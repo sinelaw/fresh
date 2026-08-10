@@ -12,7 +12,7 @@ use crate::input::keybindings::Action;
 use crate::model::event::{ContainerId, CursorId, LeafId, SplitDirection};
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::popup_mouse::{popup_areas_to_layout_info, PopupHitTester};
-use crate::view::prompt::PromptType;
+use crate::view::prompt::{PromptType, MAX_VISIBLE_SUGGESTIONS};
 use crate::view::ui::tabs::TabHit;
 use anyhow::Result as AnyhowResult;
 use ratatui::layout::Rect;
@@ -21,6 +21,33 @@ use rust_i18n::t;
 /// Returns true if (col, row) falls inside `rect`.
 fn in_rect(col: u16, row: u16, rect: Rect) -> bool {
     col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+}
+
+/// Map a screen row on a suggestion list's scrollbar track to the prompt
+/// scroll offset that puts the thumb's top on exactly that row.
+///
+/// Shared by the press and the drag-follow-up so the thumb tracks the cursor
+/// identically in both. `ScrollbarState::click_to_offset` is deliberately
+/// *not* used here: it divides by the whole track height instead of by the
+/// thumb's actual travel, so it lands the thumb a row above the row the user
+/// pointed at and can never reach the bottom of the track.
+/// [`ScrollbarState::offset_for_thumb_top`] is the real inverse of the thumb
+/// geometry the renderer draws.
+///
+/// Rows above/below the track clamp to its ends rather than being rejected,
+/// so a fast drag doesn't drop the thumb.
+fn prompt_scrollbar_offset_for_row(
+    total: usize,
+    visible: usize,
+    scroll_offset: usize,
+    sb_rect: Rect,
+    row: u16,
+) -> usize {
+    use crate::view::ui::scrollbar::ScrollbarState;
+    let clamped_row = row.clamp(sb_rect.y, sb_rect.y + sb_rect.height.saturating_sub(1));
+    let track_row = clamped_row.saturating_sub(sb_rect.y) as usize;
+    ScrollbarState::new(total, visible, scroll_offset)
+        .offset_for_thumb_top(sb_rect.height as usize, track_row)
 }
 
 /// Where a screen cell lands inside a floating widget panel. See
@@ -1953,13 +1980,10 @@ impl Editor {
         Some(self.handle_action(Action::PromptConfirm))
     }
 
-    /// Click/drag on the floating-overlay prompt's scrollbar
-    /// (issue #1796). Reuses
-    /// `view::ui::scrollbar::ScrollbarState::click_to_offset` for
-    /// the same math the popup-scrollbar handler uses, so thumb
-    /// behaviour is consistent across the editor.
+    /// Click/drag on a suggestion-list scrollbar: the floating-overlay
+    /// prompt's (issue #1796) and the bottom-anchored dropdown's
+    /// (issues #623 / #1593), which share `suggestions_scrollbar_rect`.
     fn handle_click_prompt_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        use crate::view::ui::scrollbar::ScrollbarState;
         let sb_rect = self.active_chrome().suggestions_scrollbar_rect?;
         if col < sb_rect.x
             || col >= sb_rect.x + sb_rect.width
@@ -1981,15 +2005,18 @@ impl Editor {
             .windows
             .get_mut(&active_window_id)
             .and_then(|w| w.prompt.as_mut())?;
-        let visible = suggestions_area_visible.unwrap_or(prompt.suggestions.len().min(10));
-        let total = prompt.suggestions.len();
-        let track_height = sb_rect.height as usize;
-        let click_row = row.saturating_sub(sb_rect.y) as usize;
-        let state = ScrollbarState::new(total, visible, prompt.scroll_offset);
-        prompt.scroll_offset = state.click_to_offset(track_height, click_row);
+        let visible = suggestions_area_visible
+            .unwrap_or_else(|| prompt.suggestions.len().min(MAX_VISIBLE_SUGGESTIONS));
+        prompt.scroll_offset = prompt_scrollbar_offset_for_row(
+            prompt.suggestions.len(),
+            visible,
+            prompt.scroll_offset,
+            sb_rect,
+            row,
+        );
         // Latch manual scroll so the renderer's keep-selection-visible
         // pass doesn't immediately yank the offset back to the selection
-        // (same latch the wheel uses; reset when the selection moves).
+        // (same latch the wheel uses; released when the selection moves).
         prompt.manual_scroll = true;
         // Hand off to the drag follow-up so subsequent mouse moves
         // keep tracking the thumb.
@@ -2980,7 +3007,6 @@ impl Editor {
             .mouse_state
             .dragging_prompt_scrollbar
         {
-            use crate::view::ui::scrollbar::ScrollbarState;
             // Snapshot chrome rects up front so the prompt borrow on
             // active_window_mut() doesn't conflict.
             let sb_rect = self.active_chrome().suggestions_scrollbar_rect;
@@ -2993,17 +3019,15 @@ impl Editor {
                     .get_mut(&active_window_id)
                     .and_then(|w| w.prompt.as_mut()),
             ) {
-                let visible = suggestions_area_visible.unwrap_or(prompt.suggestions.len().min(10));
-                let total = prompt.suggestions.len();
-                let track_height = sb_rect.height as usize;
-                // Allow dragging slightly past the top/bottom; clamp
-                // here rather than rejecting so the thumb keeps up
-                // with a fast mouse.
-                let clamped_row =
-                    row.clamp(sb_rect.y, sb_rect.y + sb_rect.height.saturating_sub(1));
-                let click_row = clamped_row.saturating_sub(sb_rect.y) as usize;
-                let state = ScrollbarState::new(total, visible, prompt.scroll_offset);
-                prompt.scroll_offset = state.click_to_offset(track_height, click_row);
+                let visible = suggestions_area_visible
+                    .unwrap_or_else(|| prompt.suggestions.len().min(MAX_VISIBLE_SUGGESTIONS));
+                prompt.scroll_offset = prompt_scrollbar_offset_for_row(
+                    prompt.suggestions.len(),
+                    visible,
+                    prompt.scroll_offset,
+                    sb_rect,
+                    row,
+                );
                 // Keep the manual-scroll latch through the drag so the
                 // renderer doesn't pull the offset back to the selection.
                 prompt.manual_scroll = true;

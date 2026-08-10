@@ -7,7 +7,10 @@
 //! to clicks like every other scrollbar in the editor.
 
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+/// The scrollbar sits on the popup's right border, i.e. the last column.
+const SCROLLBAR_COL: u16 = 99;
 
 /// The popup's suggestion rows: full-width popup rows start with the `│`
 /// left border glyph (the top/bottom borders start with `┌`/`└`).
@@ -15,6 +18,51 @@ fn suggestion_rows(harness: &EditorTestHarness, height: u16) -> Vec<u16> {
     (0..height)
         .filter(|&y| harness.get_row_text(y).starts_with('│'))
         .collect()
+}
+
+/// Where the scrollbar thumb is drawn, as `(top, size)` in rows relative to
+/// the top of the track. Read from the rendered cells only — the thumb is a
+/// run of background-coloured cells inside the track.
+fn thumb_span(harness: &EditorTestHarness, rows: &[u16]) -> (usize, usize) {
+    let thumb: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, &y)| harness.is_scrollbar_thumb_at(SCROLLBAR_COL, y))
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        !thumb.is_empty(),
+        "expected a scrollbar thumb on the popup border:\n{}",
+        harness.screen_to_string()
+    );
+    let top = thumb[0];
+    assert_eq!(
+        thumb.last().copied(),
+        Some(top + thumb.len() - 1),
+        "thumb rows must be contiguous, got {thumb:?}"
+    );
+    (top, thumb.len())
+}
+
+/// Open a prompt whose suggestion list overflows the 10-row dropdown, and
+/// return its suggestion rows. `command` is run through the palette; passing
+/// `None` leaves the palette itself open.
+fn open_overflowing_dropdown(harness: &mut EditorTestHarness, command: Option<&str>) -> Vec<u16> {
+    match command {
+        Some(name) => harness.run_palette_command(name).unwrap(),
+        None => harness
+            .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap(),
+    }
+    harness.render().unwrap();
+    let rows = suggestion_rows(harness, 24);
+    assert_eq!(
+        rows.len(),
+        10,
+        "dropdown must be full for the list to overflow:\n{}",
+        harness.screen_to_string()
+    );
+    rows
 }
 
 /// Issue #1593: the command palette lists far more commands than fit, so
@@ -138,4 +186,115 @@ fn test_clicking_palette_scrollbar_scrolls_the_list() {
     harness.render().unwrap();
 
     harness.assert_screen_not_contains("Add Cursor Above");
+}
+
+/// Clicking track row R must leave the thumb's top *on* row R — the thumb
+/// goes where you point it. The mapping used to divide the click position by
+/// the full track height instead of by the thumb's actual travel, so every
+/// click landed the thumb a row (or more) above the row clicked, and the
+/// bottom row of the track could never reach the end of the list.
+#[test]
+fn test_clicking_palette_scrollbar_lands_thumb_on_the_clicked_row() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let rows = open_overflowing_dropdown(&mut harness, None);
+
+    let (_, thumb_size) = thumb_span(&harness, &rows);
+    // Rows below `max_thumb_top` can't hold the thumb's top — the thumb
+    // would hang off the end of the track — so they clamp to the bottom.
+    let max_thumb_top = rows.len() - thumb_size;
+
+    for target in 0..=max_thumb_top {
+        harness.mouse_click(SCROLLBAR_COL, rows[target]).unwrap();
+        let (top, size) = thumb_span(&harness, &rows);
+        assert_eq!(
+            top,
+            target,
+            "clicking track row {target} put the thumb at row {top}:\n{}",
+            harness.screen_to_string()
+        );
+        assert_eq!(
+            size, thumb_size,
+            "thumb size must not change while scrolling"
+        );
+    }
+
+    // Both extremes, explicitly: the last row of the track scrolls to the
+    // very end of the list, the first row back to the very start.
+    harness
+        .mouse_click(SCROLLBAR_COL, *rows.last().unwrap())
+        .unwrap();
+    let (top, size) = thumb_span(&harness, &rows);
+    assert_eq!(
+        top + size,
+        rows.len(),
+        "clicking the last track row must park the thumb at the bottom:\n{}",
+        harness.screen_to_string()
+    );
+    harness.assert_screen_not_contains("Add Cursor Above");
+
+    harness.mouse_click(SCROLLBAR_COL, rows[0]).unwrap();
+    assert_eq!(
+        thumb_span(&harness, &rows).0,
+        0,
+        "clicking the first track row must return to the top of the list"
+    );
+    harness.assert_screen_contains("Add Cursor Above");
+}
+
+/// The drag follow-up uses the same mapping as the press, so the thumb keeps
+/// tracking the cursor row-for-row while the button is held. Driven as one
+/// continuous gesture — press once, walk the cursor down the track and back
+/// up — so it exercises the drag handler rather than a series of clicks.
+#[test]
+fn test_dragging_palette_scrollbar_tracks_the_cursor_row() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let rows = open_overflowing_dropdown(&mut harness, None);
+
+    let (_, thumb_size) = thumb_span(&harness, &rows);
+    let max_thumb_top = rows.len() - thumb_size;
+
+    let press = |h: &mut EditorTestHarness, y: u16| {
+        h.send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: SCROLLBAR_COL,
+            row: y,
+            modifiers: KeyModifiers::empty(),
+        })
+        .unwrap();
+    };
+    let drag_to = |h: &mut EditorTestHarness, y: u16| {
+        h.send_mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: SCROLLBAR_COL,
+            row: y,
+            modifiers: KeyModifiers::empty(),
+        })
+        .unwrap();
+        h.render().unwrap();
+    };
+    let release = |h: &mut EditorTestHarness, y: u16| {
+        h.send_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: SCROLLBAR_COL,
+            row: y,
+            modifiers: KeyModifiers::empty(),
+        })
+        .unwrap();
+        h.render().unwrap();
+    };
+
+    press(&mut harness, rows[0]);
+    let sweep: Vec<usize> = (0..=max_thumb_top)
+        .chain((0..max_thumb_top).rev())
+        .collect();
+    for target in sweep {
+        drag_to(&mut harness, rows[target]);
+        assert_eq!(
+            thumb_span(&harness, &rows).0,
+            target,
+            "dragging to track row {target} left the thumb elsewhere:\n{}",
+            harness.screen_to_string()
+        );
+    }
+    release(&mut harness, rows[0]);
 }

@@ -113,8 +113,26 @@ impl ScrollbarState {
             return 0;
         }
         let clamped = target_thumb_top.min(max_thumb_top);
-        let ratio = clamped as f64 / max_thumb_top as f64;
-        ((ratio * max_scroll as f64).round() as usize).min(max_scroll)
+        // `thumb_geometry` *floors* offset → thumb row, so a rounding
+        // division here lands the thumb one row above the target whenever the
+        // exact quotient has a fractional part. Take the smallest offset that
+        // reaches the row (ceiling division) instead, and keep the offset
+        // below it as a candidate: when there are fewer scroll positions than
+        // track rows, not every row is reachable and the nearest one wins.
+        let hi = (clamped * max_scroll)
+            .div_ceil(max_thumb_top)
+            .min(max_scroll);
+        let lo = hi.saturating_sub(1);
+        let thumb_top_of = |offset: usize| {
+            Self::new(self.total_items, self.visible_items, offset)
+                .thumb_geometry(track_height)
+                .0
+        };
+        if thumb_top_of(lo).abs_diff(clamped) < thumb_top_of(hi).abs_diff(clamped) {
+            lo
+        } else {
+            hi
+        }
     }
 
     /// Compute the scroll offset for a drag that preserves the cursor's
@@ -505,26 +523,69 @@ mod tests {
     #[test]
     fn test_offset_for_thumb_top_round_trip() {
         // For every reachable thumb row, `offset_for_thumb_top` must
-        // produce an offset whose rendered thumb top matches that row —
-        // i.e. it really is the inverse of `thumb_geometry`.
+        // produce an offset whose rendered thumb top matches that row
+        // *exactly* — it really is the inverse of `thumb_geometry`. The
+        // last two cases are the prompt-dropdown shape (10 visible rows on
+        // a 10-row track), where a rounding inverse used to land the thumb
+        // a row above the row the user clicked.
         let cases = [
             (200_usize, 50_usize, 20_usize),
             (1000, 30, 25),
             (50, 10, 15),
+            (30, 10, 10),
+            (14, 10, 10),
         ];
         for (total, visible, track) in cases {
             let probe = ScrollbarState::new(total, visible, 0);
             let (_, thumb_size) = probe.thumb_geometry(track);
             let max_thumb_top = track.saturating_sub(thumb_size);
+            let max_scroll = total - visible;
+            // Every row is reachable only when there are at least as many
+            // scroll positions as thumb rows; otherwise the mapping can
+            // only pick the nearest reachable row (asserted below).
+            assert!(
+                max_thumb_top <= max_scroll,
+                "case (total={total} visible={visible} track={track}) is not exactly invertible"
+            );
             for target in 0..=max_thumb_top {
                 let offset = probe.offset_for_thumb_top(track, target);
                 let placed = ScrollbarState::new(total, visible, offset);
                 let (got_top, _) = placed.thumb_geometry(track);
-                assert!(
-                    got_top.abs_diff(target) <= 1,
+                assert_eq!(
+                    got_top, target,
                     "thumb landed at {got_top}, expected {target} (total={total} visible={visible} track={track})"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_offset_for_thumb_top_picks_nearest_when_rows_unreachable() {
+        // 11 items in a 10-row viewport: only two scroll positions exist,
+        // so most track rows can't be hit. The mapping must still pick the
+        // closest reachable thumb row rather than always rounding down.
+        let total = 11;
+        let visible = 10;
+        let track = 10;
+        let probe = ScrollbarState::new(total, visible, 0);
+        let (_, thumb_size) = probe.thumb_geometry(track);
+        let max_thumb_top = track - thumb_size;
+        for target in 0..=max_thumb_top {
+            let offset = probe.offset_for_thumb_top(track, target);
+            let (got_top, _) = ScrollbarState::new(total, visible, offset).thumb_geometry(track);
+            let best = (0..=(total - visible))
+                .map(|o| {
+                    ScrollbarState::new(total, visible, o)
+                        .thumb_geometry(track)
+                        .0
+                })
+                .min_by_key(|top| top.abs_diff(target))
+                .unwrap();
+            assert_eq!(
+                got_top.abs_diff(target),
+                best.abs_diff(target),
+                "target row {target}: landed at {got_top}, nearest reachable was {best}"
+            );
         }
     }
 
