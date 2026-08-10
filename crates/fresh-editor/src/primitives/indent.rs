@@ -186,6 +186,23 @@ impl IndentCalculator {
         if let Some(indent) =
             self.calculate_indent_tree_sitter(buffer, position, language, tab_size)
         {
+            // Braceless control-flow body (issue #2492): the JS/TS
+            // `indents.scm` captures `)` as `@dedent`, so a braceless head
+            // like `if (x)` ends in a @dedent token and tree-sitter reports
+            // "keep level" for the body line below it. The regex rules tier
+            // already recognises these heads (`indent_next_line`); when it
+            // dictates a deeper body indent than tree-sitter produced, prefer
+            // it. Languages whose rules have no `indent_next_line` pattern
+            // (and languages with no rules at all) are unaffected.
+            if let Some(rules) = crate::primitives::indent_rules::rules_for_id(language.id()) {
+                if let Some(head_indent) =
+                    rules.braceless_head_body_indent(buffer, position, tab_size)
+                {
+                    if head_indent > indent {
+                        return Some(head_indent);
+                    }
+                }
+            }
             return Some(indent);
         }
 
@@ -1426,6 +1443,68 @@ mod tests {
         assert!(indent.is_some());
         // Should suggest indenting
         assert!(indent.unwrap() >= 4);
+    }
+
+    // ============================================================================
+    // Issue #2492: a braceless control-flow head (`if (x)` with no `{`) must
+    // indent its body line in TypeScript/JavaScript, matching the C family.
+    // The JS/TS `indents.scm` captures `)` as @dedent, so before the fix
+    // tree-sitter reported "keep level" for these heads and the body landed
+    // at the head's own column.
+    // ============================================================================
+
+    #[test]
+    fn test_ts_js_braceless_if_indents_body() {
+        let mut calc = IndentCalculator::new();
+        for lang in [Language::TypeScript, Language::JavaScript] {
+            let buffer = Buffer::from_str_test("if (a)");
+            let indent = calc.calculate_indent(&buffer, buffer.len(), &lang, 4);
+            assert_eq!(
+                indent,
+                Some(4),
+                "braceless if body should indent one level in {:?} (got {:?})",
+                lang,
+                indent
+            );
+        }
+    }
+
+    #[test]
+    fn test_ts_braceless_while_and_for_indent_body() {
+        let mut calc = IndentCalculator::new();
+        for head in ["while (a)", "for (let i = 0; i < n; i++)"] {
+            let buffer = Buffer::from_str_test(head);
+            let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::TypeScript, 4);
+            assert_eq!(indent, Some(4), "after {head:?} (got {:?})", indent);
+        }
+    }
+
+    #[test]
+    fn test_ts_braceless_if_nested_indents_from_head() {
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("function f() {\n    if (a)");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::TypeScript, 4);
+        assert_eq!(indent, Some(8), "got {:?}", indent);
+    }
+
+    #[test]
+    fn test_ts_braced_if_body_indent_unchanged() {
+        // Control: the braced head still indents exactly one level (the
+        // braceless-head override must not fire — the head ends with `{`).
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("if (a) {");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::TypeScript, 4);
+        assert_eq!(indent, Some(4), "got {:?}", indent);
+    }
+
+    #[test]
+    fn test_ts_plain_statement_keeps_indent() {
+        // Control: a statement line ending in `)` that is not a control head
+        // must not trigger the braceless-head override.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("if (a) {\n    foo(b)");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::TypeScript, 4);
+        assert_eq!(indent, Some(4), "got {:?}", indent);
     }
 
     // ============================================================================

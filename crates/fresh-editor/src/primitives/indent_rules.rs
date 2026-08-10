@@ -247,6 +247,34 @@ impl IndentRules {
     fn increases(&self, code: &str) -> bool {
         matches(&self.increase, code) && !matches(&self.self_close, code)
     }
+
+    /// Body indent dictated by a braceless control head being split at
+    /// `position`, or `None` when the rule does not apply.
+    ///
+    /// When the text before the cursor on the current line matches
+    /// `indent_next_line` (a braceless `if (x)` / `for (…)` / `while (x)`
+    /// head, or a bare `else`), the line created below it is that head's
+    /// one-shot body: head indent + one unit. Used by the tree-sitter indent
+    /// path (issue #2492), whose JS/TS `indents.scm` captures `)` as `@dedent`
+    /// and therefore reports "keep level" for exactly these heads.
+    pub fn braceless_head_body_indent(
+        &self,
+        buffer: &Buffer,
+        position: usize,
+        tab_size: usize,
+    ) -> Option<usize> {
+        self.indent_next_line.as_ref()?;
+        let cur = line_bounds(buffer, position);
+        // Only a non-empty head on the line being split qualifies; a blank
+        // line means the one-shot body line has already been consumed.
+        first_nonws(buffer, cur.start, position)?;
+        let head = code_view(buffer, cur.start, position, &|_| true);
+        if !matches(&self.indent_next_line, &head) {
+            return None;
+        }
+        Some(visual_indent(buffer, cur.start, position, tab_size) + tab_size.max(1))
+    }
+
 }
 
 fn matches(re: &Option<Regex>, text: &str) -> bool {
@@ -898,6 +926,30 @@ mod tests {
     #[test]
     fn smali_plain_field_does_not_indent() {
         assert_eq!(indent("smali", ".field public static count:I = 0\n", 4), 0);
+    }
+
+    // ---- Braceless control heads (issue #2492) ----------------------------
+
+    #[test]
+    fn braceless_head_dictates_body_indent() {
+        let r = rules_for_id("typescript").unwrap();
+        let head = "    if (a)";
+        assert_eq!(
+            r.braceless_head_body_indent(&buf(head), head.len(), 4),
+            Some(8)
+        );
+        // A braced head is not a braceless one.
+        let braced = "    if (a) {";
+        assert_eq!(
+            r.braceless_head_body_indent(&buf(braced), braced.len(), 4),
+            None
+        );
+        // A plain statement is not a head.
+        let stmt = "    foo(a);";
+        assert_eq!(
+            r.braceless_head_body_indent(&buf(stmt), stmt.len(), 4),
+            None
+        );
     }
 
     // ---- registry ---------------------------------------------------------
