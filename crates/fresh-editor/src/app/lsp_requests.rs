@@ -134,35 +134,14 @@ impl Editor {
         }
 
         // Get the partial word at cursor to filter completions
-        use crate::primitives::word_navigation::find_completion_word_start;
-        let cursor_pos = self.active_cursors().primary().position;
-        let (word_start, cursor_pos) = {
-            let state = self.active_state();
-            let word_start = find_completion_word_start(&state.buffer, cursor_pos);
-            (word_start, cursor_pos)
-        };
-        let prefix = if word_start < cursor_pos {
-            self.active_state_mut()
-                .get_text_range(word_start, cursor_pos)
-                .to_lowercase()
-        } else {
-            String::new()
-        };
+        use crate::app::popup_actions::completion_matches_prefix;
+        let prefix = self.completion_word_prefix();
 
-        let matches_prefix = |item: &lsp_types::CompletionItem| -> bool {
-            prefix.is_empty()
-                || item.label.to_lowercase().starts_with(&prefix)
-                || item
-                    .filter_text
-                    .as_ref()
-                    .map(|ft| ft.to_lowercase().starts_with(&prefix))
-                    .unwrap_or(false)
-        };
+        let any_new_match = items
+            .iter()
+            .any(|item| completion_matches_prefix(item, &prefix));
 
-        let filtered_items: Vec<&lsp_types::CompletionItem> =
-            items.iter().filter(|item| matches_prefix(item)).collect();
-
-        if filtered_items.is_empty() && self.active_window().completion_items.is_none() {
+        if !any_new_match && self.active_window().completion_items.is_none() {
             tracing::debug!("No completion items match prefix '{}'", prefix);
             return Ok(());
         }
@@ -178,32 +157,24 @@ impl Editor {
             }
         }
 
-        // Rebuild popup from ALL merged items (not just the new batch)
-        let all_items = self.active_window_mut().completion_items.as_ref().unwrap();
-        let all_filtered: Vec<&lsp_types::CompletionItem> = all_items
+        // Only the *LSP* results open the popup from this path; a response
+        // that leaves nothing matching is not a reason to show buffer-word
+        // candidates. Checked before rebuilding so a late non-matching
+        // response can't drop the mapping behind a popup already on screen.
+        let any_stored_match = self
+            .active_window()
+            .completion_items
             .iter()
-            .filter(|item| matches_prefix(item))
-            .collect();
-
-        if all_filtered.is_empty() {
+            .flatten()
+            .any(|item| completion_matches_prefix(item, &prefix));
+        if !any_stored_match {
             tracing::debug!("No completion items match prefix '{}'", prefix);
             return Ok(());
         }
 
-        // Build LSP popup items, then append buffer-word items below.
-        let mut all_popup_items =
-            crate::app::popup_actions::lsp_items_to_popup_items(&all_filtered);
-        let buffer_word_items = self.get_buffer_completion_popup_items();
-        // Deduplicate: skip buffer-word items whose label already appears in LSP results.
-        let lsp_labels: std::collections::HashSet<String> = all_popup_items
-            .iter()
-            .map(|i| i.text.to_lowercase())
-            .collect();
-        all_popup_items.extend(
-            buffer_word_items
-                .into_iter()
-                .filter(|item| !lsp_labels.contains(&item.text.to_lowercase())),
-        );
+        // Rebuild popup rows from ALL merged items (not just the new batch),
+        // recording which candidate each LSP row came from.
+        let all_popup_items = self.build_completion_popup_rows();
 
         let popup_data =
             crate::app::popup_actions::build_completion_popup_from_items(all_popup_items, 0);
@@ -674,7 +645,7 @@ impl Editor {
                 self.active_window_mut().send_lsp_cancel_request(request_id);
             }
         }
-        self.active_window_mut().completion_items = None;
+        self.active_window_mut().clear_completion_items();
 
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
@@ -737,7 +708,10 @@ impl Editor {
     ///
     /// Called when no LSP servers are available for the current buffer.
     fn show_buffer_word_completion_popup(&mut self) {
-        let items = self.get_buffer_completion_popup_items();
+        // Goes through the shared row builder so the popup-row → LSP-item
+        // mapping is reset (to "no LSP rows") by the same code that fills
+        // it — no separate place to forget.
+        let items = self.build_completion_popup_rows();
         if items.is_empty() {
             return;
         }

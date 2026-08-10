@@ -379,6 +379,20 @@ pub struct Window {
     /// Original LSP completion items (for type-to-filter).
     pub completion_items: Option<Vec<lsp_types::CompletionItem>>,
 
+    /// The LSP `CompletionItem` behind each *LSP row* of the completion
+    /// popup currently on screen, in row order. Rows past the end of this
+    /// vector are buffer-word candidates, which have no LSP item behind
+    /// them.
+    ///
+    /// Written only by `Editor::build_completion_popup_rows`, from the same
+    /// filtered list it converts into popup rows — so "popup row N" and
+    /// "entry N here" are the same candidate by construction. The accept
+    /// path needs that identity because completion *labels* are not
+    /// unique: with auto-import candidates advertised (#2603) a server
+    /// offers one `HashMap` row per crate exporting one, each with a
+    /// different `use` line.
+    pub completion_popup_lsp_items: Vec<lsp_types::CompletionItem>,
+
     /// Scheduled completion-trigger time (debounced quick-suggestions).
     pub scheduled_completion_trigger: Option<std::time::Instant>,
 
@@ -2179,6 +2193,7 @@ impl Window {
             next_lsp_request_id: 0,
             pending_completion_requests: std::collections::HashSet::new(),
             completion_items: None,
+            completion_popup_lsp_items: Vec::new(),
             scheduled_completion_trigger: None,
             dabbrev_state: None,
             pending_goto_definition_request: None,
@@ -2867,6 +2882,15 @@ impl Window {
     /// Number of in-flight completion requests for this window.
     pub fn pending_completion_requests_count(&self) -> usize {
         self.pending_completion_requests.len()
+    }
+
+    /// Forget the completion candidates: both the stored LSP items used
+    /// for type-to-filter and the popup-row → item mapping built from
+    /// them. Clearing them together keeps a dismissed popup from leaving
+    /// a mapping behind that a later accept could read.
+    pub fn clear_completion_items(&mut self) {
+        self.completion_items = None;
+        self.completion_popup_lsp_items.clear();
     }
 
     /// Number of stored completion items currently visible in this

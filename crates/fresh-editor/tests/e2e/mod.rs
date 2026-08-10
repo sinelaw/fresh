@@ -132,6 +132,7 @@ pub mod lsp_code_action_diagnostic_context;
 pub mod lsp_code_action_modal;
 pub mod lsp_code_action_resolve_and_commands;
 pub mod lsp_completion_duplicate_entries_1514;
+pub mod lsp_completion_duplicate_label_import_2952;
 pub mod lsp_completion_dynamic_registration;
 pub mod lsp_completion_french_locale;
 pub mod lsp_completion_popup_behavior;

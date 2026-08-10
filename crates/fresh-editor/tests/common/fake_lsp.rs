@@ -1483,6 +1483,139 @@ done
         std::path::PathBuf::from("/tmp/fake_lsp_log.txt")
     }
 
+    /// Spawn a fake LSP server that offers **two candidates sharing one
+    /// label** — exactly what an auto-import list looks like once
+    /// unimported symbols are advertised (sinelaw/fresh#2603): every crate
+    /// exporting a `HashMap` contributes a row labelled `HashMap`, and the
+    /// rows differ only in the `use` line they bring along.
+    ///
+    /// The first row imports `wrong_crate::HashMap`, the second
+    /// `std::collections::HashMap`, so a client that recovers the accepted
+    /// item by *label* rather than by identity visibly inserts the wrong
+    /// import (sinelaw/fresh#2952).
+    ///
+    /// Takes the log-file path as its first argument (every received method
+    /// name is appended to it, so tests can wait for `textDocument/didOpen`)
+    /// and the delivery mode as its second:
+    ///
+    /// - `"eager"` — both items carry their own `additionalTextEdits`.
+    /// - `"resolve"` — neither does; the import arrives through
+    ///   `completionItem/resolve`, keyed on the item's `data` field. This
+    ///   is rust-analyzer's actual behaviour.
+    pub fn spawn_duplicate_labels(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+LOG_FILE="${1:-/tmp/fake_lsp_duplicate_labels_log.txt}"
+MODE="${2:-eager}"
+> "$LOG_FILE"
+
+read_message() {
+    local content_length=0
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
+            break
+        fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
+    done
+
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
+}
+
+WRONG_EDIT='[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"use wrong_crate::HashMap;\n"}]'
+RIGHT_EDIT='[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"use std::collections::HashMap;\n"}]'
+
+while true; do
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    if [ -n "$method" ]; then
+        echo "$method" >> "$LOG_FILE"
+    fi
+
+case "$method" in
+    "initialize")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"resolveProvider":true,"triggerCharacters":["."]},"textDocumentSync":1}}}'
+        ;;
+    "textDocument/completion")
+        # Two candidates, same label, different imports. The wrong one is
+        # deliberately first: accepting the second must not pick it up.
+        if [ "$MODE" = "resolve" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"isIncomplete":false,"items":[{"label":"HashMap","kind":22,"insertText":"HashMap","labelDetails":{"detail":" (use wrong_crate::HashMap)"},"data":"wrong_crate"},{"label":"HashMap","kind":22,"insertText":"HashMap","labelDetails":{"detail":" (use std::collections::HashMap)"},"data":"std"}]}}'
+        else
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"isIncomplete":false,"items":[{"label":"HashMap","kind":22,"insertText":"HashMap","labelDetails":{"detail":" (use wrong_crate::HashMap)"},"data":"wrong_crate","additionalTextEdits":'"$WRONG_EDIT"'},{"label":"HashMap","kind":22,"insertText":"HashMap","labelDetails":{"detail":" (use std::collections::HashMap)"},"data":"std","additionalTextEdits":'"$RIGHT_EDIT"'}]}}'
+        fi
+        ;;
+    "completionItem/resolve")
+        # Answer the item that was actually sent: the `data` tag is what
+        # tells the two same-labelled candidates apart.
+        echo "RESOLVE:$msg" >> "$LOG_FILE"
+        if echo "$msg" | grep -q '"data":"wrong_crate"'; then
+            EDIT="$WRONG_EDIT"
+        else
+            EDIT="$RIGHT_EDIT"
+        fi
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"label":"HashMap","kind":22,"insertText":"HashMap","additionalTextEdits":'"$EDIT"'}}'
+        ;;
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave"|"textDocument/didClose"|"initialized"|"$/cancelRequest")
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+    *)
+        if [ -n "$msg_id" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        fi
+        ;;
+esac
+done
+"#;
+
+        let script_path = Self::duplicate_labels_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the duplicate-label fake LSP server script
+    pub fn duplicate_labels_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_duplicate_labels.sh")
+    }
+
     /// Spawn a fake LSP server that returns hover content WITHOUT a range
     ///
     /// This simulates LSP servers like pyrefly that don't return the hover range.

@@ -485,6 +485,18 @@ impl Popup {
         }
     }
 
+    /// Index of the currently selected row (if this is a list popup and the
+    /// row exists). Rows are indexed independently of `scroll_offset`, so
+    /// this is a stable handle on the row the user is looking at — which is
+    /// how the completion accept path tells apart candidates that share a
+    /// label.
+    pub fn selected_index(&self) -> Option<usize> {
+        match &self.content {
+            PopupContent::List { items, selected } if *selected < items.len() => Some(*selected),
+            _ => None,
+        }
+    }
+
     /// Get the actual visible content height (accounting for borders)
     fn visible_height(&self) -> usize {
         let border_offset = if self.bordered { 2 } else { 0 };
