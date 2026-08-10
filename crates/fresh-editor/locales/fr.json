@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "Terminer un démon",
   "cli.cmd.session_open_file": "Ouvrir des fichiers dans un démon (--wait bloque jusqu'à la fin)",
   "cli.file_syntax.line": "Ouvrir à la ligne 10",
+  "cli.file_syntax.plus_line": "Ouvrir à la ligne 10 (style vim)",
   "cli.file_syntax.line_col": "Ouvrir à la ligne 10, colonne 5",
   "cli.file_syntax.range": "Sélectionner les lignes 10 à 20",
   "cli.file_syntax.range_col": "Sélectionner de la ligne 10 colonne 5 à la ligne 20 colonne 1",

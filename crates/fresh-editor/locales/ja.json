@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "デーモンを終了します",
   "cli.cmd.session_open_file": "デーモンでファイルを開きます（--wait は完了までブロック）",
   "cli.file_syntax.line": "10 行目で開く",
+  "cli.file_syntax.plus_line": "10 行目で開く（vim 形式）",
   "cli.file_syntax.line_col": "10 行目 5 列目で開く",
   "cli.file_syntax.range": "10 行目から 20 行目を選択する",
   "cli.file_syntax.range_col": "10 行目 5 列目から 20 行目 1 列目までを選択する",

@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "终止一个守护进程",
   "cli.cmd.session_open_file": "在守护进程中打开文件（--wait 会阻塞至完成）",
   "cli.file_syntax.line": "在第 10 行打开",
+  "cli.file_syntax.plus_line": "在第 10 行打开（vim 风格）",
   "cli.file_syntax.line_col": "在第 10 行第 5 列打开",
   "cli.file_syntax.range": "选择第 10 至 20 行",
   "cli.file_syntax.range_col": "从第 10 行第 5 列选择到第 20 行第 1 列",

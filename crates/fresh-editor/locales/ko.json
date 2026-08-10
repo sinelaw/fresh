@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "데몬을 종료합니다",
   "cli.cmd.session_open_file": "데몬에서 파일을 엽니다 (--wait 는 완료될 때까지 블로킹)",
   "cli.file_syntax.line": "10번째 줄에서 열기",
+  "cli.file_syntax.plus_line": "10번째 줄에서 열기 (vim 스타일)",
   "cli.file_syntax.line_col": "10번째 줄, 5번째 열에서 열기",
   "cli.file_syntax.range": "10에서 20번째 줄까지 선택",
   "cli.file_syntax.range_col": "10번째 줄 5번째 열부터 20번째 줄 1번째 열까지 선택",

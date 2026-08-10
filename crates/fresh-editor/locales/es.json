@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "Terminar un demonio",
   "cli.cmd.session_open_file": "Abrir archivos en un demonio (--wait bloquea hasta finalizar)",
   "cli.file_syntax.line": "Abrir en la línea 10",
+  "cli.file_syntax.plus_line": "Abrir en la línea 10 (estilo vim)",
   "cli.file_syntax.line_col": "Abrir en la línea 10, columna 5",
   "cli.file_syntax.range": "Seleccionar las líneas 10 a 20",
   "cli.file_syntax.range_col": "Seleccionar desde la línea 10 columna 5 hasta la línea 20 columna 1",
