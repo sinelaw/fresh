@@ -2088,6 +2088,40 @@ mod tests {
     }
 
     #[test]
+    fn test_clear_root_leaf_role_heals_a_restored_poisoned_tree() {
+        // A workspace saved before the collapse invariant existed rebuilds
+        // into exactly this shape, so restore calls the sanitizer directly
+        // rather than re-deriving it from a close (#2415).
+        let mut manager = SplitManager::new(BufferId(0));
+        let sole_leaf = manager.active_split();
+        manager.set_leaf_role(sole_leaf, Some(SplitRole::UtilityDock));
+
+        assert!(manager.clear_root_leaf_role(), "a role was there to clear");
+        assert_eq!(manager.leaf_role(sole_leaf), None);
+        assert!(
+            !manager.clear_root_leaf_role(),
+            "a healthy tree reports nothing to clear"
+        );
+    }
+
+    #[test]
+    fn test_clear_root_leaf_role_leaves_a_real_dock_alone() {
+        // The sanitizer runs unconditionally after restore, so it must be
+        // inert on a tree whose dock sits beside an editor pane.
+        let mut manager = SplitManager::new(BufferId(0));
+        let dock_leaf = manager
+            .split_root_positioned(SplitDirection::Horizontal, BufferId(1), 0.7, false)
+            .unwrap();
+        manager.set_leaf_role(dock_leaf, Some(SplitRole::UtilityDock));
+
+        assert!(!manager.clear_root_leaf_role());
+        assert_eq!(
+            manager.find_leaf_by_role(SplitRole::UtilityDock),
+            Some(dock_leaf)
+        );
+    }
+
+    #[test]
     fn test_set_ratio_on_leaf_is_graceful_noop() {
         // Regression for #2770: a plugin's `setSplitRatio` always arrives
         // with a *leaf* split id (every plugin-visible split id is a leaf).
