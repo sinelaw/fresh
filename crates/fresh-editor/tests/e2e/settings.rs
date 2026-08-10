@@ -635,6 +635,131 @@ fn test_settings_number_value_click_enters_edit_mode() {
         .unwrap();
 }
 
+/// Clicking the checkbox of a Toggle setting flips the value (issue #1112
+/// regression coverage: the widget-derived hit rects must keep routing a
+/// checkbox click to the toggle action rather than plain row selection).
+#[test]
+fn test_settings_toggle_checkbox_click_flips_value() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // Jump to a Toggle setting that defaults to unchecked.
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "ensure final newline".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let (label_col, row) = harness
+        .find_text_on_screen("Ensure Final Newline On Save")
+        .expect("setting visible after search jump");
+    let row_text = harness.screen_row_text(row);
+    assert!(
+        row_text.contains("[ ]"),
+        "toggle starts unchecked:\n{row_text}"
+    );
+    // `screen_row_text` yields char indices which can drift from screen
+    // columns (multi-char cells earlier in the row); anchor on the label,
+    // whose true column `find_text_on_screen` reports, and shift the
+    // char-index of the checkbox by the same offset.
+    let label_idx = row_text.find("Ensure Final Newline On Save").unwrap() as u16;
+    let drift = label_idx - label_col;
+    let checkbox_col = row_text.find(": [").expect("checkbox on the row") as u16 - drift + 2;
+
+    // Click the checkbox glyph itself.
+    harness.mouse_click(checkbox_col + 1, row).unwrap();
+    harness.render().unwrap();
+
+    let after = harness.screen_row_text(row);
+    assert!(
+        after.contains("[v]"),
+        "clicking the checkbox must flip the toggle on:\n{after}"
+    );
+
+    // Discard changes and close.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}
+
+/// Clicking the `[value ▼]` button of a Dropdown setting opens the inline
+/// option list (issue #1112 regression coverage, same hit-rect routing as
+/// the toggle test above).
+#[test]
+fn test_settings_dropdown_button_click_opens_options() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "default line ending".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let (label_col, row) = harness
+        .find_text_on_screen("Default Line Ending")
+        .expect("setting visible after search jump");
+    let row_text = harness.screen_row_text(row);
+    assert!(
+        row_text.contains("▼"),
+        "dropdown starts closed:\n{row_text}"
+    );
+    // Same char-index-vs-column drift correction as the toggle test above.
+    let label_idx = row_text.find("Default Line Ending").unwrap() as u16;
+    let drift = label_idx - label_col;
+    let button_col = row_text.find(": [").expect("dropdown button on the row") as u16 - drift + 2;
+
+    // Click the `[lf ▼]` button.
+    harness.mouse_click(button_col + 1, row).unwrap();
+    harness.render().unwrap();
+
+    // The dropdown is now open: the button shows the ▲ indicator and the
+    // inline option list renders each option on a row of its own (opening
+    // grows the item, which may re-scroll the panel — so look for the
+    // option rows anywhere on screen rather than at fixed coordinates).
+    // A bare "crlf" row only exists as an option row; the description
+    // mentions it only inside a longer sentence.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('▲'),
+        "dropdown button must show the open indicator:\n{screen}"
+    );
+    let has_crlf_option_row = screen
+        .lines()
+        .any(|l| l.trim_matches(|c: char| c == ' ' || c == '~' || c == '│') == "crlf");
+    assert!(
+        has_crlf_option_row,
+        "clicking the dropdown button must open the option list:\n{screen}"
+    );
+
+    // Close the dropdown, discard, and close settings.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+}
+
 /// Left arrow on a focused Number control no longer decrements — it now
 /// behaves like every other control (navigates back to Categories), since
 /// numbers are edited by direct typing.
@@ -947,6 +1072,138 @@ fn test_settings_search_result_click_navigates() {
     harness.assert_screen_contains("Editor");
 
     // Close settings
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Reproducer for issue #2860 (mouse desync in scrolled search results):
+/// only the visible result rows are registered in the layout, and
+/// hit-testing used to return the row's viewport slot (0 = first visible)
+/// while the click handler treated it as an absolute result index. Once the
+/// list was scrolled, a click resolved to the result `scroll_offset` rows
+/// above the pointer. After one wheel notch, clicking the top visible row
+/// must jump to exactly the setting named on that row.
+#[test]
+fn test_settings_search_result_click_after_wheel_scroll() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // "line" matches far more settings than fit on one screen.
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "line".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // The selected top result carries the "▸ " marker; its position anchors
+    // the results area geometry (each result is 3 rows tall, names start
+    // right after the 2-char indicator).
+    let (marker_col, top_row) = harness
+        .find_text_on_screen("▸ ")
+        .expect("selected search result marker visible");
+    let name_col = marker_col + 2;
+    // Extract the top slot's result name from its row text. Anchor on the
+    // "▸" marker char itself (char indices in `screen_row_text` can drift
+    // from screen columns), and cut at the first double-space run.
+    let name_of_top_slot = |harness: &EditorTestHarness| -> String {
+        let row_text = harness.screen_row_text(top_row);
+        let idx = match row_text.find('▸') {
+            Some(i) => i + '▸'.len_utf8(),
+            None => return String::new(),
+        };
+        row_text[idx..]
+            .trim_start()
+            .split("  ")
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let first_result = name_of_top_slot(&harness);
+    assert!(!first_result.is_empty());
+
+    // One wheel notch over the results area scrolls the list; the top
+    // visible row now shows a different (later) result.
+    harness
+        .mouse_scroll_down(name_col + 5, top_row + 4)
+        .unwrap();
+    harness.render().unwrap();
+    let clicked_name = name_of_top_slot(&harness);
+    assert!(!clicked_name.is_empty());
+    assert_ne!(
+        clicked_name, first_result,
+        "wheel notch must scroll the search results"
+    );
+
+    // Click the top visible row: the jump must land on the setting that row
+    // names, not on the pre-scroll result 0.
+    harness.mouse_click(name_col + 2, top_row).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(&format!(">  {}", clicked_name)),
+        "clicking the row showing '{clicked_name}' must select that setting; screen:\n{screen}"
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Reproducer for issue #2860 (wheel cannot select the last result): at the
+/// end of the list further wheel-downs were no-ops while the selection was
+/// pinned to the first visible row, so the last result was unreachable by
+/// mouse. Wheel-downs past the end must keep advancing the selection until
+/// the bottom-most visible row is the selected one (matching keyboard).
+#[test]
+fn test_settings_search_wheel_selects_last_result() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "line".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let (marker_col, top_row) = harness
+        .find_text_on_screen("▸ ")
+        .expect("selected search result marker visible");
+
+    // Wheel down until the screen stops changing (bottom of the list plus
+    // the selection walk to the last item). Bounded by twice the notch count
+    // any realistic result list needs, and exits early once stable.
+    let mut prev_screen = harness.screen_to_string();
+    for _ in 0..300 {
+        harness
+            .mouse_scroll_down(marker_col + 5, top_row + 4)
+            .unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        if screen == prev_screen {
+            break;
+        }
+        prev_screen = screen;
+    }
+
+    // The selection marker must have walked below the first visible row —
+    // onto the last result — instead of staying pinned to the viewport top.
+    let (_, marker_row_after) = harness
+        .find_text_on_screen("▸ ")
+        .expect("selected search result marker still visible");
+    assert!(
+        marker_row_after >= top_row + 3,
+        "selection must reach past the first visible row at the end of the \
+         list (marker at row {marker_row_after}, results start at {top_row})"
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
