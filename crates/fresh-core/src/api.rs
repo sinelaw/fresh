@@ -3084,7 +3084,45 @@ pub enum PluginCommand {
         /// window and injects it as `FRESH_CMD_TOKEN`; see
         /// `CreateWindowWithTerminalOptions::allow_script`.
         allow_script: bool,
+        /// Reuse this existing (preparing) window instead of creating a new
+        /// one; see `CreateWindowWithTerminalOptions::adopt_window`.
+        adopt_window: Option<WindowId>,
         request_id: u64,
+    },
+
+    /// Create a workspace whose *contents* are not ready yet: a real
+    /// `Window` (own id, durable stable id, label, local authority) that
+    /// renders a "still being built" placeholder page instead of an empty
+    /// buffer. The Orchestrator opens one the instant the user asks for a
+    /// new workspace, so focus can move there immediately and the row is a
+    /// full workspace — renameable, filable, closable — while `git worktree
+    /// add` runs. `SetWindowPreparing` narrates progress; passing the id as
+    /// `CreateWindowWithTerminal`'s `adopt_window` turns it into the real
+    /// session in place. Returns `PreparingWindowResult`.
+    CreatePreparingWindow {
+        root: PathBuf,
+        label: String,
+        /// First line of progress copy, e.g. `Creating workspace…`.
+        message: String,
+        /// Focus the new window right away ("Create & Visit"). `false`
+        /// creates it in the background, leaving the user where they are.
+        activate: bool,
+        request_id: u64,
+    },
+
+    /// Update the progress line on a preparing window, or (with `done`)
+    /// drop the preparing state so the window renders as an ordinary
+    /// session again. `failed` switches the page to its error copy.
+    SetWindowPreparing {
+        id: WindowId,
+        message: String,
+        /// Name to show on the page. Empty keeps whatever it shows now —
+        /// the window's own label. The Orchestrator pushes its *resolved*
+        /// display name here so a workspace renamed mid-build is renamed on
+        /// the page the user is sitting in, not just on the dock row.
+        label: String,
+        failed: bool,
+        done: bool,
     },
 
     /// Make `id` the active session. No-op if `id` is already
@@ -6051,6 +6089,60 @@ pub struct CreateWindowWithTerminalOptions {
     #[serde(default, rename = "allowScript")]
     #[ts(optional, rename = "allowScript")]
     pub allow_script: Option<bool>,
+    /// Seed the terminal into this **existing** window — one created by
+    /// `createPreparingWindow` — instead of opening a new one. The window
+    /// keeps its id, its durable `stableId`, and everything keyed off them
+    /// (a manual rename, its folder, its dock position), so a workspace the
+    /// user has been looking at (and organising) since they asked for it
+    /// becomes the live session rather than being replaced by one.
+    ///
+    /// `root` still applies: a workspace opens as a placeholder before its
+    /// worktree exists, so adopting it re-roots the window at the directory
+    /// that was finally created. Ignored — and the call falls back to
+    /// creating a fresh window — when the id names no preparing window.
+    #[serde(default, rename = "adoptWindow")]
+    #[ts(optional, rename = "adoptWindow", type = "number")]
+    pub adopt_window: Option<u64>,
+}
+
+/// Options for `createPreparingWindow` — a workspace opened before its
+/// contents exist, so the user lands in it immediately instead of waiting
+/// on the work that fills it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct CreatePreparingWindowOptions {
+    /// Absolute path the placeholder window roots at. It must exist — use
+    /// the project directory when the workspace's own directory is what is
+    /// still being created; the adopt step re-roots the window onto the
+    /// final directory.
+    pub root: String,
+    /// Human-readable label. Empty defaults to the basename of `root`.
+    #[serde(default)]
+    pub label: String,
+    /// Progress line shown on the placeholder page.
+    #[serde(default)]
+    pub message: String,
+    /// Focus the new window immediately. `false` (the default) builds it in
+    /// the background and leaves the user where they are.
+    #[serde(default)]
+    #[ts(optional)]
+    pub activate: Option<bool>,
+}
+
+/// Result of `createPreparingWindow` — the ids of the placeholder window,
+/// which are already final: adopting it later keeps both.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct PreparingWindowResult {
+    /// The new window's id — a per-process handle, valid until this editor
+    /// exits.
+    #[ts(type = "number")]
+    pub window_id: u64,
+    /// The new workspace's durable identity (`ws-…`), stable across restarts.
+    #[serde(default)]
+    pub stable_id: String,
 }
 
 /// Result of `createWindowWithTerminal` — the ids of the new
@@ -6172,6 +6264,7 @@ mod fromjs_impls {
         ProcessLimitsPackConfig,
         CreateTerminalOptions,
         CreateWindowWithTerminalOptions,
+        CreatePreparingWindowOptions,
     );
 
     impl<'js> rquickjs::IntoJs<'js> for TextPropertiesAtCursor {

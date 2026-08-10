@@ -94,6 +94,10 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "SessionWithTerminalResult" => {
             Some(fresh_core::api::SessionWithTerminalResult::decl(&cfg))
         }
+        "CreatePreparingWindowOptions" => {
+            Some(fresh_core::api::CreatePreparingWindowOptions::decl(&cfg))
+        }
+        "PreparingWindowResult" => Some(fresh_core::api::PreparingWindowResult::decl(&cfg)),
 
         // Composite buffer types (ts-rs renames these with Ts prefix)
         "TsCompositeLayoutConfig" | "CompositeLayoutConfig" => {
@@ -379,6 +383,8 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TerminalResult",                  // Used by createTerminal return type
     "CreateWindowWithTerminalOptions", // Used by createWindowWithTerminal opts
     "SessionWithTerminalResult",       // Used by createWindowWithTerminal return type
+    "CreatePreparingWindowOptions",    // Used by createPreparingWindow opts
+    "PreparingWindowResult",           // Used by createPreparingWindow return type
     "CreateTerminalOptions",           // Used by createTerminal opts parameter
     "CursorInfo",                      // Used by getPrimaryCursor, getAllCursors
     "OverlayOptions",                  // Used by TextPropertyEntry.style and InlineOverlay
@@ -945,6 +951,8 @@ mod tests {
             "CreateTerminalOptions",
             "CreateWindowWithTerminalOptions",
             "SessionWithTerminalResult",
+            "CreatePreparingWindowOptions",
+            "PreparingWindowResult",
             "TsCompositeLayoutConfig",
             "TsCompositeSourceConfig",
             "TsCompositePaneStyle",

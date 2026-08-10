@@ -54,6 +54,15 @@ const KEY_TOGGLE_ON_FG: &str = "ui.help_key_fg";
 // so the cue reads consistently across selection UIs.
 const KEY_FOCUSED_FG: &str = "ui.popup_selection_fg";
 const KEY_FOCUSED_BG: &str = "ui.popup_selection_bg";
+// Backing band painted under whatever the pointer is on — a button, a
+// toggle, a list row, a tree node. `ui.menu_hover_bg` is the editor's
+// existing "pointer is here" surface (the menu bar and its dropdowns
+// already use it), so a widget panel hovering the same way costs no new
+// theme key and reads identically to the rest of the app. Deliberately
+// weaker than `KEY_FOCUSED_BG`: hover says "you could act here", focus
+// and selection say "you are here", and a hovered row must not be
+// mistakable for the selected one.
+const KEY_HOVER_BG: &str = "ui.menu_hover_bg";
 // Leading marker prepended to the *focused* control (button /
 // toggle / text input) so "which control is focused" is legible
 // from a plain terminal capture — not just from the (theme-
@@ -86,6 +95,29 @@ fn focus_gutter_prefix(focused: bool, marker_gutter: bool) -> &'static str {
         FOCUS_GUTTER_BLANK
     }
 }
+
+/// Paint the shared hover band across the whole of `entry`, leaving its
+/// existing colours alone: the overlay carries a background and nothing
+/// else, so a checked toggle's accent glyph and a row's own styling
+/// survive underneath the pointer.
+fn apply_hover_band(entry: &mut TextPropertyEntry) {
+    let end = entry.text.len();
+    if end == 0 {
+        return;
+    }
+    entry.inline_overlays.push(InlineOverlay {
+        start: 0,
+        end,
+        style: OverlayOptions {
+            bg: Some(OverlayColorSpec::theme_key(KEY_HOVER_BG)),
+            extend_to_line_end: true,
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+}
+
 // `ui.status_error_indicator_fg` defaults to white (designed as
 // the text-on-red status badge), so using it as a standalone fg
 // renders invisible against the panel bg. The diagnostic.error_fg
@@ -319,6 +351,10 @@ pub struct RenderContext<'a> {
     pub focus_key: &'a str,
     /// Widget key the pointer is over, or `""` for none.
     pub hover_key: &'a str,
+    /// Item key of the `List` / `Tree` row the pointer is over, or `""`.
+    /// Every row of one list shares that list's `hover_key`, so the row
+    /// identity has to travel separately for a per-row highlight.
+    pub hover_item_key: &'a str,
     /// Theme + grammars for `markdown: true` Text widgets. `None`
     /// (tests, callers without a theme in hand) renders the markdown
     /// source as plain unstyled lines — layout identical, colours
@@ -345,6 +381,15 @@ impl RenderContext<'_> {
     fn is_hovered(&self, key: Option<&str>) -> bool {
         matches!(key, Some(k) if !k.is_empty() && k == self.hover_key)
     }
+
+    /// Whether `item_key` names the list/tree row under the pointer, given
+    /// that `key` names the list itself. Both halves must match: an empty
+    /// item key (a row the plugin didn't key) never lights up, and a row
+    /// key that collides across two lists only counts inside the hovered
+    /// one.
+    fn is_row_hovered(&self, key: Option<&str>, item_key: &str) -> bool {
+        !item_key.is_empty() && item_key == self.hover_item_key && self.is_hovered(key)
+    }
 }
 
 /// What the host asks of one render, beyond the spec and its previous
@@ -358,6 +403,8 @@ pub struct RenderOptions<'a> {
     pub prev_focus_key: &'a str,
     /// Widget key the pointer is over (or `""`).
     pub hover_key: &'a str,
+    /// See [`RenderContext::hover_item_key`].
+    pub hover_item_key: &'a str,
     /// See [`RenderContext::marker_gutter`].
     pub marker_gutter: bool,
     /// Fall back to the first tabbable when `prev_focus_key` matches
@@ -402,6 +449,7 @@ pub fn render_spec_with_options(
     let ctx = RenderContext {
         focus_key: &focus_key,
         hover_key: opts.hover_key,
+        hover_item_key: opts.hover_item_key,
         markdown: opts.markdown,
         marker_gutter: opts.marker_gutter,
     };
@@ -827,6 +875,7 @@ fn render_collected(
             tree_key.as_deref(),
             prev,
             next_state,
+            ctx,
             panel_width,
         ),
         WidgetSpec::Text {
@@ -1372,6 +1421,12 @@ fn collect_toggle(
         let end = entry.text.len();
         (entry, (0, end))
     };
+    // The pointer lights the whole chip+label the same way it lights a
+    // button. Focus already paints its own band, so hover only shows on
+    // the controls focus isn't on.
+    if ctx.is_hovered(key) && !is_focused {
+        apply_hover_band(&mut entry);
+    }
     out.hits.push(HitArea {
         overlay: false,
         widget_key: key.unwrap_or("").to_string(),
@@ -1610,9 +1665,10 @@ fn collect_button(
     // A `hover_style` applies only while the pointer is actually on this
     // widget, and never to a disabled one — an inert control advertising
     // itself as live would lie.
-    let hover = hover_style.filter(|_| !disabled && ctx.is_hovered(key));
+    let hovered = !disabled && ctx.is_hovered(key);
+    let hover = hover_style.filter(|_| hovered);
     let mut entry = if bare {
-        render_bare_button(label, is_focused, intent, disabled, hover)
+        render_bare_button(label, is_focused, intent, disabled, hover, hovered)
     } else {
         render_button(
             label,
@@ -1621,6 +1677,7 @@ fn collect_button(
             disabled,
             ctx.marker_gutter,
             hover,
+            hovered,
         )
     };
     // Disabled buttons skip the hit area entirely — clicks on
@@ -2007,6 +2064,10 @@ fn collect_list(
             let i = start + offset;
             let is_selected = i as i32 == effective_sel;
             let item_key = item_keys.get(i).cloned().unwrap_or_default();
+            // A list row carries its *own* item key as the hit's widget
+            // key (unlike a tree, where every row shares the tree's), so
+            // the pointer resolves to one card without any extra plumbing.
+            let is_hovered_row = !is_selected && ctx.is_hovered(Some(item_key.as_str()));
             for r in 0..item_height as usize {
                 if emitted >= avail_rows {
                     break 'cards;
@@ -2015,6 +2076,8 @@ fn collect_list(
                 entry.normalize_widths();
                 if is_selected {
                     mark_list_card_selected(&mut entry);
+                } else if is_hovered_row {
+                    apply_hover_band(&mut entry);
                 }
                 let byte_end = entry.text.len();
                 ensure_trailing_newline(&mut entry);
@@ -2044,13 +2107,15 @@ fn collect_list(
             let i = start + offset;
             let mut entry = item.clone();
             entry.normalize_widths();
+            let item_key = item_keys.get(i).cloned().unwrap_or_default();
             if i as i32 == effective_sel {
                 mark_list_row_selected(&mut entry);
+            } else if ctx.is_hovered(Some(item_key.as_str())) {
+                apply_hover_band(&mut entry);
             }
             let byte_end = entry.text.len();
             ensure_trailing_newline(&mut entry);
             entries.push(entry);
-            let item_key = item_keys.get(i).cloned().unwrap_or_default();
             let hit_row = (entries.len() - 1) as u32;
             hits.push(HitArea {
                 overlay: false,
@@ -3083,6 +3148,7 @@ fn render_widget_tree(
     tree_key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
+    ctx: RenderContext<'_>,
     panel_width: u32,
 ) -> CollectedOutput {
     let mut out = CollectedOutput::default();
@@ -3307,8 +3373,16 @@ fn render_widget_tree(
                 select_style(e);
             }
         };
+        // The pointer highlights the row it's on — including every
+        // continuation row of a card, which selects as one unit and so
+        // must light as one. Selection outranks hover: a selected row
+        // keeps its stronger band (or its card frame) rather than being
+        // repainted the moment the pointer crosses it.
+        let is_hovered_row = !is_selected && ctx.is_row_hovered(tree_key, &item_key);
         if is_selected {
             mark_selected(&mut entry);
+        } else if is_hovered_row {
+            apply_hover_band(&mut entry);
         }
         let row_byte_end = entry.text.len();
         ensure_trailing_newline(&mut entry);
@@ -3328,6 +3402,8 @@ fn render_widget_tree(
         for mut extra in rendered.extra_entries {
             if is_selected {
                 mark_selected(&mut extra);
+            } else if is_hovered_row {
+                apply_hover_band(&mut extra);
             }
             let extra_byte_end = extra.text.len();
             ensure_trailing_newline(&mut extra);
@@ -5131,6 +5207,11 @@ fn dual_cursor_marker(on_cursor: bool, column_active: bool) -> &'static str {
 /// * `Primary` — bold; focused → fg/bg flip.
 /// * `Danger`  — red fg (theme `ui.status_error_indicator_fg`);
 ///   focused → bold.
+///
+/// `hovered` is whether the pointer is on this button. With no explicit
+/// `hover` style it paints the shared [`KEY_HOVER_BG`] band under the
+/// button's own colours — every framed button answers the pointer, with
+/// no per-call-site opt-in. An explicit `hover` still wins outright.
 pub fn render_button(
     label: &str,
     focused: bool,
@@ -5138,6 +5219,7 @@ pub fn render_button(
     disabled: bool,
     marker_gutter: bool,
     hover: Option<&OverlayOptions>,
+    hovered: bool,
 ) -> TextPropertyEntry {
     // In a marker-gutter panel, focused buttons lead with `▸ ` and
     // every other button with two spaces. This is the cue that
@@ -5187,10 +5269,16 @@ pub fn render_button(
     };
 
     // Hover outranks focus: the pointer is the more immediate signal.
-    // A framed button only takes it when its spec declares one, so
-    // buttons without a `hover_style` render exactly as they always have.
+    // A spec-declared `hover_style` replaces the look outright; without
+    // one, hover paints the shared band *under* the button's own intent
+    // colours, so a Danger button stays red while answering the pointer.
     let style = if let Some(hover) = hover.filter(|_| !disabled) {
         hover.clone()
+    } else if hovered && !disabled {
+        OverlayOptions {
+            bg: Some(OverlayColorSpec::theme_key(KEY_HOVER_BG)),
+            ..base_style
+        }
     } else if focused && !disabled {
         OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -5238,14 +5326,30 @@ pub fn render_button(
 ///
 /// `hover` is the spec's `hover_style`, passed in only while the pointer
 /// is on this button. It outranks focus styling: the pointer is the more
-/// immediate signal, and the one the user is actively driving.
+/// immediate signal, and the one the user is actively driving. `hovered`
+/// without a declared style falls back to the shared hover band, so even
+/// a glyph affordance lights up under the pointer.
 fn render_bare_button(
     label: &str,
     focused: bool,
     kind: ButtonKind,
     disabled: bool,
     hover: Option<&OverlayOptions>,
+    hovered: bool,
 ) -> TextPropertyEntry {
+    let base = match kind {
+        ButtonKind::Normal => OverlayOptions::default(),
+        ButtonKind::Primary => OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
+            bold: true,
+            ..Default::default()
+        },
+        ButtonKind::Danger => OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(KEY_DANGER_FG)),
+            bold: true,
+            ..Default::default()
+        },
+    };
     let style = if disabled {
         OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key("ui.menu_disabled_fg")),
@@ -5253,6 +5357,11 @@ fn render_bare_button(
         }
     } else if let Some(hover) = hover {
         hover.clone()
+    } else if hovered {
+        OverlayOptions {
+            bg: Some(OverlayColorSpec::theme_key(KEY_HOVER_BG)),
+            ..base
+        }
     } else if focused {
         OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -5261,19 +5370,7 @@ fn render_bare_button(
             ..Default::default()
         }
     } else {
-        match kind {
-            ButtonKind::Normal => OverlayOptions::default(),
-            ButtonKind::Primary => OverlayOptions {
-                fg: Some(OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
-                bold: true,
-                ..Default::default()
-            },
-            ButtonKind::Danger => OverlayOptions {
-                fg: Some(OverlayColorSpec::theme_key(KEY_DANGER_FG)),
-                bold: true,
-                ..Default::default()
-            },
-        }
+        base
     };
 
     let mut overlays = Vec::new();
@@ -6916,7 +7013,15 @@ mod tests {
 
     #[test]
     fn button_normal_unfocused_has_no_overlay() {
-        let entry = render_button("Replace All", false, ButtonKind::Normal, false, false, None);
+        let entry = render_button(
+            "Replace All",
+            false,
+            ButtonKind::Normal,
+            false,
+            false,
+            None,
+            false,
+        );
         assert_eq!(entry.text, "[ Replace All ]");
         assert!(entry.inline_overlays.is_empty());
     }
@@ -6927,7 +7032,15 @@ mod tests {
         // on the surrounding surface. Only the focused state
         // paints a backing colour — verified in
         // `button_focused_overrides_with_menu_active_keys`.
-        let entry = render_button("Submit", false, ButtonKind::Primary, false, false, None);
+        let entry = render_button(
+            "Submit",
+            false,
+            ButtonKind::Primary,
+            false,
+            false,
+            None,
+            false,
+        );
         assert_eq!(entry.inline_overlays.len(), 1);
         let style = &entry.inline_overlays[0].style;
         assert!(style.bold);
@@ -6940,7 +7053,15 @@ mod tests {
 
     #[test]
     fn button_danger_uses_error_theme_key() {
-        let entry = render_button("Delete", false, ButtonKind::Danger, false, false, None);
+        let entry = render_button(
+            "Delete",
+            false,
+            ButtonKind::Danger,
+            false,
+            false,
+            None,
+            false,
+        );
         assert_eq!(entry.inline_overlays.len(), 1);
         let fg = entry.inline_overlays[0].style.fg.as_ref().unwrap();
         assert_eq!(fg.as_theme_key(), Some("diagnostic.error_fg"));
@@ -6955,7 +7076,7 @@ mod tests {
         // former has ~6× the perceptual contrast against the popup
         // bg and is the same key the prompt already uses. See the
         // `KEY_FOCUSED_FG/BG` const comment.
-        let entry = render_button("OK", true, ButtonKind::Normal, false, false, None);
+        let entry = render_button("OK", true, ButtonKind::Normal, false, false, None, false);
         let style = &entry.inline_overlays[0].style;
         assert_eq!(
             style.fg.as_ref().and_then(|c| c.as_theme_key()),
@@ -7213,7 +7334,15 @@ mod tests {
 
     #[test]
     fn disabled_button_uses_menu_disabled_fg_overlay() {
-        let entry = render_button("Archive", false, ButtonKind::Danger, true, false, None);
+        let entry = render_button(
+            "Archive",
+            false,
+            ButtonKind::Danger,
+            true,
+            false,
+            None,
+            false,
+        );
         assert_eq!(entry.inline_overlays.len(), 1);
         let style = &entry.inline_overlays[0].style;
         assert_eq!(
@@ -7226,6 +7355,90 @@ mod tests {
             "disabled buttons drop the intent's bold emphasis"
         );
         assert!(style.bg.is_none(), "disabled buttons paint no bg");
+    }
+
+    #[test]
+    fn hovered_button_paints_the_shared_hover_band() {
+        let entry = render_button(
+            "Delete",
+            false,
+            ButtonKind::Danger,
+            false,
+            false,
+            None,
+            true,
+        );
+        let style = &entry.inline_overlays[0].style;
+        assert_eq!(
+            style.bg.as_ref().and_then(|c| c.as_theme_key()),
+            Some("ui.menu_hover_bg"),
+            "the pointer paints the shared hover background"
+        );
+        assert_eq!(
+            style.fg.as_ref().and_then(|c| c.as_theme_key()),
+            Some("diagnostic.error_fg"),
+            "hover sits *under* the intent's own colour rather than replacing it"
+        );
+    }
+
+    #[test]
+    fn hovered_disabled_button_stays_inert() {
+        let entry = render_button(
+            "Archive",
+            false,
+            ButtonKind::Danger,
+            true,
+            false,
+            None,
+            true,
+        );
+        let style = &entry.inline_overlays[0].style;
+        assert!(
+            style.bg.is_none(),
+            "an inert control must not advertise itself as actionable under the pointer"
+        );
+    }
+
+    #[test]
+    fn hovered_tree_row_lights_only_the_row_under_the_pointer() {
+        let node = |text: &str| TreeNode {
+            text: TextPropertyEntry::text(text),
+            depth: 0,
+            has_children: false,
+            checked: None,
+            extra_lines: Vec::new(),
+        };
+        let nodes = vec![node("alpha"), node("beta")];
+        let spec = WidgetSpec::Tree {
+            nodes,
+            item_keys: vec!["a".to_string(), "b".to_string()],
+            selected_index: -1,
+            visible_rows: 4,
+            expanded_keys: Vec::new(),
+            checkable: false,
+            item_height: 1,
+            card_borders: false,
+            key: Some("sessions".to_string()),
+        };
+        let out = render_spec_with_options(
+            &spec,
+            &HashMap::new(),
+            40,
+            RenderOptions {
+                // Every row of a tree shares the tree's widget key, so the
+                // row identity has to come from `hover_item_key`.
+                hover_key: "sessions",
+                hover_item_key: "b",
+                ..Default::default()
+            },
+        );
+        let band = |row: usize| {
+            out.entries[row].inline_overlays.iter().any(|o| {
+                o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some("ui.menu_hover_bg")
+            })
+        };
+        assert!(!band(0), "the row the pointer is not on stays unpainted");
+        assert!(band(1), "the row under the pointer takes the hover band");
     }
 
     #[test]

@@ -56,6 +56,7 @@ pub mod orchestrator_new_dialog;
 pub mod orchestrator_new_session_renders;
 pub mod orchestrator_open_cross_project;
 pub mod orchestrator_plugin_api;
+pub mod orchestrator_preparing_workspace;
 pub mod package_manager;
 pub mod plugin;
 pub mod plugin_authoring;

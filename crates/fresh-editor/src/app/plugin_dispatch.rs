@@ -993,6 +993,7 @@ impl Editor {
                 resume,
                 env,
                 allow_script,
+                adopt_window,
                 request_id,
             } => {
                 self.handle_create_window_with_terminal(
@@ -1004,8 +1005,27 @@ impl Editor {
                     resume,
                     env,
                     allow_script,
+                    adopt_window,
                     request_id,
                 );
+            }
+            PluginCommand::CreatePreparingWindow {
+                root,
+                label,
+                message,
+                activate,
+                request_id,
+            } => {
+                self.handle_create_preparing_window(root, label, message, activate, request_id);
+            }
+            PluginCommand::SetWindowPreparing {
+                id,
+                message,
+                label,
+                failed,
+                done,
+            } => {
+                self.set_window_preparing(id, message, label, failed, done);
             }
             PluginCommand::SetActiveWindow { id } => {
                 // Diving into a dormant remote session starts its backend
@@ -4179,6 +4199,77 @@ impl Editor {
         self.refresh_lsp_status_popup_if_open();
     }
 
+    /// Open a placeholder window for a workspace that doesn't exist on disk
+    /// yet (see [`crate::app::PreparingWindow`]) and hand its ids back. The
+    /// window is real from this moment: everything keyed on its id or
+    /// `stable_id` — a rename, a dock folder, its position — survives the
+    /// later adopt, which is what makes a half-built workspace a first-class
+    /// row rather than a stub the user can only wait on.
+    fn handle_create_preparing_window(
+        &mut self,
+        root: std::path::PathBuf,
+        label: String,
+        message: String,
+        activate: bool,
+        request_id: u64,
+    ) {
+        let callback_id = JsCallbackId::from(request_id);
+        if !root.is_absolute() {
+            let msg = format!(
+                "createPreparingWindow: root must be absolute, got {:?}",
+                root
+            );
+            tracing::warn!("{}", msg);
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, msg);
+            return;
+        }
+        let id = self.open_preparing_window(root, label, message);
+        let stable_id = self
+            .windows
+            .get(&id)
+            .map(|w| w.stable_id.clone())
+            .unwrap_or_default();
+        if activate {
+            self.set_active_window(id);
+        }
+        self.relayout();
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
+        let api_result = fresh_core::api::PreparingWindowResult {
+            window_id: id.0,
+            stable_id,
+        };
+        self.plugin_manager.read().unwrap().resolve_callback(
+            callback_id,
+            serde_json::to_string(&api_result).unwrap_or_default(),
+        );
+    }
+
+    /// Re-narrate (or clear) a preparing window's placeholder page.
+    fn set_window_preparing(
+        &mut self,
+        id: fresh_core::WindowId,
+        message: String,
+        label: String,
+        failed: bool,
+        done: bool,
+    ) {
+        if done {
+            self.preparing_windows.remove(&id);
+            return;
+        }
+        if let Some(prep) = self.preparing_windows.get_mut(&id) {
+            prep.message = message;
+            prep.failed = failed;
+            if !label.is_empty() {
+                prep.label = label;
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn handle_create_window_with_terminal(
         &mut self,
@@ -4190,6 +4281,7 @@ impl Editor {
         resume: Option<Vec<String>>,
         env: Option<std::collections::HashMap<String, String>>,
         allow_script: bool,
+        adopt_window: Option<fresh_core::WindowId>,
         request_id: u64,
     ) {
         let callback_id = JsCallbackId::from(request_id);
@@ -4214,6 +4306,9 @@ impl Editor {
         // carried through to the new session's terminal. The new local
         // session gets its own per-session trust scoped to its root.
         let new_authority = self.local_session_authority(&root);
+        // Only adopt an id that really is a placeholder: anything else would
+        // mean silently tearing down a live workspace to reuse its number.
+        let adopt = adopt_window.filter(|id| self.preparing_windows.contains_key(id));
         match self.create_window_with_terminal(
             root,
             label,
@@ -4224,6 +4319,7 @@ impl Editor {
             resume,
             env,
             allow_script,
+            adopt,
         ) {
             Ok((window_id, terminal_id, buffer_id)) => {
                 let api_result = fresh_core::api::SessionWithTerminalResult {
@@ -5486,6 +5582,7 @@ impl Editor {
             closable: !as_dock && closable,
             close_button_rect: None,
             hovered_widget_key: String::new(),
+            hovered_item_key: String::new(),
             dropdown_popup: None,
             dropdown_popup_hits: Vec::new(),
             dropdown_popup_rect: None,
@@ -5504,6 +5601,7 @@ impl Editor {
                 &prev,
                 &prev_focus,
                 panel_width,
+                "",
                 "",
                 Some(crate::widgets::MarkdownCtx {
                     theme: &theme_guard,
@@ -5581,6 +5679,10 @@ impl Editor {
             .panel(slot)
             .map(|f| f.hovered_widget_key.clone())
             .unwrap_or_default();
+        let hover_item_key = self
+            .panel(slot)
+            .map(|f| f.hovered_item_key.clone())
+            .unwrap_or_default();
         let out = {
             let theme_guard = self.theme.read().unwrap();
             super::widget_runtime::render_floating_spec(
@@ -5590,6 +5692,7 @@ impl Editor {
                 &prev_focus,
                 panel_width,
                 &hover_key,
+                &hover_item_key,
                 Some(crate::widgets::MarkdownCtx {
                     theme: &theme_guard,
                     grammars: Some(self.grammar_registry.as_ref()),

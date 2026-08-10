@@ -591,6 +591,7 @@ impl Editor {
             menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
             windows: parts.windows,
             dormant_remote: parts.dormant_remote,
+            preparing_windows: std::collections::HashMap::new(),
             session_keepalives: HashMap::new(),
             remote_attach_inflight: std::collections::HashSet::new(),
             remote_attach_cancelled: std::collections::HashSet::new(),

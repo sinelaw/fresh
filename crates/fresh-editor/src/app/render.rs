@@ -566,6 +566,11 @@ impl Editor {
         // chrome (menu, dock, status bar) without forking the render flow.
         if self.dormant_remote.contains_key(&self.active_window) {
             self.render_dormant_shell_page(frame, editor_content_area);
+        } else if self.preparing_windows.contains_key(&self.active_window) {
+            // Same treatment for a workspace whose worktree/agent is still
+            // being built: it is a real window, it just has nothing to show
+            // yet, so it says so instead of pretending to be an empty editor.
+            self.render_preparing_shell_page(frame, editor_content_area);
         }
 
         // Detect viewport changes and fire hooks
@@ -1480,10 +1485,6 @@ impl Editor {
     /// Connecting… while the dive's connect is in flight, the failure reason
     /// once it failed. The dock stays the way to switch away or retry.
     fn render_dormant_shell_page(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        use ratatui::style::{Modifier, Style};
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
         let active_id = self.active_window;
         let window = self.windows.get(&active_id).expect("active window exists");
         let label = window.label.clone();
@@ -1518,7 +1519,65 @@ impl Editor {
                 "Select it again in the dock (or use the status-bar indicator) to reconnect.",
             )
         };
+        self.render_placeholder_shell_page(frame, area, &detail, &state_line, hint, retry_hint);
+    }
 
+    /// Placeholder page for a workspace that exists but whose contents are
+    /// still being built — see [`crate::app::PreparingWindow`]. The user
+    /// asked for this workspace and was taken straight into it, so the
+    /// window must say what it is doing rather than show the empty scratch
+    /// buffer it technically holds. Deliberately the *same* page a
+    /// not-yet-connected remote session shows: from the user's side both are
+    /// "this workspace isn't ready yet", and one look should mean one thing.
+    fn render_preparing_shell_page(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        let active_id = self.active_window;
+        let Some(prep) = self.preparing_windows.get(&active_id).cloned() else {
+            return;
+        };
+        let label = if prep.label.is_empty() {
+            self.windows
+                .get(&active_id)
+                .map(|w| w.label.clone())
+                .unwrap_or_default()
+        } else {
+            prep.label.clone()
+        };
+        let detail = format!("⛭ {label}");
+        // `failed` covers both a create that errored and one interrupted by
+        // a restart: either way the workspace is stalled and the way forward
+        // is the same, so the copy states the situation and the state line
+        // above it carries the specific reason.
+        let (hint, retry_hint) = if prep.failed {
+            (
+                "This workspace has not been created yet.",
+                "Select it again in the dock to retry, or delete it from the row menu.",
+            )
+        } else {
+            (
+                "The workspace will open as soon as it has been created.",
+                "",
+            )
+        };
+        self.render_placeholder_shell_page(frame, area, &detail, &prep.message, hint, retry_hint);
+    }
+
+    /// Paint a centered "this workspace isn't ready" page over `area`: an
+    /// identity line, a live state line, and up to two dim hint lines, on a
+    /// blanked background. Shared by every not-ready state so they can't
+    /// drift apart visually.
+    fn render_placeholder_shell_page(
+        &mut self,
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+        detail: &str,
+        state_line: &str,
+        hint: &str,
+        retry_hint: &str,
+    ) {
+        use ratatui::style::{Modifier, Style};
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
         let (bg, fg, dim) = {
             let theme = self.theme.read().unwrap();
             (theme.editor_bg, theme.editor_fg, theme.line_number_fg)
@@ -1537,11 +1596,11 @@ impl Editor {
         // Centered message block.
         let lines: [(&str, Style); 5] = [
             (
-                detail.as_str(),
+                detail,
                 Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
             ),
             ("", Style::default().bg(bg)),
-            (state_line.as_str(), Style::default().fg(fg).bg(bg)),
+            (state_line, Style::default().fg(fg).bg(bg)),
             ("", Style::default().bg(bg)),
             (hint, Style::default().fg(dim).bg(bg)),
         ];

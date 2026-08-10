@@ -62,6 +62,7 @@ pub(super) fn render_floating_spec(
     prev_focus_key: &str,
     panel_width: u32,
     hover_key: &str,
+    hover_item_key: &str,
     markdown: Option<crate::widgets::MarkdownCtx<'_>>,
 ) -> crate::widgets::RenderOutput {
     crate::widgets::render_spec_with_options(
@@ -71,6 +72,7 @@ pub(super) fn render_floating_spec(
         crate::widgets::RenderOptions {
             prev_focus_key,
             hover_key,
+            hover_item_key,
             marker_gutter: focus_marker,
             auto_focus_first: true,
             markdown,
@@ -975,6 +977,10 @@ impl Editor {
                 .and_then(|slot| self.panel(slot))
                 .map(|f| f.hovered_widget_key.clone())
                 .unwrap_or_default();
+            let hover_item_key = panel_slot
+                .and_then(|slot| self.panel(slot))
+                .map(|f| f.hovered_item_key.clone())
+                .unwrap_or_default();
             let theme_guard = self.theme.read().unwrap();
             let out = render_floating_spec(
                 focus_marker,
@@ -983,6 +989,7 @@ impl Editor {
                 &prev_focus,
                 panel_width,
                 &hover_key,
+                &hover_item_key,
                 Some(crate::widgets::MarkdownCtx {
                     theme: &theme_guard,
                     grammars: Some(self.grammar_registry.as_ref()),
