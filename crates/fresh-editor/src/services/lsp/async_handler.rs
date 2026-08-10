@@ -62,6 +62,12 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 /// LSP error codes that should not surface as user-visible warnings.
 ///
 /// From [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/):
+/// - RequestCancelled (-32800): the spec-mandated reply to a request the
+///   *client* withdrew with `$/cancelRequest`. We withdraw superseded
+///   requests ourselves on every cursor move, edit and scroll (see
+///   `Window::cancel_pending_lsp_requests`) and on request timeout, so this
+///   error is the answer we asked for — warning about it means warning about
+///   our own bookkeeping (sinelaw/fresh#2952).
 /// - ContentModified (-32801): "If clients receive a ContentModified error,
 ///   it generally should not show it in the UI for the end-user."
 /// - ServerCancelled (-32802): Server cancelled the request (e.g. due to newer request).
@@ -73,6 +79,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 /// suppressed: we want genuine protocol mismatches to surface so they can
 /// be diagnosed. The correct way to avoid MethodNotFound is to check the
 /// server's advertised capabilities before sending the request.
+const LSP_ERROR_REQUEST_CANCELLED: i64 = -32800;
 const LSP_ERROR_CONTENT_MODIFIED: i64 = -32801;
 const LSP_ERROR_SERVER_CANCELLED: i64 = -32802;
 
@@ -110,7 +117,9 @@ fn is_informational_method(method: &str) -> bool {
 /// Whether a JSON-RPC error response should be logged at debug rather than warn.
 /// See `LSP_ERROR_*` constants above for the rationale behind each suppressed code.
 fn is_suppressed_error_code(code: i64) -> bool {
-    code == LSP_ERROR_CONTENT_MODIFIED || code == LSP_ERROR_SERVER_CANCELLED
+    code == LSP_ERROR_REQUEST_CANCELLED
+        || code == LSP_ERROR_CONTENT_MODIFIED
+        || code == LSP_ERROR_SERVER_CANCELLED
 }
 
 /// Whether an error response for `method` with `code` should be downgraded from
@@ -5692,6 +5701,12 @@ mod tests {
         // ContentModified and ServerCancelled are normal during editing.
         assert!(is_suppressed_error_code(LSP_ERROR_CONTENT_MODIFIED));
         assert!(is_suppressed_error_code(LSP_ERROR_SERVER_CANCELLED));
+
+        // RequestCancelled is the answer to *our own* `$/cancelRequest`:
+        // every cursor move withdraws the in-flight completion/semantic-token
+        // requests, and rust-analyzer duly replies `-32800 canceled by
+        // client`. Warning about it warns the user about our bookkeeping.
+        assert!(is_suppressed_error_code(LSP_ERROR_REQUEST_CANCELLED));
 
         // Every other JSON-RPC / LSP error must still surface so genuine
         // protocol mismatches stay debuggable — including MethodNotFound
