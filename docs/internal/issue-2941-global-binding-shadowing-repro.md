@@ -118,6 +118,65 @@ then **default-global**, then custom-context — so for multi-key chords a
 built-in global chord would even shadow a user's context-specific chord
 (the single-key ordering fixed by #2720).
 
+## Proposed long-term fix
+
+Everything above is a symptom of precedence being encoded imperatively in
+code order, in several places, with patches layered on top (the #2720
+reorder, the #2030 noop special case, the prompt Alt+Char bypass). The
+durable fix is to make the resolver a single data-driven lookup with an
+explicit two-axis comparator:
+
+1. **Source precedence, then context specificity.** User config > plugin >
+   built-in keymap (already established by #2720); within a source, exact
+   context > ancestor contexts > global. Global stops being a
+   super-priority tier and becomes the *root fallback* of the context tree.
+   This alone fixes all three scenarios, and it converges with the behavior
+   the prompt bypass already fakes — so that hack gets deleted rather than
+   replicated for the next context that needs it.
+2. **Contexts as a declared inheritance tree.** Today specificity lives in
+   four disconnected mechanisms: `parent_context()`, the Normal-fallthrough
+   block with its `is_application_wide_action` filters, the global tier,
+   and the prompt bypass. Declare the tree once (`SearchPrompt → Prompt →
+   Global`, `CompositeBuffer → Normal → Global`, …) with the fallthrough
+   filters as edge attributes; resolution walks the chain from the active
+   context to the root, per source layer.
+3. **Single keys are length-1 chords.** Fold `resolve` and `resolve_chord`
+   into one lookup over one table. The chord path still has the pre-#2720
+   ordering (default-global probed before custom-context) — the inevitable
+   result of writing the same precedence logic twice.
+4. **Feature gates act at resolution, not dispatch.** The
+   `menu_bar_mnemonics` check belongs where bindings are loaded/matched,
+   not in the `MenuOpen` dispatch arm. A disabled binding must not exist,
+   so the next candidate wins and the key is genuinely freed — which is
+   what the option's documentation already promises.
+5. **First-class unbind.** A user `noop` becomes a tombstone that
+   participates in precedence and masks lower layers, replacing the #2030
+   special case in the fallthrough block.
+6. **Enforce reachability.** The unified resolver can enumerate all
+   candidates for a chord, ranked — use that for a load-time
+   "binding shadowed by …" warning, a shadow annotation in the keybinding
+   editor, and a CI test asserting shipped keymaps contain zero unreachable
+   bindings (the guard that keeps this fixed).
+7. **Clean the keymap data.** Specificity-first surfaces the one genuine
+   conflict the old ordering hid: in `default.json`, Alt+F is both the
+   File-menu mnemonic and `move_word_right` in Normal. That is a keymap
+   decision, not a resolver decision. Recommendation: keep the mnemonic in
+   the default keymap, drop the duplicate word-movement entries (adding
+   `Ctrl+Right → move_word_right`, which currently has no non-Alt binding),
+   and keep Alt+F/Alt+B word movement in the emacs keymap, which has no
+   mnemonic collisions. Users who want word movement on Alt+F in the
+   default keymap set `menu_bar_mnemonics: false`, which now actually works.
+
+Migration risk is small and mostly "bug becomes fixed": prompt behavior is
+unchanged (the bypass already delivered context-wins), mnemonics-off changes
+from dead keys to working keys, and the only deliberate change — what Alt+F
+means in Normal — is a keymap-data decision to note in the changelog.
+
+Phased path: (1) unify the two resolvers behind the comparator, (2) delete
+the prompt bypass and the dispatch gate, (3) tombstones, (4) lint + CI
+test, (5) keymap cleanup. Steps 1–2 alone eliminate every behavior
+reproduced above.
+
 ## Repro mechanics (for re-running)
 
 ```sh
