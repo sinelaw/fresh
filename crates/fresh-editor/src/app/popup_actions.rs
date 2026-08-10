@@ -626,10 +626,10 @@ impl Editor {
         let row = popup.selected_index()?;
         match self.active_window().completion_popup_lsp_items.get(row) {
             Some(item) => Some(SelectedCompletionRow::Lsp(Box::new(item.clone()))),
-            // Past the LSP rows: a buffer-word row.
+            // No candidate recorded for this row.
             None => popup
                 .selected_item()
-                .map(|item| SelectedCompletionRow::BufferWord(item.text.clone())),
+                .map(|item| SelectedCompletionRow::Text(item.text.clone())),
         }
     }
 
@@ -640,20 +640,25 @@ impl Editor {
         previous: &SelectedCompletionRow,
         rows: &[crate::model::event::PopupListItemData],
     ) -> Option<usize> {
-        let lsp_rows = &self.active_window().completion_popup_lsp_items;
         match previous {
-            SelectedCompletionRow::Lsp(item) => lsp_rows.iter().position(|i| i == item.as_ref()),
-            // Buffer-word rows carry no payload beyond their text, so two
-            // of them with the same text are interchangeable and the text
-            // is identity enough — but only *among the buffer-word rows*:
-            // an LSP row sharing that label is a different candidate, with
-            // its own import.
-            SelectedCompletionRow::BufferWord(text) => rows
+            SelectedCompletionRow::Lsp(item) => self
+                .active_window()
+                .completion_popup_lsp_items
                 .iter()
-                .enumerate()
-                .skip(lsp_rows.len())
-                .find(|(_, row)| row.text == *text)
-                .map(|(index, _)| index),
+                .position(|i| i == item.as_ref()),
+            // A row with no candidate recorded behind it carries no payload
+            // beyond the text it inserts, so its text is identity enough —
+            // and identity semantics only buy anything where duplicates
+            // exist, which is the LSP rows. Search the whole list rather
+            // than only the buffer-word tail: popups that were not built by
+            // `build_completion_popup_rows` (plugin-supplied lists, and the
+            // ones tests inject) have *no* row → candidate mapping, so
+            // every one of their rows lands here and a tail-only search
+            // would never find them. This cannot quietly promote a plain
+            // buffer word into an auto-import candidate, because
+            // `build_completion_popup_rows` drops any buffer word whose
+            // text an LSP row already occupies — the two never coexist.
+            SelectedCompletionRow::Text(text) => rows.iter().position(|row| row.text == *text),
         }
     }
 
@@ -738,8 +743,10 @@ enum SelectedCompletionRow {
     /// An LSP candidate, identified by the candidate itself. Boxed because
     /// a `CompletionItem` is large next to the other variant.
     Lsp(Box<LspCompletionCandidate>),
-    /// A buffer-word row, identified by its text (it has no other payload).
-    BufferWord(String),
+    /// A row with no LSP candidate recorded behind it — a buffer word, or
+    /// any row of a popup this module did not build. Identified by its
+    /// text, which is all such a row carries.
+    Text(String),
 }
 
 /// Whether a completion candidate survives the word prefix at the cursor.
