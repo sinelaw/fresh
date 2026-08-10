@@ -53,7 +53,7 @@
     "info.buffer": "буфер %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} ред %{line}, %{bytes} bytes",
     "info.modified": " [променен]",
-    "info.no_name": "[No Name]",
+    "info.no_name": "[Без име]",
     "info.no_buffers": "Няма буфери",
     "info.help_not_available": "Help за \"%{topic}\" няма наличен. Опитай :help за списък команди.",
     "info.help_commands": "Команди: :w :q :wq :q! :e :sp :vs :bn :bp :bd :b :ls :set :noh :123 :help",
@@ -109,8 +109,8 @@
     "cmd.change_to_end": "Замяна до края на реда",
     "cmd.paste_after": "Поставяне след",
     "cmd.paste_before": "Поставяне преди",
-    "cmd.undo": "Undo",
-    "cmd.redo": "Redo",
+    "cmd.undo": "Отмени",
+    "cmd.redo": "Повтори",
     "cmd.join_lines": "Сливане на редове"
   },
   "cs": {

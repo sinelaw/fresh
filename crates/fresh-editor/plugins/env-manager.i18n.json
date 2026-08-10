@@ -20,7 +20,7 @@
     "statusbar.locked": "%{name} (заключена)",
     "statusbar.active": "%{name} ✓",
     "statusbar.active_unknown": "активен",
-    "statusbar.system": "system"
+    "statusbar.system": "система"
   },
   "cs": {
     "cmd.activate": "Prostředí: Aktivovat zjištěné prostředí (venv / direnv / mise)",

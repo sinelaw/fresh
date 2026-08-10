@@ -29,7 +29,7 @@
     "status.mode_head": "Live разлики: сравнение срещу HEAD",
     "status.no_file": "Live Diff: Няма отворен файл",
     "status.refreshed": "Live Diff: освежено обръщение",
-    "status.simplified": "Live Diff: large change — simplified view"
+    "status.simplified": "Live разлики: голяма промяна — опростен изглед"
   },
   "cs": {
     "cmd.toggle_global": "Živý Diff: Přepnout (globálně)",
@@ -123,7 +123,7 @@
     "status.mode_disk": "Live Diff: comparing against file on disk",
     "status.mode_branch": "Live Diff: comparing against %{ref}",
     "status.refreshed": "Live Diff: reference refreshed",
-    "status.too_large": "Live Diff: file too large for live diff",
+    "status.simplified": "Live Diff: large change — simplified view",
     "status.bad_default": "Live Diff: invalid mode (use head, disk, or branch:<ref>)",
     "status.default_set": "Live Diff: default mode updated"
   },

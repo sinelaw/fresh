@@ -317,6 +317,7 @@ fn test_multiple_locales_can_be_loaded() {
         ("ko", "전"),
         ("ru", "Слово"),
         ("pt-BR", "Palavra"),
+        ("bg", "Цяла дума"),
     ];
 
     for (locale, expected_text) in locales_and_expected {

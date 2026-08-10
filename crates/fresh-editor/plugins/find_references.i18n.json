@@ -15,7 +15,7 @@
     "status.move_cursor": "Преместване на курсора към ред обръщение",
     "status.closed": "панел обръщения затворен",
     "status.failed_open_panel": "Неуспешно отваряне на панел обръщения",
-    "panel.header": "Обръщения към %{символ} (%{count}%{limit})",
+    "panel.header": "Обръщения към %{symbol} (%{count}%{limit})",
     "panel.limited": ", ограничени до %{max}",
     "panel.no_references": "Обръщения не са намерени",
     "panel.help": "[Up/Down] навигация [RET] скок [q/Esc] затваряне"
