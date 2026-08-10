@@ -24,6 +24,31 @@ use crate::common::fake_lsp::FakeLspServer;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
+/// Screen row showing the popup entry whose import path is `import`.
+fn row_showing(harness: &EditorTestHarness, import: &str) -> u16 {
+    let needle = format!("(use {import})");
+    let screen = harness.screen_to_string();
+    screen
+        .lines()
+        .position(|line| line.contains(&needle))
+        .unwrap_or_else(|| panic!("no popup row for '{needle}'; screen was:\n{screen}")) as u16
+}
+
+/// Whether the popup row at `row` is the highlighted one, judged the way
+/// the user judges it: by the selection background painted across it.
+fn row_is_highlighted(harness: &EditorTestHarness, row: u16) -> bool {
+    let selection_bg = harness.editor().theme().popup_selection_bg;
+    let text = harness.screen_row_text(row);
+    let column = text
+        .find("HashMap")
+        .unwrap_or_else(|| panic!("row {row} does not show a candidate: {text:?}"))
+        as u16;
+    harness
+        .get_cell_style(column, row)
+        .and_then(|style| style.bg)
+        == Some(selection_bg)
+}
+
 /// Start an editor against the duplicate-label fake server in `mode`
 /// (`"eager"` or `"resolve"`), with the completion popup open on two
 /// candidates both labelled `HashMap`.
@@ -131,6 +156,72 @@ fn test_accepting_second_same_label_candidate_applies_its_own_import() -> anyhow
     assert!(
         screen.contains("let m = HashMap"),
         "the identifier itself must still be inserted; screen was:\n{screen}"
+    );
+
+    Ok(())
+}
+
+/// Typing one more character re-filters the list — and must leave the
+/// highlight on the candidate the user had picked, not snap it back to the
+/// first row sharing that candidate's label.
+///
+/// Both `HashMap` rows survive typing the `p` of `HashMap`, so the
+/// selection has somewhere to stay; restoring it by label put it on the
+/// wrong (first) row, and accepting then applied that row's import.
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_typing_another_character_keeps_the_selected_candidate_highlighted() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn_duplicate_labels(temp_dir.path())?;
+
+    let mut harness = open_duplicate_label_popup(&temp_dir, "eager")?;
+
+    // Pick the std::collections candidate.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.render()?;
+    assert!(
+        row_is_highlighted(&harness, row_showing(&harness, "std::collections::HashMap")),
+        "precondition: the second candidate is the selected one; screen was:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Type the last character of the word. Both candidates still match, so
+    // the popup keeps both rows.
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::NONE)?;
+    harness.wait_until(|h| h.screen_to_string().contains("let m = HashMap"))?;
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("HashMap (use wrong_crate::HashMap)")
+            && screen.contains("HashMap (use std::collections::HashMap)"),
+        "both candidates must survive the narrower prefix; screen was:\n{screen}"
+    );
+    assert!(
+        row_is_highlighted(&harness, row_showing(&harness, "std::collections::HashMap")),
+        "the highlight must stay on the candidate the user selected; screen was:\n{screen}"
+    );
+    assert!(
+        !row_is_highlighted(&harness, row_showing(&harness, "wrong_crate::HashMap")),
+        "only one row may be highlighted; screen was:\n{screen}"
+    );
+
+    // And accepting from there still applies the selected candidate's import.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+    harness.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("use std::collections::HashMap;")
+            || screen.contains("use wrong_crate::HashMap;")
+    })?;
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("use std::collections::HashMap;")
+            && !screen.contains("use wrong_crate::HashMap;"),
+        "accepting after the re-filter must apply the highlighted candidate's \
+         auto-import; screen was:\n{screen}"
     );
 
     Ok(())
