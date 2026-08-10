@@ -1252,35 +1252,50 @@ fn default_ssh_user() -> Option<String> {
 }
 
 /// Parse the part of an `ssh://` URL after the `ssh://` prefix.
-/// Returns `None` for any shape we don't recognise (missing `/path`,
-/// empty host, bad port, missing user with no `$USER` fallback).
-fn parse_ssh_url_rest(rest: &str) -> Option<RemoteLocation> {
+/// `default_user` fills in when the URL omits `user@` (normally
+/// `default_ssh_user()`; injected so tests don't depend on the
+/// runner's environment).  Returns a human-readable reason for any
+/// shape we don't recognise (missing `/path`, empty host, bad port,
+/// missing user with no fallback) — the caller reports it as a hard
+/// error, never as a silent local-path fallback (#2221).
+fn parse_ssh_url_rest(rest: &str, default_user: Option<&str>) -> Result<RemoteLocation, String> {
     // Authority and path are separated by the first `/`.  Missing
     // slash means no path, which we reject — consistent with the
     // scp-style branch that requires a non-empty path component.
-    let (authority, path_and_rest) = rest.split_once('/')?;
-    if path_and_rest.is_empty() {
-        return None;
-    }
+    let (authority, path_and_rest) = rest
+        .split_once('/')
+        .filter(|(_, path)| !path.is_empty())
+        .ok_or_else(|| {
+            "missing remote path (expected ssh://[user@]host[:port]/path)".to_string()
+        })?;
 
     // Optional `user@` prefix on the authority.
     let (user, host_and_port) = match authority.split_once('@') {
         Some((u, rest)) if !u.is_empty() && !u.contains(' ') => (u.to_string(), rest),
-        Some(_) => return None, // empty or space-bearing user
-        None => (default_ssh_user()?, authority),
+        Some(_) => return Err("empty or invalid user before '@'".to_string()),
+        None => match default_user {
+            Some(u) => (u.to_string(), authority),
+            None => {
+                return Err("no user given and neither $USER nor $USERNAME is set; \
+                     specify one explicitly (ssh://user@host/path)"
+                    .to_string());
+            }
+        },
     };
 
     // Optional `:port` on the host.
     let (host, port) = match host_and_port.rsplit_once(':') {
         Some((h, p)) => {
-            let parsed_port = p.parse::<u16>().ok()?;
+            let parsed_port = p
+                .parse::<u16>()
+                .map_err(|_| format!("invalid port {:?}", p))?;
             (h, Some(parsed_port))
         }
         None => (host_and_port, None),
     };
 
     if host.is_empty() || host.contains(' ') {
-        return None;
+        return Err("empty or invalid host".to_string());
     }
 
     let (path_tail, line, column) = parse_path_with_line_col(path_and_rest);
@@ -1289,7 +1304,7 @@ fn parse_ssh_url_rest(rest: &str) -> Option<RemoteLocation> {
     // same absolute path they'd get from `ssh://host/etc/hosts`.
     let path = format!("/{}", path_tail);
 
-    Some(RemoteLocation {
+    Ok(RemoteLocation {
         user,
         host: host.to_string(),
         port,
@@ -1325,7 +1340,7 @@ fn extract_ssh_url_from_files(files: &[String]) -> AnyhowResult<Option<String>> 
         .iter()
         .filter(|f| *f != "-")
         .map(|f| parse_location(f))
-        .collect();
+        .collect::<AnyhowResult<Vec<_>>>()?;
 
     let remotes: Vec<&RemoteLocation> = parsed
         .iter()
@@ -1372,8 +1387,13 @@ fn parse_ssh_url_arg(url: &str) -> AnyhowResult<RemoteLocation> {
     let rest = url
         .strip_prefix("ssh://")
         .ok_or_else(|| anyhow::anyhow!("--ssh-url expects an ssh:// URL, got {:?}", url))?;
-    parse_ssh_url_rest(rest)
-        .ok_or_else(|| anyhow::anyhow!("--ssh-url is not a valid ssh:// URL: {:?}", url))
+    parse_ssh_url_rest(rest, default_ssh_user().as_deref()).map_err(|reason| {
+        anyhow::anyhow!(
+            "--ssh-url is not a valid ssh:// URL ({}): {:?}",
+            reason,
+            url
+        )
+    })
 }
 
 /// Parse a location that may be local, scp-style remote, or an
@@ -1387,15 +1407,32 @@ fn parse_ssh_url_arg(url: &str) -> AnyhowResult<RemoteLocation> {
 /// When `ssh://` omits the user, the current login name (`$USER` /
 /// `$USERNAME`) is used.  The URL form is the only way to pass a
 /// port.  The path must be non-empty in both remote forms.
-fn parse_location(input: &str) -> ParsedLocation {
+///
+/// The `ssh://` scheme is claimed exclusively: a malformed `ssh://`
+/// argument is a hard error, never a local-path fallback.  Silently
+/// opening a local buffer named `ssh://host/...` hid the failure and
+/// invited saving to a bogus local path (#2221).  A genuine local
+/// file whose name starts with `ssh://` can still be opened as
+/// `./ssh://...`.
+fn parse_location(input: &str) -> AnyhowResult<ParsedLocation> {
+    parse_location_with_default_user(input, default_ssh_user().as_deref())
+}
+
+/// `parse_location` with the `$USER`/`$USERNAME` fallback injected,
+/// so tests can pin it without mutating the process environment.
+fn parse_location_with_default_user(
+    input: &str,
+    default_user: Option<&str>,
+) -> AnyhowResult<ParsedLocation> {
     if let Some(rest) = input.strip_prefix("ssh://") {
-        return match parse_ssh_url_rest(rest) {
-            Some(loc) => ParsedLocation::Remote(loc),
-            // Malformed `ssh://` — treat the whole input as a local
-            // filename rather than letting scp-style parsing match
-            // the `ssh://user@host:bad-port/...` slice and produce a
-            // nonsense user like `ssh://user`.
-            None => ParsedLocation::Local(parse_file_location(input)),
+        return match parse_ssh_url_rest(rest, default_user) {
+            Ok(loc) => Ok(ParsedLocation::Remote(loc)),
+            Err(reason) => Err(anyhow::anyhow!(
+                "invalid ssh:// URL {:?}: {}. \
+                 To open a local file with this name, prefix it with ./",
+                input,
+                reason
+            )),
         };
     }
 
@@ -1417,20 +1454,20 @@ fn parse_location(input: &str) -> ParsedLocation {
             {
                 let (path, line, column) = parse_path_with_line_col(path_and_rest);
 
-                return ParsedLocation::Remote(RemoteLocation {
+                return Ok(ParsedLocation::Remote(RemoteLocation {
                     user: user.to_string(),
                     host: host.to_string(),
                     port: None,
                     path,
                     line,
                     column,
-                });
+                }));
             }
         }
     }
 
     // Not a remote path, parse as local
-    ParsedLocation::Local(parse_file_location(input))
+    Ok(ParsedLocation::Local(parse_file_location(input)))
 }
 
 /// Holds resources needed for remote editing (kept alive for duration of session)
@@ -1634,7 +1671,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         .iter()
         .filter(|f| *f != "-")
         .map(|f| parse_location(f))
-        .collect();
+        .collect::<AnyhowResult<Vec<_>>>()?;
 
     // Check for remote locations - for now, collect them separately
     let remote_locations: Vec<&RemoteLocation> = parsed_locations
@@ -3095,9 +3132,11 @@ fn run_open_files_command(
     let local_files: Vec<String> = if ssh_url.is_some() {
         files
             .iter()
+            // Parse errors were already surfaced by
+            // `extract_ssh_url_from_files` above.
             .filter_map(|f| match parse_location(f) {
-                ParsedLocation::Remote(r) => Some(r.path),
-                ParsedLocation::Local(_) => None,
+                Ok(ParsedLocation::Remote(r)) => Some(r.path),
+                _ => None,
             })
             .collect()
     } else {
@@ -4655,9 +4694,11 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
         let local_files: Vec<String> = if ssh_url.is_some() {
             files
                 .iter()
+                // Parse errors were already surfaced by
+                // `extract_ssh_url_from_files` above.
                 .filter_map(|f| match parse_location(f) {
-                    ParsedLocation::Remote(r) => Some(r.path),
-                    ParsedLocation::Local(_) => None,
+                    Ok(ParsedLocation::Remote(r)) => Some(r.path),
+                    _ => None,
                 })
                 .collect()
         } else {
@@ -6456,7 +6497,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_local_simple() {
-        let loc = parse_location("file.txt");
+        let loc = parse_location("file.txt").unwrap();
         match loc {
             ParsedLocation::Local(fl) => {
                 assert_eq!(fl.path, PathBuf::from("file.txt"));
@@ -6468,7 +6509,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_local_with_line() {
-        let loc = parse_location("/path/to/file.rs:42");
+        let loc = parse_location("/path/to/file.rs:42").unwrap();
         match loc {
             ParsedLocation::Local(fl) => {
                 assert_eq!(fl.path, PathBuf::from("/path/to/file.rs"));
@@ -6480,7 +6521,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_remote_simple() {
-        let loc = parse_location("user@host:/path/to/file.rs");
+        let loc = parse_location("user@host:/path/to/file.rs").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "user");
@@ -6495,7 +6536,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_remote_with_line() {
-        let loc = parse_location("alice@server.com:/home/alice/project/main.rs:42");
+        let loc = parse_location("alice@server.com:/home/alice/project/main.rs:42").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "alice");
@@ -6510,7 +6551,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_remote_with_line_and_col() {
-        let loc = parse_location("bob@example.org:src/lib.rs:100:25");
+        let loc = parse_location("bob@example.org:src/lib.rs:100:25").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "bob");
@@ -6525,7 +6566,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_remote_relative_path() {
-        let loc = parse_location("user@host:relative/path/file.txt");
+        let loc = parse_location("user@host:relative/path/file.txt").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "user");
@@ -6539,7 +6580,7 @@ mod tests {
     #[test]
     fn test_parse_location_email_like_not_remote() {
         // An email-like string without a path should be treated as local
-        let loc = parse_location("user@host");
+        let loc = parse_location("user@host").unwrap();
         match loc {
             ParsedLocation::Local(fl) => {
                 assert_eq!(fl.path, PathBuf::from("user@host"));
@@ -6551,7 +6592,7 @@ mod tests {
     #[test]
     fn test_parse_location_at_in_path_local() {
         // A local path that happens to contain @ should still be local
-        let loc = parse_location("/path/with@sign/file.txt");
+        let loc = parse_location("/path/with@sign/file.txt").unwrap();
         match loc {
             ParsedLocation::Local(fl) => {
                 assert_eq!(fl.path, PathBuf::from("/path/with@sign/file.txt"));
@@ -6561,12 +6602,13 @@ mod tests {
     }
 
     // Tests for the URL-style `ssh://` remote form.  The `$USER`
-    // fallback-dependent cases set the env var explicitly so they
-    // don't depend on the test runner's environment.
+    // fallback-dependent cases inject the default user through
+    // `parse_location_with_default_user` so they don't depend on (or
+    // race over) the test runner's environment.
 
     #[test]
     fn test_parse_location_ssh_url_user_and_path() {
-        let loc = parse_location("ssh://alice@host.example/home/alice/main.rs");
+        let loc = parse_location("ssh://alice@host.example/home/alice/main.rs").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "alice");
@@ -6582,7 +6624,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_ssh_url_with_port() {
-        let loc = parse_location("ssh://bob@server:2222/etc/hosts");
+        let loc = parse_location("ssh://bob@server:2222/etc/hosts").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "bob");
@@ -6596,7 +6638,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_ssh_url_with_port_and_line_col() {
-        let loc = parse_location("ssh://bob@server:2222/src/lib.rs:42:7");
+        let loc = parse_location("ssh://bob@server:2222/src/lib.rs:42:7").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "bob");
@@ -6611,27 +6653,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_location_ssh_url_default_user_from_env() {
-        // Temporarily override $USER so the test doesn't depend on
-        // whatever the runner has set.
-        let prev_user = std::env::var("USER").ok();
-        let prev_username = std::env::var("USERNAME").ok();
-        // SAFETY: single-threaded test; no other thread reads $USER.
-        unsafe {
-            std::env::set_var("USER", "envuser");
-        }
-        let loc = parse_location("ssh://host.example/tmp/file.txt");
-        // Restore before asserting so a panic doesn't poison later tests.
-        unsafe {
-            match prev_user {
-                Some(ref v) => std::env::set_var("USER", v),
-                None => std::env::remove_var("USER"),
-            }
-            match prev_username {
-                Some(ref v) => std::env::set_var("USERNAME", v),
-                None => std::env::remove_var("USERNAME"),
-            }
-        }
+    fn test_parse_location_ssh_url_default_user_fallback() {
+        // No `user@` in the URL → the injected default (normally
+        // `$USER` / `$USERNAME`) fills in.
+        let loc =
+            parse_location_with_default_user("ssh://host.example/tmp/file.txt", Some("envuser"))
+                .unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "envuser");
@@ -6644,39 +6671,98 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_location_ssh_url_missing_path_is_local() {
-        // `ssh://host` with no `/path` is malformed — fall through to
-        // the local parser, which stores the whole thing as a filename.
-        let loc = parse_location("ssh://host.example");
+    fn test_parse_location_ssh_url_no_user_no_env_is_error() {
+        // #2221: a userless `ssh://` URL with no `$USER`/`$USERNAME`
+        // fallback must fail loudly — never silently degrade to a
+        // local file named `ssh://...` (typing into that buffer and
+        // saving would write to a bogus local path).
+        let err = parse_location_with_default_user("ssh://localhost/etc/hosts", None)
+            .expect_err("userless ssh:// URL without $USER must be an error, not a local path");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("ssh://"),
+            "error should name the scheme: {msg}"
+        );
+        assert!(
+            msg.contains("$USER"),
+            "error should explain the cause: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_parse_location_ssh_url_missing_path_is_error() {
+        // `ssh://host` with no `/path` is malformed — hard error, not
+        // a local-path fallback.
+        let err = parse_location_with_default_user("ssh://host.example", Some("alice"))
+            .expect_err("ssh:// URL without a path must be an error");
+        assert!(format!("{}", err).contains("path"));
+    }
+
+    #[test]
+    fn test_parse_location_ssh_url_bad_port_is_error() {
+        // Non-numeric port → hard error, not a local-path fallback.
+        let err =
+            parse_location_with_default_user("ssh://alice@host:not-a-port/file", Some("alice"))
+                .expect_err("ssh:// URL with a bad port must be an error");
+        assert!(format!("{}", err).contains("port"));
+    }
+
+    #[test]
+    fn test_parse_location_ssh_url_empty_user_is_error() {
+        // `@` with an empty user is malformed — hard error.
+        assert!(parse_location_with_default_user("ssh://@host/path", Some("alice")).is_err());
+    }
+
+    #[test]
+    fn test_parse_location_ssh_url_userless_with_default_and_port() {
+        // Userless URL + default user still parses ports and line/col.
+        let loc =
+            parse_location_with_default_user("ssh://host:2200/var/log/syslog:12:3", Some("bob"))
+                .unwrap();
         match loc {
-            ParsedLocation::Local(fl) => {
-                assert_eq!(fl.path, PathBuf::from("ssh://host.example"));
+            ParsedLocation::Remote(rl) => {
+                assert_eq!(rl.user, "bob");
+                assert_eq!(rl.host, "host");
+                assert_eq!(rl.port, Some(2200));
+                assert_eq!(rl.path, "/var/log/syslog");
+                assert_eq!(rl.line, Some(12));
+                assert_eq!(rl.column, Some(3));
             }
-            ParsedLocation::Remote(_) => panic!("Expected local, got remote"),
+            ParsedLocation::Local(_) => panic!("Expected remote, got local"),
         }
     }
 
     #[test]
-    fn test_parse_location_ssh_url_bad_port_is_local() {
-        // Non-numeric port → falls through to local.
-        let loc = parse_location("ssh://alice@host:not-a-port/file");
+    fn test_parse_location_scp_style_unaffected_by_missing_user_env() {
+        // scp-style carries its user explicitly; the `$USER` fallback
+        // plays no part.
+        let loc = parse_location_with_default_user("root@localhost:/etc/hosts", None).unwrap();
         match loc {
-            ParsedLocation::Local(fl) => {
-                assert_eq!(fl.path, PathBuf::from("ssh://alice@host:not-a-port/file"));
+            ParsedLocation::Remote(rl) => {
+                assert_eq!(rl.user, "root");
+                assert_eq!(rl.host, "localhost");
+                assert_eq!(rl.path, "/etc/hosts");
             }
-            ParsedLocation::Remote(_) => panic!("Expected local, got remote"),
+            ParsedLocation::Local(_) => panic!("Expected remote, got local"),
         }
     }
 
     #[test]
-    fn test_parse_location_ssh_url_empty_user_is_local() {
-        // `@` with an empty user is malformed — fall through to local.
-        let loc = parse_location("ssh://@host/path");
-        match loc {
-            ParsedLocation::Local(fl) => {
-                assert_eq!(fl.path, PathBuf::from("ssh://@host/path"));
+    fn test_parse_location_weird_local_names_still_local() {
+        // Only the exact `ssh://` scheme is claimed; other odd names
+        // stay local files, even with no `$USER` fallback available.
+        for input in [
+            "ssh:file.txt",
+            "ssh:/host/path",
+            "sshfile",
+            "./ssh://host/path",
+        ] {
+            match parse_location_with_default_user(input, None).unwrap() {
+                ParsedLocation::Local(fl) => {
+                    assert_eq!(fl.path, PathBuf::from(input), "input: {input}");
+                }
+                ParsedLocation::Remote(_) => panic!("Expected local for {input:?}"),
             }
-            ParsedLocation::Remote(_) => panic!("Expected local, got remote"),
         }
     }
 
