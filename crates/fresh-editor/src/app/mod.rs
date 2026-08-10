@@ -1,5 +1,7 @@
+mod action_dispatch;
 mod action_events;
 mod active_focus;
+mod agent_scripts;
 mod async_dispatch;
 mod async_messages;
 mod bookmark_actions;

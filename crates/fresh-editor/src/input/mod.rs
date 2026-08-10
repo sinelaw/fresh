@@ -34,6 +34,7 @@ mod line_move;
 pub mod multi_cursor;
 pub mod position_history;
 pub mod quick_open;
+pub mod router;
 
 #[cfg(test)]
 pub mod tests_language_features;
