@@ -22,8 +22,11 @@ fn harness_with_scratch_config_dir() -> (EditorTestHarness, tempfile::TempDir, P
     let working_dir = temp.path().join("work");
     fs::create_dir_all(&working_dir).unwrap();
 
+    // Wide enough that the status line these tests read back is not elided:
+    // the status bar drops elements to fit, and an assertion on a message
+    // that never had room to render proves nothing.
     let harness = EditorTestHarness::with_shared_dir_context(
-        80,
+        120,
         24,
         Default::default(),
         working_dir,
@@ -37,23 +40,38 @@ fn write_init_ts(config_dir: &Path, body: &str) {
     fs::write(config_dir.join("init.ts"), body).unwrap();
 }
 
+/// The rendered status line — CONTRIBUTING.md Testing §2 (observe, don't
+/// inspect): what the plugin announced is read off the screen, not out of
+/// `Editor::get_status_message()`.
 fn status(harness: &EditorTestHarness) -> String {
-    harness
-        .editor()
-        .get_status_message()
-        .cloned()
-        .unwrap_or_default()
+    harness.get_status_bar()
 }
 
+/// The number in a `<prefix>=<n>` marker on the status line, if one is shown.
+fn marker_count(harness: &EditorTestHarness, prefix: &str) -> Option<u32> {
+    let line = status(harness);
+    let rest = line.split(prefix).nth(1)?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// Pump the editor until `done` holds, *without* advancing logical time.
+///
+/// The harness's own `wait_until` moves its clock forward on every iteration,
+/// which would let plugin timers come due while we wait — no good where the
+/// property under test is "this happened before any timer tick". Renders each
+/// round so screen-reading conditions see a current frame.
 fn pump_until(harness: &mut EditorTestHarness, done: impl Fn(&EditorTestHarness) -> bool) -> bool {
     for _ in 0..300 {
         harness.editor_mut().process_async_messages();
+        harness.render().expect("render");
         if done(harness) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
     harness.editor_mut().process_async_messages();
+    harness.render().expect("render");
     done(harness)
 }
 
@@ -87,14 +105,17 @@ fn set_active_window_refuses_a_negative_id_instead_of_throwing() {
 
     harness.editor_mut().load_init_script(true);
     assert!(
-        pump_until(&mut harness, |h| !status(h).is_empty()),
+        pump_until(&mut harness, |h| {
+            let s = status(h);
+            s.contains("RETURNED_") || s.contains("THREW")
+        }),
         "init.ts never reported; status = {:?}",
         status(&harness)
     );
-    assert_eq!(
-        status(&harness),
-        "RETURNED_FALSE",
-        "a non-positive window id must be refused, not thrown on"
+    assert!(
+        status(&harness).contains("RETURNED_FALSE"),
+        "a non-positive window id must be refused, not thrown on; status = {:?}",
+        status(&harness)
     );
 }
 
@@ -182,50 +203,32 @@ fn the_documented_live_panel_recipe_runs() {
     );
 
     harness.editor_mut().load_init_script(true);
-    assert!(
-        pump_until(&mut harness, |h| {
-            h.editor()
-                .command_registry()
-                .read()
-                .unwrap()
-                .resolve_by_display_name("Recipe Panel")
-                .is_some()
-        }),
-        "init.ts should have registered the panel command"
-    );
 
+    // Ctrl+P → "Recipe Panel" → Enter, the way the author would run it. The
+    // palette waits for init.ts to have registered the row before confirming,
+    // so it doubles as the registration gate — and, unlike a synthetic
+    // `RunEditorCommand` with an invented callback id, it answers a promise
+    // somebody is actually holding.
     harness
-        .editor_mut()
-        .handle_plugin_command(fresh_core::api::PluginCommand::RunEditorCommand {
-            name: "Recipe Panel".to_string(),
-            callback_id: fresh_core::api::JsCallbackId::new(9_400),
-        })
-        .expect("opening the panel should not error");
+        .run_palette_command("Recipe Panel")
+        .expect("opening the panel from the palette");
 
     // The awaited render inside the open command means the panel has content
     // before any timer has ticked — the property that separates a working
-    // panel from one stuck on "loading…".
+    // panel from one stuck on "loading…". Hence a pump that does *not* move
+    // the clock: the first paint must not need a tick to arrive.
     assert!(
-        pump_until(&mut harness, |h| status(h) == "PAINTS=1"),
+        pump_until(&mut harness, |h| marker_count(h, "PAINTS=") == Some(1)),
         "the open command should paint once immediately; status = {:?}",
         status(&harness)
     );
 
-    // And then the timer keeps it painting.
-    for _ in 0..3 {
-        harness.advance_time(Duration::from_millis(60));
-        harness.tick_and_render().expect("tick");
-        for _ in 0..20 {
-            harness.editor_mut().process_async_messages();
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-    let s = status(&harness);
-    let paints: u32 = s.trim_start_matches("PAINTS=").parse().unwrap_or(0);
-    assert!(
-        paints >= 3,
-        "the panel should keep refreshing after the first paint: {s:?}"
-    );
+    // And then the timer keeps it painting. Waited for rather than counted
+    // after a fixed number of advances: how many paints have landed by an
+    // arbitrary deadline is a property of the machine, not of the timer.
+    harness
+        .wait_until(|h| marker_count(h, "PAINTS=").unwrap_or(0) >= 3)
+        .expect("the panel should keep refreshing after the first paint");
 }
 
 /// Reloading init.ts closes the panels its previous copy created, instead of
@@ -322,13 +325,15 @@ fn a_virtual_buffer_is_findable_by_name_in_list_buffers() {
 
     harness.editor_mut().load_init_script(true);
     assert!(
-        pump_until(&mut harness, |h| status(h).starts_with("FOUND=")),
+        pump_until(&mut harness, |h| status(h).contains("FOUND=")),
         "the panel probe never reported; status = {:?}",
         status(&harness)
     );
     assert_eq!(
-        status(&harness),
-        "FOUND=1",
-        "a virtual buffer should be findable by the name it was created with"
+        marker_count(&harness, "FOUND="),
+        Some(1),
+        "a virtual buffer should be findable by the name it was created with; \
+         status = {:?}",
+        status(&harness)
     );
 }
