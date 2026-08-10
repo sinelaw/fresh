@@ -44,6 +44,35 @@ fn thumb_span(harness: &EditorTestHarness, rows: &[u16]) -> (usize, usize) {
     (top, thumb.len())
 }
 
+/// A dropdown row's text, with runs of padding collapsed: the column widths
+/// are computed from the *visible* entries, so scrolling reflows them and
+/// only the words identify the entry.
+fn entry_text(harness: &EditorTestHarness, y: u16) -> String {
+    harness
+        .get_row_text(y)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Text of the highlighted suggestion row, or `None` when the selection has
+/// scrolled out of the viewport. The selection is a background colour rather
+/// than a glyph, so it's found as the one row whose background differs from
+/// the rest of the list.
+fn selected_row_text(harness: &EditorTestHarness, rows: &[u16]) -> Option<String> {
+    use std::collections::HashMap;
+    let bg_at = |y: u16| harness.get_cell_style(2, y).and_then(|s| s.bg);
+    let mut counts: HashMap<_, usize> = HashMap::new();
+    for &y in rows {
+        *counts.entry(bg_at(y)).or_default() += 1;
+    }
+    let unselected = counts.into_iter().max_by_key(|&(_, n)| n)?.0;
+    rows.iter()
+        .copied()
+        .find(|&y| bg_at(y) != unselected)
+        .map(|y| entry_text(harness, y))
+}
+
 /// Open a prompt whose suggestion list overflows the 10-row dropdown, and
 /// return its suggestion rows. `command` is run through the palette; passing
 /// `None` leaves the palette itself open.
@@ -297,4 +326,166 @@ fn test_dragging_palette_scrollbar_tracks_the_cursor_row() {
         );
     }
     release(&mut harness, rows[0]);
+}
+
+/// The mouse wheel scrolls the VIEW only: it must never move the selection.
+///
+/// Wheeling used to walk `selected_suggestion` instead, which rewrote the
+/// prompt input under the user and — once a scrollbar click could pin the
+/// viewport — made the list visibly jump, because the wheel released that
+/// pin and the renderer snapped back to a selection that had not moved on
+/// screen. Asserted on the palette, which is the surface the report used.
+#[test]
+fn test_wheel_over_palette_scrolls_view_without_moving_selection() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let rows = open_overflowing_dropdown(&mut harness, None);
+
+    // Put the selection a few rows down so it stays on screen after the
+    // wheel — that's what makes "the same entry is still highlighted" an
+    // observation rather than a vacuous absence.
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+    let selected_before = selected_row_text(&harness, &rows).expect("an entry must be highlighted");
+    let first_before = entry_text(&harness, rows[0]);
+
+    harness.mouse_scroll_down(50, rows[5]).unwrap();
+
+    assert_ne!(
+        entry_text(&harness, rows[0]),
+        first_before,
+        "the wheel must scroll the list:\n{}",
+        harness.screen_to_string()
+    );
+    assert_eq!(
+        selected_row_text(&harness, &rows).as_deref(),
+        Some(selected_before.as_str()),
+        "the wheel must leave the selection on the same entry:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Scrolling back restores the view, selection still untouched.
+    harness.mouse_scroll_up(50, rows[5]).unwrap();
+    assert_eq!(entry_text(&harness, rows[0]), first_before);
+    assert_eq!(
+        selected_row_text(&harness, &rows).as_deref(),
+        Some(selected_before.as_str())
+    );
+}
+
+/// Same rule on the Select Locale picker (issue #623's own dropdown): a
+/// different `PromptType`, the same shared suggestions renderer.
+#[test]
+fn test_wheel_over_select_locale_does_not_move_selection() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let rows = open_overflowing_dropdown(&mut harness, Some("Select Locale"));
+
+    for _ in 0..2 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+    let selected_before = selected_row_text(&harness, &rows).expect("a locale must be highlighted");
+    let first_before = entry_text(&harness, rows[0]);
+
+    harness.mouse_scroll_down(50, rows[5]).unwrap();
+
+    assert_ne!(
+        entry_text(&harness, rows[0]),
+        first_before,
+        "the wheel must scroll the locale list:\n{}",
+        harness.screen_to_string()
+    );
+    assert_eq!(
+        selected_row_text(&harness, &rows).as_deref(),
+        Some(selected_before.as_str()),
+        "the wheel must leave the selected locale alone:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// And on a third prompt-driven list — Set Language, whose suggestions come
+/// from the grammar catalogue rather than from the command registry.
+#[test]
+fn test_wheel_over_set_language_does_not_move_selection() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let rows = open_overflowing_dropdown(&mut harness, Some("Set Language"));
+
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+    let selected_before =
+        selected_row_text(&harness, &rows).expect("a language must be highlighted");
+    let first_before = entry_text(&harness, rows[0]);
+
+    harness.mouse_scroll_down(50, rows[5]).unwrap();
+
+    assert_ne!(
+        entry_text(&harness, rows[0]),
+        first_before,
+        "the wheel must scroll the language list:\n{}",
+        harness.screen_to_string()
+    );
+    assert_eq!(
+        selected_row_text(&harness, &rows).as_deref(),
+        Some(selected_before.as_str()),
+        "the wheel must leave the selected language alone:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// The wheel may scroll the selection clean off the list — that's correct
+/// (VS Code does the same), and the selection must survive it: scrolling
+/// back brings the very same entry back, still highlighted.
+#[test]
+fn test_wheel_may_scroll_selection_out_of_view_without_losing_it() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let rows = open_overflowing_dropdown(&mut harness, None);
+
+    let selected_before = selected_row_text(&harness, &rows).expect("an entry must be highlighted");
+
+    // Four notches of 3 rows: the first entry is far off the top now.
+    for _ in 0..4 {
+        harness.mouse_scroll_down(50, rows[5]).unwrap();
+    }
+    assert_eq!(
+        selected_row_text(&harness, &rows),
+        None,
+        "the selection scrolled out of view, so no row is highlighted:\n{}",
+        harness.screen_to_string()
+    );
+
+    for _ in 0..4 {
+        harness.mouse_scroll_up(50, rows[5]).unwrap();
+    }
+    assert_eq!(
+        selected_row_text(&harness, &rows).as_deref(),
+        Some(selected_before.as_str()),
+        "scrolling back must reveal the same selected entry:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Keyboard navigation still re-engages keep-the-selection-visible
+/// scrolling: after wheeling the selection off screen, an arrow key brings
+/// the view back to it. This is what keeps the manual-scroll latch honest
+/// now that the wheel no longer touches the selection.
+#[test]
+fn test_arrow_key_after_wheel_brings_the_selection_back_into_view() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let rows = open_overflowing_dropdown(&mut harness, None);
+
+    for _ in 0..4 {
+        harness.mouse_scroll_down(50, rows[5]).unwrap();
+    }
+    assert_eq!(selected_row_text(&harness, &rows), None);
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(
+        selected_row_text(&harness, &rows).is_some(),
+        "an arrow key must scroll the selection back into view:\n{}",
+        harness.screen_to_string()
+    );
 }

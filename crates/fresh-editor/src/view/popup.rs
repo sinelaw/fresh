@@ -586,8 +586,15 @@ impl Popup {
         }
     }
 
-    /// Scroll by a delta amount (positive = down, negative = up)
-    /// Used for mouse wheel scrolling
+    /// Scroll by a delta amount (positive = down, negative = up).
+    ///
+    /// Used for mouse-wheel scrolling and for the scrollbar handlers, so it
+    /// moves the **view only**: a `List` popup's selection stays on whatever
+    /// entry it was on, even when that entry scrolls off-screen. Dragging the
+    /// selection along with the viewport made the wheel silently retarget
+    /// what Enter would commit; the keyboard paths (`select_next`,
+    /// `page_down`, …) are the ones that move the selection, and they scroll
+    /// the view to follow it.
     pub fn scroll_by(&mut self, delta: i32) {
         let content_len = self.wrapped_item_count();
         let visible = self.visible_height();
@@ -599,18 +606,6 @@ impl Popup {
         } else {
             // Scroll down
             self.scroll_offset = (self.scroll_offset + delta as usize).min(max_scroll);
-        }
-
-        // For list popups, adjust selection to stay visible
-        if let PopupContent::List { items, selected } = &mut self.content {
-            let visible_start = self.scroll_offset;
-            let visible_end = (self.scroll_offset + visible).min(items.len());
-
-            if *selected < visible_start {
-                *selected = visible_start;
-            } else if *selected >= visible_end {
-                *selected = visible_end.saturating_sub(1);
-            }
         }
     }
 

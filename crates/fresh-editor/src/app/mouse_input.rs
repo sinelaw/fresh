@@ -571,7 +571,9 @@ impl Editor {
             // under the pointer — the preview when over it, otherwise the
             // result list (without moving the selection). See issue #2119.
         } else if self.handle_prompt_scroll(delta) {
-            // bottom-anchored prompt consumed the scroll (moves selection)
+            // bottom-anchored prompt dropdown consumed the scroll: it scrolls
+            // its list without moving the selection, like every other wheel
+            // surface in the editor.
         } else if self.is_file_open_active()
             && self.is_mouse_over_file_browser(col, row)
             && self.handle_file_open_scroll(delta)
@@ -625,7 +627,8 @@ impl Editor {
     ///   result list *without* moving the selection.
     ///
     /// Bottom-anchored prompts (command palette, file finder) are left to
-    /// `handle_prompt_scroll`, which keeps their wheel-moves-selection UX.
+    /// `handle_prompt_scroll`, which scrolls their dropdown the same
+    /// selection-preserving way.
     fn handle_overlay_prompt_scroll(&mut self, col: u16, row: u16, delta: i32) -> bool {
         if !self.overlay_prompt_active() {
             return false;
