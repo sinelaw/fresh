@@ -903,7 +903,7 @@ fn handle_auto_dedent(
 
 /// Electric keyword dedent (issue #2582): typing the character that turns the
 /// line into exactly "leading whitespace + a `decrease_indent_pattern` trigger
-/// token" (Python `else`, Ruby `end`, a custom `CLOSE`, …) re-indents the line
+/// token" (Python `else:`, Ruby `end`, a custom `CLOSE`, …) re-indents the line
 /// one level shallower — the keyword analogue of the electric `}` handled by
 /// [`handle_auto_dedent`].
 ///
@@ -1301,7 +1301,7 @@ fn insert_char_events(
         }
 
         // Electric keyword dedent (issue #2582): typing the char that
-        // completes a dedent-trigger line (`else`, `end`, custom `CLOSE`, …)
+        // completes a dedent-trigger line (`else:`, `end`, custom `CLOSE`, …)
         // re-indents the line the same way `}` does above.
         if auto_indent
             && !is_closing_delimiter
@@ -6467,7 +6467,7 @@ mod tests {
 
     // ========================================================================
     // Issue #2582: electric keyword dedent — typing the character that
-    // completes a dedent trigger (`else`, custom `CLOSE`, …) re-indents the
+    // completes a dedent trigger (`else:`, custom `CLOSE`, …) re-indents the
     // line one level shallower, the way `}` already does. Cursor sits at end
     // of the typed prefix (where real typing happens).
     // ========================================================================
@@ -6516,50 +6516,82 @@ mod tests {
     }
 
     #[test]
-    fn test_typing_else_dedents_python_line() {
-        // Canonical #2582 case: `if a:` / body / typing `else` on a line that
-        // inherited the body indent. The final `e` completes the trigger and
-        // must re-indent the line to column 0.
+    fn test_typing_else_colon_dedents_python_line() {
+        // Canonical #2582 case: `if a:` / body / typing `else:` on a line that
+        // inherited the body indent. The bare keyword must NOT move the line
+        // (it could still grow into an identifier such as `elsewhere`); the
+        // statement-final `:` completes the trigger and re-indents the line to
+        // column 0 — VS Code / ms-python behavior.
         let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\n    els");
         type_char(&mut state, &mut cursors, 'e');
         assert_eq!(
             state.buffer.to_string().unwrap(),
-            "if a:\n    x = 1\nelse",
-            "typing the char completing `else` must dedent the line"
+            "if a:\n    x = 1\n    else",
+            "the bare keyword must not dedent — the statement is incomplete"
+        );
+        type_char(&mut state, &mut cursors, ':');
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "if a:\n    x = 1\nelse:",
+            "the `:` completing the statement must dedent the line"
         );
         assert_eq!(cursors.primary().position, state.buffer.len());
+    }
 
-        // The following `:` must not fire a second dedent.
+    #[test]
+    fn test_typing_elif_condition_dedents_at_colon() {
+        // A condition-carrying trigger: `elif x > 0` stays put while typed and
+        // dedents exactly at the `:` keystroke.
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\n    elif x > 0");
         type_char(&mut state, &mut cursors, ':');
-        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = 1\nelse:");
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "if a:\n    x = 1\nelif x > 0:"
+        );
         assert_eq!(cursors.primary().position, state.buffer.len());
+    }
+
+    #[test]
+    fn test_typing_elsewhere_never_dedents() {
+        // An identifier that merely starts with the keyword must never fire —
+        // neither while typed nor when a `:` follows (annotation-style).
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\n    els");
+        for ch in "ewhere:".chars() {
+            type_char(&mut state, &mut cursors, ch);
+        }
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "if a:\n    x = 1\n    elsewhere:"
+        );
     }
 
     #[test]
     fn test_typing_else_mid_line_does_not_reindent() {
-        // The trigger word appearing mid-line (here as part of an expression)
-        // must never re-indent the line.
+        // The trigger appearing mid-line (here as part of an expression) must
+        // never re-indent the line, even once its `:` is typed.
         let (mut state, mut cursors) = python_state_with("if a:\n    x = els");
         type_char(&mut state, &mut cursors, 'e');
-        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = else");
+        type_char(&mut state, &mut cursors, ':');
+        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = else:");
     }
 
     #[test]
     fn test_typing_case_directly_under_match_keeps_indent() {
-        // `case` typed as the first body line under `match x:` belongs inside
-        // the block — it must not be pulled out to the header's level.
-        let (mut state, mut cursors) = python_state_with("match x:\n    cas");
-        type_char(&mut state, &mut cursors, 'e');
-        assert_eq!(state.buffer.to_string().unwrap(), "match x:\n    case");
+        // `case _:` typed as the first body line under `match x:` belongs
+        // inside the block — the completing `:` must not pull it out to the
+        // header's level.
+        let (mut state, mut cursors) = python_state_with("match x:\n    case _");
+        type_char(&mut state, &mut cursors, ':');
+        assert_eq!(state.buffer.to_string().unwrap(), "match x:\n    case _:");
     }
 
     #[test]
     fn test_typing_else_on_manually_dedented_line_is_noop() {
         // The user already dedented the line to (or past) the target: typing
         // the trigger must leave their indent alone.
-        let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\nels");
-        type_char(&mut state, &mut cursors, 'e');
-        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = 1\nelse");
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\nelse");
+        type_char(&mut state, &mut cursors, ':');
+        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = 1\nelse:");
     }
 }
 

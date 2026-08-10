@@ -1688,7 +1688,7 @@
           "default": null
         },
         "decrease_indent_pattern": {
-          "description": "If the new line's leading text matches, that line is dedented one level.\nExample — a line starting with a closing bracket: `^\\s*[\\}\\]\\)]`.",
+          "description": "If the new line's leading text matches, that line is dedented one level.\nExample — a line starting with a closing bracket: `^\\s*[\\}\\]\\)]`.\n\nAlso fires live while typing: at the keystroke where the pattern first\nmatches the whole line, the line is re-indented one level shallower.\nInclude the statement's terminator in the pattern when the language has\none (e.g. Python's `:`), like VS Code's `decreaseIndentPattern`, so an\nidentifier starting with a keyword never triggers a transient dedent.",
           "type": [
             "string",
             "null"

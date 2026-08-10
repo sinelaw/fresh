@@ -2794,6 +2794,12 @@ pub struct IndentRulesConfig {
 
     /// If the new line's leading text matches, that line is dedented one level.
     /// Example — a line starting with a closing bracket: `^\s*[\}\]\)]`.
+    ///
+    /// Also fires live while typing: at the keystroke where the pattern first
+    /// matches the whole line, the line is re-indented one level shallower.
+    /// Include the statement's terminator in the pattern when the language has
+    /// one (e.g. Python's `:`), like VS Code's `decreaseIndentPattern`, so an
+    /// identifier starting with a keyword never triggers a transient dedent.
     #[serde(default)]
     pub decrease_indent_pattern: Option<String>,
 
