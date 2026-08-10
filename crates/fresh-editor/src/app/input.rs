@@ -1048,6 +1048,14 @@ impl Editor {
         // Note: Modal components (Settings, Menu, Prompt, Popup, File Browser) are now
         // handled by dispatch_modal_input using the InputHandler system.
         // All remaining actions delegate to handle_action.
+
+        // Keys the file browser ignores (its Alt+letter toggles) resolve
+        // here in the Prompt context; the resulting prompt/file-browser
+        // actions belong to the browser's state machine, not the generic
+        // handler.
+        if self.is_file_open_active() && self.handle_file_open_action(&action) {
+            return Ok(());
+        }
         self.handle_action(action)
     }
 
@@ -2335,9 +2343,13 @@ impl Editor {
                 }
             }
             Action::MenuOpen(menu_name) => {
-                if self.config.editor.menu_bar_mnemonics {
-                    self.handle_menu_open(&menu_name);
-                }
+                // No mnemonics check here: with `menu_bar_mnemonics` off the
+                // resolver suppresses the Alt+letter mnemonic bindings, so a
+                // MenuOpen that reaches dispatch came from a live binding
+                // (or a menu-bar click) and must open the menu. Gating here
+                // instead used to turn Alt+F into a dead key: the mnemonic
+                // still won resolution, then dispatch dropped it (#2941).
+                self.handle_menu_open(&menu_name);
             }
 
             Action::SwitchKeybindingMap(map_name) => {

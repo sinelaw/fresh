@@ -296,13 +296,6 @@
       "when": "normal"
     },
     {
-      "key": "f",
-      "modifiers": ["alt"],
-      "action": "move_word_right",
-      "args": {},
-      "when": "normal"
-    },
-    {
       "comment": "Normal context - Selection",
       "key": "Left",
       "modifiers": ["shift"],
