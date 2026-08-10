@@ -1,18 +1,10 @@
-//! Regression coverage for issue #2761.
+//! Regression coverage for issue #2761: with fresh as git's editor, the
+//! cursor offset persisted for one `.git/COMMIT_EDITMSG` was restored into
+//! the next one's regenerated content, landing inside git's comment block.
 //!
-//! When fresh is used as git's editor, every `git commit` opens
-//! `.git/COMMIT_EDITMSG` — a file git regenerates with fresh content each
-//! time. Persisted per-file cursor state (a raw byte offset) from the
-//! *previous* commit message was restored verbatim into the brand-new
-//! content: the cursor landed mid-way into git's comment block, typing
-//! corrupted it, and the status bar Ln/Col disagreed with the real
-//! insertion point.
-//!
-//! The fix excludes files inside `.git/` from per-file state persistence
-//! on both sides (never saved, never restored — the load-side gate also
-//! neutralizes state files written by older builds), in both stores: the
-//! global per-file store (`file_states/`) applied on every file open, and
-//! the per-project workspace `file_states` map applied on session restore.
+//! Covers both stores such state lives in: the global per-file store
+//! (`file_states/`, applied on open) and the per-project workspace
+//! `file_states` map (applied on session restore).
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -22,8 +14,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-/// Create `<project>/.git/COMMIT_EDITMSG` with the given content and
-/// return its path.
 fn write_commit_editmsg(project_dir: &Path, content: &str) -> PathBuf {
     let git_dir = project_dir.join(".git");
     fs::create_dir_all(&git_dir).unwrap();
@@ -42,9 +32,7 @@ fn project_harness(project_dir: &Path) -> EditorTestHarness {
     .unwrap()
 }
 
-/// The core repro: a cursor position saved while editing one commit
-/// message must NOT be restored when the (regenerated) file is opened
-/// again — the second open starts at the beginning of the file.
+/// The core repro: the second open starts at the beginning of the file.
 #[test]
 fn test_commit_editmsg_reopens_at_start_after_regeneration() {
     let temp = TempDir::new().unwrap();
@@ -52,9 +40,8 @@ fn test_commit_editmsg_reopens_at_start_after_regeneration() {
     fs::create_dir(&project_dir).unwrap();
     let msg = write_commit_editmsg(&project_dir, "First message\nsecond line\nthird line\n");
 
-    // Session 1 ("first git commit"): edit the message with the cursor
-    // away from the start, then persist per-file state (the same
-    // save_all_global_file_states flush the quit path runs).
+    // Session 1: move the cursor away from the start, then flush per-file
+    // state the way the quit path does.
     {
         let mut harness = project_harness(&project_dir);
         harness.open_file(&msg).unwrap();
@@ -67,14 +54,13 @@ fn test_commit_editmsg_reopens_at_start_after_regeneration() {
         harness.editor_mut().save_workspace().unwrap();
     }
 
-    // Git regenerates the file with new content for the next commit.
+    // Git regenerates the file for the next commit.
     write_commit_editmsg(
         &project_dir,
         "\n# Please enter the commit message for your changes. Lines starting\n# with '#' will be ignored, and an empty message aborts the commit.\n",
     );
 
-    // Session 2 ("second git commit"): the open must not restore the
-    // stale offset into the brand-new content.
+    // Session 2: the stale offset must not be applied to the new content.
     {
         let mut harness = project_harness(&project_dir);
         harness.open_file(&msg).unwrap();
@@ -86,8 +72,7 @@ fn test_commit_editmsg_reopens_at_start_after_regeneration() {
     }
 }
 
-/// The per-project workspace file must not accumulate `file_states`
-/// entries for `.git/`-internal files.
+/// The workspace file must not accumulate `file_states` for `.git/` files.
 #[test]
 fn test_workspace_file_states_exclude_git_internal_files() {
     let temp = TempDir::new().unwrap();
@@ -120,9 +105,8 @@ fn test_workspace_file_states_exclude_git_internal_files() {
     );
 }
 
-/// A workspace file written by a pre-fix build can still carry a stale
-/// `.git/COMMIT_EDITMSG` entry. Restoring such a workspace must open the
-/// file without applying the stale cursor state.
+/// A pre-fix build's workspace can still carry a `.git/COMMIT_EDITMSG`
+/// entry; restore must open the tab without applying its cursor state.
 #[test]
 fn test_restore_ignores_poisoned_git_file_state_in_workspace() {
     let temp = TempDir::new().unwrap();
@@ -131,15 +115,13 @@ fn test_restore_ignores_poisoned_git_file_state_in_workspace() {
     let regular = project_dir.join("notes.txt");
     fs::write(&regular, "regular file\n").unwrap();
 
-    // Session 1: save a normal workspace.
     {
         let mut harness = project_harness(&project_dir);
         harness.open_file(&regular).unwrap();
         harness.editor_mut().save_workspace().unwrap();
     }
 
-    // Simulate a pre-fix build's output: inject a `.git/COMMIT_EDITMSG`
-    // tab with a stale cursor offset into the saved workspace.
+    // Inject the entry a pre-fix build would have written.
     let stale_offset = 15;
     let mut ws = Workspace::load(&project_dir)
         .unwrap()
@@ -167,14 +149,11 @@ fn test_restore_ignores_poisoned_git_file_state_in_workspace() {
     }
     ws.save().unwrap();
 
-    // The file git would have regenerated by the next invocation.
     write_commit_editmsg(
         &project_dir,
         "\n# Please enter the commit message for your changes.\n",
     );
 
-    // Session 2: restore. The tab opens, but the stale offset must not be
-    // applied.
     {
         let mut harness = project_harness(&project_dir);
         let restored = harness.editor_mut().try_restore_workspace().unwrap();

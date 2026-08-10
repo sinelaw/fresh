@@ -177,14 +177,9 @@ impl Editor {
         self.save_workspace_for(self.active_window)
     }
 
-    /// Enable/disable workspace persistence for this session. Set to
-    /// `false` for a `--no-restore` (alias `--no-session`) run: the flag's
-    /// semantics are "this session neither reads nor writes workspace
-    /// state", so quit-time saves AND mid-session checkpoints (e.g. the
-    /// window-switch checkpoint fired by Extract Tab to New Workspace) are
-    /// all suppressed. Without a uniform gate the checkpoint path wrote the
-    /// source workspace while the quit path skipped the extracted
-    /// co-tenant, silently losing it on the next launch (issue #2735).
+    /// Set to `false` for a `--no-restore` run: the flag means "this session
+    /// neither reads nor writes workspace state", so quit-time saves and
+    /// mid-session checkpoints are suppressed alike (#2735).
     pub fn set_workspace_persistence(&mut self, enabled: bool) {
         self.workspace_persistence_enabled = enabled;
     }
@@ -442,13 +437,10 @@ impl Editor {
         win.sync_terminal_backing_files();
         win.save_all_global_file_states();
 
-        // `--no-restore` session: never write *workspace* files. This is the
-        // single funnel for every workspace save (quit-time saves, restart
-        // saves, and the mid-session checkpoints that used to ignore the
-        // flag), so gating here keeps them all consistent (issue #2735).
-        // Deliberately below the per-file/terminal state flushes: those are
-        // not workspace files and a `--no-restore` session still reads them
-        // back on open, so suppressing only the writes would be asymmetric.
+        // The single funnel for every workspace write, so `--no-restore`
+        // suppresses checkpoints as well as quit-time saves (#2735).
+        // Deliberately below the terminal/per-file flushes: those are not
+        // workspace files and a `--no-restore` session still reads them back.
         if !self.workspace_persistence_enabled {
             tracing::debug!(
                 "Skipping workspace save for window {id}: workspace persistence disabled (--no-restore)"
@@ -1474,11 +1466,9 @@ impl crate::app::window::Window {
 
                 // Restore cursor, scroll, view_mode, and compose_width for ALL buffers in file_states
                 for (rel_path, file_state) in &split_state.file_states {
-                    // Never re-apply persisted state to git-internal files
-                    // (COMMIT_EDITMSG etc.): git regenerates them, so the
-                    // saved byte offsets point into content that no longer
-                    // exists. Also heals workspace files written by older
-                    // builds that still carry such entries (#2761).
+                    // Saved offsets for a regenerated file point into content
+                    // that no longer exists; gating on load also heals
+                    // workspaces written before the save-side gate (#2761).
                     if crate::workspace::is_git_internal_path(rel_path) {
                         continue;
                     }
@@ -2512,14 +2502,11 @@ impl crate::app::window::Window {
                 .set_active_split(LeafId(new_active_split));
         }
 
-        // Sanitize: a workspace written by a pre-fix build can carry a
-        // `UtilityDock` role on its sole (root) leaf — the bug where closing
-        // the last editor split left the dock's role tag behind (issue
-        // #2415). Restoring that tag verbatim makes every later panel open
-        // land as a full-window tab, permanently. Clearing it here heals
-        // existing poisoned workspace files on load. A snapshot whose split
-        // layout could not be rebuilt at all leaves `splits` unseeded, so
-        // this stays a no-op rather than a panic.
+        // Heal workspaces written before the invariant existed: a restored
+        // `UtilityDock` role on the sole root leaf makes every later panel
+        // open land as a full-window tab, permanently (#2415). A no-op
+        // rather than an expect: a snapshot whose layout could not be
+        // rebuilt at all leaves `splits` unseeded.
         if let Some(splits) = self.buffers.split_manager_mut() {
             splits.clear_root_leaf_role();
         }
@@ -3153,9 +3140,8 @@ fn serialize_split_view_state(
             continue;
         };
 
-        // Git-internal files (COMMIT_EDITMSG, MERGE_MSG, …) are regenerated
-        // with fresh content on every git operation — persisted cursor/scroll
-        // state for them is always stale (#2761).
+        // Git regenerates COMMIT_EDITMSG & co with new content every
+        // operation, so persisted cursor/scroll state is always stale (#2761).
         if crate::workspace::is_git_internal_path(abs_path) {
             continue;
         }

@@ -5562,11 +5562,9 @@ fn real_main() -> AnyhowResult<()> {
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
 
-        // `--no-restore` means the session neither restores nor persists
-        // workspace state. The quit-time save below is gated on
-        // `workspace_enabled` already; this also gates the mid-session
-        // checkpoints (window switches, session-identity finalization) that
-        // used to write workspace files regardless of the flag (issue #2735).
+        // The quit-time save below already honors `workspace_enabled`; this
+        // extends it to the mid-session checkpoints (window switches,
+        // session-identity finalization) that wrote regardless (#2735).
         editor.set_workspace_persistence(workspace_enabled);
 
         // Orchestrator cross-restart persistence is now loaded by

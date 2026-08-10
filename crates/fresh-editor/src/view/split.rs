@@ -1490,9 +1490,8 @@ impl SplitManager {
                 }
             }
 
-            // A collapse can leave a role-tagged leaf (the Utility Dock) as
-            // the sole root leaf; it is now an ordinary editor pane and must
-            // shed the role (issue #2415).
+            // A collapse can strand the dock's role on the sole root leaf,
+            // which is now an ordinary editor pane (#2415).
             self.clear_root_leaf_role();
         }
 
@@ -1553,8 +1552,7 @@ impl SplitManager {
         }
         let result = Self::remove_child_static(&mut self.root, target_id);
         if result.is_ok() {
-            // Same invariant as `close_split`: a collapse must not leave a
-            // role-tagged leaf as the sole root leaf (issue #2415).
+            // Same invariant as `close_split` (#2415).
             self.clear_root_leaf_role();
         }
         result
@@ -1916,15 +1914,11 @@ impl SplitManager {
 
     /// Enforce the invariant that the root leaf never carries a role tag.
     ///
-    /// A role-tagged leaf (the Utility Dock) only makes sense as a panel
-    /// *beside* editor splits. When a collapse (closing the last editor
-    /// split) leaves the dock leaf as the sole root leaf, it becomes the
-    /// window's ordinary editor pane — regular file buffers land in it —
-    /// but a stale `UtilityDock` tag makes every later panel open route
-    /// into it as a full-window tab, and workspace persistence then makes
-    /// that state permanent (issue #2415). Called after tree collapses and
-    /// after workspace restore (which heals already-poisoned workspace
-    /// files). Returns true if a role tag was cleared.
+    /// A role tag (the Utility Dock) only means anything on a leaf *beside*
+    /// editor splits. Once a collapse leaves it as the sole root leaf, a
+    /// stale tag routes every later dock open into it as a full-window tab,
+    /// and workspace persistence makes that permanent (#2415). Returns
+    /// whether a tag was cleared.
     pub fn clear_root_leaf_role(&mut self) -> bool {
         if let SplitNode::Leaf { role, .. } = &mut self.root {
             if role.is_some() {
@@ -2043,11 +2037,8 @@ mod tests {
 
     #[test]
     fn test_close_split_clears_role_stranded_on_root_leaf() {
-        // Regression for #2415: editor leaf + role-tagged dock leaf; closing
-        // the editor leaf collapses the tree to just the dock leaf. The
-        // surviving root leaf must NOT keep the UtilityDock role — it is now
-        // the window's only (editor) pane, and a stale role makes every later
-        // dock-routed open land in it as a full-window tab.
+        // Regression for #2415: closing the editor leaf collapses the tree
+        // onto the dock leaf, which must shed its role.
         let editor_buffer = BufferId(0);
         let dock_buffer = BufferId(1);
 
@@ -2075,8 +2066,7 @@ mod tests {
 
     #[test]
     fn test_close_split_keeps_dock_role_when_editor_leaves_remain() {
-        // Two editor leaves + a dock: closing ONE editor leaf must not touch
-        // the dock's role — the dock is still a panel beside an editor pane.
+        // The dock is still a panel beside a surviving editor pane (#2415).
         let mut manager = SplitManager::new(BufferId(0));
         let editor_a = manager.active_split();
         let editor_b = manager
