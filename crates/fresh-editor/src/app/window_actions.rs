@@ -598,6 +598,17 @@ impl crate::app::Editor {
             crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
         );
 
+        // Seeding the terminal dives into the new window. For an *adopted*
+        // one that dive is only mechanical: focus was already settled when
+        // the workspace opened — minutes earlier, possibly — and the user
+        // may well have moved on since. Put them back where they were, so
+        // the moment a slow build finishes is never the moment the keyboard
+        // jumps. (When they are still sitting in this workspace,
+        // `previous_id == id` and there is nothing to undo.)
+        if adopted.is_some() && previous_id != id && self.windows.contains_key(&previous_id) {
+            self.set_active_window(previous_id);
+        }
+
         Ok((id, terminal_id, buffer_id))
     }
 

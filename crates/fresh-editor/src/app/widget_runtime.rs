@@ -55,6 +55,10 @@ impl Editor {
     }
 }
 
+// Every parameter here is host state the spec doesn't carry (focus, hover,
+// theme, geometry); bundling them into a struct would only move the same
+// list one level out.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_floating_spec(
     focus_marker: bool,
     spec: &fresh_core::api::WidgetSpec,
