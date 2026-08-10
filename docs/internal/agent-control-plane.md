@@ -6,6 +6,12 @@ enough that a user stops clicking through workspaces and just asks. This
 document records the design, the constraints that shape it, and the phased
 plan. Status: **PLANNED** unless a section says otherwise.
 
+Landed so far: the explicit-id terminal APIs and `describeEnvironment` (§4,
+§6.1, §6.2), the discoverability fixes (§9), the `waiting` state (§7.1), and
+the Fleet view with its live pane (§7.2). Still planned: input into the embed
+(§6.6), Home as a full layout (§7.3), the event stream (§6.3), `script run
+--as` (§6.4), declarative views (§7.5), and everything under delegation (§8).
+
 This is the successor to
 [agent-fresh-cli-exposure-plan.md](agent-fresh-cli-exposure-plan.md), whose
 launcher half shipped (agent presets, resume, Start prompt, Auto mode) and
@@ -316,7 +322,7 @@ in the plan.
 
 ## 7. The show side: Home and the Fleet
 
-### 7.1 The `!` state
+### 7.1 The `!` state — **implemented**
 
 The headline signal. Today's activity model has two live states; the plan adds
 a third that is neither "printing" nor "not printing" but **parked at a
@@ -331,7 +337,40 @@ registry.
  ○  on-disk      a worktree with no live window
 ```
 
-### 7.2 Home
+### 7.2 The Fleet — **implemented**
+
+Shipped ahead of the full Home layout, because it is the part that answers the
+question. A wide panel, one row per agent — glyph, name, agent kind, branch,
+and either what it is waiting on or what it last said — sorted by urgency
+rather than by name, so the list is read from the top and abandoned as soon as
+it turns boring.
+
+Beneath it, the selected workspace rendered **live** by `windowEmbed`, which
+turned out to already exist as a widget: the host paints the real window into
+a reserved rectangle, terminals included. So §6.5's "the tail is the real
+terminal, not a mirror" is not future work — it is how the Fleet's live pane
+already behaves. Arrowing the list re-points the embed; Enter closes the Fleet
+and lands in that workspace.
+
+Tab switches the Fleet into a typing mode that sends keys to the selected
+agent's PTY by `(windowId, terminalId)` — so an approval prompt can be
+answered without leaving the view (§6.6). Enter, the arrows, Escape and
+Ctrl+C forward; so do the digits and `y`/`n` that answer a prompt.
+
+Free-form typing does **not** work, and the reason is worth recording. The
+host's floating-panel key path hands a plugin only the bare characters its
+mode explicitly claims — `mode_text_input` is never emitted for a
+panel-focused mode, and setting the mode's `allow_text_input` flag does not
+change that. So "forward every printable key" has no expression today; the
+answer keys are bound one at a time. Making the embed a true input target
+needs host work, and until then Enter on the row still takes you to the real
+terminal, which accepts anything.
+
+The Fleet's own strings are English-only, unlike the rest of the Orchestrator,
+which is fully localised across fourteen locales. That is a gap to close, not
+a decision.
+
+### 7.3 Home
 
 Home is an ordinary workspace layout, not a new UI mode: three splits built by
 a script, holding a virtual buffer, a terminal, and a virtual buffer. It takes
@@ -391,13 +430,13 @@ Note the division of labour this creates, which is deliberate: the **human**
 gets the real terminal at native rendering cost, and the **agent** gets
 `readTerminal`'s cheap stripped text. Neither pays for the other's needs.
 
-### 7.3 The dock card
+### 7.4 The dock card
 
 Lower priority than the Fleet, and strictly additive — the same card geometry
 with a third line carrying agent kind and the last output line, and the `!`
 glyph in the existing status column.
 
-### 7.4 Declarative views
+### 7.5 Declarative views
 
 Callers describe a view; they do not write render logic. A shallow spec — one
 level of nesting, named panel types, a data source and a click action per

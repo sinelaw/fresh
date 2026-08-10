@@ -12579,6 +12579,16 @@ editor.on("terminal_exit", (payload) => {
 // =============================================================================
 
 const FLEET_MODE = "orchestrator-fleet";
+// A second mode rather than a flag, because the two need different keymaps:
+// while typing at an agent, Enter/Up/Down/Escape must reach the PTY instead of
+// steering the list. Modes are static, so "claim these keys only sometimes" is
+// spelled as "switch to the mode that claims them".
+const FLEET_TYPE_MODE = "orchestrator-fleet-type";
+
+// When true, keystrokes go to the selected workspace's agent rather than to
+// the list. The embed is already showing that terminal live, so this is the
+// difference between watching an agent ask a question and answering it.
+let fleetTyping = false;
 
 let fleetPanel: FloatingWidgetPanel | null = null;
 let fleetSelected = 0;
@@ -12676,17 +12686,29 @@ function buildFleetSpec(): WidgetSpec {
   // actual screen, not a copy of it.
   if (selected) {
     children.push(labeledSection({
-      label: `live · ${workspaceDisplayName(selected)}`,
+      label: fleetTyping
+        ? `typing → ${workspaceDisplayName(selected)}`
+        : `live · ${workspaceDisplayName(selected)}`,
       child: windowEmbed({ windowId: selected.id, rows: FLEET_EMBED_ROWS, key: "fleet_embed" }),
     }));
   }
   children.push(row(
     flexSpacer(),
-    hintBar([
-      { keys: "↑↓", label: "select" },
-      { keys: "Enter", label: "go to workspace" },
-      { keys: "Esc", label: "close" },
-    ]),
+    hintBar(fleetTyping
+      ? [
+        // Escape is deliberately absent: while typing it belongs to the
+        // agent, since cancelling whatever it is asking is the single most
+        // likely thing you want to send.
+        { keys: "Tab", label: "stop" },
+        { keys: "1-9 y/n", label: "answer" },
+        { keys: "↑↓ Enter Esc", label: "to the agent" },
+      ]
+      : [
+        { keys: "↑↓", label: "select" },
+        { keys: "Tab", label: "answer agent" },
+        { keys: "Enter", label: "go to workspace" },
+        { keys: "Esc", label: "close" },
+      ]),
     flexSpacer(),
   ));
   return col(...children);
@@ -12695,10 +12717,14 @@ function buildFleetSpec(): WidgetSpec {
 function renderFleet(): void {
   if (!fleetPanel) return;
   fleetPanel.mount(buildFleetSpec(), { widthPct: 92, heightPct: 80 });
-  // Keep the list focused across re-mounts. The ticker re-mounts every
+  // Keep focus pinned across re-mounts. The ticker re-mounts every
   // FLEET_TICK_MS, and a panel that loses focus each tick swallows the very
-  // arrow keys the view exists to be steered with.
-  fleetPanel.setFocusKey("fleet_list");
+  // keys the view exists to be steered with.
+  //
+  // Focus moves off the list while typing: the host routes printable
+  // characters to the focused widget first, and a focused list eats them for
+  // type-ahead — so the digits of an answer never reached the agent.
+  fleetPanel.setFocusKey(fleetTyping ? "fleet_embed" : "fleet_list");
 }
 
 /// Keep the fleet current while it is open.
@@ -12744,7 +12770,65 @@ function closeFleet(): void {
   if (!fleetPanel) return;
   fleetPanel.unmount();
   fleetPanel = null;
+  fleetTyping = false;
   editor.setEditorMode(null);
+}
+
+/// Send a key to the selected workspace's agent.
+///
+/// Addressed by `(windowId, terminalId)`, so it lands in that agent's PTY
+/// whatever window the user is looking at — the whole reason this is possible
+/// from a panel floating over a different workspace.
+function fleetSend(data: string): void {
+  const target = fleetRows()[fleetSelected];
+  if (!target || target.terminalId === null) return;
+  editor.sendTerminalInput(target.terminalId, data, target.id);
+  // Re-render promptly so the embed shows the effect of the keystroke rather
+  // than waiting out the tick — typing that appears a second late feels
+  // broken even when it is working.
+  renderFleet();
+}
+
+function setFleetTyping(on: boolean): void {
+  const target = fleetRows()[fleetSelected];
+  // Refuse rather than silently swallow keys: a row with no terminal (a
+  // workspace whose agent has exited) has nothing to type at.
+  if (on && (!target || target.terminalId === null)) {
+    editor.setStatus("This workspace has no agent terminal to answer.");
+    return;
+  }
+  fleetTyping = on;
+  editor.setEditorMode(on ? FLEET_TYPE_MODE : FLEET_MODE);
+  renderFleet();
+}
+
+registerHandler("orchestrator_fleet_type_toggle", function () {
+  setFleetTyping(!fleetTyping);
+});
+// One handler per forwarded key, because mode bindings name actions rather
+// than carrying arguments. The escape sequences are the standard xterm ones
+// the PTY child already expects from a real terminal.
+registerHandler("orchestrator_fleet_key_enter", () => fleetSend("\r"));
+registerHandler("orchestrator_fleet_key_up", () => fleetSend("\x1b[A"));
+registerHandler("orchestrator_fleet_key_down", () => fleetSend("\x1b[B"));
+registerHandler("orchestrator_fleet_key_right", () => fleetSend("\x1b[C"));
+registerHandler("orchestrator_fleet_key_left", () => fleetSend("\x1b[D"));
+registerHandler("orchestrator_fleet_key_backspace", () => fleetSend("\x7f"));
+registerHandler("orchestrator_fleet_key_escape", () => fleetSend("\x1b"));
+registerHandler("orchestrator_fleet_key_ctrl_c", () => fleetSend("\x03"));
+
+// Answering a blocking question is the point of typing mode, and the answers
+// agents accept are a small closed set: a numbered option, or y/n.
+//
+// They have to be bound one at a time. The host's floating-panel key path
+// hands a plugin only the bare characters its mode explicitly claims —
+// `mode_text_input` is never emitted for a panel-focused mode — so there is no
+// "forward every printable key" to reach for. Free-form typing at an agent
+// therefore needs host support and is not offered here; Enter on the row takes
+// you to the workspace, where the real terminal accepts anything.
+const FLEET_ANSWER_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "y", "n", "Y", "N"];
+for (const k of FLEET_ANSWER_KEYS) {
+  registerHandler(`orchestrator_fleet_send_${k}`, () => fleetSend(k));
 }
 
 registerHandler("orchestrator_fleet", openFleet);
@@ -12777,7 +12861,34 @@ registerHandler("orchestrator_fleet_event", function (ev: Record<string, unknown
 editor.on("widget_event", "orchestrator_fleet_event");
 // Claims nothing: every key the fleet needs (Up/Down/Enter/Esc) is already a
 // smart-key default, and claiming them here would only re-implement them.
-editor.defineMode(FLEET_MODE, []);
+editor.defineMode(FLEET_MODE, [
+  // Tab is the only key the navigation mode claims. Everything else it needs
+  // — Up/Down/Enter/Esc — is already a smart-key default.
+  ["Tab", "orchestrator_fleet_type_toggle"],
+]);
+// The typing mode claims exactly the keys that would otherwise steer the list,
+// and forwards them to the PTY instead. Printable characters are not listed:
+// they arrive through the global `mode_text_input` path, which is handled in
+// `orchestrator_mode_text_input`.
+//
+// Escape is forwarded rather than claimed as "stop typing" — while an agent is
+// asking something, cancelling it is the most likely thing you want to send,
+// and Tab already exits.
+editor.defineMode(FLEET_TYPE_MODE, [
+  ...FLEET_ANSWER_KEYS.map((k) => [k, `orchestrator_fleet_send_${k}`] as [string, string]),
+  ["Tab", "orchestrator_fleet_type_toggle"],
+  ["Enter", "orchestrator_fleet_key_enter"],
+  ["Up", "orchestrator_fleet_key_up"],
+  ["Down", "orchestrator_fleet_key_down"],
+  ["Right", "orchestrator_fleet_key_right"],
+  ["Left", "orchestrator_fleet_key_left"],
+  ["Backspace", "orchestrator_fleet_key_backspace"],
+  ["Escape", "orchestrator_fleet_key_escape"],
+  ["C-c", "orchestrator_fleet_key_ctrl_c"],
+  // readOnly=false, allowTextInput=true: without the text-input flag the host
+  // never emits `mode_text_input`, so an unbound printable key is simply
+  // blocked — Enter reached the agent and the digits of the answer did not.
+], false, true);
 
 registerHandler("orchestrator_open", openControlRoom);
 registerHandler("orchestrator_new", startNewSession);
