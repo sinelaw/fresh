@@ -797,6 +797,19 @@ pub struct Editor {
     /// `materialize_window`.
     pub(crate) materialize_pending: std::collections::HashSet<fresh_core::WindowId>,
 
+    /// Whether workspace files (`workspaces/*.json`) may be written at all.
+    /// `false` for a `--no-restore` (alias `--no-session`) run: such a
+    /// session must never persist workspace state — neither the quit-time
+    /// save nor the mid-session crash-safety checkpoints
+    /// (`checkpoint_window_workspace`, fired e.g. when Extract Tab to New
+    /// Workspace switches windows). Before this flag, checkpoints ignored
+    /// `--no-restore`, so the checkpointed source workspace was written
+    /// while the extracted co-tenant was not — an asymmetry that silently
+    /// dropped the co-tenant on the next launch (issue #2735). Gated
+    /// centrally in [`Editor::save_workspace_for`], the single funnel for
+    /// all workspace writes.
+    pub(crate) workspace_persistence_enabled: bool,
+
     /// Persisted **remote** sessions (SSH / kube) discovered at boot but not
     /// yet connected — there is deliberately **no `Window`** for them, because a
     /// `Window` must always own its session's *real* authority and a remote
