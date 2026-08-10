@@ -40,6 +40,7 @@ interface LastChange {
   findCharTarget?: string;   // For operator+find-char: the target character
   count?: number;            // Count used with the command
   insertedText?: string;     // Text inserted during insert mode
+  insertCommand?: string;    // For type "insert": the command that entered insert mode (i/a/I/A/o/O)
 }
 
 interface ViState {
@@ -55,6 +56,7 @@ interface ViState {
   visualHead: number | null; // Active end of computed visual selections
   visualRange: { start: number; end: number } | null; // Characterwise visual range for computed motions
   insertStartPos: number | null; // Cursor position when entering insert mode
+  pendingInsertCommand: string | null; // Insert-entering command (i/a/I/A/o/O) awaiting '.' recording
   visualBlockAnchor: { line: number; col: number } | null; // For visual block mode
   lastWordSearch: { text: string; direction: WordSearchDirection; wholeWord: boolean } | null; // For n/N after * or #
 }
@@ -72,6 +74,7 @@ const state: ViState = {
   visualHead: null,
   visualRange: null,
   insertStartPos: null,
+  pendingInsertCommand: null,
   visualBlockAnchor: null,
   lastWordSearch: null,
 };
@@ -191,18 +194,34 @@ function switchMode(newMode: ViMode): void {
 async function captureInsertedText(): Promise<void> {
   if (state.insertStartPos === null) return;
 
+  const startPos = state.insertStartPos;
+  state.insertStartPos = null;
+  const insertCommand = state.pendingInsertCommand;
+  state.pendingInsertCommand = null;
+
   const endPos = editor.getCursorPosition();
-  if (endPos === null || endPos <= state.insertStartPos) {
-    state.insertStartPos = null;
+  let text = "";
+  if (endPos !== null && endPos > startPos) {
+    const bufferId = editor.getActiveBufferId();
+    text = (await editor.getBufferText(bufferId, startPos, endPos)) ?? "";
+  }
+
+  if (insertCommand !== null) {
+    // Insert entered via i/a/I/A/o/O: '.' replays the command's cursor
+    // motion plus the typed text. An empty i/a/I/A insert is not a change
+    // (Vim keeps the previous one for '.'), but o/O open a line even when
+    // nothing is typed, which alone is repeatable.
+    if (text.length > 0 || insertCommand === "o" || insertCommand === "O") {
+      state.lastChange = { type: "insert", insertCommand };
+      if (text.length > 0) {
+        state.lastChange.insertedText = text;
+      }
+    }
     return;
   }
 
-  const bufferId = editor.getActiveBufferId();
-  const text = await editor.getBufferText(bufferId, state.insertStartPos, endPos);
-
-  if (text && text.length > 0) {
-    // Only record if we have a pending insert change or if there was actual text inserted
-    if (state.lastChange?.type === "insert" || !state.lastChange) {
+  if (text.length > 0) {
+    if (!state.lastChange || state.lastChange.type === "insert") {
       state.lastChange = {
         type: "insert",
         insertedText: text,
@@ -214,8 +233,6 @@ async function captureInsertedText(): Promise<void> {
       state.lastChange.insertedText = text;
     }
   }
-
-  state.insertStartPos = null;
 }
 
 // Get the current count (defaults to 1 if no count specified)
@@ -1700,41 +1717,87 @@ async function vi_search_word_backward() : Promise<void> {
 registerHandler("vi_search_word_backward", vi_search_word_backward);
 
 // Mode switching
+//
+// Each insert-entering command records itself in `pendingInsertCommand` so
+// the Escape-time capture can build a `lastChange` that '.' replays by
+// re-executing the command's cursor motion at the new cursor and then
+// re-inserting the recorded keystrokes (Vim `:help .`). Commands that
+// reposition the cursor before inserting must also flush the editor's
+// command queue first: `executeAction` is queued and applied on the editor
+// thread, so without the flush `switchMode("insert")` would record the
+// PRE-reposition cursor position as `insertStartPos`, and the '.' capture
+// would span intervening buffer text instead of just the typed keystrokes
+// (issue #2443: `o`/`a`/`A` + `.` injected unrelated line content).
+async function enterInsertRepositioned(command: string): Promise<void> {
+  await editor.flush();
+  state.pendingInsertCommand = command;
+  switchMode("insert");
+}
+
 function vi_insert_before() : void {
+  // No repositioning, so no flush needed: the cursor snapshot is already
+  // accurate. Recording the entering command keeps a stale previous change
+  // (e.g. an `x`) from swallowing this insert's recording at capture time.
+  state.pendingInsertCommand = "i";
   switchMode("insert");
 }
 registerHandler("vi_insert_before", vi_insert_before);
 
-function vi_insert_after() : void {
+async function vi_insert_after() : Promise<void> {
   editor.executeAction("move_right");
-  switchMode("insert");
+  await enterInsertRepositioned("a");
 }
 registerHandler("vi_insert_after", vi_insert_after);
 
-function vi_insert_line_start() : void {
+async function vi_insert_line_start() : Promise<void> {
   editor.executeAction("move_line_start");
-  switchMode("insert");
+  await enterInsertRepositioned("I");
 }
 registerHandler("vi_insert_line_start", vi_insert_line_start);
 
-function vi_insert_line_end() : void {
+async function vi_insert_line_end() : Promise<void> {
   editor.executeAction("move_line_end");
-  switchMode("insert");
+  await enterInsertRepositioned("A");
 }
 registerHandler("vi_insert_line_end", vi_insert_line_end);
 
-function vi_open_below() : void {
+async function vi_open_below() : Promise<void> {
   editor.executeAction("move_line_end");
   editor.executeAction("insert_newline");
-  switchMode("insert");
+  await enterInsertRepositioned("o");
 }
 registerHandler("vi_open_below", vi_open_below);
 
-function vi_open_above() : void {
-  editor.executeAction("move_line_start");
-  editor.executeAction("insert_newline");
-  editor.executeAction("move_up");
-  switchMode("insert");
+// Open a line above the cursor's line and leave the cursor at its start.
+// Implemented with an explicit insert at the line-start byte offset instead of
+// `insert_newline` + `move_up`: the offsets are computed from the pre-command
+// cursor, so the new empty line and the cursor position cannot disagree.
+async function openLineAbove(): Promise<boolean> {
+  const bufferId = editor.getActiveBufferId();
+  if (isActiveBufferEditingDisabled(bufferId)) {
+    return false;
+  }
+  const range = await getLinewiseRange(1);
+  if (range === null) {
+    // Empty buffer: open an (empty) line below the cursor's empty line.
+    if (editor.getBufferLength(bufferId) === 0) {
+      editor.insertText(bufferId, 0, "\n");
+      editor.setBufferCursor(bufferId, 0);
+      return true;
+    }
+    return false;
+  }
+  editor.insertText(range.bufferId, range.start, range.lineTerminator);
+  editor.setBufferCursor(range.bufferId, range.start);
+  return true;
+}
+
+async function vi_open_above() : Promise<void> {
+  if (!(await openLineAbove())) {
+    switchMode("normal");
+    return;
+  }
+  await enterInsertRepositioned("O");
 }
 registerHandler("vi_open_above", vi_open_above);
 
@@ -2068,9 +2131,35 @@ async function vi_repeat() : Promise<void> {
     }
 
     case "insert": {
-      // Pure insert (i, a, o, O)
+      // Pure insert (i, a, I, A, o, O): re-execute the entering command's
+      // cursor motion at the current cursor, then re-insert the recorded
+      // keystrokes (Vim `:help .`). Replaying only the text without the
+      // motion — or vice versa — is what corrupted buffers in issue #2443.
+      switch (change.insertCommand) {
+        case "a":
+          editor.executeAction("move_right");
+          break;
+        case "I":
+          editor.executeAction("move_line_start");
+          break;
+        case "A":
+          editor.executeAction("move_line_end");
+          break;
+        case "o":
+          editor.executeAction("move_line_end");
+          editor.executeAction("insert_newline");
+          break;
+        case "O":
+          if (!(await openLineAbove())) {
+            return;
+          }
+          break;
+      }
       if (change.insertedText) {
         editor.insertAtCursor(change.insertedText);
+        // Leave the cursor on the last inserted character, exactly as
+        // Escape does when the original insert ended.
+        editor.executeAction("move_left_in_line");
       }
       break;
     }
