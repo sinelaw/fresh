@@ -1662,6 +1662,16 @@ impl BindingSource {
     }
 }
 
+/// Log that a configured keybinding entry was dropped because its key name did
+/// not parse, so a rejected binding leaves a trace in the log instead of dying
+/// silently (issue #1128: `"key": "asterisk"` was ignored with no feedback
+/// anywhere).
+fn warn_invalid_key(key: &str, action: &str) {
+    tracing::warn!(
+        "Invalid keybinding in config: unknown key \"{key}\" for action \"{action}\" (binding ignored)"
+    );
+}
+
 impl KeybindingResolver {
     /// Create a new resolver from configuration
     pub fn new(config: &Config) -> Self {
@@ -1732,6 +1742,7 @@ impl KeybindingResolver {
                             sequence.push((key_code, modifiers));
                         } else {
                             // Invalid key in sequence, skip this binding
+                            warn_invalid_key(&key_press.key, &binding.action);
                             break;
                         }
                     }
@@ -1755,6 +1766,8 @@ impl KeybindingResolver {
                         action,
                         &binding.key,
                     );
+                } else {
+                    warn_invalid_key(&binding.key, &binding.action);
                 }
             }
         }
@@ -1824,6 +1837,7 @@ impl KeybindingResolver {
                             sequence.push((key_code, modifiers));
                         } else {
                             // Invalid key in sequence, skip this binding
+                            warn_invalid_key(&key_press.key, &binding.action);
                             break;
                         }
                     }
@@ -1842,6 +1856,8 @@ impl KeybindingResolver {
                         .entry(context)
                         .or_default()
                         .insert((key_code, modifiers), action);
+                } else {
+                    warn_invalid_key(&binding.key, &binding.action);
                 }
             }
         }
@@ -3322,6 +3338,64 @@ mod tests {
     fn test_to_qualified_action_str_for_menu_open() {
         let action = Action::MenuOpen("Edit".to_string());
         assert_eq!(action.to_qualified_action_str(), "menu_open:Edit");
+    }
+
+    /// Issue #1128: a keybinding whose key name doesn't parse (e.g.
+    /// "asterisk", "kp_multiply") is rejected — the entry must be dropped
+    /// (binding nothing) while a `tracing::warn!` at load time names the key
+    /// and action, and the rest of the config must still load. The warning
+    /// itself is emitted by `warn_invalid_key`; here we assert the
+    /// dropped-but-load-continues behavior.
+    #[test]
+    fn test_unknown_key_name_entry_is_dropped_but_load_continues() {
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "asterisk".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            keys: Vec::new(),
+            action: "duplicate_line".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        // Same failure inside a chord sequence.
+        config.keybindings.push(crate::config::Keybinding {
+            key: String::new(),
+            modifiers: Vec::new(),
+            keys: vec![
+                crate::config::KeyPress {
+                    key: "x".to_string(),
+                    modifiers: vec!["ctrl".to_string()],
+                },
+                crate::config::KeyPress {
+                    key: "kp_multiply".to_string(),
+                    modifiers: Vec::new(),
+                },
+            ],
+            action: "save".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        // A valid entry after the bad ones: loading must not abort mid-config.
+        config.keybindings.push(crate::config::Keybinding {
+            key: "f6".to_string(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            action: "save".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        // Only the valid entry produced custom bindings; both bad entries were
+        // dropped rather than half-registered.
+        let custom_single: usize = resolver.bindings.values().map(|m| m.len()).sum();
+        assert_eq!(custom_single, 1, "bindings: {:?}", resolver.bindings);
+        let custom_chords: usize = resolver.chord_bindings.values().map(|m| m.len()).sum();
+        assert_eq!(custom_chords, 0, "chords: {:?}", resolver.chord_bindings);
+
+        // The valid entry still resolves.
+        let event = KeyEvent::new(KeyCode::F(6), KeyModifiers::empty());
+        assert_eq!(resolver.resolve(&event, KeyContext::Normal), Action::Save);
     }
 
     #[test]
