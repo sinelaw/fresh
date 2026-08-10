@@ -3963,9 +3963,16 @@ mod tests {
 
         let alt_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
 
+        // Pin the keymap: on macOS `Config::default()` selects the macos
+        // keymap, which deliberately binds Alt+F to word movement in Normal —
+        // that context-specific binding outranks the File mnemonic there, so
+        // the mnemonic assertions below only hold on the default keymap.
+        let mut baseline = Config::default();
+        baseline.active_keybinding_map = "default".into();
+
         // Baseline: with no user override, Alt+H is the Help menu mnemonic
         // (a default *global* binding).
-        let default_resolver = KeybindingResolver::new(&Config::default());
+        let default_resolver = KeybindingResolver::new(&baseline);
         assert_eq!(
             default_resolver.resolve(&alt_h, KeyContext::Normal),
             Action::MenuOpen("Help".to_string()),
@@ -3973,7 +3980,7 @@ mod tests {
         );
 
         // User binds Alt+H → command_palette (no `when` clause → Normal context).
-        let mut config = Config::default();
+        let mut config = baseline.clone();
         config.keybindings.push(Keybinding {
             key: "h".to_string(),
             modifiers: vec!["alt".to_string()],
@@ -4073,7 +4080,11 @@ mod tests {
     /// the prompt dispatch path.
     #[test]
     fn test_default_prompt_bindings_outrank_menu_mnemonics() {
-        let resolver = KeybindingResolver::new(&Config::default());
+        // Pin the keymap so the assertions don't depend on the host OS
+        // (macOS defaults to the macos keymap).
+        let mut config = Config::default();
+        config.active_keybinding_map = "default".into();
+        let resolver = KeybindingResolver::new(&config);
 
         // Alt+G: `live_grep_toggle_regex` (prompt) vs `menu_open Go` (global).
         let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
@@ -4114,9 +4125,14 @@ mod tests {
     fn test_mnemonics_disabled_releases_alt_letter_chords() {
         use crate::config::Keybinding;
 
-        let mut config = Config::default();
-        config.editor.menu_bar_mnemonics = false;
-        let resolver = KeybindingResolver::new(&config);
+        // Pin the keymap: on macOS `Config::default()` selects the macos
+        // keymap, whose own `normal` Alt+F word-movement binding would
+        // resolve here (correctly) instead of Action::None.
+        let mut baseline = Config::default();
+        baseline.active_keybinding_map = "default".into();
+        baseline.editor.menu_bar_mnemonics = false;
+
+        let resolver = KeybindingResolver::new(&baseline);
 
         // With nothing else bound, Alt+F is genuinely unbound now — not a
         // swallowed MenuOpen.
@@ -4128,8 +4144,7 @@ mod tests {
         );
 
         // The freed chord is available to user bindings.
-        let mut config = Config::default();
-        config.editor.menu_bar_mnemonics = false;
+        let mut config = baseline.clone();
         config.keybindings.push(Keybinding {
             key: "f".to_string(),
             modifiers: vec!["alt".to_string()],
@@ -4147,8 +4162,7 @@ mod tests {
 
         // The option governs Alt+letter mnemonics only: a menu_open binding
         // on a non-mnemonic chord (e.g. F2) stays live.
-        let mut config = Config::default();
-        config.editor.menu_bar_mnemonics = false;
+        let mut config = baseline.clone();
         config.keybindings.push(Keybinding {
             key: "f2".to_string(),
             modifiers: vec![],
@@ -4179,10 +4193,14 @@ mod tests {
     fn test_plugin_mode_binding_outranks_default_global() {
         let mut resolver = KeybindingResolver::new(&Config::default());
         let mode_ctx = KeyContext::Mode("test-mode".to_string());
-        resolver.plugin_defaults.entry(mode_ctx.clone()).or_default().insert(
-            (KeyCode::Char('h'), KeyModifiers::ALT),
-            Action::PluginAction("test_mode_help".to_string()),
-        );
+        resolver
+            .plugin_defaults
+            .entry(mode_ctx.clone())
+            .or_default()
+            .insert(
+                (KeyCode::Char('h'), KeyModifiers::ALT),
+                Action::PluginAction("test_mode_help".to_string()),
+            );
 
         // Alt+H is the global Help mnemonic; inside the plugin mode the
         // mode's own binding must win.
@@ -4195,10 +4213,14 @@ mod tests {
 
         // Same specificity, keymap side: a default-keymap binding for the
         // same mode context outranks the plugin default.
-        resolver.default_bindings.entry(mode_ctx.clone()).or_default().insert(
-            (KeyCode::Char('h'), KeyModifiers::ALT),
-            Action::CommandPalette,
-        );
+        resolver
+            .default_bindings
+            .entry(mode_ctx.clone())
+            .or_default()
+            .insert(
+                (KeyCode::Char('h'), KeyModifiers::ALT),
+                Action::CommandPalette,
+            );
         assert_eq!(
             resolver.resolve(&alt_h, mode_ctx),
             Action::CommandPalette,
@@ -4254,17 +4276,11 @@ mod tests {
                     let event = KeyEvent::new(*code, *modifiers);
                     let resolved = resolver.resolve(&event, context.clone());
                     assert_eq!(
-                        &resolved,
-                        action,
+                        &resolved, action,
                         "keymap '{}': binding {:?}+{:?} → {:?} in context {:?} is \
                          unreachable — it resolves to {:?} instead (shadowed by a \
                          broader binding)",
-                        map_name,
-                        modifiers,
-                        code,
-                        action,
-                        context,
-                        resolved,
+                        map_name, modifiers, code, action, context, resolved,
                     );
                 }
             }
