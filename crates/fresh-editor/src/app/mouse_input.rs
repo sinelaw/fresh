@@ -1987,6 +1987,10 @@ impl Editor {
         let click_row = row.saturating_sub(sb_rect.y) as usize;
         let state = ScrollbarState::new(total, visible, prompt.scroll_offset);
         prompt.scroll_offset = state.click_to_offset(track_height, click_row);
+        // Latch manual scroll so the renderer's keep-selection-visible
+        // pass doesn't immediately yank the offset back to the selection
+        // (same latch the wheel uses; reset when the selection moves).
+        prompt.manual_scroll = true;
         // Hand off to the drag follow-up so subsequent mouse moves
         // keep tracking the thumb.
         self.active_window_mut()
@@ -3000,6 +3004,9 @@ impl Editor {
                 let click_row = clamped_row.saturating_sub(sb_rect.y) as usize;
                 let state = ScrollbarState::new(total, visible, prompt.scroll_offset);
                 prompt.scroll_offset = state.click_to_offset(track_height, click_row);
+                // Keep the manual-scroll latch through the drag so the
+                // renderer doesn't pull the offset back to the selection.
+                prompt.manual_scroll = true;
             }
             return Ok(());
         }
