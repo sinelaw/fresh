@@ -288,6 +288,27 @@ pub struct PendingGrammar {
     pub extensions: Vec<String>,
 }
 
+/// What a still-being-built workspace shows in place of its contents.
+///
+/// See [`Editor::preparing_windows`]. The window is real; this is only
+/// the copy on its placeholder page, so the plugin driving the build can
+/// narrate it ("Adding worktree…", then "Starting agent…") without the
+/// host knowing anything about worktrees.
+#[derive(Clone, Debug)]
+pub struct PreparingWindow {
+    /// Progress line under the workspace name, e.g. `Adding worktree…`.
+    pub message: String,
+    /// Name to show on the page, when it should differ from the window's
+    /// own label — the Orchestrator's resolved display name, so renaming a
+    /// workspace mid-build renames the page too. Empty falls back to the
+    /// window label.
+    pub label: String,
+    /// The build failed and `message` is the reason. Renders in the error
+    /// colour with a retry hint instead of the "any moment now" one — the
+    /// same distinction a disconnected remote session draws.
+    pub failed: bool,
+}
+
 /// Track an in-flight semantic token range request.
 #[derive(Clone, Debug)]
 pub(crate) struct SemanticTokenRangeRequest {
@@ -828,6 +849,23 @@ pub struct Editor {
         fresh_core::WindowId,
         crate::app::orchestrator_persistence::PersistedWindow,
     >,
+
+    /// Windows whose *contents* are still being built — the Orchestrator's
+    /// "create a workspace" flow, where the `git worktree add` behind a new
+    /// workspace can run for a long time on a big repo or a slow disk.
+    ///
+    /// The window itself is entirely real from the moment the user asks for
+    /// it: a `Window` with its own id, durable `stable_id`, label, and local
+    /// authority, so it can be focused, renamed, filed into a folder,
+    /// archived, or closed exactly like any other workspace. Only what it
+    /// *shows* differs — [`Editor::render_preparing_shell_page`] paints the
+    /// progress line here instead of an empty scratch buffer, the same shape
+    /// a not-yet-connected remote session shows.
+    ///
+    /// The entry is dropped when the workspace's terminal is finally seeded
+    /// into it (via `create_window_with_terminal`'s adopt path), at which
+    /// point the window renders as the ordinary session it has become.
+    pub(crate) preparing_windows: std::collections::HashMap<fresh_core::WindowId, PreparingWindow>,
 
     /// Monotonic counter for the next session id. The base session
     /// uses 1; new sessions take 2, 3, …. Closing a session does
@@ -1474,6 +1512,15 @@ pub(crate) struct FloatingWidgetState {
     /// crossing between widgets changes it, so motion inside one control
     /// costs nothing.
     pub hovered_widget_key: String,
+    /// Per-row identity of the pointer's target inside a `List` / `Tree`,
+    /// taken from the hovered hit's `key` payload. Empty when the pointer
+    /// is over nothing, or over a widget whose hits carry no row key.
+    ///
+    /// `hovered_widget_key` alone can't light a single row: every row of a
+    /// tree shares the *tree's* spec key, so it names the list, not the
+    /// line under the pointer. This feeds `RenderContext::hover_item_key`,
+    /// which the list/tree collectors compare against each row's item key.
+    pub hovered_item_key: String,
     /// The open `Dropdown`'s option list, surfaced by the widget renderer
     /// for a screen-level floating pop-over (drawn by
     /// `render_floating_widget_panel` at the trigger's screen row, clipped
@@ -2044,6 +2091,7 @@ mod tests {
             closable: false,
             close_button_rect: None,
             hovered_widget_key: String::new(),
+            hovered_item_key: String::new(),
             dropdown_popup: None,
             dropdown_popup_hits: Vec::new(),
             dropdown_popup_rect: None,

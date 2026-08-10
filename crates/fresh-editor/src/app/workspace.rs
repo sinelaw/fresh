@@ -433,6 +433,16 @@ impl Editor {
         if self.dormant_remote.contains_key(&id) {
             return Ok(());
         }
+        // A workspace whose contents are still being built has nothing worth
+        // recording — and it is temporarily rooted at its *project*
+        // directory (its own doesn't exist yet), so writing a workspace file
+        // here would file an empty layout against a directory that already
+        // has a real workspace of its own. The Orchestrator persists the
+        // in-flight create separately and rebuilds the row on the next
+        // launch; see `PreparingWindow`.
+        if self.preparing_windows.contains_key(&id) {
+            return Ok(());
+        }
         let Some(win) = self.windows.get(&id) else {
             return Ok(());
         };

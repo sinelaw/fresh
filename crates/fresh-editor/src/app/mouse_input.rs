@@ -4524,20 +4524,35 @@ impl Editor {
         for slot in [super::PanelSlot::Dock, super::PanelSlot::Floating] {
             // A slot the pointer isn't addressing resolves to "nothing
             // hovered", which also *clears* whatever it had highlighted.
-            let now = if pointer_owner.is_none_or(|owner| owner == slot) {
+            // The hovered *row* travels beside the hovered widget: a
+            // list/tree hit carries its item key in the payload, and every
+            // row of one tree shares the tree's own `widget_key`, so
+            // without it the renderer could only light the whole list.
+            let (now, now_item) = if pointer_owner.is_none_or(|owner| owner == slot) {
                 self.probe_floating_widget(slot, col, row)
                     .and_then(|p| p.hit)
-                    .map(|h| h.widget_key)
+                    .map(|h| {
+                        let item = h
+                            .payload
+                            .get("key")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        (h.widget_key, item)
+                    })
                     .unwrap_or_default()
             } else {
-                String::new()
+                (String::new(), String::new())
             };
             let panel_key = match self.panel(slot) {
-                Some(fwp) if fwp.hovered_widget_key != now => fwp.panel_key.clone(),
+                Some(fwp) if fwp.hovered_widget_key != now || fwp.hovered_item_key != now_item => {
+                    fwp.panel_key.clone()
+                }
                 _ => continue,
             };
             if let Some(fwp) = self.panel_mut(slot) {
                 fwp.hovered_widget_key = now;
+                fwp.hovered_item_key = now_item;
             }
             self.rerender_widget_panel(&panel_key);
             changed = true;

@@ -163,14 +163,23 @@ interface AgentSession {
     detail: string;
     state: "starting" | "running" | "stopped" | "error";
   };
-  // Present only on a synthetic placeholder row that stands in for a
-  // workspace still being created in the background (the non-blocking
-  // New-Workspace flow — see `startPendingWorkspace`). While set, the row
-  // has no live window (synthetic negative `id`, `terminalId` null) and
-  // renders its `pending` status in place of a live pill. On success the
-  // placeholder is dropped and the real live window takes its place; on
-  // failure `phase` flips to `"error"` and the row offers retry / dismiss.
+  // Present while this workspace is still being built (the non-blocking
+  // New-Workspace flow — see `startPendingWorkspace`). A LOCAL create owns
+  // a real window from the moment it is asked for, so the row is a full
+  // workspace throughout — switchable, renameable, filable, closable — and
+  // `pending` only says that its *contents* are still on their way (the
+  // window renders the host's "being created" page instead of a buffer).
+  // A remote create has no window until its connect resolves, so its row is
+  // still a synthetic placeholder (negative `id`, `terminalId` null). Either
+  // way, success clears `pending` and failure flips `phase` to `"error"`,
+  // leaving retry / dismiss on the row.
   pending?: PendingCreate;
+  // Overrides the root as this row's dock-order key (see `stableOrderKey`).
+  // Set on a workspace born as a placeholder: its root changes underneath
+  // it when the worktree it was standing in for is finally created, and
+  // without a fixed key the row would jump to the bottom of the dock at
+  // exactly the moment it came alive.
+  orderKey?: string;
 }
 
 // A workspace-create request captured off the (now-closing) New-Workspace
@@ -312,7 +321,7 @@ const orchestratorSessions = new Map<number, AgentSession>();
 const rootDisplayOrder = new Map<string, number>();
 let nextRootDisplayOrder = 0;
 function stableOrderKey(s: AgentSession): number {
-  const key = normRoot(s.root);
+  const key = s.orderKey ?? normRoot(s.root);
   let order = rootDisplayOrder.get(key);
   if (order === undefined) {
     order = nextRootDisplayOrder++;
@@ -872,12 +881,16 @@ let lastShowWorktrees: boolean | null = null;
 // checkbox (Alt+I) opts back into hiding the throwaway single-file /
 // restored-shell rows.
 let lastHideTrivial: boolean | null = null;
-// Dock card density. "card" (default) shows the three-line rounded pill;
-// "compact" shows one line per session. Read all over the render path,
-// so it stays a plain value rather than a config lookup; the dock
+// Dock card density. "compact" (default) shows one line per session;
+// "card" shows the three-line rounded pill. Read all over the render
+// path, so it stays a plain value rather than a config lookup; the dock
 // re-seeds it from the `defaultView` setting on open unless the user has
 // hit the toolbar's "view" button this session (`dockViewOverride`).
-let dockView: "card" | "compact" = "card";
+// Compact is the default because the dock is a *switcher* first: one
+// line per workspace fits several times as many rows in the same column,
+// and the card's extra lines (branch, git, PR) are detail you go looking
+// for, not detail you navigate by.
+let dockView: "card" | "compact" = "compact";
 let dockViewOverride: "card" | "compact" | null = null;
 // Remembered dock project filter (see `OpenDialogState.projectFilter`).
 let lastDockProjectFilter: string | null = null;
@@ -903,10 +916,10 @@ editor.defineConfigBoolean("autoOpenDock", {
     "Open the workspace dock automatically when Fresh starts. The dock opens unfocused, so typing still goes to the editor.",
 });
 editor.defineConfigEnum("defaultView", {
-  values: ["card", "compact"] as const,
-  default: "card",
+  values: ["compact", "card"] as const,
+  default: "compact",
   description:
-    "Dock layout the panel opens with: 'card' (multi-line pill per workspace) or 'compact' (one line per workspace). The dock's 'view' button flips it for the current session.",
+    "Dock layout the panel opens with: 'compact' (one line per workspace) or 'card' (multi-line pill per workspace). The dock's 'view' button flips it for the current session.",
 });
 editor.defineConfigBoolean("showAllWorktrees", {
   default: false,
@@ -938,7 +951,7 @@ function dockSettings(): DockSettings {
 // the user has hit it, otherwise the configured default.
 function configuredDockView(): "card" | "compact" {
   if (dockViewOverride !== null) return dockViewOverride;
-  return dockSettings().defaultView === "compact" ? "compact" : "card";
+  return dockSettings().defaultView === "card" ? "card" : "compact";
 }
 
 // The two Filters checkboxes, same precedence. `hideTrivial` is the
@@ -1121,7 +1134,13 @@ function folderOfSession(id: number): string | null {
   if (!s) return null;
   const assign = loadAssign();
   const own = s.stableId ? assign[stableIdKey(s.stableId)] : undefined;
-  const a = own !== undefined ? own : assign[normRoot(s.root)];
+  // A workspace still being created borrows its project's directory as a
+  // root (its own doesn't exist yet), so the root-keyed fallback would file
+  // it wherever the *project's* workspace lives. Its stable id is its own
+  // from birth — that alone speaks for it.
+  const a = own !== undefined
+    ? own
+    : (s.pending && s.stableId ? undefined : assign[normRoot(s.root)]);
   return a && folderById(a) ? a : null;
 }
 
@@ -1259,7 +1278,13 @@ function customNameFor(stableId: string | undefined, root: string): string | und
 }
 
 // The manual name pinned to this session, if any.
+//
+// A workspace that is still being created is rooted at its *project*
+// directory until its worktree exists, which another workspace may already
+// occupy — so the root-keyed fallback would hand it that workspace's name.
+// It has a stable id of its own from birth, so key it by that alone.
 function workspaceCustomName(s: AgentSession): string | undefined {
+  if (s.pending && s.stableId) return loadNames()[stableIdKey(s.stableId)];
   return customNameFor(s.stableId, s.root);
 }
 
@@ -1280,6 +1305,26 @@ function workspaceDisplayName(s: AgentSession): string {
 // manual rename.
 function applyResolvedLabel(s: AgentSession): void {
   s.label = workspaceDisplayName(s);
+  // A workspace still being built shows this name on its own page too, so
+  // renaming it while it runs renames what the user is looking at — not
+  // just the dock row.
+  syncPreparingPage(s);
+}
+
+// Push a still-building workspace's name + status onto the placeholder page
+// inside its window. A no-op for a finished workspace, and for a windowless
+// (remote) placeholder, which has no page to write to.
+function syncPreparingPage(s: AgentSession): void {
+  if (!s.pending || s.id <= 0) return;
+  editor.setWindowPreparing(
+    s.id,
+    s.pending.message,
+    s.label,
+    // Both "failed" and "paused" (interrupted by a restart) are stalled
+    // states waiting on the same retry, and the page says so.
+    pendingActionable(s.pending),
+    false,
+  );
 }
 
 // Set (or, with an empty name, clear) the manual name for a session and
@@ -1299,7 +1344,9 @@ function renameWorkspace(s: AgentSession, name: string): void {
     // With a co-tenant present the entry may still name *that*
     // workspace, so it is left alone — touching it is exactly the
     // "renaming the extracted workspace renamed the original too" bug.
-    if (!hasLiveCoTenant(s)) {
+    // A still-being-created workspace is borrowing its project's root the
+    // same way, so it never writes the root entry either.
+    if (!hasLiveCoTenant(s) && !s.pending) {
       if (trimmed) store[rootKey] = trimmed;
       else delete store[rootKey];
     }
@@ -1352,8 +1399,9 @@ function assignSessionToFolder(id: number, folderId: string | null): void {
     else delete assign[idKey];
     // Keep the per-root entry in step when it can only mean this
     // workspace, so root-keyed lookups (a later discovered row at this
-    // root, a legacy workspace file) agree with the move.
-    if (!coTenant) {
+    // root, a legacy workspace file) agree with the move. A still-being-
+    // created workspace is only borrowing this root, so it never writes it.
+    if (!coTenant && !s.pending) {
       if (folderId) assign[rootKey] = folderId;
       else delete assign[rootKey];
     }
@@ -4263,17 +4311,17 @@ function dockProjectMenu(): WidgetSpec {
   const cur = openDialog?.projectFilter ?? null;
   const keys = projectMenuKeys();
   const cursor = clampMenuIndex(openDialog?.projectMenuIndex ?? 0, keys.length);
-  const rows: WidgetSpec[] = keys.map((key, i) => {
-    const applied = key === "" ? cur === null : key === cur;
-    const label = key === "" ? editor.t("dock.all_projects") : projectLabel(key);
-    return row(
-      button((applied ? "● " : "  ") + label, {
+  const rows = menuRows(
+    keys.map((key, i) => {
+      const applied = key === "" ? cur === null : key === cur;
+      const label = key === "" ? editor.t("dock.all_projects") : projectLabel(key);
+      return {
+        label: (applied ? "● " : "  ") + label,
         key: projectPickKey(key),
-        intent: i === cursor ? "primary" : "normal",
-      }),
-      flexSpacer(),
-    );
-  });
+        intent: i === cursor ? ("primary" as const) : undefined,
+      };
+    }),
+  );
   return overlay(labeledSection({ label: editor.t("dock.menu_label"), child: col(...rows) }));
 }
 
@@ -4436,17 +4484,24 @@ function buildDockSpec(): WidgetSpec {
       ];
   const bottomRows = bottom.length;
 
-  // The collapsible Filters section: a header toggle plus, when open,
-  // the density / project / worktree / trivial controls and Manage.
+  // The collapsible Filters section: a header row plus, when open, the
+  // project / worktree / trivial controls and Manage.
+  //
+  // Density rides on the header, NOT inside the collapsed body: flipping
+  // card↔compact is a view control the user reaches for constantly, and
+  // burying it under a "Filters" disclosure both hid it and mislabelled
+  // it (a layout is not a filter). It sits beside the Filters toggle so
+  // it is one click away whether or not the section is open.
   const filtersArrow = openDialog.filtersExpanded ? "▾ " : "▸ ";
   const filterHeader = row(
     button(filtersArrow + editor.t("dock.filters"), { key: "filters-toggle" }),
+    spacer(1),
+    button(editor.t("dock.view_btn", { view: dockView }), { key: "view-toggle" }),
     flexSpacer(),
   );
   const filterBody: WidgetSpec[] = openDialog.filtersExpanded
     ? [
       row(
-        button(editor.t("dock.view_btn", { view: dockView }), { key: "view-toggle" }),
         flexSpacer(),
         button(editor.t("dock.project_btn", { word: projWord }), { key: "project-menu" }),
       ),
@@ -4637,15 +4692,54 @@ function dockMenuOptions(): MenuOption[] {
   return m.kind === "new" ? dockNewOptions() : dockMoveOptions(m.sessionId);
 }
 
+// A dropdown/context-menu row. Menu entries are *rows in a list*, not
+// framed actions: a `[ ]` frame around every line turns the popup into a
+// column of ragged brackets and leaves the highlight hugging the label
+// instead of the popup. `bare` drops the frame, and padding every label
+// to the widest one makes the focus/hover band a uniform full-width bar
+// down the menu (`menuRows` measures the set).
+function menuItemButton(
+  label: string,
+  key: string,
+  opts?: { intent?: "primary" | "danger"; disabled?: boolean; width?: number },
+): WidgetSpec {
+  const width = opts?.width ?? 0;
+  const pad = Math.max(0, width - editor.stringWidth(label));
+  return button(" " + label + " ".repeat(pad) + " ", {
+    key,
+    bare: true,
+    intent: opts?.intent ?? "normal",
+    disabled: opts?.disabled ?? false,
+  });
+}
+
+// Lay out a set of menu entries at one shared width, so every row's
+// highlight spans the same columns and the popup sizes to its widest item.
+//
+// Deliberately no `flexSpacer`: that stretches the row to the *panel*
+// width, which for an anchored popup means half the screen — and it pads
+// with dead space rather than with the row itself, so the highlight would
+// still stop at the label. The shared label width does the aligning.
+function menuRows(
+  items: { label: string; key: string; intent?: "primary" | "danger"; disabled?: boolean }[],
+): WidgetSpec[] {
+  const width = items.reduce((w, it) => Math.max(w, editor.stringWidth(it.label)), 0);
+  return items.map((it) =>
+    menuItemButton(it.label, it.key, {
+      intent: it.intent,
+      disabled: it.disabled,
+      width,
+    })
+  );
+}
+
 function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number): WidgetSpec {
-  const rows: WidgetSpec[] = opts.map((o, i) =>
-    row(
-      button((o.marked ? "● " : "  ") + o.label, {
-        key: menuPickKey(o.key),
-        intent: i === cursor ? "primary" : "normal",
-      }),
-      flexSpacer(),
-    )
+  const rows = menuRows(
+    opts.map((o, i) => ({
+      label: (o.marked ? "● " : "  ") + o.label,
+      key: menuPickKey(o.key),
+      intent: i === cursor ? ("primary" as const) : undefined,
+    })),
   );
   return overlay(labeledSection({ label, child: col(...rows) }));
 }
@@ -4929,8 +5023,9 @@ function buildCreateFolderSpec(): WidgetSpec {
 // dialog stays open for the user to type one.
 // Every branch below goes through a published API verb rather than calling
 // the folder/name stores directly, so the dialog and a script share one
-// implementation of each operation — including the guards (a workspace still
-// being created cannot be renamed or filed) and the dock refresh.
+// implementation of each operation — including the guards (a workspace with
+// no window yet has nothing to file a name or a folder against, so it can be
+// neither renamed nor moved) and the dock refresh.
 function submitCreateFolder(): void {
   const d = createFolderDialog;
   if (!d) return;
@@ -5054,55 +5149,79 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
   if (state.target.kind === "folder") {
     const f = folderById(state.target.id);
     const label = f?.name ?? `[${state.target.id}]`;
-    return col(
-      { kind: "raw", entries: [
-        styledRow([{ text: FOLDER_GLYPH + " " + label, style: { bold: true } }]),
-      ] },
-      button(editor.t("dock.ctx_rename"), { intent: "primary", key: "ctx-rename" }),
-      button(editor.t("dock.ctx_new_subfolder"), { key: "ctx-new-subfolder" }),
-      button(editor.t("dock.ctx_delete_folder"), { intent: "danger", key: "ctx-delete-folder" }),
-      { kind: "raw", entries: [
-        styledRow([{ text: editor.t("dock.ctx_esc_close"), style: { fg: "ui.menu_disabled_fg" } }]),
-      ] },
-    );
+    return contextMenuSpec(FOLDER_GLYPH + " " + label, [
+      { label: editor.t("dock.ctx_rename"), key: "ctx-rename", intent: "primary" },
+      { label: editor.t("dock.ctx_new_subfolder"), key: "ctx-new-subfolder" },
+      { label: editor.t("dock.ctx_delete_folder"), key: "ctx-delete-folder", intent: "danger" },
+    ]);
   }
   const sid = state.target.id;
   const s = orchestratorSessions.get(sid);
   const label = s?.label ?? `[${sid}]`;
-  // A being-created placeholder isn't a real session: no Visit / Move /
-  // Archive. It offers Retry (when failed or paused) and Dismiss.
-  if (s?.pending) {
-    const items: WidgetSpec[] = [
-      { kind: "raw", entries: [styledRow([{ text: `${label}`, style: { bold: true } }])] },
-    ];
+  // A workspace whose build hasn't finished is still a workspace: it can be
+  // visited, renamed, filed into a folder and thrown away exactly like a
+  // finished one, because it owns a real window from the moment the user
+  // asked for it. Only two things differ — Retry appears once the build has
+  // failed or been interrupted, and Archive is inert while there is no
+  // worktree yet to archive.
+  //
+  // A *windowless* placeholder (a remote create, whose window is born by the
+  // connect) genuinely has nothing to visit or rename, so it keeps the
+  // narrow retry/dismiss menu.
+  if (s?.pending && sid <= 0) {
+    const items: { label: string; key: string; intent?: "primary" | "danger" }[] = [];
     if (pendingActionable(s.pending)) {
-      items.push(button(editor.t("dock.ctx_retry"), { intent: "primary", key: "ctx-retry" }));
+      items.push({ label: editor.t("dock.ctx_retry"), key: "ctx-retry", intent: "primary" });
     }
-    items.push(button(editor.t("dock.ctx_dismiss"), { intent: "danger", key: "ctx-dismiss" }));
-    items.push({
-      kind: "raw",
-      entries: [styledRow([{ text: editor.t("dock.ctx_esc_close"), style: { fg: "ui.menu_disabled_fg" } }])],
-    });
-    return col(...items);
+    items.push({ label: editor.t("dock.ctx_dismiss"), key: "ctx-dismiss", intent: "danger" });
+    return contextMenuSpec(label, items);
   }
-  const canArchive = bulkEligible("archive", sid);
-  const canDelete = bulkEligible("delete", sid);
-  // Intentionally intrinsic-width content only: NO `labeledSection`,
-  // `flexSpacer`, or `fullWidth` widgets — those expand to the panel
-  // width and would blow the anchored popup up to ~half the screen. The
-  // host frames the box (its border) and sizes it to the widest of these
-  // rows, so the popup hugs its items like a real context menu.
+  const pending = s?.pending;
+  const canArchive = !pending && bulkEligible("archive", sid);
+  const canDelete = pending ? true : bulkEligible("delete", sid);
+  const items: { label: string; key: string; intent?: "primary" | "danger"; disabled?: boolean }[] =
+    [
+      { label: editor.t("dock.ctx_visit"), key: "ctx-visit", intent: "primary" },
+      { label: editor.t("dock.ctx_rename"), key: "ctx-rename-session" },
+      { label: editor.t("dock.ctx_move"), key: "ctx-move" },
+    ];
+  if (pending && pendingActionable(pending)) {
+    items.push({ label: editor.t("dock.ctx_retry"), key: "ctx-retry" });
+  }
+  items.push({ label: editor.t("dock.ctx_archive"), key: "ctx-archive", disabled: !canArchive });
+  // Deleting a workspace that is still being created cancels the build and
+  // clears up after it (`ctx-dismiss` — the same teardown the placeholder
+  // menu offered), so the entry means what it says on either kind of row.
+  items.push({
+    label: editor.t("dock.ctx_delete"),
+    key: pending ? "ctx-dismiss" : "ctx-delete",
+    intent: "danger",
+    disabled: !canDelete,
+  });
+  return contextMenuSpec(label, items);
+}
+
+// One anchored context menu: a bold title row, the actions, and the Esc
+// hint. Rows are `menuRows` — bare, uniform-width entries — so the popup
+// reads as a menu rather than a stack of `[ bracketed ]` buttons and the
+// focus/hover highlight spans each row edge to edge.
+//
+// Intentionally intrinsic-width content only: NO `labeledSection`,
+// `flexSpacer` at the top level, or `fullWidth` widgets — those expand to
+// the panel width and would blow the anchored popup up to ~half the screen.
+// The host frames the box (its border) and sizes it to the widest row, so
+// the popup hugs its items like a real context menu.
+function contextMenuSpec(
+  title: string,
+  items: { label: string; key: string; intent?: "primary" | "danger"; disabled?: boolean }[],
+): WidgetSpec {
   return col(
+    { kind: "raw", entries: [styledRow([{ text: " " + title, style: { bold: true } }])] },
+    ...menuRows(items),
     { kind: "raw", entries: [
-      styledRow([{ text: `${label}`, style: { bold: true } }]),
-    ] },
-    button(editor.t("dock.ctx_visit"), { intent: "primary", key: "ctx-visit" }),
-    button(editor.t("dock.ctx_rename"), { key: "ctx-rename-session" }),
-    button(editor.t("dock.ctx_move"), { key: "ctx-move" }),
-    button(editor.t("dock.ctx_archive"), { key: "ctx-archive", disabled: !canArchive }),
-    button(editor.t("dock.ctx_delete"), { intent: "danger", key: "ctx-delete", disabled: !canDelete }),
-    { kind: "raw", entries: [
-      styledRow([{ text: editor.t("dock.ctx_esc_close"), style: { fg: "ui.menu_disabled_fg" } }]),
+      styledRow([
+        { text: " " + editor.t("dock.ctx_esc_close"), style: { fg: "ui.menu_disabled_fg" } },
+      ]),
     ] },
   );
 }
@@ -5272,10 +5391,12 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
     const id = dockSelectedSessionId();
     if (typeof id !== "number") return;
     const sess = orchestratorSessions.get(id);
-    // A being-created placeholder has no window to switch to. Arrow-nav
-    // must never spawn/retry from it (that would fire on every scroll-past
-    // during the debounce); it just sits highlighted, showing its status.
-    if (sess?.pending) return;
+    // A being-created workspace switches like any other — its window exists
+    // and shows the build's progress. Only a *windowless* placeholder (a
+    // remote create, whose window is born by the connect) has nothing to
+    // switch to; arrow-nav must never spawn/retry from one, which would fire
+    // on every scroll-past during the debounce.
+    if (sess?.pending && id <= 0) return;
     // A discovered (on-disk) worktree has no window to switch to — in the
     // dock's live-switch model the highlighted row *is* the active
     // session, so opening it means attaching a fresh session at the
@@ -5324,10 +5445,12 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
   const id = dockSelectedSessionId();
   if (typeof id !== "number") return;
   const sess = orchestratorSessions.get(id);
-  // A being-created placeholder has no window to dive into. A click/Enter
-  // resumes a paused/failed one (Enter = retry); a still-creating one has
-  // nothing to do but keep showing its progress.
-  if (sess?.pending) {
+  // On a workspace whose build has failed or is paused, a click/Enter is
+  // "try again" rather than "go there" — the retry is the only thing that
+  // moves it forward, and the row already shows why. A still-creating one
+  // (and any windowless remote placeholder) just keeps showing its progress;
+  // one that owns a window falls through and is entered like any workspace.
+  if (sess?.pending && (pendingActionable(sess.pending) || id <= 0)) {
     if (pendingActionable(sess.pending)) retryPending(id);
     return;
   }
@@ -8874,27 +8997,73 @@ function pendingCreatingMessage(spec: CreateSpec): string {
     : editor.t("dock.pending_connecting");
 }
 
-// Insert a placeholder row for a workspace to create and — unless it is a
-// restored (paused) row — close the form, surface the dock, and launch the
-// background worker. Returns the placeholder's synthetic id.
-function startPendingWorkspace(
+// Open a workspace that is still being built and — unless it is a restored
+// (paused) row — close the form, surface the dock, and launch the background
+// worker. Resolves to the row's id.
+//
+// A LOCAL workspace is a *real window* from this moment: the host opens it
+// with its own id, durable stable id, and label, showing a "being created"
+// page in place of its contents. That is what makes the wait bearable — the
+// user is taken into the workspace they asked for straight away (Create &
+// Visit) instead of being left on the previous one and having focus yanked
+// out from under them whenever `git worktree add` happens to finish. It is
+// also what makes the row a first-class workspace while it builds: renaming,
+// filing it into a folder, switching to it and closing it all work on the
+// window, not on a stub that only offers "dismiss".
+//
+// A REMOTE workspace still gets a synthetic placeholder row: its window is
+// born by the connect itself (`attachRemoteAgent`), so there is nothing here
+// to adopt.
+async function startPendingWorkspace(
   spec: CreateSpec,
   opts?: { restored?: boolean; visit?: boolean; label?: string },
-): number {
-  const id = allocPendingId();
+): Promise<number> {
   const restored = opts?.restored === true;
   const remoteFacet: RemoteFacet | undefined =
     spec.backend === "local" ? undefined : { ...spec.facet };
+  // A restored row keeps the name it last showed (the resolved / relabelled
+  // one persisted alongside the spec); a fresh row starts from the spec's
+  // capture-time display label.
+  const label = opts?.label || spec.displayLabel;
+  const message = restored
+    ? editor.t("dock.pending_interrupted")
+    : pendingCreatingMessage(spec);
+  // Focus follows into the new workspace *now*, while it is still empty —
+  // never later, when it finishes. A create that grabs the keyboard minutes
+  // after the click interrupts whatever the user moved on to.
+  const visit = !restored && opts?.visit === true;
+
+  let id: number;
+  let stableId: string | undefined;
+  let root: string;
+  if (spec.backend === "local") {
+    // Root the placeholder at the project directory: the workspace's own
+    // directory is exactly what does not exist yet. The adopt step re-roots
+    // the window onto the worktree once it has been created.
+    const born = await editor.createPreparingWindow({
+      root: spec.projectPath,
+      label,
+      message,
+      activate: visit,
+    });
+    id = born.windowId;
+    stableId = born.stableId || undefined;
+    root = spec.projectPath;
+  } else {
+    id = allocPendingId();
+    // Synthetic root — a placeholder owns no real directory yet, and a
+    // unique key keeps it in its own stable dock-order slot.
+    root = `pending:${id}`;
+  }
   orchestratorSessions.set(id, {
     id,
-    // A restored row keeps the name it last showed (the resolved / relabelled
-    // one persisted alongside the spec); a fresh row starts from the spec's
-    // capture-time display label.
-    label: opts?.label || spec.displayLabel,
-    hostLabel: opts?.label || spec.displayLabel,
-    // Synthetic root — a placeholder owns no real directory yet, and a unique
-    // key keeps it in its own stable dock-order slot.
-    root: `pending:${id}`,
+    stableId,
+    label,
+    hostLabel: label,
+    root,
+    // Pin the dock slot to the row's identity, not to a root that is about
+    // to change under it.
+    orderKey: `pending:${id}`,
     projectPath: spec.displayProject,
     sharedWorktree: false,
     terminalId: null,
@@ -8904,10 +9073,10 @@ function startPendingWorkspace(
     remote: remoteFacet,
     pending: {
       phase: restored ? "paused" : "creating",
-      message: restored ? editor.t("dock.pending_interrupted") : pendingCreatingMessage(spec),
+      message,
       spec,
       // A restored/resumed row never yanks focus on relaunch.
-      visit: !restored && opts?.visit === true,
+      visit,
     },
   });
   savePendingSpecs();
@@ -8915,6 +9084,10 @@ function startPendingWorkspace(
     closeForm();
     showDockUnfocused();
     launchPendingCreate(id);
+  } else if (spec.backend === "local") {
+    // A row restored from a previous run is paused, not running: say so on
+    // its page too, so entering it doesn't read as "still working".
+    syncPreparingPage(orchestratorSessions.get(id)!);
   }
   return id;
 }
@@ -8999,11 +9172,15 @@ function settleCreateOutcome(id: number, outcome: CreateOutcome): void {
   resolve(outcome);
 }
 
-// Update a placeholder's status line (a no-op once the row is gone).
+// Update a placeholder's status line (a no-op once the row is gone). The
+// same line narrates the dock row and — for a workspace that already owns a
+// window — the page inside it, so the user sees one story whether they are
+// watching the list or sitting in the workspace.
 function setPendingMessage(id: number, msg: string): void {
   const s = orchestratorSessions.get(id);
   if (!s || !s.pending) return;
   s.pending.message = msg;
+  syncPreparingPage(s);
   if (openPanel) refreshOpenDialog();
 }
 
@@ -9012,7 +9189,13 @@ function setPendingMessage(id: number, msg: string): void {
 function relabelPending(id: number, label: string): void {
   const s = orchestratorSessions.get(id);
   if (!s || !s.pending || !label || s.label === label) return;
+  // A manual rename outranks the auto-resolved name: the user may well have
+  // renamed the workspace while it was building, and the worker resolving
+  // `<project>-N` must not overwrite that.
+  if (workspaceCustomName(s) !== undefined) return;
   s.label = label;
+  s.hostLabel = label;
+  syncPreparingPage(s);
   savePendingSpecs();
   if (openPanel) refreshOpenDialog();
 }
@@ -9024,6 +9207,7 @@ function failPending(id: number, reason: string): void {
   if (!s || !s.pending) return;
   s.pending.phase = "error";
   s.pending.message = reason.trim() || editor.t("err.connection_failed");
+  syncPreparingPage(s);
   if (s.remote) s.remote.state = "error";
   editor.setStatus(editor.t("status.prefix", { msg: s.pending.message }));
   savePendingSpecs();
@@ -9048,6 +9232,7 @@ function retryPending(id: number): void {
   if (!s || !s.pending) return;
   s.pending.phase = "creating";
   s.pending.message = pendingCreatingMessage(s.pending.spec);
+  syncPreparingPage(s);
   if (s.remote) s.remote.state = "starting";
   savePendingSpecs();
   if (openPanel) refreshOpenDialog();
@@ -9068,6 +9253,19 @@ function dismissPending(id: number): void {
   const qi = remoteCreateQueue.indexOf(id);
   if (qi >= 0) remoteCreateQueue.splice(qi, 1);
   orchestratorSessions.delete(id);
+  // A local placeholder owns a real window; dismissing the workspace has to
+  // close it, or the user is left sitting in a page for a create that is no
+  // longer running. Move off it first — the host refuses to close the active
+  // window — and mark it closing so `reconcileSessions` doesn't resurrect
+  // the row from the host snapshot before the close lands.
+  if (id > 0) {
+    closingWindowIds.add(id);
+    if (editor.activeWindow() === id) {
+      const other = editor.listWindows().find((w) => w.id !== id);
+      if (other) editor.setActiveWindow(other.id);
+    }
+    editor.closeWindow(id);
+  }
   savePendingSpecs();
   if (openPanel) {
     refreshOpenDialog();
@@ -9305,10 +9503,12 @@ async function runLocalCreate(id: number): Promise<void> {
   });
   const sharedWorktree = !createWorktree && !isLinkedAttach;
 
-  // Capture the user's current window so focus can return to it after
-  // `createWindowWithTerminal` dives into the new one — unless the user chose
-  // "Create & Visit", in which case focus stays in the new workspace.
-  const visit = orchestratorSessions.get(id)?.pending?.visit ?? false;
+  // Where the user actually is, captured immediately before the spawn dives
+  // into the new window. Focus was already settled when the workspace opened
+  // — "Create & Visit" put the user in it then, "Create in Background" left
+  // them where they were — so whatever the spawn does to the active window is
+  // undone here. Without this, a create that finishes minutes later yanks the
+  // keyboard out of whatever the user moved on to.
   const restoreTo = editor.activeWindow();
   setPendingMessage(id, editor.t("dock.pending_starting"));
   try {
@@ -9319,6 +9519,10 @@ async function runLocalCreate(id: number): Promise<void> {
       command: launchArgv.length > 0 ? launchArgv : undefined,
       title: launchArgv.length > 0 ? launchArgv[0] : undefined,
       resume: resumeArgv,
+      // Grow the placeholder the user has been looking at (and may have
+      // renamed or filed away) into the live session, keeping its window id
+      // and durable workspace id.
+      adoptWindow: id > 0 ? id : undefined,
       // Always mint the capability token bound to this window so
       // `fresh --cmd script ...` from inside the workspace is authorised —
       // whether or not the agent was taught about it. `teach` only gates the
@@ -9351,7 +9555,10 @@ async function runLocalCreate(id: number): Promise<void> {
       orchestratorSessions.delete(discId);
       discoveredIdByPath.delete(root);
     }
-    // The real window supersedes the placeholder.
+    // The workspace is live. When it grew out of a placeholder (`adoptWindow`)
+    // `winId === id`, so this replaces the row in place and it keeps its dock
+    // slot; otherwise the placeholder is superseded by the new row.
+    const wasPending = orchestratorSessions.get(id);
     orchestratorSessions.delete(id);
     savePendingSpecs();
     orchestratorSessions.set(winId, {
@@ -9360,6 +9567,9 @@ async function runLocalCreate(id: number): Promise<void> {
       label: customNameFor(result.stableId || undefined, root) ?? sessionName,
       hostLabel: sessionName,
       root,
+      // Keep the slot the row has occupied since the user asked for it, so
+      // coming alive doesn't move it in the list.
+      orderKey: wasPending?.orderKey,
       projectPath: effectiveProjectPath,
       sharedWorktree,
       terminalId: result.terminalId,
@@ -9376,17 +9586,19 @@ async function runLocalCreate(id: number): Promise<void> {
       workspaceId: result.stableId,
       root,
     });
-    if (visit) {
-      // Create & Visit: `createWindowWithTerminal` already dove into the new
-      // window; hand it the keyboard (blur the dock) so the user lands in it.
-      if (openPanel && dockMode) {
-        dockBlurred = true;
-        editor.floatingPanelControl(openPanel.id(), "blur", 0);
-        editor.setEditorMode(null);
-      }
-    } else {
-      // Stay put: undo the dive `createWindowWithTerminal` performed.
-      restoreActiveWindow(restoreTo);
+    // Put the active window back where it was a moment ago. This is NOT the
+    // "Create & Visit" decision — that was honoured when the workspace
+    // opened, minutes earlier. It only undoes the dive the spawn just
+    // performed, so finishing a build never moves the user: if they were
+    // already in this workspace (`restoreTo === winId`) they stay, and if
+    // they had gone elsewhere they are left there.
+    restoreActiveWindow(restoreTo);
+    if (restoreTo === winId && openPanel && dockMode) {
+      // The user is sitting in the workspace that just came alive — hand it
+      // the keyboard (blur the dock) so they can type into the agent.
+      dockBlurred = true;
+      editor.floatingPanelControl(openPanel.id(), "blur", 0);
+      editor.setEditorMode(null);
     }
     if (openPanel) {
       refreshOpenDialog();
@@ -9543,7 +9755,7 @@ function recoverPendingWorkspaces(): void {
     // not the generic capture-time default it would otherwise re-derive.
     const savedLabel = (e as Record<string, unknown>).label;
     const label = typeof savedLabel === "string" && savedLabel ? savedLabel : undefined;
-    startPendingWorkspace(spec, { restored: true, label });
+    void startPendingWorkspace(spec, { restored: true, label });
     restored++;
   }
   if (restored > 0) showDockUnfocused();
@@ -9579,7 +9791,7 @@ async function submitForm(visit: boolean): Promise<void> {
     renderForm();
     return;
   }
-  startPendingWorkspace(captured.spec, { visit });
+  await startPendingWorkspace(captured.spec, { visit });
 }
 
 /// Open a session in an existing worktree without creating one —
@@ -9842,16 +10054,22 @@ export type WorkspaceSummary = {
    *   * `"discovered"` — a worktree found on disk that has never been
    *     opened. No window yet, so `workspaceId` is `""` and `windowId` is a
    *     synthetic *negative* placeholder. `focusWorkspace` opens it.
-   *   * `"pending"` — a placeholder for a workspace still being created (or
-   *     one whose create failed and is waiting for a retry). Same synthetic
-   *     ids, and it cannot be renamed, filed, or acted on until it lands.
+   *   * `"pending"` — a workspace still being created (or one whose create
+   *     failed and is waiting for a retry). A local one owns a real window
+   *     and real ids from the moment it was asked for, so it can be
+   *     focused, renamed and filed like any workspace — only its
+   *     *contents* are still on their way. A remote one has no window
+   *     until its connect resolves: synthetic ids, and it cannot be
+   *     renamed or filed until it lands.
    *  Branch on this rather than on the sign of `windowId`. */
   kind: "live" | "discovered" | "pending";
   /** Durable identity — survives editor restarts. Record this one. Empty
-   *  for a `discovered` / `pending` row, which has no window yet. */
+   *  for a `discovered` row, and for a `pending` row that has no window
+   *  yet. */
   workspaceId: string;
   /** Per-process window id; valid only for this editor run. Negative for a
-   *  `discovered` / `pending` row (see `kind`). */
+   *  `discovered` row, and for a `pending` row with no window (see
+   *  `kind`). */
   windowId: number;
   /** `true` for the one workspace the editor is focused on right now. */
   active: boolean;
@@ -10199,7 +10417,7 @@ async function newWorkspace(
   // Before `specForNewWorkspace`, which rejects a bad host / missing path.
   await yieldToCaller();
   const spec = specForNewWorkspace(options);
-  const pendingId = startPendingWorkspace(spec, { visit: options.visit ?? false });
+  const pendingId = await startPendingWorkspace(spec, { visit: options.visit ?? false });
   const outcome = await awaitCreateOutcome(pendingId);
   if (!outcome.ok) {
     // Thrown, not returned: a failed create must reject the caller's promise
@@ -10313,8 +10531,15 @@ function resolveWorkspace(target: string | number): AgentSession | null {
 /// yet — the dock offers it Retry / Dismiss and nothing else, so the verbs
 /// that organise a *real* workspace refuse it here rather than writing a name
 /// or a folder assignment against a placeholder key that is about to vanish.
+// Guard the verbs that need somewhere durable to record their result.
+//
+// A workspace still being created keys its name and its folder off the
+// durable `stableId` it was born with, so both survive the build and both
+// are safe to set while it runs. A *windowless* placeholder (a remote
+// create, whose window is born by the connect) has no such id yet — there
+// is nothing to file the change against, so it is still refused.
 function rejectPending(s: AgentSession, verb: string): void {
-  if (s.pending) {
+  if (s.pending && !s.stableId) {
     throw new Error(`workspace is still being created and cannot be ${verb}`);
   }
 }
@@ -11439,11 +11664,13 @@ editor.on("widget_event", (e) => {
       }
       const id = dockSelectedSessionId();
       const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
-      // Enter on a being-created placeholder: resume a paused/failed one
-      // (retry), or do nothing while it is still creating (there is no
-      // window to dive into). Never blur to the editor — that would drop
-      // focus onto whatever buffer sits behind the phantom row.
-      if (sel && sel.pending) {
+      // Enter on a workspace whose build failed or is paused: retry it —
+      // that is the only move that gets it anywhere. A windowless
+      // placeholder (a remote create) has nothing to dive into either, and
+      // must never blur to the editor: that would drop focus onto whatever
+      // buffer sits behind the phantom row. One that owns a window falls
+      // through and is entered like any workspace.
+      if (sel && sel.pending && (pendingActionable(sel.pending) || (id as number) <= 0)) {
         if (pendingActionable(sel.pending)) retryPending(id as number);
         return;
       }
@@ -11677,9 +11904,10 @@ editor.on("widget_event", (e) => {
         });
         return;
       }
-      if (sel && sel.pending) {
-        // A being-created placeholder has no window to open — resume a
-        // paused/failed one (retry); a still-creating one is a no-op.
+      if (sel && sel.pending && (pendingActionable(sel.pending) || (id as number) <= 0)) {
+        // A failed/paused build retries; a windowless placeholder (remote
+        // create) has no window to open. A still-creating workspace that
+        // owns one opens like any other.
         if (pendingActionable(sel.pending)) retryPending(id as number);
         return;
       }
@@ -11936,11 +12164,14 @@ editor.on("window_created", () => {
   refreshOpenDialog();
 });
 
-editor.on("window_closed", (e) => {
-  // The host has confirmed this window is gone, so drop any tombstone for
-  // it (reconcile won't re-add it now that it's out of `listWindows()` —
-  // this just keeps the set from growing).
-  if (e && typeof e.id === "number") closingWindowIds.delete(e.id);
+editor.on("window_closed", () => {
+  // Deliberately does NOT clear the window's tombstone. The hook fires when
+  // the host closes the window, but the plugin's `listWindows()` snapshot
+  // may not have caught up yet — and a reconcile in that gap would see a
+  // window with no tombstone and resurrect the row the user just deleted.
+  // `reconcileSessions` retires each tombstone the moment the window is
+  // genuinely absent from the snapshot, which is the same condition, read
+  // from the source that actually decides.
   refreshOpenDialog();
 });
 

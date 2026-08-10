@@ -337,6 +337,16 @@ impl crate::app::Editor {
     ///
     /// `resume` is the agent-resume argv to re-run instead of `command` if
     /// this session is restored (Orchestrator agent-resume).
+    ///
+    /// `adopt` names a **preparing** window (see
+    /// [`crate::app::PreparingWindow`]) to grow into this session rather
+    /// than opening a new one. The workspace the user has been looking at
+    /// since they asked for it — and may already have renamed or filed into
+    /// a folder — keeps its `WindowId` and its durable `stable_id`, so none
+    /// of that is stranded on a placeholder that gets thrown away. Its empty
+    /// shell is replaced wholesale (root, authority, layout all come from
+    /// this call), because the directory it was standing in for is exactly
+    /// what did not exist when the placeholder opened.
     #[allow(clippy::too_many_arguments)]
     pub fn create_window_with_terminal(
         &mut self,
@@ -349,9 +359,20 @@ impl crate::app::Editor {
         resume: Option<Vec<String>>,
         env: Option<HashMap<String, String>>,
         allow_script: bool,
+        adopt: Option<WindowId>,
     ) -> Result<(WindowId, fresh_core::TerminalId, fresh_core::BufferId), String> {
-        let id = WindowId(self.next_window_id);
-        self.next_window_id += 1;
+        // The adopted placeholder hands over its identity and is dropped
+        // (below, once nothing needs it any more — it may well be the
+        // *active* window, and half this function reads through that).
+        let adopt_id = adopt.filter(|id| self.windows.contains_key(id));
+        let id = match adopt_id {
+            Some(id) => id,
+            None => {
+                let id = WindowId(self.next_window_id);
+                self.next_window_id += 1;
+                id
+            }
+        };
 
         // The backend the editor was acting through before this new
         // session — captured so `adopt_active_window_authority` can tell
@@ -369,6 +390,21 @@ impl crate::app::Editor {
         let mut session = Window::new(id, label, root.clone(), window_authority, resources);
         session.terminal_width = self.terminal_width;
         session.terminal_height = self.terminal_height;
+        // Drop the placeholder now — everything above that reads through the
+        // active window has run, and the new window takes its id in the same
+        // breath, so `active_window` is never left pointing at nothing.
+        let adopted = adopt_id.and_then(|id| {
+            self.preparing_windows.remove(&id);
+            self.windows.remove(&id).map(|w| (id, w))
+        });
+        if let Some((_, placeholder)) = &adopted {
+            // Carry the placeholder's durable identity and any plugin state
+            // filed against it. A fresh `stable_id` here would orphan the
+            // workspace's rename/folder records and hand the plugin a second
+            // id for the workspace it already knows.
+            session.stable_id = placeholder.stable_id.clone();
+            session.plugin_state = placeholder.plugin_state.clone();
+        }
         let resolved_label = session.label.clone();
         self.windows.insert(id, session);
 
@@ -446,9 +482,24 @@ impl crate::app::Editor {
                 // restore the previous active pointer so the user
                 // isn't stranded on an empty window when the PTY
                 // spawn fails (missing binary, permission denied,
-                // out of PTYs, ...).
+                // out of PTYs, ...). An adopted placeholder goes back to
+                // being a placeholder — with the spawn failure as its
+                // message — rather than vanishing out from under the user
+                // who is sitting in it.
                 self.windows.remove(&id);
-                self.active_window = previous_id;
+                if let Some((placeholder_id, placeholder)) = adopted {
+                    self.windows.insert(placeholder_id, placeholder);
+                    self.preparing_windows.insert(
+                        placeholder_id,
+                        crate::app::PreparingWindow {
+                            message: e.clone(),
+                            label: String::new(),
+                            failed: true,
+                        },
+                    );
+                } else {
+                    self.active_window = previous_id;
+                }
                 return Err(e);
             }
         };
@@ -1354,6 +1405,10 @@ impl crate::app::Editor {
         // Closing a dormant session's disconnected shell drops the whole
         // session: the descriptor must leave the dock with the window.
         self.dormant_remote.remove(&id);
+        // Same for a workspace abandoned mid-build: its placeholder state has
+        // nothing left to describe, and a stale entry would make a later
+        // window that reuses the id render as "still being created".
+        self.preparing_windows.remove(&id);
         // Tear down a born-attached remote session's connection (carrier +
         // reconnect/heartbeat + runtime) when its window closes. No-op for
         // local windows, which never have an entry.
@@ -1403,6 +1458,9 @@ impl crate::app::Editor {
             None,
             None,
             false,
+            // Remote sessions are born attached to their connected backend
+            // rather than growing out of a local placeholder.
+            None,
         ) {
             Ok((window_id, _terminal, _buffer)) => {
                 self.session_keepalives.insert(window_id, keepalive);
@@ -1555,6 +1613,56 @@ impl crate::app::Editor {
             self.set_active_window(id);
         }
         self.set_status_message(format!("Connected: {}", descriptor.label));
+    }
+
+    /// Open a **preparing** window: a real `Window` (own id, durable
+    /// `stable_id`, label, local authority rooted at `root`) whose contents
+    /// are still being built, so it paints the progress page (see
+    /// `render_preparing_shell_page`) instead of the empty scratch buffer it
+    /// technically holds.
+    ///
+    /// This is what lets the Orchestrator take the user into a new workspace
+    /// the instant they ask for it, rather than parking them on the previous
+    /// one until `git worktree add` finishes and then yanking focus over.
+    /// Grow it into the live session by passing its id to
+    /// [`Self::create_window_with_terminal`] as `adopt`.
+    ///
+    /// Does *not* activate the window — the caller decides whether this
+    /// create follows focus.
+    pub fn open_preparing_window(
+        &mut self,
+        root: PathBuf,
+        label: String,
+        message: String,
+    ) -> WindowId {
+        let id = WindowId(self.next_window_id);
+        self.next_window_id += 1;
+        let authority = self.local_session_authority(&root);
+        let mut window = Window::new(id, label, root, authority, self.window_resources());
+        window.terminal_width = self.terminal_width;
+        window.terminal_height = self.terminal_height;
+        // Seed a layout so the renderer has a populated `splits` to paint
+        // under the placeholder page, and lock its scratch buffer: there is
+        // nothing here to edit until the workspace exists. Same shape as
+        // `ensure_dormant_shell`.
+        window.seed_initial_layout();
+        let seed_buffer = window.active_buffer();
+        window.mark_buffer_read_only(seed_buffer, true);
+        self.windows.insert(id, window);
+        self.preparing_windows.insert(
+            id,
+            crate::app::PreparingWindow {
+                message,
+                label: String::new(),
+                failed: false,
+            },
+        );
+        id
+    }
+
+    /// Whether `id` is a workspace whose contents are still being built.
+    pub fn is_window_preparing(&self, id: WindowId) -> bool {
+        self.preparing_windows.contains_key(&id)
     }
 
     /// Ensure a dormant remote session has its **empty shell** `Window`, so a

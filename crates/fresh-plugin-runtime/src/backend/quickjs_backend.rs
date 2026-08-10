@@ -7608,9 +7608,71 @@ impl JsEditorApi {
                 resume: opts.resume,
                 env: opts.env,
                 allow_script: opts.allow_script.unwrap_or(false),
+                adopt_window: opts.adopt_window.map(fresh_core::WindowId),
                 request_id: id,
             });
         Ok(id)
+    }
+
+    /// Open a workspace *before* its contents exist: a real window (own id,
+    /// durable stable id, label, authority) showing a "still being built"
+    /// placeholder page. Focus can move into it right away, and the dock
+    /// row is a full workspace — renameable, filable, closable — while the
+    /// slow part (a `git worktree add`, say) runs behind it.
+    ///
+    /// Narrate progress with `setWindowPreparing`, then hand the id to
+    /// `createWindowWithTerminal` as `adoptWindow` to turn the placeholder
+    /// into the live session in place, ids and all.
+    #[plugin_api(
+        async_promise,
+        js_name = "createPreparingWindow",
+        ts_return = "PreparingWindowResult"
+    )]
+    #[qjs(rename = "_createPreparingWindowStart")]
+    pub fn create_preparing_window_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        opts: fresh_core::api::CreatePreparingWindowOptions,
+    ) -> rquickjs::Result<u64> {
+        let id = self.alloc_request_id();
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
+        let _ = self
+            .command_sender
+            .send(PluginCommand::CreatePreparingWindow {
+                root: std::path::PathBuf::from(opts.root),
+                label: opts.label,
+                message: opts.message,
+                activate: opts.activate.unwrap_or(false),
+                request_id: id,
+            });
+        Ok(id)
+    }
+
+    /// Update the progress line (and displayed name) on a preparing window
+    /// — `failed` switches it to the error copy — or clear the preparing
+    /// state with `done` so the window renders as an ordinary session
+    /// again. An empty `label` leaves the displayed name alone.
+    ///
+    /// Returns `false` only when the channel to the editor is closed.
+    pub fn set_window_preparing(
+        &self,
+        id: u64,
+        message: String,
+        label: Option<String>,
+        failed: bool,
+        done: bool,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetWindowPreparing {
+                id: fresh_core::WindowId(id),
+                message,
+                label: label.unwrap_or_default(),
+                failed,
+                done,
+            })
+            .is_ok()
     }
 
     /// Send input data to a terminal
@@ -8134,6 +8196,7 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.getLineEndPosition = _wrapAsync("_getLineEndPositionStart", "getLineEndPosition");
                 editor.createTerminal = _wrapAsync("_createTerminalStart", "createTerminal");
                 editor.createWindowWithTerminal = _wrapAsync("_createWindowWithTerminalStart", "createWindowWithTerminal");
+                editor.createPreparingWindow = _wrapAsync("_createPreparingWindowStart", "createPreparingWindow");
                 editor.reloadGrammars = _wrapAsync("_reloadGrammarsStart", "reloadGrammars");
 
                 // Everything else that follows the `_<name>Start` convention
