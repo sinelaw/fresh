@@ -13,6 +13,12 @@
 //! the binding layer is covered and not just the Rust handlers underneath it.
 //! `fresh --cmd init reload` and `fresh --cmd command run` are thin wrappers
 //! that submit exactly these calls over the script channel.
+//!
+//! Everything a registered command needs to be *dispatched* goes through the
+//! command palette here (CONTRIBUTING.md Testing §2): a synthetic
+//! `PluginCommand::RunEditorCommand` with an invented `callback_id` skips the
+//! sequencing production has and answers a promise nobody is holding, which
+//! the runtime rightly logs as `No plugin found for callback_id=…`.
 
 use crate::common::harness::EditorTestHarness;
 use fresh::config_io::DirectoryContext;
@@ -22,6 +28,10 @@ use std::time::Duration;
 
 /// A harness whose `config_dir` is a scratch directory, so the tests write a
 /// real init.ts without touching the developer's own.
+///
+/// Wide enough that the status line these tests read back is not elided: the
+/// status bar drops elements to fit, and an assertion on a message that never
+/// had room to render proves nothing.
 fn harness_with_scratch_config_dir() -> (EditorTestHarness, tempfile::TempDir, PathBuf) {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let dir_context = DirectoryContext::for_testing(temp.path());
@@ -32,7 +42,7 @@ fn harness_with_scratch_config_dir() -> (EditorTestHarness, tempfile::TempDir, P
     fs::create_dir_all(&working_dir).unwrap();
 
     let harness = EditorTestHarness::with_shared_dir_context(
-        80,
+        120,
         24,
         Default::default(),
         working_dir,
@@ -46,46 +56,39 @@ fn write_init_ts(config_dir: &Path, body: &str) {
     fs::write(config_dir.join("init.ts"), body).unwrap();
 }
 
-/// Pump the editor until `done` holds, or give up.
+/// Give the plugin thread a chance to produce commands, drain them, and
+/// repaint.
 ///
-/// Real `std::thread::sleep`, not the harness's logical clock: what we are
-/// waiting on is another OS thread (the plugin runtime) resolving a promise
-/// and sending commands back, and advancing logical time does not make that
-/// happen. The bound is generous because a slow CI box is the only thing that
-/// should ever approach it; a passing run settles in a few iterations.
-fn pump_until(harness: &mut EditorTestHarness, done: impl Fn(&EditorTestHarness) -> bool) -> bool {
-    for _ in 0..300 {
-        harness.editor_mut().process_async_messages();
-        if done(harness) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    // One last drain, so a result that landed during the final sleep counts.
-    harness.editor_mut().process_async_messages();
-    done(harness)
-}
-
-/// Give the plugin thread a brief chance to produce commands, and drain them.
-///
-/// Used where there is no observable condition to wait on — after dispatching
-/// a command whose only effect is to arm a timer, say. Short and fixed: the
-/// tests that assert on an outcome use `pump_until`, so this only has to be
-/// long enough that the plugin thread's reply has crossed the channel.
+/// Only ever used to give a *negative* assertion something to catch: "no
+/// further tick lands" has no event to wait for, so the test has to hand the
+/// plugin thread a window in which a stray tick could show up. Every positive
+/// condition is awaited semantically instead (`wait_until`), per
+/// CONTRIBUTING.md Testing §3 — no assertion here depends on this window being
+/// long enough.
 fn settle(harness: &mut EditorTestHarness) {
     for _ in 0..20 {
         harness.editor_mut().process_async_messages();
         std::thread::sleep(Duration::from_millis(5));
     }
     harness.editor_mut().process_async_messages();
+    harness.render().expect("render");
 }
 
+/// The rendered status line.
+///
+/// CONTRIBUTING.md Testing §2 — observe, don't inspect: what the plugin
+/// announced is read off the screen the user would be looking at, not out of
+/// `Editor::get_status_message()`.
 fn status(harness: &EditorTestHarness) -> String {
-    harness
-        .editor()
-        .get_status_message()
-        .cloned()
-        .unwrap_or_default()
+    harness.get_status_bar()
+}
+
+/// The number in a `<prefix>=<n>` marker on the status line, if one is shown.
+fn marker_count(harness: &EditorTestHarness, prefix: &str) -> Option<u32> {
+    let line = status(harness);
+    let rest = line.split(prefix).nth(1)?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
 }
 
 /// `editor.listCommands()` reports a command the same init.ts just registered,
@@ -127,16 +130,13 @@ fn list_commands_sees_a_freshly_registered_command_and_run_command_dispatches_it
     );
 
     harness.editor_mut().load_init_script(true);
-    let ran = pump_until(&mut harness, |h| {
-        let s = status(h);
-        s.contains("AGENT_PROBE_RAN") || s.contains("AGENT_PROBE_NOT_LISTED")
-    });
+    harness
+        .wait_until(|h| {
+            let s = status(h);
+            s.contains("AGENT_PROBE_RAN") || s.contains("AGENT_PROBE_NOT_LISTED")
+        })
+        .expect("listCommands()/runCommand() should settle");
 
-    assert!(
-        ran,
-        "listCommands()/runCommand() never settled; last status = {:?}",
-        status(&harness)
-    );
     assert!(
         status(&harness).contains("AGENT_PROBE_RAN"),
         "the command registered by init.ts should be listed and then dispatched \
@@ -171,13 +171,10 @@ fn run_command_rejects_an_unknown_name() {
     );
 
     harness.editor_mut().load_init_script(true);
-    let settled = pump_until(&mut harness, |h| status(h).contains("UNKNOWN_"));
+    harness
+        .wait_until(|h| status(h).contains("UNKNOWN_"))
+        .expect("runCommand() with an unknown name should settle");
 
-    assert!(
-        settled,
-        "runCommand() with an unknown name never settled; status = {:?}",
-        status(&harness)
-    );
     assert!(
         status(&harness).contains("UNKNOWN_REJECTED"),
         "an unknown command name must reject, not resolve; status = {:?}",
@@ -217,41 +214,31 @@ fn set_interval_started_inside_a_command_handler_keeps_firing() {
     );
 
     harness.editor_mut().load_init_script(true);
-    // Let init.ts finish registering before the command is dispatched.
-    settle(&mut harness);
 
+    // Ctrl+P → "Open Panel" → Enter: the palette waits for init.ts to have
+    // registered the command before confirming, so this is also the gate that
+    // the old fixed settle() was standing in for.
     harness
-        .editor_mut()
-        .handle_plugin_command(fresh_core::api::PluginCommand::RunEditorCommand {
-            name: "Open Panel".to_string(),
-            callback_id: fresh_core::api::JsCallbackId::new(9_100),
-        })
-        .expect("dispatching the open command should not error");
-    // Let the setInterval command reach the editor.
-    settle(&mut harness);
+        .run_palette_command("Open Panel")
+        .expect("running the open command from the palette");
 
-    // Drive logical time forward one period at a time. The harness's clock is
-    // the editor's clock, so this is deterministic rather than a race with
-    // wall-clock.
-    for _ in 0..3 {
-        harness.advance_time(Duration::from_millis(60));
-        harness.tick_and_render().expect("tick");
-        settle(&mut harness);
-    }
-
-    let s = status(&harness);
-    assert!(
-        s.starts_with("TICKS="),
-        "a timer created inside a command handler must still fire; status = {s:?}"
-    );
-    let count: u32 = s.trim_start_matches("TICKS=").parse().unwrap_or(0);
-    assert!(
-        count >= 3,
-        "the timer should keep firing, not fire once: saw {count} ticks (status = {s:?})"
-    );
+    // Wait for the third tick to appear on screen rather than advancing a
+    // fixed number of periods and hoping three have landed: `wait_until`
+    // advances the harness clock as it goes, so the timer keeps coming due
+    // until the condition holds however slow the box is.
+    harness
+        .wait_until(|h| marker_count(h, "TICKS=").unwrap_or(0) >= 3)
+        .expect("a timer created inside a command handler must keep firing");
 }
 
 /// `clearInterval` stops a running timer.
+///
+/// The stop is announced only after a host round-trip, and the test waits for
+/// that announcement before it starts counting: `clearInterval` is
+/// fire-and-forget, so a tick the host had already dispatched can still be on
+/// its way to the plugin thread when the JS call returns. Snapshotting the
+/// count before the cancellation is *observably* in effect is what used to
+/// make this test fail on a loaded CI box with `TICKS=3` vs `TICKS=2`.
 #[test]
 fn clear_interval_stops_the_timer() {
     let (mut harness, _tmp, config_dir) = harness_with_scratch_config_dir();
@@ -267,8 +254,17 @@ fn clear_interval_stops_the_timer() {
             editor.setStatus("TICKS=" + globalThis.tick_count);
         };
 
-        globalThis.stop_ticking = function () {
+        globalThis.stop_ticking = async function () {
             editor.clearInterval(globalThis.the_timer);
+            // Any awaited host call is a barrier here. The host handles this
+            // plugin's commands in order, so it has already cancelled the
+            // timer when it answers; and the answer travels back over the
+            // same channel as handler invocations, so every tick that was
+            // already in flight has run by the time we resume. Whatever the
+            // status says after this line, no *scheduled* tick can still
+            // overwrite it.
+            await editor.listCommands();
+            editor.setStatus("STOPPED_AFTER=" + globalThis.tick_count);
         };
 
         globalThis.the_timer = editor.setInterval(50, "counting_tick");
@@ -277,28 +273,27 @@ fn clear_interval_stops_the_timer() {
     );
 
     harness.editor_mut().load_init_script(true);
-    settle(&mut harness);
 
-    for _ in 0..2 {
-        harness.advance_time(Duration::from_millis(60));
-        harness.tick_and_render().expect("tick");
-        settle(&mut harness);
-    }
-    let before = status(&harness);
-    assert!(
-        before.starts_with("TICKS="),
-        "the timer should have fired at least once; status = {before:?}"
-    );
-
+    // Stopping a timer that was never running would pass vacuously.
     harness
-        .editor_mut()
-        .handle_plugin_command(fresh_core::api::PluginCommand::RunEditorCommand {
-            name: "Stop Ticking".to_string(),
-            callback_id: fresh_core::api::JsCallbackId::new(9_200),
-        })
-        .expect("dispatching the stop command should not error");
-    settle(&mut harness);
+        .wait_until(|h| marker_count(h, "TICKS=").unwrap_or(0) >= 1)
+        .expect("the timer should fire before it is stopped");
 
+    // Ctrl+P → "Stop Ticking" → Enter.
+    harness
+        .run_palette_command("Stop Ticking")
+        .expect("running the stop command from the palette");
+
+    // Semantic wait: the marker is published *after* the host applied the
+    // cancellation, so seeing it is proof the stop took effect — no guess
+    // about when the dispatch landed.
+    harness
+        .wait_until(|h| status(h).contains("STOPPED_AFTER="))
+        .expect("the stop handler should report once the cancellation applied");
+    let stopped = status(&harness);
+
+    // From here a surviving timer announces itself by overwriting the line
+    // with `TICKS=<n>`.
     for _ in 0..3 {
         harness.advance_time(Duration::from_millis(60));
         harness.tick_and_render().expect("tick");
@@ -307,7 +302,7 @@ fn clear_interval_stops_the_timer() {
 
     assert_eq!(
         status(&harness),
-        before,
+        stopped,
         "no further ticks should land after clearInterval"
     );
 }
@@ -343,15 +338,9 @@ fn reloading_init_cancels_the_previous_copys_timers() {
     );
 
     harness.editor_mut().load_init_script(true);
-    settle(&mut harness);
-    harness.advance_time(Duration::from_millis(60));
-    harness.tick_and_render().expect("tick");
-    settle(&mut harness);
-    assert!(
-        status(&harness).starts_with("V1_TICKS="),
-        "v1's timer should be running; status = {:?}",
-        status(&harness)
-    );
+    harness
+        .wait_until(|h| status(h).contains("V1_TICKS="))
+        .expect("v1's timer should be running");
 
     // v2 has no timer at all.
     write_init_ts(
@@ -363,17 +352,15 @@ fn reloading_init_cancels_the_previous_copys_timers() {
     );
 
     harness
-        .editor_mut()
-        .handle_plugin_command(fresh_core::api::PluginCommand::RunEditorCommand {
-            name: "Do Reload".to_string(),
-            callback_id: fresh_core::api::JsCallbackId::new(9_300),
-        })
-        .expect("dispatching the reload command should not error");
-    assert!(
-        pump_until(&mut harness, |h| status(h).contains("V2_LOADED")),
-        "v2 should have loaded; status = {:?}",
-        status(&harness)
-    );
+        .run_palette_command("Do Reload")
+        .expect("running the reload command from the palette");
+    // v2's greeting is emitted by the plugin thread only after it has finished
+    // tearing v1 down, and the host drains v1's last commands before it — so
+    // once this is on screen, anything that follows came from a leaked timer.
+    harness
+        .wait_until(|h| status(h).contains("V2_LOADED"))
+        .expect("v2 should have loaded");
+    let after_reload = status(&harness);
 
     // v1's timer, had it survived, would overwrite the status on the next
     // period — which is exactly how a leaked timer announces itself.
@@ -385,7 +372,7 @@ fn reloading_init_cancels_the_previous_copys_timers() {
 
     assert_eq!(
         status(&harness),
-        "V2_LOADED",
+        after_reload,
         "reloading must cancel the previous copy's timers"
     );
 }
@@ -394,9 +381,10 @@ fn reloading_init_cancels_the_previous_copys_timers() {
 /// command it registered itself* picks up the new source.
 ///
 /// This is the shape of an agent's iteration — write the file, run the reload,
-/// observe the effect — with every step going through the same paths the CLI
-/// verbs use: `runCommand` resolves the name and dispatches the action, the
-/// handler calls `reloadInit`, and the reload re-runs the file from disk.
+/// observe the effect — with every step going through the same paths a user
+/// (or the CLI verbs) would take: the palette resolves the name and dispatches
+/// the action, the handler calls `reloadInit`, and the reload re-runs the file
+/// from disk.
 #[test]
 fn reload_init_reruns_the_edited_file() {
     let (mut harness, _tmp, config_dir) = harness_with_scratch_config_dir();
@@ -423,11 +411,9 @@ fn reload_init_reruns_the_edited_file() {
     );
 
     harness.editor_mut().load_init_script(true);
-    assert!(
-        pump_until(&mut harness, |h| status(h).contains("INIT_VERSION_ONE")),
-        "v1 of init.ts should have run; status = {:?}",
-        status(&harness)
-    );
+    harness
+        .wait_until(|h| status(h).contains("INIT_VERSION_ONE"))
+        .expect("v1 of init.ts should have run");
 
     // The agent edits the file. Nothing has re-read it yet.
     write_init_ts(
@@ -442,20 +428,14 @@ fn reload_init_reruns_the_edited_file() {
         "editing the file must not take effect on its own"
     );
 
-    // Run the command v1 registered. Its handler calls reloadInit(), which
-    // re-reads the file — so v2's body runs without an editor restart and
-    // without a keystroke.
+    // Run the command v1 registered, from the palette. Its handler calls
+    // reloadInit(), which re-reads the file — so v2's body runs without an
+    // editor restart.
     harness
-        .editor_mut()
-        .handle_plugin_command(fresh_core::api::PluginCommand::RunEditorCommand {
-            name: "Agent Reload".to_string(),
-            callback_id: fresh_core::api::JsCallbackId::new(9_001),
-        })
-        .expect("dispatching a registered command should not error");
+        .run_palette_command("Agent Reload")
+        .expect("running the reload command from the palette");
 
-    assert!(
-        pump_until(&mut harness, |h| status(h).contains("INIT_VERSION_TWO")),
-        "reloadInit() should re-read init.ts and run the new body; status = {:?}",
-        status(&harness)
-    );
+    harness
+        .wait_until(|h| status(h).contains("INIT_VERSION_TWO"))
+        .expect("reloadInit() should re-read init.ts and run the new body");
 }
