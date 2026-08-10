@@ -137,6 +137,9 @@ pub fn run_gui(
         editor.set_software_cursor_only(true);
 
         let workspace_enabled = !no_session_flag && file_locations.is_empty();
+        // Keep mid-session checkpoint saves consistent with the quit-time
+        // save gate below (issue #2735).
+        editor.set_workspace_persistence(workspace_enabled);
 
         if !file_locations.is_empty() {
             for (path, line, col) in &file_locations {

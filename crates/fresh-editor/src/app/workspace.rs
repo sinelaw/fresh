@@ -177,6 +177,18 @@ impl Editor {
         self.save_workspace_for(self.active_window)
     }
 
+    /// Enable/disable workspace persistence for this session. Set to
+    /// `false` for a `--no-restore` (alias `--no-session`) run: the flag's
+    /// semantics are "this session neither reads nor writes workspace
+    /// state", so quit-time saves AND mid-session checkpoints (e.g. the
+    /// window-switch checkpoint fired by Extract Tab to New Workspace) are
+    /// all suppressed. Without a uniform gate the checkpoint path wrote the
+    /// source workspace while the quit path skipped the extracted
+    /// co-tenant, silently losing it on the next launch (issue #2735).
+    pub fn set_workspace_persistence(&mut self, enabled: bool) {
+        self.workspace_persistence_enabled = enabled;
+    }
+
     /// Try to load and apply a workspace for the active window. Thin
     /// active-window wrapper over [`Editor::restore_workspace_for`].
     ///
@@ -413,6 +425,16 @@ impl Editor {
     /// snapshots via `Window::capture_workspace`, and injects the
     /// editor-global `plugin_global_state`.
     pub fn save_workspace_for(&mut self, id: fresh_core::WindowId) -> Result<(), WorkspaceError> {
+        // `--no-restore` session: never write workspace files — this is the
+        // single funnel for every workspace save (quit-time saves, restart
+        // saves, and mid-session checkpoints), so gating here keeps them
+        // all consistent (issue #2735).
+        if !self.workspace_persistence_enabled {
+            tracing::debug!(
+                "Skipping workspace save for window {id}: workspace persistence disabled (--no-restore)"
+            );
+            return Ok(());
+        }
         // A session still descriptor-backed in `dormant_remote` never had its
         // workspace restored: its window, when present, is only the empty
         // disconnected shell a failed reconnect built. The on-disk workspace —
