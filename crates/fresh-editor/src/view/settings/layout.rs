@@ -50,6 +50,11 @@ pub struct SettingsLayout {
 /// Layout info for a search result
 #[derive(Debug, Clone)]
 pub struct SearchResultLayout {
+    /// Absolute index into the state's `search_results` list. Only the
+    /// visible rows are registered in the layout, so this is NOT the same
+    /// as the position within `SettingsLayout::search_results` once the
+    /// list is scrolled (#2860).
+    pub result_index: usize,
     /// Page index (category)
     pub page_index: usize,
     /// Item index within the page
@@ -131,9 +136,18 @@ impl SettingsLayout {
         });
     }
 
-    /// Add a search result to the layout
-    pub fn add_search_result(&mut self, page_index: usize, item_index: usize, area: Rect) {
+    /// Add a search result to the layout. `result_index` is the absolute
+    /// index into the state's `search_results` list (not the on-screen
+    /// slot), so hit-testing keeps working when the list is scrolled.
+    pub fn add_search_result(
+        &mut self,
+        result_index: usize,
+        page_index: usize,
+        item_index: usize,
+        area: Rect,
+    ) {
         self.search_results.push(SearchResultLayout {
+            result_index,
             page_index,
             item_index,
             area,
@@ -215,10 +229,14 @@ impl SettingsLayout {
             }
         }
 
-        // Check search results (before regular items, since they replace the item list during search)
-        for (idx, result) in self.search_results.iter().enumerate() {
+        // Check search results (before regular items, since they replace the
+        // item list during search). The hit carries the ABSOLUTE result
+        // index: only visible rows are registered here, so the position in
+        // this vec is a viewport slot and would be off by the scroll offset
+        // once the list is scrolled (#2860).
+        for result in &self.search_results {
             if point_in_rect(result.area, x, y) {
-                return Some(SettingsHit::SearchResult(idx));
+                return Some(SettingsHit::SearchResult(result.result_index));
             }
         }
 
@@ -392,7 +410,8 @@ pub enum SettingsHit {
     CategoriesScrollbar,
     /// Click on a setting item (index)
     Item(usize),
-    /// Click on a search result (index in search_results)
+    /// Click on a search result (absolute index into the state's
+    /// `search_results`, not the on-screen slot)
     SearchResult(usize),
     /// Click on toggle control
     ControlToggle(usize),
@@ -518,6 +537,27 @@ mod tests {
         // Click on item/label but not on toggle
         assert_eq!(layout.hit_test(35, 10), Some(SettingsHit::Item(0)));
         assert_eq!(layout.hit_test(40, 11), Some(SettingsHit::Item(0)));
+    }
+
+    /// Reproducer for issue #2860: only VISIBLE search results are registered
+    /// in the layout, so when the list is scrolled the first registered row
+    /// is not result 0. `hit_test` must report the absolute result index the
+    /// row was registered with, not the row's position in the layout vec —
+    /// otherwise hover and click resolve to a result `scroll_offset` rows
+    /// above the pointer.
+    #[test]
+    fn test_hit_test_search_result_scrolled_uses_absolute_index() {
+        let modal = Rect::new(0, 0, 100, 40);
+        let mut layout = SettingsLayout::new(modal);
+
+        // Scrolled viewport: visible rows are results 3, 4, 5 (3 rows each).
+        layout.add_search_result(3, 0, 3, Rect::new(25, 3, 70, 3));
+        layout.add_search_result(4, 0, 4, Rect::new(25, 6, 70, 3));
+        layout.add_search_result(5, 0, 5, Rect::new(25, 9, 70, 3));
+
+        assert_eq!(layout.hit_test(30, 4), Some(SettingsHit::SearchResult(3)));
+        assert_eq!(layout.hit_test(30, 7), Some(SettingsHit::SearchResult(4)));
+        assert_eq!(layout.hit_test(30, 10), Some(SettingsHit::SearchResult(5)));
     }
 
     /// Reproducer for issue #1825: clicking on the value area between the
