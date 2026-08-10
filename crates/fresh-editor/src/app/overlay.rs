@@ -404,6 +404,32 @@ impl Editor {
         crate::app::overlay::any_layer_blocks_terminal_input(&self.overlay_layers())
     }
 
+    /// True iff a modal overlay — a prompt (Open File dialog, command
+    /// palette, …), the menu, a full-screen modal (settings, keybinding
+    /// editor, calibration wizard, workspace trust), a native context menu,
+    /// or the centered widget modal — currently covers the editor content.
+    ///
+    /// Derived from the same [`Editor::overlay_layers`] stack the keyboard
+    /// and mouse dispatchers consult, so there is a single notion of
+    /// modality. The popup band is deliberately excluded: the hover and
+    /// completion popups themselves live there, and mouse hover has its own
+    /// popup-aware handling (`update_lsp_hover_state`). The dock and the
+    /// editor base are not modal.
+    ///
+    /// Used to suppress mouse-hover LSP requests while a modal overlay is
+    /// up: positions under the pointer map to the buffer *behind* the
+    /// overlay, so a hover there would query — and render a popup for —
+    /// content the user cannot see (sinelaw/fresh#2912).
+    pub(crate) fn modal_overlay_active(&self) -> bool {
+        use crate::app::overlay::LayerKind;
+        self.overlay_layers().iter().any(|l| {
+            !matches!(
+                l.kind,
+                LayerKind::Popup | LayerKind::Dock | LayerKind::Editor
+            )
+        })
+    }
+
     /// Determine the current keybinding context based on UI state.
     ///
     /// Returns the `KeyContext` of the topmost overlay layer that owns the

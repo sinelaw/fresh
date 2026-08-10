@@ -10249,3 +10249,123 @@ fn test_completion_offers_unimported_symbol_and_applies_auto_import() -> anyhow:
 
     Ok(())
 }
+
+/// Reproducer for sinelaw/fresh#2912: while a modal dialog (Open File,
+/// command palette) is open, mouse motion over the dialog area kept firing
+/// LSP hover requests for the buffer *behind* it, and the hover popups
+/// rendered on top of the dialog.
+///
+/// The mouse-motion tracker (`update_lsp_hover_state`) ignored modal
+/// overlays entirely, and the debounce timer (`check_mouse_hover_timer`)
+/// only gated on `mouse_hover_enabled` — so both a fresh motion over the
+/// dialog and a hover armed just before the dialog opened produced hover
+/// requests underneath it.
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_no_hover_requests_while_modal_dialog_open() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    // Enough lines that buffer text sits behind the Open File dialog area.
+    let mut content = String::new();
+    for i in 0..25 {
+        content.push_str(&format!("fn hover_target_{i}() {{}}\n"));
+    }
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, content)?;
+
+    let mut config = fresh::config::Config::default();
+    // Fire the hover debounce on the next tick so the control phase below
+    // doesn't depend on wall-clock waits.
+    config.editor.mouse_hover_delay_ms = 0;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: Some(vec![]),
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Control: with no modal open, hovering a symbol produces a hover popup
+    // (proves the hover pipeline works in this setup, so the suppression
+    // assertions below can't pass vacuously).
+    harness.mouse_move(6, 2)?;
+    harness.wait_until(|h| h.screen_to_string().contains("Test hover content"))?;
+
+    // Leaving the editor area dismisses the popup and clears hover state.
+    harness.mouse_move(40, 0)?;
+    assert!(
+        !harness.editor().active_state().popups.is_visible(),
+        "hover popup should be dismissed when the mouse leaves the editor area"
+    );
+
+    // Open the Open File dialog.
+    harness.send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)?;
+    harness.render()?;
+    harness.assert_screen_contains("Open file:");
+
+    // Mouse motion over the dialog area must not arm a hover for the buffer
+    // content behind it...
+    harness.mouse_move(8, 20)?;
+    assert!(
+        harness.editor().get_mouse_hover_state().is_none(),
+        "mouse motion over a modal dialog must not track hover for the buffer behind it"
+    );
+    // ...and the debounce timer must not fire a request either.
+    assert!(
+        !harness.editor_mut().check_mouse_hover_timer(),
+        "hover timer must not fire while a modal dialog is open"
+    );
+
+    // A hover armed just before the dialog opened must not fire underneath
+    // it: close the dialog, arm a hover, reopen, then run the timer.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.render()?;
+    harness.mouse_move(6, 3)?;
+    assert!(
+        harness.editor().get_mouse_hover_state().is_some(),
+        "hover should be armed again once the dialog is closed"
+    );
+    harness.send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)?;
+    harness.render()?;
+    harness.assert_screen_contains("Open file:");
+    assert!(
+        !harness.editor_mut().check_mouse_hover_timer(),
+        "a hover armed before the dialog opened must not fire while it is up"
+    );
+
+    // And nothing hover-related renders over the dialog.
+    harness.render()?;
+    assert!(
+        !harness.screen_to_string().contains("Test hover content"),
+        "no hover popup may render on top of the dialog"
+    );
+
+    Ok(())
+}

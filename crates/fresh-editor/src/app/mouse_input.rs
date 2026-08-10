@@ -828,10 +828,15 @@ impl Editor {
 
         // Suppress LSP hover when a popup is already visible (e.g. theme info popup,
         // tab context menu, or the status-bar LSP status popup) to avoid hover
-        // tooltips overlapping other popups.
+        // tooltips overlapping other popups. Same for any modal overlay (Open
+        // File dialog, command palette, menu, …): mouse positions over the
+        // overlay map to the buffer *behind* it, so tracking them would fire
+        // hover requests for invisible content and render the popup on top of
+        // the dialog (sinelaw/fresh#2912).
         if self.active_window_mut().theme_info_popup.is_some()
             || self.active_window().context_menu_core().is_some()
             || self.is_lsp_status_popup_open()
+            || self.modal_overlay_active()
         {
             if self
                 .active_window_mut()
