@@ -1616,6 +1616,115 @@ done
         dir.join("fake_lsp_server_duplicate_labels.sh")
     }
 
+    /// Write the script for a fake LSP server that offers **one
+    /// `HashMap` candidate whose auto-import only it can produce**, and
+    /// return the path. One script, run once per configured server: a
+    /// language served by several servers at once (fresh supports that as
+    /// a first-class list) merges all of their candidates into one popup.
+    ///
+    /// Takes the log-file path as its first argument and the server's own
+    /// name as its second. The name is both the candidate's `data` handle
+    /// and the crate in the `use` line the server answers
+    /// `completionItem/resolve` with — so the import that lands names the
+    /// server that was actually asked. A server can only mint its own
+    /// import, which is the point: `data` is opaque and server-private, so
+    /// resolving a candidate against a *different* server produces
+    /// somebody else's `use` line (sinelaw/fresh#2952).
+    ///
+    /// The candidates carry no `additionalTextEdits`, so the import has to
+    /// come from resolve — rust-analyzer's actual behaviour.
+    pub fn write_per_server_import_script(
+        dir: &std::path::Path,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        let script = r#"#!/bin/bash
+
+LOG_FILE="${1:-/tmp/fake_lsp_per_server_import_log.txt}"
+NAME="${2:-server}"
+> "$LOG_FILE"
+
+read_message() {
+    local content_length=0
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
+            break
+        fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
+    done
+
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
+}
+
+while true; do
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    if [ -n "$method" ]; then
+        echo "$method" >> "$LOG_FILE"
+    fi
+
+case "$method" in
+    "initialize")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"resolveProvider":true,"triggerCharacters":["."]},"textDocumentSync":1}}}'
+        ;;
+    "textDocument/completion")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"isIncomplete":false,"items":[{"label":"HashMap","kind":22,"insertText":"HashMap","labelDetails":{"detail":" (use '"$NAME"'::HashMap)"},"data":"'"$NAME"'"}]}}'
+        ;;
+    "completionItem/resolve")
+        # This server knows one import and one only — its own. Handed a
+        # candidate minted by a sibling server it cannot do better, which
+        # is exactly why the request has to go to the right server.
+        echo "RESOLVE:$msg" >> "$LOG_FILE"
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"label":"HashMap","kind":22,"insertText":"HashMap","additionalTextEdits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"use '"$NAME"'::HashMap;\n"}]}}'
+        ;;
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave"|"textDocument/didClose"|"initialized"|"$/cancelRequest")
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+    *)
+        if [ -n "$msg_id" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        fi
+        ;;
+esac
+done
+"#;
+
+        let script_path = dir.join("fake_lsp_server_per_server_import.sh");
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        Ok(script_path)
+    }
+
     /// Spawn a fake LSP server that returns hover content WITHOUT a range
     ///
     /// This simulates LSP servers like pyrefly that don't return the hover range.

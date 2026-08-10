@@ -15,6 +15,7 @@ use rust_i18n::t;
 use std::io;
 use std::time::{Duration, Instant};
 
+use crate::app::window::LspCompletionCandidate;
 use crate::model::event::{BufferId, Event};
 use crate::primitives::word_navigation::{find_word_end, find_word_start};
 use crate::view::prompt::{Prompt, PromptType};
@@ -108,18 +109,20 @@ impl Editor {
         request_id: u64,
         items: Vec<lsp_types::CompletionItem>,
     ) -> AnyhowResult<()> {
-        // Check if this is one of the pending completion requests
-        if !self
+        // Check if this is one of the pending completion requests. Removing
+        // it also names the server that answered — the candidates below are
+        // only resolvable against that one.
+        let Some(server) = self
             .active_window_mut()
             .pending_completion_requests
             .remove(&request_id)
-        {
+        else {
             tracing::debug!(
                 "Ignoring completion response for outdated request {}",
                 request_id
             );
             return Ok(());
-        }
+        };
 
         if items.is_empty() {
             tracing::debug!("No completion items received");
@@ -146,14 +149,22 @@ impl Editor {
             return Ok(());
         }
 
-        // Store/extend original items for type-to-filter (merge from multiple servers)
+        // Store/extend original items for type-to-filter (merge from
+        // multiple servers). This is the merge point, so it is also where
+        // each candidate's origin has to be stamped on: once several
+        // servers' results sit in one list, nothing else can tell them
+        // apart.
+        let candidates = items.into_iter().map(|item| LspCompletionCandidate {
+            item,
+            server: Some(server),
+        });
         match &mut self.active_window_mut().completion_items {
             Some(existing) => {
-                existing.extend(items);
+                existing.extend(candidates);
                 tracing::debug!("Extended completion items, now {} total", existing.len());
             }
             None => {
-                self.active_window_mut().completion_items = Some(items);
+                self.active_window_mut().completion_items = Some(candidates.collect());
             }
         }
 
@@ -166,7 +177,7 @@ impl Editor {
             .completion_items
             .iter()
             .flatten()
-            .any(|item| completion_matches_prefix(item, &prefix));
+            .any(|candidate| completion_matches_prefix(&candidate.item, &prefix));
         if !any_stored_match {
             tracing::debug!("No completion items match prefix '{}'", prefix);
             return Ok(());
@@ -636,6 +647,7 @@ impl Editor {
                 .active_window_mut()
                 .pending_completion_requests
                 .drain()
+                .map(|(request_id, _server)| request_id)
                 .collect();
             for request_id in ids {
                 tracing::debug!(
@@ -681,14 +693,16 @@ impl Editor {
                         request_id
                     );
                 }
-                (request_id, result.is_ok())
+                (request_id, handle.id(), result.is_ok())
             },
         );
 
+        // Remember which server each request went to: its response's
+        // candidates can only be resolved against that same server.
         let mut sent_ids = Vec::new();
-        for (request_id, ok) in &results {
+        for (request_id, server, ok) in &results {
             if *ok {
-                sent_ids.push(*request_id);
+                sent_ids.push((*request_id, *server));
             }
         }
         // Advance the ID counter past all allocated IDs
@@ -2176,7 +2190,26 @@ impl Editor {
     }
 
     /// Handle a resolved completion item — apply additional_text_edits (e.g. auto-imports).
-    pub(crate) fn handle_completion_resolved(&mut self, item: lsp_types::CompletionItem) {
+    ///
+    /// Only the answer to the resolve request that is still outstanding may
+    /// edit the buffer. Responses are applied as the server returned them
+    /// (no lookup by label), so accepting the *reply* of a request the user
+    /// has moved past would insert an import for a candidate that is no
+    /// longer the accepted one.
+    pub(crate) fn handle_completion_resolved(
+        &mut self,
+        request_id: u64,
+        item: lsp_types::CompletionItem,
+    ) {
+        if self.active_window().pending_completion_resolve_request != Some(request_id) {
+            tracing::debug!(
+                "Ignoring completionItem/resolve response for outdated request {}",
+                request_id
+            );
+            return;
+        }
+        self.active_window_mut().pending_completion_resolve_request = None;
+
         if let Some(additional_edits) = item.additional_text_edits {
             if !additional_edits.is_empty() {
                 tracing::info!(
