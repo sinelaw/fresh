@@ -1,30 +1,18 @@
-//! Regression coverage for issue #2415.
+//! Regression coverage for issue #2415: closing the editor split collapses
+//! the tree onto the Utility Dock leaf, which used to keep its role tag and
+//! route every later dock open into itself as a full-window tab — permanently,
+//! once workspace persistence saved it.
 //!
-//! With a Utility Dock open (Search & Replace panel, dock terminal, …),
-//! closing the *editor* split collapses the tree so the dock leaf becomes
-//! the window's sole root leaf. That leaf used to silently keep
-//! `SplitRole::UtilityDock`: every later dock-routed open (panel, dock
-//! terminal) then landed in the main leaf as a full-window tab instead of
-//! a split — and workspace persistence made the state permanent (the
-//! saved `"role": "UtilityDock"` was faithfully restored on relaunch;
-//! only `rm -rf ~/.local/share/fresh` recovered).
-//!
-//! The invariant now enforced: the root leaf never carries a role tag —
-//! a collapse clears a role stranded on the sole surviving leaf, and
-//! workspace restore sanitizes the tree so already-poisoned workspace
-//! files heal on load.
-//!
-//! Like `issue_2283_dock_last_tab_close.rs`, these assert on the
-//! split-tree model directly (the role tag is not visible on screen).
+//! Like `issue_2283_dock_last_tab_close.rs`, these assert on the split-tree
+//! model directly: the role tag is not visible on screen.
 
 use crate::common::harness::EditorTestHarness;
 use fresh::input::keybindings::Action;
 use fresh::view::split::SplitRole;
 use std::fs;
 
-/// Open a file, then a dock terminal (`OpenTerminalInDock` splits at the
-/// root and tags the new leaf `UtilityDock`), then close the *editor*
-/// split so the dock leaf becomes the sole root leaf.
+/// Open a dock terminal, then close the editor split so the dock leaf is
+/// left as the sole root leaf.
 fn collapse_editor_split_onto_dock(harness: &mut EditorTestHarness) {
     let editor_leaf = harness.editor().split_manager_for_tests().active_split();
 
@@ -38,8 +26,7 @@ fn collapse_editor_split_onto_dock(harness: &mut EditorTestHarness) {
         .expect("OpenTerminalInDock must create a dock leaf");
     assert_ne!(editor_leaf, dock_leaf);
 
-    // Close the editor split (the same collapse the mouse × / Close Split
-    // command performs).
+    // The same collapse the mouse × / Close Split command performs.
     harness
         .editor_mut()
         .active_window_mut()
@@ -70,8 +57,6 @@ fn test_dock_role_cleared_when_editor_split_closes() {
 
     collapse_editor_split_onto_dock(&mut harness);
 
-    // The surviving root leaf must have shed the UtilityDock role: it is
-    // the window's only pane now, holding regular content.
     assert_eq!(
         harness
             .editor()
@@ -94,9 +79,8 @@ fn test_dock_reopens_as_split_after_editor_split_closed() {
     collapse_editor_split_onto_dock(&mut harness);
     let root_leaf = harness.editor().split_manager_for_tests().active_split();
 
-    // Reopening a dock-routed panel must create a NEW dock split — not
-    // attach the panel as a full-window tab in the sole leaf (the stuck
-    // state from the issue).
+    // Must create a NEW dock split, not attach as a full-window tab in the
+    // sole leaf (the stuck state from the issue).
     harness
         .editor_mut()
         .dispatch_action_for_tests(Action::OpenTerminalInDock);
@@ -116,9 +100,8 @@ fn test_dock_reopens_as_split_after_editor_split_closed() {
     );
 }
 
-/// A workspace file written by a pre-fix build can carry the poisoned
-/// state (`"role": "UtilityDock"` on the sole leaf). Restoring it must
-/// heal the role instead of re-applying it permanently.
+/// A pre-fix build could persist `"role": "UtilityDock"` on the sole leaf;
+/// restore must heal it rather than re-apply it forever.
 #[test]
 fn test_restore_heals_workspace_with_role_on_sole_leaf() {
     let temp = tempfile::TempDir::new().unwrap();
@@ -127,9 +110,8 @@ fn test_restore_heals_workspace_with_role_on_sole_leaf() {
     let file = project_dir.join("main.txt");
     fs::write(&file, "hello world\n").unwrap();
 
-    // Session 1: recreate the poisoned state a pre-fix build persisted —
-    // a sole leaf tagged UtilityDock while holding a regular file — and
-    // save the workspace.
+    // Session 1: persist the poisoned state (sole leaf tagged UtilityDock
+    // while holding a regular file).
     {
         let mut harness = EditorTestHarness::with_config_and_working_dir(
             80,
@@ -151,8 +133,7 @@ fn test_restore_heals_workspace_with_role_on_sole_leaf() {
         harness.editor_mut().save_workspace().unwrap();
     }
 
-    // Session 2: restore. The layout comes back, but the stranded role
-    // must be sanitized away.
+    // Session 2: the layout comes back, the stranded role does not.
     {
         let mut harness = EditorTestHarness::with_config_and_working_dir(
             80,

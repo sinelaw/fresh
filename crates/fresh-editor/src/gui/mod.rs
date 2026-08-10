@@ -137,12 +137,9 @@ pub fn run_gui(
         editor.set_software_cursor_only(true);
 
         let workspace_enabled = !no_session_flag && file_locations.is_empty();
-        // Workspace *writes* are governed by `--no-session` / `--no-restore`
-        // alone, exactly as in the TUI launch path (issue #2735) — a GUI run
-        // that merely opened files on the command line is still an ordinary
-        // session whose mid-session checkpoints must keep working. The
-        // narrower `workspace_enabled` above only decides whether this launch
-        // *restores* (and runs the quit-time save of every window).
+        // Writes hang off `--no-session` alone, as in the TUI path: a GUI run
+        // that merely opened files is still an ordinary session whose
+        // checkpoints must work. `workspace_enabled` only gates restore (#2735).
         editor.set_workspace_persistence(!no_session_flag);
 
         if !file_locations.is_empty() {
