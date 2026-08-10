@@ -7713,6 +7713,30 @@ impl JsEditorApi {
     /// This is the cheap, reason-over-it view. To *show* a human another
     /// workspace's terminal, render the window itself rather than pasting
     /// this into a buffer.
+    /// Describe every open window and the terminals in it.
+    ///
+    /// The cross-window counterpart to `describeWorkspace()`, which reports
+    /// only the window you are pointed at. This is the one call that answers
+    /// "what is going on everywhere" — before it, that took a call per window
+    /// and still could not reach another window's terminals at all.
+    ///
+    /// Structural facts only. Whether a terminal holds an agent, and whether
+    /// that agent is working or waiting on you, comes from the Orchestrator's
+    /// own listing, which joins on `terminalId`.
+    #[plugin_api(
+        async_promise,
+        js_name = "describeEnvironment",
+        ts_return = "EnvironmentDescription"
+    )]
+    #[qjs(rename = "_describeEnvironmentStart")]
+    pub fn describe_environment_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::DescribeEnvironment { request_id: id });
+        id
+    }
+
     #[plugin_api(
         async_promise,
         js_name = "readTerminal",
@@ -8234,6 +8258,7 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.watchPath = _wrapAsync("_watchPathStart", "watchPath");
                 editor.getBufferText = _wrapAsync("_getBufferTextStart", "getBufferText");
                 editor.readTerminal = _wrapAsync("_readTerminalStart", "readTerminal");
+                editor.describeEnvironment = _wrapAsync("_describeEnvironmentStart", "describeEnvironment");
                 editor.createCompositeBuffer = _wrapAsync("_createCompositeBufferStart", "createCompositeBuffer");
                 editor.getCompositeCursorInfo = _wrapAsync("_getCompositeCursorInfoStart", "getCompositeCursorInfo");
                 editor.getHighlights = _wrapAsync("_getHighlightsStart", "getHighlights");

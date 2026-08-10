@@ -10123,6 +10123,25 @@ export type WorkspaceSummary = {
   branch?: string;
   /** Whether the agent in this workspace is producing output right now. */
   agentState: "working" | "idle";
+  /** The terminal the launcher started this workspace's agent in, or `null`
+   *  for a row with no live terminal (`discovered` / `pending`, or a
+   *  workspace whose agent has been closed).
+   *
+   *  Pair it with `windowId` to reach the terminal itself:
+   *  `editor.readTerminal(windowId, terminalId, 40)` tails what the agent is
+   *  saying, and `editor.sendTerminalInput(terminalId, text, windowId)`
+   *  writes to it. Terminals are owned per-window, so neither call is
+   *  addressable without both ids — which is why this is reported rather
+   *  than left internal. */
+  terminalId: number | null;
+  /** Wall-clock ms of this workspace's most recent terminal output, or
+   *  `null` if it has never produced any.
+   *
+   *  This is the raw signal `agentState` is bucketed from, exposed because
+   *  the bucket loses what a caller often wants: *how long* a workspace has
+   *  been quiet. "Idle for four seconds" and "idle since this morning" are
+   *  the same `agentState` and very different situations. */
+  lastOutputAt: number | null;
   /** Terminal tab title — in practice the agent's command line, since the
    *  launcher titles the tab with it. Empty when the pane has no title. */
   title: string;
@@ -10496,6 +10515,8 @@ function listWorkspaces(): WorkspaceSummary[] {
       projectPath: session.projectPath,
       branch: session.branch ?? git?.branch,
       agentState: session.state,
+      terminalId: session.terminalId,
+      lastOutputAt: session.lastOutputAt,
       title: session.terminalTitle ?? "",
       git: git
         ? {

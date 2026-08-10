@@ -5287,3 +5287,61 @@ fn test_read_and_write_terminal_in_a_non_active_window() {
         "a terminal id from another window must not resolve against this one"
     );
 }
+
+/// `describeEnvironment` reports every window and its terminals, not just the
+/// window the caller happens to be pointed at.
+///
+/// The active-window state snapshot that backs `describeWorkspace` cannot
+/// answer this — covering only one window is exactly the limit this call
+/// exists to lift — so the guard here is that a terminal in a *non-active*
+/// window is present in the result.
+#[test]
+fn test_describe_environment_spans_windows() {
+    let mut harness = harness_or_return!(100, 30);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    let home = harness.editor().active_window_id();
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("the active buffer should be the terminal just opened");
+
+    let other = harness
+        .editor_mut()
+        .create_window_at(std::env::temp_dir(), "other".to_string());
+    harness.editor_mut().set_active_window(other);
+    harness.render().unwrap();
+
+    let env = harness.editor().describe_environment();
+
+    assert_eq!(
+        env.active_window_id, other,
+        "the active window is reported as a value to read"
+    );
+    assert!(
+        env.windows.len() >= 2,
+        "both windows should be listed, got {}",
+        env.windows.len()
+    );
+    assert!(
+        env.windows.windows(2).all(|w| w[0].window_id.0 <= w[1].window_id.0),
+        "windows are id-ordered so a repeated poll sees a stable list"
+    );
+
+    let described_home = env
+        .windows
+        .iter()
+        .find(|w| w.window_id == home)
+        .expect("the non-active window must still be described");
+    assert!(
+        described_home.terminals.iter().any(|t| t.terminal_id == terminal_id),
+        "a terminal in a non-active window must appear in the environment"
+    );
+    assert!(
+        !described_home.active,
+        "only the focused window is flagged active"
+    );
+}

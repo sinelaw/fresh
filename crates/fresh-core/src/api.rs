@@ -417,6 +417,78 @@ fn default_window_id() -> WindowId {
     WindowId(1)
 }
 
+/// One terminal, as reported by `editor.describeEnvironment()`.
+///
+/// Structural facts only — what exists and how to address it. Whether the
+/// thing running in it is an agent, and whether that agent is busy or waiting,
+/// is the Orchestrator's business: it already tracks that per session and can
+/// join on `terminalId`. Duplicating it here would give two sources of truth
+/// for the same question.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalDescription {
+    /// Address this terminal with `(windowId, terminalId)`.
+    #[ts(type = "number")]
+    pub terminal_id: TerminalId,
+    /// Current title — the same string the terminal's tab shows, which for an
+    /// agent is usually its process name.
+    pub title: String,
+    /// Whether the child is on the alternate screen, i.e. a full-screen TUI.
+    pub alt_screen: bool,
+    /// Grid size, so a caller can size a tail read without a round trip.
+    pub rows: usize,
+    pub cols: usize,
+    /// The child's process id, when there is a live child. `None` means the
+    /// terminal exists but its process has exited — which is exactly the
+    /// state a "did my agent die" check is looking for.
+    pub pid: Option<u32>,
+}
+
+/// One window, as reported by `editor.describeEnvironment()`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowDescription {
+    /// Per-process handle. Valid for this run only.
+    #[ts(type = "number")]
+    pub window_id: WindowId,
+    /// Durable identity, which survives restarts. Record this one.
+    pub stable_id: String,
+    /// User-visible label.
+    pub label: String,
+    /// Absolute root directory.
+    #[ts(type = "string")]
+    pub root: PathBuf,
+    /// Whether this is the window the user is currently looking at.
+    pub active: bool,
+    /// Every terminal in this window.
+    pub terminals: Vec<TerminalDescription>,
+}
+
+/// The whole editor, as answered by `editor.describeEnvironment()`.
+///
+/// The cross-window counterpart to `describeWorkspace()`, which reports only
+/// the window a script is pointed at. Answering "what is going on everywhere"
+/// previously took one call per window and still could not reach another
+/// window's terminals at all.
+///
+/// Deliberately *not* included: per-pane geometry. `describeWorkspace()`
+/// already gives that for a window a caller cares about, and folding every
+/// window's split tree in here would make the common "who needs me" poll pay
+/// for layout detail it never reads.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentDescription {
+    /// The window the user is looking at right now. A value to read, not a
+    /// default to inherit — every other call still names its target.
+    #[ts(type = "number")]
+    pub active_window_id: WindowId,
+    /// Every open window, in id order.
+    pub windows: Vec<WindowDescription>,
+}
+
 /// A terminal's live screen, as answered by `editor.readTerminal()`.
 ///
 /// The text is the PTY grid rendered to plain rows — no escape sequences, no
@@ -4895,6 +4967,15 @@ pub enum PluginCommand {
     CloseTerminal {
         /// The terminal ID to close
         terminal_id: TerminalId,
+    },
+
+    /// Describe every open window and its terminals (async).
+    ///
+    /// Cross-window by definition, so it cannot be served from the
+    /// active-window snapshot the way `describeWorkspace` is.
+    DescribeEnvironment {
+        /// Callback ID for async response
+        request_id: u64,
     },
 
     /// Read a terminal's live screen grid as text (async).

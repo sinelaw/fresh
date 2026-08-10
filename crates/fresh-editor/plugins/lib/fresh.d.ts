@@ -763,6 +763,69 @@ type TerminalScreenInfo = {
 	*/
 	title: string;
 };
+type EnvironmentDescription = {
+	/**
+	* The window the user is looking at right now. A value to read, not a
+	* default to inherit — every other call still names its target.
+	*/
+	activeWindowId: number;
+	/**
+	* Every open window, in id order.
+	*/
+	windows: Array<WindowDescription>;
+};
+type WindowDescription = {
+	/**
+	* Per-process handle. Valid for this run only.
+	*/
+	windowId: number;
+	/**
+	* Durable identity, which survives restarts. Record this one.
+	*/
+	stableId: string;
+	/**
+	* User-visible label.
+	*/
+	label: string;
+	/**
+	* Absolute root directory.
+	*/
+	root: string;
+	/**
+	* Whether this is the window the user is currently looking at.
+	*/
+	active: boolean;
+	/**
+	* Every terminal in this window.
+	*/
+	terminals: Array<TerminalDescription>;
+};
+type TerminalDescription = {
+	/**
+	* Address this terminal with `(windowId, terminalId)`.
+	*/
+	terminalId: number;
+	/**
+	* Current title — the same string the terminal's tab shows, which for an
+	* agent is usually its process name.
+	*/
+	title: string;
+	/**
+	* Whether the child is on the alternate screen, i.e. a full-screen TUI.
+	*/
+	altScreen: boolean;
+	/**
+	* Grid size, so a caller can size a tail read without a round trip.
+	*/
+	rows: number;
+	cols: number;
+	/**
+	* The child's process id, when there is a live child. `None` means the
+	* terminal exists but its process has exited — which is exactly the
+	* state a "did my agent die" check is looking for.
+	*/
+	pid: number | null;
+};
 type RemoteBackendInfo = {
 	/**
 	* Backend kind: `"ssh"` or `"kubernetes"`.
@@ -4762,7 +4825,18 @@ interface EditorAPI {
 	* This is the cheap, reason-over-it view. To *show* a human another
 	* workspace's terminal, render the window itself rather than pasting
 	* this into a buffer.
+	* Describe every open window and the terminals in it.
+	* 
+	* The cross-window counterpart to `describeWorkspace()`, which reports
+	* only the window you are pointed at. This is the one call that answers
+	* "what is going on everywhere" — before it, that took a call per window
+	* and still could not reach another window's terminals at all.
+	* 
+	* Structural facts only. Whether a terminal holds an agent, and whether
+	* that agent is working or waiting on you, comes from the Orchestrator's
+	* own listing, which joins on `terminalId`.
 	*/
+	describeEnvironment(): Promise<EnvironmentDescription>;
 	readTerminal(windowId: number, terminalId: number, lines?: number, trim?: boolean): Promise<TerminalScreenInfo>;
 	/**
 	* Close a terminal

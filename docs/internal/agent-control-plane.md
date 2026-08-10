@@ -176,15 +176,28 @@ view in §7 is a script rather than a feature.
 
 ## 6. The read side
 
-### 6.1 `describeEnvironment()`
+### 6.1 `describeEnvironment()`  — **implemented**
 
 A sibling of the existing `describeWorkspace()`, widened from one window to
-all of them: every window with its root, branch, git summary and PR probe;
-every pane with its split id, kind and geometry; every terminal with its id,
-title, agent kind, activity signal and last-output timestamp.
+all of them: every window with its durable id, label and root, and every
+terminal in it with its id, title, alt-screen flag, grid size and pid.
 
 One call replaces the several a caller currently makes, and covers ground no
 sequence of current calls can reach.
+
+It reports structural facts only; agent state, branch and git summary stay
+with the Orchestrator, which already tracks them per session. But the split is
+not merely tidiness — the Orchestrator's own `terminalId` is populated only
+for workspaces *it* created, and is null for the launch workspace and for any
+window reconciled from the host's window list. Measured on a live editor: a
+workspace whose agent terminal the Orchestrator recorded as `null` was still
+found, written to and tailed through `describeEnvironment`. So the environment
+read is what makes the join total, and a Fleet view must key off it rather
+than off the Orchestrator's bookkeeping.
+
+Deliberately excluded: per-pane geometry. `describeWorkspace()` already gives
+it for a window that matters, and folding every window's split tree in would
+make the common "who needs me" poll pay for layout detail it never reads.
 
 ### 6.2 Terminal content
 

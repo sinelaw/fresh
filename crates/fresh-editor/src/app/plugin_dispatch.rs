@@ -1771,6 +1771,10 @@ impl Editor {
                 self.handle_read_terminal(window_id, terminal_id, lines, trim, request_id);
             }
 
+            PluginCommand::DescribeEnvironment { request_id } => {
+                self.handle_describe_environment(request_id);
+            }
+
             PluginCommand::CloseTerminal { terminal_id } => {
                 self.handle_close_terminal(terminal_id);
             }
@@ -6209,6 +6213,80 @@ impl Editor {
                     .unwrap()
                     .reject_callback(callback_id, error);
             }
+        }
+    }
+
+    /// Answer `describeEnvironment` with every window and its terminals.
+    ///
+    /// Cannot be served from the state snapshot the way `describeWorkspace`
+    /// is: that snapshot covers the active window only, which is precisely
+    /// the limit this call exists to lift.
+    fn handle_describe_environment(&mut self, request_id: u64) {
+        let env = self.describe_environment();
+        let json = serde_json::to_string(&env).unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager
+            .read()
+            .unwrap()
+            .resolve_callback(fresh_core::api::JsCallbackId::from(request_id), json);
+    }
+
+    /// Every open window and the terminals in it.
+    ///
+    /// Split from the dispatch arm so it is callable — and assertable —
+    /// without going through the plugin runtime.
+    pub fn describe_environment(&self) -> fresh_core::api::EnvironmentDescription {
+        let active = self.active_window_id();
+        let mut windows: Vec<fresh_core::WindowId> = self.windows.keys().copied().collect();
+        // Id order, so a caller polling this repeatedly sees a stable list
+        // rather than HashMap iteration order churning between calls.
+        windows.sort_by_key(|w| w.0);
+
+        let described: Vec<fresh_core::api::WindowDescription> = windows
+            .into_iter()
+            .filter_map(|window_id| {
+                let window = self.windows.get(&window_id)?;
+                // Two splits can show one terminal, so the buffer map holds
+                // duplicates; report each terminal once.
+                let mut ids: Vec<_> = window
+                    .terminal_buffers
+                    .values()
+                    .map(|tb| tb.terminal_id)
+                    .collect();
+                ids.sort_by_key(|t| t.0);
+                ids.dedup_by_key(|t| t.0);
+
+                let mut terminals: Vec<fresh_core::api::TerminalDescription> = ids
+                    .into_iter()
+                    .filter_map(|terminal_id| {
+                        let handle = window.terminal_manager.get(terminal_id)?;
+                        let state = handle.state.lock().ok()?;
+                        let (cols, rows) = state.size();
+                        Some(fresh_core::api::TerminalDescription {
+                            terminal_id,
+                            title: state.title().to_string(),
+                            alt_screen: state.is_alternate_screen(),
+                            rows: rows as usize,
+                            cols: cols as usize,
+                            pid: handle.pid(),
+                        })
+                    })
+                    .collect();
+                terminals.sort_by_key(|t| t.terminal_id.0);
+
+                Some(fresh_core::api::WindowDescription {
+                    window_id,
+                    stable_id: window.stable_id.clone(),
+                    label: window.label.clone(),
+                    root: window.root.clone(),
+                    active: window_id == active,
+                    terminals,
+                })
+            })
+            .collect();
+
+        fresh_core::api::EnvironmentDescription {
+            active_window_id: active,
+            windows: described,
         }
     }
 
