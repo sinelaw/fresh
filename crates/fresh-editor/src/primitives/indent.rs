@@ -320,6 +320,62 @@ impl IndentCalculator {
         None
     }
 
+    /// Indent (in columns) of the first non-empty line at or after
+    /// `position`, but only if its first non-whitespace character is *not*
+    /// a closing delimiter (`}`, `]`, `)`).
+    ///
+    /// Used by [`calculate_indent_pattern`] to decide whether the empty
+    /// line under the cursor sits inside a still-open block (ignore the
+    /// next line — it's the block's closer) or between two siblings (use
+    /// the next line's indent if it's smaller). Returns `None` when the
+    /// cursor is at end-of-buffer with no following content, so callers
+    /// fall back to the previous-line indent.
+    fn next_non_empty_line_indent_unless_closer(
+        buffer: &Buffer,
+        position: usize,
+        tab_size: usize,
+    ) -> Option<usize> {
+        let mut pos = position;
+        let buf_len = buffer.len();
+        while pos < buf_len {
+            // Skip over the current empty/whitespace-only line. Stop at
+            // the byte after the next `\n`.
+            let mut line_indent = 0usize;
+            let mut line_pos = pos;
+            let mut first_content: Option<u8> = None;
+            while line_pos < buf_len {
+                match Self::byte_at(buffer, line_pos) {
+                    Some(b'\n') => break,
+                    Some(b' ') if first_content.is_none() => line_indent += 1,
+                    Some(b'\t') if first_content.is_none() => line_indent += tab_size,
+                    Some(b'\r') => {}
+                    Some(b) => {
+                        if first_content.is_none() {
+                            first_content = Some(b);
+                        }
+                    }
+                    None => break,
+                }
+                line_pos += 1;
+            }
+
+            if let Some(first) = first_content {
+                if matches!(first, b'}' | b']' | b')') {
+                    return None;
+                }
+                return Some(line_indent);
+            }
+
+            // Whitespace-only line — advance past the trailing `\n` and
+            // keep scanning.
+            if line_pos >= buf_len {
+                return None;
+            }
+            pos = line_pos + 1;
+        }
+        None
+    }
+
     /// Calculate the correct indent for a closing delimiter being typed.
     ///
     /// # C-family limitation
@@ -727,24 +783,101 @@ impl IndentCalculator {
             // Current line has content - use its indent as reference
             Self::get_current_line_indent(buffer, position, tab_size)
         } else {
-            // Current line is empty (or whitespace-only): copy its own
-            // indent. For a truly empty line that is 0; for a line that
-            // already has N columns of leading whitespace it is N.
+            // Current line is empty - find previous non-empty line and check for indent triggers
+            let mut search_pos = if line_start > 0 {
+                line_start - 1 // Position of \n before current line
+            } else {
+                0
+            };
+
+            let mut found_reference_indent = 0;
+            while search_pos > 0 {
+                // Find start of line
+                let mut ref_line_start = search_pos;
+                while ref_line_start > 0 {
+                    if Self::byte_at(buffer, ref_line_start.saturating_sub(1)) == Some(b'\n') {
+                        break;
+                    }
+                    ref_line_start = ref_line_start.saturating_sub(1);
+                }
+
+                // Check if this line has non-whitespace content
+                let ref_line_bytes = buffer.slice_bytes(ref_line_start..search_pos + 1);
+                let ref_last_non_ws = ref_line_bytes
+                    .iter()
+                    .rev()
+                    .find(|&&b| b != b' ' && b != b'\t' && b != b'\r' && b != b'\n');
+
+                if ref_last_non_ws.is_some() {
+                    // Found a non-empty reference line - calculate its indent
+                    let mut line_indent = 0;
+                    let mut pos = ref_line_start;
+                    while pos <= search_pos {
+                        let byte_opt = Self::byte_at(buffer, pos);
+                        match byte_opt {
+                            Some(b' ') => line_indent += 1,
+                            Some(b'\t') => line_indent += tab_size,
+                            Some(b'\n') => break,
+                            Some(_) => break, // Hit non-whitespace, done counting indent
+                            None => break,
+                        }
+                        pos += 1;
+                    }
+
+                    found_reference_indent = line_indent;
+
+                    // Check if reference line ends with indent trigger
+                    if let Some(&last_char) = ref_last_non_ws {
+                        match last_char {
+                            b'{' | b'[' | b'(' => {
+                                tracing::debug!(
+                                    "Pattern match: reference line ends with '{}'",
+                                    last_char as char
+                                );
+                                return Some(found_reference_indent + tab_size);
+                            }
+                            b':' => {
+                                tracing::debug!("Pattern match: reference line ends with colon");
+                                return Some(found_reference_indent + tab_size);
+                            }
+                            _ => {}
+                        }
+                    }
+                    break;
+                }
+
+                // Move to previous line
+                if ref_line_start == 0 {
+                    break;
+                }
+                search_pos = ref_line_start.saturating_sub(1);
+            }
+
+            // Forward look-ahead: if the next non-empty line is at a
+            // strictly smaller indent and does not begin with a closing
+            // delimiter (`}`, `]`, `)`), the surrounding block has already
+            // been exited — honour that smaller indent rather than pulling
+            // the deeper previous indent onto the new line. Closing
+            // delimiters are excluded so that the common
             //
-            // We deliberately do *not* look at the previous non-empty
-            // line, nor at the next non-empty line. Both are heuristics
-            // that try to guess "you are still inside the block above"
-            // based on context the user has not actually typed on this
-            // line. Guessing the previous block's indent caused #1425's
-            // corner case (deeply-indented block above, unindented line
-            // below — the new line was pulled to the deep indent). The
-            // simpler rule is language-agnostic, requires no token list
-            // (no `}`/`]`/`)`/`end`/`fi`/`</tag>` knowledge), and matches
-            // what the cursor's own line says it wants. The well-formed
-            // "still inside an open block" case is handled upstream by
-            // tree-sitter; for incomplete syntax the user can press Tab
-            // if they want indentation.
-            Self::get_current_line_indent(buffer, position, tab_size)
+            //     fn main() {
+            //         let x = 1;
+            //         <cursor on empty line>
+            //     }
+            //
+            // case still indents to 4: `}` is the block's closer, not a
+            // sibling at column 0. See issue #1425 (corner case reported
+            // after the original fix shipped).
+            if let Some(next_indent) =
+                Self::next_non_empty_line_indent_unless_closer(buffer, position, tab_size)
+            {
+                if next_indent < found_reference_indent {
+                    found_reference_indent = next_indent;
+                }
+            }
+
+            // Return the reference indent we found (or 0 if no non-empty line was found)
+            found_reference_indent
         };
 
         // If current line ends with indent trigger, add to reference
@@ -1613,19 +1746,10 @@ mod tests {
     }
 
     #[test]
-    fn test_indent_on_empty_line_does_not_pull_block_indent() {
-        // When the cursor is on a truly empty line (no leading whitespace)
-        // between code lines, the new line takes the cursor's own line
-        // indent — i.e., 0 — and not the previous non-empty line's indent.
-        //
-        // The old behaviour was the opposite (return 4 here, matching
-        // `let x = 1;`), but that is the same class of guess that caused
-        // #1425's corner case: the user's explicit empty line is overruled
-        // by previous-line context. The simpler, language-agnostic rule
-        // is "the new line copies the cursor's line." If the user wants
-        // to keep typing inside the function body they can press Tab, and
-        // a tree-sitter-driven indent for completed syntax is handled in
-        // `calculate_indent_tree_sitter` rather than here.
+    fn test_indent_on_empty_line_uses_reference() {
+        // Hybrid heuristic: when the cursor is on a truly empty line between
+        // code lines, indent calculation should use the previous non-empty
+        // line as reference.
         let mut calc = IndentCalculator::new();
 
         // "fn main() {\n    let x = 1;\n\n}" — cursor on the empty line.
@@ -1635,28 +1759,27 @@ mod tests {
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
         assert_eq!(
             indent,
-            Some(0),
-            "On a truly empty line, indent must equal the cursor's own line indent (0), not the previous line's"
+            Some(4),
+            "On an empty line inside a function body, should indent to match the reference line"
         );
     }
 
     #[test]
-    fn test_indent_after_empty_line_incomplete_syntax_does_not_guess_body() {
-        // Same principle as above for the incomplete-syntax case (no
-        // closing brace, cursor at end of buffer on a fresh empty line).
-        // We deliberately do *not* guess that the user is "still inside
-        // the function body" — that guess hurts when it is wrong (see
-        // #1425) and the user can press Tab when they want to indent.
+    fn test_indent_after_empty_line_incomplete_syntax() {
+        // Test with incomplete syntax (no closing brace) - this is the real-world case
         let mut calc = IndentCalculator::new();
 
         let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n");
         let position = buffer.len(); // After the second \n, start of empty line
 
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
+        tracing::trace!("TEST: Without closing brace, indent = {:?}", indent);
+        // With incomplete syntax, tree-sitter returns ERROR nodes
+        // We should fall back to pattern matching or reference line heuristic
         assert_eq!(
             indent,
-            Some(0),
-            "Empty line at end of buffer must not be auto-indented from the previous line's context"
+            Some(4),
+            "After empty line in function body (incomplete syntax), should indent to 4 spaces using reference line"
         );
     }
 
