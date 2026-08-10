@@ -799,6 +799,154 @@ fn test_trim_on_save_preserves_crlf_and_no_revert() {
     );
 }
 
+/// Reproducer for #2777: when format-on-save rewrites the buffer, the
+/// cursor must be mapped through the content change and stay anchored to
+/// the same logical text — not restored as a raw byte offset into
+/// different content.
+///
+/// Repro from the issue: a formatter that deletes blank lines
+/// (`grep -v '^$'`), cursor at the end of line 5 (`MARKER xyz`,
+/// `Ln 5, Col 11`). After save, `MARKER xyz` becomes line 2 and the
+/// cursor must follow it to `Ln 2, Col 11`. Before the fix the raw
+/// offset landed inside `omega` (`Ln 3, Col 3`).
+#[test]
+#[cfg_attr(not(unix), ignore = "On-save actions require Unix-like environment")]
+fn test_format_on_save_keeps_cursor_anchored_to_its_text() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file_path = project_dir.join("marker.txt");
+    std::fs::write(&file_path, "alpha\n\n\n\nMARKER xyz\nomega\n").unwrap();
+
+    // Formatter that deletes blank lines (stdin -> stdout).
+    let formatter = FormatterConfig {
+        command: "grep".to_string(),
+        args: vec!["-v".to_string(), "'^$'".to_string()],
+        stdin: true,
+        timeout_ms: 5000,
+    };
+
+    let mut config = Config::default();
+    config.languages.insert(
+        "plaintext".to_string(),
+        LanguageConfig {
+            extensions: vec!["txt".to_string()],
+            filenames: vec![],
+            grammar: "plaintext".to_string(),
+            comment_prefix: None,
+            auto_indent: false,
+            auto_close: None,
+            auto_surround: None,
+            textmate_grammar: None,
+            show_whitespace_tabs: true,
+            line_wrap: None,
+            wrap_column: None,
+            page_view: None,
+            page_width: None,
+            use_tabs: None,
+            tab_size: None,
+            formatter: Some(formatter),
+            format_on_save: true,
+            on_save: vec![],
+            word_characters: None,
+            indentation_guide: None,
+            indent: None,
+        },
+    );
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 24, config, project_dir).unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Put the cursor at the end of line 5 ("MARKER xyz").
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Ln 5, Col 11");
+
+    // Save: the formatter removes the three blank lines.
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("alpha\nMARKER xyz\nomega\n");
+
+    // The cursor must still sit at the end of "MARKER xyz", now line 2.
+    // Before the fix it read "Ln 3, Col 3" (inside "omega").
+    harness.assert_screen_contains("Ln 2, Col 11");
+}
+
+/// Companion to the #2777 reproducer: a cursor entirely before the
+/// formatted-away region must not move at all.
+#[test]
+#[cfg_attr(not(unix), ignore = "On-save actions require Unix-like environment")]
+fn test_format_on_save_cursor_before_edit_stays_put() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file_path = project_dir.join("marker.txt");
+    std::fs::write(&file_path, "alpha\n\n\n\nMARKER xyz\nomega\n").unwrap();
+
+    let formatter = FormatterConfig {
+        command: "grep".to_string(),
+        args: vec!["-v".to_string(), "'^$'".to_string()],
+        stdin: true,
+        timeout_ms: 5000,
+    };
+
+    let mut config = Config::default();
+    config.languages.insert(
+        "plaintext".to_string(),
+        LanguageConfig {
+            extensions: vec!["txt".to_string()],
+            filenames: vec![],
+            grammar: "plaintext".to_string(),
+            comment_prefix: None,
+            auto_indent: false,
+            auto_close: None,
+            auto_surround: None,
+            textmate_grammar: None,
+            show_whitespace_tabs: true,
+            line_wrap: None,
+            wrap_column: None,
+            page_view: None,
+            page_width: None,
+            use_tabs: None,
+            tab_size: None,
+            formatter: Some(formatter),
+            format_on_save: true,
+            on_save: vec![],
+            word_characters: None,
+            indentation_guide: None,
+            indent: None,
+        },
+    );
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 24, config, project_dir).unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // End of line 1 ("alpha"), before every removed blank line.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Ln 1, Col 6");
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("alpha\nMARKER xyz\nomega\n");
+    harness.assert_screen_contains("Ln 1, Col 6");
+}
+
 /// Test whitespace cleanup does nothing when file is already clean
 #[test]
 fn test_whitespace_cleanup_no_change_needed() {

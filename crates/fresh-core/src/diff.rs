@@ -53,6 +53,92 @@ pub fn compute_line_diff(old_text: &str, new_text: &str) -> Vec<LineDiffHunk> {
     diff_interned_lines(&old_ids, &new_ids)
 }
 
+/// Map a byte offset in `old_text` to the corresponding byte offset in
+/// `new_text`, so a cursor keeps pointing at the same logical text after
+/// the buffer is rewritten (e.g. by format-on-save — issue #2777).
+///
+/// Semantics (VS Code-like):
+/// - An offset before/after every changed region shifts by the byte delta
+///   of the preceding hunks, staying anchored to its text.
+/// - An offset inside a changed region is refined by the region's common
+///   prefix/suffix (so reindenting a line keeps the cursor at its column);
+///   if its own text was rewritten it snaps to the end of that common
+///   prefix — the start of the replacement.
+///
+/// Cost is one line-level patience diff (`compute_line_diff`, which trims
+/// the common prefix/suffix first) plus one O(lines) offset table per
+/// side — no quadratic work on large files.
+///
+/// The returned offset is always a char boundary in `new_text`, provided
+/// `offset` is a char boundary in `old_text`.
+pub fn map_offset_through_diff(old_text: &str, new_text: &str, offset: usize) -> usize {
+    let offset = offset.min(old_text.len());
+    let old_starts = line_start_offsets(old_text);
+    let new_starts = line_start_offsets(new_text);
+
+    let mut delta: isize = 0;
+    for h in compute_line_diff(old_text, new_text) {
+        let old_start = old_starts[h.old_start as usize];
+        if offset < old_start {
+            // All remaining hunks are after the offset.
+            break;
+        }
+        let old_end = old_starts[(h.old_start + h.old_count) as usize];
+        let new_start = new_starts[h.new_start as usize];
+        let new_end = new_starts[(h.new_start + h.new_count) as usize];
+        if offset < old_end {
+            return new_start
+                + map_offset_within_replacement(
+                    &old_text[old_start..old_end],
+                    &new_text[new_start..new_end],
+                    offset - old_start,
+                );
+        }
+        delta += (new_end - new_start) as isize - (old_end - old_start) as isize;
+    }
+    ((offset as isize + delta).max(0) as usize).min(new_text.len())
+}
+
+/// Byte offset of each line token per [`compute_line_diff`]'s
+/// `split_inclusive('\n')` tokenization, with a trailing sentinel at
+/// `text.len()` so `starts[i]..starts[i + count]` is a hunk's byte range.
+fn line_start_offsets(text: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    for line in text.split_inclusive('\n') {
+        starts.push(starts.last().unwrap() + line.len());
+    }
+    starts
+}
+
+/// Map char-boundary offset `rel` in `old` to an offset in `new`, where
+/// `new` replaced `old` wholesale: keep it if it sits in the common
+/// prefix, mirror it from the end if it sits in the (non-overlapping)
+/// common suffix, else snap to the end of the common prefix. Prefix and
+/// suffix are computed in whole chars, so the result is a char boundary.
+fn map_offset_within_replacement(old: &str, new: &str, rel: usize) -> usize {
+    let mut prefix = 0;
+    for (a, b) in old.chars().zip(new.chars()) {
+        if a != b {
+            break;
+        }
+        prefix += a.len_utf8();
+    }
+    if rel <= prefix {
+        return rel;
+    }
+    let mut suffix = 0;
+    for (a, b) in old[prefix..].chars().rev().zip(new[prefix..].chars().rev()) {
+        if a != b {
+            break;
+        }
+        suffix += a.len_utf8();
+    }
+    if old.len() - rel <= suffix {
+        return new.len() - (old.len() - rel);
+    }
+    prefix
+}
+
 /// Interns lines to `u32` ids so every comparison in the diff is an
 /// integer compare, not a string compare. Callers that don't hold both
 /// sides as contiguous strings (e.g. a host service iterating two
@@ -539,6 +625,101 @@ mod tests {
                 new_count: 1,
             }]
         );
+    }
+
+    // --- map_offset_through_diff (cursor mapping, issue #2777) ---
+
+    /// The #2777 repro: a formatter deletes blank lines; an offset after
+    /// the deleted region must shift back and stay anchored to its text.
+    #[test]
+    fn map_offset_shifts_past_deleted_lines() {
+        let old = "alpha\n\n\n\nMARKER xyz\nomega\n";
+        let new = "alpha\nMARKER xyz\nomega\n";
+        // End of "MARKER xyz" (old line 5) -> end of "MARKER xyz" (new line 2).
+        assert_eq!(map_offset_through_diff(old, new, 19), 16);
+        // Start of "omega" tracks too.
+        assert_eq!(map_offset_through_diff(old, new, 20), 17);
+    }
+
+    /// An offset entirely before every change must not move.
+    #[test]
+    fn map_offset_before_changes_is_identity() {
+        let old = "alpha\n\n\n\nMARKER xyz\nomega\n";
+        let new = "alpha\nMARKER xyz\nomega\n";
+        for offset in 0..=6 {
+            assert_eq!(map_offset_through_diff(old, new, offset), offset);
+        }
+    }
+
+    /// Identical texts (formatter no-op): identity for every offset.
+    #[test]
+    fn map_offset_identity_on_equal_texts() {
+        let text = "a\nb\nc\n";
+        for offset in 0..=text.len() {
+            assert_eq!(map_offset_through_diff(text, text, offset), offset);
+        }
+    }
+
+    /// An offset inside a deleted region snaps to the start of the
+    /// replacement (VS Code semantics), not into unrelated text.
+    #[test]
+    fn map_offset_inside_deleted_region_snaps_to_replacement_start() {
+        let old = "alpha\n\n\n\nMARKER xyz\nomega\n";
+        let new = "alpha\nMARKER xyz\nomega\n";
+        // Offsets 6..9 are the three deleted blank lines.
+        for offset in 6..9 {
+            assert_eq!(map_offset_through_diff(old, new, offset), 6);
+        }
+    }
+
+    /// The #2706 repro: reindentation rewrites the cursor's own line; the
+    /// common-suffix refinement keeps the cursor at the end of its text.
+    #[test]
+    fn map_offset_tracks_reindented_line_via_common_suffix() {
+        let old = "fn main() {\nlet a = 1;\nlet b = 2;\n}\n";
+        let new = "fn main() {\n    let a = 1;\n    let b = 2;\n}\n";
+        // End of "let b = 2;" (after the ';').
+        let old_pos = old.find("2;").unwrap() + 2;
+        let new_pos = new.find("2;").unwrap() + 2;
+        assert_eq!(map_offset_through_diff(old, new, old_pos), new_pos);
+    }
+
+    /// An offset between two hunks shifts only by the earlier hunk's
+    /// delta — it must not snap to either hunk.
+    #[test]
+    fn map_offset_between_hunks_shifts_by_earlier_delta_only() {
+        let old = "one\ntwo\nmiddle\nthree\nfour\n";
+        let new = "ONE CHANGED\ntwo\nmiddle\nthree\nFOUR CHANGED\n";
+        // Start of "middle": line 1 ("two\n") onward is common; the first
+        // hunk replaced "one\n" (4 bytes) with "ONE CHANGED\n" (12 bytes).
+        let old_pos = old.find("middle").unwrap();
+        let new_pos = new.find("middle").unwrap();
+        assert_eq!(map_offset_through_diff(old, new, old_pos), new_pos);
+    }
+
+    /// Out-of-range input clamps to the new text's length.
+    #[test]
+    fn map_offset_clamps_to_new_len() {
+        assert_eq!(map_offset_through_diff("abc\ndef\n", "abc\n", 8), 4);
+        assert_eq!(map_offset_through_diff("abc\n", "abc\n", 100), 4);
+    }
+
+    /// Multibyte content: results stay on char boundaries.
+    #[test]
+    fn map_offset_multibyte_stays_on_char_boundaries() {
+        let old = "héllo wörld\n\n\ntail é\n";
+        let new = "héllo wörld\ntail é\n";
+        // End of "tail é" tracks through the blank-line deletion.
+        let old_pos = old.len() - 1; // before final '\n'
+        let mapped = map_offset_through_diff(old, new, old_pos);
+        assert_eq!(mapped, new.len() - 1);
+        assert!(new.is_char_boundary(mapped));
+        // An offset inside the rewritten region also lands on a boundary.
+        for offset in 0..=old.len() {
+            if old.is_char_boundary(offset) {
+                assert!(new.is_char_boundary(map_offset_through_diff(old, new, offset)));
+            }
+        }
     }
 
     /// Deterministic pseudo-random edit fuzzing: every generated pair
