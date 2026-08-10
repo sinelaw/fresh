@@ -1431,6 +1431,16 @@ impl Editor {
             return false;
         }
 
+        // Suppress hover while a modal overlay (Open File dialog, command
+        // palette, menu, …) covers the editor: the tracked position maps to
+        // the buffer behind the overlay, and the resulting popup would render
+        // on top of the dialog (sinelaw/fresh#2912). This also covers a hover
+        // armed just before the modal opened — the pending timer must not
+        // fire underneath it.
+        if self.modal_overlay_active() {
+            return false;
+        }
+
         let hover_delay = std::time::Duration::from_millis(self.config.editor.mouse_hover_delay_ms);
 
         // Get hover state without borrowing self
