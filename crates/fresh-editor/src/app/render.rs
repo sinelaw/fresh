@@ -748,6 +748,7 @@ impl Editor {
         // Initialize popup/suggestion layout state (rendered after status bar below)
         self.active_chrome_mut().suggestions_area = None;
         self.active_chrome_mut().suggestions_outer_area = None;
+        self.active_chrome_mut().suggestions_scrollbar_rect = None;
         self.active_chrome_mut().prompt_results_area = None;
         self.active_chrome_mut().prompt_preview_area = None;
         self.active_window_mut().file_browser_layout = None;
@@ -2453,9 +2454,12 @@ impl Editor {
             return;
         }
 
-        let suggestion_count = prompt.suggestions.len().min(10);
         let is_quick_open = prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen;
         let hints_height: u16 = if is_quick_open { 1 } else { 0 };
+        let suggestion_count = prompt
+            .suggestions
+            .len()
+            .min(crate::view::prompt::MAX_VISIBLE_SUGGESTIONS);
         let height = suggestion_count as u16 + 2 + hints_height;
 
         let suggestions_area = ratatui::layout::Rect {
@@ -2478,9 +2482,14 @@ impl Editor {
         }
 
         // Adjust the prompt's scroll position to keep the selected item
-        // visible, scrolling the minimum amount required.
+        // visible, scrolling the minimum amount required — unless the user
+        // has scrolled the list with the scrollbar, in which case pulling
+        // the offset back would undo their scroll (same reasoning as the
+        // overlay prompt, issue #2119).
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-            prompt.ensure_selected_visible();
+            if !prompt.manual_scroll {
+                prompt.ensure_selected_visible_within(suggestion_count);
+            }
         }
         let Some(prompt) = &self.active_window().prompt else {
             return;
@@ -2500,6 +2509,19 @@ impl Editor {
         if chrome.suggestions_area.is_some() {
             chrome.suggestions_outer_area = Some(suggestions_area);
         }
+        // When the list overflows, the renderer drew a scrollbar over the
+        // popup's right border; record its rect so the shared prompt-
+        // scrollbar mouse handlers (click-to-jump, thumb drag) work here
+        // exactly like in the overlay prompt (issue #623 / #1593).
+        chrome.suggestions_scrollbar_rect =
+            new_suggestions_area.and_then(|(inner, _, visible, total)| {
+                (total > visible).then_some(ratatui::layout::Rect {
+                    x: inner.x + inner.width,
+                    y: inner.y,
+                    width: 1,
+                    height: inner.height,
+                })
+            });
 
         // The quick-open hints row is chrome drawn into cells; the web renders
         // no hints, so in `suppress_chrome_cells` mode we skip it entirely

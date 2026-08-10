@@ -989,6 +989,10 @@ impl Editor {
             };
 
             prompt.selected_suggestion = Some(new_selected);
+            // The wheel moved the selection, so re-engage the renderer's
+            // keep-selection-visible behaviour (clears any latch a
+            // scrollbar click/drag set).
+            prompt.manual_scroll = false;
 
             // Update input to match selected suggestion for non-plugin prompts
             if !matches!(prompt.prompt_type, PromptType::Plugin { .. }) {

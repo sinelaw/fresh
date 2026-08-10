@@ -296,9 +296,17 @@ pub struct Prompt {
     pub status: String,
 }
 
-/// Maximum number of suggestion rows shown at once. Mirrors the cap used by
-/// `SuggestionsRenderer` so `Prompt::ensure_selected_visible` can compute the
-/// viewport size without inspecting render state.
+/// Maximum number of suggestion rows a bottom-anchored dropdown shows at once.
+/// The palette is a transient overlay drawn over the document, so it stays
+/// deliberately short rather than growing with the terminal — on an 80x24
+/// terminal a height-sized dropdown would cover all but one line of the
+/// buffer, and on a split layout it would hide the other pane entirely.
+/// Overflow is communicated by the scrollbar the renderer draws over the
+/// popup's right border (issues #623 / #1593) instead of by more rows.
+///
+/// Renderers with their own geometry (the floating Live Grep overlay, which
+/// can be 30+ rows tall) pass their actual height to
+/// [`Prompt::ensure_selected_visible_within`] rather than using this cap.
 pub const MAX_VISIBLE_SUGGESTIONS: usize = 10;
 
 impl Prompt {
@@ -674,28 +682,15 @@ impl Prompt {
         self.manual_scroll = false;
     }
 
-    /// Adjust `scroll_offset` so that `selected_suggestion` is inside the
-    /// viewport, scrolling the minimum amount required. A selection that's
-    /// already on-screen leaves the viewport untouched — this is what stops
-    /// a click on a near-bottom item from snapping the list upward and
-    /// recentering under the cursor (issue #1660).
-    ///
-    /// Uses the bottom-popup default cap (`MAX_VISIBLE_SUGGESTIONS`).
-    /// Callers rendering into a different-sized area (e.g. the
-    /// floating Live Grep overlay, where the suggestion list can be
-    /// 30+ rows tall) should call
-    /// [`ensure_selected_visible_within`] with the actual height
-    /// instead — otherwise the scroll moves prematurely once the
-    /// selection passes the 10th row even though the rest of the
-    /// list is still visible on-screen.
-    pub fn ensure_selected_visible(&mut self) {
-        self.ensure_selected_visible_within(MAX_VISIBLE_SUGGESTIONS);
-    }
-
-    /// Like [`ensure_selected_visible`] but with an explicit
-    /// `visible_count` argument, so renderers in differently-sized
-    /// frames don't all share the bottom-popup `MAX_VISIBLE_SUGGESTIONS`
-    /// assumption.
+    /// Adjust `scroll_offset` so that `selected_suggestion` is inside a
+    /// viewport of `visible_count` rows, scrolling the minimum amount
+    /// required. A selection that's already on-screen leaves the viewport
+    /// untouched — this is what stops a click on a near-bottom item from
+    /// snapping the list upward and recentering under the cursor (issue
+    /// #1660). Callers pass the actual rendered height of their list
+    /// (bottom-anchored popup and floating Live Grep overlay alike), so
+    /// the scroll only moves when the selection genuinely leaves the
+    /// visible window.
     pub fn ensure_selected_visible_within(&mut self, visible_count: usize) {
         let total = self.suggestions.len();
         let visible = total.min(visible_count.max(1));
