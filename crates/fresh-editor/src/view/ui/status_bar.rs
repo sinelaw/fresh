@@ -778,6 +778,22 @@ fn format_cursor_position_compact(line: usize, col: usize, line_count: usize) ->
     }
 }
 
+/// Horizontal scroll (in display cells) for a single-line input rendered
+/// in a viewport `width` cells wide, so the cursor at display column
+/// `cursor_cells` is always visible (issue #2876). Returns 0 while the
+/// cursor fits; otherwise scrolls just enough that the cursor lands on
+/// the viewport's last column.
+///
+/// Invariant (for `width > 0`): `scroll <= cursor_cells` and
+/// `cursor_cells - scroll < width`.
+pub(crate) fn input_hscroll(cursor_cells: usize, width: usize) -> usize {
+    if width == 0 {
+        0
+    } else {
+        cursor_cells.saturating_sub(width - 1)
+    }
+}
+
 /// Renders the status bar and prompt/minibuffer
 pub struct StatusBarRenderer;
 
@@ -808,8 +824,9 @@ impl StatusBarRenderer {
     ) {
         let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
 
-        // Create spans for the prompt
-        let mut spans = vec![Span::styled(prompt.message.clone(), base_style)];
+        // Create spans for the input (the message/label is rendered
+        // separately so it stays anchored while the input scrolls).
+        let mut spans = Vec::new();
 
         // If there's a selection, split the input into parts
         if let Some((sel_start, sel_end)) = prompt.selection_range() {
@@ -841,20 +858,66 @@ impl StatusBarRenderer {
             spans.push(Span::styled(prompt.input.clone(), base_style));
         }
 
-        let line = Line::from(spans);
-        let prompt_line = Paragraph::new(line).style(base_style);
+        Self::render_prompt_label_and_input(
+            frame,
+            area,
+            vec![Span::styled(prompt.message.clone(), base_style)],
+            spans,
+            base_style,
+            str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]),
+        );
+    }
 
-        frame.render_widget(prompt_line, area);
+    /// Shared tail of the prompt-line renderers: paint the label spans
+    /// anchored at the left edge, then the input spans in the remaining
+    /// columns with a horizontal scroll that keeps the cursor visible
+    /// (issue #2876), and always place the terminal cursor on the input.
+    ///
+    /// `cursor_cells` is the display width of the input up to the cursor.
+    fn render_prompt_label_and_input(
+        frame: &mut Frame,
+        area: Rect,
+        label_spans: Vec<Span<'static>>,
+        input_spans: Vec<Span<'static>>,
+        base_style: Style,
+        cursor_cells: usize,
+    ) {
+        // Label, clipped to the area. Use display width (not byte length)
+        // for proper handling of double-width CJK and zero-width
+        // combining characters.
+        let label_cells: usize = label_spans.iter().map(|s| str_width(&s.content)).sum();
+        let label_cols = (label_cells.min(area.width as usize)) as u16;
+        let label_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: label_cols,
+            height: area.height,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(label_spans)).style(base_style),
+            label_area,
+        );
 
-        // Set cursor position in the prompt
-        // Use display width (not byte length) for proper handling of:
-        // - Double-width CJK characters
-        // - Zero-width combining characters (Thai diacritics, etc.)
-        let message_width = str_width(&prompt.message);
-        let input_width_before_cursor = str_width(&prompt.input[..prompt.cursor_pos]);
-        let cursor_x = (message_width + input_width_before_cursor) as u16;
-        if cursor_x < area.width {
-            frame.set_cursor_position((area.x + cursor_x, area.y));
+        // Input, horizontally scrolled so the cursor never leaves the
+        // viewport: with text longer than the box the line scrolls left
+        // and the cursor rides the last column.
+        let input_area = Rect {
+            x: area.x + label_cols,
+            y: area.y,
+            width: area.width - label_cols,
+            height: area.height,
+        };
+        let scroll = input_hscroll(cursor_cells, input_area.width as usize);
+        frame.render_widget(
+            Paragraph::new(Line::from(input_spans))
+                .style(base_style)
+                .scroll((0, scroll as u16)),
+            input_area,
+        );
+
+        if input_area.width > 0 {
+            // `input_hscroll` guarantees cursor_cells - scroll < width.
+            frame.set_cursor_position((input_area.x + (cursor_cells - scroll) as u16, area.y));
         }
     }
 
@@ -937,34 +1000,18 @@ impl StatusBarRenderer {
             spans.push(Span::styled(path_display, dir_style));
         }
 
-        // User input (the filename part) - normal color
-        spans.push(Span::styled(prompt.input.clone(), base_style));
-
-        let line = Line::from(spans);
-        let prompt_line = Paragraph::new(line).style(base_style);
-
-        frame.render_widget(prompt_line, area);
-
-        // Set cursor position in the prompt
-        // Use display width for proper handling of Unicode characters
-        // We need to calculate the visual width of: "Open: " + dir_display + input[..cursor_pos]
-        let prefix_width = str_width(&open_prompt);
-        let dir_display_width = if truncated.truncated {
-            let suffix_with_slash = if truncated.suffix.ends_with('/') {
-                &truncated.suffix
-            } else {
-                // We already added "/" in the suffix_with_slash above, so approximate
-                &truncated.suffix
-            };
-            str_width(&truncated.prefix) + str_width("/[...]") + str_width(suffix_with_slash) + 1
-        } else {
-            str_width(&truncated.suffix) + 1 // +1 for trailing slash
-        };
-        let input_width_before_cursor = str_width(&prompt.input[..prompt.cursor_pos]);
-        let cursor_x = (prefix_width + dir_display_width + input_width_before_cursor) as u16;
-        if cursor_x < area.width {
-            frame.set_cursor_position((area.x + cursor_x, area.y));
-        }
+        // The label here is the whole prefix (message + colorized dir path);
+        // the user input (the filename part) scrolls after it so the cursor
+        // stays visible even when the typed name overflows the line.
+        let input_spans = vec![Span::styled(prompt.input.clone(), base_style)];
+        Self::render_prompt_label_and_input(
+            frame,
+            area,
+            spans,
+            input_spans,
+            base_style,
+            str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]),
+        );
     }
 
     /// Render a single element to its text representation.
@@ -2961,5 +3008,113 @@ mod tests {
         let mut buf = crate::model::buffer::TextBuffer::from_str_test("hello\nworld\n");
         let line_start = buf.line_start_offset(1).unwrap();
         assert_eq!(cursor_column(&mut buf, line_start), 0);
+    }
+
+    /// Invariant of the prompt-input horizontal scroll window (issue #2876):
+    /// for any viewport width > 0 the cursor always lands inside the
+    /// viewport (`cursor - scroll < width`), scrolling never overshoots the
+    /// cursor, and no scrolling happens while the cursor already fits.
+    #[test]
+    fn test_input_hscroll_keeps_cursor_visible() {
+        for width in 1usize..=120 {
+            for cursor in 0usize..=200 {
+                let scroll = input_hscroll(cursor, width);
+                assert!(scroll <= cursor, "scroll {scroll} > cursor {cursor}");
+                assert!(
+                    cursor - scroll < width,
+                    "cursor not visible: cursor={cursor} scroll={scroll} width={width}"
+                );
+                if cursor < width {
+                    assert_eq!(
+                        scroll, 0,
+                        "no scroll needed at cursor={cursor} width={width}"
+                    );
+                }
+            }
+        }
+        // Degenerate zero-width viewport must not underflow.
+        assert_eq!(input_hscroll(50, 0), 0);
+    }
+
+    /// Reproducer for issue #2876 at the renderer level: with input wider
+    /// than the prompt line, the tail must scroll into view and the
+    /// terminal cursor must always be placed (the old renderer clipped the
+    /// paragraph at the right edge and skipped `set_cursor_position`
+    /// whenever the cursor's logical column was past it).
+    #[test]
+    fn test_render_prompt_scrolls_long_input_and_places_cursor() {
+        use ratatui::backend::{Backend, TestBackend};
+        use ratatui::Terminal;
+
+        let theme =
+            crate::view::theme::Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        let mut prompt = Prompt::new(
+            "Search: ".to_string(),
+            crate::view::prompt::PromptType::Search,
+        );
+        // 100 chars in an 80-column line: 8 label cols + 72 input cols.
+        let input: String = ('a'..='z').cycle().take(100).collect();
+        prompt.input = input.clone();
+        prompt.cursor_pos = prompt.input.len();
+
+        let width: u16 = 80;
+        let backend = TestBackend::new(width, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, width, 1);
+                StatusBarRenderer::render_prompt(frame, area, &prompt, &theme);
+            })
+            .unwrap();
+
+        // The label stays anchored and the *tail* of the input is visible.
+        let buffer = terminal.backend().buffer().clone();
+        let row: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert!(
+            row.starts_with("Search: "),
+            "label must stay visible: {row:?}"
+        );
+        // Scroll = 100 - 71 = 29 cells, so chars 29.. are visible and the
+        // last column is left free for the cursor.
+        let tail: String = input.chars().skip(100 - 71).collect();
+        assert!(
+            row.trim_end().ends_with(&tail),
+            "tail of the input must scroll into view: {row:?}"
+        );
+        // Cursor rides the last column instead of being skipped.
+        let cursor = terminal.backend_mut().get_cursor_position().unwrap();
+        assert_eq!((cursor.x, cursor.y), (width - 1, 0));
+
+        // Move the cursor 15 chars left: still visible (pinned to the last
+        // column), and the window follows it leftward.
+        prompt.cursor_pos -= 15;
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, width, 1);
+                StatusBarRenderer::render_prompt(frame, area, &prompt, &theme);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let row: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
+        let shifted_window: String = input.chars().skip(85 - 71).take(72).collect();
+        assert!(
+            row.ends_with(&shifted_window[shifted_window.len() - 20..]),
+            "window must shift with the cursor: {row:?}"
+        );
+        let cursor = terminal.backend_mut().get_cursor_position().unwrap();
+        assert_eq!((cursor.x, cursor.y), (width - 1, 0));
+
+        // With a short input nothing scrolls and the cursor sits right
+        // after the typed text.
+        prompt.input = "abc".to_string();
+        prompt.cursor_pos = 3;
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, width, 1);
+                StatusBarRenderer::render_prompt(frame, area, &prompt, &theme);
+            })
+            .unwrap();
+        let cursor = terminal.backend_mut().get_cursor_position().unwrap();
+        assert_eq!((cursor.x, cursor.y), (8 + 3, 0));
     }
 }
