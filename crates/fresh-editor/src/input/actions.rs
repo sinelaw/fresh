@@ -901,6 +901,118 @@ fn handle_auto_dedent(
     });
 }
 
+/// Electric keyword dedent (issue #2582): typing the character that turns the
+/// line into exactly "leading whitespace + a `decrease_indent_pattern` trigger
+/// token" (Python `else`, Ruby `end`, a custom `CLOSE`, …) re-indents the line
+/// one level shallower — the keyword analogue of the electric `}` handled by
+/// [`handle_auto_dedent`].
+///
+/// Deliberately conservative, mirroring how VS Code's `decreaseIndentPattern`
+/// re-indents while typing:
+/// - fires only with the cursor at end of line;
+/// - fires only at the keystroke where the trigger regex first consumes the
+///   whole line content, so later keystrokes on the same line never re-fire
+///   and a trigger appearing mid-line never fires at all;
+/// - only ever dedents — a line the user already dedented at or below the
+///   target is left alone;
+/// - skipped when the previous non-blank line opens a block, so a block's
+///   first body line (e.g. Python `case` right under `match x:`) is never
+///   pulled out of the block it belongs to.
+///
+/// Returns `true` when it emitted events (the typed char included), so the
+/// caller skips the normal insertion for this cursor.
+#[allow(clippy::too_many_arguments)]
+fn handle_keyword_dedent(
+    state: &mut EditorState,
+    events: &mut Vec<Event>,
+    cursor_id: CursorId,
+    ch: char,
+    insert_position: usize,
+    line_start: usize,
+    char_after: Option<u8>,
+    tab_size: usize,
+) -> bool {
+    // A real trigger is leading whitespace plus a short token; capping the
+    // examined prefix keeps this O(1) per keystroke on long lines.
+    const MAX_PREFIX_BYTES: usize = 128;
+    if insert_position - line_start > MAX_PREFIX_BYTES {
+        return false;
+    }
+    // Cursor must be at end of line (VS Code re-evaluates only while typing
+    // the leading token at end-of-line).
+    if !matches!(char_after, None | Some(b'\n') | Some(b'\r')) {
+        return false;
+    }
+    let Some(rules) = buffer_indent_rules(state) else {
+        return false;
+    };
+
+    // Masked view of the line content before the cursor (comment/string bytes
+    // blanked to spaces, same convention as the rules tier), and the current
+    // visual indent while we're scanning.
+    let prefix_bytes = state.buffer.slice_bytes(line_start..insert_position);
+    let mut before = String::with_capacity(prefix_bytes.len() + 1);
+    let mut current_indent = 0;
+    let mut in_leading_ws = true;
+    for (i, &b) in prefix_bytes.iter().enumerate() {
+        if b == b'\r' {
+            continue;
+        }
+        if in_leading_ws {
+            match b {
+                b' ' => current_indent += 1,
+                b'\t' => current_indent += tab_size,
+                _ => in_leading_ws = false,
+            }
+        }
+        if byte_is_code(state, line_start + i) {
+            before.push(b as char);
+        } else {
+            before.push(' ');
+        }
+    }
+
+    // Fire exactly when this keystroke completes the trigger.
+    let mut after = before.clone();
+    after.push(ch);
+    if !rules.decrease_consumes_line(&after) || rules.decrease_consumes_line(&before) {
+        return false;
+    }
+
+    let Some(target_indent) =
+        rules.on_type_dedent_target(&state.buffer, line_start, tab_size, |b| {
+            byte_is_code(state, b)
+        })
+    else {
+        return false;
+    };
+    if target_indent >= current_indent {
+        return false;
+    }
+
+    // Replace the whole prefix with re-indented content + the typed char in
+    // one Delete + one Insert, mirroring `handle_auto_dedent` (single undo
+    // step; cursor ends up after the typed char).
+    let prefix = state.get_text_range(line_start, insert_position);
+    events.push(Event::Delete {
+        range: line_start..insert_position,
+        deleted_text: prefix.clone(),
+        cursor_id,
+    });
+    let use_tabs = state.buffer_settings.use_tabs;
+    let mut text = indent_to_string(target_indent, use_tabs, tab_size);
+    // Splitting after leading whitespace is char-boundary-safe: space/tab are
+    // single-byte ASCII.
+    text.push_str(prefix.trim_start_matches([' ', '\t']));
+    text.push(ch);
+    events.push(Event::Insert {
+        position: line_start,
+        text,
+        cursor_id,
+    });
+    true
+}
+
 /// Check if auto-close should happen based on character after cursor.
 fn should_auto_close(char_after: Option<u8>) -> bool {
     let is_alphanumeric_after = char_after
@@ -1132,6 +1244,7 @@ fn insert_char_events(
         }
 
         // Delete selection if present
+        let had_selection = data.selection.is_some();
         if let (Some(range), Some(text)) = (data.selection, data.deleted_text) {
             events.push(Event::Delete {
                 range,
@@ -1184,6 +1297,26 @@ fn insert_char_events(
                 data.line_start,
                 tab_size,
             );
+            continue;
+        }
+
+        // Electric keyword dedent (issue #2582): typing the char that
+        // completes a dedent-trigger line (`else`, `end`, custom `CLOSE`, …)
+        // re-indents the line the same way `}` does above.
+        if auto_indent
+            && !is_closing_delimiter
+            && !had_selection
+            && handle_keyword_dedent(
+                state,
+                events,
+                data.cursor_id,
+                ch,
+                data.insert_position,
+                data.line_start,
+                data.char_after,
+                tab_size,
+            )
+        {
             continue;
         }
 
@@ -6330,6 +6463,103 @@ mod tests {
         let text = "x".repeat(200_000);
         let state = state_with(&text);
         assert_eq!(line_start_and_blank_prefix(&state, text.len()), (0, false));
+    }
+
+    // ========================================================================
+    // Issue #2582: electric keyword dedent — typing the character that
+    // completes a dedent trigger (`else`, custom `CLOSE`, …) re-indents the
+    // line one level shallower, the way `}` already does. Cursor sits at end
+    // of the typed prefix (where real typing happens).
+    // ========================================================================
+
+    /// Python-highlighted state with `text` inserted and the cursor at its end.
+    fn python_state_with(text: &str) -> (EditorState, Cursors) {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let registry = crate::primitives::grammar::GrammarRegistry::load(
+            &crate::primitives::grammar::LocalGrammarLoader::embedded_only(),
+        );
+        state.set_language_from_name("test.py", &registry);
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: text.to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
+        (state, cursors)
+    }
+
+    /// Type one character through the real InsertChar action (auto-indent on).
+    fn type_char(state: &mut EditorState, cursors: &mut Cursors, ch: char) {
+        let events = action_to_events(
+            state,
+            cursors,
+            Action::InsertChar(ch),
+            4,
+            true,
+            true,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
+        for event in events {
+            state.apply(cursors, &event);
+        }
+    }
+
+    #[test]
+    fn test_typing_else_dedents_python_line() {
+        // Canonical #2582 case: `if a:` / body / typing `else` on a line that
+        // inherited the body indent. The final `e` completes the trigger and
+        // must re-indent the line to column 0.
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\n    els");
+        type_char(&mut state, &mut cursors, 'e');
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "if a:\n    x = 1\nelse",
+            "typing the char completing `else` must dedent the line"
+        );
+        assert_eq!(cursors.primary().position, state.buffer.len());
+
+        // The following `:` must not fire a second dedent.
+        type_char(&mut state, &mut cursors, ':');
+        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = 1\nelse:");
+        assert_eq!(cursors.primary().position, state.buffer.len());
+    }
+
+    #[test]
+    fn test_typing_else_mid_line_does_not_reindent() {
+        // The trigger word appearing mid-line (here as part of an expression)
+        // must never re-indent the line.
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = els");
+        type_char(&mut state, &mut cursors, 'e');
+        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = else");
+    }
+
+    #[test]
+    fn test_typing_case_directly_under_match_keeps_indent() {
+        // `case` typed as the first body line under `match x:` belongs inside
+        // the block — it must not be pulled out to the header's level.
+        let (mut state, mut cursors) = python_state_with("match x:\n    cas");
+        type_char(&mut state, &mut cursors, 'e');
+        assert_eq!(state.buffer.to_string().unwrap(), "match x:\n    case");
+    }
+
+    #[test]
+    fn test_typing_else_on_manually_dedented_line_is_noop() {
+        // The user already dedented the line to (or past) the target: typing
+        // the trigger must leave their indent alone.
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\nels");
+        type_char(&mut state, &mut cursors, 'e');
+        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = 1\nelse");
     }
 }
 

@@ -275,6 +275,42 @@ impl IndentRules {
         Some(visual_indent(buffer, cur.start, position, tab_size) + tab_size.max(1))
     }
 
+    /// True when `line` (a line's masked content) is exactly leading
+    /// whitespace plus a `decrease` trigger token: the regex matches and the
+    /// match consumes the entire text. Used by the electric keyword dedent
+    /// (issue #2582) to fire only at the keystroke that completes the trigger
+    /// — a trigger appearing mid-line, or with anything typed after it, never
+    /// re-fires.
+    pub fn decrease_consumes_line(&self, line: &str) -> bool {
+        self.decrease
+            .as_ref()
+            .and_then(|r| r.find(line))
+            .is_some_and(|m| m.start() == 0 && m.end() == line.len())
+    }
+
+    /// Target indent for a line whose typed content just completed a
+    /// `decrease` trigger (issue #2582): one unit shallower than the previous
+    /// non-blank line.
+    ///
+    /// Returns `None` when that previous line opens a block (or is a
+    /// braceless head): the trigger would be the block's *first* body line —
+    /// e.g. Python `case` typed right under `match x:` — and dedenting it
+    /// would pull it out of the block it belongs to.
+    pub fn on_type_dedent_target<F: Fn(usize) -> bool>(
+        &self,
+        buffer: &Buffer,
+        line_start: usize,
+        tab_size: usize,
+        is_code: F,
+    ) -> Option<usize> {
+        let reference = prev_nonblank_line(buffer, line_start)?;
+        let ref_code = code_view(buffer, reference.start, reference.end, &is_code);
+        if self.increases(&ref_code) || matches(&self.indent_next_line, &ref_code) {
+            return None;
+        }
+        let base = visual_indent(buffer, reference.start, reference.end, tab_size);
+        Some(base.saturating_sub(tab_size.max(1)))
+    }
 }
 
 fn matches(re: &Option<Regex>, text: &str) -> bool {
@@ -926,6 +962,74 @@ mod tests {
     #[test]
     fn smali_plain_field_does_not_indent() {
         assert_eq!(indent("smali", ".field public static count:I = 0\n", 4), 0);
+    }
+
+    // ---- Electric keyword dedent (issue #2582) ----------------------------
+
+    #[test]
+    fn python_decrease_consumes_line_only_for_pure_trigger() {
+        let r = rules_for_id("python").unwrap();
+        // Fires exactly at the keystroke completing the trigger token…
+        assert!(r.decrease_consumes_line("    else"));
+        assert!(r.decrease_consumes_line("elif"));
+        // …not before it is complete, not after more text follows, and never
+        // for a trigger appearing mid-line.
+        assert!(!r.decrease_consumes_line("    els"));
+        assert!(!r.decrease_consumes_line("    else:"));
+        assert!(!r.decrease_consumes_line("    x = else"));
+        assert!(!r.decrease_consumes_line("    "));
+    }
+
+    #[test]
+    fn python_on_type_dedent_target_is_one_level_shallower() {
+        // Typing `else` under a body line dedents to one level shallower than
+        // that line — the issue #2582 canonical case.
+        let content = "if a:\n    x = 1\n    els";
+        let line_start = content.rfind('\n').unwrap() + 1;
+        let target = rules_for_id("python").unwrap().on_type_dedent_target(
+            &buf(content),
+            line_start,
+            4,
+            |_| true,
+        );
+        assert_eq!(target, Some(0));
+    }
+
+    #[test]
+    fn python_on_type_dedent_skipped_for_first_body_line() {
+        // `case` typed directly under `match x:`: the previous line opens the
+        // block, so the trigger is its first body line and must stay put.
+        let content = "match x:\n    cas";
+        let line_start = content.rfind('\n').unwrap() + 1;
+        let target = rules_for_id("python").unwrap().on_type_dedent_target(
+            &buf(content),
+            line_start,
+            4,
+            |_| true,
+        );
+        assert_eq!(target, None);
+    }
+
+    #[test]
+    fn custom_close_trigger_on_type_dedent() {
+        // A config-style custom pattern, compiled directly (no global
+        // USER_RULES mutation, so this can run in parallel with other tests).
+        let r = IndentRules::compile_parts(
+            Some(r"^\s*OPEN\b"),
+            Some(r"^\s*CLOSE\b"),
+            None,
+            None,
+            None,
+            false,
+        );
+        assert!(r.decrease_consumes_line("    CLOSE"));
+        assert!(!r.decrease_consumes_line("    CLOS"));
+        let content = "OPEN\n    x\n    CLOS";
+        let line_start = content.rfind('\n').unwrap() + 1;
+        assert_eq!(
+            r.on_type_dedent_target(&buf(content), line_start, 4, |_| true),
+            Some(0)
+        );
     }
 
     // ---- Braceless control heads (issue #2492) ----------------------------
