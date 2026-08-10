@@ -41,11 +41,20 @@ pub struct BufferState {
 /// `run_buffer_actions` (renders before/after each action, like the
 /// real event loop) so layout-dependent moves resolve.
 ///
+/// Plugins are skipped for the same reason `check_buffer_scenario`
+/// skips them: the observable is buffer text + caret state reached
+/// through core `Action` dispatch, which plugins cannot affect. This
+/// matters more here than for a single scenario — property tests call
+/// this in a loop (a 32-case property evaluating twice per case builds
+/// 64 editors), so the ~440 ms of TS transpile + QuickJS per
+/// plugin-loaded harness multiplies into minutes on slow CI runners
+/// and pushes the test into nextest's terminate timeout.
+///
 /// Harness construction failures (out of disk, etc.) still panic; an
 /// external driver should already trust its environment.
 pub fn evaluate_actions(initial_text: &str, actions: &[Action]) -> BufferState {
-    let mut harness = EditorTestHarness::with_temp_project(80, 24)
-        .expect("EditorTestHarness::with_temp_project failed");
+    let mut harness = EditorTestHarness::with_temp_project_no_plugins(80, 24)
+        .expect("EditorTestHarness::with_temp_project_no_plugins failed");
     let _fixture = harness
         .load_buffer_from_text(initial_text)
         .expect("load_buffer_from_text failed");
