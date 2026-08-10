@@ -279,18 +279,39 @@ const FRESH_WINDOW_ID = {window_id};
 /// plugin-cleanup path, which sends compensating commands that would tear down
 /// the very things a script is usually run to create (a terminal, a workspace).
 /// Run-and-forget is what makes the created state outlive the caller.
+/// What a caller with no token is told.
+///
+/// The bare "not authorized" this replaced named the missing token but not the
+/// remedy, and the remedy is not guessable: a terminal opened through **Open
+/// Terminal** gets `FRESH_SESSION` but no `FRESH_CMD_TOKEN`, because only the
+/// Orchestrator launcher mints them. An agent started in such a terminal
+/// follows its briefing, is refused, and reasonably concludes the capability
+/// does not exist — so the refusal has to carry the way out.
+pub(crate) const NO_TOKEN_HELP: &str = "\
+no capability token ($FRESH_CMD_TOKEN is unset), so script evaluation is not \
+authorized from this terminal.
+
+Only terminals started by the Orchestrator launcher carry the capability. To \
+get one, start this shell (or your agent) from the editor via \"Run Agent…\" \
+or \"Orchestrator: New Workspace\" — a plain \"Open Terminal\" pane is not \
+granted editor control.
+
+See: fresh --cmd help script";
+
 pub fn run_script(
     editor: Option<&mut Editor>,
     token: Option<&str>,
     source: &str,
 ) -> CommandDispatch {
     let Some(token) = token else {
-        return CommandDispatch::refused(
-            "no capability token: script evaluation is not authorized",
-        );
+        return CommandDispatch::refused(NO_TOKEN_HELP);
     };
     let Some(grant) = lookup(token) else {
-        return CommandDispatch::refused("unknown or expired capability token");
+        return CommandDispatch::refused(
+            "unknown or expired capability token: the workspace that minted \
+             $FRESH_CMD_TOKEN has been torn down. Start a new terminal from \
+             this workspace to get a current one.",
+        );
     };
     if !grant.may_script {
         return CommandDispatch::refused("this workspace's agent was not granted editor control");

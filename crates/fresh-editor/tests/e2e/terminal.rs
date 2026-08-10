@@ -5206,3 +5206,84 @@ fn test_tab_drag_split_resizes_terminal() {
         screen
     );
 }
+
+/// A terminal is readable and writable from a script *while a different
+/// window is active*.
+///
+/// This is the property the control plane rests on. Terminals are owned
+/// per-window, so before `window_id` existed on these paths both the read and
+/// the write resolved against whatever window happened to be active when the
+/// command was serviced — which meant a caller could only ever reach one
+/// window's terminals, and could not name which. Cross-workspace observation
+/// was not restricted by policy; it was unexpressible.
+///
+/// Asserting through `terminal_screen` (the same call `readTerminal` answers
+/// from) rather than through rendered output on purpose: the terminal under
+/// test is deliberately *not* the one on screen.
+#[test]
+fn test_read_and_write_terminal_in_a_non_active_window() {
+    let mut harness = harness_or_return!(100, 30);
+
+    // A terminal in the window we start in...
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    let home = harness.editor().active_window_id();
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("the active buffer should be the terminal just opened");
+
+    // ...and then leave that window entirely.
+    let other = harness
+        .editor_mut()
+        .create_window_at(std::env::temp_dir(), "other".to_string());
+    harness.editor_mut().set_active_window(other);
+    harness.render().unwrap();
+    assert_ne!(
+        harness.editor().active_window_id(),
+        home,
+        "precondition: the terminal's window must not be the active one"
+    );
+
+    // Write to it by naming its window. Nothing about the active window
+    // should matter here.
+    harness.editor_mut().handle_send_terminal_input(
+        terminal_id,
+        Some(home),
+        "echo CROSSWINDOW\n".to_string(),
+    );
+
+    // The PTY answers asynchronously; pump until the echo lands.
+    let mut screen = None;
+    for _ in 0..100 {
+        harness.render().ok();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if let Ok(s) = harness.editor().terminal_screen(home, terminal_id, None, true) {
+            if s.text.iter().any(|l| l.contains("CROSSWINDOW")) {
+                screen = Some(s);
+                break;
+            }
+        }
+    }
+
+    let screen = screen.unwrap_or_else(|| {
+        panic!(
+            "a terminal in a non-active window should be readable and writable \
+             by naming its window; never observed the echo"
+        )
+    });
+    assert!(screen.rows > 0, "the grid should report its real height");
+
+    // Naming a window that does not own the terminal is an error rather than
+    // a silent empty read — the two are different mistakes and the caller
+    // needs to tell them apart.
+    assert!(
+        harness
+            .editor()
+            .terminal_screen(other, terminal_id, None, true)
+            .is_err(),
+        "a terminal id from another window must not resolve against this one"
+    );
+}

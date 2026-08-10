@@ -417,6 +417,38 @@ fn default_window_id() -> WindowId {
     WindowId(1)
 }
 
+/// A terminal's live screen, as answered by `editor.readTerminal()`.
+///
+/// The text is the PTY grid rendered to plain rows — no escape sequences, no
+/// styling. That is deliberate: this exists so a caller can *reason* about
+/// what a terminal says, and colour is cost without meaning for that. A human
+/// looking at another workspace's terminal should get the real thing rendered
+/// natively (the window-preview path), not this.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalScreenInfo {
+    /// The rows returned, top to bottom. Already tailed and trimmed per the
+    /// request, so `text.len()` is what came back, not the grid height.
+    pub text: Vec<String>,
+    /// Full grid height, before any tailing — so a caller can tell whether it
+    /// is looking at the whole screen or the end of it.
+    pub rows: usize,
+    /// Full grid width.
+    pub cols: usize,
+    /// Cursor position as `(row, col)`, 0-indexed within the *full* grid.
+    pub cursor: (u16, u16),
+    /// Whether the program is on the alternate screen — i.e. a full-screen
+    /// TUI (which every coding agent worth watching is). Callers need this to
+    /// know how to read what they got: on the alt screen there is no
+    /// meaningful scrollback behind the grid, and the visible rectangle is
+    /// the whole truth.
+    pub alt_screen: bool,
+    /// The terminal's current title (foreground process / OSC title), the
+    /// same string the tab shows.
+    pub title: String,
+}
+
 /// Information about an editor session (plugin-visible). Returned
 /// by `editor.listWindows()` and carried in the snapshot. Mirrors
 /// the editor-side `Session` struct — see
@@ -4847,6 +4879,14 @@ pub enum PluginCommand {
     SendTerminalInput {
         /// The terminal ID (from TerminalResult)
         terminal_id: TerminalId,
+        /// Which window owns `terminal_id`. Terminals are owned per-window,
+        /// so this is what makes the call addressable: `None` resolves
+        /// against the active window (the historical behaviour, kept for
+        /// existing callers) and can therefore reach only one window, and
+        /// only whichever one happens to be active when the command is
+        /// serviced rather than when it was sent.
+        #[serde(default)]
+        window_id: Option<WindowId>,
         /// Data to write to the terminal PTY (UTF-8 string, may include escape sequences)
         data: String,
     },
@@ -4855,6 +4895,39 @@ pub enum PluginCommand {
     CloseTerminal {
         /// The terminal ID to close
         terminal_id: TerminalId,
+    },
+
+    /// Read a terminal's live screen grid as text (async).
+    ///
+    /// Window-qualified on purpose: terminals are owned per-window, so
+    /// without `window_id` this could only ever read the active window's —
+    /// which is exactly the limitation that makes cross-workspace
+    /// observation impossible. There is no ambient fallback here; a caller
+    /// names the window it means.
+    ///
+    /// This reads the **live grid**, not the on-disk scrollback capture.
+    /// The agents this exists for run as full-screen TUIs, where the capture
+    /// is a poor record of what the user sees and the grid is the honest one.
+    ReadTerminal {
+        /// Window owning the terminal.
+        window_id: WindowId,
+        /// Terminal to read within that window.
+        terminal_id: TerminalId,
+        /// Return at most this many rows, counted from the **bottom** of the
+        /// grid. `None` returns the whole grid. A tail is what callers
+        /// almost always want: for a TUI agent the bottom rows carry the
+        /// prompt and input area, which is the region that answers "is it
+        /// waiting for me".
+        #[serde(default)]
+        lines: Option<usize>,
+        /// Drop trailing whitespace on each row and skip blank rows at the
+        /// end of the grid. A terminal grid is a fixed rectangle, so
+        /// verbatim rows are mostly padding — which for an LLM caller is
+        /// pure token cost.
+        #[serde(default)]
+        trim: bool,
+        /// Request ID for async response
+        request_id: u64,
     },
 
     /// Send `signal` to every process group tracked by the

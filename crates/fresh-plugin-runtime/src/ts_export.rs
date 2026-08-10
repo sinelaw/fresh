@@ -24,7 +24,8 @@ use fresh_core::api::{
     KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig,
     OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
     ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize, ScrollbarMarker,
-    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
+    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TerminalScreenInfo,
+    TextPropertiesAtCursor,
     TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
     VirtualBufferResult, WindowInfo,
 };
@@ -52,6 +53,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Core types
         "BufferInfo" => Some(BufferInfo::decl(&cfg)),
         "WindowInfo" => Some(WindowInfo::decl(&cfg)),
+        "TerminalScreenInfo" => Some(TerminalScreenInfo::decl(&cfg)),
         "RemoteBackendInfo" => Some(RemoteBackendInfo::decl(&cfg)),
         "CursorInfo" => Some(CursorInfo::decl(&cfg)),
         "ViewportInfo" => Some(ViewportInfo::decl(&cfg)),
@@ -364,6 +366,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "DirEntry",                        // Used by plugins for directory entries
     "BufferInfo",                      // Used by listBuffers, getBufferInfo
     "WindowInfo",                      // Used by listWindows
+    "TerminalScreenInfo",              // Used by readTerminal
     "RemoteBackendInfo",               // Used by WindowInfo.remote
     "JsDiagnostic",                    // Used by getAllDiagnostics
     "JsRange",                         // Used by JsDiagnostic

@@ -7675,14 +7675,67 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Send input data to a terminal
-    pub fn send_terminal_input(&self, terminal_id: u64, data: String) -> bool {
+    /// Send input data to a terminal.
+    ///
+    /// `windowId` names the window that owns `terminalId`. Terminals are
+    /// owned per-window, so without it this reaches only the active
+    /// window's terminals — and "active" is whatever it happens to be when
+    /// the command is serviced, not when you sent it. Omit it only for a
+    /// terminal in your own window, and prefer passing it always.
+    pub fn send_terminal_input(
+        &self,
+        terminal_id: u64,
+        data: String,
+        window_id: rquickjs::function::Opt<u64>,
+    ) -> bool {
         self.command_sender
             .send(PluginCommand::SendTerminalInput {
                 terminal_id: fresh_core::TerminalId(terminal_id as usize),
+                window_id: window_id.0.map(fresh_core::WindowId),
                 data,
             })
             .is_ok()
+    }
+
+    /// Read a terminal's live screen as plain text rows.
+    ///
+    /// Both ids are required: terminals are owned per-window, so a terminal
+    /// id alone does not identify one. Resolves to `{ text, rows, cols,
+    /// cursor, altScreen, title }`, and rejects when the window or the
+    /// terminal within it is unknown.
+    ///
+    /// `lines` returns at most that many rows counted from the **bottom** —
+    /// the tail, which for a full-screen agent is the prompt and input area
+    /// and therefore the part that says whether it is waiting for you.
+    /// `trim` (default `true`) strips trailing blanks, since a grid is a
+    /// fixed rectangle and the padding is pure cost to read.
+    ///
+    /// This is the cheap, reason-over-it view. To *show* a human another
+    /// workspace's terminal, render the window itself rather than pasting
+    /// this into a buffer.
+    #[plugin_api(
+        async_promise,
+        js_name = "readTerminal",
+        ts_return = "TerminalScreenInfo"
+    )]
+    #[qjs(rename = "_readTerminalStart")]
+    pub fn read_terminal_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        window_id: u64,
+        terminal_id: u64,
+        lines: rquickjs::function::Opt<u32>,
+        trim: rquickjs::function::Opt<bool>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::ReadTerminal {
+            window_id: fresh_core::WindowId(window_id),
+            terminal_id: fresh_core::TerminalId(terminal_id as usize),
+            lines: lines.0.map(|n| n as usize),
+            trim: trim.0.unwrap_or(true),
+            request_id: id,
+        });
+        id
     }
 
     /// Close a terminal
@@ -8180,6 +8233,7 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.spawnProcessWait = _wrapAsync("_spawnProcessWaitStart", "spawnProcessWait");
                 editor.watchPath = _wrapAsync("_watchPathStart", "watchPath");
                 editor.getBufferText = _wrapAsync("_getBufferTextStart", "getBufferText");
+                editor.readTerminal = _wrapAsync("_readTerminalStart", "readTerminal");
                 editor.createCompositeBuffer = _wrapAsync("_createCompositeBufferStart", "createCompositeBuffer");
                 editor.getCompositeCursorInfo = _wrapAsync("_getCompositeCursorInfoStart", "getCompositeCursorInfo");
                 editor.getHighlights = _wrapAsync("_getHighlightsStart", "getHighlights");

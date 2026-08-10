@@ -7004,6 +7004,7 @@ const FRESH_CLI_SYSTEM_PROMPT = [
   "`direction` names the divider: \"vertical\" = side by side, \"horizontal\" = stacked. `place` is \"before\" (left/top) or \"after\" (right/bottom, the default).",
   "Mutations are queued, so a read in the same script sees the state from before them \u2014 await the mutation (those that answer resolve once applied) or `await editor.flush()`.",
   "Finding anything else: `\"$FRESH_BIN\" --cmd script api <query>` searches the whole API by name and docs; `--cmd script check <file>` flags unknown editor.* names without running; `--cmd script types` prints the .d.ts paths.",
+  "Before building any panel or persistent UI, read `\"$FRESH_BIN\" --cmd help plugin` — it is the runtime contract plus a worked auto-refreshing clickable panel, and it names the specific guard each failure mode needs. Writing one without it usually costs several rounds of debugging.",
   "Launches answer with {\"workspaceId\",\"windowId\",\"root\"} \u2014 record workspaceId, it survives editor restarts; windowId does not.",
   "FRESH_WINDOW_ID is your window. After an `await` the focused pane may be someone else's, so prefer calls taking an explicit id.",
   "You are changing a workspace a human is watching: prefer reversible moves, do not close or overwrite panes you were not asked to touch, and read back what you changed before reporting success.",

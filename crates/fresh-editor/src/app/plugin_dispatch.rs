@@ -1753,8 +1753,22 @@ impl Editor {
                 );
             }
 
-            PluginCommand::SendTerminalInput { terminal_id, data } => {
-                self.handle_send_terminal_input(terminal_id, data);
+            PluginCommand::SendTerminalInput {
+                terminal_id,
+                window_id,
+                data,
+            } => {
+                self.handle_send_terminal_input(terminal_id, window_id, data);
+            }
+
+            PluginCommand::ReadTerminal {
+                window_id,
+                terminal_id,
+                lines,
+                trim,
+                request_id,
+            } => {
+                self.handle_read_terminal(window_id, terminal_id, lines, trim, request_id);
             }
 
             PluginCommand::CloseTerminal { terminal_id } => {
@@ -6123,24 +6137,138 @@ impl Editor {
         }
     }
 
-    fn handle_send_terminal_input(
+    /// Write to a terminal's PTY.
+    ///
+    /// `window_id` is what makes this addressable. Terminals live on the
+    /// window that spawned them, so resolving against the active window —
+    /// the historical behaviour, kept for `None` — can only ever reach one
+    /// window's terminals, and only whichever window is active at the moment
+    /// the command is *serviced*. A caller that names its window gets the
+    /// terminal it meant, whatever the user has focused since.
+    pub fn handle_send_terminal_input(
         &mut self,
         terminal_id: crate::services::terminal::TerminalId,
+        window_id: Option<fresh_core::WindowId>,
         data: String,
     ) {
-        if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
+        let target = window_id.unwrap_or(self.active_window);
+        let Some(window) = self.windows.get(&target) else {
+            tracing::warn!(
+                "Plugin sent terminal input to unknown window {:?} (terminal {:?})",
+                target,
+                terminal_id
+            );
+            return;
+        };
+        if let Some(handle) = window.terminal_manager.get(terminal_id) {
             handle.write(data.as_bytes());
             tracing::trace!(
-                "Plugin sent {} bytes to terminal {:?}",
+                "Plugin sent {} bytes to terminal {:?} in window {:?}",
                 data.len(),
-                terminal_id
+                terminal_id,
+                target
             );
         } else {
             tracing::warn!(
-                "Plugin tried to send input to non-existent terminal {:?}",
-                terminal_id
+                "Plugin tried to send input to non-existent terminal {:?} in window {:?}",
+                terminal_id,
+                target
             );
         }
+    }
+
+    /// Answer `readTerminal` with a terminal's live screen.
+    ///
+    /// Reads the PTY grid rather than the on-disk scrollback capture: the
+    /// agents this exists to watch are full-screen TUIs, for which the
+    /// capture is a poor record of what is actually on screen.
+    ///
+    /// `lines` tails from the bottom, because that is where a TUI keeps its
+    /// prompt — the part that answers "is it waiting for me". `trim` drops
+    /// trailing blanks, which on a fixed-size grid are most of it.
+    fn handle_read_terminal(
+        &mut self,
+        window_id: fresh_core::WindowId,
+        terminal_id: crate::services::terminal::TerminalId,
+        lines: Option<usize>,
+        trim: bool,
+        request_id: u64,
+    ) {
+        let callback_id = fresh_core::api::JsCallbackId::from(request_id);
+        match self.terminal_screen(window_id, terminal_id, lines, trim) {
+            Ok(screen) => {
+                let json = serde_json::to_string(&screen).unwrap_or_else(|_| "null".to_string());
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback_id, json);
+            }
+            Err(error) => {
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .reject_callback(callback_id, error);
+            }
+        }
+    }
+
+    /// Gather one terminal's screen, or say why it could not be reached.
+    ///
+    /// Split out from the dispatch arm so the "unknown window" and "unknown
+    /// terminal" cases produce messages a caller can act on — the two are
+    /// different mistakes, and collapsing them into one error costs the
+    /// caller a round of guessing.
+    pub fn terminal_screen(
+        &self,
+        window_id: fresh_core::WindowId,
+        terminal_id: crate::services::terminal::TerminalId,
+        lines: Option<usize>,
+        trim: bool,
+    ) -> Result<fresh_core::api::TerminalScreenInfo, String> {
+        let window = self
+            .windows
+            .get(&window_id)
+            .ok_or_else(|| format!("unknown window {}", window_id.0))?;
+        let handle = window.terminal_manager.get(terminal_id).ok_or_else(|| {
+            format!(
+                "window {} has no terminal {}",
+                window_id.0, terminal_id.0
+            )
+        })?;
+        let state = handle
+            .state
+            .lock()
+            .map_err(|_| "terminal state lock poisoned".to_string())?;
+
+        let (cols, rows) = state.size();
+        let mut text: Vec<String> = (0..rows)
+            .map(|row| state.get_line(row).iter().map(|cell| cell.c).collect())
+            .collect();
+
+        if trim {
+            for line in text.iter_mut() {
+                let end = line.trim_end().len();
+                line.truncate(end);
+            }
+            // Blank rows below the last content are the unused part of the
+            // grid, not output. Keep interior blanks — those are real.
+            while text.last().is_some_and(|l| l.is_empty()) {
+                text.pop();
+            }
+        }
+        if let Some(n) = lines {
+            let skip = text.len().saturating_sub(n);
+            text.drain(..skip);
+        }
+
+        Ok(fresh_core::api::TerminalScreenInfo {
+            text,
+            rows: rows as usize,
+            cols: cols as usize,
+            cursor: state.cursor_position(),
+            alt_screen: state.is_alternate_screen(),
+            title: state.title().to_string(),
+        })
     }
 
     fn handle_close_terminal(&mut self, terminal_id: crate::services::terminal::TerminalId) {
