@@ -1,5 +1,56 @@
 # Release Notes
 
+## 0.4.8
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+
+### Features
+
+* **LSP completions can offer auto-imports** (#2603) - the client now advertises what servers like rust-analyzer need to suggest unimported symbols, and accepting one inserts the import.
+* **The scripting API can manage the whole Orchestrator dock** - create, rename, move, archive, delete and list workspaces, including over SSH, not just create them.
+* **`fresh +50 file.txt` opens the file at that line**, vim-style (#1926, requested by @asukaminato0721).
+* **`F3`/`Shift+F3` step through search matches without closing the search bar first** (#2111).
+* **`editor.ephemeral_file_patterns` config** - declare files (build output, generated sources, tool scratch files) whose cursor position shouldn't be remembered; git's own scratch files are excluded by default.
+* **A Bulgarian locale** (by @ci4ic4).
+* **Unparseable keybinding config entries are now logged** instead of silently dropped (#1128, reported by @michelpado).
+* **Installing and updating Fresh**
+  * The self-updating static Linux build is now install.sh's default; `--method` still picks a native package.
+  * Update downloads are verified against GitHub's build attestation, not just a same-origin checksum.
+  * Fresh no longer runs another package manager on your behalf, including the `sudo dpkg -i` it used to run - those channels now get the exact command printed instead.
+  * `--pre` opts into pre-releases; stable installs never receive one by accident.
+
+### Bug Fixes
+
+* **`Ctrl+/` (toggle-comment) works on every terminal, not just kitty** (#2933) - terminals without the kitty protocol send one byte for the chord; it now resolves the same everywhere, including non-US layouts where `/` needs Shift.
+* **Hover popups no longer render on top of modal dialogs** (#2912, reported by @maxco1d).
+* **Long text in the search/open-file/palette input scrolls so the cursor stays visible** (#2876, reported by @asukaminato0721).
+* **Vi dot-repeat (`.`) after `o`/`O`/`a`/`A` no longer corrupts the buffer** (#2443).
+* **Mouse wheel scrolls the view, not the selection**
+  * Settings search results (#2860, reported by @asukaminato0721).
+  * Prompt dropdowns (command palette, Select Locale, …), which also gained a scrollbar when they overflow (#623, #1593, reported by @asukaminato0721 and @Kodiak-01).
+* **Auto-indent**
+  * Python's `else:`/`elif:`/`except:`/`finally:` (and custom dedent keywords) dedent live as you finish typing them, only once the statement is complete (#2582).
+  * Braceless `if`/`for`/`while` bodies indent correctly in TypeScript/JavaScript (#2492).
+  * A blank line between a deeply-indented block and an unindented line below no longer inherits the wrong indent (#1425 follow-up).
+* **Format-on-save keeps the cursor on the text it was on**, instead of a stale byte offset that could land in the wrong line (#2777, refs #2706).
+* **Workspaces**
+  * `--no-restore` no longer leaks state into per-file history or mid-session checkpoints (#2735).
+  * Closing the last split next to the Utility Dock no longer leaves a stray dock role stuck on the remaining pane (#2415, reported by @mandolyte).
+  * Git's `COMMIT_EDITMSG`/`MERGE_MSG`/etc. no longer restore a stale cursor position into freshly regenerated content (#2761, reported by @skostojohn).
+* **Keybindings**
+  * Context-specific bindings always outrank global ones, so a broad global chord can no longer make one unreachable; disabling menu-bar mnemonics now genuinely frees the Alt+letter chords (#2941, reported by @chrismo).
+  * Legacy (non-kitty) terminals resolve `Alt+]`/`Alt+[` correctly again (#2930, reported by @FreekyFrank).
+* **Malformed `ssh://` URLs fail loudly** instead of silently opening a same-named local file (#2221).
+* **Review Diff: stage/unstage/discard confirmations no longer vanish** - they used to be overwritten within the same frame by the status refresh they triggered.
+* **The bundled help manual no longer shows literal `<0D>` characters on Windows** (by @ci4ic4).
+* **Four small fixes**: `bun.lock` highlights as JSONC (#2921); generated tsconfigs use `moduleResolution: bundler` for TypeScript 7 (#2872); docs no longer claim Ctrl+H opens Find & Replace (#2109); the Rust LSP mode-switching doc references the real palette command name.
+
+### Internals
+
+* Input handling split into a pure decision core plus an imperative shell, GitHub Actions workflows now lint in CI, and a round of flaky-e2e-test stabilization across the settings, vi-mode, LSP, review-diff and orchestrator-scripting suites.
+
 ## 0.4.7
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
@@ -27,7 +78,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * **Highlights taller than the window are drawn again.**
 * **Input**
   * **Shift works with "Keyboard Report All Keys As Escape Codes"** - `Shift+A` typed `a` (#2880, reported by @akarinotomoshibi).
-  * **`Ctrl+/` works outside kitty again** (#2933) - toggle-comment fired under kitty but nowhere else, because the `0x1F` byte every other terminal sends for the chord was read as `Ctrl+_`. It also reaches a terminal panel's child process as `0x1F` now, instead of a literal `/`.
   * **Pasting works in the New Workspace and Run Agent dialogs**, in daemon mode too.
 * **Settings & commands**
   * **Settings toggles actually stick**
