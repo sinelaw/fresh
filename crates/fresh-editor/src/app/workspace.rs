@@ -425,16 +425,6 @@ impl Editor {
     /// snapshots via `Window::capture_workspace`, and injects the
     /// editor-global `plugin_global_state`.
     pub fn save_workspace_for(&mut self, id: fresh_core::WindowId) -> Result<(), WorkspaceError> {
-        // `--no-restore` session: never write workspace files — this is the
-        // single funnel for every workspace save (quit-time saves, restart
-        // saves, and mid-session checkpoints), so gating here keeps them
-        // all consistent (issue #2735).
-        if !self.workspace_persistence_enabled {
-            tracing::debug!(
-                "Skipping workspace save for window {id}: workspace persistence disabled (--no-restore)"
-            );
-            return Ok(());
-        }
         // A session still descriptor-backed in `dormant_remote` never had its
         // workspace restored: its window, when present, is only the empty
         // disconnected shell a failed reconnect built. The on-disk workspace —
@@ -451,6 +441,20 @@ impl Editor {
         // per-file global states, before snapshotting.
         win.sync_terminal_backing_files();
         win.save_all_global_file_states();
+
+        // `--no-restore` session: never write *workspace* files. This is the
+        // single funnel for every workspace save (quit-time saves, restart
+        // saves, and the mid-session checkpoints that used to ignore the
+        // flag), so gating here keeps them all consistent (issue #2735).
+        // Deliberately below the per-file/terminal state flushes: those are
+        // not workspace files and a `--no-restore` session still reads them
+        // back on open, so suppressing only the writes would be asymmetric.
+        if !self.workspace_persistence_enabled {
+            tracing::debug!(
+                "Skipping workspace save for window {id}: workspace persistence disabled (--no-restore)"
+            );
+            return Ok(());
+        }
 
         let workspace = win.capture_workspace();
 
@@ -2513,11 +2517,12 @@ impl crate::app::window::Window {
         // the last editor split left the dock's role tag behind (issue
         // #2415). Restoring that tag verbatim makes every later panel open
         // land as a full-window tab, permanently. Clearing it here heals
-        // existing poisoned workspace files on load.
-        self.buffers
-            .split_manager_mut()
-            .expect("window must have a populated split layout")
-            .clear_root_leaf_role();
+        // existing poisoned workspace files on load. A snapshot whose split
+        // layout could not be rebuilt at all leaves `splits` unseeded, so
+        // this stays a no-op rather than a panic.
+        if let Some(splits) = self.buffers.split_manager_mut() {
+            splits.clear_root_leaf_role();
+        }
 
         self.restore_bookmarks_from_workspace(&workspace.bookmarks, &path_to_buffer);
         self.clean_orphaned_buffers();
