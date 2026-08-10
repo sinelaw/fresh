@@ -513,6 +513,15 @@ impl Editor {
         let old_anchor = self.active_cursors().primary().anchor;
         let old_sticky_column = self.active_cursors().primary().sticky_column;
 
+        // Map the cursor (and any selection anchor) through a diff of the
+        // old vs. new content so each stays anchored to the same logical
+        // text — a raw byte offset lands in unrelated text whenever the
+        // rewrite changes lengths before it (issue #2777).
+        let new_cursor_pos =
+            fresh_core::diff::map_offset_through_diff(&buffer_content, output, old_cursor_pos);
+        let new_anchor = old_anchor
+            .map(|a| fresh_core::diff::map_offset_through_diff(&buffer_content, output, a));
+
         // Delete all content and insert new
         let delete_event = Event::Delete {
             range: 0..buffer_len,
@@ -525,10 +534,9 @@ impl Editor {
             cursor_id,
         };
 
-        // After delete+insert, cursor will be at output.len()
-        // Restore cursor to original position (or clamp to new buffer length)
+        // After delete+insert, the cursor sits at output.len(); a trailing
+        // MoveCursor restores it to the diff-mapped position.
         let new_buffer_len = output.len();
-        let new_cursor_pos = old_cursor_pos.min(new_buffer_len);
 
         // Leading cursor-restore event. Applied forward this is a no-op (the
         // cursor is already at `old_cursor_pos`), but a `Batch` is undone by
@@ -548,15 +556,16 @@ impl Editor {
             new_sticky_column: old_sticky_column,
         };
 
-        // Only add MoveCursor event if position actually changes
+        // Only add MoveCursor event if there is something to restore (the
+        // delete+insert left the cursor at the buffer end with no selection)
         let mut events = vec![restore_cursor_event, delete_event, insert_event];
-        if new_cursor_pos != new_buffer_len {
+        if new_cursor_pos != new_buffer_len || new_anchor.is_some() {
             let move_cursor_event = Event::MoveCursor {
                 cursor_id,
                 old_position: new_buffer_len, // Where cursor is after insert
                 new_position: new_cursor_pos,
                 old_anchor: None,
-                new_anchor: old_anchor.map(|a| a.min(new_buffer_len)),
+                new_anchor,
                 old_sticky_column: None,
                 new_sticky_column: old_sticky_column,
             };
