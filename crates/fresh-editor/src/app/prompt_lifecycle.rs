@@ -15,7 +15,7 @@ use crate::input::keybindings::KeyContext;
 use crate::input::quick_open::{BufferInfo, QuickOpenContext};
 use crate::services::async_bridge::AsyncMessage;
 use crate::services::plugins::PluginManager;
-use crate::view::prompt::{Prompt, PromptType};
+use crate::view::prompt::{Prompt, PromptType, MAX_VISIBLE_SUGGESTIONS};
 
 use super::file_open;
 use super::window::Window;
@@ -967,41 +967,34 @@ impl Editor {
         }
     }
 
-    /// Handle mouse wheel scroll in prompt with suggestions.
+    /// Handle mouse wheel scroll over a prompt's suggestion list (command
+    /// palette, Select Locale, quick open, every other bottom-anchored
+    /// dropdown).
+    ///
+    /// The wheel scrolls the **view only** — it never moves the selection.
+    /// That is the editor-wide rule (and what VS Code does): the highlighted
+    /// entry may scroll out of sight, and pressing Enter still commits it.
+    /// Wheeling used to walk `selected_suggestion` instead, which also
+    /// rewrote the prompt input under the user and — once the scrollbar
+    /// could latch the offset — made the list jump, because the wheel
+    /// released the latch and the renderer snapped the view back to a
+    /// selection that had never visibly moved.
+    ///
     /// Returns true if scroll was handled, false if no prompt is active or has no suggestions.
     pub fn handle_prompt_scroll(&mut self, delta: i32) -> bool {
+        // Scroll by what the renderer actually drew (`suggestions_area` is
+        // `(inner_rect, scroll_start_idx, visible_count, total_count)`), so
+        // the offset can't run past the end of the list. Read before
+        // borrowing the prompt: `active_window_mut()` is a method call, so
+        // the compiler can't see the two are disjoint sub-fields.
+        let visible_rows = self.active_chrome().suggestions_area.map(|(_, _, v, _)| v);
         if let Some(ref mut prompt) = self.active_window_mut().prompt {
             if prompt.suggestions.is_empty() {
                 return false;
             }
-
-            let current = prompt.selected_suggestion.unwrap_or(0);
-            let len = prompt.suggestions.len();
-
-            // Calculate new position based on scroll direction
-            // delta < 0 = scroll up, delta > 0 = scroll down
-            let new_selected = if delta < 0 {
-                // Scroll up - move selection up (decrease index)
-                current.saturating_sub((-delta) as usize)
-            } else {
-                // Scroll down - move selection down (increase index)
-                (current + delta as usize).min(len.saturating_sub(1))
-            };
-
-            prompt.selected_suggestion = Some(new_selected);
-            // The wheel moved the selection, so re-engage the renderer's
-            // keep-selection-visible behaviour (clears any latch a
-            // scrollbar click/drag set).
-            prompt.manual_scroll = false;
-
-            // Update input to match selected suggestion for non-plugin prompts
-            if !matches!(prompt.prompt_type, PromptType::Plugin { .. }) {
-                if let Some(suggestion) = prompt.suggestions.get(new_selected) {
-                    prompt.input = suggestion.get_value().to_string();
-                    prompt.cursor_pos = prompt.input.len();
-                }
-            }
-
+            let visible = visible_rows
+                .unwrap_or_else(|| prompt.suggestions.len().min(MAX_VISIBLE_SUGGESTIONS));
+            prompt.scroll_results(delta, visible);
             return true;
         }
         false
