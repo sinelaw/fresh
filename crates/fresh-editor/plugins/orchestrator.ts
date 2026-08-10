@@ -59,7 +59,17 @@ const editor = getEditor();
 // signal can honestly support. We don't poll the process, so "working"
 // means "printing", not "alive" — an agent that goes quiet to think
 // reads as idle until it prints again.
-type AgentState = "working" | "idle";
+// Three live states, not two.
+//
+// "working" and "idle" are both derived from whether the PTY printed
+// recently, which cannot tell an agent parked on a permission prompt from one
+// that finished twenty minutes ago — they print nothing either way. That is
+// the single question a user with six agents running actually has, so it gets
+// its own state: "waiting" means the agent is blocked on *you*.
+//
+// Waiting is recognised from the terminal's own screen, per agent kind (see
+// `AgentEntry.waiting`), not guessed from timing.
+type AgentState = "working" | "idle" | "waiting";
 
 // One row in the completion popup. `kind: "history"` items
 // render with a leading `↶` marker + italic styling so the user
@@ -148,6 +158,10 @@ interface AgentSession {
   // working-tree diffstat) for the pill's second line — useful even
   // before there's a PR. Same lifecycle as `pr`.
   git?: GitProbe;
+  // Last read of this session's terminal tail: what it most recently said,
+  // and whether that says it is waiting on the user. `undefined` until first
+  // probed. See `probeTail`.
+  tail?: TailProbe;
   // Wall-clock ms when this session last became the active window. Used
   // to suppress the terminal's activation redraw from registering as
   // agent activity (so selecting a session doesn't flash it `working`).
@@ -2059,6 +2073,13 @@ const IDLE_AFTER_MS = 5000;
 // stored `state` field is just a cache of this for persistence/sorting.
 // No output ever (or no terminal) ⇒ idle: we have no evidence of work.
 function sessionState(s: AgentSession): AgentState {
+  // A question on screen outranks every timing signal below, including OSC.
+  //
+  // It has to: a TUI agent redraws its spinner while it waits, so by output
+  // timing a blocked agent looks busy indefinitely — the exact failure this
+  // state exists to fix. And unlike timing, this is direct evidence: the
+  // question is *there*, in the grid, right now.
+  if (s.tail?.waitingOn) return "waiting";
   // An explicit OSC activity signal (shell integration / progress) is
   // authoritative over the output-timing heuristic: a command running keeps
   // the workspace "working" even while it prints nothing, and a finished
@@ -2109,6 +2130,10 @@ interface StatusSymbol {
 }
 
 const STATE_SYMBOL: Record<AgentState, StatusSymbol> = {
+  // Blocked on the user. The only state worth interrupting yourself for, so
+  // it gets the one glyph that reads as an alarm and the error colour — it
+  // must win the eye against a column of `*` and `·`. ASCII, like the others.
+  waiting: { glyph: "!", fg: "diagnostic.error_fg" },
   // In progress — amber/warning, an asterisk reads as "busy/spinner".
   working: { glyph: "*", fg: "diagnostic.warning_fg" },
   // Quiet / waiting — a small dim dot. Deliberately understated: idle is
@@ -3721,6 +3746,85 @@ const gitProbesInFlight = new Set<number>();
 // stale — the bursts just get spread across a few ticks.
 const MAX_CONCURRENT_GIT_PROBES = 6;
 
+// =============================================================================
+// Terminal tail probe — what the agent is saying, and whether it wants you
+//
+// `readTerminal(windowId, terminalId, …)` reads a terminal's live grid from
+// any window, which is what makes this possible at all: before it, a session's
+// output was reachable only while its workspace was the active one.
+//
+// Cheap by construction — an in-process grid read, no subprocess, unlike the
+// git and PR probes — so it runs at a short TTL. It is still TTL'd rather than
+// per-render: a busy agent re-renders the dock constantly, and a read per
+// render would scale with frame rate instead of with time.
+// =============================================================================
+
+const TAIL_PROBE_TTL_MS = 2_000;
+// How many rows of the grid's bottom to pull. Enough to catch a multi-line
+// prompt (an approval dialog with its options underneath) without dragging in
+// a screenful of diff.
+const TAIL_LINES = 12;
+
+interface TailProbe {
+  fetchedAt: number;
+  // Last non-empty row — what the card and the fleet show.
+  lastLine: string;
+  // The row that matched the agent's waiting pattern, if any. Non-empty is
+  // exactly the condition for the `waiting` state, and it doubles as the
+  // reason shown to the user ("Approve edit to …?" rather than a bare `!`).
+  waitingOn: string;
+}
+
+const tailProbesInFlight = new Set<number>();
+
+/// Read a session's terminal tail and derive `lastLine` / `waitingOn`.
+///
+/// Failure is silent and non-destructive: a terminal that has gone away, or a
+/// window torn down mid-probe, keeps whatever the last good read said rather
+/// than blanking the row. A blanked row reads as "this agent has nothing to
+/// say", which is a different and wrong claim.
+async function probeTail(s: AgentSession): Promise<void> {
+  if (s.terminalId === null || s.discovered || s.pending) return;
+  if (tailProbesInFlight.has(s.id)) return;
+  const now = Date.now();
+  if (s.tail && now - s.tail.fetchedAt < TAIL_PROBE_TTL_MS) return;
+  tailProbesInFlight.add(s.id);
+  try {
+    const screen = await editor.readTerminal(s.id, s.terminalId, TAIL_LINES, true);
+    const rows = screen.text.filter((l) => l.trim().length > 0);
+    const lastLine = rows.length ? rows[rows.length - 1].trim() : "";
+    s.tail = {
+      fetchedAt: Date.now(),
+      lastLine,
+      waitingOn: matchWaiting(s, rows),
+    };
+  } catch (_e) {
+    // Keep the previous reading; just don't re-probe immediately.
+    if (s.tail) s.tail.fetchedAt = Date.now();
+  } finally {
+    tailProbesInFlight.delete(s.id);
+  }
+}
+
+/// The line that shows this agent is waiting on the user, or "" if none.
+///
+/// Driven by the agent registry rather than by one global heuristic: each
+/// vendor's TUI asks its questions differently, and a pattern that fits one
+/// will mis-fire on another. An agent with no pattern (or a bare terminal)
+/// simply never enters the `waiting` state — it degrades to the working/idle
+/// behaviour that shipped before, which is the right failure direction.
+function matchWaiting(s: AgentSession, rows: string[]): string {
+  const entry = s.terminalTitle ? agentEntryForCmd(s.terminalTitle) : null;
+  const pattern = entry?.waiting;
+  if (!pattern) return "";
+  // Search from the bottom: the live question is the most recent one, and an
+  // identical question answered earlier may still be on screen above it.
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (pattern.test(rows[i])) return rows[i].trim();
+  }
+  return "";
+}
+
 // Resolve (and cache) a session's branch. Live sessions don't carry
 // `branch` up front, so ask git in the worktree once.
 async function sessionBranch(s: AgentSession): Promise<string> {
@@ -3949,6 +4053,9 @@ function startProbePolling(): void {
       const s = orchestratorSessions.get(id);
       if (!s) continue;
       void probePr(s);
+      // Cheap enough to run unbounded alongside the others: an in-process
+      // grid read, no subprocess. It self-throttles on its own (shorter) TTL.
+      void probeTail(s);
     }
     // Git probes drain at bounded concurrency (see `drainGitProbes`) rather
     // than all firing on this tick — each completion refills the freed slot,
@@ -6859,6 +6966,22 @@ interface AgentEntry {
   // enables "Teach Fresh CLI". Absent ⇒ the agent has no autonomous shell to
   // drive the editor (aider), so the checkbox stays hidden for it.
   systemPrompt?: AgentSystemPrompt;
+  // How this agent's TUI looks when it is blocked on the user — matched
+  // against rows of the terminal's live grid (see `matchWaiting`), newest
+  // first. A hit puts the session in the `waiting` state, and the matched
+  // line becomes the reason shown beside it.
+  //
+  // Per-agent rather than one shared heuristic: each vendor asks differently,
+  // and a pattern tuned for one mis-fires on another. A false `!` is worse
+  // than none, because the whole value of the state is that it is worth
+  // interrupting yourself for. Absent ⇒ this agent never reports `waiting`,
+  // which is the right default for a bare terminal or an agent nobody has
+  // characterised yet.
+  //
+  // These match what someone else's UI draws, so they will need revisiting
+  // when it changes. Anchor them on the words a prompt must contain, never on
+  // box-drawing or layout.
+  waiting?: RegExp;
 }
 // The four launcher-priority agents come first (claude, codex, opencode), then
 // the long-standing aider entry. Order here drives the preset-row order.
@@ -6880,6 +7003,9 @@ const AGENT_REGISTRY: AgentEntry[] = [
     auto: ["--permission-mode", "auto"],
     prompt: { style: "positional" },
     systemPrompt: { via: "flag", flag: "--append-system-prompt" },
+    // Claude Code asks with a numbered option list ("❯ 1. Yes"), and
+    // phrases the question as "Do you want …?" / "Would you like …?".
+    waiting: /(Do you want|Would you like|❯\s*1\.\s|\[y\/n\])/i,
   },
   {
     // OpenAI Codex CLI: resume is a *subcommand*, not a flag — `codex resume
@@ -6904,6 +7030,8 @@ const AGENT_REGISTRY: AgentEntry[] = [
     auto: ["--sandbox", "workspace-write", "--ask-for-approval", "never"],
     prompt: { style: "positional" },
     systemPrompt: { via: "file", path: "AGENTS.md" },
+    // Codex asks before running a command or applying a patch.
+    waiting: /(Allow command|Apply patch\?|Approve|\[y\/n\])/i,
   },
   {
     // opencode (SST): `--continue` resumes the latest session in the cwd.
@@ -6915,6 +7043,7 @@ const AGENT_REGISTRY: AgentEntry[] = [
     spec: { continue: { resumeArgs: ["--continue"] } },
     prompt: { style: "flag", flag: "--prompt" },
     systemPrompt: { via: "file", path: "AGENTS.md" },
+    waiting: /(Do you want|Approve|\[y\/n\])/i,
   },
   {
     // aider keeps its conversation in the repo and reloads it with
@@ -6927,6 +7056,8 @@ const AGENT_REGISTRY: AgentEntry[] = [
     spec: { continue: { resumeArgs: ["--restore-chat-history"] } },
     auto: ["--yes-always"],
     prompt: { style: "flag", flag: "-m" },
+    // aider confirms with a readline y/n prompt rather than a TUI dialog.
+    waiting: /\(Y\)es\/\(N\)o|\[y\/n\]|Add .* to the chat\?/i,
   },
 ];
 
@@ -10121,8 +10252,20 @@ export type WorkspaceSummary = {
   projectPath: string;
   /** Checked-out branch, when known. */
   branch?: string;
-  /** Whether the agent in this workspace is producing output right now. */
-  agentState: "working" | "idle";
+  /** What this workspace's agent is doing.
+   *
+   *  `"waiting"` is the one worth acting on: the agent is blocked on the
+   *  user, recognised from a question on its own screen rather than from
+   *  timing. `waitingOn` carries the question. An agent kind with no
+   *  registered prompt pattern never reports it, so absence of `"waiting"`
+   *  is not proof that nothing is blocked. */
+  agentState: "working" | "idle" | "waiting";
+  /** The line showing why this agent is blocked, when `agentState` is
+   *  `"waiting"`; empty otherwise. */
+  waitingOn: string;
+  /** The last non-empty line this workspace's terminal printed, or `""`
+   *  before the first read. What the agent most recently said. */
+  lastLine: string;
   /** The terminal the launcher started this workspace's agent in, or `null`
    *  for a row with no live terminal (`discovered` / `pending`, or a
    *  workspace whose agent has been closed).
@@ -10514,7 +10657,11 @@ function listWorkspaces(): WorkspaceSummary[] {
       root: session.root,
       projectPath: session.projectPath,
       branch: session.branch ?? git?.branch,
-      agentState: session.state,
+      // Recomputed, not the cached `state` field: that is only a persistence
+      // hint, and it predates the `waiting` state entirely.
+      agentState: sessionState(session),
+      waitingOn: session.tail?.waitingOn ?? "",
+      lastLine: session.tail?.lastLine ?? "",
       terminalId: session.terminalId,
       lastOutputAt: session.lastOutputAt,
       title: session.terminalTitle ?? "",
