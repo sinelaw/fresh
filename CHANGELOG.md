@@ -435,6 +435,8 @@ The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd
 
 * **Minimal static Linux binary** release artifact (musl, x86_64 and aarch64) optimized for a small binary size.
 
+* **Live Diff: Revert Hunk at Cursor**: a command that reverts the change block under the cursor to the reference content (HEAD, disk, or branch), leaving all other changes intact (#1948).
+
 ### Improvements
 
 * **Orchestrator Dock right-click menu**: right-click a session row for an unobtrusive popup anchored at the cursor with Visit / Archive / Delete. Archive and Delete open a centered, full-screen-dimmed confirmation before they run.

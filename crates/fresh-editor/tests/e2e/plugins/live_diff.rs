@@ -822,6 +822,258 @@ fn test_live_diff_down_arrow_traverses_deletion_block() {
     );
 }
 
+/// Run a command by typing its full name into the command palette.
+fn run_palette_command(harness: &mut EditorTestHarness, name: &str) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text(name).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// #1948: "Live Diff: Revert Hunk at Cursor" on a rewritten line
+/// restores the HEAD content of that line and leaves the surrounding
+/// lines untouched.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_revert_hunk_restores_modified_line() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    repo.create_file(
+        "src/utils.rs",
+        "head_context_line\nORIGINAL_MIDDLE_MARKER\ntail_context_line\n",
+    );
+    repo.git_add(&["src/utils.rs"]);
+    repo.git_commit("init");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    // Rewrite the middle line with content dissimilar enough that the
+    // hunk renders as removed + added — the revert must work the same
+    // regardless of how the renderer classified the block.
+    repo.modify_file(
+        "src/utils.rs",
+        "head_context_line\nREWRITTEN_PAYLOAD_WITH_NOTHING_IN_COMMON_WITH_THE_ORIGINAL\ntail_context_line\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    // Wait for the diff decorations so we know hunks are computed.
+    harness
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '-'))
+        .unwrap();
+
+    // Cursor onto the rewritten line (line index 1).
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    run_palette_command(&mut harness, "Live Diff: Revert Hunk at Cursor");
+
+    // The rewritten payload is gone and the original content is back as
+    // real buffer text (the screen no longer shows the payload anywhere,
+    // including virtual lines).
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            has_text(&s, "ORIGINAL_MIDDLE_MARKER") && !s.contains("REWRITTEN_PAYLOAD")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        has_text(&screen, "head_context_line") && has_text(&screen, "tail_context_line"),
+        "context lines must survive the revert. Screen:\n{screen}"
+    );
+}
+
+/// #1948: reverting a pure-addition hunk deletes the added line.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_revert_hunk_removes_added_line() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    repo.create_file("src/utils.rs", "head_context_line\ntail_context_line\n");
+    repo.git_add(&["src/utils.rs"]);
+    repo.git_commit("init");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    repo.modify_file(
+        "src/utils.rs",
+        "head_context_line\nADDED_UNIQUE_LINE_MARKER\ntail_context_line\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    harness
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '+'))
+        .unwrap();
+
+    // Cursor onto the added line (line index 1).
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    run_palette_command(&mut harness, "Live Diff: Revert Hunk at Cursor");
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            !s.contains("ADDED_UNIQUE_LINE_MARKER")
+                && has_text(&s, "head_context_line")
+                && has_text(&s, "tail_context_line")
+        })
+        .unwrap();
+}
+
+/// #1948: reverting a deletion hunk re-inserts the deleted lines. The
+/// deletion block renders as virtual `-` rows anchored above the line
+/// that follows it, so the cursor goes on that anchor line.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_revert_hunk_restores_deleted_line() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    repo.create_file(
+        "src/utils.rs",
+        "head_context_line\nDELETED_MARKER_LINE\ntail_context_line\n",
+    );
+    repo.git_add(&["src/utils.rs"]);
+    repo.git_commit("init");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    repo.modify_file("src/utils.rs", "head_context_line\ntail_context_line\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    // The deleted line shows as a virtual row with the `-` glyph.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            has_glyph(&s, '-') && has_text(&s, "DELETED_MARKER_LINE")
+        })
+        .unwrap();
+
+    // Cursor onto the anchor line below the deletion block
+    // ("tail_context_line", line index 1).
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    run_palette_command(&mut harness, "Live Diff: Revert Hunk at Cursor");
+
+    // After the revert the line is real buffer content again: the diff
+    // is empty, so the `-` glyph disappears while the text stays.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            has_text(&s, "DELETED_MARKER_LINE") && !has_glyph(&s, '-')
+        })
+        .unwrap();
+}
+
+/// #1948: invoking the revert with the cursor on an unchanged line
+/// reports "no change at cursor" and leaves the buffer alone.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_revert_hunk_noop_on_unchanged_line() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    repo.create_file(
+        "src/utils.rs",
+        "head_context_line\nORIGINAL_MIDDLE_MARKER\ntail_context_line\n",
+    );
+    repo.git_add(&["src/utils.rs"]);
+    repo.git_commit("init");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    repo.modify_file(
+        "src/utils.rs",
+        "head_context_line\nCHANGED_MIDDLE_PAYLOAD_TOTALLY_DIFFERENT\ntail_context_line\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    harness
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '-'))
+        .unwrap();
+
+    // Cursor stays on line 0 — the unchanged head line.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    run_palette_command(&mut harness, "Live Diff: Revert Hunk at Cursor");
+
+    // Status reports there's nothing to revert and the change is intact.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("no change at cursor"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        has_text(&screen, "CHANGED_MIDDLE_PAYLOAD_TOTALLY_DIFFERENT"),
+        "buffer must be untouched when no hunk is at the cursor. Screen:\n{screen}"
+    );
+}
+
 /// Regression for #2177: at a degenerate effective text width (here a
 /// tiny `wrap_column`, but a narrow split pane or a wide gutter reaches
 /// the same condition), normal lines stop wrapping — but the deletion
