@@ -2579,6 +2579,7 @@ fn render_search_results(
             frame,
             item_area,
             result,
+            idx,
             is_selected,
             is_hovered,
             theme,
@@ -2615,11 +2616,15 @@ fn render_search_results(
     }
 }
 
-/// Render a single search result with breadcrumb
+/// Render a single search result with breadcrumb. `result_index` is the
+/// absolute index into the state's `search_results` (needed for hit-testing
+/// because only the visible rows get registered in the layout).
+#[allow(clippy::too_many_arguments)]
 fn render_search_result_item(
     frame: &mut Frame,
     area: Rect,
     result: &SearchResult,
+    result_index: usize,
     is_selected: bool,
     is_hovered: bool,
     theme: &Theme,
@@ -2717,7 +2722,7 @@ fn render_search_result_item(
     }
 
     // Track this item in layout
-    layout.add_search_result(result.page_index, result.item_index, area);
+    layout.add_search_result(result_index, result.page_index, result.item_index, area);
 }
 
 /// Build a line with highlighted match positions
