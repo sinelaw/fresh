@@ -214,7 +214,18 @@ enum State {
     /// APC (`ESC _`), PM (`ESC ^`) or SOS (`ESC X`). Content is discarded until
     /// the terminator: `ST` (`ESC \`) or a legacy `BEL`. `saw_esc` records that
     /// the previous byte was an `ESC`, so the next byte can complete an `ST`.
-    StringSeq { saw_esc: bool },
+    ///
+    /// `pending_alt` holds the introducer byte for as long as *nothing* has
+    /// followed it — the window in which the two-byte prefix is still ambiguous
+    /// between a real string sequence and a legacy-encoded Alt chord (a
+    /// terminal without the kitty protocol transmits Alt+] as exactly `ESC ]`).
+    /// The first body byte clears it: from then on this is unambiguously a
+    /// string sequence and [`InputParser::flush`] must not tear it apart. See
+    /// [`InputParser::escape_pending`].
+    StringSeq {
+        saw_esc: bool,
+        pending_alt: Option<u8>,
+    },
 }
 
 /// Incremental terminal-input parser.
@@ -261,32 +272,65 @@ impl InputParser {
         events
     }
 
-    /// True while a lone `ESC` is buffered, waiting for the next byte to say
-    /// whether it was the Escape key or the head of an escape sequence.
+    /// True while an ambiguous escape prefix is buffered — bytes that read as
+    /// the head of an escape sequence but equally as key press(es) a legacy
+    /// terminal encodes with an `ESC` prefix. The next byte (or an idle
+    /// [`flush`](InputParser::flush)) disambiguates. The ambiguous prefixes:
+    ///
+    /// * a lone `ESC` — the Escape key, or the head of any sequence;
+    /// * `ESC [` with no parameter byte yet — Alt+[ on a legacy terminal, or a
+    ///   CSI introducer (sinelaw/fresh#2930);
+    /// * a string introducer (`ESC ]`, `ESC P`, `ESC _`, `ESC ^`, `ESC X`)
+    ///   with no body byte yet — Alt+] (etc.) on a legacy terminal, or the
+    ///   start of an OSC/DCS/APC/PM/SOS string (sinelaw/fresh#2930).
     ///
     /// A caller reading from a live tty uses this to decide when to
-    /// [`flush`](InputParser::flush): a standalone Escape has no continuation,
-    /// so once no more input arrives the ambiguity resolves to the key press.
+    /// [`flush`](InputParser::flush): a genuine control sequence's payload
+    /// always follows its introducer immediately (same write burst, so at most
+    /// one read-boundary/grace-window away), while a human Alt chord arrives
+    /// alone. Once no more input arrives the ambiguity resolves to the key
+    /// press. As soon as any payload byte follows, this returns `false` and
+    /// the sequence is committed: it can then only complete or resync, never
+    /// surface as keystrokes.
     pub fn escape_pending(&self) -> bool {
-        self.state == State::Escape
+        match self.state {
+            State::Escape => true,
+            // `ESC [` alone: params live in `buffer` (cleared on entry), so an
+            // empty buffer means nothing has followed the introducer yet.
+            State::Csi => self.buffer.is_empty(),
+            State::StringSeq {
+                saw_esc: false,
+                pending_alt: Some(_),
+            } => true,
+            _ => false,
+        }
     }
 
-    /// Resolve a buffered lone `ESC` as a standalone Escape key press.
+    /// Resolve a buffered ambiguous escape prefix as the key press(es) a
+    /// legacy terminal means by it: a lone `ESC` is the Escape key, `ESC [` is
+    /// Alt+[, and a bare string introducer `ESC ]` / `ESC P` / `ESC _` /
+    /// `ESC ^` / `ESC X` is Alt + that character (sinelaw/fresh#2930).
     ///
-    /// Returns the `Esc` key event (and returns to ground) when
+    /// Returns the resolved key event (and returns to ground) when
     /// [`escape_pending`](InputParser::escape_pending) is true; empty
-    /// otherwise. Only the `Escape` state is flushable — a partial CSI or
-    /// UTF-8 sequence keeps waiting, since its bytes must never surface as
-    /// literal keystrokes.
+    /// otherwise. Only the ambiguous prefixes are flushable — a CSI with
+    /// parameters, a string sequence with body bytes, or a partial UTF-8
+    /// character keeps waiting, since its bytes must never surface as literal
+    /// keystrokes.
     pub fn flush(&mut self) -> Vec<Event> {
-        if !self.escape_pending() {
-            return Vec::new();
-        }
+        let key = match self.state {
+            State::Escape => KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+            State::Csi if self.buffer.is_empty() => {
+                KeyEvent::new(KeyCode::Char('['), KeyModifiers::ALT)
+            }
+            State::StringSeq {
+                saw_esc: false,
+                pending_alt: Some(introducer),
+            } => KeyEvent::new(byte_to_keycode(introducer), KeyModifiers::ALT),
+            _ => return Vec::new(),
+        };
         self.state = State::Ground;
-        vec![Event::key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::empty(),
-        ))]
+        vec![Event::key(key)]
     }
 
     /// Process a single byte, appending any completed events to `out`.
@@ -334,7 +378,7 @@ impl InputParser {
                         continue;
                     }
                 }
-                State::StringSeq { saw_esc } => {
+                State::StringSeq { saw_esc, .. } => {
                     if !self.feed_string(byte, saw_esc) {
                         continue;
                     }
@@ -383,8 +427,18 @@ impl InputParser {
             // discarded until `ST`/`BEL`; without this arm the introducer and
             // its whole payload leaked out as `Alt+<introducer>` plus literal
             // characters (e.g. an OSC 52 clipboard or OSC 10/11 colour reply).
+            //
+            // The introducer is remembered in `pending_alt` because the prefix
+            // is still ambiguous until a body byte arrives: a legacy terminal
+            // transmits Alt+] as exactly `ESC ]`, so a bare introducer with no
+            // continuation must resolve to the Alt chord on idle `flush()`
+            // rather than swallow all further input as string content
+            // (sinelaw/fresh#2930).
             b'P' | b']' | b'_' | b'^' | b'X' => {
-                self.state = State::StringSeq { saw_esc: false };
+                self.state = State::StringSeq {
+                    saw_esc: false,
+                    pending_alt: Some(byte),
+                };
             }
             0x1b => {
                 // First ESC was standalone; stay in Escape for the second one.
@@ -610,8 +664,21 @@ impl InputParser {
         } else {
             match byte {
                 0x07 => self.state = State::Ground, // BEL: legacy OSC terminator
-                0x1b => self.state = State::StringSeq { saw_esc: true },
-                _ => {} // discard content byte
+                0x1b => {
+                    self.state = State::StringSeq {
+                        saw_esc: true,
+                        pending_alt: None,
+                    }
+                }
+                _ => {
+                    // Discard the content byte. Any body byte commits the
+                    // prefix as a real string sequence: it is no longer
+                    // flushable as an Alt chord.
+                    self.state = State::StringSeq {
+                        saw_esc: false,
+                        pending_alt: None,
+                    };
+                }
             }
             true
         }
