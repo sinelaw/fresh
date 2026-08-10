@@ -113,3 +113,9 @@ Each binding in `config.json` has this structure:
 | `file_explorer` | When the file explorer has focus |
 | `menu` | When a menu is open |
 | `terminal` | When the integrated terminal has focus |
+
+When the same key is bound in more than one applicable context, the most
+specific context wins: a `normal` or `prompt` binding outranks a `global` one
+for the same key. `global` is the fallback that applies wherever no narrower
+binding claims the key. Your custom bindings always outrank keymap defaults,
+whatever context either uses.

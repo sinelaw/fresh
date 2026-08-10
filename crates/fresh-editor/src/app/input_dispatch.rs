@@ -171,33 +171,12 @@ impl Editor {
 
         // Prompt is next
         if self.active_window().prompt.is_some() {
-            // Check for Alt+key keybindings in Prompt context first
-            // Use resolve_in_context_only to bypass Global bindings (like menu mnemonics)
-            // This allows Prompt-specific Alt+key bindings (like encoding toggle) to work
-            if event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::ALT)
-            {
-                if let crossterm::event::KeyCode::Char(_) = event.code {
-                    let prompt_action = self.keybindings.read().unwrap().resolve_in_context_only(
-                        event,
-                        crate::input::keybindings::KeyContext::Prompt,
-                    );
-                    if let Some(action) = prompt_action {
-                        // For file browser actions, route to handle_file_open_action
-                        if self.is_file_open_active() && self.handle_file_open_action(&action) {
-                            return Some(InputResult::Consumed);
-                        }
-                        // For other prompt actions, use handle_action
-                        if let Err(e) = self.handle_action(action) {
-                            tracing::warn!("Prompt action failed: {}", e);
-                        }
-                        return Some(InputResult::Consumed);
-                    }
-                }
-            }
-
-            // File browser prompts use FileBrowserInputHandler
+            // File browser prompts use FileBrowserInputHandler. Keys it
+            // ignores (Alt+letter) fall through to regular keybinding
+            // resolution, which resolves them in the Prompt context —
+            // context-specific bindings outrank global ones there, so the
+            // browser's Alt toggles (encoding, hidden files) win over e.g.
+            // the Alt+E menu mnemonic without any special-casing here.
             if self.is_file_open_active() {
                 let active_window_id = self.active_window;
                 let __win = self
@@ -209,8 +188,11 @@ impl Editor {
                 {
                     let mut handler = FileBrowserInputHandler::new(file_state, prompt);
                     let result = handler.dispatch_input(event, &mut ctx);
-                    self.process_deferred_actions(ctx);
-                    return Some(result);
+                    if result != InputResult::Ignored {
+                        self.process_deferred_actions(ctx);
+                        return Some(result);
+                    }
+                    ctx = InputContext::new();
                 }
             }
 
