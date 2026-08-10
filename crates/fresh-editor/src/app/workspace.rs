@@ -1360,6 +1360,7 @@ impl crate::app::window::Window {
         let Some(split_state) = split_states.get(&saved_split_id) else {
             return;
         };
+        let ephemeral_patterns = self.config().editor.ephemeral_file_patterns.clone();
 
         // Resolve the split-manager-assigned buffer before taking the
         // &mut borrow on windows so the borrow stays disjoint from
@@ -1466,10 +1467,10 @@ impl crate::app::window::Window {
 
                 // Restore cursor, scroll, view_mode, and compose_width for ALL buffers in file_states
                 for (rel_path, file_state) in &split_state.file_states {
-                    // Saved offsets for a regenerated file point into content
+                    // Saved offsets for an ephemeral file point into content
                     // that no longer exists; gating on load also heals
                     // workspaces written before the save-side gate (#2761).
-                    if crate::workspace::is_git_internal_path(rel_path) {
+                    if crate::workspace::is_ephemeral_file(rel_path, &ephemeral_patterns) {
                         continue;
                     }
                     // Look up buffer by path, or by unnamed recovery ID
@@ -2066,7 +2067,11 @@ impl crate::app::window::Window {
             folds: Vec::new(),
         };
 
-        PersistedFileWorkspace::save(&abs_path, file_state);
+        PersistedFileWorkspace::save(
+            &abs_path,
+            file_state,
+            &self.config().editor.ephemeral_file_patterns,
+        );
     }
 
     /// Sync this window's active terminal visible screens to their
@@ -2713,6 +2718,7 @@ impl crate::app::window::Window {
                 active_buffer,
                 &terminal_id_map,
                 &terminal_indices,
+                &self.config().editor.ephemeral_file_patterns,
             );
             split_states.insert(leaf_id.0 .0, serialized);
         }
@@ -3065,6 +3071,7 @@ fn serialize_split_node_pruned(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serialize_split_view_state(
     view_state: &crate::view::split::SplitViewState,
     buffers: &HashMap<BufferId, EditorState>,
@@ -3073,6 +3080,7 @@ fn serialize_split_view_state(
     active_buffer: Option<BufferId>,
     terminal_buffers: &HashMap<BufferId, TerminalId>,
     terminal_indices: &HashMap<TerminalId, usize>,
+    ephemeral_patterns: &[String],
 ) -> SerializedSplitViewState {
     let mut open_tabs = Vec::new();
     let mut open_files = Vec::new();
@@ -3140,9 +3148,10 @@ fn serialize_split_view_state(
             continue;
         };
 
-        // Git regenerates COMMIT_EDITMSG & co with new content every
-        // operation, so persisted cursor/scroll state is always stale (#2761).
-        if crate::workspace::is_git_internal_path(abs_path) {
+        // Something outside the editor rewrites these files (git regenerates
+        // COMMIT_EDITMSG every operation), so their state is always stale by
+        // the time it would be restored (#2761).
+        if crate::workspace::is_ephemeral_file(abs_path, ephemeral_patterns) {
             continue;
         }
 

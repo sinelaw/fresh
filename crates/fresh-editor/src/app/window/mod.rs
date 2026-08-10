@@ -3006,10 +3006,12 @@ impl Window {
     ) {
         use crate::workspace::PersistedFileWorkspace;
 
-        let file_state = match PersistedFileWorkspace::load(path) {
-            Some(state) => state,
-            None => return,
-        };
+        let file_state =
+            match PersistedFileWorkspace::load(path, &self.config().editor.ephemeral_file_patterns)
+            {
+                Some(state) => state,
+                None => return,
+            };
 
         self.restore_buffer_state_in_split(buffer_id, split_id, &file_state);
     }

@@ -9,7 +9,7 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
-use fresh::workspace::{is_git_internal_path, SerializedTabRef, Workspace};
+use fresh::workspace::{is_ephemeral_file, SerializedTabRef, Workspace};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -100,7 +100,9 @@ fn test_workspace_file_states_exclude_git_internal_files() {
         "sanity: the regular file's state is persisted, got {all_keys:?}"
     );
     assert!(
-        !all_keys.iter().any(|k| is_git_internal_path(k)),
+        !all_keys
+            .iter()
+            .any(|k| is_ephemeral_file(k, &Config::default().editor.ephemeral_file_patterns)),
         "no .git-internal file may appear in workspace file_states, got {all_keys:?}"
     );
 }

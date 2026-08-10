@@ -7,7 +7,7 @@
 > alias, and this page keeps its `/features/session-persistence` URL so
 > existing links and bookmarks continue to work.
 
-> **Palette:** `Detach`. **CLI:** `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `hot_exit`, `editor.restore_previous_session`.
+> **Palette:** `Detach`. **CLI:** `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
 
 Detach from Fresh and reattach later, similar to tmux. The Fresh daemon keeps running in the background, so your editor state survives even after you close the terminal.
 
@@ -24,6 +24,12 @@ Each workspace's state (open files, split layout, plugin state) is restored on s
 - **`editor.restore_previous_session`** (config, default `true`) — when set to `false`, Fresh skips restoring tabs and splits but still brings back unsaved "hot-exit" content (dirty files and unnamed buffers).
 - **`--no-restore`** (CLI) — one-shot skip equivalent to the config flag being off.
 - **`--restore`** (CLI) — force a full workspace restore even when the config flag is off. Mutually exclusive with `--no-restore`.
+
+### Ephemeral files
+
+Some files are rewritten behind the editor's back, so a remembered cursor or scroll position would point into content that no longer exists. `editor.ephemeral_file_patterns` (default `["**/.git/**"]`) lists those files; their per-file state is never saved and never restored. The default covers git's scratch files — `COMMIT_EDITMSG`, `MERGE_MSG`, `TAG_EDITMSG`, rebase todo lists — which matters when Fresh is your `core.editor`.
+
+Entries use the same dialect as `languages.*.filenames`: a literal entry matches the file name exactly, an entry containing `*` or `?` is a glob, matched against the whole path when it names directories (`**/.git/**`, `build/**`) and against the file name otherwise (`*.tmp`). Set it to `[]` to remember state for every file.
 
 ## Quick Start
 

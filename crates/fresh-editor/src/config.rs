@@ -1686,6 +1686,22 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Startup"))]
     pub skip_session_restore_when_files_passed: bool,
 
+    /// Files whose per-file state (cursor, scroll, folds, …) is never saved
+    /// and never restored, because something outside the editor rewrites
+    /// them: a persisted byte offset would land the cursor at an arbitrary
+    /// point in content that has since been replaced. The default covers
+    /// git's scratch files (`COMMIT_EDITMSG`, `MERGE_MSG`, `TAG_EDITMSG`,
+    /// rebase todo lists), which git regenerates for every operation.
+    ///
+    /// Entries use the same dialect as `languages.*.filenames`: a literal
+    /// entry matches the file name exactly, an entry with `*`/`?` is a glob
+    /// matched against the whole path if it names directories (`**/.git/**`)
+    /// and against the file name otherwise (`*.tmp`).
+    /// Default: `["**/.git/**"]`
+    #[serde(default = "default_ephemeral_file_patterns")]
+    #[schemars(extend("x-section" = "Startup"))]
+    pub ephemeral_file_patterns: Vec<String>,
+
     /// Whether to auto-create a fresh empty `[No Name]` buffer when the
     /// last open buffer is closed. When `false`, the editor still creates
     /// an internal placeholder buffer (it always needs at least one) but
@@ -1875,6 +1891,14 @@ fn default_auto_recovery_save_interval() -> u32 {
     2 // 2 seconds between recovery saves
 }
 
+/// Anything under a `.git` directory: the whole tree, so linked worktrees
+/// (`<main>/.git/worktrees/<name>/…`) are covered too. `.github/` and
+/// `.gitignore` are unaffected — the pattern requires a `.git` path
+/// *component*.
+pub fn default_ephemeral_file_patterns() -> Vec<String> {
+    vec!["**/.git/**".to_string()]
+}
+
 fn default_highlight_context_bytes() -> usize {
     10_000 // 10KB context for accurate syntax highlighting
 }
@@ -1934,6 +1958,7 @@ impl Default for EditorConfig {
             confirm_quit: false,
             restore_previous_session: true,
             skip_session_restore_when_files_passed: true,
+            ephemeral_file_patterns: default_ephemeral_file_patterns(),
             auto_create_empty_buffer_on_last_buffer_close: true,
             recovery_enabled: true,
             auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),
