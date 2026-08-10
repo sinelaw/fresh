@@ -3819,10 +3819,20 @@ function matchWaiting(s: AgentSession, rows: string[]): string {
   if (!pattern) return "";
   // Search from the bottom: the live question is the most recent one, and an
   // identical question answered earlier may still be on screen above it.
+  //
+  // A prompt is usually several matching rows — the question, then its
+  // options ("1. Yes", "2. No…"). Prefer the question: an option tells the
+  // user nothing they could act on, and "❯ 1. Yes" as the reason a workspace
+  // is blocked is actively confusing. A trailing `?` is what distinguishes
+  // them; fall back to the lowest match when nothing asks outright.
+  let fallback = "";
   for (let i = rows.length - 1; i >= 0; i--) {
-    if (pattern.test(rows[i])) return rows[i].trim();
+    const line = rows[i].trim();
+    if (!pattern.test(line)) continue;
+    if (line.endsWith("?")) return line;
+    if (!fallback) fallback = line;
   }
-  return "";
+  return fallback;
 }
 
 // Resolve (and cache) a session's branch. Live sessions don't carry
@@ -12549,6 +12559,206 @@ editor.on("terminal_exit", (payload) => {
 // Commands
 // =============================================================================
 
+// =============================================================================
+// Fleet — every agent at once, and what it wants
+//
+// The dock answers "which workspaces exist"; the fleet answers "which of them
+// needs me". Those are different questions and the dock is the wrong shape for
+// the second: it is a narrow column optimised for switching, so the reason an
+// agent is blocked never fits.
+//
+// The fleet is a wide panel, one row per agent, sorted so anything waiting is
+// at the top — the list is meant to be read from the top and abandoned as soon
+// as it turns boring. Below it, `windowEmbed` renders the selected workspace
+// *live*: the real terminal, drawn by the real renderer, not a snapshot pasted
+// into a buffer. So the question an agent is asking is readable without
+// leaving the fleet.
+//
+// Deliberately not an LLM in a loop: the panel re-renders from the same probe
+// data the dock uses, so keeping it current costs nothing per tick.
+// =============================================================================
+
+let fleetPanel: FloatingWidgetPanel | null = null;
+let fleetSelected = 0;
+let fleetTicking = false;
+
+const FLEET_TICK_MS = 1_500;
+// Rows of the selected workspace to show live underneath. Enough to carry a
+// multi-line question and its options.
+const FLEET_EMBED_ROWS = 12;
+
+/// Sessions in fleet order: waiting first, then working, then everything else.
+///
+/// Sorting by urgency rather than by name is the whole point — a fleet you
+/// have to scan defeats the purpose. Within a bucket the dock's own stable
+/// order is preserved so rows don't shuffle between ticks.
+function fleetRows(): AgentSession[] {
+  const rank = (s: AgentSession): number => {
+    const st = sessionState(s);
+    if (s.pending || s.discovered) return 3;
+    if (st === "waiting") return 0;
+    if (st === "working") return 1;
+    return 2;
+  };
+  return [...orchestratorSessions.values()]
+    .filter((s) => !s.discovered && !s.pending)
+    .sort((a, b) => rank(a) - rank(b) || stableOrderKey(a) - stableOrderKey(b));
+}
+
+/// One fleet row: state glyph, name, agent, branch, and — the point of the
+/// whole view — what it is waiting on, or what it last said.
+function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
+  const dim = "ui.menu_disabled_fg";
+  const st = sessionState(s);
+  const segs: Entry[] = [stateGlyphEntry(s)];
+  // Not `workspaceDisplayName`: absent a manual rename that auto-tracks the
+  // terminal title, i.e. the agent's own command — which is already the next
+  // column, so the row would read "needs-you · claude   claude".
+  const name = workspaceCustomName(s) ?? s.hostLabel;
+  segs.push({ text: name.padEnd(18).slice(0, 18) + " " });
+
+  const agent = s.terminalTitle ? (agentEntryForCmd(s.terminalTitle)?.label ?? "") : "";
+  segs.push({ text: agent.padEnd(10).slice(0, 10) + " ", style: { fg: dim } });
+
+  const branch = s.branch ?? s.git?.info?.branch ?? "";
+  segs.push({ text: branch.padEnd(16).slice(0, 16) + "  ", style: { fg: dim } });
+
+  // The reason column. A waiting agent's question outranks its last line —
+  // if it is blocked, that is the only thing worth the space.
+  const waiting = s.tail?.waitingOn ?? "";
+  const said = s.tail?.lastLine ?? "";
+  const used = 2 + 19 + 11 + 18;
+  const room = Math.max(10, width - used);
+  const detail = waiting || said;
+  const clipped = detail.length > room ? detail.slice(0, room - 1) + "…" : detail;
+  segs.push({
+    text: clipped,
+    style: waiting
+      ? { fg: "diagnostic.error_fg" }
+      : { fg: dim, italic: st === "idle" },
+  });
+  return styledRow(segs as Parameters<typeof styledRow>[0]);
+}
+
+function buildFleetSpec(): WidgetSpec {
+  const rows = fleetRows();
+  if (fleetSelected >= rows.length) fleetSelected = Math.max(0, rows.length - 1);
+  const cols = Math.max(60, editor.getScreenSize().width - 8);
+  const needing = rows.filter((s) => sessionState(s) === "waiting").length;
+
+  const agentWord = rows.length === 1 ? "agent" : "agents";
+  const header = needing > 0
+    ? `${rows.length} ${agentWord} · ${needing} ${needing === 1 ? "needs" : "need"} you`
+    : `${rows.length} ${agentWord} · none waiting`;
+
+  const listRows = Math.max(3, Math.min(rows.length, 12));
+  const selected = rows[fleetSelected];
+
+  const children: WidgetSpec[] = [
+    labeledSection({
+      label: header,
+      child: rows.length === 0
+        ? raw([styledRow([{ text: "no live workspaces", style: { fg: "ui.menu_disabled_fg", italic: true } }])])
+        : list({
+          items: rows.map((s) => fleetRowEntry(s, cols)),
+          itemKeys: rows.map((s) => String(s.id)),
+          selectedIndex: fleetSelected,
+          visibleRows: listRows,
+          key: "fleet_list",
+        }),
+    }),
+  ];
+
+  // The live pane. `windowEmbed` reserves the rectangle and the host paints
+  // the real window into it — terminals included — so this is the agent's
+  // actual screen, not a copy of it.
+  if (selected) {
+    children.push(labeledSection({
+      label: `live · ${workspaceDisplayName(selected)}`,
+      child: windowEmbed({ windowId: selected.id, rows: FLEET_EMBED_ROWS, key: "fleet_embed" }),
+    }));
+  }
+  children.push(row(
+    flexSpacer(),
+    hintBar([
+      { keys: "↑↓", label: "select" },
+      { keys: "Enter", label: "go to workspace" },
+      { keys: "Esc", label: "close" },
+    ]),
+    flexSpacer(),
+  ));
+  return col(...children);
+}
+
+function renderFleet(): void {
+  if (!fleetPanel) return;
+  fleetPanel.mount(buildFleetSpec(), { widthPct: 92, heightPct: 80 });
+}
+
+/// Keep the fleet current while it is open.
+///
+/// Its own ticker rather than the dock's: the dock's poll loop only runs while
+/// the dock is open, and the fleet is a separate surface that must stay live
+/// on its own. It stops itself when the panel closes, so a closed fleet costs
+/// nothing.
+function startFleetTicking(): void {
+  if (fleetTicking) return;
+  fleetTicking = true;
+  const tick = (): void => {
+    if (!fleetPanel) {
+      fleetTicking = false;
+      return;
+    }
+    for (const s of fleetRows()) void probeTail(s);
+    renderFleet();
+    void editor.delay(FLEET_TICK_MS).then(tick);
+  };
+  tick();
+}
+
+function openFleet(): void {
+  if (fleetPanel) {
+    renderFleet();
+    return;
+  }
+  reconcileSessions();
+  fleetPanel = new FloatingWidgetPanel();
+  fleetSelected = 0;
+  renderFleet();
+  editor.floatingPanelControl(fleetPanel.id(), "focus", 0);
+  startFleetTicking();
+}
+
+function closeFleet(): void {
+  if (!fleetPanel) return;
+  fleetPanel.unmount();
+  fleetPanel = null;
+}
+
+registerHandler("orchestrator_fleet", openFleet);
+registerHandler("orchestrator_fleet_event", function (ev: Record<string, unknown>) {
+  if (!fleetPanel || ev.panelId !== fleetPanel.id()) return;
+  const type = String(ev.eventType ?? ev.event_type ?? "");
+  if (type === "select") {
+    const idx = Number(ev.index ?? -1);
+    if (idx >= 0) {
+      fleetSelected = idx;
+      renderFleet();
+    }
+    return;
+  }
+  if (type === "activate") {
+    const target = fleetRows()[fleetSelected];
+    closeFleet();
+    // Enter means "take me there" — the fleet's job ends once you have
+    // decided which agent to deal with.
+    if (target) focusWorkspace(target.id);
+    return;
+  }
+  if (type === "cancel" || type === "close") closeFleet();
+});
+editor.on("widget_event", "orchestrator_fleet_event");
+
 registerHandler("orchestrator_open", openControlRoom);
 registerHandler("orchestrator_new", startNewSession);
 registerHandler("orchestrator_kill", killSelected);
@@ -12571,6 +12781,15 @@ editor.registerCommand(
   "%cmd.new",
   "%cmd.new_desc",
   "orchestrator_new",
+  null,
+  { terminalBypass: true },
+);
+// Same bypass as the dock: "who needs me" is exactly the question you have
+// while the keyboard is inside an agent's terminal.
+editor.registerCommand(
+  "Orchestrator: Fleet",
+  "Every agent at once — who is working, who is blocked on you, and why",
+  "orchestrator_fleet",
   null,
   { terminalBypass: true },
 );
