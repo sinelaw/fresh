@@ -13348,6 +13348,7 @@ function buildFleetSpec(): WidgetSpec {
       : [
         { keys: "↑↓", label: "select" },
         { keys: "Alt+`", label: "answer agent" },
+        { keys: "m", label: "message" },
         { keys: "Enter", label: "go to workspace" },
         { keys: "Esc", label: "close" },
       ]),
@@ -13515,6 +13516,57 @@ registerHandler("orchestrator_fleet_open_selected", fleetOpenSelected);
 
 registerHandler("orchestrator_fleet_close", function () { closeFleet(); });
 
+
+/// Send an instruction to the selected agent, from the Fleet or Home.
+///
+/// The reason delegation is worth a key rather than only an API call: the
+/// Fleet is where you find out an agent is stuck, and "tell it what to do
+/// about that" is the next thing you want. Making it a script you have to
+/// write puts a compiler between noticing and acting.
+///
+/// Closes the panel while the prompt is up — a modal over a modal loses its
+/// keyboard to whichever the host focused last — and reopens it after, so the
+/// answer lands back where the question was asked.
+async function messageSelected(reopen: () => void): Promise<void> {
+  const rows = fleetRows();
+  const target = rows[fleetSelectedIndex(rows)];
+  if (!target) return;
+  const name = workspaceDisplayName(target);
+  const text = await editor.prompt(`Message ${name}:`, "");
+  reopen();
+  if (text === null) return;
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const orchApi = { delegate: apiDelegate };
+  const res = await orchApi.delegate({
+    target: target.id,
+    instruction: trimmed,
+    from: "user",
+    intent: trimmed.split("\n")[0].slice(0, 60),
+  });
+  editor.setStatus(
+    res.delivered
+      ? `Sent to ${name}. It acts on this when it next checks its inbox.`
+      : `Could not send to ${name}: ${res.reason ?? "unknown"}`,
+  );
+}
+
+registerHandler("orchestrator_fleet_message", async function () {
+  const wasOpen = fleetPanel !== null;
+  if (wasOpen) closeFleet();
+  await messageSelected(() => {
+    if (wasOpen) openFleet();
+  });
+});
+
+registerHandler("orchestrator_home_message", async function () {
+  const wasOpen = homePanel !== null;
+  if (wasOpen) closeHome();
+  await messageSelected(() => {
+    if (wasOpen) openHome();
+  });
+});
+
 registerHandler("orchestrator_fleet", openFleet);
 registerHandler("orchestrator_fleet_event", function (ev: Record<string, unknown>) {
   if (!fleetPanel || ev.panel_id !== fleetPanel.id()) return;
@@ -13563,6 +13615,7 @@ editor.defineMode(FLEET_MODE, [
   ["Down", "orchestrator_fleet_next"],
   ["Enter", "orchestrator_fleet_open_selected"],
   ["Escape", "orchestrator_fleet_close"],
+  ["m", "orchestrator_fleet_message"],
   ["M-`", "orchestrator_fleet_type_toggle"],
 ]);
 // Typing mode claims exactly one key. Everything else — Tab, Enter, Escape,
@@ -13721,6 +13774,7 @@ function buildHomeSpec(): WidgetSpec {
         { keys: "↑↓", label: "select" },
         { keys: "Tab", label: "list / master / agent" },
         { keys: "Alt+`", label: "type here" },
+        { keys: "m", label: "message" },
         { keys: "Enter", label: "go to workspace" },
         { keys: "Esc", label: "close" },
       ]),
@@ -13888,6 +13942,7 @@ editor.defineMode(HOME_MODE, [
   ["Tab", "orchestrator_home_cycle"],
   ["Enter", "orchestrator_home_open_selected"],
   ["Escape", "orchestrator_home_close"],
+  ["m", "orchestrator_home_message"],
   ["M-`", "orchestrator_home_type_toggle"],
 ]);
 // Typing mode claims only the way out, so Tab, Enter, Escape and every
