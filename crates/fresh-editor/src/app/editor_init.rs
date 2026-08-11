@@ -680,6 +680,7 @@ impl Editor {
             last_watch_response_for_test: None,
             preview_window_id: None,
             pane_view_states: std::collections::HashMap::new(),
+            pane_composite_view_states: std::collections::HashMap::new(),
             settings_state: None,
             calibration_wizard: None,
             // event_debug moved to Window

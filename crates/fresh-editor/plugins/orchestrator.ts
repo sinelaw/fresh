@@ -12639,9 +12639,57 @@ let fleetSelectedId: number | null = null;
 let fleetTicking = false;
 
 const FLEET_TICK_MS = 1_500;
-// Rows of the selected workspace to show live underneath. Enough to carry a
-// multi-line question and its options.
-const FLEET_EMBED_ROWS = 12;
+// Fewest rows of the selected workspace worth showing live: enough to carry a
+// multi-line question and its options. It is a floor, not a target — the pane
+// takes whatever height the panel has left, so on a tall terminal you get a
+// generous view of the agent rather than a 12-row slot and dead space.
+const FLEET_MIN_EMBED_ROWS = 8;
+
+// Panel size, as a share of the terminal. Named rather than inlined at the
+// `mount` call because the row builder has to budget against the *panel's*
+// width, not the screen's — see `fleetRowWidth`.
+const FLEET_WIDTH_PCT = 92;
+const FLEET_HEIGHT_PCT = 88;
+
+/// Columns a fleet row may actually use.
+///
+/// The panel is a share of the screen, and inside it a `labeledSection` costs
+/// two border columns plus padding on each side. Budgeting rows against the
+/// raw screen width overruns all of that: the row text is drawn over the
+/// section's right border, so the rounded frame renders with no `╮`/`╯`
+/// corners and looks broken at exactly the wide sizes the Fleet is for.
+function fleetRowWidth(): number {
+  // The Fleet mounts fullscreen (see `openFleet`), so its share is of the
+  // whole frame — no dock to subtract. Budget under the panel's inner width:
+  // a row wider than the section does not get clipped, the section grows to
+  // its widest child, runs past the panel, and its right border is drawn over
+  // the panel's own — leaving the rounded frame with no `╮`/`╯` corners.
+  const panel = Math.floor((editor.getScreenSize().width * FLEET_WIDTH_PCT) / 100);
+  // Panel frame (2) + section frame (2) + a column of breathing room each
+  // side, and one more so a row that fills its budget still stops short of
+  // the section's right border rather than drawing over it.
+  return Math.max(36, panel - 7);
+}
+
+/// How many rows the list and the live pane each get.
+///
+/// Both have to fit *inside* the panel, and the panel is a share of the
+/// terminal — so on a short terminal a fixed 12-row list plus a fixed 12-row
+/// pane asks for more than exists and the pane is what falls off the bottom.
+/// Budget them together instead: the list takes what it needs up to its cap,
+/// the pane takes the rest up to its own, and if they still don't fit the
+/// list yields — a fleet with a visible agent and a truncated list beats a
+/// full list with nothing to look at.
+function fleetLayoutRows(rowCount: number): { list: number; embed: number } {
+  const panelH = Math.floor((editor.getScreenSize().height * FLEET_HEIGHT_PCT) / 100);
+  // Panel frame (2) + list section frame (2) + pane section frame (2) + hint bar (1).
+  const budget = Math.max(4, panelH - 7);
+  const list = Math.max(1, Math.min(rowCount, 12));
+  const embed = Math.max(FLEET_MIN_EMBED_ROWS, budget - list);
+  return list + embed > budget
+    ? { list: Math.max(1, budget - embed), embed }
+    : { list, embed };
+}
 
 /// Sessions in fleet order: waiting first, then working, then everything else.
 ///
@@ -12671,21 +12719,35 @@ function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
   // Not `workspaceDisplayName`: absent a manual rename that auto-tracks the
   // terminal title, i.e. the agent's own command — which is already the next
   // column, so the row would read "needs-you · claude   claude".
+  // Columns drop out as the terminal narrows, widest-first. Padding every
+  // column unconditionally costs 50 cells before the reason even starts,
+  // which is more than a narrow panel has — and a row wider than its section
+  // is not clipped, it draws over the section's right border. Order is by
+  // what the view is for: which agent, then what it wants; the branch and the
+  // agent's name are context you can get by visiting it.
+  const showAgent = width >= 62;
+  const showBranch = width >= 92;
+
+  const nameW = width >= 62 ? 18 : 12;
   const name = workspaceCustomName(s) ?? s.hostLabel;
-  segs.push({ text: name.padEnd(18).slice(0, 18) + " " });
+  segs.push({ text: name.padEnd(nameW).slice(0, nameW) + " " });
 
-  const agent = s.terminalTitle ? (agentEntryForCmd(s.terminalTitle)?.label ?? "") : "";
-  segs.push({ text: agent.padEnd(10).slice(0, 10) + " ", style: { fg: dim } });
+  if (showAgent) {
+    const agent = s.terminalTitle ? (agentEntryForCmd(s.terminalTitle)?.label ?? "") : "";
+    segs.push({ text: agent.padEnd(10).slice(0, 10) + " ", style: { fg: dim } });
+  }
 
-  const branch = s.branch ?? s.git?.info?.branch ?? "";
-  segs.push({ text: branch.padEnd(16).slice(0, 16) + "  ", style: { fg: dim } });
+  if (showBranch) {
+    const branch = s.branch ?? s.git?.info?.branch ?? "";
+    segs.push({ text: branch.padEnd(16).slice(0, 16) + "  ", style: { fg: dim } });
+  }
 
   // The reason column. A waiting agent's question outranks its last line —
   // if it is blocked, that is the only thing worth the space.
   const waiting = s.tail?.waitingOn ?? "";
   const said = s.tail?.lastLine ?? "";
-  const used = 2 + 19 + 11 + 18;
-  const room = Math.max(10, width - used);
+  const used = 2 + (nameW + 1) + (showAgent ? 11 : 0) + (showBranch ? 18 : 0);
+  const room = Math.max(8, width - used);
   const detail = waiting || said;
   const clipped = detail.length > room ? detail.slice(0, room - 1) + "…" : detail;
   segs.push({
@@ -12712,7 +12774,7 @@ function fleetSelectedIndex(rows: AgentSession[]): number {
 function buildFleetSpec(): WidgetSpec {
   const rows = fleetRows();
   const fleetSelected = fleetSelectedIndex(rows);
-  const cols = Math.max(60, editor.getScreenSize().width - 8);
+  const cols = fleetRowWidth();
   const needing = rows.filter((s) => sessionState(s) === "waiting").length;
 
   const agentWord = rows.length === 1 ? "agent" : "agents";
@@ -12720,7 +12782,7 @@ function buildFleetSpec(): WidgetSpec {
     ? `${rows.length} ${agentWord} · ${needing} ${needing === 1 ? "needs" : "need"} you`
     : `${rows.length} ${agentWord} · none waiting`;
 
-  const listRows = Math.max(3, Math.min(rows.length, 12));
+  const { list: listRows, embed: embedRows } = fleetLayoutRows(rows.length);
   const selected = rows[fleetSelected];
 
   const children: WidgetSpec[] = [
@@ -12751,7 +12813,7 @@ function buildFleetSpec(): WidgetSpec {
       child: pane({
         windowId: selected.id,
         bufferId: selected.terminalBufferId,
-        rows: FLEET_EMBED_ROWS,
+        rows: embedRows,
         interactive: true,
         key: "fleet_embed",
       }),
@@ -12761,7 +12823,7 @@ function buildFleetSpec(): WidgetSpec {
     // to the whole-session embed rather than showing a hole.
     children.push(labeledSection({
       label: `live · ${workspaceDisplayName(selected)}`,
-      child: windowEmbed({ windowId: selected.id, rows: FLEET_EMBED_ROWS, key: "fleet_embed" }),
+      child: windowEmbed({ windowId: selected.id, rows: embedRows, key: "fleet_embed" }),
     }));
   }
   children.push(row(
@@ -12798,7 +12860,12 @@ function renderFleet(force = false): void {
   const key = JSON.stringify(spec);
   if (!force && key === fleetLastSpec) return;
   fleetLastSpec = key;
-  fleetPanel.mount(spec, { widthPct: 92, heightPct: 80 });
+  fleetPanel.mount(spec, { widthPct: FLEET_WIDTH_PCT, heightPct: FLEET_HEIGHT_PCT });
+  // Re-assert placement after every mount, not once at open: a mount resets
+  // the panel to the default centered placement, so a fullscreen set at open
+  // time is undone by the first tick and the Fleet drops back into the strip
+  // beside the dock.
+  editor.floatingPanelControl(fleetPanel.id(), "fullscreen", 1);
   // Keep focus pinned across re-mounts. The ticker re-mounts every
   // FLEET_TICK_MS, and a panel that loses focus each tick swallows the very
   // keys the view exists to be steered with.
@@ -12856,6 +12923,8 @@ function openFleet(): void {
   fleetSelectedId = null;
   fleetLastSpec = null;
   renderFleet(true);
+  // Placement is asserted in `renderFleet` after each mount — see there for
+  // why once at open is not enough.
   editor.floatingPanelControl(fleetPanel.id(), "focus", 0);
   // A mode has to be active for the host to route keys to the panel at all.
   // FLEET_MODE claims nothing, so Up/Down/Enter/Esc all fall through to

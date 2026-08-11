@@ -1195,6 +1195,16 @@ pub struct Editor {
     pub(crate) pane_view_states:
         std::collections::HashMap<(u64, BufferId), crate::view::split::SplitViewState>,
 
+    /// The same, for a `Pane` pointed at a **composite** buffer.
+    ///
+    /// A composite scrolls as one aligned row list across all its
+    /// source columns, so its view state is a `CompositeViewState`
+    /// rather than a `SplitViewState` — a separate type, hence a
+    /// separate map. Same keying and the same teardown as
+    /// `pane_view_states`.
+    pub(crate) pane_composite_view_states:
+        std::collections::HashMap<(u64, BufferId), crate::view::composite_view::CompositeViewState>,
+
     // terminal_buffers / terminal_backing_files / terminal_log_files
     // moved onto `Window` (Step 0d).
     // `ephemeral_terminals` moved onto `Window` — TerminalManager and

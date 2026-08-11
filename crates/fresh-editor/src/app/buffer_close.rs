@@ -38,6 +38,7 @@ impl Editor {
         // buffer it describes and a later buffer reusing the id inherits a
         // stale scroll position.
         self.pane_view_states.retain(|(_, b), _| *b != id);
+        self.pane_composite_view_states.retain(|(_, b), _| *b != id);
         // Check for unsaved changes
         if let Some(state) = self
             .windows

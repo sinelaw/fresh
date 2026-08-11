@@ -1389,6 +1389,8 @@ impl crate::app::Editor {
         // has to be swept here or a long-lived editor accumulates one entry
         // per (window, buffer) a panel ever displayed.
         self.pane_view_states.retain(|(w, _), _| *w != id.0);
+        self.pane_composite_view_states
+            .retain(|(w, _), _| *w != id.0);
         // A dormant remote session usually has no `Window` and no live
         // connection — closing it just drops its descriptor so it leaves the
         // dock. (Without a window it can never be active, and isn't the

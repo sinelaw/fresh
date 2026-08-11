@@ -2704,8 +2704,51 @@ impl Editor {
             return;
         }
 
-        // --- any other buffer kind: the ordinary per-leaf pipeline
+        // --- composite (side-by-side diff): its own renderer
+        //
+        // A composite holds no text of its own — its content is the
+        // source buffers it names, laid into columns — so the per-leaf
+        // pipeline below paints it as one empty leaf. The split path
+        // branches here for the same reason.
         let key = (window_id.0, buffer_id);
+        if window.composite_buffers.contains_key(&buffer_id) {
+            let use_terminal_bg = self.ansi_background.is_some();
+            let pane_count = window
+                .composite_buffers
+                .get(&buffer_id)
+                .map(|c| c.pane_count())
+                .unwrap_or(0);
+            self.pane_composite_view_states
+                .entry(key)
+                .or_insert_with(|| {
+                    crate::view::composite_view::CompositeViewState::new(buffer_id, pane_count)
+                });
+            let Some(view_state) = self.pane_composite_view_states.get_mut(&key) else {
+                return;
+            };
+            let Some(window) = self.windows.get_mut(&window_id) else {
+                return;
+            };
+            // Split the window borrow: the composite is read while its
+            // sources are rendered from the same map.
+            let Some(composite) = window.composite_buffers.get(&buffer_id) else {
+                return;
+            };
+            let composite = composite.clone();
+            crate::view::ui::SplitRenderer::render_phantom_composite(
+                frame.buffer_mut(),
+                inner,
+                &composite,
+                window.buffers.as_map_mut(),
+                theme,
+                view_state,
+                use_terminal_bg,
+                /* show_tilde */ false,
+            );
+            return;
+        }
+
+        // --- any other buffer kind: the ordinary per-leaf pipeline
         if !self.pane_view_states.contains_key(&key) {
             let mut view_state = crate::view::split::SplitViewState::with_buffer(
                 self.terminal_width,
