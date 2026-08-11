@@ -7,10 +7,11 @@ document records the design, the constraints that shape it, and the phased
 plan. Status: **PLANNED** unless a section says otherwise.
 
 Landed so far: the explicit-id terminal APIs and `describeEnvironment` (§4,
-§6.1, §6.2), the discoverability fixes (§9), the `waiting` state (§7.1), and
-the Fleet view with its live pane (§7.2). Still planned: input into the embed
-(§6.6), Home as a full layout (§7.3), the event stream (§6.3), `script run
---as` (§6.4), declarative views (§7.5), and everything under delegation (§8).
+§6.1, §6.2), the discoverability fixes (§9), the `waiting` state (§7.1), the
+Fleet view (§7.2), and the `pane` widget — any buffer from any window, live,
+and interactive for terminals (§6.5, §6.6). Still planned: Home as a full
+layout (§7.3), the event stream (§6.3), `script run --as` (§6.4), declarative
+views (§7.5), and everything under delegation (§8).
 
 This is the successor to
 [agent-fresh-cli-exposure-plan.md](agent-fresh-cli-exposure-plan.md), whose
