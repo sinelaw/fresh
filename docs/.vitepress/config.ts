@@ -44,11 +44,11 @@ export default defineConfig({
         text: "Blog",
         link: "/blog/",
         items: [
+          { text: "Packaging for Linux", link: "/blog/packaging-for-linux/" },
           { text: "One Editor, Every Worktree", link: "/blog/orchestrator-worktrees/" },
           { text: "Fresh 0.4.0", link: "/blog/fresh-0.4.0/" },
           { text: "The Architecture of Fresh", link: "/blog/fresh-pipeline/" },
           { text: "Fresh 0.3.0", link: "/blog/fresh-0.3.0/" },
-          { text: "Fresh 0.2.18", link: "/blog/fresh-0.2.18/" },
           { text: "More…", link: "/blog/" },
           { text: "RSS Feed", link: "/feed.rss", target: "_blank", rel: "noopener" },
         ],

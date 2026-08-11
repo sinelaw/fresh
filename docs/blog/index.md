@@ -13,6 +13,13 @@ Updates on new features and changes in Fresh.
 
 <div class="blog-grid">
 
+<a class="blog-card" href="./packaging-for-linux/">
+  <div class="blog-card-body">
+    <h3>I hate packaging my software for Linux</h3>
+    <p>Nineteen distribution channels later: what it actually costs to give a terminal editor away for free on Linux, and why the next step is a static musl binary that updates itself.</p>
+  </div>
+</a>
+
 <a class="blog-card" href="./orchestrator-worktrees/">
   <img src="./orchestrator-worktrees/showcase.gif" alt="One Editor, Every Worktree" />
   <div class="blog-card-body">
