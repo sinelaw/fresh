@@ -11,9 +11,10 @@ Landed so far: the explicit-id terminal APIs and `describeEnvironment` (§4,
 Fleet view (§7.2), and the `pane` widget — any buffer from any window, live,
 and interactive for terminals (§6.5, §6.6).
 
-**The next three phases, in order, are §10's A / B / C**: the event stream and
-`script run --as`, then the mailbox and `delegate`, then Home. §10 is the plan
-to follow; everything else here is the reasoning behind it.
+**§10's phases A, B and C have landed**: the event stream and
+`script run --as`, the mailbox (`status` outbox, `inbox/`, `delegate`), and
+Home. §10 records what shipped and what is deliberately deferred; everything
+else here is the reasoning behind it.
 
 The through-line: what is built so far only *observes*. A user still has to
 read every answer and type every reply. Delegation is the first thing that
@@ -401,7 +402,7 @@ That is the fix for a limitation an earlier draft of this document called
 "needs host work". It did — but the work was making the embed a pane, not
 forwarding more keys. Per-key forwarding was deleted rather than extended.
 
-### 7.3 Home
+### 7.3 Home — **implemented**
 
 Home is an ordinary workspace layout, not a new UI mode: three splits built by
 a script, holding a virtual buffer, a terminal, and a virtual buffer. It takes
@@ -489,7 +490,7 @@ Capability Registry** — the existing agent registry, widened with a
 orch.delegate({ agentId, instruction, wait?, expect? })
 ```
 
-### 8.1 The mailbox — a pair of directories per agent
+### 8.1 The mailbox — a pair of directories per agent — **implemented**
 
 Two files, one convention, and it carries both directions.
 
@@ -658,7 +659,7 @@ it.
 | The `!` state (screen-derived) and the Fleet | §7.1, §7.2 |
 | Discoverability: refusal names the remedy, briefing points at `help plugin` | §9 |
 
-### Phase A — the event stream, and naming a script
+### Phase A — the event stream, and naming a script — **shipped**
 
 `agent_state_change` / `window_created` emitted as plugin events; a persistent
 script subscribes and appends JSONL; `script run --as <name>` so that script
@@ -672,7 +673,7 @@ dashboard you have to remember to look at. `--as` is a precondition rather
 than a nicety: a persistent script that cannot be named cannot be replaced,
 so installing the watcher twice leaves two of them running.
 
-### Phase B — the mailbox
+### Phase B — the mailbox — **shipped**
 
 The `status` outbox first, then `inbox/` and `delegate()`, then the guards.
 
@@ -687,9 +688,12 @@ its effects visible.
    briefing teaches read-act-move.
 3. Consent overlay, depth limit, per-session budget, cycle detection, audit
    panel (§8.2). **Not optional** — these agents hold file-write and
-   shell-execute privileges.
+   shell-execute privileges. **Not yet built**: `delegate` currently writes
+   to any workspace's inbox with no approval step and no depth accounting.
+   Acceptable only while the sole caller is the user through a command; it
+   must land before a master agent is told to delegate on its own.
 
-### Phase C — Home
+### Phase C — Home — **shipped**
 
 The three-pane layout (§7.3): Fleet, master-agent terminal, tail. Mostly
 composition — the `pane` widget already renders and routes input, so the
