@@ -3855,6 +3855,9 @@ function mailboxEnv(workspaceId: number): Record<string, string> {
   return {
     FRESH_AGENT_STATUS: statusPath(workspaceId),
     FRESH_AGENT_INBOX: inboxDir(workspaceId),
+    // Not per-agent: one log for the whole environment, so an agent can
+    // watch what everyone else is doing without being told about them.
+    FRESH_FLEET_EVENTS: eventLogPath(),
   };
 }
 
@@ -3902,7 +3905,7 @@ function broadcastState(s: AgentSession): void {
   const key = st + "\u0000" + summary;
   if (lastBroadcastState.get(s.id) === key) return;
   lastBroadcastState.set(s.id, key);
-  editor.emitEvent("agent_state_change", {
+  const payload = {
     workspaceId: s.id,
     name: workspaceDisplayName(s),
     state: st,
@@ -3911,7 +3914,11 @@ function broadcastState(s: AgentSession): void {
     // so, or we inferred it from the screen.
     source: s.status ? "agent" : "inferred",
     branch: s.branch ?? s.git?.info?.branch ?? "",
-  });
+  };
+  editor.emitEvent("agent_state_change", payload);
+  // Same event to the log, for the agents that read a file rather than
+  // subscribe. A plugin gets `editor.on`; an agent gets `tail -f`.
+  appendEvent("agent_state_change", payload);
 }
 
 /// Read a session's `status` file, if it wrote one.
@@ -7343,6 +7350,28 @@ const FRESH_CLI_SYSTEM_PROMPT = [
   "falls back to guessing from your terminal output, which is often a spinner or a",
   "half-drawn frame. A line you write is what it shows instead.",
   "",
+  "DRIVING THE OTHER AGENTS \u2014 if the user asks you to coordinate, this is how:",
+  "",
+  "    \"$FRESH_BIN\" --cmd script run <<'EOF'",
+  "    const orch = editor.getPluginApi(\"orchestrator\");",
+  "    return orch.fleet();          // who is doing what, most urgent first",
+  "    EOF",
+  "",
+  "`fleet()` gives one row per agent: state, a summary, and `source` \u2014 \"agent\"",
+  "when it wrote its own status, \"inferred\" when the summary was guessed from its",
+  "screen. Trust the former; the latter can be a spinner or half a redraw.",
+  "",
+  "To tell another agent what to do, write to its inbox \u2014 it reads it because its",
+  "briefing says to. This reports delivery, not completion:",
+  "",
+  "    await orch.delegate({ target: <workspaceId>, instruction: \"rerun the flaky test\" });",
+  "",
+  "To notice things rather than being asked, tail the environment's event log at",
+  "$FRESH_FLEET_EVENTS \u2014 one JSON object per line, every state change and every",
+  "delegation:",
+  "",
+  "    tail -f \"$FRESH_FLEET_EVENTS\"",
+  "",
   "Check your inbox at the start of each turn. Act on each file, then move it to",
   "the done/ subdirectory \u2014 that move is the acknowledgement:",
   "",
@@ -10692,6 +10721,30 @@ export type OrchestratorApi = {
     intent?: string;
   }): Promise<{ delivered: boolean; path?: string; reason?: string }>;
 
+  /** Who is doing what, most urgent first — the one call a control agent
+   *  needs to answer "what's going on".
+   *
+   *  `summary` is the agent's own words when it wrote a `status` line
+   *  (`source: "agent"`) and a guess from its screen otherwise
+   *  (`source: "inferred"`). Prefer the former: the latter can be a spinner,
+   *  a blank, or half a redraw. */
+  fleet(): Array<{
+    workspaceId: number;
+    name: string;
+    state: "working" | "waiting" | "idle";
+    summary: string;
+    source: "agent" | "inferred";
+    needsYou: boolean;
+    agent: string;
+    branch: string;
+    root: string;
+  }>;
+
+  /** Path of the JSONL event log. Every state change and delegation is
+   *  appended, so `tail -f` is how an agent notices things rather than
+   *  polling for them. */
+  eventLogPath(): string;
+
   // ── organising the dock ────────────────────────────────────────────────
   // The headless twins of the dock's row context menu and its "New Task… ▾"
   // / "Move…" dropdowns. `target` is a `workspaceId` or a `windowId`, the
@@ -11356,14 +11409,91 @@ async function apiDelegate(options: {
   if (!ok) return { delivered: false, reason: "could not write to the inbox" };
   // Say so out loud: a delegation is an action taken on the user's behalf in a
   // workspace they may not be looking at.
-  editor.emitEvent("agent_delegated", {
+  const ev = {
     workspaceId: s.id,
     name: workspaceDisplayName(s),
     from: options.from ?? "user",
     intent: options.intent ?? "",
     path,
-  });
+  };
+  editor.emitEvent("agent_delegated", ev);
+  appendEvent("agent_delegated", ev);
   return { delivered: true, path };
+}
+
+
+// =============================================================================
+// What the master agent uses
+//
+// A control agent needs three verbs and nothing else: what is everyone doing,
+// tell that one to do this, and wake me when something changes. `fleet()`,
+// `delegate()` and the event log are exactly those, and all three are cheap
+// enough to use in a loop.
+// =============================================================================
+
+/// The event log every agent can tail.
+///
+/// Appended by this plugin rather than by a script the user has to install:
+/// the Orchestrator is already the emitter, so writing the line here is free,
+/// and the alternative made "notice when something changes" a setup step
+/// instead of a fact about the environment.
+function eventLogPath(): string {
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", "events.jsonl");
+}
+
+// Bounded because there is no append primitive: the log is read, extended and
+// rewritten, so an unbounded file would make every event cost the whole
+// history. The last few hundred lines are what a tail is for anyway.
+const EVENT_LOG_MAX_LINES = 500;
+
+function appendEvent(kind: string, payload: Record<string, unknown>): void {
+  try {
+    const path = eventLogPath();
+    const line = JSON.stringify({ kind, at: new Date().toISOString(), ...payload });
+    const prev = editor.readFile(editor.localPath(path));
+    const lines = typeof prev === "string" && prev.length > 0 ? prev.split("\n") : [];
+    lines.push(line);
+    const kept = lines.filter((l) => l.trim().length > 0).slice(-EVENT_LOG_MAX_LINES);
+    editor.writeFile(editor.localPath(path), kept.join("\n") + "\n");
+  } catch (_e) {
+    // A log we cannot write must never break the thing being logged.
+  }
+}
+
+/// One call that answers "who needs me", with the agents' own words where
+/// they gave them.
+///
+/// The shape a control agent actually wants: `describeEnvironment` reports
+/// terminals but not what anyone is doing, and `listWorkspaces` reports the
+/// dock's model but not state or summary. This joins them, so the common
+/// question is one call rather than a scatter-gather the agent has to invent.
+function apiFleet(): Array<{
+  workspaceId: number;
+  name: string;
+  state: AgentState;
+  summary: string;
+  source: "agent" | "inferred";
+  needsYou: boolean;
+  agent: string;
+  branch: string;
+  root: string;
+}> {
+  const rows = fleetByUrgency(fleetLive());
+  for (const s of rows) probeStatus(s);
+  return rows.map((s) => {
+    const st = sessionState(s);
+    return {
+      workspaceId: s.id,
+      name: workspaceDisplayName(s),
+      state: st,
+      summary: s.status?.summary ?? s.tail?.waitingOn ?? s.tail?.lastLine ?? "",
+      source: s.status ? "agent" : "inferred",
+      needsYou: st === "waiting",
+      agent: s.terminalTitle ? (agentEntryForCmd(s.terminalTitle)?.label ?? "") : "",
+      branch: s.branch ?? s.git?.info?.branch ?? "",
+      root: s.root,
+    };
+  });
 }
 
 editor.exportPluginApi("orchestrator", {
@@ -11385,6 +11515,8 @@ editor.exportPluginApi("orchestrator", {
   setDockView: apiSetDockView,
   setDockFilter: apiSetDockFilter,
   delegate: apiDelegate,
+  fleet: apiFleet,
+  eventLogPath,
 });
 
 // Form key bindings — each delegates to smart-key dispatch on the
