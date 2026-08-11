@@ -13418,6 +13418,338 @@ editor.defineMode(FLEET_TYPE_MODE, [
   ["M-`", "orchestrator_fleet_type_toggle"],
 ]);
 
+
+// =============================================================================
+// Home — the fleet, a master agent, and the selected agent's terminal
+//
+// The Fleet answers "who needs me". Home is the next question: you tell one
+// agent what you want in prose, and it drives the rest. That only works if
+// three things are on screen together — the list, an agent you can talk to,
+// and the terminal of whichever row you are looking at.
+//
+//     ┌ fleet ─────────────┐┌ master ────────────┐
+//     │ ! api   approve …  ││ > what's going on? │
+//     │ * build compiling  ││ Two need you: …    │
+//     └────────────────────┘└────────────────────┘
+//     ┌ live · api ─────────────────────────────┐
+//     │ the selected agent's real terminal      │
+//     └─────────────────────────────────────────┘
+//
+// Not a new UI mode: it is the Fleet's own spec with a second pane beside the
+// list, built from the same `pane` widget, which already renders any buffer
+// from any window and routes keys to a terminal. The master agent is an
+// ordinary workspace — one you can also visit, type in, and kill like any
+// other. Designating it is the only new concept.
+//
+// See docs/internal/agent-control-plane.md §7.3.
+// =============================================================================
+
+const HOME_CONTROL_KEY = "orchestrator.control_workspace";
+
+/// The workspace acting as the master agent, if it is still alive.
+///
+/// Stored by durable workspace id rather than window id so the designation
+/// survives a restart, and re-resolved every render because the workspace can
+/// be closed from anywhere.
+function controlSession(): AgentSession | null {
+  const raw = editor.getGlobalState(HOME_CONTROL_KEY);
+  if (raw === undefined || raw === null) return null;
+  const s = resolveWorkspace(raw as string | number);
+  if (!s || s.discovered || s.pending) return null;
+  return s;
+}
+
+function setControlWorkspace(target: string | number): boolean {
+  const s = resolveWorkspace(target);
+  if (!s) return false;
+  editor.setGlobalState(HOME_CONTROL_KEY, s.stableId ?? s.id);
+  return true;
+}
+
+/// Which region of Home owns the keyboard.
+type HomeFocus = "list" | "master" | "tail";
+let homeFocus: HomeFocus = "list";
+
+function homeFocusKey(): string {
+  return homeFocus === "master"
+    ? "home_master"
+    : homeFocus === "tail"
+    ? "fleet_embed"
+    : "fleet_list";
+}
+
+function buildHomeSpec(): WidgetSpec {
+  const rows = fleetRows();
+  const selectedIdx = fleetSelectedIndex(rows);
+  const selected = rows[selectedIdx];
+  const cols = fleetRowWidth();
+  const { list: listRows, embed: embedRows } = fleetLayoutRows(rows.length);
+  const needing = rows.filter((s) => sessionState(s) === "waiting").length;
+  const agentWord = rows.length === 1 ? "agent" : "agents";
+  const header = needing > 0
+    ? `${rows.length} ${agentWord} · ${needing} ${needing === 1 ? "needs" : "need"} you`
+    : `${rows.length} ${agentWord} · none waiting`;
+
+  // The list and the master sit side by side, so each gets about half the
+  // width — and the rows are budgeted against that half, not the whole panel,
+  // or they would run over the section border (see `fleetRowWidth`).
+  const halfCols = Math.max(30, Math.floor(cols / 2) - 2);
+
+  const listSection = labeledSection({
+    label: homeFocus === "list" ? `▸ ${header}` : header,
+    widthPct: 50,
+    child: rows.length === 0
+      ? raw([styledRow([{ text: "no live workspaces", style: { fg: "ui.menu_disabled_fg", italic: true } }])])
+      : list({
+        items: rows.map((s) => fleetRowEntry(s, halfCols)),
+        itemKeys: rows.map((s) => String(s.id)),
+        selectedIndex: selectedIdx,
+        visibleRows: listRows,
+        key: "fleet_list",
+      }),
+  });
+
+  const control = controlSession();
+  const masterSection = labeledSection({
+    // Say where the keys are going. Without this the master pane looks the
+    // same whether it is the input target or not, and the only way to find
+    // out is to type at it and see where the characters land.
+    label: control
+      ? (fleetTyping && homeFocus === "master"
+        ? `typing → ${workspaceDisplayName(control)}`
+        : `${homeFocus === "master" ? "▸ " : ""}master · ${workspaceDisplayName(control)}`)
+      : "master · not set",
+    widthPct: 50,
+    child: control && control.terminalBufferId !== undefined
+      ? pane({
+        windowId: control.id,
+        bufferId: control.terminalBufferId,
+        rows: listRows,
+        interactive: true,
+        key: "home_master",
+      })
+      : raw([styledRow([{
+        // Say what to do rather than leaving a blank half-screen: the whole
+        // point of Home is the agent you talk to, so its absence is the one
+        // thing worth spending the space explaining.
+        text: "  no master agent — run “Orchestrator: Set Master Agent” on a workspace",
+        style: { fg: "ui.menu_disabled_fg", italic: true },
+      }])]),
+  });
+
+  const children: WidgetSpec[] = [row(listSection, masterSection)];
+
+  if (selected && selected.terminalBufferId !== undefined) {
+    children.push(labeledSection({
+      label: fleetTyping && homeFocus === "tail"
+        ? `typing → ${workspaceDisplayName(selected)}`
+        : `${homeFocus === "tail" ? "▸ " : ""}live · ${workspaceDisplayName(selected)}`,
+      child: pane({
+        windowId: selected.id,
+        bufferId: selected.terminalBufferId,
+        rows: Math.max(4, embedRows - listRows),
+        interactive: true,
+        key: "fleet_embed",
+      }),
+    }));
+  }
+
+  children.push(row(
+    flexSpacer(),
+    hintBar(fleetTyping
+      ? [
+        { keys: "Alt+`", label: "stop typing" },
+        { keys: "keys", label: `go to ${homeFocus === "master" ? "the master" : "the agent"}` },
+      ]
+      : [
+        { keys: "↑↓", label: "select" },
+        { keys: "Tab", label: "list / master / agent" },
+        { keys: "Alt+`", label: "type here" },
+        { keys: "Enter", label: "go to workspace" },
+        { keys: "Esc", label: "close" },
+      ]),
+    flexSpacer(),
+  ));
+  return col(...children);
+}
+
+let homePanel: FloatingWidgetPanel | null = null;
+let homeLastSpec: string | null = null;
+
+function renderHome(force = false): void {
+  if (!homePanel) return;
+  const spec = buildHomeSpec();
+  const key = JSON.stringify(spec) + homeFocus + String(fleetTyping);
+  if (!force && key === homeLastSpec) return;
+  homeLastSpec = key;
+  homePanel.mount(spec, { widthPct: FLEET_WIDTH_PCT, heightPct: FLEET_HEIGHT_PCT });
+  editor.floatingPanelControl(homePanel.id(), "fullscreen", 1);
+  homePanel.setFocusKey(homeFocusKey());
+}
+
+function holdHomeFocus(): void {
+  if (homePanel) homePanel.setFocusKey(homeFocusKey());
+}
+
+let homeTicking = false;
+
+function startHomeTicking(): void {
+  if (homeTicking) return;
+  homeTicking = true;
+  const tick = (): void => {
+    if (!homePanel) {
+      homeTicking = false;
+      return;
+    }
+    reconcileSessions();
+    for (const s of fleetRows()) {
+      probeStatus(s);
+      void probeTail(s);
+    }
+    renderHome();
+    holdHomeFocus();
+    void editor.delay(FLEET_TICK_MS).then(tick);
+  };
+  tick();
+}
+
+function openHome(): void {
+  if (homePanel) {
+    renderHome(true);
+    return;
+  }
+  reconcileSessions();
+  freezeFleetOrder();
+  homeFocus = "list";
+  fleetTyping = false;
+  homePanel = new FloatingWidgetPanel();
+  homeLastSpec = null;
+  renderHome(true);
+  editor.floatingPanelControl(homePanel.id(), "focus", 0);
+  editor.setEditorMode(HOME_MODE);
+  startHomeTicking();
+}
+
+function closeHome(): void {
+  if (!homePanel) return;
+  homePanel.unmount();
+  homePanel = null;
+  fleetTyping = false;
+  fleetOrder = null;
+  editor.setEditorMode(null);
+}
+
+/// Cycle focus list → master → agent → list.
+///
+/// Skips regions that are not there: with no master designated, or no
+/// terminal for the selected row, Tab would otherwise appear to do nothing.
+function cycleHomeFocus(): void {
+  const haveMaster = controlSession()?.terminalBufferId !== undefined;
+  const rows = fleetRows();
+  const sel = rows[fleetSelectedIndex(rows)];
+  const haveTail = sel?.terminalBufferId !== undefined;
+  const order: HomeFocus[] = ["list"];
+  if (haveMaster) order.push("master");
+  if (haveTail) order.push("tail");
+  const at = order.indexOf(homeFocus);
+  homeFocus = order[(at + 1) % order.length];
+  // Leaving a pane stops typing at it: the list does not take PTY keys, and
+  // arriving at a new pane in typing mode would send its first keystroke
+  // somewhere the user did not aim it.
+  if (homeFocus === "list") fleetTyping = false;
+  renderHome(true);
+}
+
+registerHandler("orchestrator_home", openHome);
+registerHandler("orchestrator_home_close", function () { closeHome(); });
+registerHandler("orchestrator_home_cycle", cycleHomeFocus);
+registerHandler("orchestrator_home_type_toggle", function () {
+  // Typing at the list makes no sense; move to a pane first.
+  if (homeFocus === "list") {
+    cycleHomeFocus();
+    if (homeFocus === "list") return;
+  }
+  fleetTyping = !fleetTyping;
+  editor.setEditorMode(fleetTyping ? HOME_TYPE_MODE : HOME_MODE);
+  renderHome(true);
+});
+registerHandler("orchestrator_home_prev", function () {
+  fleetMove(-1);
+  renderHome(true);
+});
+registerHandler("orchestrator_home_next", function () {
+  fleetMove(1);
+  renderHome(true);
+});
+registerHandler("orchestrator_home_open_selected", function () {
+  const rows = fleetRows();
+  const target = rows[fleetSelectedIndex(rows)];
+  closeHome();
+  if (target) void focusWorkspace(target.id);
+});
+
+registerHandler("orchestrator_home_event", function (ev: Record<string, unknown>) {
+  if (!homePanel || ev.panel_id !== homePanel.id()) return;
+  const type = String(ev.event_type ?? "");
+  const payload = (ev.payload ?? {}) as Record<string, unknown>;
+  const widget = String(ev.widget_key ?? payload.key ?? "");
+  if (type === "select" || type === "change") {
+    const idx = Number(payload.index ?? payload.selectedIndex ?? -1);
+    const rows = fleetRows();
+    if (idx >= 0 && idx < rows.length && rows[idx].id !== fleetSelectedId) {
+      fleetSelectedId = rows[idx].id;
+      renderHome(true);
+    }
+    return;
+  }
+  // Clicking a pane focuses it, and in Home that also says which of the two
+  // terminals you meant — so the focus region follows the click.
+  if (type === "focus" && (widget === "home_master" || widget === "fleet_embed")) {
+    homeFocus = widget === "home_master" ? "master" : "tail";
+    if (!fleetTyping) {
+      fleetTyping = true;
+      editor.setEditorMode(HOME_TYPE_MODE);
+    }
+    renderHome(true);
+    return;
+  }
+  if (type === "activate") {
+    void editor.runCommand("Orchestrator: Home Open Selected");
+    return;
+  }
+  if (type === "cancel" || type === "close") closeHome();
+});
+editor.on("widget_event", "orchestrator_home_event");
+
+const HOME_MODE = "orchestrator-home";
+const HOME_TYPE_MODE = "orchestrator-home-type";
+
+// Same rule as the Fleet: every key is a real binding, so all of them appear
+// in the keybinding editor and can be overridden under `mode:orchestrator-home`.
+editor.defineMode(HOME_MODE, [
+  ["Up", "orchestrator_home_prev"],
+  ["Down", "orchestrator_home_next"],
+  ["Tab", "orchestrator_home_cycle"],
+  ["Enter", "orchestrator_home_open_selected"],
+  ["Escape", "orchestrator_home_close"],
+  ["M-`", "orchestrator_home_type_toggle"],
+]);
+// Typing mode claims only the way out, so Tab, Enter, Escape and every
+// printable character reach the focused terminal.
+editor.defineMode(HOME_TYPE_MODE, [
+  ["M-`", "orchestrator_home_type_toggle"],
+]);
+
+registerHandler("orchestrator_set_master", function () {
+  const id = editor.activeWindow();
+  if (setControlWorkspace(id)) {
+    editor.setStatus("This workspace is now the master agent for Home.");
+    if (homePanel) renderHome(true);
+  } else {
+    editor.setStatus("This window is not an Orchestrator workspace.");
+  }
+});
+
 registerHandler("orchestrator_open", openControlRoom);
 registerHandler("orchestrator_new", startNewSession);
 registerHandler("orchestrator_kill", killSelected);
@@ -13451,6 +13783,26 @@ editor.registerCommand(
   "orchestrator_fleet",
   null,
   { terminalBypass: true },
+);
+editor.registerCommand(
+  "Orchestrator: Home",
+  "The fleet, a master agent to tell what you want, and the selected agent's terminal",
+  "orchestrator_home",
+  null,
+  { terminalBypass: true },
+);
+editor.registerCommand(
+  "Orchestrator: Set Master Agent",
+  "Use this workspace's agent as Home's master — the one you talk to",
+  "orchestrator_set_master",
+  null,
+  { terminalBypass: true },
+);
+editor.registerCommand(
+  "Orchestrator: Home Open Selected",
+  "Leave Home and go to the selected workspace",
+  "orchestrator_home_open_selected",
+  null,
 );
 editor.registerCommand(
   "%cmd.kill",
