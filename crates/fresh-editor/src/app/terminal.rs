@@ -2227,7 +2227,18 @@ impl Window {
     /// Computing the file-explorer width against the post-dock chrome
     /// width (not the full screen) matches the renderer exactly, so split
     /// geometry derived from this lines up with the cells actually drawn.
+    ///
+    /// The vertical bands come from the same toggles the renderer lays out
+    /// against. Hard-coding "menu bar + status bar" instead over-reported the
+    /// height by a row whenever the prompt line was shown — panes are one row
+    /// shorter than that, so a panel that sizes itself to the pane it is told
+    /// it has (the code tour's dock panel) emitted one row too many and its
+    /// hint bar fell off the bottom of the dock — and under-reported it with
+    /// the menu or status bar hidden.
     pub(crate) fn editor_content_area(&self) -> ratatui::layout::Rect {
+        let menu_rows = u16::from(self.menu_bar_visible);
+        let status_rows = u16::from(self.status_bar_visible);
+        let prompt_rows = u16::from(self.prompt_line_visible);
         let chrome_width = self.terminal_width.saturating_sub(self.dock_cols);
         let file_explorer_width = if self.file_explorer_visible {
             self.file_explorer_width.to_cols(chrome_width)
@@ -2243,9 +2254,10 @@ impl Window {
         let editor_width = chrome_width.saturating_sub(file_explorer_width);
         ratatui::layout::Rect::new(
             editor_x,
-            1, // menu bar
+            menu_rows,
             editor_width,
-            self.terminal_height.saturating_sub(2), // menu bar + status bar
+            self.terminal_height
+                .saturating_sub(menu_rows + status_rows + prompt_rows),
         )
     }
 
