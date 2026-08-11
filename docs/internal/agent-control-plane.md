@@ -257,15 +257,32 @@ is only the addressing and the plumbing around it:
 - **Crop from the bottom.** The grid renderer clips rows past the rect's
   height, keeping the top of the grid. A tail wants the opposite. A row offset
   turns "the first N rows" into "the last N rows".
-- **Never resize the source PTY.** A PTY has one size, derived from its owning
-  window. Resizing it to fit a small embed would deliver `SIGWINCH` to the
-  agent and reflow its TUI in its *own* workspace — visible churn for the user
-  who is working there. The embed crops; it does not negotiate.
+- **Size the PTY to the view that is presenting it.** A PTY has one size, and
+  it belongs to whichever view is showing it right now: the Fleet opens on an
+  agent, that agent's terminal resizes to the embed pane; the Fleet closes and
+  the owning window reclaims it.
 
-For a full-screen TUI agent the bottom rows are the prompt and input area,
-which is precisely the region that answers "is it asking me something".
-Cropping to the tail is therefore not a compromise — it is the right window
-onto the grid.
+An earlier draft of this section said the opposite — crop, never resize — on
+the grounds that a resize would `SIGWINCH` the agent and disturb its own
+workspace. That reasoning was wrong twice over.
+
+Fresh is one terminal: while the Fleet overlay is up, nobody is looking at
+that workspace, so there is no second observer to disturb. The two sizes are a
+sequence, not a conflict.
+
+And cropping does not survive contact with a TUI. Cropping *rows* is fine —
+the last N rows are the tail, and for a full-screen agent that is the prompt
+and input area, precisely the region that answers "is it asking me something".
+Cropping *columns* is not: an agent drawing a 180-column dialog into a
+100-column pane loses the right edge of every box and cuts every wrapped line.
+The content the Fleet exists to show is exactly what would be clipped.
+
+Sizing to the view also generalises what already happens in-window — a
+terminal dragged into a new split re-wraps to that pane — rather than adding a
+second model. Two details are part of the change, not follow-ups: resize on a
+*settled* selection, since arrowing a long list would otherwise rewrap a
+different terminal's scrollback per keypress; and reclaim the size on close,
+or the agent is left at the Fleet's dimensions permanently.
 
 ### 6.6 One PTY, many views, one input target
 
@@ -357,14 +374,30 @@ agent's PTY by `(windowId, terminalId)` — so an approval prompt can be
 answered without leaving the view (§6.6). Enter, the arrows, Escape and
 Ctrl+C forward; so do the digits and `y`/`n` that answer a prompt.
 
-Free-form typing does **not** work, and the reason is worth recording. The
-host's floating-panel key path hands a plugin only the bare characters its
-mode explicitly claims — `mode_text_input` is never emitted for a
-panel-focused mode, and setting the mode's `allow_text_input` flag does not
-change that. So "forward every printable key" has no expression today; the
-answer keys are bound one at a time. Making the embed a true input target
-needs host work, and until then Enter on the row still takes you to the real
-terminal, which accepts anything.
+Free-form typing does **not** work: the host's floating-panel key path hands a
+plugin only the bare characters its mode explicitly claims, so the answer keys
+are bound one at a time. `mode_text_input` is never emitted for a
+panel-focused mode, and neither the mode's `allow_text_input` nor its
+`read_only` flag changes that — both were tried, with the handler instrumented
+to confirm it never fires.
+
+That gap is a symptom, and forwarding more keys is the wrong fix. **The embed
+is a picture, not a pane.** A terminal is interactive because it is a *buffer
+in a split*: focus that split and the key pipeline resolves
+`active_buffer -> terminal_id -> PTY`, with `key_to_pty_bytes` handling
+app-cursor mode and modifiers. Scrollback, mouse forwarding, selection, copy
+and link hover all hang off the same fact. `windowEmbed` has no buffer and no
+split, so none of it applies, and per-key forwarding is a hand-rebuild of
+`key_to_pty_bytes` that will never be complete.
+
+The right shape is a **cross-window terminal pane**: let a split hold a
+terminal owned by another window, addressed as `(windowId, terminalId)`.
+Everything above then arrives for free, and the forwarding code is deleted
+rather than extended. "One PTY, several views, one input target" is already
+Fresh's shipped design within a window — two splits can show one terminal, one
+scrolled back while the other streams, independently and off-focus — so this
+extends a deliberate model rather than inventing one. Combined with the
+sizing rule in §6.5, there is then no cropping compromise left anywhere.
 
 The Fleet's own strings are English-only, unlike the rest of the Orchestrator,
 which is fully localised across fourteen locales. That is a gap to close, not
