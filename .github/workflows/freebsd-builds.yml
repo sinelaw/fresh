@@ -53,7 +53,9 @@ jobs:
 
             # 5. Create Archive
             tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
-            sha256 -q "${ARCHIVE_NAME}.tar.xz" > "${ARCHIVE_NAME}.tar.xz.sha256"
+            # `sha256 -q` prints the digest alone; sidecars carry "<hash>  <name>".
+            printf '%s  %s\n' "$(sha256 -q "${ARCHIVE_NAME}.tar.xz")" \
+              "${ARCHIVE_NAME}.tar.xz" > "${ARCHIVE_NAME}.tar.xz.sha256"
 
             # Verify archive contents
             echo "Archive contents:"

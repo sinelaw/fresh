@@ -49,6 +49,12 @@ for asset in "${archives[@]}"; do
   if [ ! -f "$DIR/$asset.sha256" ]; then
     echo "FAIL (no .sha256 sidecar)"; failed=1; continue
   fi
+  # Shape first: a CRLF line ending or a bare digest makes `-c` fail for a
+  # reason that has nothing to do with the bytes, so say which one it is.
+  if ! grep -qx "[0-9a-fA-F]\{64\}  $asset" "$DIR/$asset.sha256"; then
+    echo "FAIL (malformed sidecar: want '<sha256>  $asset', LF-terminated)"
+    failed=1; continue
+  fi
   # The sidecars are written next to the archive at build time, so the name in
   # them is bare; -c resolves it relative to the working directory.
   if (cd "$DIR" && sha256sum -c --status "$asset.sha256"); then

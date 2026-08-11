@@ -217,7 +217,8 @@ jobs:
 
           Compress-Archive -Path "$ARCHIVE_NAME/*" -DestinationPath "$ARCHIVE_NAME.zip"
           $hash = (Get-FileHash "$ARCHIVE_NAME.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  $ARCHIVE_NAME.zip" | Out-File -Encoding ASCII "$ARCHIVE_NAME.zip.sha256"
+          # LF, not CRLF: `sha256sum -c` folds a trailing \r into the filename.
+          Set-Content -Path "$ARCHIVE_NAME.zip.sha256" -Encoding ascii -NoNewline -Value "$hash  $ARCHIVE_NAME.zip`n"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
