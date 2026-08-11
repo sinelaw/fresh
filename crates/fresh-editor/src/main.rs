@@ -3732,13 +3732,18 @@ fn help_command(topic: &[&str]) -> AnyhowResult<()> {
                 "  plugin   write init.ts / a plugin — the runtime contract, the \
                  dev loop, a worked auto-refreshing panel"
             );
+            println!(
+                "  agents   work with the other agents — your status and inbox, the \
+                 fleet, delegation, the event log"
+            );
             Ok(())
         }
         ["tour", flags @ ..] => help_tour(flags),
         ["script", ..] => help_script(),
         ["plugin", ..] | ["plugins", ..] | ["init", ..] => help_plugin(),
+        ["agents", ..] | ["agent", ..] | ["orchestrator", ..] | ["fleet", ..] => help_agents(),
         [other, ..] => {
-            eprintln!("unknown help topic: {other} (available: tour, script, plugin)");
+            eprintln!("unknown help topic: {other} (available: tour, script, plugin, agents)");
             std::process::exit(2);
         }
     }
@@ -3931,6 +3936,121 @@ See also: fresh --cmd help plugin   — the runtime contract, and a worked
 }
 
 /// `fresh --cmd help plugin` — how to write init.ts / a plugin.
+/// `fresh --cmd help agents` — the control plane, from an agent's side.
+fn help_agents() -> AnyhowResult<()> {
+    print!("{}", agents_help_text());
+    Ok(())
+}
+
+/// The `help agents` body.
+///
+/// Written for the reader who is *an* agent rather than the one running the
+/// editor: what you are expected to write, what you may ask for, and what you
+/// can watch. The launch briefing carries an abridged version of this — this
+/// is where the detail lives, so the briefing can stay short.
+fn agents_help_text() -> String {
+    r#"Working with the other agents
+
+Fresh runs many workspaces at once, each usually with an agent in it. Three
+files and three calls are the whole interface between you and the rest.
+
+WHAT YOU ARE EXPECTED TO WRITE
+
+  $FRESH_AGENT_STATUS   one line, rewritten whenever your state changes
+  $FRESH_AGENT_INBOX    a directory; each file in it is an instruction for you
+
+Status is `<state> <summary>`, where state is one of:
+
+    working   you are doing something
+    waiting   you are blocked and need the user   <- the important one
+    idle      nothing in progress
+    done      finished the task you were given
+    blocked   stuck on something the user must resolve
+
+    echo "working running the e2e suite"              > "$FRESH_AGENT_STATUS"
+    echo "waiting approve my edit to tests/e2e.rs"    > "$FRESH_AGENT_STATUS"
+    echo "done 3 files changed, suite green"          > "$FRESH_AGENT_STATUS"
+
+Write it often, and above all the moment you need the user. Without it, Fresh
+falls back to guessing your state from your terminal output — which is usually
+a spinner, a progress bar, or half a redraw, and cannot tell "I am asking you
+to approve" from "the word approve appeared in a diff I am showing you". A
+line you write is the only reliable way the user sees that you are waiting.
+
+Read your inbox at the start of each turn. Act on each file, then move it to
+`done/` — that move is the acknowledgement, and an instruction that never
+moves is how the user sees it was dropped:
+
+    for f in "$FRESH_AGENT_INBOX"/*.md; do
+      [ -e "$f" ] || continue
+      cat "$f"                                  # act on it
+      mv "$f" "$FRESH_AGENT_INBOX/done/"
+    done
+
+WHAT YOU MAY ASK FOR
+
+  const orch = editor.getPluginApi("orchestrator");
+
+  orch.fleet()               who is doing what, most urgent first
+  orch.delegate({...})       write an instruction into another agent's inbox
+  orch.listWorkspaces()      the dock's own model, including archived/on-disk
+  orch.newWorkspace({...})   create a workspace and start an agent in it
+
+    "$FRESH_BIN" --cmd script run <<'EOF'
+    const orch = editor.getPluginApi("orchestrator");
+    return orch.fleet();
+    EOF
+
+Each `fleet()` row carries `state`, `summary` and `source`. `source` is
+"agent" when that agent wrote its own status and "inferred" when the summary
+was guessed from its screen — weigh them differently.
+
+Delegation reports **delivery, not completion**. The peer acts because its
+briefing tells it to read its inbox; nothing is injected into its terminal:
+
+    await orch.delegate({
+      target: <workspaceId>,
+      instruction: "Rerun the flaky test with --nocapture and report what fails.",
+    });
+
+WHAT YOU CAN WATCH
+
+  $FRESH_FLEET_EVENTS   one JSON object per line: every state change, every
+                        delegation, for every workspace
+
+    tail -f "$FRESH_FLEET_EVENTS"
+
+This is how you notice something instead of being told. A plugin would
+subscribe with `editor.on("agent_state_change", ...)`; from a shell, the file
+is the same information without a protocol.
+
+READING ANOTHER AGENT'S SCREEN
+
+When a peer writes no status, its terminal is all there is:
+
+    return await editor.readTerminal(windowId, terminalId, 40, true);
+
+Both ids are required — there is no ambient "current" workspace, because a
+call that means something different depending on where the user last clicked
+cannot be reasoned about. `editor.describeEnvironment()` lists every window
+and its terminals with their ids.
+
+WHAT THE USER SEES
+
+  Orchestrator: Fleet   every agent, sorted by who needs them, with your
+                        status as the reason
+  Orchestrator: Home    the fleet, a master agent they talk to, and the
+                        selected agent's live terminal
+
+Both read your status file directly. Keeping it current is what puts you in
+front of them at the right moment.
+
+See also: fresh --cmd help script   — the API surface of this build
+          fresh --cmd help plugin   — panels, events, the runtime contract
+"#
+    .to_string()
+}
+
 fn help_plugin() -> AnyhowResult<()> {
     print!("{}", plugin_help_text());
     Ok(())
