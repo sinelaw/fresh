@@ -279,6 +279,19 @@ pub struct OverlayRow {
 #[derive(Debug, Clone, Copy)]
 pub struct EmbedRect {
     pub window_id: u32,
+    /// `None` for a `WindowEmbed` — paint the whole session, split
+    /// tree and chrome included. `Some(id)` for a `Pane` — paint just
+    /// that one buffer.
+    ///
+    /// Both share this struct, and the vector that carries it, because
+    /// they are the same thing to the layout: a rectangle the host
+    /// fills in after the widget entries are laid down. Splitting them
+    /// would mean threading a second vector through every Row / Col /
+    /// Section combinator for no gain.
+    pub buffer_id: Option<u32>,
+    /// Whether a focused pane forwards keys to its buffer (terminals
+    /// only). Meaningless for a whole-window embed.
+    pub interactive: bool,
     pub buffer_row: u32,
     pub col_in_row: u32,
     pub width_cols: u32,
@@ -579,6 +592,7 @@ fn predicts_block(spec: &WidgetSpec) -> bool {
         WidgetSpec::List { .. } => true,
         WidgetSpec::Text { rows, .. } => *rows > 1,
         WidgetSpec::WindowEmbed { rows, .. } => *rows > 1,
+        WidgetSpec::Pane { rows, .. } => *rows > 1,
         WidgetSpec::Raw { entries, .. } => entries.len() > 1,
         WidgetSpec::Row { children, .. } => children.iter().any(predicts_block),
         _ => false,
@@ -933,7 +947,20 @@ fn render_collected(
         }
         WidgetSpec::WindowEmbed {
             window_id, rows, ..
-        } => collect_window_embed(*window_id, *rows, panel_width),
+        } => collect_embed_rect(*window_id, None, false, *rows, panel_width),
+        WidgetSpec::Pane {
+            window_id,
+            buffer_id,
+            rows,
+            interactive,
+            ..
+        } => collect_embed_rect(
+            *window_id,
+            Some(*buffer_id),
+            *interactive,
+            *rows,
+            panel_width,
+        ),
         WidgetSpec::Raw { entries, .. } => collect_raw(entries),
         WidgetSpec::Overlay { child, .. } => {
             collect_overlay(child, prev, next_state, ctx, panel_width)
@@ -2332,7 +2359,16 @@ fn collect_labeled_section(
     }
 }
 
-fn collect_window_embed(window_id: u32, embed_rows: u32, panel_width: u32) -> CollectedOutput {
+/// Reserve `embed_rows` blank rows and record the rectangle for the
+/// host to paint into. Shared by `WindowEmbed` (whole session) and
+/// `Pane` (one buffer) — see [`EmbedRect::buffer_id`].
+fn collect_embed_rect(
+    window_id: u32,
+    buffer_id: Option<u32>,
+    interactive: bool,
+    embed_rows: u32,
+    panel_width: u32,
+) -> CollectedOutput {
     let mut out = CollectedOutput::default();
     // Emit `rows` blank lines of `panel_width` width so
     // layout reserves the rectangle. The host paint
@@ -2357,6 +2393,8 @@ fn collect_window_embed(window_id: u32, embed_rows: u32, panel_width: u32) -> Co
     }
     out.embeds.push(EmbedRect {
         window_id,
+        buffer_id,
+        interactive,
         buffer_row: 0,
         col_in_row: 0,
         width_cols: panel_width,
@@ -6638,6 +6676,8 @@ fn zip_row_blocks(
                         for emb in inline_embeds {
                             out_embeds.push(EmbedRect {
                                 window_id: emb.window_id,
+                                buffer_id: emb.buffer_id,
+                                interactive: emb.interactive,
                                 buffer_row: starting_row + emb.buffer_row,
                                 col_in_row: emb.col_in_row + col_shift,
                                 width_cols: emb.width_cols,
@@ -6702,6 +6742,8 @@ fn zip_row_blocks(
                         for emb in block_embeds {
                             out_embeds.push(EmbedRect {
                                 window_id: emb.window_id,
+                                buffer_id: emb.buffer_id,
+                                interactive: emb.interactive,
                                 buffer_row: starting_row + emb.buffer_row,
                                 col_in_row: emb.col_in_row + col_shift,
                                 width_cols: emb.width_cols,

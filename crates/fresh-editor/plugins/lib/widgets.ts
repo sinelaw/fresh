@@ -715,6 +715,48 @@ export function textInput(
  *
  * `windowId` of 0 (or any unknown id) renders the placeholder
  * blanks without dispatching the per-window paint. */
+/** Reserve a rectangle for one **buffer**, from any window.
+ *
+ * The narrow sibling of `windowEmbed`. An embed paints a whole
+ * session — split tree, tab bar, status chrome; a pane paints
+ * exactly one buffer, which is usually what a panel wants:
+ * "show me this agent's terminal", not "show me its whole
+ * workspace".
+ *
+ * One rectangle, one buffer, so every buffer kind works with no
+ * special case:
+ *
+ *  - **terminal** — its live PTY grid, resized to this pane. Set
+ *    `interactive` to type at it while the pane holds focus.
+ *  - **file / virtual** — the ordinary per-leaf render pipeline,
+ *    with view state the host keeps for this pane.
+ *  - **composite (side-by-side diff)** — one buffer that divides
+ *    its own rectangle, so nothing extra is needed here.
+ *
+ * A *buffer group* is not a buffer — it is a set of them plus a
+ * layout — so show a group as several panes composed with
+ * `row()` / `col()`.
+ *
+ * `bufferId` of 0 (or an unknown id) renders blank placeholder
+ * rows rather than failing. */
+export function pane(options: {
+  windowId: number;
+  bufferId: number;
+  rows: number;
+  /** Terminals only: forward keys to the PTY while focused. */
+  interactive?: boolean;
+  key?: string;
+}): WidgetSpec {
+  return {
+    kind: "pane",
+    windowId: options.windowId,
+    bufferId: options.bufferId,
+    rows: options.rows,
+    interactive: options.interactive ?? false,
+    key: options.key,
+  };
+}
+
 export function windowEmbed(options: {
   windowId: number;
   rows: number;

@@ -431,6 +431,11 @@ pub struct TerminalDescription {
     /// Address this terminal with `(windowId, terminalId)`.
     #[ts(type = "number")]
     pub terminal_id: TerminalId,
+    /// The buffer this terminal is shown through. Reported because it
+    /// is what a `Pane` widget addresses — a pane names a *buffer*,
+    /// and a terminal id alone cannot be drawn.
+    #[ts(type = "number")]
+    pub buffer_id: BufferId,
     /// Current title — the same string the terminal's tab shows, which for an
     /// agent is usually its process name.
     pub title: String,
@@ -2764,6 +2769,49 @@ pub enum WidgetSpec {
     /// Row's horizontal-zip path). Used by Orchestrator's open
     /// dialog so the preview pane shows a live render of the
     /// highlighted session.
+    /// Reserve a rectangle for one **buffer**, from any window.
+    ///
+    /// The narrow sibling of [`WidgetSpec::WindowEmbed`]. Where an
+    /// embed paints a whole session — split tree, tab bar, status
+    /// chrome — a pane paints exactly one buffer, which is what a
+    /// panel usually wants: "show me this agent's terminal", not
+    /// "show me its entire workspace".
+    ///
+    /// The contract is deliberately one rectangle, one buffer, so
+    /// every buffer kind is covered without a special case. A
+    /// composite (side-by-side diff) buffer is a single buffer that
+    /// divides its own rectangle, so it needs nothing extra here. A
+    /// *buffer group* is not a buffer — it is a set of them plus a
+    /// layout — so a group is shown as several `Pane`s composed with
+    /// `Row`/`Col`, not as one pane.
+    ///
+    /// The pane's view state (scroll, cursor, folds) is owned by the
+    /// panel, **not** registered in the window's `split_view_states`.
+    /// That map is iterated by ~20 cross-cutting paths — workspace
+    /// save, viewport hooks, buffer-close cascades — and a transient
+    /// render surface must not appear to any of them. This is the
+    /// same isolation `OverlayPreviewState` already keeps.
+    Pane {
+        /// Window owning `buffer_id`. Terminals and plugin-owned
+        /// virtual buffers live on a specific window, so a pane is
+        /// addressed by the pair rather than by buffer alone.
+        window_id: u32,
+        /// The buffer to draw. `0` (or an unknown id) renders blank
+        /// placeholder rows rather than failing.
+        buffer_id: u32,
+        /// Height in rows. Width is whatever the parent allocates.
+        rows: u32,
+        /// When true and the buffer is a terminal, keystrokes go to
+        /// its PTY while this pane holds focus. Ignored for other
+        /// buffer kinds: a terminal's input has one unambiguous
+        /// meaning (bytes to the child), whereas typing into a file
+        /// means *editing*, which brings undo, LSP and save with it —
+        /// a decision no panel should make implicitly.
+        #[serde(default)]
+        interactive: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
     WindowEmbed {
         /// Numeric editor-window id, matching `WindowId(N).0`.
         /// `0` (or any unknown id) renders empty placeholder

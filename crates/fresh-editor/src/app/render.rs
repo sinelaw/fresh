@@ -2624,6 +2624,165 @@ impl Editor {
     /// back after. `pending_hardware_cursor` and
     /// `cell_theme_map` use scratch locals so the active editor
     /// area's hit-testing isn't clobbered by the preview pass.
+    /// Paint one buffer — from any window — into `inner`.
+    ///
+    /// The `Pane` widget's paint half. Two shapes, because terminals
+    /// are not text:
+    ///
+    /// A **terminal** is its live PTY grid. The grid is sized to this
+    /// rectangle first, which is the same rule the split path applies
+    /// (`resize_visible_terminals`) and is what makes the pane
+    /// readable: a TUI drawing at the owning window's width into a
+    /// narrower pane would lose the right edge of every box. Whoever
+    /// renders it, sizes it — so when this pane goes away the owning
+    /// window reclaims the size on its next frame, with no "restore"
+    /// step anywhere.
+    ///
+    /// **Everything else** — file, virtual, composite — goes through
+    /// `render_phantom_leaf`, the same per-leaf pipeline a real split
+    /// uses, with view state this panel owns. A composite (side-by-side
+    /// diff) buffer needs no special case: it is one buffer that
+    /// divides its own rectangle.
+    fn render_pane_into_rect(
+        &mut self,
+        frame: &mut ratatui::Frame,
+        inner: ratatui::layout::Rect,
+        window_id: fresh_core::WindowId,
+        buffer_id: BufferId,
+        theme: &crate::view::theme::Theme,
+    ) {
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+        let Some(window) = self.windows.get(&window_id) else {
+            return;
+        };
+
+        // --- terminal: size the PTY to this rect, then paint its grid
+        if let Some(terminal_id) = window.get_terminal_id(buffer_id) {
+            if let Some(win) = self.windows.get_mut(&window_id) {
+                win.resize_terminal(buffer_id, inner.width, inner.height);
+            }
+            let Some(window) = self.windows.get(&window_id) else {
+                return;
+            };
+            let Some(handle) = window.terminal_manager.get(terminal_id) else {
+                return;
+            };
+            let Ok(state) = handle.state.lock() else {
+                return;
+            };
+            let (_, rows) = state.size();
+            let content: Vec<Vec<crate::services::terminal::TerminalCell>> =
+                (0..rows).map(|row| state.get_line(row)).collect();
+            let cursor_pos = state.cursor_position();
+            drop(state);
+            frame.render_widget(ratatui::widgets::Clear, inner);
+            crate::app::terminal::render::render_terminal_content(
+                &content,
+                cursor_pos,
+                // The caret belongs to whichever view owns input. A pane
+                // is not that until interactive panes land, and two
+                // caretsfor one PTY would be worse than none.
+                false,
+                inner,
+                frame.buffer_mut(),
+                theme.terminal_fg,
+                theme.terminal_bg,
+                None,
+            );
+            return;
+        }
+
+        // --- any other buffer kind: the ordinary per-leaf pipeline
+        let key = (window_id.0, buffer_id);
+        if !self.pane_view_states.contains_key(&key) {
+            let mut view_state = crate::view::split::SplitViewState::with_buffer(
+                self.terminal_width,
+                self.terminal_height,
+                buffer_id,
+            );
+            view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: self.config.editor.line_numbers,
+                highlight_current_line: self.config.editor.highlight_current_line,
+                line_wrap: window.resolve_line_wrap_for_buffer(buffer_id),
+                wrap_indent: self.config.editor.wrap_indent,
+                wrap_column: window.resolve_wrap_column_for_buffer(buffer_id),
+                rulers: self.config.editor.rulers.clone(),
+                scroll_offset: self.config.editor.scroll_offset,
+            });
+            self.pane_view_states.insert(key, view_state);
+        }
+
+        // Snapshot the appearance inputs before taking the `&mut
+        // self.windows` borrow below — they read only
+        // `self.config`/`self.theme`/`self.ansi_background`, which Rust
+        // splits from `self.windows` as distinct fields.
+        let session_mode = self.session_mode || !self.software_cursor_only;
+        let show_tilde = false;
+        let highlight_current_column = self.config.editor.highlight_current_column;
+        let screen_width = frame.area().width;
+        let style = crate::view::ui::RenderStyle {
+            theme,
+            ansi_background: self.ansi_background.as_ref(),
+            cfg: crate::view::ui::EditorRenderConfig::new(
+                &self.config.editor,
+                self.background_fade,
+                self.software_cursor_only,
+            ),
+        };
+
+        // The view state is on `self`, the buffer on the target window,
+        // so take the two borrows apart before the render call.
+        let Some(view_state) = self.pane_view_states.get_mut(&key) else {
+            return;
+        };
+        view_state.viewport.resize(inner.width, inner.height);
+        let buf_state = view_state.active_state_mut();
+        let cursors = buf_state.cursors.clone();
+        let view_mode = buf_state.view_mode.clone();
+        let compose_width = buf_state.compose_width;
+        let compose_column_guides = buf_state.compose_column_guides.clone();
+        let rulers = buf_state.rulers.clone();
+        let show_line_numbers = buf_state.show_line_numbers;
+        let highlight_current_line = buf_state.highlight_current_line;
+        let viewport_ref = &mut buf_state.viewport;
+        let folds_ref = &mut buf_state.folds;
+
+        let Some(window) = self.windows.get_mut(&window_id) else {
+            return;
+        };
+        let buffers = &mut window.buffers;
+        let event_logs = &mut window.event_logs;
+        let cell_theme_map = &mut window.chrome_layout.cell_theme_map;
+        let Some(state) = buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let event_log = event_logs.get_mut(&buffer_id);
+        let _ = crate::view::ui::SplitRenderer::render_phantom_leaf(
+            frame.buffer_mut(),
+            state,
+            &cursors,
+            viewport_ref,
+            folds_ref,
+            event_log,
+            inner,
+            style,
+            view_mode,
+            compose_width,
+            compose_column_guides,
+            buffer_id,
+            session_mode,
+            &rulers,
+            show_line_numbers,
+            highlight_current_line,
+            show_tilde,
+            highlight_current_column,
+            cell_theme_map,
+            screen_width,
+        );
+    }
+
     fn render_session_preview_into_rect(
         &mut self,
         frame: &mut ratatui::Frame,
@@ -4792,8 +4951,24 @@ impl Editor {
                 width: w,
                 height: h,
             };
-            self.preview_window_id = Some(fresh_core::WindowId(emb.window_id as u64));
-            self.render_session_preview_into_rect(frame, rect, &theme);
+            match emb.buffer_id {
+                // `Pane`: one buffer, from any window.
+                Some(buffer_id) if buffer_id != 0 => {
+                    self.render_pane_into_rect(
+                        frame,
+                        rect,
+                        fresh_core::WindowId(emb.window_id as u64),
+                        BufferId(buffer_id as usize),
+                        &theme,
+                    );
+                }
+                Some(_) => {}
+                // `WindowEmbed`: the whole session.
+                None => {
+                    self.preview_window_id = Some(fresh_core::WindowId(emb.window_id as u64));
+                    self.render_session_preview_into_rect(frame, rect, &theme);
+                }
+            }
         }
         self.preview_window_id = saved_preview;
 

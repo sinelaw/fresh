@@ -1177,6 +1177,24 @@ pub struct Editor {
     /// "Rich Control Room rendering".
     pub(crate) preview_window_id: Option<fresh_core::WindowId>,
 
+    /// View state for `WidgetSpec::Pane` widgets — scroll, cursor and
+    /// folds for a buffer being shown inside a panel, keyed by the
+    /// `(window, buffer)` pair the pane names.
+    ///
+    /// Kept here rather than in the owning window's `split_view_states`
+    /// on purpose, and the reason is load-bearing: that map is iterated
+    /// by ~20 cross-cutting paths — workspace save, viewport hooks,
+    /// settings broadcasts, buffer-close cascades — and a pane is a
+    /// transient render surface, not a pane the user owns. None of
+    /// those paths should ever see one. `OverlayPreviewState` keeps the
+    /// same isolation for the same reason.
+    ///
+    /// Keyed by target rather than by widget, so two panes showing the
+    /// same buffer scroll together — which is what you want when a
+    /// panel shows one buffer in two places, and harmless otherwise.
+    pub(crate) pane_view_states:
+        std::collections::HashMap<(u64, BufferId), crate::view::split::SplitViewState>,
+
     // terminal_buffers / terminal_backing_files / terminal_log_files
     // moved onto `Window` (Step 0d).
     // `ephemeral_terminals` moved onto `Window` — TerminalManager and

@@ -39,6 +39,7 @@ import {
   toggle,
   tree,
   treeNode,
+  pane,
   windowEmbed,
   type WidgetSpec,
 } from "./lib/widgets.ts";
@@ -162,6 +163,11 @@ interface AgentSession {
   // and whether that says it is waiting on the user. `undefined` until first
   // probed. See `probeTail`.
   tail?: TailProbe;
+  // Buffer the session's terminal is shown through, resolved from
+  // `describeEnvironment`. A `pane` widget addresses a *buffer*, so this is
+  // what the Fleet's live pane needs — a terminal id alone cannot be drawn.
+  // `undefined` until resolved, or for a session with no terminal.
+  terminalBufferId?: number;
   // Wall-clock ms when this session last became the active window. Used
   // to suppress the terminal's activation redraw from registering as
   // agent activity (so selecting a session doesn't flash it `working`).
@@ -3790,6 +3796,16 @@ async function probeTail(s: AgentSession): Promise<void> {
   if (s.tail && now - s.tail.fetchedAt < TAIL_PROBE_TTL_MS) return;
   tailProbesInFlight.add(s.id);
   try {
+    // Resolve the terminal's buffer once. Cheap to ask for, and the Fleet's
+    // live pane cannot render without it.
+    if (s.terminalBufferId === undefined) {
+      try {
+        const env = await editor.describeEnvironment();
+        const win = env.windows.find((w) => w.windowId === s.id);
+        const t = win?.terminals.find((t) => t.terminalId === s.terminalId);
+        if (t) s.terminalBufferId = t.bufferId;
+      } catch (_e) { /* retried on the next probe */ }
+    }
     const screen = await editor.readTerminal(s.id, s.terminalId, TAIL_LINES, true);
     const rows = screen.text.filter((l) => l.trim().length > 0);
     const lastLine = rows.length ? rows[rows.length - 1].trim() : "";
@@ -12681,14 +12697,29 @@ function buildFleetSpec(): WidgetSpec {
     }),
   ];
 
-  // The live pane. `windowEmbed` reserves the rectangle and the host paints
-  // the real window into it — terminals included — so this is the agent's
-  // actual screen, not a copy of it.
-  if (selected) {
+  // The live pane: the agent's terminal itself, not a copy of it. A `pane`
+  // rather than a `windowEmbed` because an embed paints the whole session —
+  // tab bar and all — when what this wants is one terminal, named explicitly.
+  // Sizing follows for free: the host resizes the PTY to this rectangle, and
+  // the owning window takes it back on its next frame.
+  if (selected && selected.terminalBufferId) {
     children.push(labeledSection({
       label: fleetTyping
         ? `typing → ${workspaceDisplayName(selected)}`
         : `live · ${workspaceDisplayName(selected)}`,
+      child: pane({
+        windowId: selected.id,
+        bufferId: selected.terminalBufferId,
+        rows: FLEET_EMBED_ROWS,
+        interactive: true,
+        key: "fleet_embed",
+      }),
+    }));
+  } else if (selected) {
+    // No terminal buffer known yet (a workspace still coming up). Fall back
+    // to the whole-session embed rather than showing a hole.
+    children.push(labeledSection({
+      label: `live · ${workspaceDisplayName(selected)}`,
       child: windowEmbed({ windowId: selected.id, rows: FLEET_EMBED_ROWS, key: "fleet_embed" }),
     }));
   }

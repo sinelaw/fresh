@@ -2043,6 +2043,33 @@ type WidgetSpec = {
 	widthPct?: number | null;
 	key?: string | null;
 } | {
+	"kind": "pane";
+	/**
+	* Window owning `buffer_id`. Terminals and plugin-owned
+	* virtual buffers live on a specific window, so a pane is
+	* addressed by the pair rather than by buffer alone.
+	*/
+	windowId: number;
+	/**
+	* The buffer to draw. `0` (or an unknown id) renders blank
+	* placeholder rows rather than failing.
+	*/
+	bufferId: number;
+	/**
+	* Height in rows. Width is whatever the parent allocates.
+	*/
+	rows: number;
+	/**
+	* When true and the buffer is a terminal, keystrokes go to
+	* its PTY while this pane holds focus. Ignored for other
+	* buffer kinds: a terminal's input has one unambiguous
+	* meaning (bytes to the child), whereas typing into a file
+	* means *editing*, which brings undo, LSP and save with it —
+	* a decision no panel should make implicitly.
+	*/
+	interactive: boolean;
+	key?: string | null;
+} | {
 	"kind": "windowEmbed";
 	/**
 	* Numeric editor-window id, matching `WindowId(N).0`.

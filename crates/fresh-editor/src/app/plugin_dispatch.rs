@@ -6249,20 +6249,21 @@ impl Editor {
                 // duplicates; report each terminal once.
                 let mut ids: Vec<_> = window
                     .terminal_buffers
-                    .values()
-                    .map(|tb| tb.terminal_id)
+                    .iter()
+                    .map(|(&buffer_id, tb)| (tb.terminal_id, buffer_id))
                     .collect();
-                ids.sort_by_key(|t| t.0);
-                ids.dedup_by_key(|t| t.0);
+                ids.sort_by_key(|(t, _)| t.0);
+                ids.dedup_by_key(|(t, _)| t.0);
 
                 let mut terminals: Vec<fresh_core::api::TerminalDescription> = ids
                     .into_iter()
-                    .filter_map(|terminal_id| {
+                    .filter_map(|(terminal_id, buffer_id)| {
                         let handle = window.terminal_manager.get(terminal_id)?;
                         let state = handle.state.lock().ok()?;
                         let (cols, rows) = state.size();
                         Some(fresh_core::api::TerminalDescription {
                             terminal_id,
+                            buffer_id,
                             title: state.title().to_string(),
                             alt_screen: state.is_alternate_screen(),
                             rows: rows as usize,

@@ -679,6 +679,7 @@ impl Editor {
             path_changes_for_test: Vec::new(),
             last_watch_response_for_test: None,
             preview_window_id: None,
+            pane_view_states: std::collections::HashMap::new(),
             settings_state: None,
             calibration_wizard: None,
             // event_debug moved to Window
