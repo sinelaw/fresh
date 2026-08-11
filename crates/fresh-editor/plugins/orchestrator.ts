@@ -12642,9 +12642,10 @@ const FLEET_EMBED_ROWS = 12;
 /// have to scan defeats the purpose. Within a bucket the dock's own stable
 /// order is preserved so rows don't shuffle between ticks.
 function fleetRows(): AgentSession[] {
+  // Pending and discovered rows are filtered out below, so rank only has to
+  // order the live ones.
   const rank = (s: AgentSession): number => {
     const st = sessionState(s);
-    if (s.pending || s.discovered) return 3;
     if (st === "waiting") return 0;
     if (st === "working") return 1;
     return 2;
@@ -12937,12 +12938,14 @@ editor.defineMode(FLEET_MODE, [
 // Escape is forwarded rather than claimed as "stop typing" — while an agent is
 // asking something, cancelling it is the most likely thing you want to send,
 // and Tab already exits.
-// Tab is the only key typing mode claims — the escape hatch. Everything else
-// falls through to the focused interactive pane, which sends it to the PTY.
-// That is the whole point of the pane being a pane: the key translation is the
-// one focused terminal splits already use, not a table maintained beside it.
-// Escape included: while an agent is asking something, cancelling it is the
-// most likely thing you want to send.
+// Tab is the only key typing mode claims — the escape hatch. Everything else,
+// printable characters included, falls through to the focused interactive
+// pane, which the host routes to the PTY through the same key translation a
+// focused terminal split uses. Escape falls through too: while an agent is
+// asking something, cancelling it is the most likely thing to send.
+//
+// Nothing here goes via `mode_text_input`; that path is scoped to the
+// new-workspace form and never fires for this panel.
 editor.defineMode(FLEET_TYPE_MODE, [
   ["Tab", "orchestrator_fleet_type_toggle"],
 ]);

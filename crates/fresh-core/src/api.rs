@@ -513,7 +513,10 @@ pub struct TerminalScreenInfo {
     pub rows: usize,
     /// Full grid width.
     pub cols: usize,
-    /// Cursor position as `(row, col)`, 0-indexed within the *full* grid.
+    /// Cursor position as `(column, row)`, 0-indexed within the *full* grid
+    /// — column first, matching the terminal's own `cursor_position()`.
+    /// Stated explicitly because the type is a bare pair of numbers, so this
+    /// comment is the only thing that says which is which.
     pub cursor: (u16, u16),
     /// Whether the program is on the alternate screen — i.e. a full-screen
     /// TUI (which every coding agent worth watching is). Callers need this to
@@ -2756,19 +2759,6 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
-    /// Reserve a rectangle in the widget layout for the host to
-    /// natively paint the editor `Window` identified by
-    /// `window_id`. The widget itself renders only blank lines
-    /// so subsequent passes (split tree, terminal grids, syntax
-    /// highlighting, decorations) can be drawn into the
-    /// reserved cells by the existing per-window render path.
-    ///
-    /// `rows` controls the embed's height. Width is whatever
-    /// the parent container allocates (`panel_width` for a
-    /// direct Col child; the block's `column_width` inside a
-    /// Row's horizontal-zip path). Used by Orchestrator's open
-    /// dialog so the preview pane shows a live render of the
-    /// highlighted session.
     /// Reserve a rectangle for one **buffer**, from any window.
     ///
     /// The narrow sibling of [`WidgetSpec::WindowEmbed`]. Where an
@@ -2812,6 +2802,21 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+    /// Reserve a rectangle in the widget layout for the host to
+    /// natively paint the editor `Window` identified by
+    /// `window_id`. The widget itself renders only blank lines
+    /// so subsequent passes (split tree, terminal grids, syntax
+    /// highlighting, decorations) can be drawn into the
+    /// reserved cells by the existing per-window render path.
+    ///
+    /// `rows` controls the embed's height. Width is whatever
+    /// the parent container allocates (`panel_width` for a
+    /// direct Col child; the block's `column_width` inside a
+    /// Row's horizontal-zip path). Used by Orchestrator's open
+    /// dialog so the preview pane shows a live render of the
+    /// highlighted session.
+    ///
+    /// See [`WidgetSpec::Pane`] for the one-buffer counterpart.
     WindowEmbed {
         /// Numeric editor-window id, matching `WindowId(N).0`.
         /// `0` (or any unknown id) renders empty placeholder

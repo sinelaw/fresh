@@ -65,9 +65,16 @@ fn shown_workspace(h: &EditorTestHarness) -> Option<String> {
 }
 
 /// The live pane's rows, title line included.
+///
+/// The title reads `live · <name>` normally and `typing → <name>` while the
+/// pane holds the keyboard, so both are accepted — a helper that knew only the
+/// first silently returned nothing in typing mode.
 fn pane_text(h: &EditorTestHarness) -> String {
     let screen = h.screen_to_string();
-    let start = match screen.lines().position(|l| l.contains("live · ")) {
+    let start = match screen
+        .lines()
+        .position(|l| l.contains("live · ") || l.contains("typing → "))
+    {
         Some(i) => i,
         None => return String::new(),
     };
@@ -263,4 +270,64 @@ fn fleet_pane_shows_the_terminal_without_session_chrome() {
         "the pane renders one terminal, so the session's tab bar must not \
          appear inside it. Pane:\n{pane}"
     );
+}
+
+/// Typing in the Fleet reaches the selected agent's terminal, and Tab is the
+/// way back out.
+///
+/// This is the point of the pane being interactive rather than a picture: a
+/// focused interactive pane takes every key the panel's own mode does not
+/// claim and routes it to the PTY, so an agent's question can be answered
+/// without leaving the view that reported it. Covers `focused_interactive_pane`
+/// / `send_key_to_pane`, the `interactive` flag, and the rule that only an
+/// interactive pane is tabbable.
+#[test]
+fn fleet_typing_reaches_the_selected_terminal() {
+    let (_tmp, root) = setup_project("gammaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    h.editor_mut().open_terminal();
+    h.render().unwrap();
+    let buffer_id = h.editor().active_buffer_id();
+    let terminal_id = h
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("the active buffer should be the terminal just opened");
+    let home = h.editor().active_window_id();
+    // Wait for the shell rather than a fixed pause: it is what will echo.
+    h.wait_until(|h| {
+        h.editor()
+            .terminal_screen(home, terminal_id, None, true)
+            .is_ok_and(|s| !s.text.is_empty())
+    })
+    .unwrap();
+
+    open_fleet(&mut h);
+    // The pane must be a real pane before typing means anything.
+    h.wait_until(|h| {
+        let pane = pane_text(h);
+        !pane.is_empty() && !pane.contains("[No Name]") && !pane.contains("*Terminal")
+    })
+    .unwrap();
+
+    // Tab hands the keyboard to the pane, which the chrome states.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("typing →"))
+        .unwrap();
+
+    // Type a command and run it. Both the characters and Enter have to reach
+    // the PTY — a mode that only forwarded Enter would leave an empty line.
+    h.type_text("echo FLEETTYPING").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| pane_text(h).contains("FLEETTYPING"))
+        .unwrap();
+
+    // Tab is still the way out: the pane must not swallow its own exit.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("answer agent"))
+        .unwrap();
 }

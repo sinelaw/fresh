@@ -7697,22 +7697,6 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Read a terminal's live screen as plain text rows.
-    ///
-    /// Both ids are required: terminals are owned per-window, so a terminal
-    /// id alone does not identify one. Resolves to `{ text, rows, cols,
-    /// cursor, altScreen, title }`, and rejects when the window or the
-    /// terminal within it is unknown.
-    ///
-    /// `lines` returns at most that many rows counted from the **bottom** —
-    /// the tail, which for a full-screen agent is the prompt and input area
-    /// and therefore the part that says whether it is waiting for you.
-    /// `trim` (default `true`) strips trailing blanks, since a grid is a
-    /// fixed rectangle and the padding is pure cost to read.
-    ///
-    /// This is the cheap, reason-over-it view. To *show* a human another
-    /// workspace's terminal, render the window itself rather than pasting
-    /// this into a buffer.
     /// Describe every open window and the terminals in it.
     ///
     /// The cross-window counterpart to `describeWorkspace()`, which reports
@@ -7737,6 +7721,22 @@ impl JsEditorApi {
         id
     }
 
+    /// Read a terminal's live screen as plain text rows.
+    ///
+    /// Both ids are required: terminals are owned per-window, so a terminal
+    /// id alone does not identify one. Resolves to `{ text, rows, cols,
+    /// cursor, altScreen, title }`, and rejects when the window or the
+    /// terminal within it is unknown.
+    ///
+    /// `lines` returns at most that many rows counted from the **bottom** —
+    /// the tail, which for a full-screen agent is the prompt and input area
+    /// and therefore the part that says whether it is waiting for you.
+    /// `trim` (default `true`) strips trailing blanks, since a grid is a
+    /// fixed rectangle and the padding is pure cost to read.
+    ///
+    /// This is the cheap, reason-over-it view. To *show* a human another
+    /// workspace's terminal, render the window itself rather than pasting
+    /// this into a buffer.
     #[plugin_api(
         async_promise,
         js_name = "readTerminal",

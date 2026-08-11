@@ -2631,12 +2631,19 @@ impl Editor {
     ///
     /// A **terminal** is its live PTY grid. The grid is sized to this
     /// rectangle first, which is the same rule the split path applies
-    /// (`resize_visible_terminals`) and is what makes the pane
-    /// readable: a TUI drawing at the owning window's width into a
-    /// narrower pane would lose the right edge of every box. Whoever
-    /// renders it, sizes it — so when this pane goes away the owning
-    /// window reclaims the size on its next frame, with no "restore"
-    /// step anywhere.
+    /// (`resize_visible_terminals`) and is what makes the pane readable: a
+    /// TUI drawing at the owning window's width into a narrower pane would
+    /// lose the right edge of every box, and cropping columns takes the edge
+    /// off every box a full-screen agent draws.
+    ///
+    /// Known gap: nothing hands the size *back*. The owning window resizes
+    /// its terminals from `resize_visible_terminals`, which runs for the
+    /// window being rendered — so a workspace nobody is looking at keeps the
+    /// pane's dimensions until it is next visited, at which point it
+    /// corrects itself. Measured, not assumed: a 129x41 agent shown in a
+    /// 115x12 pane still reported 115x12 after the panel closed. Bounded
+    /// (visiting fixes it) and so left alone for now rather than given a
+    /// restore path that would need its own bookkeeping.
     ///
     /// **Everything else** — file, virtual, composite — goes through
     /// `render_phantom_leaf`, the same per-leaf pipeline a real split
@@ -2649,6 +2656,9 @@ impl Editor {
         inner: ratatui::layout::Rect,
         window_id: fresh_core::WindowId,
         buffer_id: BufferId,
+        // Whether this pane is the current input target, and so owns the
+        // caret. Only ever true for a focused interactive pane.
+        show_cursor: bool,
         theme: &crate::view::theme::Theme,
     ) {
         if inner.width == 0 || inner.height == 0 {
@@ -2681,10 +2691,10 @@ impl Editor {
             crate::app::terminal::render::render_terminal_content(
                 &content,
                 cursor_pos,
-                // The caret belongs to whichever view owns input. A pane
-                // is not that until interactive panes land, and two
-                // caretsfor one PTY would be worse than none.
-                false,
+                // The caret follows input: exactly the pane keys are being
+                // routed to draws one, so two views of a PTY never both show
+                // a cursor.
+                show_cursor,
                 inner,
                 frame.buffer_mut(),
                 theme.terminal_fg,
@@ -4705,6 +4715,7 @@ impl Editor {
             title,
             closable,
             dropdown_popup,
+            panel_focus_key,
         ) = match self.panel(slot) {
             Some(fwp) => (
                 fwp.width_pct,
@@ -4721,6 +4732,10 @@ impl Editor {
                 fwp.title.clone(),
                 fwp.closable,
                 fwp.dropdown_popup.clone(),
+                self.widget_registry
+                    .focus_key(&fwp.panel_key)
+                    .unwrap_or_default()
+                    .to_string(),
             ),
             None => return,
         };
@@ -4954,11 +4969,19 @@ impl Editor {
             match emb.buffer_id {
                 // `Pane`: one buffer, from any window.
                 Some(buffer_id) if buffer_id != 0 => {
+                    // The caret belongs to the pane that keys are going to.
+                    // An interactive pane holding panel focus *is* the input
+                    // target, so drawing no cursor there leaves the user
+                    // typing at an agent with nothing showing where.
+                    let has_caret = panel_focused
+                        && emb.interactive
+                        && emb.key.as_deref().is_some_and(|k| k == panel_focus_key);
                     self.render_pane_into_rect(
                         frame,
                         rect,
                         fresh_core::WindowId(emb.window_id as u64),
                         BufferId(buffer_id as usize),
+                        has_caret,
                         &theme,
                     );
                 }
