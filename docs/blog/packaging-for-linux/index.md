@@ -81,7 +81,7 @@ The bottom line of all this ranting is that distro-specific channels are not a g
 
 Do I even need a package manager?
 
-I already build a musl binary as part of the release. The next version will include a new built-in self-updating mechanism that users can trigger on demand. This will be the main release channel for Linux and hopefully the only one I'll need to support going forward. By making it the default, I'm taking a risk because who knows what other surprises it will bring - some Linux portability issue that will break my statically linked binary for some people. They can still build from source or use one of the package files I'm still releasing, for now.
+I already build a musl binary as part of the release. The next version will include a new built-in self-updating mechanism that users can trigger on demand. This will be the main release channel for Linux and hopefully the only one I'll need to support going forward. **All the existing packages will continue to be supported** at least for the time being. The goal is to make the static binary the *recommended default*. By making it the default, I'm taking a risk because who knows what other surprises it will bring - some Linux portability issue that will break my statically linked binary for some people. They can still build from source or use one of the package files I'm still releasing, for now.
 
 Basically I'm implementing my own little package manager. Will it work for
 everybody? Hopefully! Fresh is ~12MB to download and extracts to ~35MB so it
