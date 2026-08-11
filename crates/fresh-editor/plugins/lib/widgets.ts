@@ -310,6 +310,23 @@ export function button(
      * anything with a word on it. Layout only — `hoverStyle` decides
      * how it looks under the pointer. */
     bare?: boolean;
+    /** Stretch the button across the full width it is laid out in (the
+     * panel's content width, or its share of an enclosing `row`),
+     * padding the label out — and `…`-truncating it when the width
+     * can't hold it.
+     *
+     * Focus and hover paint the button's *own* cells, so a
+     * natural-width button leaves the rest of its row unhighlighted
+     * even where the container pads the row out around it (a
+     * `labeledSection` pads every child to its inner width). Menu
+     * entries are rows of a menu rather than free-standing actions, so
+     * set this on them and the highlight spans the row — at the width
+     * the host actually rendered, with no plugin-side width guess to
+     * drift on a resize or a dock drag.
+     *
+     * Leave it off inside an anchored popup that sizes itself to its
+     * content: filling there stretches the popup to the panel width. */
+    fullWidth?: boolean;
     /** How the button looks while the pointer is over it. Omit to
      * leave it looking the same hovered as not.
      *
@@ -332,6 +349,7 @@ export function button(
     disabled: options?.disabled ?? false,
     focusable: options?.focusable ?? true,
     bare: options?.bare ?? false,
+    fullWidth: options?.fullWidth ?? false,
   };
   // Omit rather than pass `undefined`: the plugin bridge turns a
   // present `undefined` into JSON `null`, which fails to deserialize

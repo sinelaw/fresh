@@ -1687,6 +1687,28 @@ type WidgetSpec = {
 	*/
 	bare: boolean;
 	/**
+	* Stretch the button across the full width it is laid out in
+	* (the panel's content width, or its share of an enclosing
+	* `Row`), padding the label with spaces — and truncating it
+	* with an `…` when the width can't hold it.
+	*
+	* This exists because focus / hover paint the button's *own*
+	* cells: a natural-width button leaves the rest of its row
+	* unhighlighted even when the surrounding container pads the
+	* row out (a `LabeledSection` pads every child to its inner
+	* width). Dropdown and context-menu entries are rows of a
+	* menu, not free-standing actions, so their highlight has to
+	* span the row — set this on them and the host fills the row
+	* at the width it actually rendered, with no plugin-side
+	* width guess to drift on a resize or a dock drag.
+	*
+	* Leave it off for a free-standing action, and off for
+	* anything inside an anchored popup that sizes itself to its
+	* content — filling there stretches the popup to the whole
+	* panel width.
+	*/
+	fullWidth: boolean;
+	/**
 	* Style applied while the pointer is over this button. `None`
 	* (the default) leaves it looking the same hovered as not.
 	*

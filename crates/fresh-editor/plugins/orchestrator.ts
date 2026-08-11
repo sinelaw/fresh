@@ -4331,6 +4331,9 @@ function dockProjectMenu(): WidgetSpec {
         intent: i === cursor ? ("primary" as const) : undefined,
       };
     }),
+    // Lives inside the dock panel, so the section pads each row to the
+    // dock width — the band has to follow (see `menuRows`).
+    { fill: true },
   );
   return overlay(labeledSection({ label: editor.t("dock.menu_label"), child: col(...rows) }));
 }
@@ -4705,40 +4708,62 @@ function dockMenuOptions(): MenuOption[] {
 // A dropdown/context-menu row. Menu entries are *rows in a list*, not
 // framed actions: a `[ ]` frame around every line turns the popup into a
 // column of ragged brackets and leaves the highlight hugging the label
-// instead of the popup. `bare` drops the frame, and padding every label
-// to the widest one makes the focus/hover band a uniform full-width bar
-// down the menu (`menuRows` measures the set).
+// instead of the popup. `bare` drops the frame; how the row reaches its
+// full width depends on where the menu lives — see `menuRows`.
 function menuItemButton(
   label: string,
   key: string,
-  opts?: { intent?: "primary" | "danger"; disabled?: boolean; width?: number },
+  opts?: {
+    intent?: "primary" | "danger";
+    disabled?: boolean;
+    width?: number;
+    fullWidth?: boolean;
+  },
 ): WidgetSpec {
   const width = opts?.width ?? 0;
   const pad = Math.max(0, width - editor.stringWidth(label));
   return button(" " + label + " ".repeat(pad) + " ", {
     key,
     bare: true,
+    fullWidth: opts?.fullWidth ?? false,
     intent: opts?.intent ?? "normal",
     disabled: opts?.disabled ?? false,
   });
 }
 
-// Lay out a set of menu entries at one shared width, so every row's
-// highlight spans the same columns and the popup sizes to its widest item.
+// Lay out a set of menu entries so every row's focus/hover band spans
+// the whole menu row rather than hugging its label. Which width "the
+// whole row" means depends on the surface, so the caller says:
 //
-// Deliberately no `flexSpacer`: that stretches the row to the *panel*
-// width, which for an anchored popup means half the screen — and it pads
-// with dead space rather than with the row itself, so the highlight would
-// still stop at the label. The shared label width does the aligning.
+// * `fill: false` (the default) — an anchored popup panel the host
+//   sizes to its widest row. Padding every label to the widest one is
+//   what makes the rows uniform *and* what sets the popup's width.
+//   Filling here would stretch the popup to the panel width (~half the
+//   screen), so the shared label width does the aligning.
+// * `fill: true` — a dropdown that lives inside the dock's own panel,
+//   where the enclosing `labeledSection` pads every row out to the dock
+//   width anyway. The widest label is then far short of the row, and
+//   the band stopped there while the row visibly ran on to the border.
+//   `fullWidth` hands the padding to the host, which knows the width it
+//   actually rendered at — including a user-dragged dock.
+//
+// Deliberately no `flexSpacer` in either mode: it pads with dead space
+// beside the row rather than with the row itself, so the highlight
+// would still stop at the label.
 function menuRows(
   items: { label: string; key: string; intent?: "primary" | "danger"; disabled?: boolean }[],
+  opts?: { fill?: boolean },
 ): WidgetSpec[] {
-  const width = items.reduce((w, it) => Math.max(w, editor.stringWidth(it.label)), 0);
+  const fill = opts?.fill ?? false;
+  const width = fill
+    ? 0
+    : items.reduce((w, it) => Math.max(w, editor.stringWidth(it.label)), 0);
   return items.map((it) =>
     menuItemButton(it.label, it.key, {
       intent: it.intent,
       disabled: it.disabled,
       width,
+      fullWidth: fill,
     })
   );
 }
@@ -4750,6 +4775,7 @@ function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number):
       key: menuPickKey(o.key),
       intent: i === cursor ? ("primary" as const) : undefined,
     })),
+    { fill: true },
   );
   return overlay(labeledSection({ label, child: col(...rows) }));
 }
