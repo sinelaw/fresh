@@ -67,8 +67,14 @@ jobs:
           ARCHIVE_NAME="fresh-editor-${{ matrix.target }}"
           mkdir -p "${ARCHIVE_NAME}"
           cp target/${{ matrix.target }}/release/fresh "${ARCHIVE_NAME}/"
-          cp README.md LICENSE "${ARCHIVE_NAME}/" 2>/dev/null || true
+          # LICENSE ships because the archive redistributes a binary. README
+          # does not: self-update swaps the binary alone, so a copy in here
+          # would sit frozen at whatever version was first installed.
+          cp LICENSE "${ARCHIVE_NAME}/" 2>/dev/null || true
           # Plugins/themes are embedded in the binary; no on-disk copy needed.
+          # The icon theme and desktop entry are the same files the .deb and
+          # .rpm install; install.sh copies them into the XDG data dirs, which
+          # is the only reason they are worth carrying.
           cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons" 2>/dev/null || true
           cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop" 2>/dev/null || true
 
@@ -104,6 +110,21 @@ jobs:
             || { echo "::error::musl archive receipt is not channel=tarball"; exit 1; }
           echo "$receipt" | grep -q 'self_update = true' \
             || { echo "::error::musl archive receipt is not self_update=true"; exit 1; }
+
+      - name: Verify the archive carries the desktop entry and icons
+        run: |
+          # Every `cp` above is `|| true`, so a rename under docs/icons or
+          # resources/ would drop these silently — and this is now the default
+          # Linux install, the one whose desktop integration install.sh builds
+          # from these files.
+          ARCHIVE_NAME="fresh-editor-${{ matrix.target }}"
+          listing=$(tar -tzf "${ARCHIVE_NAME}.tar.gz")
+          echo "$listing" | grep -q "^${ARCHIVE_NAME}/fresh.desktop\$" \
+            || { echo "::error::musl archive is missing fresh.desktop"; exit 1; }
+          icons=$(echo "$listing" | grep -c "^${ARCHIVE_NAME}/icons/.*/apps/fresh\.png\$" || true)
+          [ "$icons" -ge 9 ] \
+            || { echo "::error::musl archive has $icons icons, expected at least 9"; exit 1; }
+          echo "desktop entry present, $icons icons present"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
