@@ -40,6 +40,7 @@ pub mod emacs_actions;
 pub mod encoding;
 pub mod explorer_bugs;
 pub mod explorer_context_menu;
+pub mod explorer_focus_terminal_keys;
 pub mod explorer_menu;
 pub mod external_file_save_as_tab;
 pub mod extract_tab_to_workspace;
