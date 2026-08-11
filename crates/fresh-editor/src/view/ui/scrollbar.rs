@@ -345,6 +345,59 @@ pub fn render_scrollbar(
     (thumb_start, thumb_end)
 }
 
+/// Render a vertical scrollbar over a column whose glyph has to survive.
+///
+/// [`render_scrollbar`] paints a blank cell per row. That is right over a
+/// list's own padding, but it *erases* whatever it lands on — and a widget
+/// panel's scroll region is deliberately extended two columns, through the
+/// right padding and onto the wrapping `LabeledSection`'s `│` border, so the
+/// bar hugs the section edge instead of floating a column inboard. The blank
+/// fill therefore rubbed out the box's right border on every row the bar
+/// covered, which is why the code tour's explanation box lost its right edge
+/// as soon as its prose overflowed (a short dock, mostly).
+///
+/// This keeps the glyph that is already in the column and re-styles only its
+/// background, so the box stays closed and the bar still reads as a bar.
+/// Over a list row the cell underneath is a space, so it paints identically
+/// to [`render_scrollbar`].
+///
+/// # Returns
+/// (thumb_start, thumb_end) in row coordinates relative to the area
+pub fn render_scrollbar_over_chrome(
+    frame: &mut Frame,
+    area: Rect,
+    state: &ScrollbarState,
+    colors: &ScrollbarColors,
+    thumb_hovered: bool,
+) -> (usize, usize) {
+    let height = area.height as usize;
+    if height == 0 || area.width == 0 {
+        return (0, 0);
+    }
+
+    let (thumb_start, thumb_size) = state.thumb_geometry(height);
+    let thumb_end = thumb_start + thumb_size;
+    let thumb_color = if thumb_hovered {
+        Color::White
+    } else {
+        colors.thumb
+    };
+
+    let buffer = frame.buffer_mut();
+    for row in 0..height {
+        let bg = if row >= thumb_start && row < thumb_end {
+            thumb_color
+        } else {
+            colors.track
+        };
+        if let Some(cell) = buffer.cell_mut((area.x, area.y + row as u16)) {
+            cell.set_bg(bg);
+        }
+    }
+
+    (thumb_start, thumb_end)
+}
+
 /// Render a scrollbar with mouse hover highlight
 ///
 /// Same as `render_scrollbar` but highlights the thumb if hovered

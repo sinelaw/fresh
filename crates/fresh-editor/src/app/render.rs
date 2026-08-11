@@ -4436,7 +4436,9 @@ impl Editor {
     /// nothing about widget geometry, so without this pass their
     /// overflowing lists show no scrollbar at all.
     fn render_split_widget_panel_scrollbars(&mut self, frame: &mut Frame) {
-        use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+        use crate::view::ui::scrollbar::{
+            render_scrollbar_over_chrome, ScrollbarColors, ScrollbarState,
+        };
 
         // Collect paint jobs first so the layout/registry borrows end
         // before the frame is written.
@@ -4519,7 +4521,9 @@ impl Editor {
             ScrollbarColors::from_theme(&theme)
         };
         for (rect, state) in jobs {
-            render_scrollbar(frame, rect, &state, &colors);
+            // The region reaches onto the panel's own `LabeledSection`
+            // border, so the bar has to tint that border, not blank it out.
+            render_scrollbar_over_chrome(frame, rect, &state, &colors, false);
         }
     }
 
@@ -4846,7 +4850,9 @@ impl Editor {
             scrollbar_flash_until.is_some_and(|until| self.time_source().now() < until);
         let mut scrollbar_hover_zones: Vec<ratatui::layout::Rect> = Vec::new();
         {
-            use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+            use crate::view::ui::scrollbar::{
+                render_scrollbar_over_chrome, ScrollbarColors, ScrollbarState,
+            };
             let colors = ScrollbarColors::from_theme(&theme);
             for region in &scroll_regions {
                 // Regions are emitted for every keyed list (wheel routing
@@ -4906,7 +4912,9 @@ impl Editor {
                     continue;
                 }
                 let state = ScrollbarState::new(region.total, region.visible, region.scroll);
-                render_scrollbar(frame, sb_rect, &state, &colors);
+                // Same as the split-mounted panels: the region reaches onto
+                // the section border, which must stay drawn under the bar.
+                render_scrollbar_over_chrome(frame, sb_rect, &state, &colors, false);
                 scrollbar_tracks.push(super::WidgetScrollbarTrack {
                     list_key: region.list_key.clone(),
                     rect: sb_rect,
