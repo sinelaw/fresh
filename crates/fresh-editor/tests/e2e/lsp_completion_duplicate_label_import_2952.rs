@@ -322,6 +322,22 @@ fn open_two_server_popup(temp_dir: &tempfile::TempDir) -> anyhow::Result<EditorT
     harness.open_file(&test_file)?;
     harness.render()?;
 
+    // Wait for *both* servers to be initialized and the document opened.
+    // Ctrl+Space is a one-shot: a server that has not reported its
+    // capabilities yet is skipped when the request fans out, and nothing
+    // ever re-asks — so asking too early leaves the popup showing one
+    // server's candidate, or none at all, and the wait below hangs
+    // forever. Waiting per server is what makes the merged list
+    // deterministic with more than one server behind the language.
+    for name in ["alpha", "beta"] {
+        let log_file = temp_dir.path().join(format!("{name}_log.txt"));
+        harness.wait_until(|_| {
+            std::fs::read_to_string(&log_file)
+                .unwrap_or_default()
+                .contains("textDocument/didOpen")
+        })?;
+    }
+
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
     harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
     harness.render()?;
