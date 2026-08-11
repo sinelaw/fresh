@@ -9,9 +9,16 @@ plan. Status: **PLANNED** unless a section says otherwise.
 Landed so far: the explicit-id terminal APIs and `describeEnvironment` (§4,
 §6.1, §6.2), the discoverability fixes (§9), the `waiting` state (§7.1), the
 Fleet view (§7.2), and the `pane` widget — any buffer from any window, live,
-and interactive for terminals (§6.5, §6.6). Still planned: Home as a full
-layout (§7.3), the event stream (§6.3), `script run --as` (§6.4), declarative
-views (§7.5), and everything under delegation (§8).
+and interactive for terminals (§6.5, §6.6).
+
+**The next three phases, in order, are §10's A / B / C**: the event stream and
+`script run --as`, then the mailbox and `delegate`, then Home. §10 is the plan
+to follow; everything else here is the reasoning behind it.
+
+The through-line: what is built so far only *observes*. A user still has to
+read every answer and type every reply. Delegation is the first thing that
+lets one agent act on another, and the mailbox (§8.1) is how — a pair of
+directories per agent, instructions in, one-line status out.
 
 This is the successor to
 [agent-fresh-cli-exposure-plan.md](agent-fresh-cli-exposure-plan.md), whose
@@ -355,6 +362,14 @@ registry.
  ○  on-disk      a worktree with no live window
 ```
 
+As shipped, `!` is recognised from the terminal's own screen, refined per
+agent kind by the registry. That is a guess about someone else's TUI, and the
+patterns are provisional by construction. **The agent's own `status` line
+(§8.1) supersedes it wherever one exists** — an agent saying `waiting …`
+outranks anything inferred from pixels, and the summary it writes is what it
+knows it is doing rather than whatever it last printed. Screen inference stays
+as the fallback for agents that write no status, so nothing regresses.
+
 ### 7.2 The Fleet — **implemented**
 
 Shipped ahead of the full Home layout, because it is the part that answers the
@@ -474,14 +489,96 @@ Capability Registry** — the existing agent registry, widened with a
 orch.delegate({ agentId, instruction, wait?, expect? })
 ```
 
-### 8.1 Transport ladder
+### 8.1 The mailbox — a pair of directories per agent
+
+Two files, one convention, and it carries both directions.
+
+```
+<state>/orchestrator/agents/<workspaceId>/
+  inbox/          instructions in  — one file per instruction
+  inbox/done/     the agent moves a file here once it has acted
+  status          one line out     — the agent rewrites it as it works
+```
+
+Both halves depend on nothing but "agents read and write files", which is true
+of every agent that exists, is indistinguishable from a human editing a file,
+and survives any vendor CLI change. The peer checks its inbox and updates its
+status because **its own briefing told it to** — not because Fresh injected
+anything.
+
+#### The outbox: agents say what they are doing
+
+`status` is one line the agent rewrites whenever its state changes:
+
+```
+<state> <one-line summary>
+```
+
+`<state>` is one of `working` `waiting` `idle` `done` `blocked`. Everything
+after the first space is shown verbatim. A shell one-liner has to be enough to
+write it, because that is what agents will actually do:
+
+```sh
+echo "waiting approval to edit tests/e2e.rs" > "$FRESH_AGENT_STATUS"
+```
+
+A JSON object on one line is accepted as an alternative for agents that prefer
+structure (`{"state":"waiting","summary":"…"}`), but the bare form is the one
+the briefing teaches.
+
+**This supersedes screen-scraping as the source of the `!` state and the
+reason column** (§7.1, §7.2), and it is a better answer in every direction:
+
+- **It is authoritative.** Scraping is a guess about someone else's TUI. It
+  cannot tell "the word *Approve* appeared in a diff the agent is showing me"
+  from "I am asking you to approve", and today's patterns are admittedly
+  provisional — they match what one vendor's TUI happens to draw.
+- **It does not break on redesign.** A vendor changing its prompt layout
+  breaks a regex; it does not break a line the agent wrote itself.
+- **It costs nothing.** No PTY read, no per-tick screen parse, no regex over
+  40 rows per agent per tick. A file mtime is the whole poll.
+- **It works where scraping cannot** — an agent with no TUI, a headless run, a
+  remote workspace, an agent mid-redraw.
+- **The summary is better.** "running cargo bench --bench io" is what the
+  agent knows it is doing; the last terminal line is whatever happened to be
+  printed, which is often a progress bar or a blank.
+
+Fallback is unchanged behaviour, not an error: an agent that writes no
+`status` file keeps today's screen-derived state and last-line summary. So the
+outbox is strictly additive, and an agent that adopts it simply becomes more
+legible than one that has not.
+
+Both the Fleet and the master agent read `status`. The Fleet reads it directly
+— deterministic plugin code, no model in the loop — which is what keeps the
+view free to run at whatever tick rate it likes.
+
+#### The inbox: instructions in
+
+`delegate()` writes one file per instruction:
+
+```
+inbox/2026-08-11T164500-a3f1.md
+---
+from: <workspaceId or "user">
+intent: <short imperative>
+reply-to: <path to the sender's inbox, when a reply is expected>
+---
+<the instruction, in prose>
+```
+
+The agent's briefing says: read `inbox/` at the start of each turn, act, then
+move the file to `inbox/done/`. That move is the acknowledgement — no protocol,
+no ack message, and the delegation's outcome is visible as a file that did or
+did not move.
+
+#### The rest of the ladder
+
+The mailbox is **the primary transport**. The others stay in the design as
+fallbacks for cases it cannot reach, and are ordered by risk:
 
 1. **Launch-time prompt.** Already implemented per agent kind. A published
    interface; no risk. Best for starting a worker on a task.
-2. **Filesystem mailbox.** An inbox directory per agent. Depends only on
-   "agents read files", is indistinguishable from a human editing a file, and
-   survives any vendor CLI change. The peer checks its inbox because its own
-   briefing told it to. **The primary transport.**
+2. **The mailbox.** Above. The default for anything sent to a running agent.
 3. **Headless one-shot.** Documented non-interactive modes. Gated in the
    registry on credential kind, defaulting to off where a vendor's terms
    restrict automated use of an interactive subscription tier, and surfacing
@@ -548,18 +645,64 @@ first because they are nearly free:
 
 ## 10. Phasing
 
-| Phase | Ships | Why here |
-|---|---|---|
-| 1 | Explicit-id plugin dispatch; reach dimension on the grant; `agentId`; terminal id and last-output on the workspace listing | Unblocks everything; nothing above works without it |
-| 2 | `describeEnvironment`, `getTerminalScreen`, `readTerminal`, event emission, `script run --as` | Completes the read side |
-| 2b | Split-targeted live embeds, bottom-crop row offset, cross-window input routing | The tail pane; builds on shipped rendering |
-| 3 | The `!` state, Home, the Fleet view, declarative views | The first thing a user feels |
-| 4 | `help` topics, generated reference, briefing pointer, refusal message | Onboarding cost to near zero |
-| 5 | Capability Registry transports, `delegate`, consent overlay, recursion guards | Highest risk, on a proven foundation |
+Phases 1–4 are largely done; what remains is A, B, C, in that order. Each is
+sequenced so the one before it removes a blocker rather than merely preceding
+it.
 
-Phase 3 is deliberately ahead of Phase 5: making the fleet legible should
-precede letting agents act on each other, so the delegation layer lands in an
-environment where its effects are visible.
+### Shipped
+
+| | |
+|---|---|
+| Explicit-id plugin dispatch, `describeEnvironment`, `readTerminal`, `sendTerminalInput(windowId)` | §4, §6.1, §6.2 |
+| Live embeds and the `pane` widget — any buffer, any window, interactive for terminals | §6.5, §6.6 |
+| The `!` state (screen-derived) and the Fleet | §7.1, §7.2 |
+| Discoverability: refusal names the remedy, briefing points at `help plugin` | §9 |
+
+### Phase A — the event stream, and naming a script
+
+`agent_state_change` / `window_created` emitted as plugin events; a persistent
+script subscribes and appends JSONL; `script run --as <name>` so that script
+can be installed once and replaced rather than stacked (§6.3, §6.4).
+
+First because it is small, carries no risk, and **everything reactive is
+blocked on it**. Today every surface polls — the dock polls, the Fleet ticks,
+`probeTail` re-reads screens — and a master agent can only answer when asked,
+never notice. An event file is the difference between a control room and a
+dashboard you have to remember to look at. `--as` is a precondition rather
+than a nicety: a persistent script that cannot be named cannot be replaced,
+so installing the watcher twice leaves two of them running.
+
+### Phase B — the mailbox
+
+The `status` outbox first, then `inbox/` and `delegate()`, then the guards.
+
+Order within the phase matters. The outbox is pure gain and independent of
+delegation: it makes the Fleet honest immediately (§8.1) and can ship on its
+own. The inbox is where the risk lives, so it lands after the view that makes
+its effects visible.
+
+1. `status` written by agents; Fleet and `describeEnvironment` read it;
+   briefing teaches the one-liner; screen inference kept as fallback.
+2. `inbox/` + `orch.delegate({agentId, instruction, wait?, expect?})`;
+   briefing teaches read-act-move.
+3. Consent overlay, depth limit, per-session budget, cycle detection, audit
+   panel (§8.2). **Not optional** — these agents hold file-write and
+   shell-execute privileges.
+
+### Phase C — Home
+
+The three-pane layout (§7.3): Fleet, master-agent terminal, tail. Mostly
+composition — the `pane` widget already renders and routes input, so the
+master agent is one more pane beside the list. It lands last because it is the
+*payoff* for A and B: with events it can notice, with the mailbox it can act,
+and without either it is a second terminal next to a list.
+
+### Deferred, deliberately
+
+The reach dimension on the capability grant (§8.3), declarative views (§7.5),
+the dock card's third line (§7.4), `help` topics (§9), and the Fleet's
+remaining polish — age column, `○` stale worktrees, row actions, the doubled
+panel border. All real; none of them change what the system can do.
 
 ## 11. Risks
 
@@ -567,7 +710,10 @@ environment where its effects are visible.
   cleanly for TUI agents, the agent-facing side degrades to "busy, contents
   unknown" and the Fleet view loses its third line. The human-facing side is
   unaffected — the live embed (§6.5) renders cells, not text, and already
-  works. This is the highest technical risk to the agent-facing half.
+  works. **The `status` outbox (§8.1) retires most of this risk**: an agent
+  that writes its own state is not read from the screen at all, so the
+  scraping path becomes a fallback for agents that have not adopted it rather
+  than the mechanism the fleet depends on.
 - **Two input targets on one PTY** invites focus ambiguity: a keystroke must
   land in exactly one place, and the user must be able to tell which. The
   existing focused-split cursor rule is the model to extend, not to reinvent.
@@ -579,3 +725,9 @@ environment where its effects are visible.
   registry so that adapting is a data edit, not a refactor.
 - **PTY injection will break** on vendor UI redesigns. It is a leaf of the
   ladder, so when it breaks nothing above it does.
+- **The mailbox depends on agents following their briefing.** An agent that
+  never reads its inbox silently drops instructions, and one that never writes
+  `status` is merely as legible as it is today. Both fail visibly rather than
+  wrongly — an undelivered instruction is a file that never moved to
+  `inbox/done/`, which the audit panel shows — but "the peer cooperates" is a
+  real assumption, and it is why delegation reports delivery, not completion.
