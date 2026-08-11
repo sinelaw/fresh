@@ -120,13 +120,23 @@ fn open_delete_confirmation(height: u16) -> (tempfile::TempDir, EditorTestHarnes
 
     let card_row = row_of(&h, "alphaproj") as u16;
     h.mouse_right_click(4, card_row).unwrap();
-    // Match the rendered button, not the bare word — "Delete" alone could pick
-    // up any other row that happens to mention it.
-    h.wait_until(|h| h.screen_to_string().contains("[ Delete ]"))
-        .unwrap();
+    // The menu's entries draw as plain uniform rows inside its box, not as
+    // `[ bracketed ]` buttons, so match "Delete" *within the menu* — a bare
+    // word match could pick up any other row that mentions it, and the box
+    // border on the same line is what distinguishes one.
+    let menu_row = |h: &EditorTestHarness| -> Option<(u16, u16)> {
+        h.screen_to_string().lines().enumerate().find_map(|(r, l)| {
+            if !l.contains('│') {
+                return None;
+            }
+            l.find("Delete")
+                .map(|b| (l[..b].chars().count() as u16, r as u16))
+        })
+    };
+    h.wait_until(|h| menu_row(h).is_some()).unwrap();
 
-    let (dcol, drow) = pos_of(&h, "[ Delete ]");
-    h.mouse_click(dcol + 2, drow).unwrap();
+    let (dcol, drow) = menu_row(&h).expect("the row menu lists Delete");
+    h.mouse_click(dcol + 1, drow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
         .unwrap();
     (tmp, h)

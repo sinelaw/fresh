@@ -18,6 +18,7 @@
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::{Config, PluginConfig};
 use std::fs;
 use std::path::PathBuf;
 
@@ -72,6 +73,23 @@ fn row_of(h: &EditorTestHarness, needle: &str) -> usize {
         .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
 }
 
+/// A config that opens the dock in **card** density. The dock's own default
+/// is compact — it is a switcher first — so a test about the card layout
+/// says so here instead of clicking the toolbar for it, which would also
+/// move keyboard focus onto that button.
+fn card_config() -> Config {
+    let mut config = Config::default();
+    config.plugins.insert(
+        "orchestrator".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "defaultView": "card" }),
+        },
+    );
+    config
+}
+
 /// Expand the dock's collapsible "Filters" section so the density /
 /// project / worktree / trivial controls and the "Manage" button — which
 /// the redesigned toolbar tucks away by default — become visible.
@@ -79,6 +97,33 @@ fn expand_filters(h: &mut EditorTestHarness) {
     let frow = row_of(h, "Filters") as u16;
     h.mouse_click(3, frow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Manage"))
+        .unwrap();
+}
+
+/// Put the dock in `want` ("card" or "compact") density by clicking the
+/// toolbar's `view:` button, which sits beside "Filters" rather than inside
+/// it — flipping how the list is laid out is not a filter, and shouldn't
+/// need a section disclosed first. Idempotent: a dock already in `want`
+/// is left alone, so a test states the density it needs without having to
+/// know the default.
+fn set_view(h: &mut EditorTestHarness, want: &str) {
+    let target = format!("view: {want}");
+    if h.screen_to_string().contains(&target) {
+        return;
+    }
+    // Click the button itself, not the start of its row — the density button
+    // shares the toolbar row with "Filters", which owns the left edge.
+    let screen = h.screen_to_string();
+    let (vrow, vcol) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(r, l)| {
+            l.find("view:")
+                .map(|b| (r as u16, l[..b].chars().count() as u16))
+        })
+        .unwrap_or_else(|| panic!("screen missing the density button:\n{screen}"));
+    h.mouse_click(vcol + 1, vrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains(&target))
         .unwrap();
 }
 
@@ -256,15 +301,24 @@ fn editor_click_blurs_dock_when_a_filter_widget_is_focused() {
     let focused_fg = divider_fg(&h);
 
     // Reveal the Filters section and move keyboard focus off the list onto a
-    // filter widget (Tab from the list lands on the view toggle).
+    // toolbar widget (Tab from the Filters header lands on the density
+    // toggle, its immediate neighbour).
     expand_filters(&mut h);
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     // Press Enter to flip the toggle (view: card ↔ compact) — the user's exact
     // sequence. The flip re-renders the dock; focus must stay put, and the
-    // subsequent editor click must still blur.
+    // subsequent editor click must still blur. Which way it flips is not the
+    // point, so wait on the density *changing* rather than on either name —
+    // a test that named one would pass vacuously in the density that already
+    // shows it.
+    let before = if h.screen_to_string().contains("view: card") {
+        "view: card"
+    } else {
+        "view: compact"
+    };
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+    h.wait_until(|h| !h.screen_to_string().contains(before))
         .unwrap();
     // Still focused (on a filter widget): the divider keeps its accent colour.
     assert_eq!(
@@ -603,7 +657,7 @@ fn active_session_card_is_a_seamless_tab_and_follows_focus() {
         .success());
 
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root_a.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root_a.clone())
             .unwrap();
     h.editor_mut()
         .create_window_at(root_b.clone(), "zzz_project".to_string());
@@ -867,18 +921,19 @@ fn dock_enter_on_focused_button_runs_button_action() {
     h.wait_until(|h| !h.screen_to_string().contains("New Folder"))
         .unwrap();
 
-    // Tab to the "Filters" header button and Enter it: the section
-    // expands (its "view:" control appears), proving Enter activated the
-    // focused button rather than diving the tree. Tab order from the tree
-    // is new-session → filter → filters-toggle.
-    h.assert_screen_not_contains("view: card");
+    // Tab to the "Filters" header button and Enter it: the section expands
+    // (its "Manage" button appears), proving Enter activated the focused
+    // button rather than diving the tree. The density control is NOT the
+    // tell here — it sits on the toolbar beside "Filters", visible whether
+    // or not the section is open.
+    h.assert_screen_not_contains("Manage");
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: card"))
+    h.wait_until(|h| h.screen_to_string().contains("Manage"))
         .unwrap();
-    h.assert_screen_contains("view: card");
+    h.assert_screen_contains("Manage");
 }
 
 #[test]
@@ -2250,12 +2305,9 @@ fn dock_right_click_opens_context_menu_in_compact_mode() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Flip the density to compact.
-    expand_filters(&mut h);
-    let vrow = row_of(&h, "view: card") as u16;
-    h.mouse_click(3, vrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
-        .unwrap();
+    // Compact density (the dock's default — stated anyway so the test
+    // doesn't ride on it).
+    set_view(&mut h, "compact");
 
     // Right-click the session's (single-line) row PAST the end of its
     // short text — where most of a compact row's width is empty and
@@ -2298,12 +2350,9 @@ fn dock_left_click_past_text_dives_in_compact_mode() {
     })
     .unwrap();
 
-    // Flip the density to compact.
-    expand_filters(&mut h);
-    let vrow = row_of(&h, "view: card") as u16;
-    h.mouse_click(3, vrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
-        .unwrap();
+    // Compact density (the dock's default — stated anyway so the test
+    // doesn't ride on it).
+    set_view(&mut h, "compact");
     assert!(
         h.editor().is_dock_focused(),
         "precondition: the dock holds keyboard focus"
@@ -2551,7 +2600,7 @@ fn dock_card_tree_wheel_scrolls_when_overflowing() {
     init_tracing_from_env();
     let (_tmp, root) = setup_project("aaaproj");
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     // Enough sessions that the bordered 5-row cards overflow a 32-row
     // screen (~5 visible cards): 13 nodes total.
@@ -2653,13 +2702,13 @@ fn dock_menu_key_opens_context_menu_and_arrows_navigate() {
 fn dock_card_view_draws_card_borders() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
 
-    // The default density is "card": the session's card wears a rounded
-    // border, with the session name on the row below the top border.
+    // In card density the session's card wears a rounded border, with the
+    // session name on the row below the top border.
     h.wait_until(|h| {
         let s = h.screen_to_string();
         s.contains('╭') && s.contains('╰')
@@ -2682,11 +2731,7 @@ fn dock_card_view_draws_card_borders() {
     );
 
     // Toggle to compact density: the borders disappear.
-    expand_filters(&mut h);
-    let vrow = row_of(&h, "view: card") as u16;
-    h.mouse_click(3, vrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
-        .unwrap();
+    set_view(&mut h, "compact");
     h.wait_until(|h| !h.screen_to_string().contains('╭'))
         .unwrap();
 }
@@ -2890,7 +2935,7 @@ fn dock_hint_bar_not_padded_when_tree_overflows() {
 fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
@@ -2946,7 +2991,7 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
 fn dock_compact_rows_drop_branch_name() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
@@ -2958,10 +3003,8 @@ fn dock_compact_rows_drop_branch_name() {
     h.wait_until(|h| h.screen_to_string().contains("clean"))
         .unwrap();
 
-    // Flip the density to compact.
-    expand_filters(&mut h);
-    let vrow = row_of(&h, "view: card") as u16;
-    h.mouse_click(3, vrow).unwrap();
+    // Now flip to compact — the density under test.
+    set_view(&mut h, "compact");
 
     // Final steady state, waited on semantically: compact density active
     // AND the session row (dock column, left of the wall) carries the
@@ -3003,7 +3046,7 @@ fn dock_card_git_line_right_aligned_to_card_border() {
         .success());
 
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     h.editor_mut()
         .create_window_at(other.clone(), "zzz_other".to_string());
@@ -3413,7 +3456,7 @@ fn dock_git_summary_survives_transient_probe_failure() {
     let (_tmp_a, root_a) = setup_committed_project("gitproj");
     fs::write(root_a.join("readme.txt"), "a\nb\nc\nd\ne\n").unwrap();
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root_a.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root_a.clone())
             .unwrap();
 
     // Witness session: a second committed repo, used only to prove a re-probe
@@ -3472,7 +3515,7 @@ fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
     let branch = git_head_branch(&beta_root);
 
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     h.editor_mut()
         .create_window_at(beta_root.clone(), "beta".to_string());
@@ -3559,7 +3602,7 @@ fn dock_card_shows_the_project_when_the_branch_just_repeats_the_name() {
         .success());
 
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     // The workspace is named exactly after the branch it sits on.
     h.editor_mut()
@@ -3632,7 +3675,7 @@ fn dock_card_leaves_the_second_row_empty_rather_than_echo_the_name() {
     fs::create_dir(&loose).unwrap();
 
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     h.editor_mut()
         .create_window_at(loose.clone(), "loose".to_string());
