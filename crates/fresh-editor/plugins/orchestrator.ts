@@ -12714,9 +12714,20 @@ function buildFleetSpec(): WidgetSpec {
   return col(...children);
 }
 
-function renderFleet(): void {
+// Serialized form of the last spec actually mounted. The ticker runs every
+// FLEET_TICK_MS whether or not anything moved, and every re-mount is a real
+// widgets frame — the same "serialized change pushed a redundant frame" that
+// made the dock flicker on its own poll. Skipping the identical case means a
+// quiet fleet costs one comparison per tick and paints nothing.
+let fleetLastSpec: string | null = null;
+
+function renderFleet(force = false): void {
   if (!fleetPanel) return;
-  fleetPanel.mount(buildFleetSpec(), { widthPct: 92, heightPct: 80 });
+  const spec = buildFleetSpec();
+  const key = JSON.stringify(spec);
+  if (!force && key === fleetLastSpec) return;
+  fleetLastSpec = key;
+  fleetPanel.mount(spec, { widthPct: 92, heightPct: 80 });
   // Keep focus pinned across re-mounts. The ticker re-mounts every
   // FLEET_TICK_MS, and a panel that loses focus each tick swallows the very
   // keys the view exists to be steered with.
@@ -12725,6 +12736,15 @@ function renderFleet(): void {
   // characters to the focused widget first, and a focused list eats them for
   // type-ahead — so the digits of an answer never reached the agent.
   fleetPanel.setFocusKey(fleetTyping ? "fleet_embed" : "fleet_list");
+}
+
+/// Re-assert focus without repainting.
+///
+/// The ticker skips identical frames, but focus still has to be held every
+/// tick — otherwise a fleet that is merely *quiet* drifts out of focus and
+/// stops responding to the arrow keys.
+function holdFleetFocus(): void {
+  if (fleetPanel) fleetPanel.setFocusKey(fleetTyping ? "fleet_embed" : "fleet_list");
 }
 
 /// Keep the fleet current while it is open.
@@ -12743,6 +12763,7 @@ function startFleetTicking(): void {
     }
     for (const s of fleetRows()) void probeTail(s);
     renderFleet();
+    holdFleetFocus();
     void editor.delay(FLEET_TICK_MS).then(tick);
   };
   tick();
@@ -12756,7 +12777,8 @@ function openFleet(): void {
   reconcileSessions();
   fleetPanel = new FloatingWidgetPanel();
   fleetSelected = 0;
-  renderFleet();
+  fleetLastSpec = null;
+  renderFleet(true);
   editor.floatingPanelControl(fleetPanel.id(), "focus", 0);
   // A mode has to be active for the host to route keys to the panel at all.
   // FLEET_MODE claims nothing, so Up/Down/Enter/Esc all fall through to
@@ -12799,7 +12821,7 @@ function setFleetTyping(on: boolean): void {
   }
   fleetTyping = on;
   editor.setEditorMode(on ? FLEET_TYPE_MODE : FLEET_MODE);
-  renderFleet();
+  renderFleet(true);
 }
 
 registerHandler("orchestrator_fleet_type_toggle", function () {
