@@ -331,3 +331,104 @@ fn fleet_typing_reaches_the_selected_terminal() {
     h.wait_until(|h| h.screen_to_string().contains("answer agent"))
         .unwrap();
 }
+
+/// An agent parked on a question shows `!`, and the reason it shows is the
+/// question rather than one of its options.
+///
+/// This is the state the Fleet exists for: "working" and "idle" are both
+/// derived from whether a PTY printed recently, and a blocked agent prints
+/// nothing, so without this it is indistinguishable from one that finished.
+/// Recognition is per agent kind and reads the terminal's own screen, so the
+/// test runs a stand-in named `claude` — the name is what resolves the
+/// registry entry whose pattern is matched.
+///
+/// Also covers `matchWaiting`'s preference for the line ending in `?`: the
+/// stand-in prints the question *and* a numbered option, both of which match
+/// the pattern, and "1. Yes" as the stated reason a workspace is blocked would
+/// tell the user nothing they could act on.
+#[test]
+fn fleet_shows_why_an_agent_is_blocked() {
+    let (_tmp, root) = setup_project("deltaproj");
+
+    // A stand-in agent: asks the way Claude Code asks, then goes quiet. Quiet
+    // is the whole difficulty — timing alone cannot tell it from finished.
+    let agent = root.join("claude");
+    fs::write(
+        &agent,
+        // Sets its terminal title with OSC 0, the way a real agent's TUI
+        // does. The title is what resolves the registry entry whose prompt
+        // pattern is matched, so a stand-in that never set one would be
+        // testing nothing.
+        "#!/usr/bin/env bash\n\
+         printf '\\033]0;claude\\007'\n\
+         echo 'Do you want to make this edit to tests/e2e.rs?'\n\
+         echo '> 1. Yes'\n\
+         sleep 3600\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&agent, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    h.editor_mut().open_terminal();
+    h.render().unwrap();
+
+    let buffer_id = h.editor().active_buffer_id();
+    let terminal_id = h
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("the active buffer should be the terminal just opened");
+    let home = h.editor().active_window_id();
+    h.wait_until(|h| {
+        h.editor()
+            .terminal_screen(home, terminal_id, None, true)
+            .is_ok_and(|s| !s.text.is_empty())
+    })
+    .unwrap();
+    // Run it in the foreground so the terminal's title — which is what
+    // resolves the agent registry entry — becomes `claude`.
+    h.editor_mut()
+        .send_terminal_input_to(home, terminal_id, "./claude\n");
+    h.wait_until(|h| {
+        h.editor()
+            .terminal_screen(home, terminal_id, None, true)
+            .is_ok_and(|s| s.text.iter().any(|l| l.contains("Do you want")))
+    })
+    .unwrap();
+
+    open_fleet(&mut h);
+
+    // The row must state that this workspace wants something, and say what.
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|l| l.contains("needs you") || l.contains('!'))
+    })
+    .unwrap();
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|l| l.contains("deltaproj") && l.contains("Do you want"))
+    })
+    .unwrap();
+
+    // The reason is the question, not the option beneath it.
+    let row = h
+        .screen_to_string()
+        .lines()
+        .find(|l| l.contains("deltaproj") && l.contains("Do you want"))
+        .expect("the Fleet row for the blocked workspace")
+        .to_string();
+    assert!(
+        !row.contains("1. Yes"),
+        "the reason a workspace is blocked should be the question, not one of \
+         its options. Row:\n{row}"
+    );
+}

@@ -3826,7 +3826,11 @@ async function probeTail(s: AgentSession): Promise<void> {
     s.tail = {
       fetchedAt: Date.now(),
       lastLine,
-      waitingOn: matchWaiting(s, rows),
+      // The screen's own title, not `s.terminalTitle`: the latter is only
+      // tracked for terminals the Orchestrator started, so a workspace whose
+      // agent was launched any other way would never be recognised as
+      // waiting — the same partial bookkeeping that hid its buffer above.
+      waitingOn: matchWaiting(rows, screen.title || s.terminalTitle || ""),
     };
   } catch (_e) {
     // Keep the previous reading; just don't re-probe immediately.
@@ -3838,13 +3842,16 @@ async function probeTail(s: AgentSession): Promise<void> {
 
 /// The line that shows this agent is waiting on the user, or "" if none.
 ///
+/// `title` is the terminal's own foreground-process title, which is what
+/// resolves the registry entry whose pattern is matched.
+///
 /// Driven by the agent registry rather than by one global heuristic: each
 /// vendor's TUI asks its questions differently, and a pattern that fits one
 /// will mis-fire on another. An agent with no pattern (or a bare terminal)
 /// simply never enters the `waiting` state — it degrades to the working/idle
 /// behaviour that shipped before, which is the right failure direction.
-function matchWaiting(s: AgentSession, rows: string[]): string {
-  const entry = s.terminalTitle ? agentEntryForCmd(s.terminalTitle) : null;
+function matchWaiting(rows: string[], title: string): string {
+  const entry = title ? agentEntryForCmd(title) : null;
   const pattern = entry?.waiting;
   if (!pattern) return "";
   // Search from the bottom: the live question is the most recent one, and an
