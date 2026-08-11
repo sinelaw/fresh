@@ -10,17 +10,25 @@ use anyhow::Result as AnyhowResult;
 
 use crate::model::event::{BufferId, LeafId};
 
+/// Columns a single scroll step moves a split's tab strip, shared by the
+/// wheel and by a click on the bar's `<` / `>` indicators so both nudge the
+/// strip by the same amount.
+pub(crate) const TAB_SCROLL_STEP_COLUMNS: usize = 10;
+
 /// The scrollable surface a wheel event lands on.
 ///
-/// There is deliberately no "whatever has focus" variant: chrome that owns no
-/// scrollable content of its own — the menu bar, the tab bars, the status bar,
-/// split separators — hit-tests to `None`, and the wheel is dropped there
-/// instead of being handed to the focused pane (sinelaw/fresh#2969).
+/// There is deliberately no "whatever has focus" variant: the wheel moves what
+/// the pointer is over. Chrome that owns no scrollable content of its own —
+/// the menu bar, the status bar, split separators — hit-tests to `None` and
+/// the wheel is dropped there rather than being handed to the focused pane
+/// (sinelaw/fresh#2969).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WheelSurface {
     /// The file explorer panel, which scrolls its own viewport rather than a
     /// split's.
     FileExplorer,
+    /// A split's tab strip, which pans horizontally through its tabs.
+    TabBar(LeafId),
     /// An editor/terminal split, hit either in its content rect or in its
     /// scrollbar gutter.
     Split(LeafId, BufferId),
@@ -29,9 +37,9 @@ pub(crate) enum WheelSurface {
 impl crate::app::window::Window {
     /// Hit-test the scrollable surface under a screen cell for wheel routing.
     ///
-    /// This is the single fork every wheel path shares, so "the pointer is
-    /// over nothing scrollable" is decided in one place rather than per call
-    /// site. Overlays and mounted widget panels are resolved *before* this by
+    /// This is the single fork every wheel path shares, so "what is under the
+    /// pointer" is decided in one place rather than per call site. Overlays
+    /// and mounted widget panels are resolved *before* this by
     /// [`Editor::handle_vertical_scroll`]; what reaches here is the permanent
     /// layout.
     pub(crate) fn wheel_surface_at(&self, col: u16, row: u16) -> Option<WheelSurface> {
@@ -44,8 +52,59 @@ impl crate::app::window::Window {
                 return Some(WheelSurface::FileExplorer);
             }
         }
-        self.split_at_position(col, row)
-            .map(|(split_id, buffer_id)| WheelSurface::Split(split_id, buffer_id))
+        if let Some((split_id, buffer_id)) = self.split_at_position(col, row) {
+            return Some(WheelSurface::Split(split_id, buffer_id));
+        }
+        // The tab strip is chrome, but chrome with content of its own: when
+        // the tabs overflow their bar it scrolls, so the wheel pans it instead
+        // of doing nothing. Checked after the splits because a split's content
+        // rect never overlaps its bar, so the order only decides which
+        // comparison runs first.
+        self.layout_cache
+            .tab_layouts
+            .iter()
+            .find(|(_, layout)| {
+                let bar = layout.bar_area;
+                col >= bar.x && col < bar.x + bar.width && row >= bar.y && row < bar.y + bar.height
+            })
+            .map(|(split_id, _)| WheelSurface::TabBar(*split_id))
+    }
+
+    /// Pan a split's tab strip by one scroll step: negative moves toward the
+    /// first tab, positive toward the last.
+    ///
+    /// Scrolling right stops at the last tab — `right_overflow` is the
+    /// renderer's own record of whether anything is still hidden off the right
+    /// edge, so the offset can't run out into empty space and leave the user
+    /// wheeling back through nothing. Which tab is *active* never changes: the
+    /// wheel moves the view, like every other wheel surface in the editor.
+    pub(crate) fn scroll_tab_strip(&mut self, split_id: LeafId, delta: i32) {
+        if delta == 0 {
+            return;
+        }
+        let overflows_right = self
+            .layout_cache
+            .tab_layouts
+            .get(&split_id)
+            .is_some_and(|layout| layout.right_overflow);
+        if delta > 0 && !overflows_right {
+            return;
+        }
+        if let Some(view_state) = self
+            .split_view_states_mut()
+            .expect("active window must have a populated split layout")
+            .get_mut(&split_id)
+        {
+            view_state.tab_scroll_offset = if delta < 0 {
+                view_state
+                    .tab_scroll_offset
+                    .saturating_sub(TAB_SCROLL_STEP_COLUMNS)
+            } else {
+                view_state
+                    .tab_scroll_offset
+                    .saturating_add(TAB_SCROLL_STEP_COLUMNS)
+            };
+        }
     }
 
     /// Handle mouse wheel scroll event
@@ -89,6 +148,12 @@ impl crate::app::window::Window {
                     };
                     explorer.set_scroll_offset(new_offset);
                 }
+                return Ok(());
+            }
+            Some(WheelSurface::TabBar(split_id)) => {
+                // A vertical wheel over a horizontal strip pans it: up walks
+                // toward the first tab, down toward the last.
+                self.scroll_tab_strip(split_id, delta);
                 return Ok(());
             }
             Some(WheelSurface::Split(split_id, buffer_id)) => (split_id, buffer_id),
@@ -135,12 +200,16 @@ impl crate::app::window::Window {
         row: u16,
         delta: i32,
     ) -> AnyhowResult<()> {
-        // Same fork as the vertical wheel: pan the split under the pointer,
-        // and pan nothing when the pointer is over chrome or over the file
-        // explorer (which has no horizontal viewport of its own).
-        let Some(WheelSurface::Split(target_split, buffer_id)) = self.wheel_surface_at(col, row)
-        else {
-            return Ok(());
+        // Same fork as the vertical wheel: pan whatever is under the pointer.
+        // The file explorer has no horizontal viewport of its own, and chrome
+        // with no content stays put.
+        let (target_split, buffer_id) = match self.wheel_surface_at(col, row) {
+            Some(WheelSurface::TabBar(split_id)) => {
+                self.scroll_tab_strip(split_id, delta);
+                return Ok(());
+            }
+            Some(WheelSurface::Split(split_id, buffer_id)) => (split_id, buffer_id),
+            Some(WheelSurface::FileExplorer) | None => return Ok(()),
         };
 
         if self.is_non_scrollable_buffer(buffer_id) {
