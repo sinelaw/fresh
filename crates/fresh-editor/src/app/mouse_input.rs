@@ -595,6 +595,13 @@ impl Editor {
             // its column (never leaks to the window beneath).
         } else if self.handle_split_widget_panel_wheel(col, row, delta) {
             // a mounted widget panel consumed the scroll
+        } else if self.active_window().wheel_surface_at(col, row).is_none() {
+            // Chrome that owns no scrollable content — menu bar, tab bars,
+            // status bar, split separators. The wheel is dropped here rather
+            // than falling through to the focused pane, which used to scroll a
+            // focused terminal's scrollback from a pointer sitting on the
+            // status bar (sinelaw/fresh#2969). Gating at this fork also keeps
+            // the focused terminal out of read-only scrollback below.
         } else {
             if self.active_window().focused_terminal_live() {
                 // Scrolling up drops the focused split into read-only scrollback

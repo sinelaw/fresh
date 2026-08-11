@@ -10,7 +10,44 @@ use anyhow::Result as AnyhowResult;
 
 use crate::model::event::{BufferId, LeafId};
 
+/// The scrollable surface a wheel event lands on.
+///
+/// There is deliberately no "whatever has focus" variant: chrome that owns no
+/// scrollable content of its own — the menu bar, the tab bars, the status bar,
+/// split separators — hit-tests to `None`, and the wheel is dropped there
+/// instead of being handed to the focused pane (sinelaw/fresh#2969).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WheelSurface {
+    /// The file explorer panel, which scrolls its own viewport rather than a
+    /// split's.
+    FileExplorer,
+    /// An editor/terminal split, hit either in its content rect or in its
+    /// scrollbar gutter.
+    Split(LeafId, BufferId),
+}
+
 impl crate::app::window::Window {
+    /// Hit-test the scrollable surface under a screen cell for wheel routing.
+    ///
+    /// This is the single fork every wheel path shares, so "the pointer is
+    /// over nothing scrollable" is decided in one place rather than per call
+    /// site. Overlays and mounted widget panels are resolved *before* this by
+    /// [`Editor::handle_vertical_scroll`]; what reaches here is the permanent
+    /// layout.
+    pub(crate) fn wheel_surface_at(&self, col: u16, row: u16) -> Option<WheelSurface> {
+        if let Some(explorer_area) = self.layout_cache.file_explorer_area {
+            if col >= explorer_area.x
+                && col < explorer_area.x + explorer_area.width
+                && row >= explorer_area.y
+                && row < explorer_area.y + explorer_area.height
+            {
+                return Some(WheelSurface::FileExplorer);
+            }
+        }
+        self.split_at_position(col, row)
+            .map(|(split_id, buffer_id)| WheelSurface::Split(split_id, buffer_id))
+    }
+
     /// Handle mouse wheel scroll event
     pub(super) fn handle_mouse_scroll(
         &mut self,
@@ -30,13 +67,10 @@ impl crate::app::window::Window {
             },
         );
 
-        // Check if scroll is over the file explorer
-        if let Some(explorer_area) = self.layout_cache.file_explorer_area {
-            if col >= explorer_area.x
-                && col < explorer_area.x + explorer_area.width
-                && row >= explorer_area.y
-                && row < explorer_area.y + explorer_area.height
-            {
+        // Scroll the surface under the mouse pointer — not necessarily the
+        // focused one, and nothing at all when the pointer is over chrome.
+        let (target_split, buffer_id) = match self.wheel_surface_at(col, row) {
+            Some(WheelSurface::FileExplorer) => {
                 // Scroll the file explorer's viewport. The wheel moves the
                 // view, not the selection — moving the selected entry (and
                 // letting it drag the viewport) is jumpy and surprising.
@@ -57,20 +91,9 @@ impl crate::app::window::Window {
                 }
                 return Ok(());
             }
-        }
-
-        // Scroll the split under the mouse pointer (not necessarily the focused split).
-        // Fall back to the active split if the pointer isn't over any split area.
-        let (target_split, buffer_id) = self.split_at_position(col, row).unwrap_or_else(|| {
-            (
-                self.buffers
-                    .splits()
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split(),
-                self.active_buffer(),
-            )
-        });
+            Some(WheelSurface::Split(split_id, buffer_id)) => (split_id, buffer_id),
+            None => return Ok(()),
+        };
 
         // Panels marked non-scrollable (buffer-group toolbars/headers/footers
         // default to this) swallow the wheel event — their content is pinned
@@ -112,16 +135,13 @@ impl crate::app::window::Window {
         row: u16,
         delta: i32,
     ) -> AnyhowResult<()> {
-        let (target_split, buffer_id) = self.split_at_position(col, row).unwrap_or_else(|| {
-            (
-                self.buffers
-                    .splits()
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split(),
-                self.active_buffer(),
-            )
-        });
+        // Same fork as the vertical wheel: pan the split under the pointer,
+        // and pan nothing when the pointer is over chrome or over the file
+        // explorer (which has no horizontal viewport of its own).
+        let Some(WheelSurface::Split(target_split, buffer_id)) = self.wheel_surface_at(col, row)
+        else {
+            return Ok(());
+        };
 
         if self.is_non_scrollable_buffer(buffer_id) {
             return Ok(());
