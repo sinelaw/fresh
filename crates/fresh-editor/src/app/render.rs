@@ -4987,6 +4987,9 @@ impl Editor {
         // reuse the existing per-window paint path — it reads
         // that field to decide which session to draw.
         let saved_preview = self.preview_window_id;
+        // Rebuilt every frame: a pane that moved, shrank or went away must not
+        // leave a stale click target behind.
+        let mut pane_hits: Vec<(String, ratatui::layout::Rect)> = Vec::new();
         for emb in &embeds {
             if emb.window_id == 0 {
                 continue;
@@ -5019,6 +5022,11 @@ impl Editor {
                     let has_caret = panel_focused
                         && emb.interactive
                         && emb.key.as_deref().is_some_and(|k| k == panel_focus_key);
+                    if emb.interactive {
+                        if let Some(k) = emb.key.as_deref() {
+                            pane_hits.push((k.to_string(), rect));
+                        }
+                    }
                     self.render_pane_into_rect(
                         frame,
                         rect,
@@ -5037,6 +5045,9 @@ impl Editor {
             }
         }
         self.preview_window_id = saved_preview;
+        if let Some(fwp) = self.panel_mut(slot) {
+            fwp.pane_hits = pane_hits;
+        }
 
         // Dock "seamless tab (missing wall)": erase the right-edge divider
         // across the active session card's rows and scoop it away with

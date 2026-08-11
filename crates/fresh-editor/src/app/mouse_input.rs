@@ -4583,6 +4583,31 @@ impl Editor {
         if self.try_widget_scrollbar_press(slot, col, row) {
             return;
         }
+        // A click inside an interactive pane focuses that pane.
+        //
+        // Checked before the widget probe because a pane is invisible to it:
+        // the pane contributes blank entries for layout and the host paints
+        // the buffer over them, so the probe reports no hit and the click is
+        // swallowed — you could see a terminal, click it, and have nothing
+        // happen. Focusing is the whole gesture: the focused interactive pane
+        // is the input target, so this is what "click the terminal and type"
+        // means. The `focus` event it fires is what lets the plugin switch
+        // its mode to match.
+        let pane_hit = self.panel(slot).and_then(|f| {
+            f.pane_hits
+                .iter()
+                .find(|(_, r)| in_rect(col, row, *r))
+                .map(|(k, _)| k.clone())
+        });
+        if let Some(key) = pane_hit {
+            let panel_key = match self.panel(slot) {
+                Some(fwp) => fwp.panel_key.clone(),
+                None => return,
+            };
+            self.set_panel_focus_and_notify(&panel_key, key);
+            self.rerender_widget_panel(&panel_key);
+            return;
+        }
         let panel_key = match self.panel(slot) {
             Some(fwp) => fwp.panel_key.clone(),
             None => return,

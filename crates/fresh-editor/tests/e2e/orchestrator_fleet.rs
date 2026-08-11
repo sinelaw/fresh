@@ -272,15 +272,19 @@ fn fleet_pane_shows_the_terminal_without_session_chrome() {
     );
 }
 
-/// Typing in the Fleet reaches the selected agent's terminal, and Tab is the
-/// way back out.
+/// Typing in the Fleet reaches the selected agent's terminal, Alt+` is the way
+/// in and back out, and Tab reaches the agent rather than toggling.
 ///
 /// This is the point of the pane being interactive rather than a picture: a
 /// focused interactive pane takes every key the panel's own mode does not
 /// claim and routes it to the PTY, so an agent's question can be answered
 /// without leaving the view that reported it. Covers `focused_interactive_pane`
-/// / `send_key_to_pane`, the `interactive` flag, and the rule that only an
-/// interactive pane is tabbable.
+/// / `send_key_to_pane` and the `interactive` flag.
+///
+/// Tab is asserted explicitly because it is the reason the toggle is Alt+`:
+/// Tab is a key agents genuinely want (completion, field navigation in their
+/// own TUI), so a toggle that ate it would make the one view built for
+/// answering an agent unable to send it.
 #[test]
 fn fleet_typing_reaches_the_selected_terminal() {
     let (_tmp, root) = setup_project("gammaproj");
@@ -314,8 +318,8 @@ fn fleet_typing_reaches_the_selected_terminal() {
     })
     .unwrap();
 
-    // Tab hands the keyboard to the pane, which the chrome states.
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Alt+` hands the keyboard to the pane, which the chrome states.
+    h.send_key(KeyCode::Char('`'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("typing →"))
         .unwrap();
 
@@ -326,8 +330,19 @@ fn fleet_typing_reaches_the_selected_terminal() {
     h.wait_until(|h| pane_text(h).contains("FLEETTYPING"))
         .unwrap();
 
-    // Tab is still the way out: the pane must not swallow its own exit.
+    // Tab reaches the agent instead of toggling: the shell echoes a completion
+    // or a literal tab, but either way the Fleet stays in typing mode. Without
+    // this the toggle would be eating a key the agent needs.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    assert!(
+        h.screen_to_string().contains("typing →"),
+        "Tab must reach the agent, not toggle the Fleet out of typing mode:\n{}",
+        h.screen_to_string()
+    );
+
+    // The same key that focused the pane un-focuses it.
+    h.send_key(KeyCode::Char('`'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("answer agent"))
         .unwrap();
 }

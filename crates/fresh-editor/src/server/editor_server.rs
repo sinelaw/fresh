@@ -1789,6 +1789,7 @@ mod wave_dismiss_tests {
             entries: Vec::new(),
             focus_cursor: None,
             embeds: Vec::new(),
+            pane_hits: Vec::new(),
             overlays: Vec::new(),
             scroll_regions: Vec::new(),
             scrollbar_tracks: Vec::new(),

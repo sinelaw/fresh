@@ -1448,6 +1448,16 @@ pub(crate) struct FloatingWidgetState {
     /// scoped to each rect — giving us a live render of the
     /// referenced editor window inside the floating overlay.
     pub embeds: Vec<crate::widgets::EmbedRect>,
+    /// Where the interactive panes actually landed on screen, in
+    /// absolute cells, recorded by the paint pass.
+    ///
+    /// `embeds` is panel-relative and says nothing about clipping, so
+    /// it cannot answer "did this click land in the terminal?". The
+    /// paint pass already computes the clipped screen rect to draw
+    /// into; keeping it is what lets a click focus the pane it landed
+    /// in. Only keyed interactive panes are recorded — nothing else is
+    /// a click target.
+    pub pane_hits: Vec<(String, ratatui::layout::Rect)>,
     /// Rows produced by `WidgetSpec::Overlay` children. Painted
     /// AFTER `entries` and `embeds`, on top of whatever's at
     /// each `buffer_row`. Used for dropdown completions /
@@ -2108,6 +2118,7 @@ mod tests {
             entries: Vec::new(),
             focus_cursor: None,
             embeds: Vec::new(),
+            pane_hits: Vec::new(),
             overlays: Vec::new(),
             scroll_regions: Vec::new(),
             scrollbar_tracks: Vec::new(),

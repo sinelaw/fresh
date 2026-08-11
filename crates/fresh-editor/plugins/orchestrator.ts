@@ -12691,23 +12691,57 @@ function fleetLayoutRows(rowCount: number): { list: number; embed: number } {
     : { list, embed };
 }
 
-/// Sessions in fleet order: waiting first, then working, then everything else.
+/// The row order, frozen for the life of the open panel.
 ///
-/// Sorting by urgency rather than by name is the whole point — a fleet you
-/// have to scan defeats the purpose. Within a bucket the dock's own stable
-/// order is preserved so rows don't shuffle between ticks.
-function fleetRows(): AgentSession[] {
-  // Pending and discovered rows are filtered out below, so rank only has to
-  // order the live ones.
+/// Sorting by urgency is right when the view *opens* — the thing that needs
+/// you should be the first thing you read. Re-sorting while it is open is
+/// not: an agent's state changes on its own, so rows slide up and down under
+/// the pointer, and the row you were reading is somewhere else by the time
+/// you reach for it. Answering an agent moved it from top to bottom, which is
+/// the worst moment to move anything.
+///
+/// So: order once at open, then hold it. The glyphs still update live, which
+/// is what actually tells you who needs you — the row just stays put.
+let fleetOrder: number[] | null = null;
+
+/// Sessions eligible for the fleet: live ones only.
+function fleetLive(): AgentSession[] {
+  return [...orchestratorSessions.values()].filter((s) => !s.discovered && !s.pending);
+}
+
+/// Order by urgency: waiting first, then working, then everything else, with
+/// the dock's own stable order inside each bucket. Only consulted when the
+/// order is (re)frozen.
+function fleetByUrgency(rows: AgentSession[]): AgentSession[] {
   const rank = (s: AgentSession): number => {
     const st = sessionState(s);
     if (st === "waiting") return 0;
     if (st === "working") return 1;
     return 2;
   };
-  return [...orchestratorSessions.values()]
-    .filter((s) => !s.discovered && !s.pending)
-    .sort((a, b) => rank(a) - rank(b) || stableOrderKey(a) - stableOrderKey(b));
+  return [...rows].sort((a, b) => rank(a) - rank(b) || stableOrderKey(a) - stableOrderKey(b));
+}
+
+function freezeFleetOrder(): void {
+  fleetOrder = fleetByUrgency(fleetLive()).map((s) => s.id);
+}
+
+function fleetRows(): AgentSession[] {
+  const live = fleetLive();
+  if (fleetOrder === null) return fleetByUrgency(live);
+  const byId = new Map(live.map((s) => [s.id, s]));
+  // Frozen order first, dropping any that have gone…
+  const rows = fleetOrder.map((id) => byId.get(id)).filter((s): s is AgentSession => !!s);
+  // …then anything created since, appended in urgency order so a new agent
+  // is visible without disturbing where the existing rows sit.
+  const seen = new Set(rows.map((s) => s.id));
+  for (const s of fleetByUrgency(live)) {
+    if (!seen.has(s.id)) {
+      rows.push(s);
+      fleetOrder.push(s.id);
+    }
+  }
+  return rows;
 }
 
 /// One fleet row: state glyph, name, agent, branch, and — the point of the
@@ -12819,11 +12853,19 @@ function buildFleetSpec(): WidgetSpec {
       }),
     }));
   } else if (selected) {
-    // No terminal buffer known yet (a workspace still coming up). Fall back
-    // to the whole-session embed rather than showing a hole.
+    // No terminal yet — a workspace still coming up. Deliberately NOT a
+    // `windowEmbed` of the whole session: that paints the session's tab bar
+    // and chrome, which (a) is not what this view is about, (b) is inert
+    // inside a panel, so its `+` and tabs look clickable and do nothing, and
+    // (c) disappears a second later when the terminal is discovered, shifting
+    // the content up a row. One line that says what is happening is honest
+    // and does not move.
     children.push(labeledSection({
       label: `live · ${workspaceDisplayName(selected)}`,
-      child: windowEmbed({ windowId: selected.id, rows: embedRows, key: "fleet_embed" }),
+      child: raw([styledRow([{
+        text: "  starting…",
+        style: { fg: "ui.menu_disabled_fg", italic: true },
+      }])]),
     }));
   }
   children.push(row(
@@ -12833,12 +12875,12 @@ function buildFleetSpec(): WidgetSpec {
         // Escape is deliberately absent: while typing it belongs to the
         // agent, since cancelling whatever it is asking is the single most
         // likely thing you want to send.
-        { keys: "Tab", label: "stop" },
-        { keys: "type", label: "goes to the agent" },
+        { keys: "Alt+`", label: "stop typing" },
+        { keys: "keys", label: "go to the agent" },
       ]
       : [
         { keys: "↑↓", label: "select" },
-        { keys: "Tab", label: "answer agent" },
+        { keys: "Alt+`", label: "answer agent" },
         { keys: "Enter", label: "go to workspace" },
         { keys: "Esc", label: "close" },
       ]),
@@ -12919,6 +12961,7 @@ function openFleet(): void {
     return;
   }
   reconcileSessions();
+  freezeFleetOrder();
   fleetPanel = new FloatingWidgetPanel();
   fleetSelectedId = null;
   fleetLastSpec = null;
@@ -12938,6 +12981,8 @@ function closeFleet(): void {
   if (!fleetPanel) return;
   fleetPanel.unmount();
   fleetPanel = null;
+  // Next open re-sorts by urgency; the frozen order is per-viewing.
+  fleetOrder = null;
   fleetTyping = false;
   editor.setEditorMode(null);
 }
@@ -12966,64 +13011,95 @@ registerHandler("orchestrator_fleet_type_toggle", function () {
   setFleetTyping(!fleetTyping);
 });
 
+/// Move the selection by `delta` rows, by identity.
+///
+/// The list widget has its own arrow handling, but the Fleet binds the keys
+/// itself so they are real keybindings a user can rebind — a smart-key
+/// default lives in the host and is not in any keymap. Moving by id rather
+/// than by index also survives the row set changing underneath.
+function fleetMove(delta: number): void {
+  const rows = fleetRows();
+  if (rows.length === 0) return;
+  const at = Math.max(0, fleetSelectedIndex(rows));
+  const next = Math.min(rows.length - 1, Math.max(0, at + delta));
+  if (rows[next].id === fleetSelectedId) return;
+  fleetSelectedId = rows[next].id;
+  renderFleet(true);
+}
+
+registerHandler("orchestrator_fleet_prev", function () { fleetMove(-1); });
+registerHandler("orchestrator_fleet_next", function () { fleetMove(1); });
+
+/// Leave the Fleet and go to the selected workspace — the fleet's job ends
+/// once you have decided which agent to deal with.
+function fleetOpenSelected(): void {
+  const rows = fleetRows();
+  const target = rows[fleetSelectedIndex(rows)];
+  closeFleet();
+  if (target) void focusWorkspace(target.id);
+}
+
+registerHandler("orchestrator_fleet_open_selected", fleetOpenSelected);
+
+registerHandler("orchestrator_fleet_close", function () { closeFleet(); });
+
 registerHandler("orchestrator_fleet", openFleet);
 registerHandler("orchestrator_fleet_event", function (ev: Record<string, unknown>) {
   if (!fleetPanel || ev.panel_id !== fleetPanel.id()) return;
   const type = String(ev.event_type ?? "");
   const payload = (ev.payload ?? {}) as Record<string, unknown>;
   if (type === "select" || type === "change") {
-    // The host reports the list's own index; moving the selection is what
-    // re-points the live pane, so re-render immediately rather than waiting
-    // for the next tick — an embed that lags the highlight by a second reads
-    // as broken.
+    // A mouse click on a row still reports the list's own index. Translate it
+    // to an id at once: the index is only valid against the ordering that
+    // produced the event.
     const idx = Number(payload.index ?? payload.selectedIndex ?? -1);
     const rows = fleetRows();
-    // Translate the host's row index into an id at once: it is only valid
-    // against the ordering that produced the event, and the next re-sort
-    // invalidates it.
     if (idx >= 0 && idx < rows.length && rows[idx].id !== fleetSelectedId) {
       fleetSelectedId = rows[idx].id;
       renderFleet();
     }
     return;
   }
+  // Clicking the live pane focuses it — the host fires `focus` for the pane
+  // it was clicked in. Typing mode is what that gesture means: the pane is
+  // the input target, so the mode has to agree or the next keystroke steers
+  // the list instead of reaching the agent.
+  if (type === "focus" && String(ev.widget_key ?? payload.key ?? "") === "fleet_embed") {
+    if (!fleetTyping) setFleetTyping(true);
+    return;
+  }
+  // A double-click on a row means the same as Enter.
   if (type === "activate") {
-    const rows = fleetRows();
-    const target = rows[fleetSelectedIndex(rows)];
-    closeFleet();
-    // Enter means "take me there" — the fleet's job ends once you have
-    // decided which agent to deal with.
-    if (target) focusWorkspace(target.id);
+    fleetOpenSelected();
     return;
   }
   if (type === "cancel" || type === "close") closeFleet();
 });
 editor.on("widget_event", "orchestrator_fleet_event");
-// Claims nothing: every key the fleet needs (Up/Down/Enter/Esc) is already a
-// smart-key default, and claiming them here would only re-implement them.
+
+// Every Fleet key is a real binding, not a host smart-key default, so all of
+// them show up in the keybinding editor and can be overridden per user under
+// the `mode:orchestrator-fleet` context. `defineMode` bindings are the
+// lowest-precedence tier, so a user's own binding always wins.
+//
+// Alt+` toggles typing rather than Tab: Tab is a key you genuinely want to
+// send to an agent (completion, field navigation in its own TUI), and a
+// toggle that eats it means the one view built for answering an agent cannot
+// send it. The toggle has to be something no terminal program expects.
 editor.defineMode(FLEET_MODE, [
-  // Tab is the only key the navigation mode claims. Everything else it needs
-  // — Up/Down/Enter/Esc — is already a smart-key default.
-  ["Tab", "orchestrator_fleet_type_toggle"],
+  ["Up", "orchestrator_fleet_prev"],
+  ["Down", "orchestrator_fleet_next"],
+  ["Enter", "orchestrator_fleet_open_selected"],
+  ["Escape", "orchestrator_fleet_close"],
+  ["M-`", "orchestrator_fleet_type_toggle"],
 ]);
-// The typing mode claims exactly the keys that would otherwise steer the list,
-// and forwards them to the PTY instead. Printable characters are not listed:
-// they arrive through the global `mode_text_input` path, which is handled in
-// `orchestrator_mode_text_input`.
-//
-// Escape is forwarded rather than claimed as "stop typing" — while an agent is
-// asking something, cancelling it is the most likely thing you want to send,
-// and Tab already exits.
-// Tab is the only key typing mode claims — the escape hatch. Everything else,
-// printable characters included, falls through to the focused interactive
+// Typing mode claims exactly one key. Everything else — Tab, Enter, Escape,
+// arrows, printable characters — falls through to the focused interactive
 // pane, which the host routes to the PTY through the same key translation a
-// focused terminal split uses. Escape falls through too: while an agent is
-// asking something, cancelling it is the most likely thing to send.
-//
-// Nothing here goes via `mode_text_input`; that path is scoped to the
-// new-workspace form and never fires for this panel.
+// focused terminal split uses. Escape falls through on purpose: while an
+// agent is asking something, cancelling it is the most likely thing to send.
 editor.defineMode(FLEET_TYPE_MODE, [
-  ["Tab", "orchestrator_fleet_type_toggle"],
+  ["M-`", "orchestrator_fleet_type_toggle"],
 ]);
 
 registerHandler("orchestrator_open", openControlRoom);
