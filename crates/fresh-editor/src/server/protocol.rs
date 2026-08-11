@@ -377,6 +377,7 @@ mod tests {
             },
             ClientControl::RunScript {
                 source: "return editor.activeWindow();".to_string(),
+                as_name: None,
             },
         ];
 
@@ -428,11 +429,12 @@ mod tests {
         let source = "const w = editor.activeWindow();\nreturn { \"w\": w };\n";
         let msg = ClientControl::RunScript {
             source: source.to_string(),
+            as_name: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"run_script\""));
         match serde_json::from_str::<ClientControl>(&json).unwrap() {
-            ClientControl::RunScript { source: got } => assert_eq!(got, source),
+            ClientControl::RunScript { source: got, .. } => assert_eq!(got, source),
             other => panic!("expected RunScript, got {:?}", other),
         }
     }

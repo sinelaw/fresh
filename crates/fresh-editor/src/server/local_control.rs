@@ -848,6 +848,7 @@ mod tests {
         let conn = connect_client_with_token(&paths, "tok-123");
         let msg = ClientControl::RunScript {
             source: "return 1;".to_string(),
+            as_name: None,
         };
         conn.write_control(&serde_json::to_string(&msg).unwrap())
             .unwrap();
@@ -929,6 +930,7 @@ mod tests {
             conn.write_control(
                 &serde_json::to_string(&ClientControl::RunScript {
                     source: "return editor.activeWindow();".to_string(),
+                    as_name: None,
                 })
                 .unwrap(),
             )
@@ -990,6 +992,7 @@ mod tests {
         conn.write_control(
             &serde_json::to_string(&ClientControl::RunScript {
                 source: "return 1;".to_string(),
+                as_name: None,
             })
             .unwrap(),
         )
@@ -1017,6 +1020,7 @@ mod tests {
         let conn = connect_client(&paths);
         let msg = ClientControl::RunScript {
             source: "return 1;".to_string(),
+            as_name: None,
         };
         conn.write_control(&serde_json::to_string(&msg).unwrap())
             .unwrap();

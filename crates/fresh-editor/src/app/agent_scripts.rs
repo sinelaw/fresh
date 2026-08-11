@@ -45,7 +45,11 @@ impl Editor {
             // caller named it: it is replacing its own earlier submission.
             let name = match as_name {
                 Some(n) => {
-                    let _ = self.plugin_manager.read().unwrap().unload_plugin(n);
+                    // A first install has nothing to unload; that is the
+                    // common case, not a failure.
+                    if let Err(e) = self.plugin_manager.read().unwrap().unload_plugin(n) {
+                        tracing::debug!("script run --as {n}: no previous load to replace ({e})");
+                    }
                     n.to_string()
                 }
                 None => format!("agent-script-{}", request_id),
