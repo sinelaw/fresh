@@ -364,6 +364,11 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root_a.clone())
             .unwrap();
+    // Give the launch window a file so the two sessions' editor panes are
+    // told apart by their tab bars: aaa shows `readme.txt`, zzz (a fresh
+    // window, empty scratch buffer) shows `[No Name]`. That is what makes
+    // the live switch below observable — see the wait after Down.
+    h.open_file(&root_a.join("readme.txt")).unwrap();
     // Second session in the other project (launch session is aaa_project).
     h.editor_mut()
         .create_window_at(root_b.clone(), "zzz_project".to_string());
@@ -388,19 +393,23 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     // Arrow down to the second row, which live-switches the active window
     // to the zzz project.
     //
-    // Snapshot the pre-Down screen so we can wait on a *screen-observable*
-    // post-switch signal — the dock's PROJECT column tag visibly swaps
-    // when the active session changes. Before Down: aaa is current
-    // (no project tag), zzz is not (tag = "zzz_project's basename"); after
-    // the switch: zzz is current (no tag), aaa shows its tag. This lets us
-    // detect the switch without an accessor wait (CONTRIBUTING §2) AND
-    // without false matches on mid-render snapshots — the post-Down
-    // highlight-move is a style-only change that doesn't enter
-    // `screen_to_string`, so the first diff that does is the tag swap
-    // after `scheduleDockSwitch`'s 30 ms debounce lands.
-    let pre = h.screen_to_string();
+    // The switch is observed on the *editor pane*, which renders whichever
+    // window is active: aaa holds readme.txt, zzz is an empty window, so
+    // `[No Name]` appearing in the tab bar is the switch landing (after
+    // `scheduleDockSwitch`'s 30 ms debounce). The dock rows themselves say
+    // nothing observable about it — in the dock's default compact density
+    // `renderPillSpec` marks the current session by colouring its label,
+    // and a style-only change doesn't enter `screen_to_string`.
+    assert!(
+        !h.screen_to_string().contains("[No Name]"),
+        "precondition: only aaa (readme.txt) is rendered before the switch, \
+         so `[No Name]` is the zzz window arriving and not something already \
+         on screen. Full screen for diagnosis:\n{}",
+        h.screen_to_string(),
+    );
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string() != pre).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[No Name]"))
+        .unwrap();
     h.wait_until_stable(|_| true).unwrap();
 
     // Order must be unchanged — aaa still above zzz (the bug floated the
