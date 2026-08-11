@@ -1,7 +1,7 @@
 //! Regression tests for issue #2969 (defect 1): a mouse wheel over UI chrome
 //! — the menu bar, a tab bar, the status bar — was routed to whatever pane
-//! held *focus* instead of being ignored, because the wheel router fell back
-//! to the active split whenever the pointer hit-tested to no split at all.
+//! held *focus*, because the wheel router fell back to the active split
+//! whenever the pointer hit-tested to no split at all.
 //!
 //! The user-visible damage was worst with a focused terminal: its scrollback
 //! scrolled while the pointer sat on the status bar, nowhere near the terminal
@@ -9,11 +9,16 @@
 //! what the first test drives (no PTY required, so it covers the fix
 //! everywhere).
 //!
-//! Both tests assert only on rendered output (CONTRIBUTING.md Testing §2): the
+//! The rule the fix enforces is that the wheel moves what the pointer is over,
+//! so the third test covers the other half of it: the tab strip *does* own
+//! scrollable content, and a wheel over it pans the tabs rather than doing
+//! nothing.
+//!
+//! All three assert only on rendered output (CONTRIBUTING.md Testing §2): the
 //! window of `LINE n` markers on screen *is* the scroll position, so "the pane
 //! did not move" and "the pane did move" are both read off the screen. Each
-//! also wheels over the real pane afterwards, so a fix that simply swallowed
-//! every wheel event could not pass.
+//! also wheels over a surface that should respond, so a fix that simply
+//! swallowed every wheel event could not pass.
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -58,6 +63,15 @@ fn chrome_rows(screen: &str) -> Vec<(&'static str, u16)> {
         ("tab bar", row_with("tab bar", "×")),
         ("status bar", row_with("status bar", "Palette: Ctrl+P")),
     ]
+}
+
+/// The text of the tab row (the row carrying a tab's close button).
+fn tab_bar_text(screen: &str) -> String {
+    screen
+        .lines()
+        .find(|line| line.contains('×'))
+        .unwrap_or_else(|| panic!("no tab row on screen:\n{screen}"))
+        .to_string()
 }
 
 /// A wheel over the menu bar, the tab bar or the status bar must leave the
@@ -199,6 +213,91 @@ fn wheel_over_chrome_does_not_scroll_the_focused_terminal() {
          {:?}). Screen:\n{}",
         baseline.first(),
         scrolled.first(),
+        harness.screen_to_string()
+    );
+}
+
+/// The tab strip is chrome, but chrome that owns content: when the tabs
+/// overflow their bar it scrolls, so a wheel over it pans the strip rather
+/// than doing nothing. That is the same rule as everywhere else — the wheel
+/// moves what the pointer is over — and it moves the *view*, not the
+/// selection: the active tab and the editor beneath both stay put.
+#[test]
+fn wheel_over_the_tab_bar_pans_the_tab_strip() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    // Enough long-named tabs to overflow a 100-column bar. Each fixture has to
+    // outlive the test, so they are all bound.
+    let _fixtures: Vec<_> = [
+        "tab_alpha",
+        "tab_bravo",
+        "tab_charlie",
+        "tab_delta",
+        "tab_foxtrot",
+        "tab_golf",
+        "tab_hotel",
+    ]
+    .iter()
+    .map(|name| {
+        harness
+            .load_buffer_from_text_named(&format!("{name}.txt"), "PAD")
+            .unwrap()
+    })
+    .collect();
+    // The last-opened file is the active tab and carries the numbered content,
+    // so the `LINE n` window doubles as proof the editor never moved while the
+    // strip did.
+    let content: Vec<String> = (1..=200).map(|i| format!("LINE {i}")).collect();
+    let _active = harness
+        .load_buffer_from_text_named("tab_echo.txt", &content.join("\n"))
+        .unwrap();
+    harness.render().unwrap();
+
+    let tab_row = chrome_rows(&harness.screen_to_string())
+        .into_iter()
+        .find(|(label, _)| *label == "tab bar")
+        .expect("the tab bar is one of the chrome rows")
+        .1;
+    let baseline_tabs = tab_bar_text(&harness.screen_to_string());
+    let baseline_lines = line_markers(&harness.screen_to_string());
+    assert!(
+        baseline_tabs.contains("tab_echo") && !baseline_tabs.contains("tab_alpha"),
+        "the strip should be scrolled to the active tab with earlier tabs off the left edge — \
+         otherwise there is nothing to pan. Tab row: {baseline_tabs:?}"
+    );
+
+    // Wheel up over the bar walks the strip back toward the first tab.
+    for _ in 0..NOTCHES {
+        harness.mouse_scroll_up(30, tab_row).unwrap();
+    }
+    let panned = tab_bar_text(&harness.screen_to_string());
+    assert!(
+        panned.contains("tab_alpha"),
+        "a wheel over the tab bar should pan the strip toward the first tab (was {baseline_tabs:?}, \
+         now {panned:?})"
+    );
+    assert_eq!(
+        line_markers(&harness.screen_to_string()),
+        baseline_lines,
+        "panning the tab strip must not scroll the editor beneath it. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // ...and wheel down walks it forward again, stopping at the last tab
+    // rather than running off into empty space.
+    for _ in 0..NOTCHES * 2 {
+        harness.mouse_scroll_down(30, tab_row).unwrap();
+    }
+    let returned = tab_bar_text(&harness.screen_to_string());
+    assert!(
+        returned.contains("tab_echo"),
+        "a wheel down over the tab bar should pan back to the last tab and stop there, \
+         got {returned:?}"
+    );
+    assert_eq!(
+        line_markers(&harness.screen_to_string()),
+        baseline_lines,
+        "panning the tab strip must not scroll the editor beneath it. Screen:\n{}",
         harness.screen_to_string()
     );
 }

@@ -7,6 +7,7 @@
 //! - Split separator dragging
 //! - Text selection via mouse
 
+use super::scrollbar_input::WheelSurface;
 use super::*;
 use crate::input::keybindings::Action;
 use crate::model::event::{ContainerId, CursorId, LeafId, SplitDirection};
@@ -595,32 +596,41 @@ impl Editor {
             // its column (never leaks to the window beneath).
         } else if self.handle_split_widget_panel_wheel(col, row, delta) {
             // a mounted widget panel consumed the scroll
-        } else if self.active_window().wheel_surface_at(col, row).is_none() {
-            // Chrome that owns no scrollable content — menu bar, tab bars,
-            // status bar, split separators. The wheel is dropped here rather
-            // than falling through to the focused pane, which used to scroll a
-            // focused terminal's scrollback from a pointer sitting on the
-            // status bar (sinelaw/fresh#2969). Gating at this fork also keeps
-            // the focused terminal out of read-only scrollback below.
         } else {
-            if self.active_window().focused_terminal_live() {
-                // Scrolling up drops the focused split into read-only scrollback
-                // (recorded per-split, so re-focusing keeps it there).
-                self.enter_terminal_scrollback();
-            } else if let Some((split_id, buffer_id)) =
-                self.active_window().split_at_position(col, row)
-            {
-                // Scrolling a terminal split that a drag parked in implicit
-                // scrollback means the user is now *reading* the scrollback:
-                // convert the visit to an explicit one, so copy / click-away
-                // no longer auto-resume the live grid (no-op for everything
-                // else).
-                self.active_window_mut()
-                    .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
+            // Nothing above claimed the wheel, so it belongs to whatever the
+            // pointer is over in the permanent layout: a pane, the file
+            // explorer, a tab strip — or nothing at all, on chrome that owns
+            // no content (the menu bar, the status bar, a split separator).
+            // Before this fork existed the miss fell through to the *focused*
+            // pane, so resting the pointer on the status bar scrolled a
+            // focused terminal's scrollback (sinelaw/fresh#2969).
+            match self.active_window().wheel_surface_at(col, row) {
+                None => {}
+                Some(surface) => {
+                    // Only a wheel over a pane changes that terminal's
+                    // live/scrollback state; panning the tab strip or the
+                    // explorer leaves a live terminal streaming.
+                    if let WheelSurface::Split(split_id, buffer_id) = surface {
+                        if self.active_window().focused_terminal_live() {
+                            // Scrolling up drops the focused split into read-only
+                            // scrollback (recorded per-split, so re-focusing keeps
+                            // it there).
+                            self.enter_terminal_scrollback();
+                        } else {
+                            // Scrolling a terminal split that a drag parked in
+                            // implicit scrollback means the user is now *reading*
+                            // the scrollback: convert the visit to an explicit
+                            // one, so copy / click-away no longer auto-resume the
+                            // live grid (no-op for everything else).
+                            self.active_window_mut()
+                                .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
+                        }
+                    }
+                    self.dismiss_transient_popups();
+                    self.active_window_mut()
+                        .handle_mouse_scroll(col, row, delta)?;
+                }
             }
-            self.dismiss_transient_popups();
-            self.active_window_mut()
-                .handle_mouse_scroll(col, row, delta)?;
         }
         Ok(())
     }
@@ -2779,30 +2789,17 @@ impl Editor {
                 }
                 Some(Ok(()))
             }
+            // The indicators and the wheel nudge the strip through one shared
+            // helper, so a click and a wheel notch move it by the same step
+            // and both stop at the last tab.
             TabHit::ScrollLeft => {
                 self.set_status_message("ScrollLeft clicked!".to_string());
-                if let Some(vs) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(&split_id)
-                {
-                    vs.tab_scroll_offset = vs.tab_scroll_offset.saturating_sub(10);
-                }
+                self.active_window_mut().scroll_tab_strip(split_id, -1);
                 Some(Ok(()))
             }
             TabHit::ScrollRight => {
                 self.set_status_message("ScrollRight clicked!".to_string());
-                if let Some(vs) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(&split_id)
-                {
-                    vs.tab_scroll_offset = vs.tab_scroll_offset.saturating_add(10);
-                }
+                self.active_window_mut().scroll_tab_strip(split_id, 1);
                 Some(Ok(()))
             }
             TabHit::NewTabButton => {
