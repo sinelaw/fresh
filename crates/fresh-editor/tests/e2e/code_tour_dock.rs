@@ -2014,6 +2014,76 @@ fn test_load_definition_picker_reaches_hidden_tour_files() {
     wait_for_step_settled(&mut harness);
 }
 
+/// A dock panel has to fit the dock it is actually painted into.
+///
+/// The editor's content area was derived as "screen height minus the menu bar
+/// and the status bar", which is one row too many whenever the prompt line is
+/// shown — and one row too few with the menu or status bar hidden. Panes are
+/// laid out inside that area, so the pane geometry every consumer reads (the
+/// `describeWorkspace` / `listSplits` snapshots, terminal PTY sizes) claimed a
+/// row that was not there. A panel that sizes its bands to the pane it is told
+/// it has then emits one row too many: the tour's hint bar, its last band,
+/// was pushed out of the dock entirely and nothing on screen said why.
+#[test]
+fn test_tour_panel_fits_the_dock_when_the_prompt_line_is_shown() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 200, 45);
+
+    // Precondition, read off the screen: the prompt line occupies the bottom
+    // row (it is blank until a prompt is open), so the status bar is *not*
+    // the last row and the editor area is three bands shorter than the
+    // screen, not two.
+    let screen = harness.screen_to_string();
+    let rows: Vec<&str> = screen.lines().collect();
+    assert!(
+        rows.last().is_some_and(|r| r.trim().is_empty()),
+        "expected the prompt line on the bottom row\nScreen:\n{screen}"
+    );
+    assert!(
+        rows.iter()
+            .nth_back(1)
+            .is_some_and(|r| r.contains("Trusted")),
+        "expected the status bar directly above the prompt line\nScreen:\n{screen}"
+    );
+
+    let manifest = project_root.join(".fresh-tour.json");
+    run_command(&mut harness, "Tour: Load Definition");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("tour file path"))
+        .unwrap();
+    harness.type_text(&manifest.display().to_string()).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // Wait for the panel's *body* and then for the frame to settle —
+    // deliberately not for the hint bar, which is the thing under test.
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("╭─ Steps"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let bottom_border = screen
+        .lines()
+        .position(|l| l.contains('╰'))
+        .unwrap_or_else(|| panic!("expected the body's bottom border\nScreen:\n{screen}"));
+    // The hint bar is the panel's last band. Lower-case "jump to code" is the
+    // hint's wording; the header's button reads "[ Jump to code ⏎ ]".
+    let hints = screen
+        .lines()
+        .position(|l| l.contains("jump to code"))
+        .unwrap_or_else(|| {
+            panic!(
+                "the hint bar must still be inside the dock — the panel sized \
+                 itself to a dock one row taller than it was given\nScreen:\n{screen}"
+            )
+        });
+    assert!(
+        hints > bottom_border,
+        "the hint bar belongs below the body, inside the dock \
+         (hints={hints}, bottom_border={bottom_border})\nScreen:\n{screen}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The panel re-lays out when a sibling panel takes its width
 // ---------------------------------------------------------------------------
