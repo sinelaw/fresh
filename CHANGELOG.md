@@ -30,6 +30,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * Prompt dropdowns (command palette, Select Locale, …), which also gained a scrollbar when they overflow (#623, #1593, reported by @asukaminato0721 and @Kodiak-01).
 * **A wheel over the menu, tab or status bar no longer scrolls the focused pane** - chrome wheel events used to land on whatever had focus, dropping a focused terminal into scrollback (#2969).
 * **Plugin dock panels get their geometry right** - opening one (like a code tour) now resizes terminals above it so shell output doesn't vanish off-screen, panels reflow when the file explorer toggles instead of spilling at their old width, and dock hover/selection highlights span the whole row (#2969).
+* **A code tour opens every step into the same pane** - stepping through one while clicking between splits used to scatter its files across all of them (#2969).
 * **Auto-indent**
   * Typing `else:`, `except:` or a custom dedent keyword re-indents the line on the spot, like `}` always did (#2582).
   * Braceless `if`/`for`/`while` bodies indent correctly in TypeScript/JavaScript (#2492).
