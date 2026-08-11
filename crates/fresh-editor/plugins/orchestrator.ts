@@ -3864,6 +3864,7 @@ function mailboxEnv(workspaceId: number): Record<string, string> {
 /// structure. Anything unrecognised is treated as a summary with no state —
 /// a garbled line should still show the user what the agent tried to say.
 function parseStatus(raw: string, now: number): StatusReport | null {
+  if (typeof raw !== "string") return null;
   const line = raw.split("\n").find((l) => l.trim().length > 0);
   if (!line) return null;
   const text = line.trim();
@@ -3929,7 +3930,10 @@ function probeStatus(s: AgentSession): void {
   }
   // No file is the normal case for an agent that has not adopted the
   // convention: leave `status` undefined so screen inference stays in charge.
-  if (raw === null) return;
+  // `readFile` is typed `string | null` but answers `undefined` for a missing
+  // path, so a `=== null` test lets the miss through and the parse throws on
+  // every tick of the watch.
+  if (typeof raw !== "string") return;
   const parsed = parseStatus(raw, now);
   if (parsed) s.status = parsed;
 }
