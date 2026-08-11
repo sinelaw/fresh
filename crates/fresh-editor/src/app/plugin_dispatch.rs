@@ -3841,16 +3841,26 @@ impl Editor {
 
         // A plugin-created split changes every sibling pane's geometry — most
         // visibly for `role = "utility_dock"`, which splits at the *root* and
-        // so takes rows from every pane above it. Reflow through the single
-        // layout funnel here, the one fork both split shapes pass through, so
-        // an existing terminal's PTY is SIGWINCHed to its new pane instead of
-        // keeping the rows it had before the dock appeared. Without this a
-        // terminal kept writing below the pane's new bottom edge — the shell
-        // prompt and everything after it landed in grid rows that are never
-        // drawn (issue #2969 item 5). `relayout` is explicitly cheap to call
-        // redundantly, so the failed-split branch runs it too, exactly as
-        // `Editor::split_current` and the tab-drag drop fork do.
-        self.relayout();
+        // so takes rows from every pane above it. Push the new geometry down
+        // here, at the one fork both split shapes pass through, so an existing
+        // terminal's PTY is SIGWINCHed to its new pane instead of keeping the
+        // rows it had before the dock appeared. Without this a terminal kept
+        // writing below the pane's new bottom edge — the shell prompt and
+        // everything after it landed in grid rows that are never drawn
+        // (issue #2969 item 5).
+        //
+        // The geometry half only, *not* `relayout`: we are inside a plugin
+        // command whose callback has not been resolved yet (see below), so
+        // firing the `resize` hook from here re-enters the calling plugin
+        // before it knows its own buffer id. That is not hypothetical —
+        // `search_replace.ts` renders its panel through a `resultsBufferId`
+        // that is still `0` until this very callback resolves, so the hook
+        // mounted its panel into `BufferId(0)` and the panel came up blank.
+        // Terminals need nothing from the notify half.
+        //
+        // Cheap to call redundantly (PTY resizes are idempotent), so the
+        // failed-split branch runs it too, matching `Editor::split_current`.
+        self.push_layout_geometry();
 
         if let Some(req_id) = request_id {
             tracing::trace!(
