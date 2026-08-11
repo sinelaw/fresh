@@ -2013,3 +2013,93 @@ fn test_load_definition_picker_reaches_hidden_tour_files() {
         .unwrap();
     wait_for_step_settled(&mut harness);
 }
+
+// ---------------------------------------------------------------------------
+// The panel re-lays out when a sibling panel takes its width
+// ---------------------------------------------------------------------------
+
+/// The screen row the tour's body opens its two boxes on — the rail's
+/// `╭─ Steps ─…` and the prose section's `╭─ 1/2 · … ─…` — together with the
+/// number of box corners that close on it. A body laid out wider than the
+/// dock spills its corners onto the following row, so a count below two says
+/// the panel overflowed its region.
+fn body_box_top_row(harness: &EditorTestHarness) -> Option<(String, usize)> {
+    harness
+        .screen_to_string()
+        .lines()
+        .find(|l| l.contains("╭─ Steps"))
+        .map(|l| (l.to_string(), l.chars().filter(|c| *c == '╮').count()))
+}
+
+/// Opening the file explorer takes columns away from the tour's dock without
+/// any window resize. The panel must re-lay out into the region it now has.
+///
+/// It used not to: the layout funnel reseeded every split viewport from the
+/// post-dock *window* width, which never accounted for the file explorer, so
+/// toggling the explorer moved no viewport the panel could observe. The panel
+/// kept its previous, wider layout and overflowed — the box's top border
+/// spilled onto a second screen row, every content row was followed by a
+/// stray line carrying the right border that no longer fit, and the hint bar
+/// was pushed out of the dock entirely. It stayed that way until a step
+/// change or a window resize forced a re-layout.
+#[test]
+fn test_tour_panel_relayouts_when_the_explorer_narrows_the_dock() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+
+    // Baseline: the rail's box opens and closes on one screen row, and the
+    // hint bar is on screen below it.
+    let (before, before_closes) = body_box_top_row(&harness).unwrap_or_else(|| {
+        panic!(
+            "expected the Steps rail box before the explorer opens\nScreen:\n{}",
+            harness.screen_to_string()
+        )
+    });
+    assert_eq!(
+        before_closes, 2,
+        "baseline: both body boxes must open and close on one screen row\nRow: {before}"
+    );
+
+    // Read the code, then open the explorer beside it — the panel's own mode
+    // owns the keyboard while the panel holds focus, so click into the editor
+    // split first, exactly as a reader would.
+    harness.mouse_click(10, 3).unwrap();
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    // The explorer's panel and the tour's re-layout are both async; wait for
+    // the sidebar to paint and then for the frame to stop changing, so the
+    // assertions below read a settled screen either way. The sidebar draws a
+    // bordered box whose top-left corner sits at column 0 — nothing else
+    // paints a `┌` at the start of a line, so it is a locale-independent
+    // "the sidebar is on screen" signal.
+    harness
+        .wait_until_stable(|h| h.screen_to_string().lines().any(|l| l.starts_with('┌')))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let (after, after_closes) = body_box_top_row(&harness).unwrap_or_else(|| {
+        panic!("expected the Steps rail box to still be drawn\nScreen:\n{screen}")
+    });
+    assert_eq!(
+        after_closes, 2,
+        "the panel must re-lay out into the narrower dock: both body boxes \
+         have to open and close on the same screen row, not spill their \
+         right-hand corners onto the next one\nRow: {after}\nScreen:\n{screen}"
+    );
+    // A panel laid out too wide pushes its own tail off the bottom of the
+    // dock; the hint bar is the last band, so its presence says the whole
+    // panel still fits the rows it has.
+    assert!(
+        screen.contains("jump to code"),
+        "the hint bar must still be inside the dock after the explorer opens\
+         \nScreen:\n{screen}"
+    );
+}

@@ -508,20 +508,56 @@ impl Editor {
 impl crate::app::window::Window {
     /// Adopt the geometry handed down by [`Editor::relayout`]: cache the
     /// screen dimensions and the editor-global dock width, reseed every
-    /// split viewport against the post-dock editor width, and resize the
-    /// visible terminal PTYs. Per-split viewport dimensions are refined
-    /// again at paint time by `sync_viewport_to_content`; terminals have
-    /// no such paint-time sync, which is why their PTY size must be pushed
-    /// here.
+    /// split viewport against the pane rect that split will actually be
+    /// painted into, and resize the visible terminal PTYs. Per-split
+    /// viewport dimensions are refined again at paint time by
+    /// `sync_viewport_to_content` (which subtracts each pane's own chrome —
+    /// gutter, tab bar, scrollbars); terminals have no such paint-time sync,
+    /// which is why their PTY size must be pushed here.
     pub fn apply_layout(&mut self, width: u16, height: u16, dock_cols: u16) {
         self.terminal_width = width;
         self.terminal_height = height;
         self.dock_cols = dock_cols;
 
-        let editor_width = width.saturating_sub(dock_cols);
+        // Per-split pane rects, derived from the same content area the
+        // renderer and `resize_visible_terminals` lay out against — so the
+        // file explorer's columns (and a sibling split's) are already carved
+        // out of them.
+        let visible: Vec<(
+            crate::model::event::LeafId,
+            crate::model::event::BufferId,
+            ratatui::layout::Rect,
+        )> = match self.buffers.splits() {
+            Some((mgr, _)) => mgr.get_visible_buffers(self.editor_content_area()),
+            None => Vec::new(),
+        };
+
+        // Seed each visible split's viewport from its own pane rect. Seeding
+        // every split with the whole post-dock editor width instead — which is
+        // what this did — ignored the file explorer entirely, so toggling it
+        // changed no viewport here at all. Nothing downstream noticed the
+        // narrower panes until the *next* paint corrected them, and by then
+        // `notify_layout_changed` had already refreshed the plugin-facing
+        // snapshot and fired its hooks off the stale, too-wide geometry: a
+        // plugin panel that re-lays itself out in reaction (the code tour's
+        // dock panel) saw no width change, kept its old layout, and spilled
+        // out of the region it had been given until something else forced a
+        // re-layout. Toggling the *dock* never had that problem, because
+        // `dock_cols` was the one piece of chrome this did subtract.
+        //
+        // Splits that aren't on screen keep the coarse full-content-width
+        // seed; they have no rect of their own until they are laid out.
+        let content_width = self.editor_content_area().width;
+        let visible_rects: std::collections::HashMap<_, _> = visible
+            .iter()
+            .map(|(split_id, _, area)| (*split_id, *area))
+            .collect();
         if let Some(view_states) = self.split_view_states_mut() {
-            for view_state in view_states.values_mut() {
-                view_state.viewport.resize(editor_width, height);
+            for (split_id, view_state) in view_states.iter_mut() {
+                match visible_rects.get(split_id) {
+                    Some(area) => view_state.viewport.resize(area.width, area.height),
+                    None => view_state.viewport.resize(content_width, height),
+                }
             }
         }
 
@@ -534,20 +570,8 @@ impl crate::app::window::Window {
         // tab-scroll offset is never revisited. Use each split's real area
         // width (dock/explorer/split-aware), not the whole-window width, so
         // a half-width vertical split scrolls correctly too.
-        let visible: Vec<(
-            crate::model::event::LeafId,
-            crate::model::event::BufferId,
-            u16,
-        )> = match self.buffers.splits() {
-            Some((mgr, _)) => mgr
-                .get_visible_buffers(self.editor_content_area())
-                .into_iter()
-                .map(|(split_id, buffer_id, area)| (split_id, buffer_id, area.width))
-                .collect(),
-            None => Vec::new(),
-        };
-        for (split_id, buffer_id, tab_width) in visible {
-            self.ensure_active_tab_visible(split_id, buffer_id, tab_width);
+        for (split_id, buffer_id, area) in visible {
+            self.ensure_active_tab_visible(split_id, buffer_id, area.width);
         }
     }
 }
