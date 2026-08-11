@@ -986,6 +986,64 @@ fn test_overflowing_lists_show_scrollbars() {
     }
 }
 
+/// An overflowing list must not cost the section its right border.
+///
+/// The panel's scroll region deliberately reaches through the right padding
+/// onto the wrapping section's `│` border, so the bar hugs the box edge. The
+/// bar was painted as a blank cell per row, though, which rubbed the border
+/// out: as soon as the prose was taller than its window — any dock short
+/// enough, which includes a tour opened into an already-open bottom dock —
+/// the explanation box rendered with a top and a bottom border and no right
+/// edge at all on the rows between them.
+#[test]
+fn test_overflowing_lists_keep_the_section_border() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+    let first_row = load_overflow_tour(&mut harness, &project_root);
+
+    // The sections' shared top-border row carries one `╮` per box; those are
+    // the columns the two scrollbars paint on. Every glyph on the row is
+    // single-width, so char index == screen column.
+    let border_row = first_row - 1;
+    let screen = harness.screen_to_string();
+    let line = screen.lines().nth(border_row).expect("border row");
+    let closes: Vec<u16> = line
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c == '╮')
+        .map(|(i, _)| i as u16)
+        .collect();
+    assert_eq!(closes.len(), 2, "expected both section borders\n{line}");
+    // The body's last row is the one above the sections' bottom border.
+    let bottom_row = screen
+        .lines()
+        .skip(border_row)
+        .position(|l| l.contains('╰'))
+        .map(|offset| border_row + offset)
+        .unwrap_or_else(|| panic!("expected the sections' bottom border\nScreen:\n{screen}"));
+    assert!(
+        bottom_row > first_row,
+        "expected content rows between the borders\nScreen:\n{screen}"
+    );
+
+    for col in closes {
+        // The bar is still there — this is not "no scrollbar, no problem".
+        assert!(
+            harness.is_scrollbar_thumb_at(col, first_row as u16)
+                || harness.is_scrollbar_track_at(col, first_row as u16),
+            "expected a scrollbar cell on the border col {col} row {first_row}\nScreen:\n{screen}"
+        );
+        for row in first_row..bottom_row {
+            assert_eq!(
+                harness.get_cell(col, row as u16).as_deref(),
+                Some("│"),
+                "the section's right border must survive the scrollbar at \
+                 col {col} row {row}\nScreen:\n{screen}"
+            );
+        }
+    }
+}
+
 /// The selected rows' highlight stays inside the panel. Before the fix,
 /// the selection band's `extend_to_line_end` survived the row zipper and
 /// the painter flooded every cell right of the panel border — a stray
