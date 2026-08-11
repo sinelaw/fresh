@@ -219,8 +219,27 @@ fn dock_column(screen: &str) -> String {
         .join("\n")
 }
 
-/// Expand the dock's collapsible "Filters" section, which holds the density
-/// button and the two checkboxes.
+/// Click the toolbar's density button, which sits beside "Filters" rather
+/// than inside it. Used to put the dock in card density — the opposite of
+/// the compact default — so a probe that switches it *to* compact has
+/// somewhere to switch from.
+fn click_view_button(h: &mut EditorTestHarness) {
+    let screen = h.screen_to_string();
+    // Click the button itself, not the start of its row — the density button
+    // shares the toolbar row with "Filters", which owns the left edge.
+    let (vrow, vcol) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(r, l)| {
+            l.find("view:")
+                .map(|b| (r as u16, l[..b].chars().count() as u16))
+        })
+        .unwrap_or_else(|| panic!("screen missing 'view:':\n{screen}"));
+    h.mouse_click(vcol + 1, vrow).unwrap();
+}
+
+/// Expand the dock's collapsible "Filters" section, which holds the project
+/// control and the two checkboxes.
 fn expand_filters(h: &mut EditorTestHarness) {
     let screen = h.screen_to_string();
     let frow = screen
@@ -314,7 +333,8 @@ fn list_folders_reports_the_tree_the_dock_renders() {
 fn set_dock_view_switches_the_dock_to_compact() {
     let (_tmp, mut h) = harness();
     open_dock(&mut h);
-    expand_filters(&mut h);
+    // Start from card, so the probe has a density to change.
+    click_view_button(&mut h);
     h.wait_until(|h| h.screen_to_string().contains("view: card"))
         .unwrap();
 

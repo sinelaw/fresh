@@ -88,20 +88,32 @@ fn default_view_setting_opens_dock_compact() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    expand_filters(&mut h);
     h.wait_until(|h| h.screen_to_string().contains("view: compact"))
         .unwrap();
     h.assert_screen_not_contains("view: card");
 }
 
-/// The shipped default is unchanged: no setting ⇒ card density.
+/// No setting ⇒ compact density. The dock is a switcher first, and one line
+/// per workspace fits several times as many rows in the same column; the
+/// card's extra lines are detail you go looking for. An explicit
+/// `defaultView: "card"` still gets cards.
 #[test]
-fn default_view_setting_absent_opens_dock_card() {
+fn default_view_setting_absent_opens_dock_compact() {
     let (_tmp, root, config) = setup(serde_json::json!({}));
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    expand_filters(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+        .unwrap();
+    h.assert_screen_not_contains("view: card");
+}
+
+#[test]
+fn default_view_setting_card_opens_dock_card() {
+    let (_tmp, root, config) = setup(serde_json::json!({ "defaultView": "card" }));
+    let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
     h.wait_until(|h| h.screen_to_string().contains("view: card"))
         .unwrap();
 }

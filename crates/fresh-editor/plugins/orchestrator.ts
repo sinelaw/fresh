@@ -2679,11 +2679,21 @@ function renderPendingPillSpec(s: AgentSession): WidgetSpec {
     { text: proj, style: { fg: "ui.menu_disabled_fg", italic: true } },
   ];
 
-  // Compact: glyph + name on the left, the short status on the right.
+  // Compact: glyph + name on the left, the status on the right. A stuck
+  // workspace shows the short affordance ("↵ Retry") rather than its
+  // sentence-long message — the dock column is ~39 cells, so
+  // "Interrupted — press Enter to resume" clips to "Interrupted — press "
+  // and loses the very instruction it exists to give. The glyph and the
+  // colour already say something is wrong; the full message is a line of
+  // the card and an entry of the row menu away.
   if (dockMode && dockView === "compact") {
     return flexLine(
       [stateGlyphEntry(s), ...remoteGlyph, nameEntry],
-      [{ text: p.message, style: { fg: msgFg, italic: true } }],
+      [
+        actionable
+          ? { text: "↵ " + editor.t("dock.ctx_retry"), style: { fg: msgFg, italic: true } }
+          : { text: p.message, style: { fg: msgFg, italic: true } },
+      ],
     );
   }
 
