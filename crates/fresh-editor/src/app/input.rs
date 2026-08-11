@@ -493,7 +493,10 @@ impl Editor {
         slot: super::PanelSlot,
     ) -> Option<(fresh_core::WindowId, BufferId)> {
         let panel = self.panel(slot)?;
-        let focus_key = self.widget_registry.focus_key(&panel.panel_key)?.to_string();
+        let focus_key = self
+            .widget_registry
+            .focus_key(&panel.panel_key)?
+            .to_string();
         if focus_key.is_empty() {
             return None;
         }

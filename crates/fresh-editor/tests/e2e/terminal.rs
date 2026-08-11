@@ -5247,25 +5247,54 @@ fn test_read_and_write_terminal_in_a_non_active_window() {
         "precondition: the terminal's window must not be the active one"
     );
 
-    // Write to it by naming its window. Nothing about the active window
-    // should matter here.
-    harness.editor_mut().handle_send_terminal_input(
-        terminal_id,
-        Some(home),
-        "echo CROSSWINDOW\n".to_string(),
-    );
+    // Wait for the shell to come up, write to it, then wait for the echo.
+    //
+    // Two waits rather than one because they fail differently: a shell that
+    // never starts is an environment problem, an echo that never comes back
+    // is this feature broken.
+    //
+    // The budget is deliberately generous. A ConPTY shell on Windows can take
+    // seconds to produce its first byte — a 5s budget failed there, at 5.8s,
+    // while passing in under a second on Linux. That is a flaky test, not a
+    // signal.
+    let poll = std::time::Duration::from_millis(50);
+    let deadline = std::time::Duration::from_secs(30);
 
-    // The PTY answers asynchronously; pump until the echo lands.
-    let mut screen = None;
-    for _ in 0..100 {
+    let mut waited = std::time::Duration::ZERO;
+    while waited < deadline {
         harness.render().ok();
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        if let Ok(s) = harness.editor().terminal_screen(home, terminal_id, None, true) {
+        if harness
+            .editor()
+            .terminal_screen(home, terminal_id, None, true)
+            .is_ok_and(|s| !s.text.is_empty())
+        {
+            break;
+        }
+        std::thread::sleep(poll);
+        waited += poll;
+    }
+
+    // Write by naming its window. Nothing about which window is *active*
+    // should matter — that is the property under test.
+    harness
+        .editor_mut()
+        .send_terminal_input_to(home, terminal_id, "echo CROSSWINDOW\n");
+
+    let mut screen = None;
+    let mut waited = std::time::Duration::ZERO;
+    while waited < deadline {
+        harness.render().ok();
+        if let Ok(s) = harness
+            .editor()
+            .terminal_screen(home, terminal_id, None, true)
+        {
             if s.text.iter().any(|l| l.contains("CROSSWINDOW")) {
                 screen = Some(s);
                 break;
             }
         }
+        std::thread::sleep(poll);
+        waited += poll;
     }
 
     let screen = screen.unwrap_or_else(|| {
@@ -5327,7 +5356,9 @@ fn test_describe_environment_spans_windows() {
         env.windows.len()
     );
     assert!(
-        env.windows.windows(2).all(|w| w[0].window_id.0 <= w[1].window_id.0),
+        env.windows
+            .windows(2)
+            .all(|w| w[0].window_id.0 <= w[1].window_id.0),
         "windows are id-ordered so a repeated poll sees a stable list"
     );
 
@@ -5337,7 +5368,10 @@ fn test_describe_environment_spans_windows() {
         .find(|w| w.window_id == home)
         .expect("the non-active window must still be described");
     assert!(
-        described_home.terminals.iter().any(|t| t.terminal_id == terminal_id),
+        described_home
+            .terminals
+            .iter()
+            .any(|t| t.terminal_id == terminal_id),
         "a terminal in a non-active window must appear in the environment"
     );
     assert!(
