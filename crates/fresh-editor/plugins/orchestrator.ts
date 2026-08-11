@@ -163,6 +163,11 @@ interface AgentSession {
   // and whether that says it is waiting on the user. `undefined` until first
   // probed. See `probeTail`.
   tail?: TailProbe;
+  // What the agent itself last reported, from its `status` outbox.
+  // `undefined` for an agent that writes no status — which is every agent
+  // that has not adopted the convention, so this must never be assumed
+  // present. See `probeStatus` and the mailbox block above.
+  status?: StatusReport;
   // Buffer the session's terminal is shown through, resolved from
   // `describeEnvironment`. A `pane` widget addresses a *buffer*, so this is
   // what the Fleet's live pane needs — a terminal id alone cannot be drawn.
@@ -2079,6 +2084,26 @@ const IDLE_AFTER_MS = 5000;
 // stored `state` field is just a cache of this for persistence/sorting.
 // No output ever (or no terminal) ⇒ idle: we have no evidence of work.
 function sessionState(s: AgentSession): AgentState {
+  // What the agent says about itself outranks everything inferred about it.
+  //
+  // Screen matching is a guess about someone else's TUI: it cannot tell "the
+  // word Approve appeared in a diff the agent is showing me" from "I am
+  // asking you to approve", and it breaks whenever a vendor redraws a prompt.
+  // A line the agent wrote is direct testimony. `done` and `blocked` have no
+  // glyph of their own yet, so they read as idle and waiting respectively —
+  // both are "not working", and a blocked agent is one you need to look at.
+  if (s.status) {
+    switch (s.status.state) {
+      case "waiting":
+      case "blocked":
+        return "waiting";
+      case "working":
+        return "working";
+      case "idle":
+      case "done":
+        return "idle";
+    }
+  }
   // A question on screen outranks every timing signal below, including OSC.
   //
   // It has to: a TUI agent redraws its spinner while it waits, so by output
@@ -3765,6 +3790,150 @@ const MAX_CONCURRENT_GIT_PROBES = 6;
 // render would scale with frame rate instead of with time.
 // =============================================================================
 
+// =============================================================================
+// The mailbox — a pair of directories per agent
+//
+//   <dataDir>/orchestrator/agents/<workspaceId>/
+//     inbox/        instructions in  — one file per instruction
+//     inbox/done/   the agent moves a file here once it has acted
+//     status        one line out     — the agent rewrites it as it works
+//
+// Both halves depend on nothing but "agents read and write files", which is
+// true of every agent that exists, is indistinguishable from a human editing
+// a file, and survives any vendor CLI change. The agent participates because
+// its own briefing told it to — nothing is injected into its terminal.
+//
+// See docs/internal/agent-control-plane.md §8.1.
+// =============================================================================
+
+/// The states an agent may report. Deliberately the same vocabulary the dock
+/// already shows, plus `done`/`blocked` for things a screen cannot say.
+type ReportedState = "working" | "waiting" | "idle" | "done" | "blocked";
+
+const REPORTED_STATES: ReportedState[] = ["working", "waiting", "idle", "done", "blocked"];
+
+/// A parsed `status` line.
+interface StatusReport {
+  state: ReportedState;
+  summary: string;
+  /// File mtime proxy: when this plugin last read a changed line. Used only
+  /// to avoid re-reading an unchanged file.
+  readAt: number;
+  raw: string;
+}
+
+function agentDir(workspaceId: number): string {
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", "agents", String(workspaceId));
+}
+
+function statusPath(workspaceId: number): string {
+  return editor.pathJoin(agentDir(workspaceId), "status");
+}
+
+function inboxDir(workspaceId: number): string {
+  return editor.pathJoin(agentDir(workspaceId), "inbox");
+}
+
+/// Create the mailbox for a workspace. Cheap and idempotent; called at launch
+/// so the agent's very first turn finds the directories its briefing names.
+function ensureMailbox(workspaceId: number): void {
+  try {
+    editor.createDir(editor.localPath(inboxDir(workspaceId)));
+    editor.createDir(editor.localPath(editor.pathJoin(inboxDir(workspaceId), "done")));
+  } catch (_e) {
+    // A mailbox we could not create means the agent falls back to screen
+    // inference, which is the pre-mailbox behaviour — not an error worth
+    // interrupting a launch for.
+  }
+}
+
+/// Environment an agent needs to find its own mailbox.
+///
+/// Passed at spawn rather than discovered, because an agent should not have to
+/// know this plugin's directory layout to answer "where do I write my status".
+function mailboxEnv(workspaceId: number): Record<string, string> {
+  return {
+    FRESH_AGENT_STATUS: statusPath(workspaceId),
+    FRESH_AGENT_INBOX: inboxDir(workspaceId),
+  };
+}
+
+/// Parse a `status` line.
+///
+/// `<state> <summary>`, or a one-line JSON object for agents that prefer
+/// structure. Anything unrecognised is treated as a summary with no state —
+/// a garbled line should still show the user what the agent tried to say.
+function parseStatus(raw: string, now: number): StatusReport | null {
+  const line = raw.split("\n").find((l) => l.trim().length > 0);
+  if (!line) return null;
+  const text = line.trim();
+  if (text.startsWith("{")) {
+    try {
+      const o = JSON.parse(text) as { state?: string; summary?: string };
+      const st = REPORTED_STATES.find((s) => s === o.state);
+      if (st) return { state: st, summary: String(o.summary ?? ""), readAt: now, raw: text };
+    } catch (_e) {
+      // fall through to the bare form
+    }
+  }
+  const sp = text.indexOf(" ");
+  const head = (sp < 0 ? text : text.slice(0, sp)).toLowerCase();
+  const st = REPORTED_STATES.find((s) => s === head);
+  if (!st) return { state: "working", summary: text, readAt: now, raw: text };
+  return { state: st, summary: sp < 0 ? "" : text.slice(sp + 1).trim(), readAt: now, raw: text };
+}
+
+const STATUS_TTL_MS = 1_000;
+
+/// Last state broadcast per session, so `agent_state_change` fires on
+/// transitions rather than on every tick.
+const lastBroadcastState = new Map<number, string>();
+
+/// Broadcast a session's state to any subscriber, if it changed.
+///
+/// This is the event half of §6.3: the Orchestrator is the only thing that
+/// knows an agent's state, so it is the only thing that can say so. A watcher
+/// subscribes with `editor.on("agent_state_change", …)` exactly as it would
+/// for a host event.
+function broadcastState(s: AgentSession): void {
+  const st = sessionState(s);
+  const summary = s.status?.summary ?? s.tail?.waitingOn ?? s.tail?.lastLine ?? "";
+  const key = st + "\u0000" + summary;
+  if (lastBroadcastState.get(s.id) === key) return;
+  lastBroadcastState.set(s.id, key);
+  editor.emitEvent("agent_state_change", {
+    workspaceId: s.id,
+    name: workspaceDisplayName(s),
+    state: st,
+    summary,
+    // Where the claim came from, so a consumer can weigh it: the agent said
+    // so, or we inferred it from the screen.
+    source: s.status ? "agent" : "inferred",
+    branch: s.branch ?? s.git?.info?.branch ?? "",
+  });
+}
+
+/// Read a session's `status` file, if it wrote one.
+///
+/// Cheaper than `probeTail` by a wide margin — one small file read against a
+/// grid read plus a regex sweep over 40 rows — so it runs on the shorter TTL.
+function probeStatus(s: AgentSession): void {
+  if (s.discovered || s.pending) return;
+  const now = Date.now();
+  if (s.status && now - s.status.readAt < STATUS_TTL_MS) return;
+  let raw: string | null = null;
+  try {
+    raw = editor.readFile(editor.localPath(statusPath(s.id)));
+  } catch (_e) {
+    raw = null;
+  }
+  // No file is the normal case for an agent that has not adopted the
+  // convention: leave `status` undefined so screen inference stays in charge.
+  if (raw === null) return;
+  const parsed = parseStatus(raw, now);
+  if (parsed) s.status = parsed;
+}
+
 const TAIL_PROBE_TTL_MS = 2_000;
 // How many rows of the grid's bottom to pull. Enough to catch a multi-line
 // prompt (an approval dialog with its options underneath) without dragging in
@@ -3780,6 +3949,25 @@ interface TailProbe {
   // reason shown to the user ("Approve edit to …?" rather than a bare `!`).
   waitingOn: string;
 }
+
+/// Watch every live agent's `status` file and broadcast state changes.
+///
+/// Runs for the life of the plugin, not just while a view is open, because an
+/// event stream that only exists when someone is looking is not an event
+/// stream. This is affordable *because* of the outbox: one small file read per
+/// agent per tick, against the grid read plus 40-row regex sweep that screen
+/// inference would cost. An agent that writes no status contributes nothing
+/// here — its state still changes, but only a view that probes the tail will
+/// notice, exactly as before.
+const STATUS_WATCH_MS = 1_500;
+
+registerHandler("orchestrator_status_watch", function () {
+  for (const s of orchestratorSessions.values()) {
+    if (s.discovered || s.pending) continue;
+    probeStatus(s);
+    broadcastState(s);
+  }
+});
 
 const tailProbesInFlight = new Set<number>();
 
@@ -4102,6 +4290,7 @@ function startProbePolling(): void {
       void probePr(s);
       // Cheap enough to run unbounded alongside the others: an in-process
       // grid read, no subprocess. It self-throttles on its own (shorter) TTL.
+      probeStatus(s);
       void probeTail(s);
     }
     // Git probes drain at bounded concurrency (see `drainGitProbes`) rather
@@ -7133,6 +7322,32 @@ const FRESH_CLI_SYSTEM_PROMPT = [
   "",
   "The loop: orient with describeWorkspace(), find the call with `script api <query>`, then act and verify in one script.",
   "",
+  "YOUR MAILBOX \u2014 two files, and they are how anyone else knows what you are doing:",
+  "",
+  "  $FRESH_AGENT_STATUS  one line you rewrite whenever your state changes.",
+  "  $FRESH_AGENT_INBOX   a directory; each file in it is an instruction for you.",
+  "",
+  "Write your status often \u2014 on starting a task, on finishing one, and above all",
+  "the moment you are blocked and need the user. It is one line, `<state> <summary>`,",
+  "where state is one of working / waiting / idle / done / blocked:",
+  "",
+  "    echo \"working running the e2e suite\" > \"$FRESH_AGENT_STATUS\"",
+  "    echo \"waiting approve my edit to tests/e2e.rs\" > \"$FRESH_AGENT_STATUS\"",
+  "    echo \"done 3 files changed, suite green\" > \"$FRESH_AGENT_STATUS\"",
+  "",
+  "This is the only reliable way the user sees that you need them: the fleet view",
+  "falls back to guessing from your terminal output, which is often a spinner or a",
+  "half-drawn frame. A line you write is what it shows instead.",
+  "",
+  "Check your inbox at the start of each turn. Act on each file, then move it to",
+  "the done/ subdirectory \u2014 that move is the acknowledgement:",
+  "",
+  "    for f in \"$FRESH_AGENT_INBOX\"/*.md; do",
+  "      [ -e \"$f\" ] || continue",
+  "      cat \"$f\"                       # act on it",
+  "      mv \"$f\" \"$FRESH_AGENT_INBOX/done/\"",
+  "    done",
+  "",
   "RECIPES \u2014 copy and adapt:",
   "",
   "  // current layout: panes left-to-right, with geometry, kind (terminal/file/virtual) and focus",
@@ -9726,6 +9941,9 @@ async function runLocalCreate(id: number): Promise<void> {
   // keyboard out of whatever the user moved on to.
   const restoreTo = editor.activeWindow();
   setPendingMessage(id, editor.t("dock.pending_starting"));
+  // Before the spawn, so the agent's first turn finds the directories its
+  // briefing names rather than having to create them.
+  ensureMailbox(id);
   try {
     const result = await editor.createWindowWithTerminal({
       root,
@@ -9743,6 +9961,10 @@ async function runLocalCreate(id: number): Promise<void> {
       // whether or not the agent was taught about it. `teach` only gates the
       // prompt.
       allowScript: FRESH_CLI_ALLOW_SCRIPT,
+      // Where this agent reports its status and reads its instructions. Passed
+      // rather than discovered: an agent should not have to know this plugin's
+      // directory layout to answer "where do I write my status".
+      env: mailboxEnv(id),
     });
     const winId = result.windowId;
     // Dismissed during the (awaited) spawn: the window was born and dove in,
@@ -10146,6 +10368,7 @@ async function launchAgentInCurrentWorkspace(
     systemPrompt: teach?.via === "flag" ? FRESH_CLI_SYSTEM_PROMPT : undefined,
   });
   if (trimmedCmd) editor.setGlobalState("orchestrator.last_cmd", trimmedCmd);
+  ensureMailbox(editor.activeWindow());
   try {
     await editor.createTerminal({
       cwd,
@@ -10157,6 +10380,7 @@ async function launchAgentInCurrentWorkspace(
       // dialogue, where the token is always present and only the prompt is
       // gated by "Teach Fresh CLI".
       allowScript: FRESH_CLI_ALLOW_SCRIPT,
+      env: mailboxEnv(editor.activeWindow()),
       focus: true,
     });
   } catch (e) {
@@ -10445,6 +10669,24 @@ export type OrchestratorApi = {
    *  Resolves `true` once the workspace is active, `false` if no workspace
    *  matches. */
   focusWorkspace(target: string | number): Promise<boolean>;
+
+  /** Deliver an instruction to another agent by writing it into that agent's
+   *  inbox (`$FRESH_AGENT_INBOX`), the mailbox transport.
+   *
+   *  Reports **delivery, not completion**. The peer acts because its own
+   *  briefing told it to check the inbox; nothing is injected into its
+   *  terminal, and an instruction it never acts on stays visible as a file
+   *  that never moved to `done/`.
+   *
+   *  Resolves `{delivered: false, reason}` rather than throwing when the
+   *  target does not exist or the instruction is empty — a caller addressing
+   *  a workspace that has since closed should branch, not crash. */
+  delegate(options: {
+    target: string | number;
+    instruction: string;
+    from?: string;
+    intent?: string;
+  }): Promise<{ delivered: boolean; path?: string; reason?: string }>;
 
   // ── organising the dock ────────────────────────────────────────────────
   // The headless twins of the dock's row context menu and its "New Task… ▾"
@@ -11069,6 +11311,57 @@ function apiSetDockFilter(
   if (options.worktrees === true) void refreshDiscoveredWorktrees();
 }
 
+/// Deliver an instruction to another agent by writing it into that agent's
+/// inbox — the mailbox transport of docs/internal/agent-control-plane.md §8.1.
+///
+/// Reports **delivery, not completion**. The peer acts on the file because its
+/// own briefing told it to; nothing is injected into its terminal and nothing
+/// forces it to look. An instruction that is never acted on stays visible as a
+/// file that never moved to `done/`, which is a better failure than a silent
+/// one.
+async function apiDelegate(options: {
+  /// Target workspace: a `workspaceId` or a `windowId`, the same pair
+  /// `focusWorkspace` accepts.
+  target: string | number;
+  /// What you want done, in prose. The peer reads this as a human would.
+  instruction: string;
+  /// Who is asking, for the file's header. Defaults to `"user"`.
+  from?: string;
+  /// One-line imperative summary, for the header and the audit trail.
+  intent?: string;
+}): Promise<{ delivered: boolean; path?: string; reason?: string }> {
+  const s = resolveWorkspace(options.target);
+  if (!s) return { delivered: false, reason: "no workspace matches that target" };
+  const text = String(options.instruction ?? "").trim();
+  if (!text) return { delivered: false, reason: "empty instruction" };
+  ensureMailbox(s.id);
+  // Name the file so it sorts by time and cannot collide with a concurrent
+  // delegation to the same peer.
+  const now = new Date();
+  const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\..*$/, "");
+  const nonce = Math.random().toString(36).slice(2, 6);
+  const path = editor.pathJoin(inboxDir(s.id), `${stamp}-${nonce}.md`);
+  const header = [
+    "---",
+    `from: ${options.from ?? "user"}`,
+    `intent: ${options.intent ?? text.split("\n")[0].slice(0, 80)}`,
+    "---",
+    "",
+  ].join("\n");
+  const ok = editor.writeFile(editor.localPath(path), header + text + "\n");
+  if (!ok) return { delivered: false, reason: "could not write to the inbox" };
+  // Say so out loud: a delegation is an action taken on the user's behalf in a
+  // workspace they may not be looking at.
+  editor.emitEvent("agent_delegated", {
+    workspaceId: s.id,
+    name: workspaceDisplayName(s),
+    from: options.from ?? "user",
+    intent: options.intent ?? "",
+    path,
+  });
+  return { delivered: true, path };
+}
+
 editor.exportPluginApi("orchestrator", {
   runAgent,
   newWorkspace,
@@ -11087,6 +11380,7 @@ editor.exportPluginApi("orchestrator", {
   unarchiveWorkspace: apiUnarchiveWorkspace,
   setDockView: apiSetDockView,
   setDockFilter: apiSetDockFilter,
+  delegate: apiDelegate,
 });
 
 // Form key bindings — each delegates to smart-key dispatch on the
@@ -12406,6 +12700,13 @@ function killSelected(): void {
 // Lifecycle hook handlers
 // =============================================================================
 
+// The status watch is the event stream's producer, so it starts with the
+// plugin rather than with any view. `setInterval` over a self-scheduling loop
+// on purpose: the host drives it, a throw in one tick does not stop the next,
+// and it is cancelled on reload — the three things a hand-rolled loop has to
+// get right and usually does not (see `help plugin`).
+editor.setInterval(STATUS_WATCH_MS, "orchestrator_status_watch");
+
 editor.on("window_created", () => {
   // The orchestrator's own new-session flow uses
   // `createWindowWithTerminal` (atomic — populates the window
@@ -12778,8 +13079,14 @@ function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
 
   // The reason column. A waiting agent's question outranks its last line —
   // if it is blocked, that is the only thing worth the space.
-  const waiting = s.tail?.waitingOn ?? "";
-  const said = s.tail?.lastLine ?? "";
+  // The agent's own summary wins: "running cargo bench --bench io" is what it
+  // knows it is doing, where the last terminal line is whatever happened to be
+  // printed — often a progress bar, a blank, or half a redraw.
+  const reported = s.status?.summary ?? "";
+  const waiting = reported && sessionState(s) === "waiting"
+    ? reported
+    : (s.tail?.waitingOn ?? "");
+  const said = reported || (s.tail?.lastLine ?? "");
   const used = 2 + (nameW + 1) + (showAgent ? 11 : 0) + (showBranch ? 18 : 0);
   const room = Math.max(8, width - used);
   const detail = waiting || said;
@@ -12947,7 +13254,12 @@ function startFleetTicking(): void {
     // refresh — so a row could outlive its window and selecting it would point at
     // nothing.
     reconcileSessions();
-    for (const s of fleetRows()) void probeTail(s);
+    for (const s of fleetRows()) {
+      // Status first: it is the cheaper read and the authoritative one, and
+      // when it answers the tail probe's result is only a fallback.
+      probeStatus(s);
+      void probeTail(s);
+    }
     renderFleet();
     holdFleetFocus();
     void editor.delay(FLEET_TICK_MS).then(tick);

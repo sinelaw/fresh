@@ -6656,6 +6656,40 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Broadcast an event to every plugin subscribed to `name`, as
+    /// `editor.on(name, handler)`.
+    ///
+    /// The counterpart of `on` for events the host does not produce. A
+    /// subscriber cannot tell a plugin-emitted event from a host one, and
+    /// that is the point: a watcher subscribes to `agent_state_change`
+    /// — which only Orchestrator can know — exactly as it subscribes to
+    /// `window_created`, which the host emits.
+    ///
+    /// The emitting plugin receives its own event too. Filter on the
+    /// payload's `from` field when that matters.
+    ///
+    /// ```js
+    /// editor.emitEvent("agent_state_change", {
+    ///   workspaceId: 12, state: "waiting", summary: "approve edit to e2e.rs",
+    /// });
+    /// ```
+    #[qjs(rename = "emitEvent")]
+    pub fn emit_event<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+        #[plugin_api(ts_type = "unknown")] payload: rquickjs::Value<'js>,
+    ) -> bool {
+        let payload = js_to_json(&ctx, payload);
+        self.command_sender
+            .send(PluginCommand::EmitEvent {
+                plugin: self.plugin_name.clone(),
+                name,
+                payload,
+            })
+            .is_ok()
+    }
+
     // === Async Operations ===
 
     /// Spawn a process (async, returns request_id)

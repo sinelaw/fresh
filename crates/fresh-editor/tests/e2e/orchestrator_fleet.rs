@@ -447,3 +447,86 @@ fn fleet_shows_why_an_agent_is_blocked() {
          its options. Row:\n{row}"
     );
 }
+
+/// An agent's own `status` line outranks anything inferred from its screen.
+///
+/// The outbox is the mailbox's read half (docs/internal/agent-control-plane.md
+/// §8.1). Screen matching is a guess about someone else's TUI: it cannot tell
+/// "the word Approve appeared in a diff the agent is showing me" from "I am
+/// asking you to approve". This test puts the two in direct conflict — a
+/// terminal printing a question that the `claude` registry pattern matches,
+/// and a status file saying the agent is merely working — and asserts the
+/// agent's own claim wins, both for the state glyph and for the reason column.
+#[test]
+fn an_agents_own_status_outranks_its_screen() {
+    let (_tmp, root) = setup_project("epsilonproj");
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    h.editor_mut().open_terminal();
+    h.render().unwrap();
+
+    let buffer_id = h.editor().active_buffer_id();
+    let terminal_id = h
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("the active buffer should be the terminal just opened");
+    let home = h.editor().active_window_id();
+    h.wait_until(|h| {
+        h.editor()
+            .terminal_screen(home, terminal_id, None, true)
+            .is_ok_and(|s| !s.text.is_empty())
+    })
+    .unwrap();
+
+    // Say, on screen, exactly what the screen-matching path looks for.
+    h.editor_mut().send_terminal_input_to(
+        home,
+        terminal_id,
+        "printf '\\033]0;claude\\007'; echo 'Do you want to make this edit to tests/e2e.rs?'\n",
+    );
+    h.wait_until(|h| {
+        h.editor()
+            .terminal_screen(home, terminal_id, None, true)
+            .is_ok_and(|s| s.text.iter().any(|l| l.contains("Do you want")))
+    })
+    .unwrap();
+
+    // …and contradict it in the outbox. The window id is the workspace id the
+    // mailbox is keyed by, which is what the plugin passes as
+    // `$FRESH_AGENT_STATUS` at launch.
+    let status_dir = h
+        .editor()
+        .dir_context()
+        .data_dir
+        .join("orchestrator")
+        .join("agents")
+        .join(home.0.to_string());
+    fs::create_dir_all(&status_dir).unwrap();
+    fs::write(
+        status_dir.join("status"),
+        "working rebuilding the index, nothing needed from you\n",
+    )
+    .unwrap();
+
+    open_fleet(&mut h);
+
+    // The agent's summary is what the row shows…
+    h.wait_until(|h| h.screen_to_string().contains("rebuilding the index"))
+        .unwrap();
+    // …and the question on screen must not have raised the needs-you state,
+    // because the agent said it is working.
+    let screen = h.screen_to_string();
+    let header = screen
+        .lines()
+        .find(|l| l.contains("agents ·") || l.contains("agent ·"))
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        header.contains("none waiting"),
+        "the agent said `working`, so nothing should be flagged as waiting:\n{screen}"
+    );
+}

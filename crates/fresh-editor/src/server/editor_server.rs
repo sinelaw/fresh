@@ -1421,10 +1421,14 @@ impl EditorServer {
                         }
                     }
                 }
-                ClientControl::RunScript { source } => {
+                ClientControl::RunScript { source, as_name } => {
                     let token = self.clients.get(idx).and_then(|c| c.cmd_token.clone());
-                    let dispatch =
-                        command_access::run_script(self.editor.as_mut(), token.as_deref(), &source);
+                    let dispatch = command_access::run_script(
+                        self.editor.as_mut(),
+                        token.as_deref(),
+                        &source,
+                        as_name.as_deref(),
+                    );
                     match dispatch {
                         // Only a refusal settles here — a script that started
                         // answers for itself.

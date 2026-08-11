@@ -3159,6 +3159,27 @@ pub enum PluginCommand {
     /// Set status message
     SetStatus { message: String },
 
+    /// Broadcast an event to every plugin subscribed to `name`.
+    ///
+    /// The counterpart of `editor.on(name, handler)` for events the host
+    /// does not itself produce. A subscriber cannot tell — and should not
+    /// care — whether an event came from the host or from a peer plugin;
+    /// that symmetry is what lets a watcher subscribe to
+    /// `agent_state_change` (emitted by Orchestrator, which is the only
+    /// thing that knows an agent's state) the same way it subscribes to
+    /// `window_created` (emitted by the host).
+    EmitEvent {
+        /// Plugin that emitted it, filled in by the runtime.
+        plugin: String,
+        /// Event name. Arbitrary: the host cannot know which names are
+        /// meaningful, and gating on a permitted list would mean editing
+        /// the host every time a plugin had something new to say.
+        name: String,
+        /// Event payload, delivered verbatim.
+        #[ts(type = "unknown")]
+        payload: serde_json::Value,
+    },
+
     /// Apply a theme by name
     ApplyTheme { theme_name: String },
 

@@ -746,7 +746,10 @@ type TerminalScreenInfo = {
 	*/
 	cols: number;
 	/**
-	* Cursor position as `(row, col)`, 0-indexed within the *full* grid.
+	* Cursor position as `(column, row)`, 0-indexed within the *full* grid
+	* — column first, matching the terminal's own `cursor_position()`.
+	* Stated explicitly because the type is a bare pair of numbers, so this
+	* comment is the only thing that says which is which.
 	*/
 	cursor: [number, number];
 	/**
@@ -4546,6 +4549,26 @@ interface EditorAPI {
 	*/
 	floatingPanelControl(panelId: number, op: string, arg: number): boolean;
 	/**
+	* Broadcast an event to every plugin subscribed to `name`, as
+	* `editor.on(name, handler)`.
+	* 
+	* The counterpart of `on` for events the host does not produce. A
+	* subscriber cannot tell a plugin-emitted event from a host one, and
+	* that is the point: a watcher subscribes to `agent_state_change`
+	* — which only Orchestrator can know — exactly as it subscribes to
+	* `window_created`, which the host emits.
+	* 
+	* The emitting plugin receives its own event too. Filter on the
+	* payload's `from` field when that matters.
+	* 
+	* ```js
+	* editor.emitEvent("agent_state_change", {
+	* workspaceId: 12, state: "waiting", summary: "approve edit to e2e.rs",
+	* });
+	* ```
+	*/
+	emitEvent(name: string, payload: unknown): boolean;
+	/**
 	* Spawn a process (async, returns request_id)
 	* 
 	* **No shell is involved.** `command` is executed directly, so quoting,
@@ -4910,6 +4933,19 @@ interface EditorAPI {
 	*/
 	sendTerminalInput(terminalId: number, data: string, windowId?: number): boolean;
 	/**
+	* Describe every open window and the terminals in it.
+	* 
+	* The cross-window counterpart to `describeWorkspace()`, which reports
+	* only the window you are pointed at. This is the one call that answers
+	* "what is going on everywhere" — before it, that took a call per window
+	* and still could not reach another window's terminals at all.
+	* 
+	* Structural facts only. Whether a terminal holds an agent, and whether
+	* that agent is working or waiting on you, comes from the Orchestrator's
+	* own listing, which joins on `terminalId`.
+	*/
+	describeEnvironment(): Promise<EnvironmentDescription>;
+	/**
 	* Read a terminal's live screen as plain text rows.
 	* 
 	* Both ids are required: terminals are owned per-window, so a terminal
@@ -4926,18 +4962,7 @@ interface EditorAPI {
 	* This is the cheap, reason-over-it view. To *show* a human another
 	* workspace's terminal, render the window itself rather than pasting
 	* this into a buffer.
-	* Describe every open window and the terminals in it.
-	* 
-	* The cross-window counterpart to `describeWorkspace()`, which reports
-	* only the window you are pointed at. This is the one call that answers
-	* "what is going on everywhere" — before it, that took a call per window
-	* and still could not reach another window's terminals at all.
-	* 
-	* Structural facts only. Whether a terminal holds an agent, and whether
-	* that agent is working or waiting on you, comes from the Orchestrator's
-	* own listing, which joins on `terminalId`.
 	*/
-	describeEnvironment(): Promise<EnvironmentDescription>;
 	readTerminal(windowId: number, terminalId: number, lines?: number, trim?: boolean): Promise<TerminalScreenInfo>;
 	/**
 	* Close a terminal

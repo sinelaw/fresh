@@ -3656,7 +3656,7 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
                 _ => {
                     eprintln!("usage: fresh --cmd script api <query>     search the API by name or description");
                     eprintln!("       fresh --cmd script check [FILE|-]  parse + check editor.* names, without running");
-                    eprintln!("       fresh --cmd script run [FILE|-]    evaluate against this workspace (default: stdin)");
+                    eprintln!("       fresh --cmd script run [--as NAME] [FILE|-]  evaluate against this workspace (default: stdin)");
                     eprintln!("       fresh --cmd script types           paths of the API declaration files");
                     std::process::exit(2);
                 }
@@ -3870,7 +3870,7 @@ Drive a running Fresh with the same API plugins use. A script runs as
 the body of an async function with an `editor` global; whatever it
 returns is printed as JSON. Source comes from a file or stdin.
 
-  fresh --cmd script run [FILE|-]           evaluate against this workspace
+  fresh --cmd script run [--as NAME] [FILE|-]  evaluate against this workspace
   fresh --cmd script check [FILE|-]         parse + check editor.* names, no run
   fresh --cmd script api <query> [--json]   search the API by name/description
   fresh --cmd script types                  paths of the API declaration files
@@ -3885,11 +3885,17 @@ Those three are the author → reload → test loop for customizing the editor:
 edit init.ts, `init reload`, then `command run` the command you registered.
 No keystroke from the user is needed at any point.
 
-Target a specific daemon with --session NAME (default: the daemon of the
-current working directory). Inside a Fresh terminal the right session is
-already in `$FRESH_SESSION`, so no flag is needed — reach for --session only
-when running from outside, where `fresh --cmd daemon list` names the
-candidates.
+A script that sticks around — a panel, an event watcher — should be named:
+
+  fresh --cmd script run --as fleet-watch watch.ts
+
+A submitted script is loaded as a real plugin and is never unloaded on its
+own, because unloading runs the cleanup path that would tear down the
+terminals and workspaces scripts are usually run to create. So an unnamed
+script that mounts a panel or subscribes to an event leaves another copy
+running every time you submit it. `--as` replaces the previous load of that
+name instead, which makes install idempotent and `edit → re-run` a loop
+rather than a leak.
 
 Examples:
   echo 'return editor.listBuffers().map(b => b.path)' | fresh --cmd script run
@@ -4183,12 +4189,46 @@ fn script_types() -> AnyhowResult<()> {
 ///
 /// Whatever the script returns is printed as JSON; a throw becomes a non-zero
 /// exit with the message on stderr.
+/// `script run [--as NAME] [FILE|-]`.
+///
+/// `--as` names the loaded plugin so a persistent script — a panel, an event
+/// watcher — can be re-submitted without stacking another copy of itself. A
+/// script is never unloaded on its own, so without a name every submission
+/// leaves the previous one running.
 fn script_run(session: Option<&str>, from: &[&str]) -> AnyhowResult<()> {
-    let source = read_script_source(from)?;
+    let (as_name, rest) = take_as_flag(from)?;
+    let rest_refs: Vec<&str> = rest.iter().map(|s| s.as_str()).collect();
+    let source = read_script_source(&rest_refs)?;
     if source.trim().is_empty() {
         anyhow::bail!("empty script: pass a file, or pipe the source on stdin");
     }
-    submit_script(session, source, false)
+    submit_script_as(session, source, false, as_name)
+}
+
+/// Split `--as NAME` (or `--as=NAME`) out of the argument list, wherever it
+/// appears — a flag that only worked before the filename would be a trap.
+fn take_as_flag(args: &[&str]) -> AnyhowResult<(Option<String>, Vec<String>)> {
+    let mut name: Option<String> = None;
+    let mut rest: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        if let Some(v) = arg.strip_prefix("--as=") {
+            name = Some(v.to_string());
+        } else if *arg == "--as" {
+            let v = it.next().ok_or_else(|| {
+                anyhow::anyhow!("--as needs a name: fresh --cmd script run --as my-watcher")
+            })?;
+            name = Some((*v).to_string());
+        } else {
+            rest.push((*arg).to_string());
+        }
+    }
+    if let Some(n) = name.as_deref() {
+        if n.trim().is_empty() {
+            anyhow::bail!("--as needs a non-empty name");
+        }
+    }
+    Ok((name, rest))
 }
 
 /// Send `source` to a live editor's script channel and report the outcome:
@@ -4204,11 +4244,20 @@ fn script_run(session: Option<&str>, from: &[&str]) -> AnyhowResult<()> {
 /// caller asked for JSON); the convenience verbs return prose meant to be
 /// read, where the surrounding quotes and `\n` escapes would be noise.
 fn submit_script(session: Option<&str>, source: String, unwrap_string: bool) -> AnyhowResult<()> {
+    submit_script_as(session, source, unwrap_string, None)
+}
+
+fn submit_script_as(
+    session: Option<&str>,
+    source: String,
+    unwrap_string: bool,
+    as_name: Option<String>,
+) -> AnyhowResult<()> {
     use fresh::server::protocol::ClientControl;
 
     let socket = resolve_cmd_socket(session)?;
     let mut conn = connect_cmd(&socket)?;
-    conn.send(&ClientControl::RunScript { source })?;
+    conn.send(&ClientControl::RunScript { source, as_name })?;
 
     // A script gets the long wait: it can create a workspace (a git worktree
     // plus an agent process) before it answers, and timing that out would

@@ -869,6 +869,23 @@ impl Editor {
             PluginCommand::SetStatus { message } => {
                 self.handle_set_status(message);
             }
+            PluginCommand::EmitEvent {
+                plugin,
+                name,
+                payload,
+            } => {
+                // Straight through to the same hook channel the host's own
+                // events use, under the emitter's chosen name — so
+                // `editor.on("agent_state_change", …)` works identically
+                // whether the host or a peer plugin produced it.
+                self.plugin_manager.read().unwrap().run_hook(
+                    &name,
+                    crate::services::plugins::hooks::HookArgs::PluginEvent {
+                        from: plugin,
+                        payload,
+                    },
+                );
+            }
             PluginCommand::ApplyTheme { theme_name } => {
                 self.apply_theme(&theme_name);
             }

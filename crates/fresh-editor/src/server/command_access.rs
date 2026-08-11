@@ -302,6 +302,7 @@ pub fn run_script(
     editor: Option<&mut Editor>,
     token: Option<&str>,
     source: &str,
+    as_name: Option<&str>,
 ) -> CommandDispatch {
     let Some(token) = token else {
         return CommandDispatch::refused(NO_TOKEN_HELP);
@@ -332,7 +333,7 @@ pub fn run_script(
 
     let request_id = next_request_id();
     let wrapped = wrap_script(source, request_id, window_id);
-    match editor.eval_agent_script(&wrapped, request_id) {
+    match editor.eval_agent_script(&wrapped, request_id, as_name) {
         Ok(()) => CommandDispatch::Pending { request_id },
         Err(e) => CommandDispatch::refused(e),
     }
@@ -427,13 +428,18 @@ mod tests {
 
     #[test]
     fn run_script_without_token_is_refused() {
-        let reason = refusal_reason(run_script(None, None, "return 1;"));
+        let reason = refusal_reason(run_script(None, None, "return 1;", None));
         assert!(reason.contains("not authorized"), "{}", reason);
     }
 
     #[test]
     fn run_script_unknown_token_is_refused() {
-        let reason = refusal_reason(run_script(None, Some("not-a-real-token"), "return 1;"));
+        let reason = refusal_reason(run_script(
+            None,
+            Some("not-a-real-token"),
+            "return 1;",
+            None,
+        ));
         assert!(reason.contains("unknown or expired"), "{}", reason);
     }
 
@@ -444,7 +450,7 @@ mod tests {
     #[test]
     fn run_script_without_the_grant_is_refused() {
         let token = mint(Grant::new(Some(1), false));
-        let reason = refusal_reason(run_script(None, Some(&token), "return 1;"));
+        let reason = refusal_reason(run_script(None, Some(&token), "return 1;", None));
         assert!(reason.contains("not granted editor control"), "{}", reason);
         revoke(&token);
     }

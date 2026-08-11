@@ -549,6 +549,27 @@ pub enum HookArgs {
         #[serde(default)]
         payload: serde_json::Value,
     },
+
+    /// An event one plugin broadcast to the others via
+    /// `editor.emitEvent(name, payload)`.
+    ///
+    /// The hook *name* is the event name the emitter chose, so a
+    /// subscriber writes `editor.on("agent_state_change", …)` exactly as
+    /// it would for a host event — plugin-emitted and host-emitted
+    /// events are the same thing to a subscriber, which is the point.
+    /// This variant only carries the payload across.
+    ///
+    /// Deliberately unvalidated: the host does not know which names are
+    /// meaningful, and a registry of permitted event names would have to
+    /// be edited every time a plugin wanted to say something new.
+    PluginEvent {
+        /// Plugin that emitted it, so a subscriber can tell a peer's
+        /// event from its own echo.
+        from: String,
+        /// Event-specific JSON payload, verbatim.
+        #[serde(default)]
+        payload: serde_json::Value,
+    },
 }
 
 /// Information about a single line for the LinesChanged hook
