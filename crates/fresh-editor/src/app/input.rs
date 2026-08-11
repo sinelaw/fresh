@@ -475,6 +475,71 @@ impl Editor {
         }
     }
 
+    /// Deliver `key_event` to the buffer inside a focused, interactive
+    /// `Pane` widget. Returns whether it was consumed.
+    ///
+    /// This is what makes a pane a *pane* rather than a picture. A
+    /// terminal in a split is interactive because focusing it routes
+    /// keys through `key_to_pty_bytes` to its PTY; a pane earns the same
+    /// treatment by naming the same buffer, so the translation — app
+    /// cursor mode, modifiers, the lot — is the shared one rather than a
+    /// per-key table maintained alongside it.
+    ///
+    /// Terminals only. A file pane's keys would mean *editing*, which
+    /// brings undo, LSP and save with it — a decision a panel should not
+    /// make implicitly, so a non-terminal pane simply declines the key.
+    fn focused_interactive_pane(
+        &self,
+        slot: super::PanelSlot,
+    ) -> Option<(fresh_core::WindowId, BufferId)> {
+        let panel = self.panel(slot)?;
+        let focus_key = self.widget_registry.focus_key(&panel.panel_key)?.to_string();
+        if focus_key.is_empty() {
+            return None;
+        }
+        panel.embeds.iter().find_map(|e| {
+            let key = e.key.as_deref()?;
+            let buffer_id = e.buffer_id?;
+            (e.interactive && key == focus_key).then_some((
+                fresh_core::WindowId(e.window_id as u64),
+                BufferId(buffer_id as usize),
+            ))
+        })
+    }
+
+    fn send_key_to_pane(
+        &mut self,
+        window_id: fresh_core::WindowId,
+        buffer_id: BufferId,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> bool {
+        let key_event = &crossterm::event::KeyEvent::new(code, modifiers);
+        let Some(window) = self.windows.get(&window_id) else {
+            return false;
+        };
+        let Some(terminal_id) = window.get_terminal_id(buffer_id) else {
+            return false;
+        };
+        let Some(handle) = window.terminal_manager.get(terminal_id) else {
+            return false;
+        };
+        let app_cursor = handle
+            .state
+            .lock()
+            .map(|s| s.is_app_cursor())
+            .unwrap_or(false);
+        let Some(bytes) = crate::services::terminal::pty::key_to_pty_bytes(
+            key_event.code,
+            key_event.modifiers,
+            app_cursor,
+        ) else {
+            return false;
+        };
+        handle.write(&bytes);
+        true
+    }
+
     /// When an *unfocused* popup is on screen, resolve the key event
     /// against `KeyContext::Popup`/`Global` so the user's bound
     /// `popup_cancel` (default Esc) and `popup_focus` (default Alt+T)
@@ -592,6 +657,21 @@ impl Editor {
             ?outcome,
             "dispatch_floating_widget_key: decision"
         );
+        // An interactive `Pane` behaves like a focused terminal split: the
+        // buffer inside it takes the keystroke. Anything the outcome would
+        // otherwise consume as text or a smart key belongs to that PTY.
+        //
+        // `FallThrough` is deliberately excluded. That is how the plugin's own
+        // mode bindings get a look — without it a focused pane would swallow
+        // the very key that gets you back out of it.
+        if !matches!(outcome, WidgetKeyOutcome::FallThrough) {
+            if let Some((window_id, buffer_id)) = self.focused_interactive_pane(slot) {
+                if self.send_key_to_pane(window_id, buffer_id, code, modifiers) {
+                    return true;
+                }
+            }
+        }
+
         match outcome {
             WidgetKeyOutcome::DockEvent(event_type) => {
                 self.fire_dock_widget_event(&panel_key, event_type);

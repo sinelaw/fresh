@@ -374,34 +374,16 @@ agent's PTY by `(windowId, terminalId)` — so an approval prompt can be
 answered without leaving the view (§6.6). Enter, the arrows, Escape and
 Ctrl+C forward; so do the digits and `y`/`n` that answer a prompt.
 
-Free-form typing does **not** work: the host's floating-panel key path hands a
-plugin only the bare characters its mode explicitly claims, so the answer keys
-are bound one at a time. `mode_text_input` is never emitted for a
-panel-focused mode, and neither the mode's `allow_text_input` nor its
-`read_only` flag changes that — both were tried, with the handler instrumented
-to confirm it never fires.
+Typing works, including free-form prose, because the live pane is a `pane`
+widget rather than a picture. A focused interactive pane takes any key the
+panel's own mode does not claim and routes it through `key_to_pty_bytes` — the
+same translation a focused terminal split uses, so app-cursor mode and
+modifiers come from one place rather than a table maintained beside it. The
+Fleet's mode claims only Tab, its way back out.
 
-That gap is a symptom, and forwarding more keys is the wrong fix. **The embed
-is a picture, not a pane.** A terminal is interactive because it is a *buffer
-in a split*: focus that split and the key pipeline resolves
-`active_buffer -> terminal_id -> PTY`, with `key_to_pty_bytes` handling
-app-cursor mode and modifiers. Scrollback, mouse forwarding, selection, copy
-and link hover all hang off the same fact. `windowEmbed` has no buffer and no
-split, so none of it applies, and per-key forwarding is a hand-rebuild of
-`key_to_pty_bytes` that will never be complete.
-
-The right shape is a **cross-window terminal pane**: let a split hold a
-terminal owned by another window, addressed as `(windowId, terminalId)`.
-Everything above then arrives for free, and the forwarding code is deleted
-rather than extended. "One PTY, several views, one input target" is already
-Fresh's shipped design within a window — two splits can show one terminal, one
-scrolled back while the other streams, independently and off-focus — so this
-extends a deliberate model rather than inventing one. Combined with the
-sizing rule in §6.5, there is then no cropping compromise left anywhere.
-
-The Fleet's own strings are English-only, unlike the rest of the Orchestrator,
-which is fully localised across fourteen locales. That is a gap to close, not
-a decision.
+That is the fix for a limitation an earlier draft of this document called
+"needs host work". It did — but the work was making the embed a pane, not
+forwarding more keys. Per-key forwarding was deleted rather than extended.
 
 ### 7.3 Home
 

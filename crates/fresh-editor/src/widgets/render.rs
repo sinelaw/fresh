@@ -276,9 +276,13 @@ pub struct OverlayRow {
 /// matches the spec's `rows`. The host's floating-panel render
 /// walks these and invokes the per-window paint path scoped to
 /// the rect.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct EmbedRect {
     pub window_id: u32,
+    /// The widget's `key`, when it has one. Carried so the host can
+    /// tell whether a focused widget *is* this pane — the check that
+    /// decides whether a keystroke belongs to the buffer inside it.
+    pub key: Option<String>,
     /// `None` for a `WindowEmbed` — paint the whole session, split
     /// tree and chrome included. `Some(id)` for a `Pane` — paint just
     /// that one buffer.
@@ -693,6 +697,16 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
         } if !k.is_empty() && *focusable => {
             out.push(k.clone());
         }
+        // Only an *interactive* pane is tabbable. A read-only pane is a
+        // picture of a buffer, and focusing something that cannot answer a
+        // keystroke just adds a dead stop to the Tab cycle.
+        WidgetSpec::Pane {
+            key: Some(k),
+            interactive,
+            ..
+        } if !k.is_empty() && *interactive => {
+            out.push(k.clone());
+        }
         _ => {}
     }
     for c in spec.children() {
@@ -946,18 +960,21 @@ fn render_collected(
             collect_labeled_section(label, child, prev, next_state, ctx, panel_width)
         }
         WidgetSpec::WindowEmbed {
-            window_id, rows, ..
-        } => collect_embed_rect(*window_id, None, false, *rows, panel_width),
+            window_id,
+            rows,
+            key,
+        } => collect_embed_rect(*window_id, None, false, key.clone(), *rows, panel_width),
         WidgetSpec::Pane {
             window_id,
             buffer_id,
             rows,
             interactive,
-            ..
+            key,
         } => collect_embed_rect(
             *window_id,
             Some(*buffer_id),
             *interactive,
+            key.clone(),
             *rows,
             panel_width,
         ),
@@ -2366,6 +2383,7 @@ fn collect_embed_rect(
     window_id: u32,
     buffer_id: Option<u32>,
     interactive: bool,
+    key: Option<String>,
     embed_rows: u32,
     panel_width: u32,
 ) -> CollectedOutput {
@@ -2393,6 +2411,7 @@ fn collect_embed_rect(
     }
     out.embeds.push(EmbedRect {
         window_id,
+        key,
         buffer_id,
         interactive,
         buffer_row: 0,
@@ -6676,6 +6695,7 @@ fn zip_row_blocks(
                         for emb in inline_embeds {
                             out_embeds.push(EmbedRect {
                                 window_id: emb.window_id,
+                                key: emb.key.clone(),
                                 buffer_id: emb.buffer_id,
                                 interactive: emb.interactive,
                                 buffer_row: starting_row + emb.buffer_row,
@@ -6742,6 +6762,7 @@ fn zip_row_blocks(
                         for emb in block_embeds {
                             out_embeds.push(EmbedRect {
                                 window_id: emb.window_id,
+                                key: emb.key.clone(),
                                 buffer_id: emb.buffer_id,
                                 interactive: emb.interactive,
                                 buffer_row: starting_row + emb.buffer_row,
