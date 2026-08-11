@@ -4078,3 +4078,261 @@ fn moving_extracted_co_tenant_workspace_to_folder_leaves_original_unfiled() {
          got screen:\n{screen}"
     );
 }
+
+// ---------------------------------------------------------------------
+// Highlight band width.
+//
+// The dock's hover / selection highlight is a background band, so these
+// read cell backgrounds off the rendered screen. None of them names a
+// theme colour: each snapshots a row's backgrounds with the pointer
+// parked elsewhere, drives the pointer (or the keyboard) onto the row,
+// and diffs — the columns that changed ARE the band the user sees,
+// whatever the active theme paints it with.
+// ---------------------------------------------------------------------
+
+/// Background colour of every column on one screen row.
+fn row_bgs(h: &EditorTestHarness, row: u16) -> Vec<Option<ratatui::style::Color>> {
+    let cols = h.screen_row_text(row).chars().count() as u16;
+    (0..cols)
+        .map(|c| h.get_cell_style(c, row).and_then(|s| s.bg))
+        .collect()
+}
+
+/// Inclusive column span whose background differs between two snapshots
+/// of one row — the band the highlight painted. `None` when nothing
+/// changed (no band at all).
+fn band_span(
+    before: &[Option<ratatui::style::Color>],
+    after: &[Option<ratatui::style::Color>],
+) -> Option<(u16, u16)> {
+    let changed: Vec<u16> = before
+        .iter()
+        .zip(after.iter())
+        .enumerate()
+        .filter(|(_, (b, a))| b != a)
+        .map(|(i, _)| i as u16)
+        .collect();
+    Some((*changed.first()?, *changed.last()?))
+}
+
+/// Park the pointer over the editor buffer, far right of the dock, for a
+/// clean un-hovered baseline.
+fn park_pointer(h: &mut EditorTestHarness) {
+    h.mouse_move(110, 20).unwrap();
+}
+
+/// Hover each of `rows` in turn, returning `(row, first, last)` for the
+/// rows that answered the pointer.
+///
+/// The dock's *selected* row keeps its own, stronger highlight and hover
+/// deliberately leaves it alone, so it contributes nothing here. Which
+/// row that is depends on which workspace is active, and the screen is
+/// the only place a test may learn that from — so rather than assume,
+/// sweep both rows and assert on whichever ones lit up.
+fn hover_bands(h: &mut EditorTestHarness, rows: &[u16]) -> Vec<(u16, u16, u16)> {
+    let mut lit = Vec::new();
+    for &row in rows {
+        park_pointer(h);
+        let idle = row_bgs(h, row);
+        // Nothing crosses the plugin bridge on a hover — the host
+        // repaints from its own hover state — so the screen is settled
+        // by the time `mouse_move` returns.
+        h.mouse_move(4, row).unwrap();
+        let hovered = row_bgs(h, row);
+        if let Some((first, last)) = band_span(&idle, &hovered) {
+            lit.push((row, first, last));
+        }
+    }
+    lit
+}
+
+/// The dock's right-edge divider column, found on the toolbar row.
+fn dock_edge_col(h: &EditorTestHarness) -> u16 {
+    let cols = h.screen_row_text(0).chars().count() as u16;
+    (0..cols)
+        .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+        .expect("the dock's right-edge divider should be present on the toolbar row")
+}
+
+/// Columns of the first two `│` glyphs on `row` — the box a dropdown /
+/// card draws around that row.
+fn box_border_cols(h: &EditorTestHarness, row: u16) -> (u16, u16) {
+    let borders: Vec<u16> = (0..h.screen_row_text(row).chars().count() as u16)
+        .filter(|&c| h.get_cell(c, row).as_deref() == Some("│"))
+        .collect();
+    assert!(
+        borders.len() >= 2,
+        "row {row} should be framed by a box, got:\n{}",
+        h.screen_to_string()
+    );
+    (borders[0], borders[1])
+}
+
+/// Open the dock's "New Task… ▾" create dropdown (entries "New Task…"
+/// and "New Folder…") and return the screen row of its second entry.
+fn open_create_dropdown(h: &mut EditorTestHarness) -> u16 {
+    let new_row = row_of(h, "New Task") as u16;
+    h.mouse_click(4, new_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+        .unwrap();
+    row_of(h, "New Folder") as u16
+}
+
+/// A dock dropdown's hover band must span the menu row, not a band sized
+/// to the longest label.
+///
+/// The menu's entries are bare buttons, and hover paints a button's OWN
+/// cells — so the band stopped at the widest label (~15 columns) while
+/// the enclosing section padded every row out to the dock width, leaving
+/// most of the row visibly unhighlighted. Both entries lit exactly the
+/// same 15 columns despite labels of different lengths, which is the
+/// tell: the band tracked the label set, not the row.
+#[test]
+fn dock_dropdown_hover_band_spans_the_menu_row() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // "New Folder…" is the entry to hover: "New Task…" is the keyboard
+    // cursor and already carries the focus band.
+    let menu_row = open_create_dropdown(&mut h);
+    let (left, right) = box_border_cols(&h, menu_row);
+
+    park_pointer(&mut h);
+    let idle = row_bgs(&h, menu_row);
+    h.mouse_move(left + 4, menu_row).unwrap();
+    let hovered = row_bgs(&h, menu_row);
+
+    let (start, end) = band_span(&idle, &hovered).unwrap_or_else(|| {
+        panic!(
+            "hovering a dropdown entry must repaint it; row {menu_row} was unchanged:\n{}",
+            h.screen_to_string()
+        )
+    });
+    // The row runs from just inside the left border to just inside the
+    // right one, the section keeping one column of padding at each end.
+    // Before the fix the band ended ~15 columns in, far short of `right`.
+    assert!(
+        start <= left + 2 && end >= right - 2,
+        "the hover band must span the menu row (borders at cols {left}/{right}), \
+         got cols {start}..{end}:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// The same band, driven by the keyboard cursor rather than the pointer:
+/// the highlighted entry of an open dropdown must read as a full-width
+/// bar so the menu looks like a menu.
+#[test]
+fn dock_dropdown_cursor_band_spans_the_menu_row() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    let menu_row = open_create_dropdown(&mut h);
+    park_pointer(&mut h);
+    let (left, right) = box_border_cols(&h, menu_row);
+    let idle = row_bgs(&h, menu_row);
+
+    // ↓ moves the dropdown cursor onto "New Folder…".
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| row_bgs(h, menu_row) != idle).unwrap();
+    let selected = row_bgs(&h, menu_row);
+
+    let (start, end) = band_span(&idle, &selected).expect("the cursor row must repaint");
+    assert!(
+        start <= left + 2 && end >= right - 2,
+        "the dropdown cursor band must span the menu row (borders at cols \
+         {left}/{right}), got cols {start}..{end}:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// A workspace with a sibling, so the dock has one row that is NOT the
+/// selected one and can therefore show a distinct hover state.
+fn dock_with_two_workspaces(config: Config) -> (tempfile::TempDir, EditorTestHarness) {
+    let (tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config, root.clone()).unwrap();
+    let sibling = root.parent().unwrap().join("zzz_project");
+    fs::create_dir(&sibling).unwrap();
+    h.editor_mut()
+        .create_window_at(sibling, "zzz_project".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("zzz_project"))
+        .unwrap();
+    (tmp, h)
+}
+
+/// Compact workspace rows: hovering one must light the row across the
+/// whole dock, the way the selected row already does.
+///
+/// The hover band declares `extend_to_line_end`, but the panel renderer
+/// filled a row's trailing cells from the row-level style alone and
+/// dropped the flag off inline overlays — so the selection band ran to
+/// the dock edge while the hover band stopped dead at the end of the
+/// workspace name.
+#[test]
+fn dock_compact_row_hover_band_spans_the_dock() {
+    let (_tmp, mut h) = dock_with_two_workspaces(Default::default());
+
+    let edge = dock_edge_col(&h);
+    let rows = [
+        row_of(&h, "alphaproj") as u16,
+        row_of(&h, "zzz_project") as u16,
+    ];
+    let lit = hover_bands(&mut h, &rows);
+
+    assert!(
+        !lit.is_empty(),
+        "hovering a workspace row must repaint it:\n{}",
+        h.screen_to_string()
+    );
+    for (row, start, end) in lit {
+        assert!(
+            start == 0 && end >= edge - 1,
+            "the hover band on row {row} must span the dock (right edge at col \
+             {edge}), got cols {start}..{end}:\n{}",
+            h.screen_to_string()
+        );
+    }
+}
+
+/// Card density: the same row-wide band, this time over a bordered card,
+/// where "the row" is the card and the band has to reach its borders.
+#[test]
+fn dock_card_row_hover_band_spans_the_card() {
+    let (_tmp, mut h) = dock_with_two_workspaces(card_config());
+
+    let rows = [
+        row_of(&h, "alphaproj") as u16,
+        row_of(&h, "zzz_project") as u16,
+    ];
+    let lit = hover_bands(&mut h, &rows);
+
+    assert!(
+        !lit.is_empty(),
+        "hovering a workspace card must repaint it:\n{}",
+        h.screen_to_string()
+    );
+    for (row, start, end) in lit {
+        // Read the card's own borders — the active workspace's card is
+        // drawn as a seamless tab with no right border, so the frame
+        // can't be assumed; only rows that answered the pointer (never
+        // the selected one) are measured.
+        let (left, right) = box_border_cols(&h, row);
+        assert!(
+            start <= left && end >= right,
+            "the hover band on card row {row} must span the card (borders at cols \
+             {left}/{right}), got cols {start}..{end}:\n{}",
+            h.screen_to_string()
+        );
+    }
+}

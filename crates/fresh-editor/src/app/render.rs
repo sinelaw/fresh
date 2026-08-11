@@ -5482,6 +5482,27 @@ pub(crate) fn paint_text_property_entry(
         }
     }
 
+    // The row's trailing cells come from the Paragraph's own style, so
+    // that style is where `extend_to_line_end` has to land: an inline
+    // overlay carrying it is asking for a band across the whole row, not
+    // just the cells it covers. The widget renderer sets it on the hover
+    // band, and a row-wide band that stopped at the end of the text —
+    // while the row visibly ran on to the panel edge — is the tell that
+    // the flag was being dropped here. The buffer path honours it via
+    // the `extend_to_line_end` tail-fill; panels honour it here.
+    //
+    // Last writer wins, matching the per-span overlay precedence above.
+    // Note this is the *row's* line end: a container that pads its
+    // children (a `LabeledSection`) clears the flag when it wraps them,
+    // so a band can't flood past the section border.
+    let fill_style = normalized
+        .inline_overlays
+        .iter()
+        .filter(|o| o.style.extend_to_line_end)
+        .filter_map(|o| Editor::resolve_overlay_style(&o.style, theme).bg)
+        .next_back()
+        .map_or(base_style, |bg| base_style.bg(bg));
+
     let line = Line::from(spans);
     let rect = ratatui::layout::Rect {
         x,
@@ -5489,7 +5510,7 @@ pub(crate) fn paint_text_property_entry(
         width,
         height: 1,
     };
-    frame.render_widget(Paragraph::new(line).style(base_style), rect);
+    frame.render_widget(Paragraph::new(line).style(fill_style), rect);
 }
 
 /// Record `[start_col, start_col+span_w)` of screen row `row` into the

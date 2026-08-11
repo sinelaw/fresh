@@ -79,6 +79,13 @@ const FOCUS_MARKER: &str = "▸ ";
 // two display columns the marker occupies, so reserving the gutter
 // keeps control widths identical whether or not they're focused.
 const FOCUS_GUTTER_BLANK: &str = "  ";
+// Display columns the focus-marker gutter occupies (`FOCUS_MARKER` /
+// `FOCUS_GUTTER_BLANK`) and the columns a framed button spends on its
+// own `[ ` / ` ]` chrome. Both are reserved when stretching a
+// `full_width` button so the finished control lands on the panel width
+// exactly.
+const FOCUS_GUTTER_COLS: usize = 2;
+const FRAMED_BUTTON_CHROME_COLS: usize = 4;
 
 /// The two-column gutter prefix a focusable control leads with when
 /// the render reserves the focus-marker gutter
@@ -819,6 +826,7 @@ fn render_collected(
             key,
             disabled,
             bare,
+            full_width,
             hover_style,
             ..
         } => collect_button(
@@ -828,8 +836,10 @@ fn render_collected(
             key.as_deref(),
             *disabled,
             *bare,
+            *full_width,
             hover_style.as_ref(),
             ctx,
+            panel_width,
         ),
         WidgetSpec::Spacer { cols, .. } => collect_spacer(*cols),
         WidgetSpec::Divider { ch, style, .. } => collect_divider(ch, style.as_ref(), panel_width),
@@ -1644,6 +1654,30 @@ fn collect_dropdown(
     out
 }
 
+/// Pad (or `…`-truncate) a `full_width` button's label so the finished
+/// control spans exactly `panel_width` display columns.
+///
+/// The chrome the renderer is about to add is reserved here rather than
+/// trimmed afterwards, so the band never overshoots the row: a framed
+/// button spends 4 columns on `[ ` / ` ]`, plus 2 more on the
+/// focus-marker gutter when the panel opted into one. A bare button is
+/// all label.
+///
+/// Padding goes through the shared column helper: menu labels carry
+/// `…`, `▾` and box glyphs, and byte-counted padding both misaligns the
+/// row and risks slicing a multi-byte char.
+fn fill_button_label(label: &str, bare: bool, marker_gutter: bool, panel_width: u32) -> String {
+    let chrome = if bare {
+        0
+    } else {
+        FRAMED_BUTTON_CHROME_COLS + if marker_gutter { FOCUS_GUTTER_COLS } else { 0 }
+    };
+    let target = (panel_width as usize).saturating_sub(chrome).max(1);
+    let mut filled = label.to_string();
+    pad_or_truncate_cols(&mut filled, target);
+    filled
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_button(
     label: &str,
@@ -1652,8 +1686,10 @@ fn collect_button(
     key: Option<&str>,
     disabled: bool,
     bare: bool,
+    full_width: bool,
     hover_style: Option<&OverlayOptions>,
     ctx: RenderContext<'_>,
+    panel_width: u32,
 ) -> CollectedOutput {
     let mut out = CollectedOutput::default();
     let is_focused = !disabled
@@ -1667,6 +1703,13 @@ fn collect_button(
     // itself as live would lie.
     let hovered = !disabled && ctx.is_hovered(key);
     let hover = hover_style.filter(|_| hovered);
+    // A `full_width` button is stretched by padding its *label*, before
+    // the chrome goes on, so the finished control (frame and all) is
+    // exactly `panel_width` columns — the focus / hover band is painted
+    // over the button's own cells, so filling the label is what makes
+    // the band span the row rather than hugging the word.
+    let filled = full_width.then(|| fill_button_label(label, bare, ctx.marker_gutter, panel_width));
+    let label = filled.as_deref().unwrap_or(label);
     let mut entry = if bare {
         render_bare_button(label, is_focused, intent, disabled, hover, hovered)
     } else {
@@ -4149,9 +4192,15 @@ fn wrap_entry_between(
     // all it could reach is whatever lies past the section's right
     // edge: the split's spare columns, or a sibling column once a Row
     // zips this line. Scope the style to the row's own cells so the
-    // selection can't flood the screen past the panel border.
+    // selection can't flood the screen past the panel border. The same
+    // goes for a row-filling *inline* overlay (the hover band): the
+    // renderers fill a row's tail from either, so both have to be
+    // pinned here or the section leaks.
     if let Some(style) = child.style.as_mut() {
         style.extend_to_line_end = false;
+    }
+    for overlay in child.inline_overlays.iter_mut() {
+        overlay.style.extend_to_line_end = false;
     }
 
     // Compose final text: `<prefix>` + child + `<suffix>\n`.
@@ -7116,6 +7165,7 @@ mod tests {
                     disabled: false,
                     focusable: true,
                     bare: false,
+                    full_width: false,
                     hover_style: None,
                 },
             ],
@@ -7198,6 +7248,7 @@ mod tests {
                     disabled: false,
                     focusable: true,
                     bare: false,
+                    full_width: false,
                     hover_style: None,
                 },
             ],
@@ -7276,6 +7327,7 @@ mod tests {
             disabled: false,
             focusable: true,
             bare: false,
+            full_width: false,
             hover_style: None,
         };
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
@@ -7301,6 +7353,7 @@ mod tests {
                     disabled: true,
                     focusable: true,
                     bare: false,
+                    full_width: false,
                     hover_style: None,
                 },
                 WidgetSpec::Button {
@@ -7311,6 +7364,7 @@ mod tests {
                     disabled: false,
                     focusable: true,
                     bare: false,
+                    full_width: false,
                     hover_style: None,
                 },
             ],
@@ -7557,6 +7611,7 @@ mod tests {
                             disabled: false,
                             focusable: true,
                             bare: false,
+                            full_width: false,
                             hover_style: None,
                         },
                     ],
