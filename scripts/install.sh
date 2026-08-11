@@ -44,6 +44,19 @@ BIN_NAME="fresh-editor"
 INSTALL_DIR="${FRESH_INSTALL_DIR:-${HOME}/.local/share/fresh-editor}"
 BIN_DIR="${FRESH_BIN_DIR:-${HOME}/.local/bin}"
 
+# 6. Desktop integration for the universal build: the archive ships an icon
+#    theme and a .desktop entry, and unpacking them under INSTALL_DIR puts them
+#    somewhere no XDG lookup consults. Copying them into the XDG data dirs is
+#    what the .deb and .rpm do; set FRESH_NO_DESKTOP=1 (or pass
+#    --no-desktop-integration) to skip it, which is usually what you want on a
+#    server or in a container.
+NO_DESKTOP="${FRESH_NO_DESKTOP:-0}"
+
+# The list of paths written outside INSTALL_DIR, recorded inside it. Without a
+# manifest those files are unremovable without guesswork: everything else the
+# installer creates is one directory plus one symlink.
+MANIFEST_NAME="installed-files.txt"
+
 # ==============================================================================
 #   END CONFIGURATION
 # ==============================================================================
@@ -66,7 +79,7 @@ usage() {
     cat <<EOF
 Fresh Editor installer
 
-Usage: install.sh [--method=METHOD]
+Usage: install.sh [--method=METHOD] [--no-desktop-integration]
 
 Methods:
   auto      (default) universal build on Linux, Homebrew on macOS, Nix on NixOS
@@ -80,15 +93,26 @@ Methods:
   npm       npm install -g
   appimage  AppImage, extracted under ~/.local
 
+Options:
+  --no-desktop-integration
+            do not install the .desktop entry and icon theme into the XDG data
+            dirs (universal build only)
+
 Environment:
   FRESH_INSTALL_METHOD   same as --method
   FRESH_INSTALL_DIR      where the universal build unpacks (default ~/.local/share/fresh-editor)
   FRESH_BIN_DIR          where the 'fresh' symlink goes (default ~/.local/bin)
+  FRESH_NO_DESKTOP       set to 1 for --no-desktop-integration
+  XDG_DATA_HOME          where the desktop entry and icons go (default ~/.local/share)
 
 Notes:
   The universal build updates itself with 'fresh --cmd update'. Distro packages
   delegate updates to the package manager that installed them, which is why
   they are opt-in rather than the default.
+
+  The universal build records every file it writes outside its install
+  directory in <install-dir>/${MANIFEST_NAME}; re-running this script removes
+  what the previous run put there before installing again.
 EOF
 }
 
@@ -100,6 +124,7 @@ for arg in "$@"; do
     case "$arg" in
         --method=*) METHOD="${arg#--method=}" ;;
         --method)   log_error "--method needs a value, e.g. --method=deb" ;;
+        --no-desktop-integration) NO_DESKTOP=1 ;;
         -h|--help)  usage; exit 0 ;;
         *)          log_error "unknown argument: $arg (try --help)" ;;
     esac
@@ -222,6 +247,137 @@ musl_target() {
     esac
 }
 
+xdg_data_home() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then
+        printf '%s\n' "$XDG_DATA_HOME"
+    elif [ -n "${HOME:-}" ]; then
+        printf '%s\n' "$HOME/.local/share"
+    else
+        return 1
+    fi
+}
+
+# Remove what a previous run of this script installed outside INSTALL_DIR, so a
+# reinstall does not leave an older layout's files orphaned in the XDG tree.
+#
+# Only the two shapes this script writes are honored. A manifest is a plain list
+# of paths in a directory the user owns, so treating it as a list of things to
+# delete unconditionally would turn one bad line — hand-edited, or written by
+# something else that claimed the path — into an arbitrary `rm`. Anything that
+# does not look like a file we placed is skipped and reported.
+prune_recorded_files() {
+    manifest="$INSTALL_DIR/$MANIFEST_NAME"
+    [ -f "$manifest" ] || return 0
+
+    while IFS= read -r recorded; do
+        [ -n "$recorded" ] || continue
+        case "$recorded" in
+            */applications/fresh.desktop)
+                rm -f "$recorded"
+                ;;
+            */icons/hicolor/*/apps/fresh.png)
+                rm -f "$recorded"
+                # Leave no empty size directories behind in a theme tree other
+                # applications share. rmdir refuses a non-empty directory, which
+                # is exactly the check we want.
+                apps_dir=$(dirname "$recorded")
+                if rmdir "$apps_dir" 2>/dev/null; then
+                    rmdir "$(dirname "$apps_dir")" 2>/dev/null || true
+                fi
+                ;;
+            *)
+                log_warn "not removing unexpected entry in $MANIFEST_NAME: $recorded"
+                ;;
+        esac
+    done < "$manifest"
+    return 0
+}
+
+# Copy the archive's .desktop entry and icon theme into the XDG data dirs — the
+# same places the .deb and .rpm install them. Unpacked under INSTALL_DIR they
+# are inert: no desktop environment looks there.
+#
+# Best-effort throughout. A machine with no $HOME, no icons in the archive, or
+# no cache tools installed still gets a working editor, and a failure here must
+# not fail an install that has already succeeded.
+integrate_desktop_files() {
+    if [ "$NO_DESKTOP" = "1" ]; then
+        log_info "Skipping desktop integration (requested)."
+        return 0
+    fi
+
+    DATA_HOME=$(xdg_data_home) || {
+        log_warn "Neither XDG_DATA_HOME nor HOME is set; skipping desktop integration."
+        return 0
+    }
+
+    manifest="$INSTALL_DIR/$MANIFEST_NAME"
+    : > "$manifest" || return 0
+
+    icons_installed=0
+    if [ -d "$INSTALL_DIR/icons" ]; then
+        for size_dir in "$INSTALL_DIR"/icons/*/; do
+            src="${size_dir}apps/fresh.png"
+            [ -f "$src" ] || continue
+            size=$(basename "$size_dir")
+            dest_dir="$DATA_HOME/icons/hicolor/$size/apps"
+            mkdir -p "$dest_dir" 2>/dev/null || continue
+            cp "$src" "$dest_dir/fresh.png" 2>/dev/null || continue
+            printf '%s\n' "$dest_dir/fresh.png" >> "$manifest"
+            icons_installed=$((icons_installed + 1))
+        done
+    fi
+
+    desktop_installed=0
+    if [ -f "$INSTALL_DIR/fresh.desktop" ]; then
+        apps_dir="$DATA_HOME/applications"
+        if mkdir -p "$apps_dir" 2>/dev/null; then
+            # The shipped entry says `Exec=fresh`, which is right for a package
+            # that installs into /usr/bin. Here the binary is reached through a
+            # symlink in ~/.local/bin, and a desktop environment launching the
+            # entry very often does not have that on PATH — so the Exec line is
+            # rewritten to the absolute path we just linked. Arguments after the
+            # program name (the %F field code) are preserved.
+            if FRESH_EXEC_PATH="$BIN_DIR/fresh" awk '
+                /^Exec=/ && !done {
+                    rest = $0
+                    sub(/^Exec=[^ ]*/, "", rest)
+                    print "Exec=" ENVIRON["FRESH_EXEC_PATH"] rest
+                    done = 1
+                    next
+                }
+                { print }
+            ' "$INSTALL_DIR/fresh.desktop" > "$apps_dir/fresh.desktop" 2>/dev/null
+            then
+                printf '%s\n' "$apps_dir/fresh.desktop" >> "$manifest"
+                desktop_installed=1
+            else
+                rm -f "$apps_dir/fresh.desktop"
+                log_warn "Could not write $apps_dir/fresh.desktop."
+            fi
+        fi
+    fi
+
+    # Both caches are optional: a desktop environment reads the directories
+    # directly when they are absent, and neither tool exists on a headless box.
+    if [ "$desktop_installed" -eq 1 ] && check_cmd update-desktop-database; then
+        update-desktop-database "$DATA_HOME/applications" >/dev/null 2>&1 || true
+    fi
+
+    if [ "$icons_installed" -gt 0 ] && check_cmd gtk-update-icon-cache; then
+        gtk-update-icon-cache -q -t -f "$DATA_HOME/icons/hicolor" >/dev/null 2>&1 || true
+    fi
+
+    if [ "$desktop_installed" -eq 1 ] || [ "$icons_installed" -gt 0 ]; then
+        log_success "Desktop entry and $icons_installed icon(s) installed under $DATA_HOME"
+    else
+        # Nothing outside INSTALL_DIR, so nothing to record and nothing for the
+        # next run to clean up.
+        rm -f "$manifest"
+    fi
+    return 0
+}
+
 do_install_tarball() {
     mark_tried tarball
     if [ "$(uname -s)" != "Linux" ]; then
@@ -292,10 +448,14 @@ EOF
 
     log_info "Finalizing installation..."
     mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR"
+    # Before the manifest goes away with the directory that holds it.
+    prune_recorded_files
     rm -rf "$INSTALL_DIR"
     mv "$STAGED" "$INSTALL_DIR" || log_error "failed to move files to $INSTALL_DIR."
 
     ln -sf "$INSTALL_DIR/fresh" "$BIN_DIR/fresh"
+
+    integrate_desktop_files
 
     case ":$PATH:" in
         *":${BIN_DIR}:"*) ;;

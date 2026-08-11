@@ -118,9 +118,21 @@ replace itself: `fresh --cmd update` downloads the next release, verifies it
 against both its published checksum and GitHub's release attestation, and swaps
 the binary in place.
 
+The archive also carries the same desktop entry and icon theme the `.deb` and
+`.rpm` install, and the installer copies them into `$XDG_DATA_HOME`
+(`~/.local/share` by default) so Fresh shows up in your application menu. Pass
+`--no-desktop-integration`, or set `FRESH_NO_DESKTOP=1`, to skip that — usually
+what you want on a server or in a container. Every file written outside the
+install directory is listed in
+`~/.local/share/fresh-editor/installed-files.txt`, so re-running the installer
+cleans up after the previous run and uninstalling is `rm` over that list plus
+the install directory and the symlink.
+
 Downloading the archive by hand from the [releases
 page](https://github.com/sinelaw/fresh/releases) works the same way — it ships
-the same install receipt, so a hand-unpacked copy self-updates too.
+the same install receipt, so a hand-unpacked copy self-updates too. Only the
+binary is swapped on update, so the desktop entry and icons are refreshed by
+re-running the installer, not by `fresh --cmd update`.
 
 ### Brew
 

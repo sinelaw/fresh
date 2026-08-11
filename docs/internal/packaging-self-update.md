@@ -489,6 +489,36 @@ writes the matching receipt (or relies on the package's own packaged receipt).
 Its AppImage branch writes `channel=appimage`, `self_update=true`,
 `install_root=~/.local/share/fresh-editor`.
 
+#### Desktop integration (tarball branch only)
+The musl archive carries `fresh.desktop` and a `hicolor` icon tree — the same
+files `debian/fresh-editor.install` puts in `/usr/share`. Unpacked under
+`INSTALL_DIR` they are inert, because no XDG lookup consults that path, so the
+tarball branch copies them into `$XDG_DATA_HOME/{applications,icons/hicolor}`
+after the move. Three details are load-bearing:
+
+- **`Exec=` is rewritten** to the absolute `$BIN_DIR/fresh`. The shipped entry
+  says `Exec=fresh`, correct for a package that lands in `/usr/bin`; a desktop
+  environment launching the entry frequently does not have `~/.local/bin` on
+  `PATH`.
+- **A manifest** (`$INSTALL_DIR/installed-files.txt`) records every path written
+  outside `INSTALL_DIR`. Everything else the installer creates is one directory
+  plus one symlink; without the manifest these files could not be removed
+  without guessing. The next run prunes what the previous one recorded, and
+  refuses to act on any line that is not one of the two shapes it writes.
+- **Nothing here fails the install.** Missing `$HOME`, an archive built without
+  the assets, an unwritable data dir, absent `update-desktop-database` /
+  `gtk-update-icon-cache`: all warn at most. `--no-desktop-integration` /
+  `FRESH_NO_DESKTOP=1` skips the whole step (still pruning the previous run's
+  files), which is the right default for servers and containers.
+
+Self-update swaps the binary alone (§8), so these files are refreshed by
+re-running `install.sh`, not by `fresh --cmd update`. That is why `README.md` is
+*not* in the archive: it would freeze at the first-installed version. `LICENSE`
+stays, because the archive redistributes a binary.
+
+The AppImage branch deliberately does none of this — its assets live inside the
+extracted AppDir and are its own concern.
+
 ### 7.5 Known limitations
 - **winget / scoop / chocolatey.** These consume the same Windows `.zip` as a
   raw download. winget-pkgs zip installers can't run a post-extract hook, so a
