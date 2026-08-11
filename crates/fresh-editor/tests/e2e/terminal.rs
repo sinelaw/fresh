@@ -5253,26 +5253,17 @@ fn test_read_and_write_terminal_in_a_non_active_window() {
     // never starts is an environment problem, an echo that never comes back
     // is this feature broken.
     //
-    // The budget is deliberately generous. A ConPTY shell on Windows can take
-    // seconds to produce its first byte — a 5s budget failed there, at 5.8s,
-    // while passing in under a second on Linux. That is a flaky test, not a
-    // signal.
-    let poll = std::time::Duration::from_millis(50);
-    let deadline = std::time::Duration::from_secs(30);
-
-    let mut waited = std::time::Duration::ZERO;
-    while waited < deadline {
-        harness.render().ok();
-        if harness
-            .editor()
-            .terminal_screen(home, terminal_id, None, true)
-            .is_ok_and(|s| !s.text.is_empty())
-        {
-            break;
-        }
-        std::thread::sleep(poll);
-        waited += poll;
-    }
+    // `wait_until` rather than a bounded poll (CONTRIBUTING.md §3): a budget
+    // here is a guess about how slow the slowest CI runner's shell is, and an
+    // earlier 5s one failed on Windows at 5.8s while passing in under a
+    // second on Linux. nextest applies the timeout from outside.
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .terminal_screen(home, terminal_id, None, true)
+                .is_ok_and(|s| !s.text.is_empty())
+        })
+        .unwrap();
 
     // Write by naming its window. Nothing about which window is *active*
     // should matter — that is the property under test.
@@ -5280,29 +5271,18 @@ fn test_read_and_write_terminal_in_a_non_active_window() {
         .editor_mut()
         .send_terminal_input_to(home, terminal_id, "echo CROSSWINDOW\n");
 
-    let mut screen = None;
-    let mut waited = std::time::Duration::ZERO;
-    while waited < deadline {
-        harness.render().ok();
-        if let Ok(s) = harness
-            .editor()
-            .terminal_screen(home, terminal_id, None, true)
-        {
-            if s.text.iter().any(|l| l.contains("CROSSWINDOW")) {
-                screen = Some(s);
-                break;
-            }
-        }
-        std::thread::sleep(poll);
-        waited += poll;
-    }
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .terminal_screen(home, terminal_id, None, true)
+                .is_ok_and(|s| s.text.iter().any(|l| l.contains("CROSSWINDOW")))
+        })
+        .unwrap();
 
-    let screen = screen.unwrap_or_else(|| {
-        panic!(
-            "a terminal in a non-active window should be readable and writable \
-             by naming its window; never observed the echo"
-        )
-    });
+    let screen = harness
+        .editor()
+        .terminal_screen(home, terminal_id, None, true)
+        .expect("the terminal is readable by naming its window");
     assert!(screen.rows > 0, "the grid should report its real height");
 
     // Naming a window that does not own the terminal is an error rather than

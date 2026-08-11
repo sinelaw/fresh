@@ -1,0 +1,266 @@
+//! E2E coverage for the Orchestrator **Fleet** view — the wide panel that
+//! answers "which of my agents needs me", with a live pane showing the
+//! selected workspace's terminal.
+//!
+//! Per CONTRIBUTING.md §2 these drive only the keyboard and assert on
+//! rendered output. The pane's title line (`live · <name>`) is the visible
+//! statement of which workspace the Fleet is pointed at, so it is what the
+//! selection assertions read.
+
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crossterm::event::{KeyCode, KeyModifiers};
+use std::fs;
+use std::path::PathBuf;
+
+/// A git project with the orchestrator plugin (+ shared lib) installed.
+fn setup_project(name: &str) -> (tempfile::TempDir, PathBuf) {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let root = temp_dir.path().join(name);
+    fs::create_dir(&root).unwrap();
+    let plugins_dir = root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "orchestrator");
+    fs::write(root.join("readme.txt"), "hello\n").unwrap();
+    let ok = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&root)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
+    (temp_dir, root)
+}
+
+/// Open the Fleet through the command palette and wait for it to render.
+fn open_fleet(h: &mut EditorTestHarness) {
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Fleet").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Fleet"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // The hint bar is the Fleet's own chrome and is present exactly when the
+    // panel has painted. The header is not usable here: it reads "1 agent" or
+    // "N agents" depending on how many there are.
+    h.wait_until(|h| h.screen_to_string().contains("Enter go to workspace"))
+        .unwrap();
+}
+
+/// The workspace named on the live pane's title line, i.e. the one the Fleet
+/// says it is showing. `None` before the pane has painted.
+fn shown_workspace(h: &EditorTestHarness) -> Option<String> {
+    h.screen_to_string()
+        .lines()
+        .find_map(|l| l.split("live · ").nth(1))
+        .map(|rest| {
+            rest.trim_start()
+                .split([' ', '·', '─', '│'])
+                .find(|s| !s.is_empty())
+                .unwrap_or("")
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+}
+
+/// The live pane's rows, title line included.
+fn pane_text(h: &EditorTestHarness) -> String {
+    let screen = h.screen_to_string();
+    let start = match screen.lines().position(|l| l.contains("live · ")) {
+        Some(i) => i,
+        None => return String::new(),
+    };
+    screen
+        .lines()
+        .skip(start)
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Workspace names as the Fleet lists them, top to bottom. Read off the panel
+/// so the test sees the same order the user does.
+fn row_labels(h: &EditorTestHarness) -> Vec<String> {
+    let screen = h.screen_to_string();
+    screen
+        .lines()
+        .skip_while(|l| !l.contains("needs you") && !l.contains("none waiting"))
+        .skip(1)
+        .take_while(|l| !l.contains("live · "))
+        .filter_map(|l| {
+            // `│ ! name   agent   branch   detail │` — the name is the token
+            // after the state glyph.
+            let body = l.trim_start_matches(|c: char| !c.is_alphanumeric() && c != '!');
+            let mut it = body.split_whitespace();
+            let first = it.next()?;
+            let name = if first == "!" || first == "*" || first == "·" {
+                it.next()?
+            } else {
+                first
+            };
+            (!name.is_empty()).then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// The window id behind a Fleet row label.
+fn window_id_for(h: &EditorTestHarness, label: &str) -> fresh_core::WindowId {
+    h.editor()
+        .describe_environment()
+        .windows
+        .into_iter()
+        .find(|w| w.label == label)
+        .unwrap_or_else(|| panic!("no window labelled {label}"))
+        .window_id
+}
+
+/// The Fleet's selection follows the *workspace*, not the row it happened to
+/// be on.
+///
+/// Rows are sorted by urgency — waiting first, then working, then quiet — so
+/// the order changes underneath the user as agents change state. With the
+/// selection held as a row index, an agent going from quiet to working
+/// reorders the list and silently re-points the selection at whatever slid
+/// into that slot: observed by hand as selecting one workspace, typing, and
+/// having the keystrokes land in a different workspace's buffer two rows
+/// away.
+///
+/// Drives the reorder the way it happens in life — by making a workspace
+/// produce output — and asserts the pane still names the workspace the user
+/// chose.
+#[test]
+fn fleet_selection_survives_a_reorder() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let parent = root.parent().unwrap().to_path_buf();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // Three more workspaces, so there are rows to reorder.
+    for name in ["projB", "projC", "projD"] {
+        let dir = parent.join(name);
+        fs::create_dir(&dir).unwrap();
+        h.editor_mut().create_window_at(dir, name.to_string());
+    }
+    h.render().unwrap();
+    let launch_id = h.editor().active_window_id();
+    let launch_label = h.editor().active_window().label.clone();
+
+    open_fleet(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("projD"))
+        .unwrap();
+
+    // Step down twice so the selection sits below the top of the list, and
+    // remember which workspace the pane names.
+    for _ in 0..2 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| shown_workspace(h).is_some()).unwrap();
+    }
+    let chosen = shown_workspace(&h).expect("the live pane names a workspace");
+
+    // Shorten the list above the selection, which shifts every row below it up
+    // by one. Deliberately not driven by agent activity: the Fleet only sees
+    // activity for terminals the Orchestrator itself created, so a
+    // host-created terminal never changes a row's rank and the reorder would
+    // never happen.
+    let rows = row_labels(&h);
+    let idx = rows
+        .iter()
+        .position(|l| l == &chosen)
+        .unwrap_or_else(|| panic!("the selected workspace is listed. rows={rows:?}"));
+    assert!(
+        idx > 0,
+        "precondition: rows above the selection. rows={rows:?}"
+    );
+    // Anything but the active window, which cannot be closed out from under
+    // itself.
+    let active = h.editor().active_window().label.clone();
+    let victim = rows[..idx]
+        .iter()
+        .find(|l| *l != &active)
+        .unwrap_or_else(|| panic!("a closable row above the selection. rows={rows:?}"))
+        .clone();
+    let victim_id = window_id_for(&h, &victim);
+    h.editor_mut().close_window(victim_id);
+    h.render().unwrap();
+    h.wait_until(|h| !row_labels(h).contains(&victim)).unwrap();
+
+    // The pane must still name the workspace the user chose. Holding the
+    // selection as a row index reported whichever workspace slid into that
+    // slot instead.
+    h.wait_until_stable(|h| shown_workspace(h).is_some())
+        .unwrap();
+    assert_eq!(
+        shown_workspace(&h).as_deref(),
+        Some(chosen.as_str()),
+        "the Fleet must keep showing the workspace the user selected after the \
+         row above it went away. Screen:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// The Fleet's live pane shows one *terminal*, not the whole session.
+///
+/// It renders through the `pane` widget rather than the whole-window embed,
+/// so a workspace's tab bar and editor chrome must not appear inside it — the
+/// pane is there to show what an agent is saying, and session furniture is
+/// noise that also makes the pane ambiguous when a workspace holds two
+/// terminals.
+#[test]
+fn fleet_pane_shows_the_terminal_without_session_chrome() {
+    let (_tmp, root) = setup_project("betaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // A terminal in this workspace, with a recognisable prompt on screen.
+    h.editor_mut().open_terminal();
+    h.render().unwrap();
+    let buffer_id = h.editor().active_buffer_id();
+    let terminal_id = h
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("the active buffer should be the terminal just opened");
+    let home = h.editor().active_window_id();
+    h.wait_until(|h| {
+        h.editor()
+            .terminal_screen(home, terminal_id, None, true)
+            .is_ok_and(|s| !s.text.is_empty())
+    })
+    .unwrap();
+    h.editor_mut()
+        .send_terminal_input_to(home, terminal_id, "echo FLEETPANE\n");
+
+    open_fleet(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("FLEETPANE"))
+        .unwrap();
+
+    // The pane must settle into showing the terminal *alone*: its output
+    // present, and none of the tab-bar chrome the whole-session embed paints.
+    //
+    // A wait rather than a bare assertion because the pane's buffer is
+    // resolved by the Fleet's probe a tick after it opens; without the fix it
+    // never resolves and the Fleet keeps embedding the whole session, so this
+    // times out — which CONTRIBUTING.md §1 accepts as the failing half of a
+    // regression test.
+    h.wait_until(|h| {
+        let pane = pane_text(h);
+        pane.contains("FLEETPANE") && !pane.contains("[No Name]") && !pane.contains("*Terminal")
+    })
+    .unwrap();
+
+    let pane = pane_text(&h);
+    assert!(
+        pane.contains("FLEETPANE"),
+        "the pane shows the terminal's own output. Pane:\n{pane}"
+    );
+    assert!(
+        !pane.contains("*Terminal") && !pane.contains("[No Name]"),
+        "the pane renders one terminal, so the session's tab bar must not \
+         appear inside it. Pane:\n{pane}"
+    );
+}

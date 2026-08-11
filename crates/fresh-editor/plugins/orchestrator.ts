@@ -3790,22 +3790,36 @@ const tailProbesInFlight = new Set<number>();
 /// than blanking the row. A blanked row reads as "this agent has nothing to
 /// say", which is a different and wrong claim.
 async function probeTail(s: AgentSession): Promise<void> {
-  if (s.terminalId === null || s.discovered || s.pending) return;
+  if (s.discovered || s.pending) return;
   if (tailProbesInFlight.has(s.id)) return;
   const now = Date.now();
   if (s.tail && now - s.tail.fetchedAt < TAIL_PROBE_TTL_MS) return;
   tailProbesInFlight.add(s.id);
   try {
-    // Resolve the terminal's buffer once. Cheap to ask for, and the Fleet's
-    // live pane cannot render without it.
-    if (s.terminalBufferId === undefined) {
+    // Resolve the session's terminal from the environment, not from
+    // `s.terminalId`.
+    //
+    // The orchestrator only records `terminalId` for workspaces *it* created,
+    // so the launch workspace — and any window reconciled from the host's
+    // list — has none. Gating on it left exactly those sessions with no
+    // terminal to read and no buffer for the Fleet's live pane, which then
+    // silently fell back to embedding the whole session, tab bar and all.
+    // `describeEnvironment` sees every terminal regardless of who made it.
+    if (s.terminalBufferId === undefined || s.terminalId === null) {
       try {
         const env = await editor.describeEnvironment();
         const win = env.windows.find((w) => w.windowId === s.id);
-        const t = win?.terminals.find((t) => t.terminalId === s.terminalId);
-        if (t) s.terminalBufferId = t.bufferId;
+        // Prefer the terminal the orchestrator knows about; otherwise the
+        // window's first, which is the one a plain "Open Terminal" made.
+        const t = win?.terminals.find((t) => t.terminalId === s.terminalId)
+          ?? win?.terminals[0];
+        if (t) {
+          s.terminalBufferId = t.bufferId;
+          if (s.terminalId === null) s.terminalId = t.terminalId;
+        }
       } catch (_e) { /* retried on the next probe */ }
     }
+    if (s.terminalId === null) return;
     const screen = await editor.readTerminal(s.id, s.terminalId, TAIL_LINES, true);
     const rows = screen.text.filter((l) => l.trim().length > 0);
     const lastLine = rows.length ? rows[rows.length - 1].trim() : "";
@@ -12607,7 +12621,14 @@ const FLEET_TYPE_MODE = "orchestrator-fleet-type";
 let fleetTyping = false;
 
 let fleetPanel: FloatingWidgetPanel | null = null;
-let fleetSelected = 0;
+// The selected workspace, by id rather than by row index.
+//
+// Rows sort by urgency, so the order changes underneath the user: answering an
+// agent makes it "working" and moves it to the top, which with an index-based
+// selection silently re-points at whatever slid into that slot. Observed:
+// selecting `raw`, typing, and having the keystroke land in a file buffer two
+// rows away. An id cannot drift.
+let fleetSelectedId: number | null = null;
 let fleetTicking = false;
 
 const FLEET_TICK_MS = 1_500;
@@ -12668,9 +12689,21 @@ function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
   return styledRow(segs as Parameters<typeof styledRow>[0]);
 }
 
+/// Index of the selected row, resolved from its id. `-1` when the fleet is
+/// empty; falls back to the first row when the selection has gone away (its
+/// workspace closed), which is the only case where a positional answer is the
+/// honest one.
+function fleetSelectedIndex(rows: AgentSession[]): number {
+  if (rows.length === 0) return -1;
+  const idx = rows.findIndex((s) => s.id === fleetSelectedId);
+  if (idx >= 0) return idx;
+  fleetSelectedId = rows[0].id;
+  return 0;
+}
+
 function buildFleetSpec(): WidgetSpec {
   const rows = fleetRows();
-  if (fleetSelected >= rows.length) fleetSelected = Math.max(0, rows.length - 1);
+  const fleetSelected = fleetSelectedIndex(rows);
   const cols = Math.max(60, editor.getScreenSize().width - 8);
   const needing = rows.filter((s) => sessionState(s) === "waiting").length;
 
@@ -12791,6 +12824,12 @@ function startFleetTicking(): void {
       fleetTicking = false;
       return;
     }
+    // Re-derive the session list from the host's windows before rendering.
+    // Without this the Fleet keeps listing workspaces that have since closed —
+    // `fleetRows()` reads the plugin's own map, which only the dock's paths
+    // refresh — so a row could outlive its window and selecting it would point at
+    // nothing.
+    reconcileSessions();
     for (const s of fleetRows()) void probeTail(s);
     renderFleet();
     holdFleetFocus();
@@ -12806,7 +12845,7 @@ function openFleet(): void {
   }
   reconcileSessions();
   fleetPanel = new FloatingWidgetPanel();
-  fleetSelected = 0;
+  fleetSelectedId = null;
   fleetLastSpec = null;
   renderFleet(true);
   editor.floatingPanelControl(fleetPanel.id(), "focus", 0);
@@ -12833,7 +12872,8 @@ function closeFleet(): void {
 /// goes to that terminal's PTY through the same translation a focused
 /// terminal split uses. This function only moves focus and the mode.
 function setFleetTyping(on: boolean): void {
-  const target = fleetRows()[fleetSelected];
+  const rows = fleetRows();
+  const target = rows[fleetSelectedIndex(rows)];
   // Refuse rather than silently swallow keys: a row with no terminal (a
   // workspace whose agent has exited) has nothing to type at.
   if (on && (!target || target.terminalBufferId === undefined)) {
@@ -12860,14 +12900,19 @@ registerHandler("orchestrator_fleet_event", function (ev: Record<string, unknown
     // for the next tick — an embed that lags the highlight by a second reads
     // as broken.
     const idx = Number(payload.index ?? payload.selectedIndex ?? -1);
-    if (idx >= 0 && idx !== fleetSelected) {
-      fleetSelected = idx;
+    const rows = fleetRows();
+    // Translate the host's row index into an id at once: it is only valid
+    // against the ordering that produced the event, and the next re-sort
+    // invalidates it.
+    if (idx >= 0 && idx < rows.length && rows[idx].id !== fleetSelectedId) {
+      fleetSelectedId = rows[idx].id;
       renderFleet();
     }
     return;
   }
   if (type === "activate") {
-    const target = fleetRows()[fleetSelected];
+    const rows = fleetRows();
+    const target = rows[fleetSelectedIndex(rows)];
     closeFleet();
     // Enter means "take me there" — the fleet's job ends once you have
     // decided which agent to deal with.

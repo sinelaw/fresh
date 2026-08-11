@@ -192,6 +192,7 @@ pub mod open_folder;
 pub mod orchestrator_dialog_trust_repro;
 pub mod orchestrator_dock;
 pub mod orchestrator_dock_settings;
+pub mod orchestrator_fleet;
 pub mod orchestrator_window_lsp;
 pub mod overlay_extend_to_line_end;
 pub mod pane_navigation;
