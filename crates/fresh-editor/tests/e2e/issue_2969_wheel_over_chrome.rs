@@ -17,7 +17,6 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
-use portable_pty::{native_pty_system, PtySize};
 
 /// Wheel notches sent per target, matching the issue's measurements.
 const NOTCHES: usize = 5;
@@ -127,6 +126,10 @@ fn wheel_over_chrome_does_not_scroll_the_focused_editor() {
 #[test]
 #[cfg(not(windows))] // Uses a Unix shell to produce scrollback
 fn wheel_over_chrome_does_not_scroll_the_focused_terminal() {
+    // Imported here rather than at module scope so the Windows build, which
+    // cfg's this test out, doesn't carry an unused import.
+    use portable_pty::{native_pty_system, PtySize};
+
     if native_pty_system()
         .openpty(PtySize {
             rows: 1,
