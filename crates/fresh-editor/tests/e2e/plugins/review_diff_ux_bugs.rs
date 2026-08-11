@@ -5,7 +5,7 @@
 //! **fail** (or demonstrate the broken behavior) until the underlying
 //! bug is fixed.  Once fixed, the test becomes the regression guard.
 
-use crate::common::git_test_helper::GitTestRepo;
+use crate::common::git_test_helper::{git_command, GitTestRepo};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -2014,5 +2014,110 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
         original,
         "Issue #2117: discarding the hunk should restore the committed \
          content (removing the unterminated added line). Got: {after:?}"
+    );
+}
+
+/// Return `git status --porcelain` for the repo.
+fn git_status_porcelain(repo: &GitTestRepo) -> String {
+    let out = git_command(&repo.path)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("run git status");
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+/// Issue #2318: file-level Discard (`D`) on a file whose changes are entirely
+/// *staged* (clean working tree) must actually revert the file to HEAD. Before
+/// the fix the plugin ran `git checkout -- <path>`, which only reverts the
+/// working tree from the index — so a fully-staged file was left untouched
+/// while the status bar still reported "Discarded".
+#[test]
+fn test_issue2318_discard_fully_staged_file_reverts_to_head() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Modify main.rs and FULLY stage it, so the working tree is clean and the
+    // only change lives in the index.
+    let main_rs = repo.path.join("src/main.rs");
+    fs::write(
+        &main_rs,
+        "fn main() {\n    println!(\"STAGED_CHANGE\");\n}\n",
+    )
+    .unwrap();
+    repo.git_add(&["src/main.rs"]);
+
+    // Precondition: staged modification with a clean working tree ("M ").
+    let status = git_status_porcelain(&repo);
+    assert!(
+        status.contains("M  src/main.rs"),
+        "precondition: src/main.rs should be fully staged. git status:\n{status}"
+    );
+
+    // Open the editor on an unrelated file (so the discarded file is not the
+    // active buffer) and launch Review Diff.
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&repo.path.join("src/lib.rs")).unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert!(
+        screen.contains("STAGED"),
+        "the staged file should appear in the STAGED section. Screen:\n{screen}"
+    );
+
+    // Move the cursor down into the file's region so file-level discard resolves
+    // the file under the cursor, then press capital `D` (always-file-level
+    // discard).
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('D'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    // The first suggestion ("Discard changes in file") is selected by default.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // The discard runs asynchronously (spawns `git`), and the handler sets its
+    // status message only AFTER the `git` process and the follow-up refresh have
+    // completed. Wait for that signal before inspecting git state, rather than
+    // guessing a fixed number of ticks (which races on slower machines and can
+    // observe a half-applied index/worktree).
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Discarded") || s.contains("Discard failed")
+        })
+        .unwrap();
+
+    // The staged change must be fully discarded: clean git status and the file
+    // reverted to its committed content on disk.
+    let status = git_status_porcelain(&repo);
+    assert!(
+        status.trim().is_empty(),
+        "#2318: the staged change should be fully discarded, but git status is:\n{status}"
+    );
+    let content = fs::read_to_string(&main_rs).unwrap();
+    assert!(
+        !content.contains("STAGED_CHANGE"),
+        "#2318: src/main.rs should be reverted to HEAD, but still contains the \
+         staged change:\n{content}"
     );
 }
