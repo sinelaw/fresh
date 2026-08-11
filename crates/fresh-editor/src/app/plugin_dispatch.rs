@@ -3839,6 +3839,19 @@ impl Editor {
             }
         };
 
+        // A plugin-created split changes every sibling pane's geometry — most
+        // visibly for `role = "utility_dock"`, which splits at the *root* and
+        // so takes rows from every pane above it. Reflow through the single
+        // layout funnel here, the one fork both split shapes pass through, so
+        // an existing terminal's PTY is SIGWINCHed to its new pane instead of
+        // keeping the rows it had before the dock appeared. Without this a
+        // terminal kept writing below the pane's new bottom edge — the shell
+        // prompt and everything after it landed in grid rows that are never
+        // drawn (issue #2969 item 5). `relayout` is explicitly cheap to call
+        // redundantly, so the failed-split branch runs it too, exactly as
+        // `Editor::split_current` and the tab-drag drop fork do.
+        self.relayout();
+
         if let Some(req_id) = request_id {
             tracing::trace!(
                 "CreateVirtualBufferInSplit: resolving callback for request_id={}, \
