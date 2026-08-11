@@ -112,6 +112,10 @@ interface TourInstance {
   visited: Set<number>;
   bufferId: number;
   splitId: number;
+  /** The editor pane this tour opens its steps into — see `targetSplit`.
+   * Seeded with the split the tour was launched from and re-pinned to
+   * wherever a step actually landed, so it survives splits being closed. */
+  targetSplitId: number;
   panel: WidgetPanel;
   /** Per-tour overlay namespace, so one tour's teardown cannot clear another's
    * highlight and two tours may highlight the same buffer at once. */
@@ -830,6 +834,10 @@ async function openTour(
   const drift = await commitDrift(manifest);
 
   const name = tabName(manifest.title);
+  // The pane the reader was in when they started the tour is where its code
+  // belongs. Read before the dock panel is mounted — mounting makes the dock
+  // the active split, and after that there is nothing left to remember.
+  const launchedFrom = editor.getActiveSplitId();
   let bufferId = 0;
   let splitId = 0;
   try {
@@ -866,6 +874,7 @@ async function openTour(
     visited: new Set(options.visited ?? [step]),
     bufferId,
     splitId,
+    targetSplitId: launchedFrom,
     panel: new WidgetPanel(bufferId),
     namespace: `code-tour:${manifestPath}`,
     railOpen: options.railOpen !== false,
@@ -923,7 +932,67 @@ function clampStep(step: number, total: number): number {
   return Math.min(Math.max(Math.floor(step), 0), total - 1);
 }
 
-/** Open the step's file in the editor split, centre it, and paint the
+/** The editor pane this tour opens its steps into, or `null` when the
+ * workspace has none to offer.
+ *
+ * A tour is a reading flow: the code it is talking about belongs in one
+ * predictable pane, not wherever focus happened to be when the step changed.
+ * `openFile` lands in the *active* split, so stepping through a tour while
+ * clicking between splits scattered its files across all of them — step 2 in
+ * the left split, step 3 in the right, step 4 back in the left.
+ *
+ * The pane is the one the tour was launched from, but it is re-resolved on
+ * every step rather than trusted: splits close, and a pane that has since
+ * become a terminal or a plugin panel cannot hold the step's source. When the
+ * remembered pane is no longer usable the left-most/top-most file pane takes
+ * over and is remembered in its place. `t.splitId` — the tour's own dock leaf,
+ * which every Utility Dock panel shares — is never a candidate, so a step's
+ * file cannot land beside the panels.
+ */
+function targetSplit(t: TourInstance): number | null {
+  const panes = editor.describeWorkspace().panes;
+  const usable = (splitId: number, kind: string) =>
+    kind === "file" && splitId !== t.splitId &&
+    ![...tours.values()].some((other) => other.splitId === splitId);
+  const remembered = panes.find((p) => p.splitId === t.targetSplitId);
+  if (remembered && usable(remembered.splitId, remembered.kind)) return remembered.splitId;
+  const fallback = panes.find((p) => usable(p.splitId, p.kind));
+  if (!fallback) return null;
+  t.targetSplitId = fallback.splitId;
+  return fallback.splitId;
+}
+
+/** Open a step's file in the tour's target pane.
+ *
+ * Falls back to `openFile` when no pane qualifies (a workspace showing only
+ * terminals and panels, say): the host's own file-open path redirects the
+ * active split away from the Utility Dock, so the file still does not become
+ * a tab in the dock even though the tour panel holds focus. */
+function openStepFile(t: TourInstance, stepPath: string, line: number): void {
+  const target = targetSplit(t);
+  if (target === null) {
+    editor.openFile(stepPath, line, 1);
+    return;
+  }
+  editor.openFileInSplit(target, stepPath, line, 1);
+}
+
+/** Pin the tour to the pane its step actually landed in.
+ *
+ * The fallback path above lets the host choose, and even the targeted path can
+ * be redirected. Reading the result back means the *next* step joins this one
+ * instead of starting the hunt over — which is the whole point: one pane, all
+ * the way through. Callers must `flush` first; `describeWorkspace` reads the
+ * plugin-state snapshot, which still describes the pre-open layout until the
+ * host has drained the queued command. */
+function rememberTargetSplit(t: TourInstance, bufferId: number): void {
+  const pane = editor
+    .describeWorkspace()
+    .panes.find((p) => p.bufferId === bufferId && p.splitId !== t.splitId);
+  if (pane) t.targetSplitId = pane.splitId;
+}
+
+/** Open the step's file in the tour's target pane, centre it, and paint the
  * highlight. Never moves keyboard focus out of the panel. */
 async function revealStep(t: TourInstance): Promise<void> {
   const step = currentStep(t);
@@ -946,12 +1015,7 @@ async function revealStep(t: TourInstance): Promise<void> {
     return;
   }
 
-  // `openFile` — not `openFileInSplit`. The host's file-open path already
-  // redirects the active split away from the Utility Dock, so a file never
-  // becomes a tab in the dock even though the tour panel is what holds focus.
-  // Naming a split explicitly would bypass that guard and let the step's
-  // source land beside the panels.
-  editor.openFile(stepPath, step.lines[0], 1);
+  openStepFile(t, stepPath, step.lines[0]);
   // Hand the keyboard straight back. Both calls are FIFO commands, so
   // queueing the focus restore in the same turn leaves no window where
   // a key typed at the panel lands in the source file instead — parking
@@ -967,6 +1031,7 @@ async function revealStep(t: TourInstance): Promise<void> {
 
   const bufferId = stepBufferId(stepPath);
   if (bufferId) {
+    rememberTargetSplit(t, bufferId);
     // Centre the range — but never at the cost of its first line. The
     // host parks the passed line a third of the viewport from the top,
     // so clamp the target: a range taller than the pane keeps its top
@@ -1163,9 +1228,9 @@ function jumpToCode(t: TourInstance): void {
     return;
   }
   // Deliberately no `focusSplit` back to the panel afterwards: this is the
-  // explicit "put me in the code" gesture, so focus stays where `openFile`
-  // left it.
-  editor.openFile(resolveStepPath(t.manifestPath, step.file_path), step.lines[0], 1);
+  // explicit "put me in the code" gesture, so focus stays in the pane the
+  // step opened into — the same pane every other step uses.
+  openStepFile(t, resolveStepPath(t.manifestPath, step.file_path), step.lines[0]);
   editor.setStatus(
     editor.t("status.jumped", { file: step.file_path, line: String(step.lines[0]) }),
   );

@@ -986,6 +986,83 @@ fn test_overflowing_lists_show_scrollbars() {
     }
 }
 
+/// The two editor splits' tab strips, taken from the tab-bar row and split
+/// at the vertical separator between the panes.
+fn tab_bar_halves(harness: &EditorTestHarness) -> (String, String) {
+    let screen = harness.screen_to_string();
+    let row = screen
+        .lines()
+        .nth(1)
+        .unwrap_or_else(|| panic!("expected a tab-bar row\nScreen:\n{screen}"));
+    row.split_once('\u{2502}')
+        .map(|(left, right)| (left.to_string(), right.to_string()))
+        .unwrap_or_else(|| {
+            panic!("expected two side-by-side tab strips\nRow: {row}\nScreen:\n{screen}")
+        })
+}
+
+/// Every step opens into the same pane — the one the tour was launched from —
+/// no matter which split has focus when the step changes.
+///
+/// Each step used to open into whichever split was active, so reading the code
+/// in one pane and then stepping scattered the tour's files across all of
+/// them: step 2 in the left split, step 3 in the right, step 4 back in the
+/// left, with no way to predict where the next one would land.
+#[test]
+fn test_tour_opens_every_step_in_its_target_panel() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    run_command(&mut harness, "Split Vertical");
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .nth(1)
+                .is_some_and(|r| r.contains('\u{2502}'))
+        })
+        .unwrap();
+
+    // Launch the tour from the left split: that is the pane its code belongs
+    // in for the rest of the tour.
+    harness.mouse_click(10, 3).unwrap();
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+
+    // Read the code in the *other* split, then step the tour from there.
+    harness.mouse_click(120, 3).unwrap();
+    run_command(&mut harness, "Tour: Next Step");
+    // Wait for the step to have landed *somewhere* — the panel counter plus
+    // the new file's tab — and then for the frame to settle. Deliberately not
+    // `wait_for_step_settled`: that watches for the highlight at a column
+    // inside the left split, which is the very thing under test.
+    harness
+        .wait_until_stable(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Step 2 of 2")
+                && screen.lines().nth(1).is_some_and(|r| r.contains("wide.rs"))
+        })
+        .unwrap();
+
+    let (left, right) = tab_bar_halves(&harness);
+    assert!(
+        left.contains("wide.rs"),
+        "step 2's file must open in the pane the tour was launched from\n\
+         left strip: {left}\nright strip: {right}\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    assert!(
+        !right.contains("wide.rs"),
+        "step 2's file must not follow the focused split\n\
+         left strip: {left}\nright strip: {right}\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// The selected rows' highlight stays inside the panel. Before the fix,
 /// the selection band's `extend_to_line_end` survived the row zipper and
 /// the painter flooded every cell right of the panel border — a stray
