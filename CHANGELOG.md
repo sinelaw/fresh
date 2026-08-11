@@ -8,6 +8,11 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
+* **Installing and updating Fresh** - one Linux install that works everywhere and updates itself, instead of a dozen fragile packaging channels.
+  * The self-updating static Linux build is now install.sh's default; `--method` still picks a native package.
+  * Update downloads are verified against GitHub's build attestation, not just a same-origin checksum.
+  * Fresh no longer runs another package manager on your behalf, including the `sudo dpkg -i` it used to run - those channels now get the exact command printed instead.
+  * `--pre` opts into pre-releases; stable installs never receive one by accident.
 * **LSP completions can offer auto-imports** - servers like rust-analyzer now suggest unimported symbols, and accepting one inserts the `use`/import line (#2603).
 * **The scripting API can manage the whole Orchestrator dock** - create, rename, move, archive, delete and list workspaces, including over SSH, not just create them.
 * **`fresh +50 file.txt` opens the file at that line**, vim-style (#1926, requested by @asukaminato0721).
@@ -15,11 +20,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Choose which files are too ephemeral to remember** - a configurable pattern list keeps cursor positions from being saved for build output, generated sources and the like; git's own scratch files are excluded by default.
 * **Bulgarian locale** (by @ci4ic4).
 * **Unparseable keybinding config entries are now logged** instead of silently dropped (#1128, reported by @michelpado).
-* **Installing and updating Fresh**
-  * The self-updating static Linux build is now install.sh's default; `--method` still picks a native package.
-  * Update downloads are verified against GitHub's build attestation, not just a same-origin checksum.
-  * Fresh no longer runs another package manager on your behalf, including the `sudo dpkg -i` it used to run - those channels now get the exact command printed instead.
-  * `--pre` opts into pre-releases; stable installs never receive one by accident.
 
 ### Bug Fixes
 
