@@ -384,6 +384,25 @@ impl Editor {
     /// plugin hook is signature-deduped, so callers never need to decide
     /// "did this actually change the layout?" — they just call `relayout`.
     pub fn relayout(&mut self) {
+        self.push_layout_geometry();
+        self.notify_layout_changed();
+    }
+
+    /// The geometry half of [`Editor::relayout`]: derive the authoritative
+    /// dimensions and push them down to every window's viewports and
+    /// terminal PTYs, *without* notifying plugins.
+    ///
+    /// Callers that are themselves running inside a plugin command must use
+    /// this rather than `relayout`. The notify half fires the `resize` hook
+    /// re-entrantly into the plugin thread, and a plugin part-way through its
+    /// own command — still awaiting the callback that hands it the buffer id
+    /// it just asked the host to create — will service that hook against its
+    /// pre-await state. `search_replace.ts` does exactly this: its `resize`
+    /// handler re-renders the panel through `panel.resultsBufferId`, which is
+    /// still its initial `0` until `createVirtualBufferInSplit` resolves, so
+    /// the panel mounts into `BufferId(0)` ("Buffer not found") and its body
+    /// never paints. Everything the terminals need lives in this half.
+    pub(crate) fn push_layout_geometry(&mut self) {
         // Derive the dock width from its placement (the source of truth),
         // exactly as the renderer's `compute_dock_split` does, so the
         // geometry we push down matches what gets painted.
@@ -397,8 +416,6 @@ impl Editor {
         for window in self.windows.values_mut() {
             window.apply_layout(width, height, dock_cols);
         }
-
-        self.notify_layout_changed();
     }
 
     /// Effective width (cols) the left dock currently claims, or `0` when
