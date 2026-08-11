@@ -553,6 +553,36 @@ Both the Fleet and the master agent read `status`. The Fleet reads it directly
 — deterministic plugin code, no model in the loop — which is what keeps the
 view free to run at whatever tick rate it likes.
 
+#### Discovery: an agent is whatever reports, not whatever we launched
+
+The mailbox has two locations, because there are two kinds of agent.
+
+**Ours** — one this plugin launched — lives under the data dir, keyed by
+workspace id. Nothing is written into the user's repository, two workspaces
+sharing a root cannot collide, and a restored session finds the mailbox it had.
+
+**Theirs** — one we did not launch — reports at `<root>/.fresh/agent-status`,
+a path both sides can compute without coordinating. A `claude` started by hand
+in a worktree, an agent in another multiplexer, one left from a previous
+session: none can be told an id they were never given, but all of them know
+their working directory.
+
+Discovery reads both, over every checkout already known — live session roots
+and the worktrees found on disk. Deliberately not a filesystem walk: "every
+status file on this machine" is a much more expensive question, and answering
+it would surface agents working on things the user is not.
+
+This is the inversion that makes the fleet honest. Before it, the roster was
+"agents the user happened to start through the dock", and anything else was
+invisible no matter how loudly it was blocked. After it, an agent is whatever
+reports — and reporting costs one `echo`.
+
+The in-repo directory carries a `.gitignore` containing `*`, which excludes
+its contents and itself, so `git status` stays clean. Verified rather than
+assumed: a control plane whose cost is a permanently dirty working tree would
+not be worth using, and an agent that runs `git status` to decide what it
+changed must not see our bookkeeping.
+
 #### The inbox: instructions in
 
 `delegate()` writes one file per instruction:

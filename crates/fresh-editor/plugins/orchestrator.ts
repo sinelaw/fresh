@@ -3864,28 +3864,77 @@ interface StatusReport {
   raw: string;
 }
 
-function agentDir(workspaceId: number): string {
+/// Two mailbox locations, for two kinds of agent.
+///
+/// **Ours** — an agent this plugin launched — lives under the data dir, keyed
+/// by workspace id. Nothing is written into the user's repository, two
+/// workspaces sharing a root (a non-worktree create) cannot collide, and a
+/// restored session finds the same mailbox it had before.
+///
+/// **Theirs** — an agent we did not launch — reports at `<root>/.fresh/`,
+/// because that is a path both sides can compute without coordinating. A
+/// `claude` someone started by hand in a worktree, an agent in another
+/// multiplexer, one left from a previous session: none of them can be told an
+/// id they were never given, but all of them know their working directory.
+///
+/// Discovery reads both. Launch only ever writes the first, so adopting the
+/// convention is the foreign agent's choice and costs us no repository churn.
+function workspaceMailboxDir(workspaceId: number): string {
   return editor.pathJoin(editor.getDataDir(), "orchestrator", "agents", String(workspaceId));
 }
 
-function statusPath(workspaceId: number): string {
-  return editor.pathJoin(agentDir(workspaceId), "status");
+function workspaceStatusPath(workspaceId: number): string {
+  return editor.pathJoin(workspaceMailboxDir(workspaceId), "status");
 }
 
-function inboxDir(workspaceId: number): string {
-  return editor.pathJoin(agentDir(workspaceId), "inbox");
+function workspaceInboxDir(workspaceId: number): string {
+  return editor.pathJoin(workspaceMailboxDir(workspaceId), "inbox");
 }
 
-/// Create the mailbox for a workspace. Cheap and idempotent; called at launch
-/// so the agent's very first turn finds the directories its briefing names.
-function ensureMailbox(workspaceId: number): void {
+/// The in-repo convention, for agents we did not launch.
+function agentDirForRoot(root: string): string {
+  return editor.pathJoin(root, ".fresh");
+}
+
+function statusPathForRoot(root: string): string {
+  return editor.pathJoin(agentDirForRoot(root), "agent-status");
+}
+
+function inboxDirForRoot(root: string): string {
+  return editor.pathJoin(agentDirForRoot(root), "inbox");
+}
+
+/// Create the mailbox for a workspace we launched. Cheap and idempotent.
+function ensureWorkspaceMailbox(workspaceId: number): void {
   try {
-    editor.createDir(editor.localPath(inboxDir(workspaceId)));
-    editor.createDir(editor.localPath(editor.pathJoin(inboxDir(workspaceId), "done")));
+    editor.createDir(editor.localPath(workspaceInboxDir(workspaceId)));
+    editor.createDir(editor.localPath(editor.pathJoin(workspaceInboxDir(workspaceId), "done")));
   } catch (_e) {
     // A mailbox we could not create means the agent falls back to screen
     // inference, which is the pre-mailbox behaviour — not an error worth
     // interrupting a launch for.
+  }
+}
+
+/// Create the in-repo mailbox — only when talking *to* a foreign agent, never
+/// at launch.
+///
+/// Writes `.fresh/.gitignore` containing `*`, which excludes the directory's
+/// contents and the ignore file itself, so `git status` stays clean. A control
+/// plane whose cost is a permanently dirty working tree would not be worth
+/// using, and an agent that runs `git status` to decide what it changed must
+/// not see our bookkeeping.
+function ensureMailboxAt(root: string): void {
+  if (!root) return;
+  try {
+    editor.createDir(editor.localPath(inboxDirForRoot(root)));
+    editor.createDir(editor.localPath(editor.pathJoin(inboxDirForRoot(root), "done")));
+    const ignore = editor.pathJoin(agentDirForRoot(root), ".gitignore");
+    if (!editor.fileExists(editor.localPath(ignore))) {
+      editor.writeFile(editor.localPath(ignore), "*\n");
+    }
+  } catch (_e) {
+    // Same reasoning as above.
   }
 }
 
@@ -3895,8 +3944,8 @@ function ensureMailbox(workspaceId: number): void {
 /// know this plugin's directory layout to answer "where do I write my status".
 function mailboxEnv(workspaceId: number): Record<string, string> {
   return {
-    FRESH_AGENT_STATUS: statusPath(workspaceId),
-    FRESH_AGENT_INBOX: inboxDir(workspaceId),
+    FRESH_AGENT_STATUS: workspaceStatusPath(workspaceId),
+    FRESH_AGENT_INBOX: workspaceInboxDir(workspaceId),
     // Not per-agent: one log for the whole environment, so an agent can
     // watch what everyone else is doing without being told about them.
     FRESH_FLEET_EVENTS: eventLogPath(),
@@ -3927,6 +3976,85 @@ function parseStatus(raw: string, now: number): StatusReport | null {
   const st = REPORTED_STATES.find((s) => s === head);
   if (!st) return { state: "working", summary: text, readAt: now, raw: text };
   return { state: st, summary: sp < 0 ? "" : text.slice(sp + 1).trim(), readAt: now, raw: text };
+}
+
+
+/// Agents that reported in from somewhere we did not launch them.
+///
+/// The point of putting the mailbox in the workspace: an agent is whatever
+/// wrote a status file, not whatever this plugin happens to have started. A
+/// `claude` someone ran by hand in a worktree, an agent in another
+/// multiplexer, one left over from a previous session — all of them become
+/// visible by looking where a status file would be.
+///
+/// Keyed by root, and only for roots with no live session: a root that has a
+/// window is already a row, and reporting it twice would be worse than not
+/// finding it at all.
+interface UnattachedAgent {
+  root: string;
+  label: string;
+  status: StatusReport;
+}
+
+const unattachedAgents = new Map<string, UnattachedAgent>();
+
+/// Roots worth looking in.
+///
+/// Every root we know about from any source — live sessions and the
+/// worktrees discovered on disk — because those are the places an agent
+/// plausibly runs, and scanning them is a `fileExists` each. Deliberately not
+/// a filesystem walk: "find every status file on this machine" is a different
+/// and much more expensive question, and answering it would surface agents
+/// working on things the user is not.
+function mailboxSearchRoots(): string[] {
+  const roots = new Set<string>();
+  for (const s of orchestratorSessions.values()) {
+    if (s.root) roots.add(s.root);
+  }
+  const cwd = editor.getCwd();
+  if (cwd) roots.add(cwd);
+  return [...roots];
+}
+
+/// Roots that already have a live window, so a report from them is not
+/// "unattached" — it is that session's own status.
+function attachedRoots(): Set<string> {
+  const live = new Set<string>();
+  for (const s of orchestratorSessions.values()) {
+    if (!s.discovered && !s.pending && s.root) live.add(s.root);
+  }
+  return live;
+}
+
+function scanForUnattachedAgents(): void {
+  const attached = attachedRoots();
+  const now = Date.now();
+  const seen = new Set<string>();
+  for (const root of mailboxSearchRoots()) {
+    if (attached.has(root)) continue;
+    let raw: string | null | undefined = null;
+    try {
+      const path = statusPathForRoot(root);
+      if (!editor.fileExists(editor.localPath(path))) continue;
+      raw = editor.readFile(editor.localPath(path));
+    } catch (_e) {
+      continue;
+    }
+    if (typeof raw !== "string") continue;
+    const parsed = parseStatus(raw, now);
+    if (!parsed) continue;
+    seen.add(root);
+    unattachedAgents.set(root, {
+      root,
+      label: editor.pathBasename(root) || root,
+      status: parsed,
+    });
+  }
+  // Drop the ones that stopped reporting: a stale row claiming an agent is
+  // waiting on you, for a worktree nobody is in, is worse than no row.
+  for (const root of [...unattachedAgents.keys()]) {
+    if (!seen.has(root)) unattachedAgents.delete(root);
+  }
 }
 
 const STATUS_TTL_MS = 1_000;
@@ -3973,7 +4101,13 @@ function probeStatus(s: AgentSession): void {
   if (s.status && now - s.status.readAt < STATUS_TTL_MS) return;
   let raw: string | null = null;
   try {
-    raw = editor.readFile(editor.localPath(statusPath(s.id)));
+    // Ours first: an agent we launched was handed that path, so it is the
+    // authoritative one. Falling back to the in-repo convention means a
+    // workspace whose agent was replaced by hand still reports.
+    raw = editor.readFile(editor.localPath(workspaceStatusPath(s.id)));
+    if (typeof raw !== "string" && s.root) {
+      raw = editor.readFile(editor.localPath(statusPathForRoot(s.root)));
+    }
   } catch (_e) {
     raw = null;
   }
@@ -4020,6 +4154,7 @@ registerHandler("orchestrator_status_watch", function () {
     probeStatus(s);
     broadcastState(s);
   }
+  scanForUnattachedAgents();
 });
 
 const tailProbesInFlight = new Set<number>();
@@ -10000,7 +10135,7 @@ async function runLocalCreate(id: number): Promise<void> {
   setPendingMessage(id, editor.t("dock.pending_starting"));
   // Before the spawn, so the agent's first turn finds the directories its
   // briefing names rather than having to create them.
-  ensureMailbox(id);
+  ensureWorkspaceMailbox(id);
   try {
     const result = await editor.createWindowWithTerminal({
       root,
@@ -10425,7 +10560,7 @@ async function launchAgentInCurrentWorkspace(
     systemPrompt: teach?.via === "flag" ? FRESH_CLI_SYSTEM_PROMPT : undefined,
   });
   if (trimmedCmd) editor.setGlobalState("orchestrator.last_cmd", trimmedCmd);
-  ensureMailbox(editor.activeWindow());
+  ensureWorkspaceMailbox(editor.activeWindow());
   try {
     await editor.createTerminal({
       cwd,
@@ -11411,17 +11546,27 @@ async function apiDelegate(options: {
   /// One-line imperative summary, for the header and the audit trail.
   intent?: string;
 }): Promise<{ delivered: boolean; path?: string; reason?: string }> {
-  const s = resolveWorkspace(options.target);
-  if (!s) return { delivered: false, reason: "no workspace matches that target" };
   const text = String(options.instruction ?? "").trim();
   if (!text) return { delivered: false, reason: "empty instruction" };
-  ensureMailbox(s.id);
+  // A target may be a workspace we own, or a bare root — an agent that
+  // reported in from a checkout we never launched has no workspace id, and
+  // refusing to talk to it would defeat the point of discovering it.
+  const s = resolveWorkspace(options.target);
+  const root = s ? s.root : String(options.target);
+  if (!s && !unattachedAgents.has(root)) {
+    return { delivered: false, reason: "no workspace or reporting agent matches that target" };
+  }
+  if (s) ensureWorkspaceMailbox(s.id);
+  else ensureMailboxAt(root);
   // Name the file so it sorts by time and cannot collide with a concurrent
   // delegation to the same peer.
   const now = new Date();
   const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\..*$/, "");
   const nonce = Math.random().toString(36).slice(2, 6);
-  const path = editor.pathJoin(inboxDir(s.id), `${stamp}-${nonce}.md`);
+  const path = editor.pathJoin(
+    s ? workspaceInboxDir(s.id) : inboxDirForRoot(root),
+    `${stamp}-${nonce}.md`,
+  );
   const header = [
     "---",
     `from: ${options.from ?? "user"}`,
@@ -11434,8 +11579,8 @@ async function apiDelegate(options: {
   // Say so out loud: a delegation is an action taken on the user's behalf in a
   // workspace they may not be looking at.
   const ev = {
-    workspaceId: s.id,
-    name: workspaceDisplayName(s),
+    workspaceId: s ? s.id : -1,
+    name: s ? workspaceDisplayName(s) : (editor.pathBasename(root) || root),
     from: options.from ?? "user",
     intent: options.intent ?? "",
     path,
@@ -11502,9 +11647,10 @@ function apiFleet(): Array<{
   branch: string;
   root: string;
 }> {
+  scanForUnattachedAgents();
   const rows = fleetByUrgency(fleetLive());
   for (const s of rows) probeStatus(s);
-  return rows.map((s) => {
+  const attachedOut = rows.map((s) => {
     const st = sessionState(s);
     return {
       workspaceId: s.id,
@@ -11518,6 +11664,27 @@ function apiFleet(): Array<{
       root: s.root,
     };
   });
+  // Agents that reported from a root we have no window for. They have no
+  // workspaceId — there is no workspace — so `delegate` addresses them by
+  // root, and a caller can tell them apart by that.
+  const loose = [...unattachedAgents.values()].map((u) => ({
+    workspaceId: -1,
+    name: u.label,
+    state: (u.status.state === "waiting" || u.status.state === "blocked"
+      ? "waiting"
+      : u.status.state === "working"
+      ? "working"
+      : "idle") as AgentState,
+    summary: u.status.summary,
+    source: "agent" as const,
+    needsYou: u.status.state === "waiting" || u.status.state === "blocked",
+    agent: "",
+    branch: "",
+    root: u.root,
+  }));
+  // Waiting first, same rule as the attached rows.
+  loose.sort((a, b) => Number(b.needsYou) - Number(a.needsYou));
+  return [...attachedOut, ...loose];
 }
 
 editor.exportPluginApi("orchestrator", {
@@ -13165,9 +13332,43 @@ function fleetLayoutRows(rowCount: number): { list: number; embed: number } {
 /// is what actually tells you who needs you — the row just stays put.
 let fleetOrder: number[] | null = null;
 
+/// A reporting agent we do not own, shaped as a session so the row builders
+/// need no second code path.
+///
+/// Negative id, because every real id is a live window and something that
+/// tries to focus this must fail loudly rather than land somewhere arbitrary.
+/// It has no terminal, so the live pane shows nothing for it — which is
+/// honest: we can read what it says about itself and nothing else.
+function unattachedAsSession(u: UnattachedAgent): AgentSession {
+  return {
+    id: -Math.abs(hashRootToId(u.root)),
+    label: u.label,
+    hostLabel: u.label,
+    root: u.root,
+    status: u.status,
+    discovered: false,
+    pending: undefined,
+  } as unknown as AgentSession;
+}
+
+/// Stable small positive number from a root path, so a reporting agent keeps
+/// the same row identity between scans (selection is by id).
+function hashRootToId(root: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < root.length; i++) {
+    h ^= root.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % 1000000 + 1000;
+}
+
 /// Sessions eligible for the fleet: live ones only.
 function fleetLive(): AgentSession[] {
-  return [...orchestratorSessions.values()].filter((s) => !s.discovered && !s.pending);
+  const live = [...orchestratorSessions.values()].filter((s) => !s.discovered && !s.pending);
+  // Agents that reported from a checkout we have no window for belong in the
+  // list for the same reason the others do: the question is "who needs me",
+  // and who launched them is not part of it.
+  return [...live, ...[...unattachedAgents.values()].map(unattachedAsSession)];
 }
 
 /// Order by urgency: waiting first, then working, then everything else, with
@@ -13434,6 +13635,12 @@ function openFleet(): void {
     return;
   }
   reconcileSessions();
+  // Sweep for worktrees on disk, then for agents reporting from them. Done on
+  // open rather than on the tick: it spawns `git worktree list` per repo, and
+  // the set of checkouts on a machine changes on the order of minutes, not
+  // seconds.
+  void refreshDiscoveredWorktrees().then(scanForUnattachedAgents);
+  scanForUnattachedAgents();
   freezeFleetOrder();
   fleetPanel = new FloatingWidgetPanel();
   fleetSelectedId = null;
@@ -13829,6 +14036,8 @@ function openHome(): void {
     return;
   }
   reconcileSessions();
+  void refreshDiscoveredWorktrees().then(scanForUnattachedAgents);
+  scanForUnattachedAgents();
   freezeFleetOrder();
   homeFocus = "list";
   fleetTyping = false;

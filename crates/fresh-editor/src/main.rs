@@ -3971,6 +3971,16 @@ Status is `<state> <summary>`, where state is one of:
     echo "waiting approve my edit to tests/e2e.rs"    > "$FRESH_AGENT_STATUS"
     echo "done 3 files changed, suite green"          > "$FRESH_AGENT_STATUS"
 
+If you were not started by Fresh, $FRESH_AGENT_STATUS will not be set — write
+`.fresh/agent-status` in your working directory instead, same format. Fresh
+looks there for every checkout it knows about, so an agent nobody launched
+from the editor still shows up in the fleet and can still be messaged. Create
+`.fresh/.gitignore` containing `*` alongside it so the directory excludes
+itself from the repository:
+
+    mkdir -p .fresh/inbox/done && printf '*\n' > .fresh/.gitignore
+    echo "waiting need a decision on the schema" > .fresh/agent-status
+
 Write it often, and above all the moment you need the user. Without it, Fresh
 falls back to guessing your state from your terminal output — which is usually
 a spinner, a progress bar, or half a redraw, and cannot tell "I am asking you
