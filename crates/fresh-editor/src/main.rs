@@ -4915,12 +4915,16 @@ fn update_command(args: &Args) -> AnyhowResult<()> {
             }
         };
         if let Some(url) = args.update_releases_url.clone() {
-            endpoints.releases_url = url;
-            endpoints.trusted = false;
+            if let Err(e) = endpoints.set_releases_url(url) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
         }
         if let Some(base) = args.update_download_base.clone() {
-            endpoints.download_base = base;
-            endpoints.trusted = false;
+            if let Err(e) = endpoints.set_download_base(base) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
         }
         let opts = fresh_update::engine::UpdateOptions {
             check_only: args.update_check,

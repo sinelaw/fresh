@@ -8,12 +8,15 @@
 //! [`crate::net`], because GitHub 302s assets to a CDN and a redirect that
 //! downgraded to `http://` would otherwise be followed silently.
 //!
-//! **An override is never trusted.** The env overrides exist so the update
-//! path can be exercised without cutting a release. Unconstrained they would
-//! turn "can set an env var" into "can run code as root": point the base at
-//! your own server, serve a package and a matching `.sha256`, and the checksum
-//! proves only that you can do arithmetic. So an override marks the endpoints
-//! untrusted and the engine prints the command rather than elevating.
+//! **An override off the pinned hosts is never trusted.** The overrides exist
+//! so the update path can be exercised without cutting a release.
+//! Unconstrained they would turn "can set an env var" into "can run code as
+//! root": point the base at your own server, serve a package and a matching
+//! `.sha256`, and the checksum proves only that you can do arithmetic. So an
+//! override that leaves the allowlist marks the endpoints untrusted and the
+//! engine prints the command rather than elevating. One that stays on it —
+//! another path on `api.github.com`, say — is not a downgrade and keeps its
+//! trust, whether it arrived by env var or by flag.
 //!
 //! Pinning means an attacker needs GitHub rather than any host. It is not a
 //! substitute for signing — [`crate::attestation`] narrows that gap with a
@@ -163,14 +166,31 @@ impl Endpoints {
     pub fn from_env() -> Result<Self, EndpointError> {
         let mut ep = Endpoints::production();
         if let Some(url) = env_override(RELEASES_URL_ENV) {
-            ep.trusted &= accept(&url)?;
-            ep.releases_url = url;
+            ep.set_releases_url(url)?;
         }
         if let Some(base) = env_override(DOWNLOAD_BASE_ENV) {
-            ep.trusted &= accept(&base)?;
-            ep.download_base = base;
+            ep.set_download_base(base)?;
         }
         Ok(ep)
+    }
+
+    /// Point the release feed elsewhere, under the policy above.
+    ///
+    /// The `--releases-url` flag lands here so it is judged by where it points
+    /// rather than by which channel set it: another path on an allowlisted host
+    /// is not a downgrade and stays trusted, and anything outside the policy is
+    /// refused in a release build exactly as an env override would be.
+    pub fn set_releases_url(&mut self, url: String) -> Result<(), EndpointError> {
+        self.trusted &= accept(&url)?;
+        self.releases_url = url;
+        Ok(())
+    }
+
+    /// Point asset downloads elsewhere, under the same policy.
+    pub fn set_download_base(&mut self, base: String) -> Result<(), EndpointError> {
+        self.trusted &= accept(&base)?;
+        self.download_base = base;
+        Ok(())
     }
 
     /// The same repository's release list, which carries pre-releases too.
@@ -295,6 +315,27 @@ mod tests {
         assert!(!is_trusted("https://evil.example/fresh.deb"));
         // Not a prefix match: `github.com.evil.example` is a different host.
         assert!(!is_trusted("https://github.com.evil.example/fresh.deb"));
+    }
+
+    /// Trust follows where an override points, not which channel set it — the
+    /// CLI flags resolve through the same `accept` as the env vars, so a feed
+    /// on an allowlisted host still gets the attestation check.
+    #[test]
+    fn an_override_within_policy_stays_trusted() {
+        let mut ep = Endpoints::production();
+        ep.set_releases_url(format!(
+            "https://api.github.com/repos/{REPO}/releases/tags/v0.4.7"
+        ))
+        .expect("an allowlisted host is within policy");
+        assert!(ep.trusted);
+
+        // And one that leaves the allowlist does not, whether this build
+        // refuses it outright or merely demotes it.
+        let mut ep = Endpoints::production();
+        match ep.set_download_base("https://evil.example/dl".to_string()) {
+            Ok(()) => assert!(!ep.trusted, "an out-of-policy base must not stay trusted"),
+            Err(e) => assert!(matches!(e, EndpointError::HostNotAllowed { .. })),
+        }
     }
 
     #[test]
