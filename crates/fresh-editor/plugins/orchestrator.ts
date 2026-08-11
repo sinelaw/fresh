@@ -35,6 +35,7 @@ import {
   spacer,
   styledRow,
   text,
+  textInput,
   textInputChar,
   toggle,
   tree,
@@ -11958,7 +11959,14 @@ function completionVisibleForFocused(): boolean {
 // path (printable chars route to `mode_text_input` ahead of the
 // custom mode keymap), so we intercept here instead.
 function orchestrator_mode_text_input(args: { text: string }): void {
-  if (!form || !formPanel || !args?.text) return;
+  if (!args?.text) return;
+  // The Fleet/Home composer keeps its own value, so a character is appended
+  // here rather than pushed into the widget.
+  if (fleetCompose !== null) {
+    composeChar(args.text, composeRerender());
+    return;
+  }
+  if (!form || !formPanel) return;
   formPanel.command(textInputChar(args.text));
 }
 registerHandler("mode_text_input", orchestrator_mode_text_input);
@@ -13473,6 +13481,77 @@ function fleetSelectedIndex(rows: AgentSession[]): number {
   return 0;
 }
 
+/// A stand-in for the live pane that occupies exactly the same rows.
+///
+/// The pane is the tallest thing in the view, so anything shorter in its place
+/// collapses the panel — the window jumps to a smaller size the moment a
+/// workspace is still starting or has no terminal at all, and jumps back when
+/// it arrives. A view that changes size while you are reading it is worse than
+/// one with a few blank rows in it, so the placeholder pads to the pane's
+/// height rather than saying its piece in one line and stopping.
+/// The right words for an empty pane, which are not the same words.
+///
+/// "starting…" for a workspace whose terminal has not arrived is a promise
+/// that it will; saying it about an agent reporting from a checkout we do not
+/// own would be a lie, since no terminal is ever coming for that row.
+function paneplaceholderFor(selected: AgentSession | undefined, rows: number): WidgetSpec {
+  if (!selected) return paneplaceholder("no workspace selected", rows);
+  if (selected.id < 0) {
+    return paneplaceholder(
+      "reporting from " + selected.root + " — no terminal here to show",
+      rows,
+    );
+  }
+  return paneplaceholder("starting…", rows);
+}
+
+function paneplaceholder(message: string, rows: number): WidgetSpec {
+  const lines: TextPropertyEntry[] = [
+    styledRow([{ text: "  " + message, style: { fg: "ui.menu_disabled_fg", italic: true } }]),
+  ];
+  for (let i = 1; i < Math.max(1, rows); i++) lines.push(styledRow([{ text: " " }]));
+  return raw(lines);
+}
+
+/// The inline message composer.
+///
+/// `null` when closed. The value mirrors the focused text widget, updated
+/// from its `change` events: the host routes printable characters into the
+/// focused control itself, so the widget is where the text actually lives and
+/// a parallel copy maintained by hand would silently disagree with what is on
+/// screen — as it did, sending an empty message while the field showed text.
+///
+/// Inline, and not the editor's prompt line, because the prompt is at the
+/// bottom of the screen and the panel covers the screen — using it meant
+/// unmounting the Fleet, dropping the user onto a bare editor with a
+/// one-line question fifty rows from where they were looking, and putting it
+/// back afterwards. You compose a message to an agent *while looking at what
+/// it said*, or the message is worse.
+let fleetCompose: { value: string } | null = null;
+
+function composeRow(targetName: string): WidgetSpec {
+  // One row, in the hint bar's place, so opening the composer does not change
+  // the panel's height. A view that resizes when you start typing is the same
+  // complaint as one that collapses when a terminal is not ready: the thing
+  // you are reading moves while you are reading it.
+  return row(
+    textInput(fleetCompose?.value ?? "", {
+      // The field's own label, not a text widget beside it: a `text` spec
+      // renders as an input box, so the label came out looking like a second
+      // empty field next to the real one.
+      label: `message → ${targetName}`,
+      placeholder: "what should it do?",
+      focused: true,
+      fullWidth: true,
+      key: "fleet_msg",
+    }),
+    hintBar([
+      { keys: "Enter", label: "send" },
+      { keys: "Esc", label: "cancel" },
+    ]),
+  );
+}
+
 function buildFleetSpec(): WidgetSpec {
   const rows = fleetRows();
   const fleetSelected = fleetSelectedIndex(rows);
@@ -13516,25 +13595,29 @@ function buildFleetSpec(): WidgetSpec {
         windowId: selected.id,
         bufferId: selected.terminalBufferId,
         rows: embedRows,
-        interactive: true,
+        // Not an input target while the composer is up: an interactive pane
+        // takes any key the mode does not claim, so leaving it live would
+        // send what you are typing *about* an agent *to* that agent.
+        interactive: fleetCompose === null,
         key: "fleet_embed",
       }),
     }));
-  } else if (selected) {
-    // No terminal yet — a workspace still coming up. Deliberately NOT a
-    // `windowEmbed` of the whole session: that paints the session's tab bar
-    // and chrome, which (a) is not what this view is about, (b) is inert
-    // inside a panel, so its `+` and tabs look clickable and do nothing, and
-    // (c) disappears a second later when the terminal is discovered, shifting
-    // the content up a row. One line that says what is happening is honest
-    // and does not move.
+  } else {
+    // No terminal to show: a workspace still coming up, or an agent that
+    // reported in from a checkout we have no window for. Deliberately NOT a
+    // `windowEmbed` of the whole session — that paints the session's tab bar
+    // and chrome, which is not what this view is about, is inert inside a
+    // panel (its `+` and tabs look clickable and do nothing), and disappears
+    // a second later when the terminal is discovered, shifting everything up
+    // a row.
     children.push(labeledSection({
-      label: `live · ${workspaceDisplayName(selected)}`,
-      child: raw([styledRow([{
-        text: "  starting…",
-        style: { fg: "ui.menu_disabled_fg", italic: true },
-      }])]),
+      label: selected ? `live · ${workspaceDisplayName(selected)}` : "live",
+      child: paneplaceholderFor(selected, embedRows),
     }));
+  }
+  if (fleetCompose !== null) {
+    children.push(composeRow(selected ? workspaceDisplayName(selected) : "?"));
+    return col(...children);
   }
   children.push(row(
     flexSpacer(),
@@ -13549,7 +13632,7 @@ function buildFleetSpec(): WidgetSpec {
       : [
         { keys: "↑↓", label: "select" },
         { keys: "Alt+`", label: "answer agent" },
-        { keys: "m", label: "message" },
+        { keys: "Alt+m", label: "message" },
         { keys: "Enter", label: "go to workspace" },
         { keys: "Esc", label: "close" },
       ]),
@@ -13567,6 +13650,12 @@ let fleetLastSpec: string | null = null;
 
 function renderFleet(force = false): void {
   if (!fleetPanel) return;
+  // Hold still while the composer is up. A mount rebuilds the text field from
+  // the value we last mirrored, so a tick landing between two keystrokes puts
+  // back a value one character old — which is exactly how "check the CI"
+  // arrived as "check the I". The fleet behind the composer can wait the few
+  // seconds it takes to type a sentence.
+  if (fleetCompose !== null && !force) return;
   const spec = buildFleetSpec();
   const key = JSON.stringify(spec);
   if (!force && key === fleetLastSpec) return;
@@ -13584,7 +13673,9 @@ function renderFleet(force = false): void {
   // Focus moves off the list while typing: the host routes printable
   // characters to the focused widget first, and a focused list eats them for
   // type-ahead — so the digits of an answer never reached the agent.
-  fleetPanel.setFocusKey(fleetTyping ? "fleet_embed" : "fleet_list");
+  fleetPanel.setFocusKey(
+    fleetCompose !== null ? "fleet_msg" : fleetTyping ? "fleet_embed" : "fleet_list",
+  );
 }
 
 /// Re-assert focus without repainting.
@@ -13593,7 +13684,10 @@ function renderFleet(force = false): void {
 /// tick — otherwise a fleet that is merely *quiet* drifts out of focus and
 /// stops responding to the arrow keys.
 function holdFleetFocus(): void {
-  if (fleetPanel) fleetPanel.setFocusKey(fleetTyping ? "fleet_embed" : "fleet_list");
+  if (!fleetPanel) return;
+  fleetPanel.setFocusKey(
+    fleetCompose !== null ? "fleet_msg" : fleetTyping ? "fleet_embed" : "fleet_list",
+  );
 }
 
 /// Keep the fleet current while it is open.
@@ -13724,33 +13818,46 @@ registerHandler("orchestrator_fleet_open_selected", fleetOpenSelected);
 registerHandler("orchestrator_fleet_close", function () { closeFleet(); });
 
 
-/// Send an instruction to the selected agent, from the Fleet or Home.
+const FLEET_COMPOSE_MODE = "orchestrator-fleet-compose";
+
+/// Open the composer against the selected row.
 ///
-/// The reason delegation is worth a key rather than only an API call: the
-/// Fleet is where you find out an agent is stuck, and "tell it what to do
-/// about that" is the next thing you want. Making it a script you have to
-/// write puts a compiler between noticing and acting.
-///
-/// Closes the panel while the prompt is up — a modal over a modal loses its
-/// keyboard to whichever the host focused last — and reopens it after, so the
-/// answer lands back where the question was asked.
-async function messageSelected(reopen: () => void): Promise<void> {
+/// Refuses rather than opening over nothing: composing a message with no
+/// addressee, and finding out on Enter, wastes what you typed.
+function openCompose(rerender: () => void): void {
   const rows = fleetRows();
   const target = rows[fleetSelectedIndex(rows)];
-  if (!target) return;
-  const name = workspaceDisplayName(target);
-  const text = await editor.prompt(`Message ${name}:`, "");
-  reopen();
-  if (text === null) return;
-  const trimmed = text.trim();
-  if (!trimmed) return;
-  const orchApi = { delegate: apiDelegate };
-  const res = await orchApi.delegate({
-    target: target.id,
-    instruction: trimmed,
+  if (!target) {
+    editor.setStatus("No agent selected.");
+    return;
+  }
+  fleetCompose = { value: "" };
+  editor.setEditorMode(FLEET_COMPOSE_MODE);
+  rerender();
+}
+
+function closeCompose(rerender: () => void, mode: string): void {
+  fleetCompose = null;
+  editor.setEditorMode(mode);
+  rerender();
+}
+
+/// Deliver what was typed, to the row it was typed against.
+async function sendCompose(rerender: () => void, mode: string): Promise<void> {
+  const text = (fleetCompose?.value ?? "").trim();
+  const rows = fleetRows();
+  const target = rows[fleetSelectedIndex(rows)];
+  closeCompose(rerender, mode);
+  if (!text || !target) return;
+  // A discovered agent has no workspace id, so address it by the root it
+  // reported from — the same pair `delegate` accepts.
+  const res = await apiDelegate({
+    target: target.id < 0 ? target.root : target.id,
+    instruction: text,
     from: "user",
-    intent: trimmed.split("\n")[0].slice(0, 60),
+    intent: text.split("\n")[0].slice(0, 60),
   });
+  const name = workspaceDisplayName(target);
   editor.setStatus(
     res.delivered
       ? `Sent to ${name}. It acts on this when it next checks its inbox.`
@@ -13758,27 +13865,77 @@ async function messageSelected(reopen: () => void): Promise<void> {
   );
 }
 
-registerHandler("orchestrator_fleet_message", async function () {
-  const wasOpen = fleetPanel !== null;
-  if (wasOpen) closeFleet();
-  await messageSelected(() => {
-    if (wasOpen) openFleet();
-  });
+/// Feed one typed character to the composer.
+///
+/// The value lives in `fleetCompose`, not in the widget, so a keystroke is
+/// "append and re-render" rather than a round trip through the host's text
+/// control — which also means Backspace and Enter need no special agreement
+/// about where the cursor is.
+function composeChar(ch: string, rerender: () => void): void {
+  if (fleetCompose === null) return;
+  fleetCompose.value += ch;
+  rerender();
+}
+
+function composeBackspace(rerender: () => void): void {
+  if (fleetCompose === null) return;
+  fleetCompose.value = [...fleetCompose.value].slice(0, -1).join("");
+  rerender();
+}
+
+const rerenderFleet = () => renderFleet(true);
+const rerenderHome = () => renderHome(true);
+
+/// Whichever view is up owns the composer; both use the same one.
+function composeRerender(): () => void {
+  return homePanel !== null ? rerenderHome : rerenderFleet;
+}
+
+function composeReturnMode(): string {
+  return homePanel !== null ? HOME_MODE : FLEET_MODE;
+}
+
+registerHandler("orchestrator_fleet_message", function () {
+  openCompose(composeRerender());
+});
+registerHandler("orchestrator_home_message", function () {
+  openCompose(composeRerender());
+});
+registerHandler("orchestrator_compose_send", async function () {
+  await sendCompose(composeRerender(), composeReturnMode());
+});
+registerHandler("orchestrator_compose_cancel", function () {
+  closeCompose(composeRerender(), composeReturnMode());
+});
+registerHandler("orchestrator_compose_backspace", function () {
+  composeBackspace(composeRerender());
 });
 
-registerHandler("orchestrator_home_message", async function () {
-  const wasOpen = homePanel !== null;
-  if (wasOpen) closeHome();
-  await messageSelected(() => {
-    if (wasOpen) openHome();
-  });
-});
+// Enter sends, Escape cancels, Backspace edits; every printable character
+// arrives through the global `mode_text_input` path below.
+editor.defineMode(FLEET_COMPOSE_MODE, [
+  ["Enter", "orchestrator_compose_send"],
+  ["Escape", "orchestrator_compose_cancel"],
+  ["Backspace", "orchestrator_compose_backspace"],
+// `allowTextInput` is what routes printable characters to `mode_text_input`
+// instead of letting them fall through to the focused pane — which is a live
+// terminal, so without this every character you typed was sent to the agent
+// you were trying to compose a message about.
+], false, true);
 
 registerHandler("orchestrator_fleet", openFleet);
 registerHandler("orchestrator_fleet_event", function (ev: Record<string, unknown>) {
   if (!fleetPanel || ev.panel_id !== fleetPanel.id()) return;
   const type = String(ev.event_type ?? "");
   const payload = (ev.payload ?? {}) as Record<string, unknown>;
+  const widget = String(ev.widget_key ?? payload.key ?? "");
+  // The composer's text lives in the widget; mirror it so `send` has it.
+  if (type === "change" && widget === "fleet_msg") {
+    if (fleetCompose !== null && typeof payload.value === "string") {
+      fleetCompose.value = payload.value;
+    }
+    return;
+  }
   if (type === "select" || type === "change") {
     // A mouse click on a row still reports the list's own index. Translate it
     // to an id at once: the index is only valid against the ordering that
@@ -13822,7 +13979,11 @@ editor.defineMode(FLEET_MODE, [
   ["Down", "orchestrator_fleet_next"],
   ["Enter", "orchestrator_fleet_open_selected"],
   ["Escape", "orchestrator_fleet_close"],
-  ["m", "orchestrator_fleet_message"],
+  // Alt+m, not a bare `m`: a focused list eats printable characters for
+  // type-ahead before a mode binding sees them (the same shadowing the
+  // new-workspace form documents for Space), so a plain letter would look
+  // bound and do nothing.
+  ["M-m", "orchestrator_fleet_message"],
   ["M-`", "orchestrator_fleet_type_toggle"],
 ]);
 // Typing mode claims exactly one key. Everything else — Tab, Enter, Escape,
@@ -13887,6 +14048,7 @@ type HomeFocus = "list" | "master" | "tail";
 let homeFocus: HomeFocus = "list";
 
 function homeFocusKey(): string {
+  if (fleetCompose !== null) return "fleet_msg";
   return homeFocus === "master"
     ? "home_master"
     : homeFocus === "tail"
@@ -13941,20 +14103,22 @@ function buildHomeSpec(): WidgetSpec {
         windowId: control.id,
         bufferId: control.terminalBufferId,
         rows: listRows,
-        interactive: true,
+        interactive: fleetCompose === null,
         key: "home_master",
       })
-      : raw([styledRow([{
-        // Say what to do rather than leaving a blank half-screen: the whole
-        // point of Home is the agent you talk to, so its absence is the one
-        // thing worth spending the space explaining.
-        text: "  no master agent — run “Orchestrator: Set Master Agent” on a workspace",
-        style: { fg: "ui.menu_disabled_fg", italic: true },
-      }])]),
+      // Say what to do rather than leaving a blank half-screen: the whole
+      // point of Home is the agent you talk to, so its absence is the one
+      // thing worth spending the space explaining. Padded to the list's
+      // height so the row keeps its size either way.
+      : paneplaceholder(
+        "no master agent — run “Orchestrator: Set Master Agent” on a workspace",
+        listRows,
+      ),
   });
 
   const children: WidgetSpec[] = [row(listSection, masterSection)];
 
+  const tailRows = Math.max(4, embedRows - listRows);
   if (selected && selected.terminalBufferId !== undefined) {
     children.push(labeledSection({
       label: fleetTyping && homeFocus === "tail"
@@ -13963,13 +14127,22 @@ function buildHomeSpec(): WidgetSpec {
       child: pane({
         windowId: selected.id,
         bufferId: selected.terminalBufferId,
-        rows: Math.max(4, embedRows - listRows),
-        interactive: true,
+        rows: tailRows,
+        interactive: fleetCompose === null,
         key: "fleet_embed",
       }),
     }));
+  } else {
+    children.push(labeledSection({
+      label: selected ? `live · ${workspaceDisplayName(selected)}` : "live",
+      child: paneplaceholderFor(selected, tailRows),
+    }));
   }
 
+  if (fleetCompose !== null) {
+    children.push(composeRow(selected ? workspaceDisplayName(selected) : "?"));
+    return col(...children);
+  }
   children.push(row(
     flexSpacer(),
     hintBar(fleetTyping
@@ -13981,7 +14154,7 @@ function buildHomeSpec(): WidgetSpec {
         { keys: "↑↓", label: "select" },
         { keys: "Tab", label: "list / master / agent" },
         { keys: "Alt+`", label: "type here" },
-        { keys: "m", label: "message" },
+        { keys: "Alt+m", label: "message" },
         { keys: "Enter", label: "go to workspace" },
         { keys: "Esc", label: "close" },
       ]),
@@ -13995,6 +14168,8 @@ let homeLastSpec: string | null = null;
 
 function renderHome(force = false): void {
   if (!homePanel) return;
+  // See `renderFleet`: the composer owns the text while it is open.
+  if (fleetCompose !== null && !force) return;
   const spec = buildHomeSpec();
   const key = JSON.stringify(spec) + homeFocus + String(fleetTyping);
   if (!force && key === homeLastSpec) return;
@@ -14112,6 +14287,13 @@ registerHandler("orchestrator_home_event", function (ev: Record<string, unknown>
   const type = String(ev.event_type ?? "");
   const payload = (ev.payload ?? {}) as Record<string, unknown>;
   const widget = String(ev.widget_key ?? payload.key ?? "");
+  // The composer's text lives in the widget; mirror it so `send` has it.
+  if (type === "change" && widget === "fleet_msg") {
+    if (fleetCompose !== null && typeof payload.value === "string") {
+      fleetCompose.value = payload.value;
+    }
+    return;
+  }
   if (type === "select" || type === "change") {
     const idx = Number(payload.index ?? payload.selectedIndex ?? -1);
     const rows = fleetRows();
@@ -14151,7 +14333,7 @@ editor.defineMode(HOME_MODE, [
   ["Tab", "orchestrator_home_cycle"],
   ["Enter", "orchestrator_home_open_selected"],
   ["Escape", "orchestrator_home_close"],
-  ["m", "orchestrator_home_message"],
+  ["M-m", "orchestrator_home_message"],
   ["M-`", "orchestrator_home_type_toggle"],
 ]);
 // Typing mode claims only the way out, so Tab, Enter, Escape and every
