@@ -11,6 +11,8 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Installing and updating Fresh** - the preferred install method for Linux is now a single self-contained, self-updating, statically linked (musl) binary - one install that works everywhere, instead of a dozen fragile packaging channels.
 * **LSP completions can offer auto-imports** - servers like rust-analyzer now suggest unimported symbols, and accepting one inserts the `use`/import line (#2603).
 * **The scripting API can manage the whole Orchestrator dock** - create, rename, move, archive, delete and list workspaces, including over SSH, not just create them.
+* **A new workspace opens the moment you ask for it** - a progress page shows while `git worktree add` still runs, the workspace can be renamed, moved or deleted mid-build, and the build finishing no longer steals focus. The dock also got tidier: compact by default, uniform full-width menu rows.
+* **The mouse wheel pans the tab strip** - tabs scroll into view under the pointer without changing the active tab.
 * **`fresh +50 file.txt` opens the file at that line**, vim-style (#1926, requested by @asukaminato0721).
 * **`F3`/`Shift+F3` step through search matches without closing the search bar first** (#2111).
 * **Choose which files are too ephemeral to remember** - a configurable pattern list keeps cursor positions from being saved for build output, generated sources and the like; git's own scratch files are excluded by default.
@@ -26,6 +28,8 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Mouse wheel scrolls the view, not the selection**
   * Settings search results - hover and clicks also land on the row under the pointer once the list is scrolled (#2860, #1112, reported by @asukaminato0721).
   * Prompt dropdowns (command palette, Select Locale, …), which also gained a scrollbar when they overflow (#623, #1593, reported by @asukaminato0721 and @Kodiak-01).
+* **A wheel over the menu, tab or status bar no longer scrolls the focused pane** - chrome wheel events used to land on whatever had focus, dropping a focused terminal into scrollback (#2969).
+* **Plugin dock panels get their geometry right** - opening one (like a code tour) now resizes terminals above it so shell output doesn't vanish off-screen, panels reflow when the file explorer toggles instead of spilling at their old width, and dock hover/selection highlights span the whole row (#2969).
 * **Auto-indent**
   * Typing `else:`, `except:` or a custom dedent keyword re-indents the line on the spot, like `}` always did (#2582).
   * Braceless `if`/`for`/`while` bodies indent correctly in TypeScript/JavaScript (#2492).
