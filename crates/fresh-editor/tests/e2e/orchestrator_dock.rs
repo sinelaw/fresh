@@ -588,10 +588,11 @@ fn next_window_cycles_only_dock_visible_sessions() {
     }
 }
 
-/// Rows a dock card occupies below its name row in card view: the
-/// remaining content row (branch/project + PR) plus the bottom border.
-/// Mirrors the plugin's `DOCK_CARD_HEIGHT` (2 content rows).
-const DOCK_CARD_ROWS_BELOW_NAME: u16 = 2;
+/// Rows a dock card occupies below its name row in card view: the two
+/// remaining content rows (branch/project + PR, then what the agent is
+/// doing) plus the bottom border. Mirrors the plugin's `DOCK_CARD_HEIGHT`
+/// (3 content rows).
+const DOCK_CARD_ROWS_BELOW_NAME: u16 = 3;
 
 /// Column of the dock's right-edge divider (the "wall") on the title row.
 fn dock_wall_col(h: &EditorTestHarness) -> u16 {
@@ -3514,7 +3515,7 @@ fn dock_git_summary_survives_transient_probe_failure() {
 /// floated in the middle of the card instead of starting at its left
 /// edge, and the third row stood empty on every session without a PR.
 #[test]
-fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
+fn dock_card_starts_the_branch_at_the_left_edge() {
     let (_tmp, root) = setup_committed_project("alphaproj");
     // The measured workspace lives in its own repo, so its card can be
     // read without the launch project's own status bleeding in. It stays
@@ -3584,12 +3585,17 @@ fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
         "the branch starts at the card's left edge, got {row2:?}"
     );
 
-    // ...and that is the last content row: the card is two rows tall, so
-    // the next line is its bottom border.
-    let after = screen.lines().nth(name_row + 2).unwrap_or_default();
+    // The branch row is followed by the agent's reason row, and then the
+    // bottom border. What this test pins is *where the branch starts*, not
+    // how tall the card is, so the border is found from the shared
+    // geometry constant rather than a literal offset.
+    let after = screen
+        .lines()
+        .nth(name_row + DOCK_CARD_ROWS_BELOW_NAME as usize)
+        .unwrap_or_default();
     assert!(
         after.trim_start().starts_with('╰'),
-        "the card ends after the branch row, got {after:?}"
+        "the card ends after its content rows, got {after:?}"
     );
 }
 
@@ -3704,13 +3710,19 @@ fn dock_card_leaves_the_second_row_empty_rather_than_echo_the_name() {
     })
     .unwrap();
 
-    // ...and it is still a two-row card, closed by its bottom border.
+    // ...and the card is closed by its bottom border after the third
+    // content row (the agent's reason line, blank for a folder with no
+    // agent) — the point being that the *second* row stays empty rather
+    // than echoing the name, not that the card is any particular height.
     let screen = h.screen_to_string();
     let name_row = screen.lines().position(|l| l.contains("loose")).unwrap();
-    let after = screen.lines().nth(name_row + 2).unwrap_or_default();
+    let after = screen
+        .lines()
+        .nth(name_row + DOCK_CARD_ROWS_BELOW_NAME as usize)
+        .unwrap_or_default();
     assert!(
         after.trim_start().starts_with('╰'),
-        "the card still ends after its second row, got {after:?}"
+        "the card ends after its content rows, got {after:?}"
     );
 }
 
