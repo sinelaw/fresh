@@ -1622,7 +1622,11 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
 // workspace name) and the project tag beside the name were dropped for
 // the same reason: they spent a card's scarce width on what the row
 // already said.
-const DOCK_CARD_HEIGHT = 2;
+// Three content rows: name, branch/project, and what the agent is doing or
+// wants. Uniform — a height that changed with content would make the whole
+// dock jump every time an agent started or finished saying something, which
+// is worse than a blank row on a quiet card.
+const DOCK_CARD_HEIGHT = 3;
 
 // A card row split into a left group and a right group flush against
 // the card's right border. Tree card rows are plain text entries (no
@@ -1712,6 +1716,40 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
 // left — its branch when that says something the name doesn't, else the
 // project it belongs to — and its PR badge (or the on-disk tag) flush
 // right.
+/// The card's third line: what this agent is doing, or what it wants.
+///
+/// Empty for a workspace with nothing to say, so a card only grows when there
+/// is something worth the row. A waiting agent's question outranks its last
+/// line and takes the error colour — on a dock of six cards, that colour is
+/// the thing you are scanning for.
+///
+/// Prefers the agent's own `status` summary over anything scraped from its
+/// screen, for the reasons in §8.1: the screen is often a spinner, a progress
+/// bar, or half a redraw.
+function sessionCardReasonRow(s: AgentSession): TextPropertyEntry[] {
+  const st = sessionState(s);
+  const reported = s.status?.summary ?? "";
+  const waiting = st === "waiting" ? (reported || s.tail?.waitingOn || "") : "";
+  const text = waiting || reported || s.tail?.lastLine || "";
+  if (!text) return [];
+  const agent = s.terminalTitle ? (agentEntryForCmd(s.terminalTitle)?.label ?? "") : "";
+  const prefix = agent ? agent + " " : "";
+  const cap = Math.max(10, cardInnerColsEstimate() - 2 - prefix.length);
+  return [
+    styledRow([
+      ...(prefix
+        ? [{ text: prefix, style: { fg: "ui.menu_disabled_fg" } }]
+        : []),
+      {
+        text: capText(text, cap),
+        style: waiting
+          ? { fg: "diagnostic.error_fg" }
+          : { fg: "ui.menu_disabled_fg", italic: st === "idle" },
+      },
+    ]),
+  ];
+}
+
 function sessionCardExtraLines(id: number): TextPropertyEntry[] {
   const s = orchestratorSessions.get(id);
   if (!s) return [];
@@ -1747,7 +1785,10 @@ function sessionCardExtraLines(id: number): TextPropertyEntry[] {
   // opened as its own project, whose label *is* the folder). The row
   // stays empty rather than echoing the line above it.
   if (text === s.label) {
-    return [cardSplitRow(right.length > 0 ? [] : [{ text: " " }], right)];
+    return [
+      cardSplitRow(right.length > 0 ? [] : [{ text: " " }], right),
+      ...sessionCardReasonRow(s),
+    ];
   }
   // Cap the branch/project so the badge keeps its columns: the host
   // truncates the row's *end*, which is the badge. Budget = the card's
@@ -1763,6 +1804,7 @@ function sessionCardExtraLines(id: number): TextPropertyEntry[] {
       ],
       right,
     ),
+    ...sessionCardReasonRow(s),
   ];
 }
 
