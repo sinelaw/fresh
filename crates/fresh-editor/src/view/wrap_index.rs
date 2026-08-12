@@ -809,15 +809,19 @@ impl WrapIndex {
     /// `ensure_built` repairs them by diffing the stored snapshot against the
     /// fresh one.
     ///
-    /// Nothing calls this today. The paths that replace a buffer's contents
-    /// outright — file reload, auto-revert, `apply_bulk_edit`'s snapshot
-    /// restore — leave the index alone and rely on `buffer.version()` moving,
-    /// which routes `ensure_built` to a full rebuild. That works, but it is an
-    /// implicit dependency rather than a stated one: `damage_bytes` checks
-    /// only `self.built`, so an edit arriving between such a replacement and
-    /// the next render would repair lines that describe the *old* document and
+    /// Its one caller is `EditorState::restore_displaced_markers`, which
+    /// teleports marker positions on undo without any decoration version
+    /// moving — the only change the version-keyed diff cannot see.
+    ///
+    /// The paths that replace a buffer's contents outright — file reload,
+    /// auto-revert, `apply_bulk_edit`'s snapshot restore — still do not call
+    /// it, relying instead on `buffer.version()` moving to route
+    /// `ensure_built` to a full rebuild. That works, but it is an implicit
+    /// dependency rather than a stated one: `damage_bytes` checks only
+    /// `self.built`, so an edit arriving between such a replacement and the
+    /// next render would repair lines that describe the *old* document and
     /// then mark the index current. A render always intervenes in practice.
-    /// Calling this from those paths is the explicit fix.
+    /// Calling this from those paths too is the explicit fix.
     pub fn damage_all(&mut self) {
         self.built = false;
     }
