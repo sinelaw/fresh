@@ -1683,6 +1683,29 @@ let toolbarPanel: WidgetPanel | null = null;
 let filesPanel: WidgetPanel | null = null;
 let commentsPanel: WidgetPanel | null = null;
 
+/** Width in columns of a side panel: the host's last reported viewport
+ *  width for it, or the share of the screen `REVIEW_LAYOUT` gives it
+ *  until the first `viewport_changed` for that panel arrives. */
+function panelWidthOf(panel: 'files' | 'comments'): number {
+    const known = state.panelWidths[panel];
+    if (known && known > 0) return known;
+    return Math.max(12, Math.floor(state.viewportWidth * (panel === 'files' ? 0.16 : 0.15)));
+}
+
+/** `text` clipped to `width` columns, dropping characters from the left
+ *  and marking the cut with `…`. Used for paths, where the tail (the
+ *  directory you are in) carries more than the root. */
+function elideLeft(text: string, width: number): string {
+    if (width <= 1) return text.slice(0, Math.max(0, width));
+    return text.length <= width ? text : '…' + text.slice(text.length - (width - 1));
+}
+
+/** `text` clipped to `width` columns, marking the cut with `…`. */
+function elideRight(text: string, width: number): string {
+    if (width <= 1) return text.slice(0, Math.max(0, width));
+    return text.length <= width ? text : text.slice(0, width - 1) + '…';
+}
+
 /** The close button at the right edge of an open side panel's header.
  *  Clicking it hides that panel (same as `F` / `C`). */
 const PANEL_CLOSE_GLYPH = '✕';
@@ -1784,6 +1807,11 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     state.filesPanelByRow = {};
     state.filesPanelDirByRow = {};
+    // Every row is cut to the panel's width. A row wider than the panel
+    // would let the buffer scroll sideways (nothing wraps in a panel), and
+    // that pans the *whole* viewport — header included — the moment the
+    // hidden cursor lands past the right edge.
+    const W = panelWidthOf('files');
 
     if (state.files.length === 0) {
         entries.push({
@@ -1819,7 +1847,7 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
             const display = state.mode === 'range' ? label : label.toUpperCase();
             row1++;
             entries.push({
-                text: ` ${display} (${catCounts[group.category]})\n`,
+                text: `${elideRight(` ${display} (${catCounts[group.category]})`, W)}\n`,
                 style: { fg: STYLE_SECTION_HEADER, bold: true },
                 properties: { type: "files-section" },
             });
@@ -1837,8 +1865,12 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
             ? `  ${dirFiles.length} file${dirFiles.length === 1 ? '' : 's'}` : '';
         row1++;
         state.filesPanelDirByRow[row1] = group.dirKey;
+        // The counts are the part worth keeping when a path is too long,
+        // so the path is what gets elided (from the left — the leaf
+        // directory says more than the repo root).
+        const dirStats = `${countNote}  +${added} -${removed}`;
         entries.push({
-            text: ` ${tri} ${group.dir}${countNote}  +${added} -${removed}\n`,
+            text: ` ${tri} ${elideLeft(group.dir, Math.max(4, W - 3 - dirStats.length))}${dirStats}\n`,
             style: { fg: STYLE_SECTION_HEADER },
             properties: { type: "files-dir", dirKey: group.dirKey },
         });
@@ -1858,7 +1890,7 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
             state.filesPanelByRow[row1] = key;
             // Basename only — the directory header carries the path.
             entries.push({
-                text: `   ${glyph} ${fileBaseOf(file.path)}${stats}\n`,
+                text: `   ${glyph} ${elideRight(fileBaseOf(file.path), Math.max(4, W - 5 - stats.length))}${stats}\n`,
                 style,
                 properties: { type: "file", fileKey: key, filePath: file.path },
             });
@@ -2317,6 +2349,21 @@ function on_review_mouse_click(data: {
     // Clicks on the toolbar's and the panel headers' buttons arrive as
     // `widget_event`, not here.
 
+    // A click is a focus gesture: the panel you clicked takes the keys.
+    // The host moves its own focus to the clicked buffer; mirroring it
+    // here keeps `state.focusPanel` — which decides where ↑↓ / ←→ /
+    // Home / End go — from pointing at the panel you just left.
+    const clickedPanel: 'files' | 'diff' | 'comments' | null =
+        data.buffer_id === state.panelBuffers["files"] ? 'files'
+            : data.buffer_id === commentsId ? 'comments'
+                : (data.buffer_id === diffId || data.buffer_id === stickyId
+                    || (state.centerComposite
+                        && data.buffer_id === state.centerComposite.compositeBufId)) ? 'diff'
+                    : null;
+    if (clickedPanel && clickedPanel !== state.focusPanel && panelVisible(clickedPanel)) {
+        reviewSetFocus(clickedPanel);
+    }
+
     // Click in the diff buffer: section headers and file headers are
     // both interactive — clicking either toggles its fold state.
     if (data.buffer_id === diffId) {
@@ -2411,7 +2458,6 @@ function on_review_mouse_click(data: {
                 } else {
                     jumpToFile(file);
                 }
-                editor.focusBufferGroupPanel(state.groupId, "diff");
             }
         }
         return;
@@ -2425,9 +2471,11 @@ function on_review_mouse_click(data: {
         const targetRow1 = data.buffer_row + 1;
         const commentId = state.commentsByRow[targetRow1];
         if (commentId) {
+            // Clicking a comment moves the diff to it but leaves focus in
+            // the rail — you clicked the rail, so the next arrow key
+            // should step to the next comment, not scroll the diff.
             state.commentsSelectedRow = targetRow1;
             jumpToComment(commentId);
-            editor.focusBufferGroupPanel(state.groupId, "diff");
             renderCommentsPanel();
         }
         return;
@@ -2813,10 +2861,13 @@ function reviewSetFocus(panel: 'files' | 'diff' | 'comments'): void {
     // async, but a key handler firing immediately after must see the new
     // focus to route the next arrow correctly.
     state.focusPanel = panel;
-    // Pin the FILES cursor to the start of the selected row. Without this the
-    // panel keeps whatever column the hidden cursor last had, and focusing it
-    // can scroll the sidebar horizontally to a long path's end-of-line.
-    if (panel === 'files') scrollFilesToSelected();
+    // A freshly focused sidebar needs a selected row for its keys to act
+    // on, and the row scrolled into view.
+    if (panel === 'files') {
+        selectedSidebarFile();
+        renderFilesPanel();
+        scrollFilesToSelected();
+    }
     refreshFocusIndicators();
 }
 
@@ -3195,9 +3246,22 @@ function review_nav_right() {
 }
 registerHandler("review_nav_right", review_nav_right);
 
+/** The file the sidebar points at, falling back to the first visible one.
+ *  In the expanded stream the selection tracks the diff cursor, which sits
+ *  on a section header at startup — with no fallback the sidebar's own keys
+ *  would have nothing to act on until you scrolled into a file. */
+function selectedSidebarFile(): FileEntry | null {
+    const current = state.files.find(f => fileKey(f) === state.filesCurrentKey);
+    if (current) return current;
+    const vis = visibleFiles();
+    if (vis.length === 0) return null;
+    state.filesCurrentKey = fileKey(vis[0]);
+    return vis[0];
+}
+
 /** Collapse or expand the directory group holding the selected file. */
 function setSelectedDirCollapsed(collapsed: boolean): void {
-    const file = state.files.find(f => fileKey(f) === state.filesCurrentKey);
+    const file = selectedSidebarFile();
     if (!file) return;
     const dirKey = `${file.category} ${fileDirOf(file.path)}`;
     const had = state.collapsedDirs.has(dirKey);
@@ -4626,10 +4690,44 @@ function restoreReviewAnchor(anchor: ReviewAnchor): void {
             return;
         }
     }
-    // The line isn't in the stream (a context line outside every hunk, in
-    // a file whose hunks don't cover it) — settle for the file header.
+    // The line isn't in the stream at all. Side-by-side shows the whole
+    // file, so the cursor can sit a long way from any change; unified
+    // only carries the hunks and their context. Land on the change
+    // nearest that line — the one just above it, or the one just below
+    // when there is nothing above — instead of falling back to the file
+    // header, which reads as "jumped somewhere random".
+    const hunkRow = nearestHunkRowToAnchor(anchor);
+    if (hunkRow !== undefined) {
+        jumpDiffCursorToRow(hunkRow);
+        return;
+    }
     const headerRow = state.fileHeaderRows[anchor.fileKey];
     if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+}
+
+/** Row of the hunk closest to `anchor`'s line within its file: the last
+ *  one ending at or before it, else the first one starting after it.
+ *  `undefined` when the file has no hunks in the stream. */
+function nearestHunkRowToAnchor(anchor: ReviewAnchor): number | undefined {
+    const file = state.files.find(f => fileKey(f) === anchor.fileKey);
+    if (!file) return undefined;
+    const line = anchor.lineType === 'remove' ? anchor.oldLine : anchor.newLine;
+    if (line === undefined) return undefined;
+    const useOld = anchor.lineType === 'remove';
+    let before: Hunk | undefined;
+    let after: Hunk | undefined;
+    for (const h of state.hunks) {
+        if (h.file !== file.path || (h.gitStatus || 'unstaged') !== file.category) continue;
+        const start = useOld ? h.oldRange.start : h.range.start;
+        const end = useOld ? h.oldRange.end : h.range.end;
+        if (end <= line) before = h;              // hunks come in file order
+        else if (start >= line && !after) after = h;
+    }
+    const pick = before && after
+        ? ((line - (useOld ? before.oldRange.end : before.range.end))
+            <= ((useOld ? after.oldRange.start : after.range.start) - line) ? before : after)
+        : (before ?? after);
+    return pick ? state.hunkRowByHunkId[pick.id] : undefined;
 }
 
 async function review_set_layout(layout: 'unified' | 'side-by-side'): Promise<void> {
