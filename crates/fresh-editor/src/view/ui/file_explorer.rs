@@ -184,7 +184,15 @@ impl FileExplorerRenderer {
         false
     }
 
-    /// Render the file explorer in the given frame area
+    /// Render the file explorer in the given frame area.
+    ///
+    /// Returns the cell where the hardware caret should sit (the selected
+    /// row's left edge) when the panel owns the keyboard, or `None`. The
+    /// caret is deliberately *not* committed here: the sidebar paints early
+    /// in the frame, and ratatui draws the hardware caret on top of every
+    /// cell, so a caret set here would blink through any overlay painted
+    /// later (popups, menus, the settings modal). The caller commits it at
+    /// the end of the draw, once it knows what ended up covering that cell.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         view: &mut FileTreeView,
@@ -209,13 +217,13 @@ impl FileExplorerRenderer {
         // cells — the frontend renders the sidebar natively from
         // `Editor::file_explorer_view`. The TUI always passes `true`.
         draw: bool,
-    ) {
+    ) -> Option<(u16, u16)> {
         // Viewport height drives scrolling math AND the web projection's visible
         // window, so it must be set on every render regardless of `draw`.
         let viewport_height_pre = area.height.saturating_sub(2) as usize;
         view.set_viewport_height(viewport_height_pre);
         if !draw {
-            return;
+            return None;
         }
         let search_active = view.is_search_active();
         // The tree-indicator glyphs are the only config the inner renderers
@@ -349,9 +357,12 @@ impl FileExplorerRenderer {
         // Render close button "×" at the right side of the title bar
         Self::render_close_button(frame, area, theme, close_button_hovered);
 
-        // When focused, show a blinking cursor indicator at the selected row
-        // We render a cursor indicator character and position the hardware cursor there
-        // The hardware cursor provides efficient terminal-native blinking
+        // When focused, show a blinking cursor indicator at the selected row.
+        // We paint the indicator glyph here and hand the cell back to the
+        // caller, which parks the hardware cursor on it at the end of the
+        // draw — the hardware cursor provides efficient terminal-native
+        // blinking, but only the caller knows whether an overlay has since
+        // covered the cell.
         if is_focused {
             if let Some(selected) = selected_viewport_index {
                 // Position at the left edge of the selected row (after border)
@@ -364,10 +375,10 @@ impl FileExplorerRenderer {
                 let cursor_area = ratatui::layout::Rect::new(cursor_x, cursor_y, 1, 1);
                 frame.render_widget(cursor_indicator, cursor_area);
 
-                // Position hardware cursor here for blinking effect
-                frame.set_cursor_position((cursor_x, cursor_y));
+                return Some((cursor_x, cursor_y));
             }
         }
+        None
     }
 
     /// Render a single tree node as a ListItem

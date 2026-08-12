@@ -228,9 +228,12 @@ impl Editor {
         // separate, composable step that draws only into the returned rect.
         let (editor_content_area, file_explorer_area) =
             self.split_file_explorer_area(main_content_area);
-        if let Some(file_explorer_area) = file_explorer_area {
-            self.render_file_explorer(frame, file_explorer_area);
-        }
+        // Where the sidebar wants the hardware caret (its selected row) when
+        // it owns the keyboard. Committed at the very end of this draw, with
+        // the editor's caret, so overlays painted after the sidebar can
+        // suppress it instead of having it blink through them.
+        let explorer_hardware_cursor = file_explorer_area
+            .and_then(|file_explorer_area| self.render_file_explorer(frame, file_explorer_area));
 
         // Note: Tabs are now rendered within each split by SplitRenderer
 
@@ -903,7 +906,19 @@ impl Editor {
         // When a prompt is active the prompt renderer already placed the
         // caret on the prompt line via `frame.set_cursor_position`; don't
         // override it with the (now-irrelevant) buffer cursor.
-        if let Some((cx, cy)) = pending_hardware_cursor {
+        //
+        // The focused file explorer's caret rides the same path: the sidebar
+        // paints at the top of the draw, so it can only defer the decision to
+        // here. It additionally drops the caret when a late overlay (menu,
+        // settings, another full-screen modal) owns the screen — those paint
+        // after this point or record no popup rect, so
+        // `cursor_obscured_by_overlay` cannot see them. The editor's own
+        // caret needs no such check: `hide_cursor` above already suppressed
+        // it for every one of those states.
+        let hardware_cursor = pending_hardware_cursor.or_else(|| {
+            explorer_hardware_cursor.filter(|_| !self.cursor_suppressed_by_late_overlay())
+        });
+        if let Some((cx, cy)) = hardware_cursor {
             if self.active_window().prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
                 frame.set_cursor_position((cx, cy));
             }
@@ -1635,7 +1650,14 @@ impl Editor {
         );
     }
 
-    fn render_file_explorer(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
+    /// Returns the cell the sidebar wants the hardware caret parked on (its
+    /// selected row) when it owns the keyboard, for the caller to commit at
+    /// the end of the draw. See [`FileExplorerRenderer::render`].
+    fn render_file_explorer(
+        &mut self,
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+    ) -> Option<(u16, u16)> {
         // Get connection string before mutable borrow of file_explorer.
         let remote_connection = self.connection_display_string();
 
@@ -1672,6 +1694,9 @@ impl Editor {
             .get_mut(&active_id)
             .expect("active window must exist");
         let __buffers_ref: &crate::app::window::WindowBuffers = &__win.buffers;
+        // Set by the materialised panel below; the loading placeholder has no
+        // selected row and so never asks for the caret.
+        let mut explorer_cursor = None;
         if let Some(explorer) = __win.file_explorer.as_mut() {
             // Build set of files with unsaved changes
             let mut files_with_unsaved_changes = std::collections::HashSet::new();
@@ -1698,7 +1723,7 @@ impl Editor {
                 decorations: &__win.file_explorer_decoration_cache,
                 slot_overrides: &__win.file_explorer_slot_override_cache,
             };
-            FileExplorerRenderer::render(
+            explorer_cursor = FileExplorerRenderer::render(
                 explorer,
                 frame,
                 area,
@@ -1738,6 +1763,7 @@ impl Editor {
             );
         }
         self.active_chrome_mut().apply_theme_runs(&fe_runs);
+        explorer_cursor
     }
 
     /// Render the status bar into `area`, unless it's toggled off or a
@@ -2407,6 +2433,34 @@ impl Editor {
             }
         }
         false
+    }
+
+    /// Returns true when a layer that [`Self::cursor_obscured_by_overlay`]
+    /// cannot account for owns the screen: menus and context menus (they
+    /// record menu layouts, not popup rects) and the full-screen modals —
+    /// settings, keybinding editor, calibration wizard, event debug, a
+    /// floating panel, the workspace-trust prompt — which all paint *after*
+    /// the hardware cursor is committed, on a dimmed backdrop.
+    ///
+    /// A hardware caret committed underneath one of these blinks straight
+    /// through it, since the terminal draws the caret on top of every cell.
+    /// The editor's caret is already suppressed for these states via
+    /// `hide_cursor`; this is the equivalent gate for chrome carets that are
+    /// painted before the overlays exist (today: the file explorer's).
+    fn cursor_suppressed_by_late_overlay(&self) -> bool {
+        self.menu_state.active_menu.is_some()
+            || self.active_window().open_context_menu().is_some()
+            || self.settings_state.as_ref().is_some_and(|s| s.visible)
+            || self.keybinding_editor.is_some()
+            || self.calibration_wizard.is_some()
+            || self.active_window().event_debug.is_some()
+            || self.floating_widget_panel.is_some()
+            || self.global_popups.top().is_some_and(|p| {
+                matches!(
+                    p.resolver,
+                    crate::view::popup::PopupResolver::WorkspaceTrust
+                )
+            })
     }
 
     /// Render the Quick Open hints line showing available mode prefixes
