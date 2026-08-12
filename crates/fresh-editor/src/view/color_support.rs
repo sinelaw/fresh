@@ -14,6 +14,7 @@
 //! The Editor will automatically convert colors during rendering based on the capability.
 
 use ratatui::style::Color;
+use std::sync::LazyLock;
 
 /// Terminal color capability levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,14 +340,36 @@ const MIN_CONTRAST_RATIO: f64 = 3.0;
 /// The 6 discrete values used in the 256-color cube (indices 16-231)
 const CUBE_VALUES: [u8; 6] = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff];
 
+/// sRGB -> linear for every possible channel value.
+///
+/// The conversion is a `powf` per channel and luminance needs three of them, so
+/// a contrast comparison costs six. The input is a `u8`, so the entire domain
+/// fits in a 256-entry table and the `powf` calls disappear from the render
+/// path entirely.
+static LINEAR_CHANNEL: LazyLock<[f64; 256]> = LazyLock::new(|| {
+    std::array::from_fn(|c| {
+        let s = c as f64 / 255.0;
+        if s <= 0.04045 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
+    })
+});
+
+/// Relative luminance of every 256-color palette entry, so the candidate scan
+/// in `find_readable_256_color` is table lookups rather than recomputed
+/// luminance for all 240 candidates.
+static PALETTE_LUMINANCE: LazyLock<[f64; 256]> = LazyLock::new(|| {
+    std::array::from_fn(|idx| {
+        let (r, g, b) = idx_to_rgb(idx as u8);
+        relative_luminance(r, g, b)
+    })
+});
+
 /// Convert a sRGB component to linear for luminance calculation
 fn srgb_to_linear(c: u8) -> f64 {
-    let s = c as f64 / 255.0;
-    if s <= 0.04045 {
-        s / 12.92
-    } else {
-        ((s + 0.055) / 1.055).powf(2.4)
-    }
+    LINEAR_CHANNEL[c as usize]
 }
 
 /// Compute relative luminance per WCAG 2.x
@@ -450,7 +473,7 @@ fn find_readable_256_color(fg_idx: u8, bg_rgb: (u8, u8, u8)) -> u8 {
     // Search color cube (16-231) and grayscale ramp (232-255)
     for candidate in 16..=255u8 {
         let c_rgb = idx_to_rgb(candidate);
-        let c_lum = relative_luminance(c_rgb.0, c_rgb.1, c_rgb.2);
+        let c_lum = PALETTE_LUMINANCE[candidate as usize];
 
         // Skip candidates in the wrong direction (optimization)
         if need_lighter && c_lum <= bg_lum {
