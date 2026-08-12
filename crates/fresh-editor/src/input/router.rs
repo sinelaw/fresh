@@ -279,6 +279,15 @@ pub fn widget_panel_key(
             KeyCode::Enter => {
                 return if on_filter {
                     FocusWidget("sessions")
+                } else if view.focused_widget_is_text {
+                    // Any other focused text field in the dock — today the
+                    // chat's composer — means Enter to the plugin. The generic
+                    // single-line-Text fallback below is "picker-style
+                    // activate": it fires the first scrollable widget's
+                    // activate, which here is the session tree. So Enter on a
+                    // finished message opened a workspace instead of sending
+                    // it, and left the message sitting in the box.
+                    DockEvent("dock_text_enter")
                 } else if sessions_focused {
                     // Enter on the session list activates the highlighted
                     // row; handled plugin-side so the discovered-vs-live
@@ -328,8 +337,13 @@ pub fn widget_panel_key(
                 return DockEvent("dock_chat_focus")
             }
             // Toggle the highlighted row's multi-select checkbox (plugin
-            // owns the selection set).
-            KeyCode::Char(' ') => return DockEvent("dock_space"),
+            // owns the selection set) — but never out of a text field's
+            // mouth. A focused field owns the space bar; claiming it dock-wide
+            // meant the chat's composer silently dropped every space, so a
+            // message arrived as one run-together word.
+            KeyCode::Char(' ') if !view.focused_widget_is_text => {
+                return DockEvent("dock_space")
+            }
             _ => {}
         }
     }

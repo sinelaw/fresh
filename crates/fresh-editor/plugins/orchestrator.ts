@@ -12542,6 +12542,15 @@ function resolveAgentAddress(
   target: string | number,
 ): { root: string; name: string; session?: AgentSession } | null {
   const raw = String(target ?? "").trim().replace(/^@/, "");
+  // A `workspace/agent` address, which is what the chat's picker deals in.
+  // First, because it is the only form that cannot be ambiguous.
+  const addressed = raw ? mailboxForAddress(raw) : null;
+  if (addressed) {
+    const session = [...orchestratorSessions.values()].find(
+      (s) => s.root === addressed.root && s.agentName === addressed.name,
+    );
+    return { ...addressed, session };
+  }
   if (raw) {
     for (const s of orchestratorSessions.values()) {
       if (s.agentName === raw && s.root) return { root: s.root, name: raw, session: s };
@@ -13870,6 +13879,13 @@ editor.on("widget_event", (e) => {
       toggleDockChatFocus();
       return;
     }
+    // Enter on a focused text field that is not the filter. Same reason as
+    // Alt+C: there is no mode to bind it in, and the host's own default for a
+    // single-line field is to activate the session tree.
+    if (e.event_type === "dock_text_enter") {
+      if (dockFocus === "chat" && chatTarget !== null) void sendChat();
+      return;
+    }
     // Clicking the chat line is how the mouse aims the keyboard at it.
     if (e.event_type === "focus" && e.widget_key === "dock_chat") {
       if (dockFocus !== "chat") {
@@ -14873,14 +14889,80 @@ function chatCandidates(): string[] {
   return chatFilterMatches(chatFilter);
 }
 
-/// Agent names matching `filter`, best-first — prefix matches before
-/// substring ones, because a prefix is what you were doing when you typed it.
+/// Every addressable agent, under the address the chat uses for it.
+///
+/// `workspace/agent`, not a bare agent name. A name is only unique inside its
+/// own checkout — `uniqueAgentName` makes it so per root, not per machine — so
+/// two workspaces routinely hold a `claude` each, and a picker offering two
+/// rows reading `claude` is one you cannot answer. The workspace half is the
+/// name the dock already shows for that workspace, so the address is two
+/// things you can both see on screen.
+///
+/// Ambiguity is resolved rather than tolerated: when two workspaces would
+/// contribute the same half — two checkouts of one repo, both called `fresh` —
+/// every colliding one grows a further trailing path segment until they
+/// differ. So `a/fresh/claude` and `b/fresh/claude`, and never two identical
+/// rows.
+function agentAddresses(): Array<{ root: string; name: string; label: string }> {
+  const boxes = knownAgentMailboxes();
+  // The workspace's own name, as the dock writes it. Not
+  // `workspaceDisplayName`, which folds in the terminal's title — an address
+  // should not change because the agent renamed its tab.
+  const named = new Map<string, string>();
+  for (const s of orchestratorSessions.values()) {
+    if (!s.root || named.has(s.root)) continue;
+    const n = workspaceCustomName(s) ?? s.hostLabel;
+    if (n) named.set(s.root, n);
+  }
+  const roots = [...new Set(boxes.map((b) => b.root))];
+  const seg = new Map<string, string>();
+  for (const r of roots) seg.set(r, named.get(r) ?? editor.pathBasename(r) ?? r);
+  // Widen the colliding segments one path level at a time. Bounded because a
+  // root has finitely many segments and two distinct roots differ within
+  // them; the cap is a guard against a pathological path, not a real limit.
+  for (let depth = 2; depth <= 8; depth++) {
+    const byLabel = new Map<string, string[]>();
+    for (const r of roots) {
+      const k = seg.get(r) as string;
+      byLabel.set(k, [...(byLabel.get(k) ?? []), r]);
+    }
+    const clashing = [...byLabel.values()].filter((rs) => rs.length > 1).flat();
+    if (clashing.length === 0) break;
+    for (const r of clashing) seg.set(r, pathTail(r, depth));
+  }
+  return boxes.map((b) => ({
+    root: b.root,
+    name: b.name,
+    label: `${seg.get(b.root)}/${b.name}`,
+  })).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/// The last `n` segments of `root`, as a path.
+function pathTail(root: string, n: number): string {
+  const parts = root.split("/").filter((p) => p.length > 0);
+  return parts.slice(Math.max(0, parts.length - n)).join("/");
+}
+
+/// The mailbox an address names, or `null`.
+function mailboxForAddress(label: string): { root: string; name: string } | null {
+  const want = label.trim().replace(/^@/, "");
+  const hit = agentAddresses().find((a) => a.label === want);
+  return hit ? { root: hit.root, name: hit.name } : null;
+}
+
+/// Addresses matching `filter`, best-first — prefix matches before substring
+/// ones, because a prefix is what you were doing when you typed it.
+///
+/// Matched against the agent half as well as the whole address: you know what
+/// the agent is called, and having to type the workspace first to reach it
+/// would make the qualifier a toll rather than a disambiguator.
 function chatFilterMatches(filter: string): string[] {
   const f = filter.trim().toLowerCase();
-  const names = knownAgentMailboxes().map((m) => m.name).sort();
-  if (!f) return names;
-  const starts = names.filter((n) => n.toLowerCase().startsWith(f));
-  const rest = names.filter((n) => !n.toLowerCase().startsWith(f) && n.toLowerCase().includes(f));
+  const labels = agentAddresses().map((a) => a.label);
+  if (!f) return labels;
+  const agentOf = (l: string): string => l.slice(l.lastIndexOf("/") + 1).toLowerCase();
+  const starts = labels.filter((l) => l.toLowerCase().startsWith(f) || agentOf(l).startsWith(f));
+  const rest = labels.filter((l) => !starts.includes(l) && l.toLowerCase().includes(f));
   return [...starts, ...rest];
 }
 
@@ -14943,6 +15025,10 @@ function openChatPicker(filter = ""): void {
   chatTarget = null;
   chatFilter = filter;
   renderChatSurface(true);
+  // Same reason as `acceptChatTarget`: on a surface that rebuilds with
+  // `update`, the `@` that reopened the picker is still sitting in the field
+  // unless it is written out.
+  setChatFieldValue(filter);
   refocusChatField();
   pushChatCandidates(true);
 }
@@ -14960,7 +15046,18 @@ function acceptChatTarget(name: string): void {
   // The popup belongs to the picker; the message line is a free text field.
   f?.panel.setCompletions(f.key, []);
   renderChatSurface(true);
+  // Explicitly, not via the rebuilt spec: the host owns the field's text and
+  // only a *mount* re-seeds it from the spec. The dock rebuilds with
+  // `update`, which keeps instance state — so without this the name you just
+  // completed stays in the box as the first three letters of your message.
+  setChatFieldValue("");
   refocusChatField();
+}
+
+/// Put `v` in the chat line and the caret at its end.
+function setChatFieldValue(v: string): void {
+  const f = chatField();
+  f?.panel.setValue(f.key, v, v.length);
 }
 
 /// Re-render whichever surface is showing the chat, from the ground up.
@@ -14987,7 +15084,15 @@ async function sendChat(): Promise<void> {
   // field which was already clear.
   if (!text) return;
   chatDraft = "";
-  renderHome(true);
+  // Clear the line before the delegate round-trip, so the field is empty the
+  // moment you press Enter rather than a second later. `setValue` rather than
+  // a rebuilt spec: the host owns the field's text and only a *mount*
+  // re-seeds it from the spec, so on the dock — which rebuilds with `update`
+  // — the sent message stayed in the box and was sent again on the next
+  // Enter.
+  renderChatSurface(true);
+  setChatFieldValue("");
+  refocusChatField();
   if (!to) {
     // Unreachable through the keyboard — there is no message field without a
     // target — but a defensive answer here beats a message sent nowhere.
@@ -15007,13 +15112,9 @@ async function sendChat(): Promise<void> {
   if (!res.delivered) {
     chatSay(`Could not deliver that to @${to}: ${res.reason ?? "unknown"}.`);
   }
-  renderHome(true);
-  if (openPanel && dockMode) {
-    // A forced rebuild, not a mutation: the field has to be cleared, and the
-    // spec is what clears it.
-    openPanel.update(buildDockSpec());
-    if (dockFocus === "chat") openPanel.setFocusKey("dock_chat");
-  }
+  renderChatSurface(true);
+  setChatFieldValue("");
+  refocusChatField();
 }
 
 // -----------------------------------------------------------------------------
