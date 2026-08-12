@@ -213,13 +213,13 @@ impl ScrollbarMarkerManager {
         let take = resolved.len().min(room);
 
         for m in resolved.into_iter().take(take) {
-            // Start anchors with left affinity so text typed at the marked
-            // position pushes the marker along with its content.
-            let start = self.markers.create(m.start, true);
+            // Right gravity, so text typed at the marked position pushes the
+            // marker along with its content.
+            let start = self.markers.create(m.start);
             let end = m
                 .end
                 .filter(|e| *e > m.start)
-                .map(|e| self.markers.create(e, false));
+                .map(|e| self.markers.create(e));
             entries.push(MarkerEntry {
                 start,
                 end,

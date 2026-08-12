@@ -718,7 +718,7 @@ impl TextMateEngine {
             current_offset + CHECKPOINT_INTERVAL / 2,
         );
         if nearby.is_empty() {
-            let marker_id = self.checkpoint_markers.create(current_offset, true);
+            let marker_id = self.checkpoint_markers.create(current_offset);
             self.checkpoint_states.insert(marker_id, snapshot.clone());
         }
     }

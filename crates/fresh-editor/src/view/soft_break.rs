@@ -106,7 +106,7 @@ impl SoftBreakManager {
         indent: u16,
         activation: Option<MarkerActivation>,
     ) {
-        let marker_id = marker_list.create(position, false); // right affinity
+        let marker_id = marker_list.create(position);
 
         let idx = self.breaks.len();
         self.marker_to_idx.insert(marker_id, idx);

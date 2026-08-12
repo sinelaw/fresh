@@ -302,6 +302,10 @@ impl Editor {
                                 state.buffer.insert(0, &text);
                                 state.buffer.set_modified(true);
                                 state.buffer.set_recovery_pending(false);
+                                // The document is a different document now, and
+                                // this path never described the change as edit
+                                // damage. See `WrapIndex::damage_all`.
+                                state.wrap_indices.damage_all();
                                 // Invalidate saved position so undo can't
                                 // incorrectly clear the modified flag
                                 if let Some(log) =
@@ -2371,6 +2375,9 @@ impl crate::app::window::Window {
                             state.buffer.insert(0, &text);
                             state.buffer.set_modified(true);
                             state.buffer.set_recovery_pending(false);
+                            // Wholesale replacement, never described as edit
+                            // damage. See `WrapIndex::damage_all`.
+                            state.wrap_indices.damage_all();
                             mutated = true;
                             tracing::info!(
                                 "Restored unsaved changes for {:?} from hot exit recovery",

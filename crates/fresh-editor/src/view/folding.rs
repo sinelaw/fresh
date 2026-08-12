@@ -79,8 +79,9 @@ impl FoldManager {
             return;
         }
 
-        let start_marker = marker_list.create(start, true); // left affinity
-        let end_marker = marker_list.create(end, false); // right affinity
+        // Both right gravity, like every `MarkerList::create` marker.
+        let start_marker = marker_list.create(start);
+        let end_marker = marker_list.create(end);
 
         self.ranges.push(FoldRange {
             start_marker,
@@ -339,8 +340,8 @@ impl LspFoldRanges {
             // Right affinity: text inserted at the line start pushes the marker
             // down with the content (so it keeps pointing at the same *code*,
             // not the same *byte offset*).
-            let start_marker = marker_list.create(start_byte, false);
-            let end_marker = marker_list.create(end_byte, false);
+            let start_marker = marker_list.create(start_byte);
+            let end_marker = marker_list.create(end_byte);
             self.ranges.push(LspFoldEntry {
                 start_marker,
                 end_marker,

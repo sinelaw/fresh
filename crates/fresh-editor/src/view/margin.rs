@@ -372,7 +372,7 @@ impl MarginManager {
         mut indicator: LineIndicator,
     ) -> MarkerId {
         // Create a marker at this byte position (left affinity - stays before inserted text)
-        let marker_id = self.indicator_markers.create(byte_offset, true);
+        let marker_id = self.indicator_markers.create(byte_offset);
         indicator.marker_id = marker_id;
 
         self.line_indicators

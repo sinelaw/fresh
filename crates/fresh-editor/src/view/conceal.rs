@@ -32,10 +32,13 @@ pub struct ConcealRange {
     /// Namespace for bulk operations (shared with overlay namespace system)
     pub namespace: OverlayNamespace,
 
-    /// Start marker (left affinity - stays before inserted text)
+    /// Start marker. Right gravity, like every marker `MarkerList::create`
+    /// makes: text inserted exactly at the conceal's start is swallowed by
+    /// the conceal rather than appearing before it.
     pub start_marker: MarkerId,
 
-    /// End marker (right affinity - moves after inserted text)
+    /// End marker, also right gravity: text typed at the conceal's end
+    /// extends it.
     pub end_marker: MarkerId,
 
     /// Optional replacement text to show instead of the concealed content.
@@ -114,8 +117,8 @@ impl ConcealManager {
         replacement: Option<String>,
         activation: Option<MarkerActivation>,
     ) {
-        let start_marker = marker_list.create(range.start, true); // left affinity
-        let end_marker = marker_list.create(range.end, false); // right affinity
+        let start_marker = marker_list.create(range.start);
+        let end_marker = marker_list.create(range.end);
 
         let idx = self.ranges.len();
         self.marker_to_idx.insert(start_marker, idx);

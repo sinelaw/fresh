@@ -63,36 +63,30 @@ impl MarkerList {
         }
     }
 
-    /// Create a new marker at the given position
+    /// Create a new **right-gravity** point marker at the given position:
+    /// text inserted exactly at `position` pushes the marker forward.
     ///
-    /// # Arguments
-    /// * `position` - Byte offset in the buffer
-    /// * `left_affinity` - If true, marker stays before text inserted at this position
+    /// This used to take a `left_affinity: bool` that was stored in a side map
+    /// and never reached the tree — every marker was right-gravity regardless,
+    /// while call sites (and their comments) claimed otherwise. Code that
+    /// mirrors marker movement has to model gravity exactly, and a parameter
+    /// that silently does nothing is how it gets modelled wrong: see
+    /// `IndexDecorations::shift_for_edit`, which was written to match the
+    /// argument rather than the behaviour. Callers that genuinely need the
+    /// other gravity use [`create_left_gravity`](Self::create_left_gravity),
+    /// which does reach the tree.
     ///
-    /// # Returns
-    /// The ID of the newly created marker
-    ///
-    /// Note: Point markers are represented as zero-length intervals in the tree.
-    /// The IntervalTree handles position adjustments using interval semantics, which
-    /// differs slightly from explicit affinity for zero-length markers at exact edit
-    /// positions. In practice, this doesn't affect the LSP diagnostics use case.
-    pub fn create(&mut self, position: usize, left_affinity: bool) -> MarkerId {
+    /// Point markers are zero-length intervals; the tree resolves adjustment
+    /// with interval semantics.
+    pub fn create(&mut self, position: usize) -> MarkerId {
         let pos = position as u64;
 
         // Create a zero-length interval for point markers
-        // The IntervalTree handles affinity through its interval spanning logic
         let tree_id = self.tree.insert(pos, pos);
         let id = MarkerId(tree_id);
+        self._affinity_map.insert(id, false);
 
-        // Store affinity for compatibility (though not strictly needed by tree)
-        self._affinity_map.insert(id, left_affinity);
-
-        tracing::trace!(
-            "Created marker {:?} at position {} with {} affinity",
-            id,
-            position,
-            if left_affinity { "left" } else { "right" }
-        );
+        tracing::trace!("Created marker {:?} at position {}", id, position);
 
         id
     }
@@ -403,7 +397,7 @@ mod tests {
         let mut per_edit = MarkerList::new();
         let ids: Vec<_> = positions
             .iter()
-            .map(|&pos| (batched.create(pos, false), per_edit.create(pos, false)))
+            .map(|&pos| (batched.create(pos), per_edit.create(pos)))
             .collect();
 
         batched.adjust_for_bulk_edits(&edits);
@@ -435,7 +429,7 @@ mod tests {
     fn test_create_marker_at_start() {
         let mut list = MarkerList::new();
 
-        let m1 = list.create(0, true);
+        let m1 = list.create(0);
         assert_eq!(list.marker_count(), 1);
         assert_eq!(list.get_position(m1), Some(0));
         list.check_invariants().unwrap();
@@ -445,8 +439,8 @@ mod tests {
     fn test_create_multiple_markers() {
         let mut list = MarkerList::new();
 
-        let m1 = list.create(5, true);
-        let m2 = list.create(15, false);
+        let m1 = list.create(5);
+        let m2 = list.create(15);
 
         assert_eq!(list.get_position(m1), Some(5));
         assert_eq!(list.get_position(m2), Some(15));
@@ -457,7 +451,7 @@ mod tests {
     fn test_insert_before_marker() {
         let mut list = MarkerList::new();
 
-        let m1 = list.create(10, true);
+        let m1 = list.create(10);
         assert_eq!(list.get_position(m1), Some(10));
 
         // Insert 5 bytes before marker
@@ -472,7 +466,7 @@ mod tests {
     fn test_insert_after_marker() {
         let mut list = MarkerList::new();
 
-        let m1 = list.create(10, true);
+        let m1 = list.create(10);
         assert_eq!(list.get_position(m1), Some(10));
 
         // Insert 5 bytes after marker
@@ -488,7 +482,7 @@ mod tests {
         let mut list = MarkerList::new();
 
         // Left affinity: marker stays before inserted text
-        let m1 = list.create(10, true);
+        let m1 = list.create(10);
 
         // Insert at marker position
         list.adjust_for_insert(10, 5);
@@ -507,7 +501,7 @@ mod tests {
         let mut list = MarkerList::new();
 
         // Right affinity: marker moves after inserted text
-        let m1 = list.create(10, false);
+        let m1 = list.create(10);
 
         // Insert at marker position
         list.adjust_for_insert(10, 5);
@@ -521,7 +515,7 @@ mod tests {
     fn test_delete_before_marker() {
         let mut list = MarkerList::new();
 
-        let m1 = list.create(15, true);
+        let m1 = list.create(15);
         assert_eq!(list.get_position(m1), Some(15));
 
         // Delete 5 bytes before marker (at position 5)
@@ -536,7 +530,7 @@ mod tests {
     fn test_delete_after_marker() {
         let mut list = MarkerList::new();
 
-        let m1 = list.create(10, true);
+        let m1 = list.create(10);
         assert_eq!(list.get_position(m1), Some(10));
 
         // Delete 5 bytes after marker (at position 15)
@@ -551,7 +545,7 @@ mod tests {
     fn test_delete_marker() {
         let mut list = MarkerList::new();
 
-        let m1 = list.create(10, true);
+        let m1 = list.create(10);
 
         // Delete at the marker position
         list.adjust_for_delete(10, 5);
@@ -567,9 +561,9 @@ mod tests {
     fn test_delete_multiple_markers() {
         let mut list = MarkerList::new();
 
-        let m1 = list.create(10, true);
-        let m2 = list.create(15, true);
-        let m3 = list.create(20, true);
+        let m1 = list.create(10);
+        let m2 = list.create(15);
+        let m3 = list.create(20);
 
         // Delete range [8, 18) covering m1 and m2
         list.adjust_for_delete(8, 10);
@@ -588,9 +582,9 @@ mod tests {
         let mut list = MarkerList::new();
 
         // Create markers at 10, 20, 30
-        let m1 = list.create(10, true);
-        let m2 = list.create(20, true);
-        let m3 = list.create(30, true);
+        let m1 = list.create(10);
+        let m2 = list.create(20);
+        let m3 = list.create(30);
 
         // Insert at 15
         list.adjust_for_insert(15, 5);
@@ -612,8 +606,8 @@ mod tests {
     fn test_marker_deletion_with_delete_method() {
         let mut list = MarkerList::new();
 
-        let m1 = list.create(10, true);
-        let m2 = list.create(15, false);
+        let m1 = list.create(10);
+        let m2 = list.create(15);
 
         // Delete m1
         list.delete(m1);
@@ -669,7 +663,7 @@ mod tests {
                 let markers: Vec<_> = unique_positions
                     .iter()
                     .enumerate()
-                    .map(|(i, &pos)| list.create(pos, i % 2 == 0))
+                    .map(|(_i, &pos)| list.create(pos))
                     .collect();
 
                 // Apply random operations
@@ -706,7 +700,7 @@ mod tests {
 
                 // Create markers in order with given spacing
                 let markers: Vec<_> = (0..5)
-                    .map(|i| list.create(i * initial_spacing, true))
+                    .map(|i| list.create(i * initial_spacing))
                     .collect();
 
                 // Apply operations
@@ -780,7 +774,7 @@ mod tests {
                 for (i, &p) in unique_positions.iter().enumerate() {
                     let right_gravity = i % 2 == 0;
                     let id = if right_gravity {
-                        list.create(p, i % 2 == 0)
+                        list.create(p)
                     } else {
                         list.create_left_gravity(p)
                     };
