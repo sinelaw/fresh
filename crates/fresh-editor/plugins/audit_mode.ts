@@ -2244,16 +2244,18 @@ function refreshStickyHeader(topVisibleRow: number): void {
         properties: { type: "sticky-header" },
     }]);
 
-    // Legacy multi-file-stream mode only: keep the sidebar's highlighted
-    // file in sync with the diff's top file. In focus mode the current file
-    // is driven by explicit navigation, so we must NOT re-derive it here.
+    // Expanded (multi-file) stream: the sidebar highlight follows the
+    // *cursor's* file, not the top-visible one. Deriving it from the scroll
+    // fought navigation — `.` jumped the cursor into the next file, the
+    // resulting scroll put a different file at the top, and the highlight
+    // (and with it the next `.`) snapped back to that one. In focus mode
+    // the current file is explicit navigation, so it isn't re-derived at all.
     if (!state.focusOnly) {
-        const curKey = bestFile ? fileKey(bestFile) : null;
+        const cursorFile = currentFileFromCursor();
+        const curKey = cursorFile ? fileKey(cursorFile) : state.filesCurrentKey;
         if (curKey !== state.filesCurrentKey) {
             state.filesCurrentKey = curKey;
-            if (state.panelBuffers["files"] !== undefined) {
-                renderFilesPanel();
-            }
+            renderFilesPanel();
         }
     }
 }
@@ -2977,6 +2979,19 @@ function review_comments_select_prev() {
 }
 registerHandler("review_comments_select_prev", review_comments_select_prev);
 
+/** Home / End in the COMMENTS rail: first / last comment. */
+function review_comments_select_first() {
+    if (state.groupId === null || state.comments.length === 0) return;
+    state.commentsSelectedRow = 2;
+    renderCommentsPanel();
+}
+
+function review_comments_select_last() {
+    if (state.groupId === null || state.comments.length === 0) return;
+    state.commentsSelectedRow = state.comments.length + 1;
+    renderCommentsPanel();
+}
+
 /**
  * Visual line-selection mode. Activates a multi-row selection rooted
  * at the cursor's hunk; j/k extend it; Esc cancels. The selection is
@@ -3161,6 +3176,52 @@ function review_nav_down() {
     }
 }
 registerHandler("review_nav_down", review_nav_down);
+
+/** Left / Right belong to whichever panel has focus. In the diff they pan
+ *  the (unwrapped) stream horizontally; in the FILES sidebar they fold and
+ *  unfold the selected file's directory group — a sidebar keystroke must
+ *  never reach through and scroll the diff behind it. */
+function review_nav_left() {
+    if (state.focusPanel === 'files') { setSelectedDirCollapsed(true); return; }
+    if (state.focusPanel === 'comments') return;
+    editor.executeAction("move_left");
+}
+registerHandler("review_nav_left", review_nav_left);
+
+function review_nav_right() {
+    if (state.focusPanel === 'files') { setSelectedDirCollapsed(false); return; }
+    if (state.focusPanel === 'comments') return;
+    editor.executeAction("move_right");
+}
+registerHandler("review_nav_right", review_nav_right);
+
+/** Collapse or expand the directory group holding the selected file. */
+function setSelectedDirCollapsed(collapsed: boolean): void {
+    const file = state.files.find(f => fileKey(f) === state.filesCurrentKey);
+    if (!file) return;
+    const dirKey = `${file.category} ${fileDirOf(file.path)}`;
+    const had = state.collapsedDirs.has(dirKey);
+    if (collapsed === had) return;
+    if (collapsed) state.collapsedDirs.add(dirKey);
+    else state.collapsedDirs.delete(dirKey);
+    renderFilesPanel();
+}
+
+/** Home / End in a side panel jump to its first / last row; in the diff
+ *  they keep the editor's start-of-line / end-of-line meaning. */
+function review_nav_home() {
+    if (state.focusPanel === 'files') { review_goto_file(-state.files.length); return; }
+    if (state.focusPanel === 'comments') { review_comments_select_first(); return; }
+    editor.executeAction("move_line_start");
+}
+registerHandler("review_nav_home", review_nav_home);
+
+function review_nav_end() {
+    if (state.focusPanel === 'files') { review_goto_file(state.files.length); return; }
+    if (state.focusPanel === 'comments') { review_comments_select_last(); return; }
+    editor.executeAction("move_line_end");
+}
+registerHandler("review_nav_end", review_nav_end);
 
 function review_page_up() {
     if (state.focusPanel === 'comments') { review_comments_select_prev(); return; }
@@ -4493,22 +4554,104 @@ registerHandler("review_drill_down", review_drill_down);
 // See docs/internal/REVIEW_DIFF_HUNK_PARITY_UX_DESIGN.md §5.1.
 const AUTO_SPLIT_MIN_WIDTH = 140;
 
-function review_set_layout(layout: 'unified' | 'side-by-side'): void {
+/** Where the reader is: the file and the file-line under the cursor, in
+ *  whichever layout is showing. Carried across a layout switch so the
+ *  other view opens on the same line rather than at the top of the file. */
+interface ReviewAnchor {
+    fileKey: string;
+    lineType: 'add' | 'remove' | 'context';
+    oldLine?: number;
+    newLine?: number;
+}
+
+/** The anchor for the current cursor position. Reads the composite's
+ *  cursor in side-by-side and the unified stream's row properties
+ *  otherwise. */
+async function currentReviewAnchor(): Promise<ReviewAnchor | null> {
+    const info = state.centerComposite
+        ? await getCompositeLineInfo()
+        : getCurrentLineInfo();
+    if (!info || !info.lineType) return null;
+    const file = state.files.find(f => f.path === info.file);
+    if (!file) return null;
+    return {
+        fileKey: fileKey(file),
+        lineType: info.lineType,
+        oldLine: info.oldLine,
+        newLine: info.newLine,
+    };
+}
+
+/** Index, within its file's hunks, of the hunk holding the anchor's line —
+ *  what `buildCenterComposite` wants as its initial focus. 0 when the line
+ *  sits outside every hunk. */
+function anchorHunkIndex(anchor: ReviewAnchor): number {
+    const file = state.files.find(f => fileKey(f) === anchor.fileKey);
+    if (!file) return 0;
+    const fileHunks = state.hunks.filter(
+        h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
+    );
+    const idx = fileHunks.findIndex(h =>
+        (anchor.newLine !== undefined
+            && anchor.newLine >= h.range.start && anchor.newLine <= h.range.end)
+        || (anchor.oldLine !== undefined
+            && anchor.oldLine >= h.oldRange.start && anchor.oldLine <= h.oldRange.end)
+    );
+    return idx < 0 ? 0 : idx;
+}
+
+/** Put the freshly-built center on `anchor`. In unified that is the stream
+ *  row carrying the same file + line; in side-by-side it is the composite
+ *  row showing that line of OLD (pane 0) or NEW (pane 1). */
+function restoreReviewAnchor(anchor: ReviewAnchor): void {
+    if (state.reviewLayout === 'side-by-side') {
+        const cc = state.centerComposite;
+        if (!cc) return;
+        const pane = anchor.lineType === 'remove' ? 0 : 1;
+        const line = anchor.lineType === 'remove' ? anchor.oldLine : anchor.newLine;
+        if (line === undefined) return;
+        editor.setCompositeCursorLine(cc.compositeBufId, pane, line - 1);
+        return;
+    }
+    for (const rowStr of Object.keys(state.entryPropsByRow)) {
+        const row = Number(rowStr);
+        const props = state.entryPropsByRow[row];
+        if (props["type"] !== anchor.lineType) continue;
+        if (props["file"] !== state.files.find(f => fileKey(f) === anchor.fileKey)?.path) continue;
+        const matches = anchor.lineType === 'remove'
+            ? props["oldLine"] === anchor.oldLine
+            : props["newLine"] === anchor.newLine;
+        if (matches) {
+            jumpDiffCursorToRow(row);
+            return;
+        }
+    }
+    // The line isn't in the stream (a context line outside every hunk, in
+    // a file whose hunks don't cover it) — settle for the file header.
+    const headerRow = state.fileHeaderRows[anchor.fileKey];
+    if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+}
+
+async function review_set_layout(layout: 'unified' | 'side-by-side'): Promise<void> {
     if (state.reviewLayout !== layout) {
+        // Read where the reader is *before* the center is rebuilt.
+        const anchor = await currentReviewAnchor();
         state.reviewLayout = layout;
         // Unified expands every file, side-by-side renders one — the
         // center rebuild below has to see the new mode.
         syncFocusMode();
-        // Side-by-side has nowhere to draw an inline comment box: the
-        // center is two real file buffers. The NEW pane's label says how
-        // many the file carries and the rail carries the text (Enter on a
-        // row jumps the composite to it), so open it on the way in rather
-        // than leaving the comments written but unreadable.
-        if (layout === 'side-by-side' && state.comments.length > 0) {
-            setReviewPanelVisible('comments', true);
+        if (anchor) state.filesCurrentKey = anchor.fileKey;
+        if (layout === 'side-by-side') {
+            // Await the build (renderCenter fires it off unawaited) so the
+            // composite exists before the cursor is placed on it, and open
+            // it on the anchor's hunk so the exact-line move below is a
+            // nudge rather than a jump.
+            await buildCenterComposite(anchor ? anchorHunkIndex(anchor) : 0);
+        } else {
+            renderCenter();
         }
-        renderCenter();
-        refreshStickyHeader(state.diffViewportTopRow);
+        if (anchor) restoreReviewAnchor(anchor);
+        else refreshStickyHeader(state.diffViewportTopRow);
     }
     editor.setStatus(
         layout === 'side-by-side'
@@ -4516,10 +4659,10 @@ function review_set_layout(layout: 'unified' | 'side-by-side'): void {
             : (editor.t("status.unified_view") || "Unified view")
     );
 }
-function review_layout_split() { review_set_layout('side-by-side'); }
+async function review_layout_split() { await review_set_layout('side-by-side'); }
 registerHandler("review_layout_split", review_layout_split);
 
-function review_layout_stack() { review_set_layout('unified'); }
+async function review_layout_stack() { await review_set_layout('unified'); }
 registerHandler("review_layout_stack", review_layout_stack);
 
 function review_layout_auto() {
@@ -4549,6 +4692,8 @@ async function review_help() {
         "",
         " Focus       Tab / S-Tab cycle focus: files → diff → comments",
         "             ↑ ↓        move within the focused panel (j / k too)",
+        "             ← →        pan the diff / fold a directory in FILES",
+        "             Home End   line ends in the diff, first / last row in a panel",
         " Navigate    n / p      next / prev hunk",
         "             , / .      prev / next file",
         "             ] / [      next / prev comment",
@@ -4637,8 +4782,10 @@ function review_goto_file(delta: number) {
     if (vis.length === 0) return;
     let idx = vis.findIndex(f => fileKey(f) === state.filesCurrentKey);
     if (idx < 0) idx = 0;
-    const next = idx + delta;
-    if (next < 0 || next >= vis.length) return;
+    // Clamped, not bailed: `,`/`.` still stop at the ends, and Home / End
+    // can ask for "as far as it goes" with one big delta.
+    const next = Math.max(0, Math.min(vis.length - 1, idx + delta));
+    if (next === idx) return;
     state.filesCurrentKey = fileKey(vis[next]);
     // Light refresh: only the center + sidebar highlight + sticky change on a
     // file switch — rebuilding the toolbar/comments panels too would add
@@ -6950,16 +7097,16 @@ editor.defineMode("review-mode", [
     ["Up", "review_nav_up"], ["Down", "review_nav_down"],
     ["k", "review_nav_up"], ["j", "review_nav_down"],
     ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
-    // Home / End — match the editor's normal-mode defaults so users
-    // get the same start-of-line / end-of-line behavior they're used
-    // to. Mode bindings replace globals, so we must bind these
-    // explicitly even though the actions are built-in.
-    ["Home", "move_line_start"], ["End", "move_line_end"],
+    // Home / End — start / end of line in the diff (the editor's normal
+    // meaning), first / last row in a focused side panel. Mode bindings
+    // replace globals, so these are bound explicitly.
+    ["Home", "review_nav_home"], ["End", "review_nav_end"],
     // Left / Right pan the unified stream horizontally. Nothing wraps
     // in the diff panel, so a long line runs past the right edge; the
     // cursor walking off it is what scrolls the viewport across, the
-    // same way it does in a normal buffer (Shift+wheel pans too).
-    ["Left", "move_left"], ["Right", "move_right"],
+    // same way it does in a normal buffer (Shift+wheel pans too). In the
+    // FILES sidebar they fold / unfold the selected directory instead.
+    ["Left", "review_nav_left"], ["Right", "review_nav_right"],
     // Hunk navigation across the unified stream.
     ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
     // File navigation (hunk-style): focus the prev / next file.
