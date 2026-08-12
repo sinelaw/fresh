@@ -35,6 +35,7 @@ pub use drag::{TabDragState, TabDropZone};
 pub use hover::HoverTarget;
 
 // layout re-exports
+pub(crate) use layout::PopupAreaLayout;
 pub(crate) use layout::{ChromeLayout, WindowLayoutCache};
 pub use layout::{OverlayPreviewState, ViewLineMapping};
 

@@ -34,6 +34,7 @@ mod file_operations;
 mod git_index;
 mod help;
 mod help_actions;
+mod hit_test;
 mod hover;
 mod input;
 mod input_dispatch;

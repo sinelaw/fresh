@@ -3,7 +3,6 @@
 //! This module contains handlers for menu navigation, execution, and mouse interaction.
 
 use super::Editor;
-use crate::app::types::HoverTarget;
 use crate::config::{generate_dynamic_items, Menu, MenuExt, MenuItem};
 use crate::input::keybindings::Action;
 use anyhow::Result as AnyhowResult;
@@ -178,29 +177,6 @@ impl Editor {
                 break;
             }
         }
-    }
-
-    /// Compute hover target for menu dropdown chain (main dropdown and submenus).
-    /// Uses the cached menu layout from the previous render frame.
-    pub(crate) fn compute_menu_dropdown_hover(
-        &self,
-        col: u16,
-        row: u16,
-        menu_index: usize,
-    ) -> Option<HoverTarget> {
-        let menu_layout = self.active_chrome().menu_layout.as_ref()?;
-
-        // Check submenu items first (they're rendered on top)
-        if let Some((depth, item_idx)) = menu_layout.submenu_item_at(col, row) {
-            return Some(HoverTarget::SubmenuItem(depth, item_idx));
-        }
-
-        // Check main dropdown items
-        if let Some(item_idx) = menu_layout.item_at(col, row) {
-            return Some(HoverTarget::MenuDropdownItem(menu_index, item_idx));
-        }
-
-        None
     }
 
     /// Handle click on menu dropdown chain (main dropdown and any open submenus).
