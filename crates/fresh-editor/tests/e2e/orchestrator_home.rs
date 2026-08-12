@@ -405,6 +405,13 @@ fn home_typing_reaches_the_selected_terminal() {
 /// stand-in prints the question *and* a numbered option, both of which match
 /// the pattern, and "1. Yes" as the stated reason a workspace is blocked would
 /// tell the user nothing they could act on.
+/// Unix only: the stand-in is a file with a `#!/usr/bin/env bash` shebang, run
+/// as `./claude` so the terminal's title — which is what resolves the agent
+/// registry entry whose prompt pattern is matched — becomes `claude`. Windows
+/// has no shebang loader, so the command never starts, the screen never shows
+/// the question, and the test waits out its timeout rather than failing on
+/// anything about the code under test.
+#[cfg(unix)]
 #[test]
 fn home_shows_why_an_agent_is_blocked() {
     let (_tmp, root) = setup_project("deltaproj");
@@ -590,11 +597,12 @@ fn home_chat_carries_an_outbox_message_and_delivers_the_reply() {
     fs::create_dir_all(mailbox.join("inbox").join("done")).unwrap();
     fs::create_dir_all(mailbox.join("outbox").join("read")).unwrap();
     fs::write(mailbox.join("status"), "working pushing the last PR\n").unwrap();
-    fs::write(
-        mailbox.join("outbox").join("100.md"),
-        "pushed the 3 PRs; want me to start the fourth?\n",
-    )
-    .unwrap();
+    // Short enough to survive the chat's wrapping intact. The pane is a
+    // fraction of the panel and wraps on word boundaries, so a sentence
+    // asserted as one contiguous string is a test of the wrap width rather
+    // than of the message getting through. What the message *says* is checked
+    // against the delivered file below, where nothing wraps.
+    fs::write(mailbox.join("outbox").join("100.md"), "PRs pushed\n").unwrap();
 
     let mut h =
         EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
@@ -607,7 +615,7 @@ fn home_chat_carries_an_outbox_message_and_delivers_the_reply() {
     // transcript stays empty and this times out.
     h.wait_until(|h| {
         let screen = h.screen_to_string();
-        screen.contains("peer") && screen.contains("want me to start the fourth")
+        screen.contains("peer") && screen.contains("PRs pushed")
     })
     .unwrap();
 
@@ -618,8 +626,8 @@ fn home_chat_carries_an_outbox_message_and_delivers_the_reply() {
 
     // Answer it. The keyboard is already in the chat line: Home opens there
     // because reading what happened and replying is why you opened it.
-    h.type_text("@peer yes, start the fourth").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("yes, start the fourth"))
+    h.type_text("@peer go ahead").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("go ahead"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
@@ -645,7 +653,7 @@ fn home_chat_carries_an_outbox_message_and_delivers_the_reply() {
         "the reply names the agent it was addressed to:\n{delivered}"
     );
     assert!(
-        delivered.contains("yes, start the fourth"),
+        delivered.contains("go ahead"),
         "the reply carries what was typed:\n{delivered}"
     );
     assert!(
@@ -658,7 +666,7 @@ fn home_chat_carries_an_outbox_message_and_delivers_the_reply() {
     // as one thing rather than as a message into a void.
     let screen = h.screen_to_string();
     assert!(
-        screen.contains("you") && screen.contains("yes, start the fourth"),
+        screen.contains("you") && screen.contains("go ahead"),
         "the chat shows what the user sent:\n{screen}"
     );
 }
