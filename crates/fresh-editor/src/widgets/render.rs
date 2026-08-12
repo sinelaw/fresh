@@ -263,10 +263,33 @@ pub struct DropdownPopup {
 /// 0-based row inside the panel's inner area where the entry
 /// should be painted; the host's paint pass writes overlay rows
 /// after the main entries so they sit on top.
+///
+/// `above_by` displaces the row *upward* from that anchor. It exists
+/// because `buffer_row` is unsigned and accumulates the row shift of
+/// every enclosing container (`Col`'s cursor, `LabeledSection`'s top
+/// border) on the way up — so an upward anchor cannot be expressed as a
+/// smaller `buffer_row` without knowing the total shift in advance,
+/// which the emitting widget does not. Keeping the anchor unsigned and
+/// carrying the displacement beside it leaves every intermediate shift
+/// untouched: they all still mean "the widget moved down by N".
+/// [`OverlayRow::row`] resolves the pair, and answers `None` for a row
+/// that would land above the panel — the upward mirror of the paint
+/// pass dropping rows past its bottom edge.
 #[derive(Debug, Clone)]
 pub struct OverlayRow {
     pub buffer_row: u32,
+    /// Rows to displace upward from `buffer_row`. `0` — the ordinary
+    /// case — paints at the anchor itself.
+    pub above_by: u32,
     pub entry: TextPropertyEntry,
+}
+
+impl OverlayRow {
+    /// The panel-inner row this overlay actually paints on, or `None`
+    /// when the upward displacement carries it off the top.
+    pub fn row(&self) -> Option<u32> {
+        self.buffer_row.checked_sub(self.above_by)
+    }
 }
 
 /// A rectangle reserved by a `WindowEmbed` widget. All
@@ -928,6 +951,7 @@ fn render_collected(
             full_width,
             completions: _,
             completions_visible_rows,
+            completions_above,
             block_caret,
             sel_start,
             sel_end,
@@ -946,6 +970,7 @@ fn render_collected(
             *max_visible_chars,
             *full_width,
             *completions_visible_rows,
+            *completions_above,
             *block_caret,
             (*sel_start, *sel_end),
             *label_width,
@@ -1337,6 +1362,7 @@ fn collect_col(
             for (i, e) in child_out.entries.into_iter().enumerate() {
                 overlays.push(OverlayRow {
                     buffer_row: row_offset + i as u32,
+                    above_by: 0,
                     entry: e,
                 });
             }
@@ -2524,6 +2550,16 @@ fn effective_text_field_width(
 /// Overlay anchors: 1 = the `LabeledSection`'s bottom border (the dim
 /// separator paints over it), 2..N+1 = item rows, N+2 = the popup's own
 /// bottom border.
+///
+/// `above` mirrors the whole thing through the field: the same
+/// distances measured upward (see [`OverlayRow::above_by`]), the dim
+/// separator still adjacent to the input, the solid border still
+/// closing the far end — which is now the top, so it is drawn with the
+/// `╭─╮` corners instead of `╰─╯`. Item order is NOT mirrored: the
+/// first candidate stays the topmost row, because "the list reads
+/// downward" is what makes the selection's Up/Down obvious, and a popup
+/// whose order depended on which side of the field it opened would make
+/// the arrow keys mean different things in two places.
 #[allow(clippy::too_many_arguments)]
 fn emit_completion_overlays(
     out: &mut CollectedOutput,
@@ -2534,6 +2570,7 @@ fn emit_completion_overlays(
     navigated: bool,
     prev_scroll: u32,
     marker_gutter: bool,
+    above: bool,
 ) -> u32 {
     if completions.is_empty() {
         return 0;
@@ -2551,14 +2588,33 @@ fn emit_completion_overlays(
         scroll = max_scroll;
     }
 
-    let mut anchor: u32 = 1;
-    out.overlays.push(OverlayRow {
-        buffer_row: anchor,
-        entry: render_completion_dim_separator_overlay(popup_total),
-    });
-    anchor += 1;
+    // One distance scale for both directions: 1 is the row touching the
+    // field, and it counts away from it. `place` is the only thing that
+    // knows which side that is.
+    let place = |dist: u32, entry: TextPropertyEntry| -> OverlayRow {
+        if above {
+            OverlayRow {
+                buffer_row: 0,
+                above_by: dist,
+                entry,
+            }
+        } else {
+            OverlayRow {
+                buffer_row: dist,
+                above_by: 0,
+                entry,
+            }
+        }
+    };
+
     let needs_scrollbar = total > visible;
     let end = (scroll + visible).min(total) as usize;
+    let drawn = end.saturating_sub(scroll as usize) as u32;
+
+    out.overlays.push(place(
+        1,
+        render_completion_dim_separator_overlay(popup_total),
+    ));
     for (visible_row, i) in (scroll as usize..end).enumerate() {
         let item = &completions[i];
         let thumb = if needs_scrollbar {
@@ -2566,9 +2622,13 @@ fn emit_completion_overlays(
         } else {
             None
         };
-        out.overlays.push(OverlayRow {
-            buffer_row: anchor,
-            entry: render_completion_item_overlay(
+        let row = visible_row as u32;
+        // Downward the first candidate is nearest the field; upward it
+        // is farthest, so the same list still reads top-to-bottom.
+        let dist = if above { drawn + 1 - row } else { 2 + row };
+        out.overlays.push(place(
+            dist,
+            render_completion_item_overlay(
                 &item.value,
                 item.kind.as_deref(),
                 // Only paint a selected-row highlight once the user
@@ -2580,13 +2640,16 @@ fn emit_completion_overlays(
                 thumb,
                 marker_gutter,
             ),
-        });
-        anchor += 1;
+        ));
     }
-    out.overlays.push(OverlayRow {
-        buffer_row: anchor,
-        entry: render_completion_bottom_border(popup_total),
-    });
+    out.overlays.push(place(
+        drawn + 2,
+        if above {
+            render_completion_top_border(popup_total)
+        } else {
+            render_completion_bottom_border(popup_total)
+        },
+    ));
     scroll
 }
 
@@ -2910,6 +2973,7 @@ fn render_widget_text(
     max_visible_chars: u32,
     full_width: bool,
     completions_visible_rows: u32,
+    completions_above: bool,
     block_caret: bool,
     spec_sel: (i32, i32),
     label_width: u32,
@@ -3219,6 +3283,7 @@ fn render_widget_text(
         prev_completion_navigated,
         prev_completion_scroll,
         ctx.marker_gutter,
+        completions_above,
     );
     // Persist instance state for next render. `editor`
     // already carries the canonical cursor (row/col +
@@ -3831,12 +3896,24 @@ fn render_completion_dim_separator_overlay(total_cols: usize) -> TextPropertyEnt
 /// right after the last visible candidate, closing the
 /// unified box.
 fn render_completion_bottom_border(total_cols: usize) -> TextPropertyEntry {
+    render_completion_border(total_cols, '╰', '╯')
+}
+
+/// The same border with the corners the other way up, closing a popup
+/// that floats *above* its field (`completions_above`). The far end of
+/// the box is its top there, so `╰─╯` would draw a lid that curls the
+/// wrong way and read as a second box below the candidates.
+fn render_completion_top_border(total_cols: usize) -> TextPropertyEntry {
+    render_completion_border(total_cols, '╭', '╮')
+}
+
+fn render_completion_border(total_cols: usize, left: char, right: char) -> TextPropertyEntry {
     let mut text = String::with_capacity(total_cols * 4 + 2);
-    text.push('╰');
+    text.push(left);
     for _ in 0..total_cols.saturating_sub(2).max(1) {
         text.push('─');
     }
-    text.push('╯');
+    text.push(right);
     text.push('\n');
     // The whole row is chrome; stamp the popup-border theme key
     // at the entry level so every glyph paints in the same
@@ -6983,6 +7060,7 @@ mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            completions_above: false,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
@@ -7025,6 +7103,7 @@ mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            completions_above: false,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
@@ -7715,6 +7794,7 @@ mod tests {
                     full_width: false,
                     completions: Vec::new(),
                     completions_visible_rows: 0,
+                    completions_above: false,
                     read_only: false,
                     markdown: false,
                     key: Some("ti".into()),
@@ -9412,6 +9492,7 @@ mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            completions_above: false,
             read_only: false,
             markdown: false,
             key: key.map(|s| s.into()),
@@ -9500,6 +9581,7 @@ mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            completions_above: false,
             read_only: false,
             markdown: false,
             key: Some("ta".into()),
@@ -9635,6 +9717,7 @@ mod tests {
             full_width,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            completions_above: false,
             read_only: false,
             markdown: false,
             key: key.map(|s| s.into()),
@@ -9783,6 +9866,7 @@ mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            completions_above: false,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
@@ -9824,6 +9908,7 @@ mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            completions_above: false,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,

@@ -5194,14 +5194,30 @@ impl Editor {
         let panel_bg_style = ratatui::style::Style::default().bg(panel_bg);
         let overlay_sw = self.active_chrome().last_frame.width;
         for o in &overlays {
-            let row_y = inner.y.saturating_add(o.buffer_row as u16);
+            // `None` = the row's upward displacement (a completions popup
+            // opened above its field) carries it off the panel's top, the
+            // mirror of the bottom-edge drop below.
+            let Some(orow) = o.row() else {
+                continue;
+            };
+            let row_y = inner.y.saturating_add(orow as u16);
             if row_y >= inner.y.saturating_add(inner.height) {
                 continue;
             }
+            // Clear only as far as the overlay's own text reaches, not the
+            // whole row. Beyond it the overlay is not there, and blanking
+            // that span erases whatever shares the row — which for a
+            // two-column panel is the entire other column, seven rows of it,
+            // for as long as a completion popup is open. Every overlay that
+            // predates this is a full-width `labeledSection`, so its cleared
+            // span is unchanged.
+            let overlay_cols = crate::primitives::display_width::str_width(
+                o.entry.text.trim_end_matches('\n'),
+            ) as u16;
             let row_rect = ratatui::layout::Rect {
                 x: inner.x,
                 y: row_y,
-                width: inner.width,
+                width: overlay_cols.min(inner.width),
                 height: 1,
             };
             frame.render_widget(Clear, row_rect);

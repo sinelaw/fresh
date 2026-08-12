@@ -600,6 +600,13 @@ export function text(
      * `WidgetSpec::Text.completions` (Rust) for the rendering
      * + keyboard semantics. */
     completions?: string[];
+    /** Float the completion popup ABOVE the field rather than below
+     * it. Nothing reflows either way — the popup floats — so this is
+     * only which side of the input it grows into. Set it when the
+     * field is the last row of its surface, where a downward popup
+     * renders past the panel edge and is clipped away. Default
+     * false. */
+    completionsAbove?: boolean;
     /** Paint the caret as a REVERSED block cell (modal surfaces
      * without a hardware cursor). Default false. */
     blockCaret?: boolean;
@@ -637,6 +644,7 @@ export function text(
     maxVisibleChars: options.maxVisibleChars ?? 0,
     fullWidth: options.fullWidth ?? false,
     completions: options.completions ?? [],
+    completionsAbove: options.completionsAbove ?? false,
     blockCaret: options.blockCaret ?? false,
     selStart: options.selStart ?? -1,
     selEnd: options.selEnd ?? -1,
@@ -689,6 +697,12 @@ export function textInput(
     fieldWidth?: number;
     /** See `text({ fullWidth })`. */
     fullWidth?: boolean;
+    /** Seed candidates for the completion popup; live updates go
+     * through the `setCompletions(key, items)` mutation. */
+    completions?: string[];
+    /** See `text({ completionsAbove })` — float the popup above the
+     * field, for an input pinned to the bottom of its surface. */
+    completionsAbove?: boolean;
     key?: string;
   },
 ): WidgetSpec {
@@ -702,6 +716,8 @@ export function textInput(
     fieldWidth: options?.fieldWidth,
     maxVisibleChars: options?.maxVisibleChars,
     fullWidth: options?.fullWidth,
+    completions: options?.completions,
+    completionsAbove: options?.completionsAbove,
     key: options?.key,
   });
 }

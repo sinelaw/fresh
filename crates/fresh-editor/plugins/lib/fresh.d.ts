@@ -2046,6 +2046,20 @@ type WidgetSpec = {
 	*/
 	completionsVisibleRows: number;
 	/**
+	* Float the completion popup ABOVE the field instead of below
+	* it. The rows still float — nothing reflows either way — so
+	* this is purely which side of the input the box grows into.
+	*
+	* Set it when the field is the last row of its surface (a chat
+	* composer pinned to the bottom, a filter on the final line of
+	* a dock section): a downward popup there renders past the
+	* panel's edge and is clipped away entirely. Mirrored
+	* faithfully — the dim `┄` separator stays adjacent to the
+	* field and the solid border closes the far end, so the popup
+	* and the input still read as one box.
+	*/
+	completionsAbove: boolean;
+	/**
 	* Paint the caret as a REVERSED block cell inside the row
 	* (in addition to publishing the hardware-cursor position).
 	* Modal form surfaces (e.g. Settings) use this — a hardware

@@ -4473,7 +4473,7 @@ impl Editor {
         let overlay_text = panel
             .overlays
             .iter()
-            .find(|o| o.buffer_row == brow)
+            .find(|o| o.row() == Some(brow))
             .map(|o| o.entry.text.as_str());
         let on_overlay = overlay_text.is_some();
         let row_text =
