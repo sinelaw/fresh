@@ -545,6 +545,10 @@ interface NewSessionForm {
   // button) we re-open the picker so the user lands back where
   // they were instead of being dropped into the bare editor.
   fromPicker: boolean;
+  // Opened from Home, so closing it returns there. Without this, dismissing
+  // the dialog dropped the user on a bare editor — they pressed a key *in*
+  // Home and were answered by having Home taken away.
+  fromHome: boolean;
   // Token incremented every time the user changes the Project
   // Path field. Async probes (is-git, session-name, default-
   // branch) capture the token at launch and bail on result if
@@ -9194,7 +9198,9 @@ function renderForm(): void {
   formPanel.update(buildFormSpec());
 }
 
-function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): void {
+function openForm(
+  options?: { fromPicker?: boolean; fromHome?: boolean; target?: RunAgentTarget },
+): void {
   const lastCmd =
     (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
@@ -9242,6 +9248,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     defaultBranch: "",
     defaultBranchIsHeadFallback: false,
     fromPicker: !!options?.fromPicker,
+    fromHome: !!options?.fromHome,
     probeToken: 0,
     historyCursor: { project_path: -1, name: -1, cmd: -1, branch: -1 },
     historyDraft: { project_path: "", name: "", cmd: "", branch: "" },
@@ -9715,6 +9722,7 @@ function restoreDockAfterForm(): boolean {
 // just hand focus back to it instead.
 function cancelForm(): void {
   const wasFromPicker = !!form?.fromPicker;
+  const wasFromHome = !!form?.fromHome;
   // Cancelling while a remote connect is in flight: tell the host to abort it.
   // The pending `attachRemoteAgent` promise rejects with "cancelled" (its catch
   // is a no-op once `form` is null below) and the connect's late result is
@@ -9724,6 +9732,10 @@ function cancelForm(): void {
     editor.cancelRemoteAgent();
   }
   closeForm();
+  if (wasFromHome) {
+    openHome();
+    return;
+  }
   if (restoreDockAfterForm()) return;
   if (wasFromPicker) {
     openControlRoom();
@@ -10813,8 +10825,10 @@ async function submitForm(visit: boolean): Promise<void> {
       teachFreshCli: !!agent?.systemPrompt && form.teachFreshCli,
     };
     const cmd = form.cmd.value;
+    const backHome = form.fromHome;
     closeForm();
-    restoreDockAfterForm();
+    if (backHome) openHome();
+    else restoreDockAfterForm();
     void launchAgentInCurrentWorkspace(cmd, opts);
     return;
   }
@@ -13076,6 +13090,7 @@ editor.on("widget_event", (e) => {
       // mirror our own state and (if reached from the picker)
       // bounce back to the picker so Esc is "back", not "out".
       const wasFromPicker = !!form?.fromPicker;
+      const wasFromHome = !!form?.fromHome;
       // Esc while connecting aborts the in-flight remote attach, same as the
       // Cancel button: reject the promise and discard the late result host-side.
       if (form?.submitting) {
@@ -13085,6 +13100,10 @@ editor.on("widget_event", (e) => {
       form = null;
       formPanel = null;
       editor.setEditorMode(null);
+      if (wasFromHome) {
+        openHome();
+        return;
+      }
       if (restoreDockAfterForm()) return;
       if (wasFromPicker) {
         openControlRoom();
@@ -14235,7 +14254,7 @@ function rowProject(s: AgentSession): string {
 
 /// One fleet row: state glyph, name, project, agent, branch, and — the point
 /// of the whole view — what it is waiting on, or what it last said.
-function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
+function fleetRowEntry(s: AgentSession, width: number, selected = false): TextPropertyEntry {
   const dim = "ui.menu_disabled_fg";
   const st = sessionState(s);
   // A workspace with no agent is context, not content: it draws dim
@@ -14294,8 +14313,12 @@ function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
   // question outranks its last line — if it is blocked, that is the only thing
   // worth the space.
   const reported = s.status?.summary ?? "";
+  // The advice, only on the row it applies to. Repeated down every agentless
+  // row it is wallpaper: five identical sentences saying the same thing about
+  // five different workspaces, crowding out the column that exists to say
+  // what is different about each.
   const detail = idle
-    ? "no agent here — Alt+n starts one"
+    ? (selected ? "no agent here — Alt+n starts one" : "")
     : (reported || s.tail?.waitingOn || s.tail?.lastLine || "");
   const used = 2 + (nameW + 1) + (showProject ? 15 : 0) + (showAgent ? 11 : 0) +
     (showBranch ? 18 : 0);
@@ -14308,6 +14331,26 @@ function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
       : { fg: dim, italic: idle || st === "idle" },
   });
   return styledRow(segs as Parameters<typeof styledRow>[0]);
+}
+
+/// The column header, laid out against exactly the widths `fleetRowEntry`
+/// uses.
+///
+/// Without it the columns are a guessing game: `api  fresh  claude  fix/api`
+/// is four words with no stated meaning, and the one that matters — the
+/// reason — reads as an afterthought rather than as the point of the row.
+function fleetHeaderRow(width: number): TextPropertyEntry {
+  const dim = "ui.menu_disabled_fg";
+  const showProject = width >= 52;
+  const showAgent = width >= 74;
+  const showBranch = width >= 104;
+  const nameW = width >= 62 ? 18 : 12;
+  let text = "  " + "agent".padEnd(nameW) + " ";
+  if (showProject) text += "project".padEnd(14) + " ";
+  if (showAgent) text += "runs".padEnd(10) + " ";
+  if (showBranch) text += "branch".padEnd(16) + "  ";
+  text += "what it is doing";
+  return styledRow([{ text, style: { fg: dim, bold: true } }]);
 }
 
 /// What to call a row.
@@ -14416,13 +14459,17 @@ let chatPick = 0;
 
 /// Rows the candidate list occupies while the picker is up.
 ///
-/// Fixed rather than sized to the candidates, so filtering never changes the
-/// layout: the list is redrawn by mutation, and a mutation cannot move the
-/// field it sits above. A count that grew and shrank with the matches would
-/// need a re-mount, and a re-mount rebuilds the text field from our copy —
-/// which is how a keystroke gets lost between the key and its `change` event
-/// ("bash" arriving as "bsh").
-const CHAT_PICK_ROWS = 5;
+/// Sized to how many agents there *are*, not how many match. Filtering must
+/// not change the layout: the list is redrawn by mutation, and a mutation
+/// cannot move the field it sits above — a height that shrank with the
+/// matches would need a re-mount, and a re-mount rebuilds the text field from
+/// our copy, which is how a keystroke gets lost between the key and its
+/// `change` event ("bash" arriving as "bsh"). Sizing to the total means the
+/// unfiltered list — what you see when the picker opens — has no wasted rows
+/// at all, and only a narrowing filter leaves any.
+function chatPickRows(): number {
+  return Math.min(Math.max(knownAgentMailboxes().length, 1), 6);
+}
 
 /// Agent names matching the filter, best-first.
 ///
@@ -14440,14 +14487,17 @@ function chatCandidates(): string[] {
 
 /// Redraw the candidate list in place.
 ///
-/// A *mutation*, deliberately, not a re-render — see `CHAT_PICK_ROWS`. The
+/// A *mutation*, deliberately, not a re-render — see `chatPickRows`. The
 /// host's own completion popup would be the obvious primitive, and is not
 /// usable here: it paints *below* its field by extending the section
 /// downwards, and this field is the last row of a full-height panel, so the
 /// candidates would render past the frame and be clipped away entirely.
 function pushChatCandidates(): void {
   if (!homePanel || chatTarget !== null) return;
-  homePanel.setRawEntries("home_pick", candidateRows(chatCandidates(), chatColsNow()));
+  homePanel.setRawEntries(
+    "home_pick",
+    candidateRows(chatCandidates(), chatColsNow(), chatPickRows()),
+  );
 }
 
 /// Open the picker, keeping whatever is half-typed as the filter.
@@ -14461,14 +14511,12 @@ function openChatPicker(filter = ""): void {
 
 function chooseChatTarget(): void {
   const cands = chatCandidates();
-  if (cands.length === 0) {
-    chatSay(
-      knownAgentMailboxes().length === 0
-        ? "No agents yet. Alt+n makes a workspace and starts one in it."
-        : `No agent matches "${chatFilter}".`,
-    );
-    return;
-  }
+  // Nothing to choose: do nothing. Saying so in the chat put a line in the
+  // transcript for every press of a key that did not work — three identical
+  // paragraphs about there being no agents, which is both the least useful
+  // thing the chat could contain and a growing one. The candidate area
+  // already says "no agent matches".
+  if (cands.length === 0) return;
   chatTarget = cands[Math.min(chatPick, cands.length - 1)];
   chatFilter = "";
   chatDraft = "";
@@ -14489,9 +14537,12 @@ function moveChatPick(delta: number): void {
 async function sendChat(): Promise<void> {
   const to = chatTarget;
   const text = chatDraft.trim();
+  // An empty line is not a message. Returning before touching anything means
+  // Enter on an empty field is inert rather than a repaint that clears a
+  // field which was already clear.
+  if (!text) return;
   chatDraft = "";
   renderHome(true);
-  if (!text) return;
   if (!to) {
     // Unreachable through the keyboard — there is no message field without a
     // target — but a defensive answer here beats a message sent nowhere.
@@ -14556,14 +14607,15 @@ function buildHomeSpec(): WidgetSpec {
   // when you start typing is the same complaint as a pane that collapses
   // while a terminal starts.
   const picking = chatTarget === null;
-  const logRows = Math.max(2, chatBodyRows - (picking ? CHAT_PICK_ROWS : 0));
+  const pickRows = picking ? chatPickRows() : 0;
+  const logRows = Math.max(2, chatBodyRows - pickRows);
   const chatChildren: WidgetSpec[] = [
     // Padded to a fixed height and sliced from the end: the newest message is
     // the one you came to read, so the transcript is pinned to the bottom.
     raw(padTop(chatLines(chatCols), logRows), "home_chat_log"),
   ];
   if (picking) {
-    chatChildren.push(raw(candidateRows(chatCandidates(), chatCols), "home_pick"));
+    chatChildren.push(raw(candidateRows(chatCandidates(), chatCols, pickRows), "home_pick"));
   }
   chatChildren.push(
     textInput(chatTarget === null ? chatFilter : chatDraft, {
@@ -14604,13 +14656,16 @@ function buildHomeSpec(): WidgetSpec {
           style: { fg: "ui.menu_disabled_fg" },
         }]),
       ])
-      : list({
-        items: rows.map((s) => fleetRowEntry(s, rightCols)),
-        itemKeys: rows.map((s) => String(s.id)),
-        selectedIndex: selectedIdx,
-        visibleRows: listRows,
-        key: "home_list",
-      }),
+      : col(
+        raw([fleetHeaderRow(rightCols)]),
+        list({
+          items: rows.map((s, i) => fleetRowEntry(s, rightCols, i === selectedIdx)),
+          itemKeys: rows.map((s) => String(s.id)),
+          selectedIndex: selectedIdx,
+          visibleRows: Math.max(1, listRows - 1),
+          key: "home_list",
+        }),
+      ),
   });
 
   const tailSection = selected && selected.terminalBufferId !== undefined
@@ -14698,7 +14753,7 @@ function chatColsNow(): number {
 /// Not a `list` widget: the chat line has to keep the keyboard so typing
 /// filters it, and a focused list eats printable characters for its own
 /// type-ahead. So the rows are painted and the highlight is ours.
-function candidateRows(cands: string[], width: number): TextPropertyEntry[] {
+function candidateRows(cands: string[], width: number, rows: number): TextPropertyEntry[] {
   const out: TextPropertyEntry[] = [];
   if (cands.length === 0) {
     out.push(styledRow([{
@@ -14707,11 +14762,11 @@ function candidateRows(cands: string[], width: number): TextPropertyEntry[] {
     }]));
   } else {
     // Scroll to keep the highlight in view rather than clipping to the first
-    // `CHAT_PICK_ROWS`: with eight agents, the one you arrowed down to has to
+    // the block's height: with eight agents, the one you arrowed down to has to
     // be visible.
     const pick = Math.min(chatPick, cands.length - 1);
-    const start = Math.max(0, Math.min(pick - CHAT_PICK_ROWS + 1, cands.length - CHAT_PICK_ROWS));
-    for (let i = start; i < Math.min(start + CHAT_PICK_ROWS, cands.length); i++) {
+    const start = Math.max(0, Math.min(pick - rows + 1, cands.length - rows));
+    for (let i = start; i < Math.min(start + rows, cands.length); i++) {
       const on = i === pick;
       out.push(styledRow([{
         text: (on ? "  ▸ @" : "    @") + cands[i],
@@ -14721,9 +14776,13 @@ function candidateRows(cands: string[], width: number): TextPropertyEntry[] {
       }]));
     }
   }
-  // Always the same height, so a mutation never has to move the field.
-  while (out.length < CHAT_PICK_ROWS) out.push(styledRow([{ text: " " }]));
-  return out.slice(0, CHAT_PICK_ROWS);
+  // Padded at the top, not the bottom: the block keeps one height so a
+  // mutation never has to move the field, but the candidates belong *against*
+  // the line you are typing into. Padding below them pushed them up into the
+  // transcript and left a hand's width of blank between the last match and
+  // the caret.
+  while (out.length < rows) out.unshift(styledRow([{ text: " " }]));
+  return out.slice(-rows);
 }
 
 /// Take the last `rows` entries, padding at the top when there are fewer.
@@ -14745,7 +14804,7 @@ let homeLastSpec: string | null = null;
 /// How many transcript rows the chat pane has right now.
 function chatLogRowsNow(): number {
   const { chat } = homeLayout(fleetRows().length);
-  return Math.max(2, chat - (chatTarget === null ? CHAT_PICK_ROWS : 0));
+  return Math.max(2, chat - (chatTarget === null ? chatPickRows() : 0));
 }
 
 /// Bring the view up to date without rebuilding it.
@@ -14765,9 +14824,10 @@ function refreshHomeInPlace(): void {
   const rows = fleetRows();
   if (rows.length > 0) {
     const cols = Math.max(30, Math.floor((fleetRowWidth() * (100 - HOME_CHAT_PCT)) / 100) - 7);
+    const sel = fleetSelectedIndex(rows);
     homePanel.setItems(
       "home_list",
-      rows.map((s) => fleetRowEntry(s, cols)),
+      rows.map((s, i) => fleetRowEntry(s, cols, i === sel)),
       rows.map((s) => String(s.id)),
     );
   }
@@ -14964,14 +15024,32 @@ registerHandler("orchestrator_home_send", function () {
   if (chatTarget === null) chooseChatTarget();
   else void sendChat();
 });
-/// Make an agent from Home.
+/// Start an agent in the selected workspace.
 ///
-/// Home closes first: the New-Workspace form is its own full-screen panel, so
-/// leaving Home mounted underneath would stack two modals and leave the user
-/// looking at a form over a view neither of which has the keyboard.
+/// "Run Agent…", not "New Workspace". The list already has the workspace in
+/// it — that is what you selected — so asking for a *new* one answers a
+/// question nobody asked, and the dialog would open on some other project
+/// root because it defaults to the active window rather than the row under
+/// the cursor.
+///
+/// The workspace is focused first, which is what pins the dialog to it: the
+/// form's "current workspace" target means the active window, so making the
+/// selection active is the whole of "pin it". Home closes because the form is
+/// its own full-screen panel — two stacked modals leave the keyboard in
+/// neither — and reopens when the form does, so the key you pressed *in* Home
+/// does not cost you Home.
 registerHandler("orchestrator_home_new", function () {
+  const rows = fleetRows();
+  const target = rows[fleetSelectedIndex(rows)];
+  const windowId = target?.terminalWindowId ?? target?.id;
   closeHome();
-  void editor.runCommand("%cmd.new");
+  // A row with no window (an agent reporting from a checkout we never opened)
+  // has nothing to launch into; the dialog opens on the active window, which
+  // is the honest fallback.
+  if (windowId !== undefined && windowId > 0) {
+    editor.setActiveWindow(windowId);
+  }
+  openForm({ target: "current", fromHome: true });
 });
 registerHandler("orchestrator_home_chat_backspace", function () {
   // Backspace on an empty message goes back to choosing. The address is not

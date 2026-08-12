@@ -1212,6 +1212,14 @@ export class FloatingWidgetPanel {
     return this.mutate({ kind: "setItems", widgetKey, items, itemKeys });
   }
 
+  /** Replace a keyed `Raw` widget's entries. See `WidgetPanel.setRawEntries`
+   * — same mutation, and the same reason to prefer it over re-mounting: a
+   * mount rebuilds every widget from the spec, including the text field the
+   * user is typing into. */
+  setRawEntries(widgetKey: string, entries: TextPropertyEntry[]): boolean {
+    return this.mutate({ kind: "setRawEntries", widgetKey, entries });
+  }
+
   setExpandedKeys(widgetKey: string, keys: string[]): boolean {
     return this.mutate({ kind: "setExpandedKeys", widgetKey, keys });
   }
