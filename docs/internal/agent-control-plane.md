@@ -8,7 +8,7 @@ plan. Status: **PLANNED** unless a section says otherwise.
 
 Landed so far: the explicit-id terminal APIs and `describeEnvironment` (§4,
 §6.1, §6.2), the discoverability fixes (§9), the `waiting` state (§7.1), the
-Fleet view (§7.2), and the `pane` widget — any buffer from any window, live,
+agent list (§7.2), and the `pane` widget — any buffer from any window, live,
 and interactive for terminals (§6.5, §6.6).
 
 **§10's phases A, B and C have landed**: the event stream and
@@ -207,7 +207,7 @@ for workspaces *it* created, and is null for the launch workspace and for any
 window reconciled from the host's window list. Measured on a live editor: a
 workspace whose agent terminal the Orchestrator recorded as `null` was still
 found, written to and tailed through `describeEnvironment`. So the environment
-read is what makes the join total, and a Fleet view must key off it rather
+read is what makes the join total, and the agent list must key off it rather
 than off the Orchestrator's bookkeeping.
 
 Deliberately excluded: per-pane geometry. `describeWorkspace()` already gives
@@ -267,15 +267,15 @@ is only the addressing and the plumbing around it:
   height, keeping the top of the grid. A tail wants the opposite. A row offset
   turns "the first N rows" into "the last N rows".
 - **Size the PTY to the view that is presenting it.** A PTY has one size, and
-  it belongs to whichever view is showing it right now: the Fleet opens on an
-  agent, that agent's terminal resizes to the embed pane; the Fleet closes and
+  it belongs to whichever view is showing it right now: Home opens on an
+  agent, that agent's terminal resizes to the embed pane; Home closes and
   the owning window reclaims it.
 
 An earlier draft of this section said the opposite — crop, never resize — on
 the grounds that a resize would `SIGWINCH` the agent and disturb its own
 workspace. That reasoning was wrong twice over.
 
-Fresh is one terminal: while the Fleet overlay is up, nobody is looking at
+Fresh is one terminal: while the Home overlay is up, nobody is looking at
 that workspace, so there is no second observer to disturb. The two sizes are a
 sequence, not a conflict.
 
@@ -284,14 +284,14 @@ the last N rows are the tail, and for a full-screen agent that is the prompt
 and input area, precisely the region that answers "is it asking me something".
 Cropping *columns* is not: an agent drawing a 180-column dialog into a
 100-column pane loses the right edge of every box and cuts every wrapped line.
-The content the Fleet exists to show is exactly what would be clipped.
+The content Home exists to show is exactly what would be clipped.
 
 Sizing to the view also generalises what already happens in-window — a
 terminal dragged into a new split re-wraps to that pane — rather than adding a
 second model. Two details are part of the change, not follow-ups: resize on a
 *settled* selection, since arrowing a long list would otherwise rewrap a
 different terminal's scrollback per keypress; and reclaim the size on close,
-or the agent is left at the Fleet's dimensions permanently.
+or the agent is left at Home's dimensions permanently.
 
 ### 6.6 One PTY, many views, one input target
 
@@ -346,7 +346,7 @@ in the plan.
 
 ---
 
-## 7. The show side: Home and the Fleet
+## 7. The show side: Home
 
 ### 7.1 The `!` state — **implemented**
 
@@ -371,32 +371,37 @@ outranks anything inferred from pixels, and the summary it writes is what it
 knows it is doing rather than whatever it last printed. Screen inference stays
 as the fallback for agents that write no status, so nothing regresses.
 
-### 7.2 The Fleet — **implemented**
+### 7.2 The agent list — **implemented**
 
-Shipped ahead of the full Home layout, because it is the part that answers the
-question. A wide panel, one row per agent — glyph, name, agent kind, branch,
-and either what it is waiting on or what it last said — sorted by urgency
-rather than by name, so the list is read from the top and abandoned as soon as
-it turns boring.
+One row per agent — glyph, name, project, agent kind, branch, and either what
+it is waiting on or what it last said — sorted by urgency rather than by name,
+so the list is read from the top and abandoned as soon as it turns boring.
 
-Beneath it, the selected workspace rendered **live** by `windowEmbed`, which
-turned out to already exist as a widget: the host paints the real window into
-a reserved rectangle, terminals included. So §6.5's "the tail is the real
-terminal, not a mirror" is not future work — it is how the Fleet's live pane
-already behaves. Arrowing the list re-points the embed; Enter closes the Fleet
-and lands in that workspace.
+For one release this was also its own panel, called the Fleet: the list plus
+the selected agent's live terminal. That panel is gone. Home (§7.3) is the
+same list and the same terminal with a chat beside them, so keeping the Fleet
+meant maintaining a strictly worse copy of one view. The row model — ordering,
+the reason column, the frozen-at-open order — is what survived, and it is what
+Home draws.
 
-Tab switches the Fleet into a typing mode that sends keys to the selected
-agent's PTY by `(windowId, terminalId)` — so an approval prompt can be
-answered without leaving the view (§6.6). Enter, the arrows, Escape and
-Ctrl+C forward; so do the digits and `y`/`n` that answer a prompt.
+Beside the list, the selected workspace rendered **live**. So §6.5's "the tail
+is the real terminal, not a mirror" is not future work — it is how the live
+pane already behaves. Arrowing the list re-points it; Enter closes Home and
+lands in that workspace.
+
+`Alt+`` moves the keyboard into the pane, which then sends keys to that
+agent's PTY — so an approval prompt can be answered without leaving the view
+(§6.6). Enter, the arrows, Escape and Ctrl+C forward; so do the digits and
+`y`/`n` that answer a prompt. Not Tab: Tab is a key agents genuinely want
+(completion, field navigation in their own TUI), so a toggle that ate it would
+make the one view built for answering an agent unable to send it.
 
 Typing works, including free-form prose, because the live pane is a `pane`
 widget rather than a picture. A focused interactive pane takes any key the
 panel's own mode does not claim and routes it through `key_to_pty_bytes` — the
 same translation a focused terminal split uses, so app-cursor mode and
 modifiers come from one place rather than a table maintained beside it. The
-Fleet's mode claims only Tab, its way back out.
+typing mode claims only `Alt+``, its way back out.
 
 That is the fix for a limitation an earlier draft of this document called
 "needs host work". It did — but the work was making the embed a pane, not
@@ -404,59 +409,58 @@ forwarding more keys. Per-key forwarding was deleted rather than extended.
 
 ### 7.3 Home — **implemented**
 
-Home is an ordinary workspace layout, not a new UI mode: three splits built by
-a script, holding a virtual buffer, a terminal, and a virtual buffer. It takes
-the startup slot the `dashboard` plugin already owns — the buffer shown when
-`fresh` is started with no file — so opening any file replaces it and nothing
-new has to be explained.
+A full-screen panel, 90% × 90% like Settings, answering the three questions
+you have about a machine full of agents: who needs me, what did they say, and
+what do I want them to do next.
 
 ```
  File   Edit   View   Selection   Go   LSP   Help
- ⌂ Home ×   api-refactor ×   +
-┌ FLEET ──────────────────────────── 6 agents · 2 need you ─┐┌ master · claude ───────────────────────────┐
-│                                                           ││ > what's going on?                         │
-│ ! flaky-test     codex     fix/flaky                 2m   ││                                            │
-│   Approve edit to tests/e2e.rs?                           ││ Six workspaces. Two need you:              │
-│                                                           ││   • flaky-test  — approval on tests/e2e.rs │
-│ ! api-refactor   claude    fix/api-shape             4m   ││   • api-refactor — rate limited, retrying  │
-│   Rate limit — retry in 40s                               ││                                            │
-│                                                           ││ perf-probe and docs-pass are working.      │
-│ * perf-probe     claude    perf/bench               12m   ││ ui-polish finished 31m ago, CI green.      │
-│   running cargo bench --bench io                          ││ old-migration is a 6-day-old stale worktree│
-│                                                           ││                                            │
-│ * docs-pass      claude    docs/tidy                 8m   ││ > approve flaky-test, and tell docs-pass   │
-│   writing docs/features/agents.md                         ││   to also cover the new agents API         │
-│                                                           ││                                            │
-│ · ui-polish      opencode  ui/spacing               31m   ││ ✓ flaky-test   ← "approved"      (mailbox) │
-│   done · 3 files · ✓ CI                                   ││ ✓ docs-pass    ← "also cover…"   (mailbox) │
-│                                                           ││                                            │
-│ ○ old-migration            migrate/v2                6d   ││ > _                                        │
-│   on-disk worktree                                        ││                                            │
-│                                                           ││                                            │
-│ ↵ focus  m message  a approve  d diff  x archive          ││                                            │
-└──────────────────────────────────── live · updated 1s ────┘└────────────────────────────────────────────┘
-┌ TAIL · flaky-test ─────────────────────────────────────────────────────────────────── following · 40 ln ┐
-│ running 3 tests                                                                                         │
-│ test e2e::retry_backoff ... FAILED                                                                      │
-│                                                                                                         │
-│ I need to edit tests/e2e.rs to widen the timeout window.                                                │
-│ ╭─ Approve edit to tests/e2e.rs? ────────────────────────────────╮                                      │
-│ │  [ Yes ]   [ Yes, and don't ask again ]   [ No ]               │                                      │
-│ ╰────────────────────────────────────────────────────────────────╯                                      │
-└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- Trusted  Local   6 agents · 2 need you                              Fleet live    LF  UTF-8   Palette: Ctrl+P
+ [No Name] ×   +
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│╭─ ▸ chat ───────────────────────────╮╭─ 6 agents · 2 need you ──────────────────────────────────╮│
+││                                    ││ ! flaky-test    fresh    codex     fix/flaky             ││
+││                                    ││   Approve edit to tests/e2e.rs?                          ││
+││                                    ││ ! api-refactor  fresh    claude    fix/api-shape         ││
+││ flaky-test  ▸ tests/e2e.rs needs a ││   Rate limit — retry in 40s                              ││
+││             ▸ wider timeout. ok?   ││ * perf-probe    fresh    claude    perf/bench            ││
+││ api-refac…  ▸ rate limited,        ││   running cargo bench --bench io                         ││
+││             ▸ retrying in 40s      │╰──────────────────────────────────────────────────────────╯│
+││         you ▸ @flaky-test approved ││╭─ live · flaky-test ─────────────────────────────────────╮│
+││ flaky-test  ▸ done, suite green    ││ running 3 tests                                          ││
+││                                    ││ test e2e::retry_backoff ... FAILED                       ││
+││ [@name what should it do?        ] ││ ╭─ Approve edit to tests/e2e.rs? ─╮                       ││
+│╰────────────────────────────────────╯│ │  [ Yes ]  [ No ]                │                      ││
+│                                      ╰──────────────────────────────────────────────────────────╯│
+│   Tab chat / list / agent   ↑↓ select   @name address   Alt+` type at agent   Enter send / go     │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The tail pane follows the fleet selection and is a **live native embed** of the
-selected workspace's terminal (§6.5), cropped to its last rows — not a text
-snapshot. It is also an input target (§6.6): the approval prompt drawn in the
-wireframe above is answerable from Home, by typing, without switching
-workspaces. The same terminal remains fully usable from its own workspace at
-the same time.
+The left column is **not an agent**. It was, in the design this replaces: a
+designated "master" workspace whose terminal filled that half, which you
+talked to in prose and which drove the rest. That is a fine thing to be able
+to do — and you still can, by making an agent and telling it things — but it
+is the wrong thing for this pane, because it puts an LLM between you and a
+message you already know how to write. The messages agents send are already
+in their outboxes (§8.1) and a reply is a file write. Both halves are
+deterministic, so the pane is: a transcript, a line to type in, and `@name` to
+decide where it goes. A line with no `@` goes to whoever spoke last, which is
+what makes a back-and-forth with one agent readable.
 
-The fleet panel is a subscriber to editor events, so it stays live with no
-agent in the loop. After the layout is declared, keeping it current costs
-nothing.
+Nothing summarises and nothing decides who should hear what. A control plane
+that paraphrased its agents would be a worse control plane.
+
+The right column is the list over the selected agent's terminal, a **live
+native embed** (§6.5) rather than a text snapshot, and an input target (§6.6):
+the approval prompt in the wireframe is answerable from Home, by typing,
+without switching workspaces. The same terminal stays fully usable from its
+own workspace at the same time.
+
+Both columns are budgeted against one height so they end level, and the chat's
+input line is pinned to the panel's last row rather than riding up and down as
+messages arrive.
+
+Home stays live from the same probe data the dock uses plus a poll of every
+outbox, so keeping it current costs no agent in the loop.
 
 Note the division of labour this creates, which is deliberate: the **human**
 gets the real terminal at native rendering cost, and the **agent** gets
@@ -464,7 +468,7 @@ gets the real terminal at native rendering cost, and the **agent** gets
 
 ### 7.4 The dock card
 
-Lower priority than the Fleet, and strictly additive — the same card geometry
+Lower priority than Home, and strictly additive — the same card geometry
 with a third line carrying agent kind and the last output line, and the `!`
 glyph in the existing status column.
 
@@ -475,7 +479,7 @@ level of nesting, named panel types, a data source and a click action per
 section — keeps the emitted description small and keeps the concurrency guards
 in the host, written once.
 
-Prebuilt views: **Fleet**, **Workspace Matrix**, **What Changed**,
+Prebuilt views: **Roster**, **Workspace Matrix**, **What Changed**,
 **Diagnostics Roll-up**, **CI/PR Board**.
 
 ---
@@ -549,30 +553,50 @@ Fallback is unchanged behaviour, not an error: an agent that writes no
 outbox is strictly additive, and an agent that adopts it simply becomes more
 legible than one that has not.
 
-Both the Fleet and the master agent read `status`. The Fleet reads it directly
-— deterministic plugin code, no model in the loop — which is what keeps the
-view free to run at whatever tick rate it likes.
+Home reads `status` directly — deterministic plugin code, no model in the loop
+— which is what keeps the view free to run at whatever tick rate it likes.
+
+#### One mailbox per agent
+
+```
+<root>/.fresh/agents/<name>/
+    status        one line — "<state> <summary>" — rewritten in place
+    inbox/        one file per instruction for it; inbox/done/ when acted on
+    outbox/       one file per thing it wants to say; outbox/read/ once shown
+```
+
+Per **agent**, not per worktree. Two agents routinely share a checkout — a
+build watcher and a refactorer, or simply two `claude`s in two terminals — and
+one mailbox per root would have them overwriting each other's status and
+racing for each other's instructions. The directory name is also the agent's
+**address**: it is what you type after `@` in Home's chat, so it has to name
+an agent rather than a directory for the chat to be able to say anything.
+
+In the checkout rather than in our data dir, because that is a path both sides
+can compute without coordinating. An agent someone started by hand knows its
+working directory and nothing about the plugin's layout, so a data-dir
+location would be discoverable only by agents we launched — which is exactly
+the constraint the mailbox exists to remove. Agents we *do* launch are handed
+`$FRESH_AGENT_NAME`, `$FRESH_AGENT_STATUS`, `$FRESH_AGENT_INBOX` and
+`$FRESH_AGENT_OUTBOX` so they never have to derive any of it.
 
 #### Discovery: an agent is whatever reports, not whatever we launched
 
-The mailbox has two locations, because there are two kinds of agent.
+Discovery lists `<root>/.fresh/agents/` over every checkout already known —
+live session roots and the worktrees found on disk. Deliberately not a
+filesystem walk: "every status file on this machine" is a much more expensive
+question, and answering it would surface agents working on things the user is
+not.
 
-**Ours** — one this plugin launched — lives under the data dir, keyed by
-workspace id. Nothing is written into the user's repository, two workspaces
-sharing a root cannot collide, and a restored session finds the mailbox it had.
+A mailbox found in a checkout that has a live window, where that window has
+not claimed one, is *adopted* onto that window — someone started an agent by
+hand in a workspace we happen to have open, and listing it twice (once with
+its own words, once with a guess from its screen) would be worse than not
+finding it. Only when it is the only mailbox there, though: with two, we
+cannot tell which of them is the agent in that window's terminal, and guessing
+hands one of them a terminal belonging to the other.
 
-**Theirs** — one we did not launch — reports at `<root>/.fresh/agent-status`,
-a path both sides can compute without coordinating. A `claude` started by hand
-in a worktree, an agent in another multiplexer, one left from a previous
-session: none can be told an id they were never given, but all of them know
-their working directory.
-
-Discovery reads both, over every checkout already known — live session roots
-and the worktrees found on disk. Deliberately not a filesystem walk: "every
-status file on this machine" is a much more expensive question, and answering
-it would surface agents working on things the user is not.
-
-This is the inversion that makes the fleet honest. Before it, the roster was
+This is the inversion that makes the list honest. Before it, the roster was
 "agents the user happened to start through the dock", and anything else was
 invisible no matter how loudly it was blocked. After it, an agent is whatever
 reports — and reporting costs one `echo`.
@@ -588,11 +612,11 @@ changed must not see our bookkeeping.
 `delegate()` writes one file per instruction:
 
 ```
-inbox/2026-08-11T164500-a3f1.md
+inbox/20260811T164500-a3f1.md
 ---
-from: <workspaceId or "user">
+from: <agent name or "user">
+to: <agent name>
 intent: <short imperative>
-reply-to: <path to the sender's inbox, when a reply is expected>
 ---
 <the instruction, in prose>
 ```
@@ -601,6 +625,24 @@ The agent's briefing says: read `inbox/` at the start of each turn, act, then
 move the file to `inbox/done/`. That move is the acknowledgement — no protocol,
 no ack message, and the delegation's outcome is visible as a file that did or
 did not move.
+
+#### The outbox: what an agent says, out
+
+`status` is a state, not a conversation: it is one line and the agent
+overwrites it, so anything said there is gone at the next state change. "I'm
+done pushing the 3 PRs" is a thing said *once, at a moment*, that must still
+be there when the user looks up two minutes later.
+
+So the outbox is a directory beside the status file — one file per message.
+Home drains it every tick, appends each message to the transcript attributed
+to the agent that wrote it, and moves the file to `outbox/read/`. The move is
+what makes the drain idempotent: a message is appended once however often the
+drain runs, and the original stays readable. Files are drained in name order,
+so a numeric timestamp keeps several messages written in one turn in the order
+they were said.
+
+The transcript is persisted, because the conversation outlives the panel: an
+agent that answered while Home was closed still said it to you.
 
 #### The rest of the ladder
 
@@ -686,7 +728,7 @@ it.
 |---|---|
 | Explicit-id plugin dispatch, `describeEnvironment`, `readTerminal`, `sendTerminalInput(windowId)` | §4, §6.1, §6.2 |
 | Live embeds and the `pane` widget — any buffer, any window, interactive for terminals | §6.5, §6.6 |
-| The `!` state (screen-derived) and the Fleet | §7.1, §7.2 |
+| The `!` state (screen-derived) and the agent list | §7.1, §7.2 |
 | Discoverability: refusal names the remedy, briefing points at `help plugin` | §9 |
 
 ### Phase A — the event stream, and naming a script — **shipped**
@@ -696,7 +738,7 @@ script subscribes and appends JSONL; `script run --as <name>` so that script
 can be installed once and replaced rather than stacked (§6.3, §6.4).
 
 First because it is small, carries no risk, and **everything reactive is
-blocked on it**. Today every surface polls — the dock polls, the Fleet ticks,
+blocked on it**. Today every surface polls — the dock polls, Home ticks,
 `probeTail` re-reads screens — and a master agent can only answer when asked,
 never notice. An event file is the difference between a control room and a
 dashboard you have to remember to look at. `--as` is a precondition rather
@@ -708,11 +750,11 @@ so installing the watcher twice leaves two of them running.
 The `status` outbox first, then `inbox/` and `delegate()`, then the guards.
 
 Order within the phase matters. The outbox is pure gain and independent of
-delegation: it makes the Fleet honest immediately (§8.1) and can ship on its
+delegation: it makes the agent list honest immediately (§8.1) and can ship on its
 own. The inbox is where the risk lives, so it lands after the view that makes
 its effects visible.
 
-1. `status` written by agents; Fleet and `describeEnvironment` read it;
+1. `status` written by agents; Home and `describeEnvironment` read it;
    briefing teaches the one-liner; screen inference kept as fallback.
 2. `inbox/` + `orch.delegate({agentId, instruction, wait?, expect?})`;
    briefing teaches read-act-move.
@@ -725,16 +767,18 @@ its effects visible.
 
 ### Phase C — Home — **shipped**
 
-The three-pane layout (§7.3): Fleet, master-agent terminal, tail. Mostly
-composition — the `pane` widget already renders and routes input, so the
-master agent is one more pane beside the list. It lands last because it is the
-*payoff* for A and B: with events it can notice, with the mailbox it can act,
-and without either it is a second terminal next to a list.
+The layout of §7.3: chat, agent list, live terminal. It lands last because it
+is the *payoff* for A and B — with events it can notice, with the mailbox it
+can act, and without either it is a terminal next to a list.
+
+The chat replaced a designated "master agent" pane. See §7.3 for why: the
+outbox already carries what agents say and `delegate` already carries what you
+answer, so the pane needed a transcript and a text field, not a model.
 
 ### Deferred, deliberately
 
 The reach dimension on the capability grant (§8.3), declarative views (§7.5),
-the dock card's third line (§7.4), `help` topics (§9), and the Fleet's
+the dock card's third line (§7.4), `help` topics (§9), and Home's
 remaining polish — age column, `○` stale worktrees, row actions, the doubled
 panel border. All real; none of them change what the system can do.
 
@@ -742,12 +786,12 @@ panel border. All real; none of them change what the system can do.
 
 - **Alt-screen capture.** If reading the live grid as *text* does not work
   cleanly for TUI agents, the agent-facing side degrades to "busy, contents
-  unknown" and the Fleet view loses its third line. The human-facing side is
+  unknown" and the agent list loses its third line. The human-facing side is
   unaffected — the live embed (§6.5) renders cells, not text, and already
   works. **The `status` outbox (§8.1) retires most of this risk**: an agent
   that writes its own state is not read from the screen at all, so the
   scraping path becomes a fallback for agents that have not adopted it rather
-  than the mechanism the fleet depends on.
+  than the mechanism the agent list depends on.
 - **Two input targets on one PTY** invites focus ambiguity: a keystroke must
   land in exactly one place, and the user must be able to tell which. The
   existing focused-split cursor rule is the model to extend, not to reinvent.
