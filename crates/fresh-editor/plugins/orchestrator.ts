@@ -37,6 +37,7 @@ import {
   text,
   textInput,
   textInputChar,
+  textInputKey,
   toggle,
   tree,
   treeNode,
@@ -4001,6 +4002,22 @@ function ensureAgentMailbox(root: string, name: string): void {
   }
 }
 
+/// Whether a mailbox has anything in it.
+///
+/// The directory is created at launch, before the agent has said a word, so
+/// its existence proves nothing. A `status` file is the first thing an agent
+/// writes, and until it exists there is a directory and no evidence of an
+/// agent — a name in the picker addressing nobody, and a row claiming an
+/// agent that has never spoken. Directories left behind by agents that are
+/// gone are the same thing from the other end.
+function mailboxHasStatus(root: string, name: string): boolean {
+  try {
+    return editor.fileExists(editor.localPath(agentStatusPath(root, name)));
+  } catch (_e) {
+    return false;
+  }
+}
+
 /// Every agent name that has a mailbox under `root`.
 function listAgentNames(root: string): string[] {
   if (!root) return [];
@@ -4114,6 +4131,14 @@ const unattachedAgents = new Map<string, UnattachedAgent>();
 /// restart the agent is found the way any foreign one is.
 const launchedAgentBuffers = new Map<string, { windowId: number; bufferId: number }>();
 
+/// Mailboxes we created by starting an agent in this process.
+///
+/// Distinguishes "a directory with nothing in it" from "an agent that is
+/// visibly running and has not written its first status yet". Not persisted:
+/// after a restart the only evidence we have is what the mailbox contains,
+/// which is the same evidence we have for anyone else's agent.
+const launchedAgents = new Set<string>();
+
 function agentKey(root: string, name: string): string {
   return root + "\u0000" + name;
 }
@@ -4161,7 +4186,9 @@ function scanForUnattachedAgents(): void {
   const now = Date.now();
   const seen = new Set<string>();
   for (const root of mailboxSearchRoots()) {
-    const names = listAgentNames(root);
+    // Directories with nothing in them are not agents, and must not become
+    // rows, names in the picker, or a reason to refuse adoption below.
+    const names = listAgentNames(root).filter((n) => mailboxHasStatus(root, n));
     for (const name of names) {
       const key = agentKey(root, name);
       if (attached.has(key)) continue;
@@ -4224,11 +4251,27 @@ function scanForUnattachedAgents(): void {
 interface ChatMessage {
   /// Wall-clock ms when we recorded it.
   at: number;
-  /// `"user"`, or the mailbox name of the agent that wrote it.
+  /// `"user"`, `"fresh"`, or the mailbox name of the agent that wrote it.
+  ///
+  /// `"fresh"` is the control plane speaking for itself — a message that
+  /// could not be delivered, an agent that has no terminal to type at. Those
+  /// used to go to the editor's status line, which is the wrong place for
+  /// them by construction: Home covers the screen, so the one line that
+  /// reports what just happened was behind the panel that caused it. A
+  /// failure to send belongs in the transcript of the conversation it failed
+  /// in, next to the message it was about.
   from: string;
   /// The agent a user message was addressed to, if any.
   to?: string;
   text: string;
+}
+
+const CHAT_SYSTEM = "fresh";
+
+/// Say something to the user, in the place they are looking.
+function chatSay(text: string): void {
+  appendChat({ at: Date.now(), from: CHAT_SYSTEM, text });
+  renderHome(true);
 }
 
 /// Keep the tail rather than the whole history: this is a conversation you
@@ -4291,8 +4334,14 @@ function appendChat(m: ChatMessage): void {
   saveChat();
 }
 
-/// Every agent that has a mailbox: the sessions we launched, plus the ones
-/// that reported in on their own.
+/// Every agent that has a mailbox worth addressing: the ones we launched in
+/// this session, plus every mailbox that has actually reported.
+///
+/// An empty mailbox is excluded — see `mailboxHasStatus`. The exception is an
+/// agent we started ourselves and are still watching: it has a terminal on
+/// screen, so it plainly exists, and refusing to let the user message it
+/// until it happened to write a status would be worse than trusting what we
+/// did a moment ago.
 function knownAgentMailboxes(): Array<{ root: string; name: string }> {
   const out: Array<{ root: string; name: string }> = [];
   const seen = new Set<string>();
@@ -4300,6 +4349,7 @@ function knownAgentMailboxes(): Array<{ root: string; name: string }> {
     if (s.discovered || s.pending || !s.root || !s.agentName) continue;
     const key = agentKey(s.root, s.agentName);
     if (seen.has(key)) continue;
+    if (!launchedAgents.has(key) && !mailboxHasStatus(s.root, s.agentName)) continue;
     seen.add(key);
     out.push({ root: s.root, name: s.agentName });
   }
@@ -7827,42 +7877,48 @@ const FRESH_CLI_SYSTEM_PROMPT = [
   "",
   "The loop: orient with describeWorkspace(), find the call with `script api <query>`, then act and verify in one script.",
   "",
-  "YOUR MAILBOX \u2014 how anyone else knows what you are doing, and how they reach you:",
+  "YOUR MAILBOX — three commands, and they are how anyone else knows what you",
+  "are doing and how they reach you:",
   "",
-  "  $FRESH_AGENT_NAME    your name. Others address you as @$FRESH_AGENT_NAME.",
-  "  $FRESH_AGENT_STATUS  one line you rewrite whenever your state changes.",
-  "  $FRESH_AGENT_INBOX   a directory; each file in it is an instruction for you.",
-  "  $FRESH_AGENT_OUTBOX  a directory; each file you drop in it is a message to the user.",
+  "    \"$FRESH_BIN\" --cmd agent status <state> <summary>   what you are doing now",
+  "    \"$FRESH_BIN\" --cmd agent say <message>              say it in the user's chat",
+  "    \"$FRESH_BIN\" --cmd agent inbox --take               what they have asked for",
   "",
-  "Write your status often \u2014 on starting a task, on finishing one, and above all",
-  "the moment you are blocked and need the user. It is one line, `<state> <summary>`,",
-  "where state is one of working / waiting / idle / done / blocked:",
+  "FIRST, BEFORE ANYTHING ELSE: say hello, so the user's chat shows you arriving",
+  "and knows what to call you. Do this on startup even with nothing to report —",
+  "an agent that says nothing is indistinguishable from one that failed to start,",
+  "and the user cannot message an agent they have not seen:",
   "",
-  "    echo \"working running the e2e suite\" > \"$FRESH_AGENT_STATUS\"",
-  "    echo \"waiting approve my edit to tests/e2e.rs\" > \"$FRESH_AGENT_STATUS\"",
-  "    echo \"done 3 files changed, suite green\" > \"$FRESH_AGENT_STATUS\"",
+  "    \"$FRESH_BIN\" --cmd agent status idle ready",
+  "    \"$FRESH_BIN\" --cmd agent say \"$FRESH_AGENT_NAME here. What do you need?\"",
+  "",
+  "Then write your status often — on starting a task, on finishing one, and",
+  "above all the moment you are blocked and need the user. State is one of",
+  "working / waiting / idle / done / blocked:",
+  "",
+  "    \"$FRESH_BIN\" --cmd agent status working running the e2e suite",
+  "    \"$FRESH_BIN\" --cmd agent status waiting approve my edit to tests/e2e.rs",
+  "    \"$FRESH_BIN\" --cmd agent status done 3 files changed, suite green",
   "",
   "This is the only reliable way the user sees that you need them: the agent list",
   "falls back to guessing from your terminal output, which is often a spinner or a",
   "half-drawn frame. A line you write is what it shows instead.",
   "",
-  "The status is a state, not a conversation. When you have something to SAY \u2014 you",
-  "finished, you have a question, you found something they should know \u2014 write a",
-  "file into your outbox. It appears in the user's chat, attributed to you, and",
-  "they answer it there:",
+  "The status is a state, not a conversation — it is one line and you overwrite",
+  "it. When you have something to SAY, say it. It appears in the user's chat",
+  "attributed to you, and their reply comes back through your inbox:",
   "",
-  "    echo \"pushed the 3 PRs; want me to start the fourth?\" \\",
-  "      > \"$FRESH_AGENT_OUTBOX/$(date +%s%N).md\"",
+  "    \"$FRESH_BIN\" --cmd agent say \"pushed the 3 PRs; want me to start the fourth?\"",
   "",
-  "Their reply arrives in your inbox. Check it at the start of each turn, act on",
-  "each file, then move it to the done/ subdirectory \u2014 that move is the",
-  "acknowledgement:",
+  "Read your inbox at the start of each turn. `--take` acknowledges what it",
+  "returns, so an instruction is never handed to you twice:",
   "",
-  "    for f in \"$FRESH_AGENT_INBOX\"/*.md; do",
-  "      [ -e \"$f\" ] || continue",
-  "      cat \"$f\"                       # act on it",
-  "      mv \"$f\" \"$FRESH_AGENT_INBOX/done/\"",
-  "    done",
+  "    \"$FRESH_BIN\" --cmd agent inbox --take",
+  "",
+  "These reach the editor through the same authorized channel as `script run`,",
+  "so they find the right Fresh instance and the right workspace on their own —",
+  "you do not need to know where any of this is stored. $FRESH_AGENT_NAME is your",
+  "name; everyone else addresses you as @$FRESH_AGENT_NAME.",
   "",
   "To coordinate the other agents \u2014 see what they are doing, tell one to do",
   "something, watch for changes \u2014 read `\"$FRESH_BIN\" --cmd help agents`. It",
@@ -10461,13 +10517,24 @@ async function runLocalCreate(id: number): Promise<void> {
   // keyboard out of whatever the user moved on to.
   const restoreTo = editor.activeWindow();
   setPendingMessage(id, editor.t("dock.pending_starting"));
-  // Before the spawn, so the agent's first turn finds the directories its
-  // briefing names rather than having to create them. The name is minted from
-  // the workspace's name because that is what the user will reach for when
-  // they type `@` in Home's chat — and made unique within the checkout,
-  // because a second agent here must not inherit the first one's mailbox.
-  const agentName = uniqueAgentName(root, sessionName);
-  ensureAgentMailbox(root, agentName);
+  // A mailbox only when an agent is actually being started. "Agent: terminal"
+  // launches a shell, and minting a name for it would claim an agent exists
+  // where none does — which is how an empty workspace ended up listed as an
+  // agent, selected, and showing a live pane that said "starting…" about a
+  // shell that had already started and was never an agent.
+  //
+  // The name is minted from the workspace's name because that is what the
+  // user will reach for when picking an agent in Home's chat, and made unique
+  // within the checkout, because a second agent here must not inherit the
+  // first one's mailbox. Created before the spawn, so the agent's first turn
+  // finds the directories its briefing names.
+  const agentName = launchArgv.length > 0
+    ? uniqueAgentName(root, sessionName)
+    : undefined;
+  if (agentName) {
+    ensureAgentMailbox(root, agentName);
+    launchedAgents.add(agentKey(root, agentName));
+  }
   try {
     const result = await editor.createWindowWithTerminal({
       root,
@@ -10488,7 +10555,7 @@ async function runLocalCreate(id: number): Promise<void> {
       // Where this agent reports its status and reads its instructions. Passed
       // rather than discovered: an agent should not have to know this plugin's
       // directory layout to answer "where do I write my status".
-      env: mailboxEnv(root, agentName),
+      env: agentName ? mailboxEnv(root, agentName) : undefined,
     });
     const winId = result.windowId;
     // Dismissed during the (awaited) spawn: the window was born and dove in,
@@ -10543,7 +10610,7 @@ async function runLocalCreate(id: number): Promise<void> {
     // was created before the window existed, so until this point the name is
     // only in a local variable and would be lost across a restart.
     const born = orchestratorSessions.get(winId);
-    if (born) rememberAgentName(born, agentName);
+    if (born && agentName) rememberAgentName(born, agentName);
     // The workspace exists and is running: hand a waiting caller its ids. The
     // durable `stableId` is minted with the window, so it is already final —
     // this is the only moment it can be reported from.
@@ -10919,12 +10986,16 @@ async function launchAgentInCurrentWorkspace(
   const agentBase = cmdName && !generic.includes(cmdName)
     ? cmdName
     : (here ? workspaceDisplayName(here) : "agent");
-  // First agent in this window adopts the session's identity, so the row you
-  // already see gains a status. A second one gets its own name and shows up as
-  // its own row, found through its own mailbox.
-  const agentName = uniqueAgentName(cwd, agentBase);
-  ensureAgentMailbox(cwd, agentName);
-  if (here && !here.agentName) rememberAgentName(here, agentName);
+  // Same rule as a new workspace: no command means a shell, and a shell is
+  // not an agent. First agent in this window adopts the session's identity,
+  // so the row you already see gains a status; a second one gets its own name
+  // and its own row, found through its own mailbox.
+  const agentName = launch.length > 0 ? uniqueAgentName(cwd, agentBase) : undefined;
+  if (agentName) {
+    ensureAgentMailbox(cwd, agentName);
+    launchedAgents.add(agentKey(cwd, agentName));
+    if (here && !here.agentName) rememberAgentName(here, agentName);
+  }
   const launchWindow = editor.activeWindow();
   try {
     const created = await editor.createTerminal({
@@ -10937,12 +11008,12 @@ async function launchAgentInCurrentWorkspace(
       // dialogue, where the token is always present and only the prompt is
       // gated by "Teach Fresh CLI".
       allowScript: FRESH_CLI_ALLOW_SCRIPT,
-      env: mailboxEnv(cwd, agentName),
+      env: agentName ? mailboxEnv(cwd, agentName) : undefined,
       focus: true,
     });
     // So a second agent in this workspace still has a live pane in Home. The
     // session's own `terminalBufferId` names only the first one.
-    if (created?.bufferId !== undefined) {
+    if (created?.bufferId !== undefined && agentName) {
       launchedAgentBuffers.set(agentKey(cwd, agentName), {
         windowId: launchWindow,
         bufferId: created.bufferId,
@@ -11960,6 +12031,145 @@ async function apiDelegate(options: {
   return { delivered: true, path };
 }
 
+// =============================================================================
+// What an agent calls — the mailbox, without the filesystem
+//
+// Agents used to be told a directory layout: write `$FRESH_AGENT_STATUS`, drop
+// files in `$FRESH_AGENT_OUTBOX`, move things to `inbox/done/`. That works and
+// it is still what happens underneath, but it makes every agent responsible
+// for a convention it has to be taught and can get subtly wrong — a status
+// written to the wrong path is indistinguishable from an agent that never
+// wrote one, and a message left in `outbox/` unmoved is delivered forever.
+//
+// These three verbs are the interface instead. They arrive through the script
+// channel, which is already authorized and bound to the calling window, so the
+// agent needs to know nothing except what it wants to say — not where its
+// mailbox is, and not which of several running Fresh instances it belongs to.
+// An agent that has never been told anything can call them and be adopted on
+// the spot.
+// =============================================================================
+
+/// Resolve the agent behind a CLI call.
+///
+/// `name` when the caller knows it (we handed it `$FRESH_AGENT_NAME` at
+/// launch); otherwise the window's own agent; otherwise a new one, minted and
+/// remembered here. That last case is the point: an agent nobody launched
+/// through Fresh becomes visible by *saying something*, with no convention to
+/// follow and no directory to create.
+function resolveCallingAgent(
+  windowId: number,
+  name?: string,
+): { root: string; name: string } | null {
+  reconcileSessions();
+  const wanted = String(name ?? "").trim();
+  if (wanted) {
+    const addr = resolveAgentAddress(wanted);
+    if (addr) return { root: addr.root, name: addr.name };
+  }
+  const s = orchestratorSessions.get(windowId);
+  if (!s || !s.root) return null;
+  if (s.agentName) return { root: s.root, name: s.agentName };
+  const minted = wanted || uniqueAgentName(s.root, workspaceDisplayName(s));
+  ensureAgentMailbox(s.root, minted);
+  launchedAgents.add(agentKey(s.root, minted));
+  rememberAgentName(s, minted);
+  return { root: s.root, name: minted };
+}
+
+/// `fresh --cmd agent status <state> <summary>`.
+function apiAgentStatus(options: {
+  window: number;
+  name?: string;
+  state?: string;
+  summary?: string;
+}): { ok: boolean; agent?: string; reason?: string } {
+  const who = resolveCallingAgent(options.window, options.name);
+  if (!who) return { ok: false, reason: "no workspace for this window" };
+  const state = REPORTED_STATES.find((x) => x === String(options.state ?? "").toLowerCase());
+  if (!state) {
+    return {
+      ok: false,
+      reason: `state must be one of ${REPORTED_STATES.join(" / ")}`,
+    };
+  }
+  const summary = String(options.summary ?? "").replace(/\s+/g, " ").trim();
+  ensureAgentMailbox(who.root, who.name);
+  const ok = editor.writeFile(
+    editor.localPath(agentStatusPath(who.root, who.name)),
+    `${state} ${summary}\n`,
+  );
+  return ok
+    ? { ok: true, agent: who.name }
+    : { ok: false, reason: "could not write the status" };
+}
+
+/// `fresh --cmd agent say <text>` — a message into the user's chat.
+function apiAgentSay(options: {
+  window: number;
+  name?: string;
+  text?: string;
+}): { ok: boolean; agent?: string; reason?: string } {
+  const who = resolveCallingAgent(options.window, options.name);
+  if (!who) return { ok: false, reason: "no workspace for this window" };
+  const text = String(options.text ?? "").trim();
+  if (!text) return { ok: false, reason: "nothing to say" };
+  ensureAgentMailbox(who.root, who.name);
+  // Straight into the transcript rather than through the outbox and back:
+  // the drain exists to notice files an agent wrote behind our back, and this
+  // is not behind our back. A round trip through the disk would also mean the
+  // message appeared a tick late, which is visible when an agent says
+  // something and immediately blocks on the answer.
+  appendChat({ at: Date.now(), from: who.name, text });
+  renderHome(true);
+  return { ok: true, agent: who.name };
+}
+
+/// `fresh --cmd agent inbox [--take]` — what the user has asked for.
+function apiAgentInbox(options: {
+  window: number;
+  name?: string;
+  take?: boolean;
+}): { ok: boolean; agent?: string; messages: Array<{ from: string; text: string }>; reason?: string } {
+  const who = resolveCallingAgent(options.window, options.name);
+  if (!who) return { ok: false, messages: [], reason: "no workspace for this window" };
+  const dir = agentInboxDir(who.root, who.name);
+  let files: string[] = [];
+  try {
+    const local = editor.localPath(dir);
+    if (editor.fileExists(local)) {
+      files = editor.readDir(local).filter((e) => e.is_file).map((e) => e.name).sort();
+    }
+  } catch (_e) {
+    return { ok: false, messages: [], reason: "could not read the inbox" };
+  }
+  const messages: Array<{ from: string; text: string }> = [];
+  for (const file of files) {
+    const path = editor.pathJoin(dir, file);
+    let raw: string | null | undefined = null;
+    try {
+      raw = editor.readFile(editor.localPath(path));
+    } catch (_e) {
+      continue;
+    }
+    if (typeof raw !== "string") continue;
+    const from = /^from:\s*(.+)$/m.exec(raw)?.[1]?.trim() ?? "user";
+    messages.push({ from, text: stripFrontMatter(raw).trim() });
+    // Acknowledging is the caller's choice, so an agent can look without
+    // committing to act. `--take` is the loop-friendly form: read and
+    // acknowledge in one call, with no window in which a crash loses the
+    // instruction or replays it.
+    if (options.take) {
+      try {
+        editor.renamePath(
+          editor.localPath(path),
+          editor.localPath(editor.pathJoin(dir, "done", file)),
+        );
+      } catch (_e) { /* leave it for the next call */ }
+    }
+  }
+  return { ok: true, agent: who.name, messages };
+}
+
 /// Where a target's mailbox is, whatever form the target was given in.
 ///
 /// The chat addresses agents by name, the plugin API by workspace id, and a
@@ -12113,6 +12323,9 @@ editor.exportPluginApi("orchestrator", {
   setDockView: apiSetDockView,
   setDockFilter: apiSetDockFilter,
   delegate: apiDelegate,
+  agentStatus: apiAgentStatus,
+  agentSay: apiAgentSay,
+  agentInbox: apiAgentInbox,
   fleet: apiFleet,
   eventLogPath,
 });
@@ -12366,12 +12579,7 @@ function completionVisibleForFocused(): boolean {
 // custom mode keymap), so we intercept here instead.
 function orchestrator_mode_text_input(args: { text: string }): void {
   if (!args?.text) return;
-  // Home's chat line keeps its own value, so a character is appended here
-  // rather than pushed into the widget.
-  if (homePanel && homeFocus === "chat") {
-    chatChar(args.text);
-    return;
-  }
+
   if (!form || !formPanel) return;
   formPanel.command(textInputChar(args.text));
 }
@@ -13782,20 +13990,49 @@ function hashToId(key: string): number {
   return (h >>> 0) % 1000000 + 1000;
 }
 
-/// Sessions eligible for the fleet: live ones only.
+/// Everything the list may show: every agent we know of, plus the workspaces
+/// that have none.
+///
+/// Agents come from two places and neither is privileged — one we launched is
+/// a live session carrying a mailbox name, and one that reported on its own is
+/// a mailbox we found, in a checkout that may or may not have a window. The
+/// question is "who needs me"; who started them is not part of it.
+///
+/// Agentless workspaces are still listed, because they are where you go to
+/// start one and because a window you have open should not vanish from the
+/// view that claims to show your environment. They sort last and draw dim —
+/// see `fleetByUrgency` and `fleetRowEntry`.
 function fleetLive(): AgentSession[] {
   const live = [...orchestratorSessions.values()].filter((s) => !s.discovered && !s.pending);
-  // Agents that reported from a checkout we have no window for belong in the
-  // list for the same reason the others do: the question is "who needs me",
-  // and who launched them is not part of it.
   return [...live, ...[...unattachedAgents.values()].map(unattachedAsSession)];
 }
 
-/// Order by urgency: waiting first, then working, then everything else, with
-/// the dock's own stable order inside each bucket. Only consulted when the
-/// order is (re)frozen.
+/// Whether we know of an agent in this row.
+///
+/// A mailbox name is the whole test: it is set when we launched an agent
+/// here, and adopted when one reported from here on its own. A workspace
+/// without one may well have a shell in it, but nothing has said it is an
+/// agent, and this view is a list of agents.
+function hasKnownAgent(s: AgentSession): boolean {
+  if (!s.agentName || !s.root) return false;
+  // An empty mailbox is a directory, not an agent — see `mailboxHasStatus`.
+  // One we started ourselves counts before its first status: its terminal is
+  // right there on screen.
+  return launchedAgents.has(agentKey(s.root, s.agentName)) ||
+    mailboxHasStatus(s.root, s.agentName);
+}
+
+/// Order by urgency: waiting first, then working, then quiet — and every
+/// workspace with no agent in it last, whatever its terminal is doing.
+///
+/// The bottom bucket is the point of the ordering as much as the top one. A
+/// list of agents that puts an agentless workspace above a blocked agent
+/// because its shell printed something is not a list of agents; it is a list
+/// of windows sorted by noise. Inside each bucket the dock's own stable order
+/// applies. Only consulted when the order is (re)frozen.
 function fleetByUrgency(rows: AgentSession[]): AgentSession[] {
   const rank = (s: AgentSession): number => {
+    if (!hasKnownAgent(s)) return 3;
     const st = sessionState(s);
     if (st === "waiting") return 0;
     if (st === "working") return 1;
@@ -13853,6 +14090,16 @@ function fleetSelectedIndex(rows: AgentSession[]): number {
 /// own would be a lie, since no terminal is ever coming for that row.
 function paneplaceholderFor(selected: AgentSession | undefined, rows: number): WidgetSpec {
   if (!selected) return paneplaceholder("no workspace selected", rows);
+  // No agent here at all. "starting…" was the answer for every empty pane,
+  // which made this case read as a workspace that was about to come alive and
+  // never did — you select it, wait, and nothing happens, because nothing was
+  // ever coming. Say what is true and what to do about it.
+  if (!hasKnownAgent(selected)) {
+    return paneplaceholder(
+      "no agent in this workspace — Alt+n starts one here",
+      rows,
+    );
+  }
   if (selected.id < 0) {
     return paneplaceholder(
       "reporting from " + selected.root + " — no terminal here to show",
@@ -13955,7 +14202,14 @@ function rowProject(s: AgentSession): string {
 function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
   const dim = "ui.menu_disabled_fg";
   const st = sessionState(s);
-  const segs: Entry[] = [stateGlyphEntry(s)];
+  // A workspace with no agent is context, not content: it draws dim
+  // throughout so the eye skips it, which is the other half of sorting it to
+  // the bottom. Its terminal's activity is deliberately not reflected — a
+  // shell running `ls` is not an agent working.
+  const idle = !hasKnownAgent(s);
+  const segs: Entry[] = idle
+    ? [{ text: "  ", style: { fg: dim } }]
+    : [stateGlyphEntry(s)];
   // Not `workspaceDisplayName`: absent a manual rename that auto-tracks the
   // terminal title, i.e. the agent's own command — which is already the next
   // column, so the row would read "needs-you · claude   claude".
@@ -13971,7 +14225,10 @@ function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
 
   const nameW = width >= 62 ? 18 : 12;
   const name = agentRowName(s);
-  segs.push({ text: name.padEnd(nameW).slice(0, nameW) + " " });
+  segs.push({
+    text: name.padEnd(nameW).slice(0, nameW) + " ",
+    style: idle ? { fg: dim } : undefined,
+  });
 
   if (showProject) {
     segs.push({ text: rowProject(s).padEnd(14).slice(0, 14) + " ", style: { fg: dim } });
@@ -14001,16 +14258,18 @@ function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
   // question outranks its last line — if it is blocked, that is the only thing
   // worth the space.
   const reported = s.status?.summary ?? "";
-  const detail = reported || s.tail?.waitingOn || s.tail?.lastLine || "";
+  const detail = idle
+    ? "no agent here — Alt+n starts one"
+    : (reported || s.tail?.waitingOn || s.tail?.lastLine || "");
   const used = 2 + (nameW + 1) + (showProject ? 15 : 0) + (showAgent ? 11 : 0) +
     (showBranch ? 18 : 0);
   const room = Math.max(8, width - used);
   const clipped = detail.length > room ? detail.slice(0, room - 1) + "…" : detail;
   segs.push({
     text: clipped,
-    style: st === "waiting"
+    style: !idle && st === "waiting"
       ? { fg: "diagnostic.error_fg" }
-      : { fg: dim, italic: st === "idle" },
+      : { fg: dim, italic: idle || st === "idle" },
   });
   return styledRow(segs as Parameters<typeof styledRow>[0]);
 }
@@ -14042,25 +14301,29 @@ function chatLines(width: number): TextPropertyEntry[] {
   const body = Math.max(16, width - nameW - 3);
   for (const m of chatLog) {
     const mine = m.from === "user";
+    const system = m.from === CHAT_SYSTEM;
     const who = (mine ? "you" : m.from).slice(0, nameW);
     // The user's own lines are right-aligned in the name column, which is the
     // cheapest way to make "what I said" and "what was said to me" separable
     // at a glance without colour carrying the whole distinction.
     const label = mine ? who.padStart(nameW) : who.padEnd(nameW);
+    const nameStyle = system
+      ? { fg: "diagnostic.warning_fg" }
+      : { fg: mine ? "ui.help_key_fg" : "ui.menu_selected_fg" };
+    const bodyStyle = system
+      ? { fg: "diagnostic.warning_fg", italic: true }
+      : (mine ? undefined : { fg: "ui.menu_fg" });
     const wrapped = wrapPlain(m.text, body);
     for (let i = 0; i < wrapped.length; i++) {
       out.push(styledRow([
-        {
-          text: (i === 0 ? label : " ".repeat(nameW)) + " ▸ ",
-          style: { fg: mine ? "ui.help_key_fg" : "ui.menu_selected_fg" },
-        },
-        { text: wrapped[i], style: mine ? undefined : { fg: "ui.menu_fg" } },
+        { text: (i === 0 ? label : " ".repeat(nameW)) + " ▸ ", style: nameStyle },
+        { text: wrapped[i], style: bodyStyle },
       ]));
     }
   }
   if (out.length === 0) {
     out.push(styledRow([{
-      text: "  nothing said yet — type @name and a message to start",
+      text: "  nothing said yet",
       style: { fg: "ui.menu_disabled_fg", italic: true },
     }]));
   }
@@ -14092,60 +14355,125 @@ function wrapPlain(text: string, width: number): string[] {
   return out.length > 0 ? out : [""];
 }
 
-/// Every name the chat will accept after an `@`, as one readable phrase.
-function knownNames(): string {
-  const names = knownAgentMailboxes().map((m) => "@" + m.name).sort();
-  return names.length > 0 ? names.join(", ") : "no agents (Alt+n makes one)";
-}
+// -----------------------------------------------------------------------------
+// Addressing — you pick an agent, you do not spell one
+//
+// The chat line used to be free text where a leading `@name` chose the
+// recipient. That is a guessing game with a silent-ish failure at the end of
+// it: you type a sentence, press Enter, and find out the name was wrong — and
+// the message is only *recorded*, never delivered. Names are also minted by
+// us (`uniqueAgentName`), so "what is this one called" is a question the user
+// should not have to answer from memory.
+//
+// So the address is chosen, not typed. Typing goes into a filter, the matches
+// are listed under the line, and there is no message field at all until one is
+// picked. `@` re-opens the picker so switching agents mid-conversation is one
+// keystroke.
+// -----------------------------------------------------------------------------
 
-/// Split a typed line into "who it is for" and "what it says".
+/// The agent the next message goes to. `null` = the picker is up.
+let chatTarget: string | null = null;
+/// What has been typed into the picker's filter.
+let chatFilter = "";
+/// Which candidate is highlighted, as an index into `chatCandidates()`.
+let chatPick = 0;
+
+/// Rows the candidate list occupies while the picker is up.
 ///
-/// A leading `@name` addresses that agent. Anything else goes to whoever the
-/// last message was from, which is what makes a back-and-forth with one agent
-/// readable — you answer a question without re-typing the name of the thing
-/// that just asked it.
-function parseChatTarget(text: string): { to: string | null; body: string } {
-  const m = /^@([A-Za-z0-9_-]+)\s*/.exec(text);
-  if (m) return { to: m[1], body: text.slice(m[0].length) };
-  loadChat();
-  for (let i = chatLog.length - 1; i >= 0; i--) {
-    const prev = chatLog[i];
-    if (prev.from !== "user") return { to: prev.from, body: text };
-    if (prev.to) return { to: prev.to, body: text };
-  }
-  return { to: null, body: text };
+/// Fixed rather than sized to the candidates, so filtering never changes the
+/// layout: the list is redrawn by mutation, and a mutation cannot move the
+/// field it sits above. A count that grew and shrank with the matches would
+/// need a re-mount, and a re-mount rebuilds the text field from our copy —
+/// which is how a keystroke gets lost between the key and its `change` event
+/// ("bash" arriving as "bsh").
+const CHAT_PICK_ROWS = 5;
+
+/// Agent names matching the filter, best-first.
+///
+/// Prefix matches before substring ones: having typed `re`, `refactor-1`
+/// should be ahead of `core-review`, because a prefix is what you were doing
+/// when you typed it.
+function chatCandidates(): string[] {
+  const f = chatFilter.trim().toLowerCase();
+  const names = knownAgentMailboxes().map((m) => m.name).sort();
+  if (!f) return names;
+  const starts = names.filter((n) => n.toLowerCase().startsWith(f));
+  const rest = names.filter((n) => !n.toLowerCase().startsWith(f) && n.toLowerCase().includes(f));
+  return [...starts, ...rest];
 }
 
-/// Send what is in the chat line.
+/// Redraw the candidate list in place.
+///
+/// A *mutation*, deliberately, not a re-render — see `CHAT_PICK_ROWS`. The
+/// host's own completion popup would be the obvious primitive, and is not
+/// usable here: it paints *below* its field by extending the section
+/// downwards, and this field is the last row of a full-height panel, so the
+/// candidates would render past the frame and be clipped away entirely.
+function pushChatCandidates(): void {
+  if (!homePanel || chatTarget !== null) return;
+  homePanel.setRawEntries("home_pick", candidateRows(chatCandidates(), chatColsNow()));
+}
+
+/// Open the picker, keeping whatever is half-typed as the filter.
+function openChatPicker(filter = ""): void {
+  chatTarget = null;
+  chatFilter = filter;
+  chatPick = 0;
+  renderHome(true);
+  pushChatCandidates();
+}
+
+function chooseChatTarget(): void {
+  const cands = chatCandidates();
+  if (cands.length === 0) {
+    chatSay(
+      knownAgentMailboxes().length === 0
+        ? "No agents yet. Alt+n makes a workspace and starts one in it."
+        : `No agent matches "${chatFilter}".`,
+    );
+    return;
+  }
+  chatTarget = cands[Math.min(chatPick, cands.length - 1)];
+  chatFilter = "";
+  chatDraft = "";
+  chatPick = 0;
+  renderHome(true);
+}
+
+function moveChatPick(delta: number): void {
+  const n = chatCandidates().length;
+  if (n === 0) return;
+  const next = Math.min(n - 1, Math.max(0, chatPick + delta));
+  if (next === chatPick) return;
+  chatPick = next;
+  pushChatCandidates();
+}
+
+/// Send what is in the chat line to the agent that was picked.
 async function sendChat(): Promise<void> {
+  const to = chatTarget;
   const text = chatDraft.trim();
   chatDraft = "";
   renderHome(true);
   if (!text) return;
-  const { to, body } = parseChatTarget(text);
   if (!to) {
-    editor.setStatus(
-      `Say who it is for: start the line with @ and one of ${knownNames()}.`,
-    );
+    // Unreachable through the keyboard — there is no message field without a
+    // target — but a defensive answer here beats a message sent nowhere.
+    openChatPicker();
     return;
   }
   const res = await apiDelegate({
     target: to,
-    instruction: body.trim() || text,
+    instruction: text,
     from: "user",
-    intent: body.split("\n")[0].slice(0, 60),
+    intent: text.split("\n")[0].slice(0, 60),
   });
   // Recorded either way. A message that could not be delivered is still
   // something the user said, and a transcript that quietly drops it is how
   // you end up waiting on an agent that was never told anything.
-  appendChat({ at: Date.now(), from: "user", to, text: res.delivered ? text : `${text}` });
+  appendChat({ at: Date.now(), from: "user", to, text });
   if (!res.delivered) {
-    // Name the alternatives rather than only the failure: a mistyped
-    // address is the likeliest reason to be here, and the set of agents is
-    // short enough to state.
-    editor.setStatus(
-      `Could not send to @${to}: ${res.reason ?? "unknown"}. Known: ${knownNames()}.`,
-    );
+    chatSay(`Could not deliver that to @${to}: ${res.reason ?? "unknown"}.`);
   }
   renderHome(true);
 }
@@ -14165,11 +14493,16 @@ function buildHomeSpec(): WidgetSpec {
   const selected = rows[selectedIdx];
   const cols = fleetRowWidth();
   const { list: listRows, tail: tailRows, chat: chatBodyRows } = homeLayout(rows.length);
-  const needing = rows.filter((s) => sessionState(s) === "waiting").length;
-  const agentWord = rows.length === 1 ? "agent" : "agents";
-  const header = needing > 0
-    ? `${rows.length} ${agentWord} · ${needing} ${needing === 1 ? "needs" : "need"} you`
-    : `${rows.length} ${agentWord} · none waiting`;
+  // Counted over agents, not rows: the agentless workspaces at the bottom are
+  // there to be gone to, not to be tallied as part of the fleet.
+  const agents = rows.filter(hasKnownAgent);
+  const needing = agents.filter((s) => sessionState(s) === "waiting").length;
+  const agentWord = agents.length === 1 ? "agent" : "agents";
+  const header = agents.length === 0
+    ? "no agents · Alt+n starts one"
+    : needing > 0
+    ? `${agents.length} ${agentWord} · ${needing} ${needing === 1 ? "needs" : "need"} you`
+    : `${agents.length} ${agentWord} · none waiting`;
 
   // Rows are budgeted against the column they land in, not the panel, or they
   // run over the section border (see `fleetRowWidth`).
@@ -14181,22 +14514,40 @@ function buildHomeSpec(): WidgetSpec {
   const rightCols = Math.max(30, Math.floor((cols * (100 - HOME_CHAT_PCT)) / 100) - 7);
   const chatCols = Math.max(24, Math.floor((cols * HOME_CHAT_PCT) / 100) - 7);
 
+  // The popup paints over the rows above the field without reflowing them, so
+  // the transcript keeps the whole height either way and the input line stays
+  // on the panel's last row. A composer that moves the thing you are reading
+  // when you start typing is the same complaint as a pane that collapses
+  // while a terminal starts.
+  const picking = chatTarget === null;
+  const logRows = Math.max(2, chatBodyRows - (picking ? CHAT_PICK_ROWS : 0));
+  const chatChildren: WidgetSpec[] = [
+    // Padded to a fixed height and sliced from the end: the newest message is
+    // the one you came to read, so the transcript is pinned to the bottom.
+    raw(padTop(chatLines(chatCols), logRows), "home_chat_log"),
+  ];
+  if (picking) {
+    chatChildren.push(raw(candidateRows(chatCandidates(), chatCols), "home_pick"));
+  }
+  chatChildren.push(
+    textInput(chatTarget === null ? chatFilter : chatDraft, {
+      // The label carries the address. A field that shows `@name` as part of
+      // its own text invites editing it, and an address you can half-delete
+      // is an address that can be wrong.
+      label: chatTarget === null ? "to" : `@${chatTarget}`,
+      placeholder: chatTarget === null ? "which agent?" : "what should it do?",
+      focused: homeFocus === "chat",
+      fullWidth: true,
+      key: "home_chat",
+    }),
+  );
+
   const chatSection = labeledSection({
-    label: homeFocus === "chat" ? "▸ chat" : "chat",
+    label: homeFocus === "chat"
+      ? (chatTarget === null ? "▸ chat · pick an agent" : `▸ chat · → @${chatTarget}`)
+      : "chat",
     widthPct: HOME_CHAT_PCT,
-    child: col(
-      // Padded to a fixed height and sliced from the end: the newest message
-      // is the one you came to read, so the transcript is pinned to the
-      // bottom, and the input line stays on the panel's last row instead of
-      // riding up and down as messages arrive.
-      raw(padTop(chatLines(chatCols), chatBodyRows), "home_chat_log"),
-      textInput(chatDraft, {
-        placeholder: "@name what should it do?",
-        focused: homeFocus === "chat",
-        fullWidth: true,
-        key: "home_chat",
-      }),
-    ),
+    child: col(...chatChildren),
   });
 
   const listSection = labeledSection({
@@ -14261,23 +14612,82 @@ function buildHomeSpec(): WidgetSpec {
     row(chatSection, col(listSection, tailSection)),
     row(
       flexSpacer(),
+      // Say what the keys do *here*. The three states want genuinely
+      // different sentences, and a hint bar that lists all of them at once is
+      // the same as one that lists none.
       hintBar(homeFocus === "tail"
         ? [
           { keys: "Alt+`", label: "stop typing" },
           { keys: "keys", label: "go to the agent" },
         ]
+        : homeFocus === "chat" && chatTarget === null
+        ? [
+          { keys: "type", label: "filter" },
+          { keys: "↑↓", label: "pick" },
+          { keys: "Enter", label: "choose" },
+          { keys: "Tab", label: "list" },
+          { keys: "Alt+n", label: "new agent" },
+          { keys: "Esc", label: "close" },
+        ]
+        : homeFocus === "chat"
+        ? [
+          { keys: "Enter", label: `send to @${chatTarget}` },
+          { keys: "@", label: "another agent" },
+          { keys: "Tab", label: "list" },
+          { keys: "Alt+`", label: "type at agent" },
+          { keys: "Esc", label: "close" },
+        ]
         : [
-          { keys: "Tab", label: "chat / list" },
+          { keys: "Tab", label: "chat" },
           { keys: "↑↓", label: "select" },
-          { keys: "@name", label: "address" },
           { keys: "Alt+`", label: "type at agent" },
           { keys: "Alt+n", label: "new agent" },
-          { keys: "Enter", label: "send / go" },
+          { keys: "Enter", label: "go to workspace" },
           { keys: "Esc", label: "close" },
         ]),
       flexSpacer(),
     ),
   );
+}
+
+/// Columns the chat pane's text may use, recomputed the way `buildHomeSpec`
+/// does — the candidate list is redrawn between renders, so it cannot read
+/// the width the last render happened to use.
+function chatColsNow(): number {
+  return Math.max(24, Math.floor((fleetRowWidth() * HOME_CHAT_PCT) / 100) - 7);
+}
+
+/// The picker's candidate rows.
+///
+/// Not a `list` widget: the chat line has to keep the keyboard so typing
+/// filters it, and a focused list eats printable characters for its own
+/// type-ahead. So the rows are painted and the highlight is ours.
+function candidateRows(cands: string[], width: number): TextPropertyEntry[] {
+  const out: TextPropertyEntry[] = [];
+  if (cands.length === 0) {
+    out.push(styledRow([{
+      text: "  no agent matches — Alt+n starts one",
+      style: { fg: "ui.menu_disabled_fg", italic: true },
+    }]));
+  } else {
+    // Scroll to keep the highlight in view rather than clipping to the first
+    // `CHAT_PICK_ROWS`: with eight agents, the one you arrowed down to has to
+    // be visible.
+    const pick = Math.min(chatPick, cands.length - 1);
+    const start = Math.max(0, Math.min(pick - CHAT_PICK_ROWS + 1, cands.length - CHAT_PICK_ROWS));
+    for (let i = start; i < Math.min(start + CHAT_PICK_ROWS, cands.length); i++) {
+      const on = i === pick;
+      out.push(styledRow([{
+        text: (on ? "  ▸ @" : "    @") + cands[i],
+        style: on
+          ? { fg: "ui.menu_selected_fg", bold: true }
+          : { fg: "ui.menu_fg" },
+      }]));
+    }
+  }
+  // Always the same height, so a mutation never has to move the field.
+  while (out.length < CHAT_PICK_ROWS) out.push(styledRow([{ text: " " }]));
+  return out.slice(0, CHAT_PICK_ROWS);
 }
 
 /// Take the last `rows` entries, padding at the top when there are fewer.
@@ -14296,12 +14706,50 @@ function padTop(lines: TextPropertyEntry[], rows: number): TextPropertyEntry[] {
 let homePanel: FloatingWidgetPanel | null = null;
 let homeLastSpec: string | null = null;
 
+/// How many transcript rows the chat pane has right now.
+function chatLogRowsNow(): number {
+  const { chat } = homeLayout(fleetRows().length);
+  return Math.max(2, chat - (chatTarget === null ? CHAT_PICK_ROWS : 0));
+}
+
+/// Bring the view up to date without rebuilding it.
+///
+/// Every mount rebuilds the text field from the spec, so a mount landing
+/// between a keystroke and the `change` event it produces puts back a value
+/// one character old — "please run the suite" arriving as "plae rn h sie".
+/// While the keyboard is in the chat, the parts that go stale are therefore
+/// refreshed as *mutations*, which touch only the widgets they name.
+function refreshHomeInPlace(): void {
+  if (!homePanel) return;
+  homePanel.setRawEntries(
+    "home_chat_log",
+    padTop(chatLines(chatColsNow()), chatLogRowsNow()),
+  );
+  pushChatCandidates();
+  const rows = fleetRows();
+  if (rows.length > 0) {
+    const cols = Math.max(30, Math.floor((fleetRowWidth() * (100 - HOME_CHAT_PCT)) / 100) - 7);
+    homePanel.setItems(
+      "home_list",
+      rows.map((s) => fleetRowEntry(s, cols)),
+      rows.map((s) => String(s.id)),
+    );
+  }
+}
+
 function renderHome(force = false): void {
   if (!homePanel) return;
+  // Hold the panel still while it holds the caret — see `refreshHomeInPlace`.
+  // A forced render is an explicit state change (a target chosen, a message
+  // sent, the focus moved), where rebuilding the field is the point.
+  if (!force && homeFocus === "chat") {
+    refreshHomeInPlace();
+    return;
+  }
   const spec = buildHomeSpec();
-  const key = JSON.stringify(spec) + homeFocus;
-  if (!force && key === homeLastSpec) return;
-  homeLastSpec = key;
+  const specKey = JSON.stringify(spec) + homeFocus + String(chatTarget);
+  if (!force && specKey === homeLastSpec) return;
+  homeLastSpec = specKey;
   homePanel.mount(spec, { widthPct: HOME_WIDTH_PCT, heightPct: HOME_HEIGHT_PCT });
   // Re-assert placement after every mount, not once at open: a mount resets
   // the panel to the default centered placement, so a fullscreen set at open
@@ -14348,8 +14796,8 @@ function startHomeTicking(): void {
       probeStatus(s);
       void probeTail(s);
     }
-    const arrived = drainOutboxes();
-    renderHome(arrived);
+    drainOutboxes();
+    renderHome();
     holdHomeFocus();
     void editor.delay(FLEET_TICK_MS).then(tick);
   };
@@ -14372,6 +14820,10 @@ function openHome(): void {
   drainOutboxes();
   freezeFleetOrder();
   homeFocus = "chat";
+  // Every open starts at "who is this for". Carrying a target across opens
+  // would mean the first thing you type after coming back goes somewhere you
+  // chose in a different sitting.
+  openChatPicker();
   homePanel = new FloatingWidgetPanel();
   homeLastSpec = null;
   renderHome(true);
@@ -14438,7 +14890,11 @@ registerHandler("orchestrator_home_type_toggle", function () {
     // agent reporting from a checkout we have no window for) has nothing to
     // type at.
     if (sel?.terminalBufferId === undefined) {
-      editor.setStatus("This workspace has no agent terminal to answer.");
+      chatSay(
+        sel && !sel.agentName
+          ? `${agentRowName(sel)} has no agent in it — Alt+n starts one.`
+          : "That agent has no terminal here to type at.",
+      );
       return;
     }
     homeFocus = "tail";
@@ -14446,8 +14902,16 @@ registerHandler("orchestrator_home_type_toggle", function () {
   editor.setEditorMode(homeModeForFocus());
   renderHome(true);
 });
-registerHandler("orchestrator_home_prev", function () { fleetMove(-1); });
-registerHandler("orchestrator_home_next", function () { fleetMove(1); });
+registerHandler("orchestrator_home_prev", function () {
+  // In the picker the arrows steer the candidates; anywhere else they steer
+  // the agent list. Both are "move the selection in front of me".
+  if (homeFocus === "chat" && chatTarget === null) moveChatPick(-1);
+  else fleetMove(-1);
+});
+registerHandler("orchestrator_home_next", function () {
+  if (homeFocus === "chat" && chatTarget === null) moveChatPick(1);
+  else fleetMove(1);
+});
 registerHandler("orchestrator_home_open_selected", function () {
   const rows = fleetRows();
   const target = rows[fleetSelectedIndex(rows)];
@@ -14457,7 +14921,13 @@ registerHandler("orchestrator_home_open_selected", function () {
   const windowId = target?.terminalWindowId ?? target?.id;
   if (windowId !== undefined) void focusWorkspace(windowId);
 });
-registerHandler("orchestrator_home_send", function () { void sendChat(); });
+registerHandler("orchestrator_home_send", function () {
+  // Enter means "choose" while the picker is up and "send" once it is not.
+  // One key for "commit what is in front of me" reads as one gesture, where
+  // a separate accept key would be a second thing to know.
+  if (chatTarget === null) chooseChatTarget();
+  else void sendChat();
+});
 /// Make an agent from Home.
 ///
 /// Home closes first: the New-Workspace form is its own full-screen panel, so
@@ -14468,27 +14938,49 @@ registerHandler("orchestrator_home_new", function () {
   void editor.runCommand("%cmd.new");
 });
 registerHandler("orchestrator_home_chat_backspace", function () {
-  chatDraft = [...chatDraft].slice(0, -1).join("");
-  renderHome(true);
+  // Backspace on an empty message goes back to choosing. The address is not
+  // part of the text, so this is the only way to unsay it — and it is the
+  // gesture you would reach for anyway, having deleted the message you no
+  // longer want to send to that agent.
+  if (chatTarget !== null && chatDraft.length === 0) {
+    openChatPicker();
+    return;
+  }
+  // Otherwise the host's own text control does the edit and answers with a
+  // `change` event, which is where our copy is updated. Editing our copy here
+  // instead would leave the widget showing a character we think is gone.
+  if (homePanel) homePanel.command(textInputKey("Backspace"));
 });
-
-/// Feed one typed character to the chat line.
-///
-/// Called from the global `mode_text_input` path, which is where printable
-/// characters land for a mode declared with `allowTextInput`.
-function chatChar(ch: string): void {
-  chatDraft += ch;
-  renderHome(true);
-}
 
 registerHandler("orchestrator_home_event", function (ev: Record<string, unknown>) {
   if (!homePanel || ev.panel_id !== homePanel.id()) return;
   const type = String(ev.event_type ?? "");
   const payload = (ev.payload ?? {}) as Record<string, unknown>;
   const widget = String(ev.widget_key ?? payload.key ?? "");
-  // The chat line's text lives in the widget; mirror it so `send` has it.
+  // The chat line's text lives in the widget, not here: the host routes
+  // printable characters straight into the focused text control, so this
+  // event is where typing actually shows up. A copy maintained by hand from
+  // key events instead would silently disagree with what is on screen.
   if (type === "change" && widget === "home_chat") {
-    if (typeof payload.value === "string") chatDraft = payload.value;
+    if (typeof payload.value !== "string") return;
+    const value = payload.value;
+    if (chatTarget === null) {
+      chatFilter = value;
+      chatPick = 0;
+      // Deliberately no re-render: the candidate list is redrawn by mutation.
+      // Re-mounting here would rebuild the field from our copy and lose
+      // whatever was typed between the keystroke and this event.
+      pushChatCandidates();
+      return;
+    }
+    // `@` at the start of an empty message means "not that agent, this one".
+    if (value.startsWith("@")) {
+      openChatPicker(value.slice(1));
+      return;
+    }
+    // No re-render: the field already shows this, and re-mounting would
+    // rebuild it from our copy — losing whatever was typed in between.
+    chatDraft = value;
     return;
   }
   if (type === "select" || type === "change") {

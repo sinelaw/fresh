@@ -3667,6 +3667,26 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
         // running editor. Two different `init`s is unfortunate, but `reload`
         // belongs with the thing it reloads.
         Some("init") if rest.get(1).copied() == Some("reload") => init_reload_command(session),
+        // The agent mailbox. Thin wrappers like everything else here: the
+        // script channel is already window-scoped and token-checked, so these
+        // verbs inherit "which Fresh instance, which workspace" for free —
+        // which is the whole reason an agent should not be reaching for the
+        // filesystem to do this.
+        Some("agent") => match &rest[1..] {
+            ["status", state, summary @ ..] => agent_status_command(session, state, summary),
+            ["say", words @ ..] => agent_say_command(session, words),
+            ["inbox", flags @ ..] => {
+                agent_inbox_command(session, flags.contains(&"--take"))
+            }
+            _ => {
+                eprintln!(
+                    "usage: fresh --cmd agent status <working|waiting|idle|done|blocked> [summary]"
+                );
+                eprintln!("       fresh --cmd agent say <message>     say something in the user's chat");
+                eprintln!("       fresh --cmd agent inbox [--take]    read what the user asked for");
+                std::process::exit(2);
+            }
+        },
         Some("command") => match &rest[1..] {
             ["run", name] => command_run_command(session, name),
             ["list", query] => command_list_command(session, Some(query)),
@@ -3685,6 +3705,7 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
             eprintln!("Unknown command: {}", rest.join(" "));
             eprintln!("usage: fresh --cmd script <api|check|run|types> ...");
             eprintln!("       fresh --cmd command <run|list> ...");
+            eprintln!("       fresh --cmd agent <status|say|inbox> ...");
             eprintln!("       fresh --cmd init reload");
             std::process::exit(2);
         }
@@ -3955,15 +3976,32 @@ Fresh runs many workspaces at once, and a workspace may hold more than one
 agent. Your mailbox is yours alone — it is keyed by your name, not by the
 checkout — so two agents in one directory never overwrite each other.
 
-WHAT YOU ARE EXPECTED TO WRITE
+WHAT YOU ARE EXPECTED TO SAY
 
-  $FRESH_AGENT_NAME     your name. Everyone else addresses you as @<name>
-  $FRESH_AGENT_STATUS   one line, rewritten whenever your state changes
-  $FRESH_AGENT_INBOX    a directory; each file in it is an instruction for you
-  $FRESH_AGENT_OUTBOX   a directory; each file you drop in it is a message to
-                        the user, and shows up in their chat attributed to you
+Three commands. They reach the editor through the same authorized, window-
+scoped channel as `script run`, so they find the right Fresh instance and the
+right workspace on their own — you do not need to know where any of this is
+stored, and you cannot report into the wrong editor by accident.
 
-Status is `<state> <summary>`, where state is one of:
+  fresh --cmd agent status <state> <summary>   what you are doing now
+  fresh --cmd agent say <message>              say it in the user's chat
+  fresh --cmd agent inbox [--take]             what the user has asked for
+
+SAY HELLO FIRST
+
+Before anything else, on startup, even with nothing to report:
+
+    fresh --cmd agent status idle ready
+    fresh --cmd agent say "$FRESH_AGENT_NAME here. What do you need?"
+
+The user's chat is where agents appear. One that says nothing is
+indistinguishable from one that failed to start, and they cannot message an
+agent they have not seen. If you were not started by Fresh you have no name
+yet — saying something is what gets you one, and the answer names it.
+
+STATUS
+
+`<state> <summary>`, where state is one of:
 
     working   you are doing something
     waiting   you are blocked and need the user   <- the important one
@@ -3971,21 +4009,9 @@ Status is `<state> <summary>`, where state is one of:
     done      finished the task you were given
     blocked   stuck on something the user must resolve
 
-    echo "working running the e2e suite"              > "$FRESH_AGENT_STATUS"
-    echo "waiting approve my edit to tests/e2e.rs"    > "$FRESH_AGENT_STATUS"
-    echo "done 3 files changed, suite green"          > "$FRESH_AGENT_STATUS"
-
-If you were not started by Fresh, none of those will be set — pick a short
-name for yourself and build the mailbox by hand, in your working directory.
-Fresh looks under `.fresh/agents/` for every checkout it knows about, so an
-agent nobody launched from the editor still shows up in the list and can
-still be messaged. The `.gitignore` containing `*` excludes the directory and
-itself, so none of this touches `git status`:
-
-    NAME=schema-work
-    mkdir -p ".fresh/agents/$NAME/inbox/done" ".fresh/agents/$NAME/outbox/read"
-    printf '*\n' > .fresh/.gitignore
-    echo "waiting need a decision on the schema" > ".fresh/agents/$NAME/status"
+    fresh --cmd agent status working running the e2e suite
+    fresh --cmd agent status waiting approve my edit to tests/e2e.rs
+    fresh --cmd agent status done 3 files changed, suite green
 
 Write it often, and above all the moment you need the user. Without it, Fresh
 falls back to guessing your state from your terminal output — which is usually
@@ -3993,27 +4019,46 @@ a spinner, a progress bar, or half a redraw, and cannot tell "I am asking you
 to approve" from "the word approve appeared in a diff I am showing you". A
 line you write is the only reliable way the user sees that you are waiting.
 
-The status is a state, not a conversation: it is one line and you overwrite
-it, so anything you say there is gone the next time you change state. When you
-have something to SAY — you finished, you have a question, you found something
-the user should know — write a file into your outbox instead. Fresh moves it
-into the user's chat, attributed to you, and their reply lands in your inbox:
+SAYING THINGS
 
-    echo "pushed the 3 PRs; want me to start the fourth?" \
-      > "$FRESH_AGENT_OUTBOX/$(date +%s%N).md"
+Status is a state, not a conversation: it is one line and you overwrite it, so
+anything said there is gone at the next state change. "I'm done pushing the 3
+PRs" is said once, at a moment, and must still be there when the user looks up
+two minutes later. That is what `say` is for:
 
-Files are drained in name order, so a numeric timestamp keeps several messages
-written in one turn in the order you said them.
+    fresh --cmd agent say "pushed the 3 PRs; want me to start the fourth?"
 
-Read your inbox at the start of each turn. Act on each file, then move it to
-`done/` — that move is the acknowledgement, and an instruction that never
-moves is how the user sees it was dropped:
+With no arguments it reads the message from stdin, so long text needs no
+quoting.
 
-    for f in "$FRESH_AGENT_INBOX"/*.md; do
-      [ -e "$f" ] || continue
-      cat "$f"                                  # act on it
-      mv "$f" "$FRESH_AGENT_INBOX/done/"
-    done
+YOUR INBOX
+
+Read it at the start of each turn. `--take` acknowledges what it returns, so
+an instruction is never handed to you twice and none is lost to a crash
+between reading and acting:
+
+    fresh --cmd agent inbox --take
+
+WITHOUT THE CLI
+
+Underneath, all of it is files, and an agent that cannot run the CLI can use
+them directly — it is the same mailbox:
+
+    <root>/.fresh/agents/<name>/status     one line, "<state> <summary>"
+    <root>/.fresh/agents/<name>/inbox/     one file per instruction; move to done/
+    <root>/.fresh/agents/<name>/outbox/    one file per message to the user
+
+Fresh looks under `.fresh/agents/` for every checkout it knows about, so an
+agent nobody launched from the editor still shows up and can still be messaged.
+Create `.fresh/.gitignore` containing `*` so none of it touches `git status`:
+
+    NAME=schema-work
+    mkdir -p ".fresh/agents/$NAME/inbox/done" ".fresh/agents/$NAME/outbox/read"
+    printf '*\n' > .fresh/.gitignore
+    echo "waiting need a decision on the schema" > ".fresh/agents/$NAME/status"
+
+Prefer the CLI where you can run it. The paths are a contract you have to get
+right; the commands are not, and they cannot address the wrong instance.
 
 WHAT YOU MAY ASK FOR
 
@@ -4430,6 +4475,80 @@ fn submit_script_as(
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// The agent's own name, when Fresh started it and said so.
+///
+/// Absent for an agent nobody launched through the editor, which is fine: the
+/// plugin then resolves the caller from the window the script channel is bound
+/// to, and mints a name if there is not one yet. That is what lets an agent
+/// become visible by saying something rather than by adopting a convention.
+fn agent_name_env() -> String {
+    std::env::var("FRESH_AGENT_NAME").unwrap_or_default()
+}
+
+/// `fresh --cmd agent status <state> [summary...]`
+fn agent_status_command(session: Option<&str>, state: &str, summary: &[&str]) -> AnyhowResult<()> {
+    let script = format!(
+        "const orch = editor.getPluginApi(\"orchestrator\");\n\
+         const r = orch.agentStatus({{ window: FRESH_WINDOW_ID, name: {name}, \
+         state: {state}, summary: {summary} }});\n\
+         if (!r.ok) throw new Error(r.reason ?? \"could not report\");\n\
+         return \"\";",
+        name = json_str(&agent_name_env()),
+        state = json_str(state),
+        summary = json_str(&summary.join(" ")),
+    );
+    submit_script_as(session, script, true, None)
+}
+
+/// `fresh --cmd agent say <message...>` — or the message on stdin.
+fn agent_say_command(session: Option<&str>, words: &[&str]) -> AnyhowResult<()> {
+    // Words when given, stdin otherwise, so a long message can be piped and a
+    // short one typed without quoting gymnastics.
+    let text = if words.is_empty() {
+        let mut buf = String::new();
+        use std::io::Read;
+        std::io::stdin().read_to_string(&mut buf)?;
+        buf
+    } else {
+        words.join(" ")
+    };
+    if text.trim().is_empty() {
+        anyhow::bail!("nothing to say: pass a message, or pipe one on stdin");
+    }
+    let script = format!(
+        "const orch = editor.getPluginApi(\"orchestrator\");\n\
+         const r = orch.agentSay({{ window: FRESH_WINDOW_ID, name: {name}, text: {text} }});\n\
+         if (!r.ok) throw new Error(r.reason ?? \"could not send\");\n\
+         return \"\";",
+        name = json_str(&agent_name_env()),
+        text = json_str(text.trim()),
+    );
+    submit_script_as(session, script, true, None)
+}
+
+/// `fresh --cmd agent inbox [--take]`
+fn agent_inbox_command(session: Option<&str>, take: bool) -> AnyhowResult<()> {
+    let script = format!(
+        "const orch = editor.getPluginApi(\"orchestrator\");\n\
+         const r = orch.agentInbox({{ window: FRESH_WINDOW_ID, name: {name}, take: {take} }});\n\
+         if (!r.ok) throw new Error(r.reason ?? \"could not read the inbox\");\n\
+         return r.messages.map((m) => `--- from ${{m.from}}\\n${{m.text}}`).join(\"\\n\\n\");",
+        name = json_str(&agent_name_env()),
+        take = take,
+    );
+    submit_script_as(session, script, true, None)
+}
+
+/// JSON-encode a string for embedding in generated script source.
+///
+/// The arguments are the user's prose — quotes, backslashes, newlines and all
+/// — and they are being spliced into JavaScript. Anything less than a real
+/// encoder here is an injection bug with the agent's own message as the
+/// payload.
+fn json_str(s: &str) -> String {
+    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
 /// `fresh --cmd init reload` — re-read and run `~/.config/fresh/init.ts` in
@@ -5577,7 +5696,7 @@ fn real_main() -> AnyhowResult<()> {
     if !cli.cmd.is_empty() {
         let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
         match cmd_args.as_slice() {
-            ["script", ..] | ["command", ..] => {
+            ["script", ..] | ["command", ..] | ["agent", ..] => {
                 run_cmd_command(&cmd_args)?;
                 return Ok(());
             }
