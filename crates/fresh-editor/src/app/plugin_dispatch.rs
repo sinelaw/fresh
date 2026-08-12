@@ -150,8 +150,19 @@ fn agent_argv_from_maps(
 /// saved order so a workspace with two agents answers consistently across
 /// runs, matching the id-sorted pick the map version makes.
 fn agent_argv_from_workspace(ws: &crate::workspace::Workspace) -> Vec<String> {
-    let mut terminals: Vec<&crate::workspace::SerializedTerminalWorkspace> =
-        ws.terminals.iter().collect();
+    let mut terminals: Vec<&crate::workspace::SerializedTerminalWorkspace> = ws
+        .terminals
+        .iter()
+        // A terminal that had already quit when the workspace was saved is
+        // deliberately NOT respawned by restore — it comes back as a dead
+        // transcript with the restart offer re-armed, so that reopening an
+        // editor never silently resumes an agent conversation someone had
+        // finished with. Reading its argv here would promise an agent that
+        // opening the workspace does not produce, which is a worse answer than
+        // the "no agent" this replaced: it sends you to a workspace on the
+        // strength of something that is not there.
+        .filter(|t| t.exited.is_none())
+        .collect();
     terminals.sort_by_key(|t| t.terminal_index);
     terminals
         .iter()

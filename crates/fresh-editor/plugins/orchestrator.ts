@@ -14817,7 +14817,14 @@ function chatLines(width: number): TextPropertyEntry[] {
     const bodyStyle = system
       ? { fg: "diagnostic.warning_fg", italic: true }
       : (mine ? undefined : { fg: "ui.menu_fg" });
-    const wrapped = wrapPlain(m.text, body);
+    // Your own lines carry who they went to. The name column can only say
+    // "you", so without this a transcript of a morning spent answering four
+    // agents is four indistinguishable blocks of your own prose — and the one
+    // thing you go back to check is which of them you told what. Part of the
+    // text rather than a second column, so it wraps with the sentence and
+    // costs nothing on the lines that are only an agent talking.
+    const shown = mine && m.to ? `@${m.to} ${m.text}` : m.text;
+    const wrapped = wrapPlain(shown, body);
     for (let i = 0; i < wrapped.length; i++) {
       out.push(styledRow([
         { text: (i === 0 ? label : " ".repeat(nameW)) + " ▸ ", style: nameStyle },

@@ -953,9 +953,17 @@ impl crate::app::window::Window {
         ) {
             Ok(id) => id,
             Err(e) => {
+                // Name what failed to spawn, not just that something did.
+                // A restored agent argv routinely holds a relative path
+                // (`./claude`), so the common failure is a workspace whose
+                // agent binary is no longer where it was — and the symptom is
+                // a workspace that comes back with its files and no agent at
+                // all, which is impossible to diagnose from an index alone.
                 tracing::warn!(
-                    "Failed to restore terminal {}: {}",
+                    "Failed to restore terminal {} in {:?} (argv {:?}): {}",
                     terminal.terminal_index,
+                    terminal.cwd,
+                    spawn_argv,
                     e
                 );
                 return None;
