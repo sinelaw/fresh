@@ -3986,6 +3986,119 @@ See also: fresh --cmd help plugin   — the runtime contract, and a worked
     out
 }
 
+
+/// One line per member of a `type XxxApi = { … }` block: the signature, and
+/// the first sentence of its doc comment.
+///
+/// Generated rather than written out, so the list cannot drift from the build
+/// — and printed in `--skills` so an agent sees the whole verb set without
+/// running a second command to discover it.
+fn api_block_summary(text: &str, type_name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut inside = false;
+    let mut doc: Vec<String> = Vec::new();
+    let mut in_doc = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if !inside {
+            let head = t.trim_start_matches("export ").trim();
+            if head.starts_with(&format!("type {type_name} ")) || head.starts_with(&format!("type {type_name}=")) {
+                inside = true;
+            }
+            continue;
+        }
+        if t == "}" || t == "};" {
+            break;
+        }
+        if t.starts_with("/**") {
+            doc.clear();
+            in_doc = true;
+            if let Some(rest) = t.strip_prefix("/**").and_then(|r| r.strip_suffix("*/")) {
+                doc.push(rest.trim().to_string());
+                in_doc = false;
+            } else {
+                // See `parse_dts_entries`: the opening line carries the first
+                // sentence, and it is the one worth keeping.
+                let rest = t.trim_start_matches("/**").trim();
+                if !rest.is_empty() {
+                    doc.push(rest.to_string());
+                }
+            }
+            continue;
+        }
+        if in_doc {
+            let (body, closes) = match t.find("*/") {
+                Some(i) => (&t[..i], true),
+                None => (t, false),
+            };
+            let body = body.trim_start_matches('*').trim();
+            if !body.is_empty() {
+                doc.push(body.to_string());
+            }
+            if closes {
+                in_doc = false;
+            }
+            continue;
+        }
+        let head: String = t
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if head.is_empty() || !t[head.len()..].trim_start().starts_with('(') {
+            doc.clear();
+            continue;
+        }
+        // First sentence only: the point is a menu, not the manual. `script
+        // api <name>` prints the whole doc comment when one is wanted.
+        let summary = doc
+            .join(" ")
+            .split(". ")
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches('.')
+            .to_string();
+        let sig = t.trim_end_matches(';');
+        // Signatures spanning several lines (an inline options object) are
+        // truncated at the brace — the shape is a `script api` away and the
+        // name is what this list is for.
+        let sig = sig.split(" {").next().unwrap_or(sig).trim_end();
+        out.push(if summary.is_empty() {
+            format!("  {sig}")
+        } else {
+            format!("  {sig}\n      {summary}")
+        });
+        doc.clear();
+    }
+    out
+}
+
+/// Signature + first doc sentence for named members of `fresh.d.ts`.
+fn editor_member_summary(names: &[&str]) -> Vec<String> {
+    let entries = parse_dts_entries(EMBEDDED_FRESH_DTS, "fresh.d.ts");
+    let mut out = Vec::new();
+    for want in names {
+        if let Some(e) = entries.iter().find(|e| &e.name == want && e.signature.contains('(')) {
+            let summary = e
+                .doc
+                .join(" ")
+                .split(". ")
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_end_matches('.')
+                .to_string();
+            let sig = e.signature.split(" {").next().unwrap_or(&e.signature).trim_end();
+            out.push(if summary.is_empty() {
+                format!("  {sig}")
+            } else {
+                format!("  {sig}\n      {summary}")
+            });
+        }
+    }
+    out
+}
+
 /// `fresh --skills` — everything an agent working inside Fresh needs, in one
 /// page.
 ///
@@ -3999,14 +4112,17 @@ See also: fresh --cmd help plugin   — the runtime contract, and a worked
 fn skills_text() -> String {
     let mut out = String::new();
     out.push_str(
-        r#"Working inside Fresh — everything you need, shortest first
+        r##"Working inside Fresh — everything you need, on one page
 
 You are running in a terminal inside the Fresh editor. You can report what you
-are doing, talk to the user, take instructions, and drive the editor itself.
+are doing, talk to the user, take instructions, drive the editor, and start and
+steer other agents.
 
 Always invoke the CLI through $FRESH_BIN — it is the exact binary running this
-editor. $FRESH_SESSION says which instance you belong to; the commands below
-use it for you.
+editor. $FRESH_SESSION says which instance you belong to and the commands below
+use it for you, so you can never report into the wrong editor by accident.
+
+═══ TALKING TO THE USER ══════════════════════════════════════════════════════
 
 1. SAY HELLO. Do this first, before anything else, even with nothing to report.
 
@@ -4015,7 +4131,8 @@ use it for you.
 
    The user's chat is where agents appear. One that says nothing is
    indistinguishable from one that failed to start. If Fresh did not start you,
-   you have no name yet — saying something is what gets you one.
+   you have no name yet — saying something is what gets you one, and the reply
+   tells you what it is.
 
 2. REPORT YOUR STATE whenever it changes, and above all when you are blocked.
 
@@ -4024,8 +4141,11 @@ use it for you.
     "$FRESH_BIN" --cmd agent status done 3 files changed, suite green
 
    States: working / waiting / idle / done / blocked. `waiting` is the one that
-   puts you in front of the user. Without a status, Fresh guesses from your
-   terminal output, which is usually a spinner or half a redraw.
+   puts you at the top of the user's list, in red, with your summary as the
+   reason. Without a status, Fresh guesses your state from your terminal
+   output — usually a spinner, a progress bar, or half a redraw — and cannot
+   tell "I am asking you to approve" from "the word approve appeared in a diff
+   I am showing you". A line you write is the only reliable signal.
 
 3. SAY THINGS. Status is one line you overwrite; a message is said once and
    stays. Use it when you finish, when you have a question, when you find
@@ -4033,61 +4153,186 @@ use it for you.
 
     "$FRESH_BIN" --cmd agent say "pushed the 3 PRs; want me to start the fourth?"
 
-   With no arguments it reads the message from stdin, so long text needs no
-   quoting.
+   With no arguments it reads the message from stdin, so long or multi-line
+   text needs no quoting:
+
+    printf 'done:\n- api.rs\n- tests\n' | "$FRESH_BIN" --cmd agent say
 
 4. READ YOUR INBOX at the start of each turn. `--take` acknowledges what it
-   returns, so nothing is handed to you twice or lost to a crash.
+   returns, so nothing is handed to you twice or lost to a crash between
+   reading and acting. Empty output means nothing is waiting.
 
     "$FRESH_BIN" --cmd agent inbox --take
 
-5. DRIVE THE EDITOR by submitting TypeScript. The body is an async function:
-   top-level `await` works, `return value` is the answer and prints as JSON.
+   Output is one block per message:  `--- from <who>` then the text.
+
+═══ DRIVING THE EDITOR ═══════════════════════════════════════════════════════
+
+Submit TypeScript. The body is an async function with an `editor` global:
+top-level `await` works, `return value` is the answer and prints as JSON, a
+throw exits non-zero with the message on stderr.
 
     "$FRESH_BIN" --cmd script run <<'EOF'
     return editor.describeWorkspace();
     EOF
 
-FINDING THE CALL YOU NEED
+A script that sticks around — a panel, an event watcher — must be named, or
+every submission leaves another copy running:
+
+    "$FRESH_BIN" --cmd script run --as fleet-watch watch.ts
+
+Ids are never ambient. There is no "current" window or terminal: a call that
+meant something different depending on where the user last clicked could not be
+reasoned about, so every call takes explicit ids. `describeEnvironment()` lists
+every window and its terminals with theirs.
+
+"##,
+    );
+
+    use std::fmt::Write as _;
+
+    out.push_str("Calls you will want first (from this build's declarations):\n\n");
+    for line in editor_member_summary(&[
+        "describeWorkspace",
+        "describeEnvironment",
+        "readTerminal",
+        "listWindows",
+        "listBuffers",
+        "openFile",
+        "createTerminal",
+        "sendTerminalInput",
+        "splitWindow",
+        "setStatus",
+        "runCommand",
+        "getPluginApi",
+    ]) {
+        let _ = writeln!(out, "{line}");
+    }
+
+    out.push_str(
+        r##"
+Find anything else with:
 
     "$FRESH_BIN" --cmd script api <query>
 
-   Searches by name and by description, prints the doc comment, and expands the
-   option types — so one call usually answers the question outright. Two things
-   that are not obvious and cost people rounds:
+It searches names and descriptions, prints the doc comment, and expands the
+option types — so one call usually answers the question outright. Two things
+that are not obvious and cost people whole sessions:
 
-   * Plugin APIs are not on `editor`. They are behind `getPluginApi`, and the
-     search output says which one:
+  * Plugin APIs are NOT on `editor`. They are behind `getPluginApi`, and the
+    search output tells you which name to pass:
 
-         const orch = editor.getPluginApi("orchestrator");
+        const orch = editor.getPluginApi("orchestrator");
 
-   * Prefer the high-level call. `createWindowWithTerminal` is a primitive and
-     will let you hand-build a worktree, a branch, an agent launch and the
-     wiring between them. `orch.newWorkspace({...})` does all of that in one
-     call and is the headless twin of the New Workspace dialog. When a palette
-     command does what you want, look for its scriptable twin before building
-     it yourself.
+  * Prefer the high-level call. `createWindowWithTerminal` is a primitive and
+    will happily let you hand-build a worktree, a branch, an agent launch and
+    the wiring between them. `orch.newWorkspace({...})` does all of that in one
+    call. When a palette command does what you want, look for its scriptable
+    twin before building it yourself; `--cmd command list` names the commands.
 
-WORKING WITH THE OTHER AGENTS
+═══ THE OTHER AGENTS ═════════════════════════════════════════════════════════
 
     const orch = editor.getPluginApi("orchestrator");
-    orch.fleet()               who is doing what, most urgent first
-    orch.delegate({...})       give another agent an instruction
-    orch.newWorkspace({...})   create a workspace and start an agent in it
 
-   $FRESH_FLEET_EVENTS is a file with one JSON object per line: every state
-   change and every delegation, for every workspace. `tail -f` it to notice
-   something instead of being told.
+"##,
+    );
 
-MORE
+    // The orchestrator's whole verb set, generated so it cannot drift. Read
+    // from the declarations the editor writes on startup; absent those (a
+    // `--skills` run before the editor has ever started), the prose above
+    // still stands and `script api` finds the rest.
+    let mut listed = false;
+    if let Ok(files) = read_api_declarations() {
+        if let Some((_, text)) = files.iter().find(|(n, _)| n.contains("plugins.d.ts")) {
+            let lines = api_block_summary(text, "OrchestratorApi");
+            if !lines.is_empty() {
+                for line in lines {
+                    let _ = writeln!(out, "{line}");
+                }
+                listed = true;
+            }
+        }
+    }
+    if !listed {
+        out.push_str(
+            "  (start the editor once, then `--cmd script api orchestrator` lists these)\n",
+        );
+    }
+
+    out.push_str(
+        r##"
+Worked examples:
+
+  # Create a workspace on a new branch and start an agent in it
+  "$FRESH_BIN" --cmd script run <<'EOF'
+  const orch = editor.getPluginApi("orchestrator");
+  return await orch.newWorkspace({
+    path: "/repos/api", newBranch: "fix/flaky", name: "flaky",
+    agent: "claude", prompt: "Fix the flaky retry test.",
+    worktree: true, visit: false,
+  });
+  EOF
+
+  # Who needs the user right now
+  echo 'return editor.getPluginApi("orchestrator").fleet()' \
+    | "$FRESH_BIN" --cmd script run
+
+  # Tell another agent to do something (delivery, not completion — it acts
+  # because its own briefing says to read its inbox)
+  "$FRESH_BIN" --cmd script run <<'EOF'
+  const orch = editor.getPluginApi("orchestrator");
+  return await orch.delegate({
+    target: "flaky",
+    instruction: "Rerun with --nocapture and report what fails.",
+  });
+  EOF
+
+  # Read another agent's screen, when it writes no status
+  echo 'return await editor.readTerminal(WINDOW_ID, TERMINAL_ID, 40, true)' \
+    | "$FRESH_BIN" --cmd script run
+
+Watching instead of asking:
+
+  $FRESH_FLEET_EVENTS is a file with one JSON object per line — every state
+  change and every delegation, for every workspace:
+
+    tail -f "$FRESH_FLEET_EVENTS"
+
+  A plugin would subscribe with `editor.on("agent_state_change", ...)`; from a
+  shell the file is the same information without a protocol.
+
+═══ IF YOU CANNOT RUN THE CLI ════════════════════════════════════════════════
+
+Underneath, the mailbox is files, and they are the same mailbox:
+
+    <root>/.fresh/agents/<name>/status     one line, "<state> <summary>"
+    <root>/.fresh/agents/<name>/inbox/     one file per instruction; move to done/
+    <root>/.fresh/agents/<name>/outbox/    one file per message to the user
+
+Fresh looks under `.fresh/agents/` in every checkout it knows about, so an
+agent nobody launched still shows up and can still be messaged. Add
+`.fresh/.gitignore` containing `*` so none of it touches `git status`:
+
+    NAME=schema-work
+    mkdir -p ".fresh/agents/$NAME/inbox/done" ".fresh/agents/$NAME/outbox/read"
+    printf '*\n' > .fresh/.gitignore
+    echo "waiting need a decision on the schema" > ".fresh/agents/$NAME/status"
+
+Prefer the CLI where you can run it: the paths are a contract you have to get
+right, the commands are not, and the commands cannot address the wrong
+instance.
+
+═══ LONGER READS ═════════════════════════════════════════════════════════════
 
     "$FRESH_BIN" --cmd agent --help      the mailbox verbs
     "$FRESH_BIN" --cmd script --help     the script verbs
     "$FRESH_BIN" --cmd help agents       the control plane in full
-    "$FRESH_BIN" --cmd help script       the API surface of this build
+    "$FRESH_BIN" --cmd help script       scripting, and this build's API surface
     "$FRESH_BIN" --cmd help plugin       panels, events, the runtime contract
+    "$FRESH_BIN" --cmd help tour         authoring guided code tours
     "$FRESH_BIN" --cmd command list      every palette command, built-in and plugin
-"#,
+    "$FRESH_BIN" --cmd script types      where the full declaration files live
+"##,
     );
     out
 }
@@ -4808,6 +5053,16 @@ fn parse_dts_entries(text: &str, source: &str) -> Vec<ApiEntry> {
             if let Some(rest) = t.strip_prefix("/**").and_then(|r| r.strip_suffix("*/")) {
                 doc.push(rest.trim().to_string());
                 in_doc = false;
+            } else {
+                // Text on the opening line of a multi-line comment. Dropping
+                // it lost the first sentence of every doc in the file, which
+                // is the sentence that says what the thing is — `runAgent`
+                // summarised as `"Run Agent…" dialog`, having thrown away
+                // "Launch a coding agent in THIS workspace".
+                let rest = t.trim_start_matches("/**").trim();
+                if !rest.is_empty() {
+                    doc.push(rest.to_string());
+                }
             }
             continue;
         }
