@@ -298,6 +298,20 @@ pub struct WrapIndex {
     /// rebuild rather than a repair, so a repair only ever sees a pure-text edit
     /// against the snapshot it was built with.
     decorations: IndexDecorations,
+    stats: WrapIndexStats,
+}
+
+/// How much full rebuilding this index has done.
+///
+/// `ensure_built` is O(buffer) — it lays out every logical line — so
+/// `lines_built` divided by the buffer's line count is how many times the whole
+/// document has been re-laid-out. One is the design; one *per frame* is what a
+/// stream of `pipeline_inputs_version` bumps produces, and is the difference
+/// between a scroll that costs the viewport and a scroll that costs the file.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WrapIndexStats {
+    pub rebuilds: u64,
+    pub lines_built: u64,
 }
 
 impl WrapIndex {
@@ -309,6 +323,11 @@ impl WrapIndex {
 
     pub fn lines(&self) -> &[LineWrap] {
         &self.lines
+    }
+
+    /// Full-rebuild work this index has done. See [`WrapIndexStats`].
+    pub fn stats(&self) -> WrapIndexStats {
+        self.stats
     }
 
     /// Build for `geometry`, unless already current.
@@ -340,6 +359,8 @@ impl WrapIndex {
                 decorations,
             ));
         }
+        self.stats.rebuilds += 1;
+        self.stats.lines_built += line_count as u64;
         let counts: Vec<u32> = lines.iter().map(|l| l.total_rows()).collect();
         self.rows.rebuild(&counts);
         self.lines = lines;
@@ -1544,6 +1565,20 @@ pub struct WrapIndexSet {
 const MAX_GEOMETRIES: usize = 4;
 
 impl WrapIndexSet {
+    /// Full-rebuild work summed over every geometry of this buffer. Evicted
+    /// geometries take their counts with them, so this is a floor, not a total.
+    pub fn stats(&self) -> WrapIndexStats {
+        self.entries
+            .iter()
+            .fold(WrapIndexStats::default(), |acc, (_, i)| {
+                let s = i.stats();
+                WrapIndexStats {
+                    rebuilds: acc.rebuilds + s.rebuilds,
+                    lines_built: acc.lines_built + s.lines_built,
+                }
+            })
+    }
+
     /// The index for `geometry`, creating it if this geometry is new.
     ///
     /// The returned index may need building; the caller decides whether to pay
