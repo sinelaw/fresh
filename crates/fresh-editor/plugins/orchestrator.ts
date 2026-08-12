@@ -7554,14 +7554,23 @@ editor.defineMode(
 );
 
 registerHandler("orchestrator_dock_tab", function () {
-  if (dockMode && dockFocus === "chat") {
-    chatCompleteToPick((v) => {
-      if (openPanel) openPanel.setValue("dock_chat", v, v.length);
-      refreshDockChatInPlace();
-    });
+  // Tab belongs to the chat outright, and is never handed back. Forwarding it
+  // when the dock believed the caret was elsewhere is what kept moving focus
+  // *out* of the field you were typing in — and the belief was wrong exactly
+  // when it mattered, because arriving through the host's own focus cycle
+  // never announced itself. The tree steers with the arrows and does not need
+  // Tab, so there is nothing to hand it back for.
+  if (!dockMode || !openPanel || dockChatIsCollapsed()) return;
+  if (dockFocus !== "chat") {
+    dockFocus = "chat";
+    openPanel.update(buildDockSpec());
+    openPanel.setFocusKey("dock_chat");
     return;
   }
-  if (openPanel) openPanel.command(widgetKey("Tab"));
+  chatCompleteToPick((v) => {
+    openPanel?.setValue("dock_chat", v, v.length);
+    refreshDockChatInPlace();
+  });
 });
 
 /// Move the caret between the dock's chat and its list.
@@ -13854,6 +13863,15 @@ editor.on("widget_event", (e) => {
       }
       const value = payload.value;
       if (chatTarget === null) {
+        // A picker, not a text box: you are choosing from a list, so a
+        // keystroke that matches nothing is refused rather than accepted into
+        // a value that can never be valid. Typing freely into a field whose
+        // only legal contents are eight known names is an invitation to type
+        // a ninth and find out at the end that it was never going to work.
+        if (value && chatFilterMatches(value).length === 0) {
+          openPanel?.setValue("dock_chat", chatFilter, chatFilter.length);
+          return;
+        }
         chatFilter = value;
         chatPick = 0;
         refreshDockChatInPlace();
@@ -14880,7 +14898,13 @@ function chatPickRows(): number {
 /// should be ahead of `core-review`, because a prefix is what you were doing
 /// when you typed it.
 function chatCandidates(): string[] {
-  const f = chatFilter.trim().toLowerCase();
+  return chatFilterMatches(chatFilter);
+}
+
+/// Agent names matching `filter`, best-first — prefix matches before
+/// substring ones, because a prefix is what you were doing when you typed it.
+function chatFilterMatches(filter: string): string[] {
+  const f = filter.trim().toLowerCase();
   const names = knownAgentMailboxes().map((m) => m.name).sort();
   if (!f) return names;
   const starts = names.filter((n) => n.toLowerCase().startsWith(f));
@@ -15529,6 +15553,12 @@ registerHandler("orchestrator_home_event", function (ev: Record<string, unknown>
     if (typeof payload.value !== "string") return;
     const value = payload.value;
     if (chatTarget === null) {
+      // See the dock's copy: the picker refuses a keystroke that matches no
+      // agent rather than accepting a value that cannot be chosen.
+      if (value && chatFilterMatches(value).length === 0) {
+        homePanel?.setValue("home_chat", chatFilter, chatFilter.length);
+        return;
+      }
       chatFilter = value;
       chatPick = 0;
       // Deliberately no re-render: the candidate list is redrawn by mutation.
