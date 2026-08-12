@@ -55,8 +55,7 @@ Lastly, for various reasons, many people have a bad view of AppImage and Flatpak
 
 ## Debian family pain
 
-As explained in [this other hn discussion](https://news.ycombinator.com/item?id=48347180) I hadn't gotten
-around to pushing my `.deb` as a Debian (and Ubuntu) official package, because it requires all the (many) rust dependencies to also be Debian packages. Yes yes, I understand why - fully reproducible and self-contained builds for any package, also reduces supply chain hell, etc. - but it's a lot of work to do. And how will I ever keep up - every one of my direct dependencies will need to be re-updated on Debian on every security issue etc. I don't have time for that. Maybe I should just vendor all my deps as sources into my deb source package? I don't know if the Debian maintainers will like that.
+As explained in [this other hn discussion](https://news.ycombinator.com/item?id=48347180) I hadn't gotten around to pushing my `.deb` as a Debian (and Ubuntu) official package, because it requires all the (many) rust dependencies to also be Debian packages. There are many good reasons for this policy - fully reproducible and self-contained builds for any package, reduces supply chain hell, etc. - but it's a lot of work to do. And how will I ever keep up - every one of my direct dependencies will need to be re-updated on Debian on every security issue etc. I don't have time for that. I can't just vendor all my deps as sources into my deb source package, that goes against the policy.
 
 Another fun anecdote is that I do want to support older machines running e.g. older Ubuntu (and I guess any older distro) - but these have older libc, meaning my build for newer ubuntu can't be installed on the older ones as they fail on link error at binary load time. So I'd have to build in an old Ubuntu container image and inherit its unpatched packages into my build - or drop those users entirely. Neither option holds up.
 
