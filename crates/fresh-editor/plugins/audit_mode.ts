@@ -1777,10 +1777,20 @@ function buildFilesTree(): FilesTree {
     const groups = fileGroups();
     const catCounts: Record<string, number> = {};
     for (const g of groups) catCounts[g.category] = (catCounts[g.category] || 0) + g.files.length;
+    // With one category (the usual worktree review: everything unstaged)
+    // a category row would be a header over the whole tree and one wasted
+    // indent level in a panel that has ~24 columns to work with.
+    const categories = Object.keys(catCounts);
+    const showCategories = categories.length > 1;
+    const dirDepth = showCategories ? 1 : 0;
+    // Rows are clipped by the host to the panel width; a path clipped from
+    // the right leaves three sibling directories looking identical, so
+    // elide from the left and keep the leaf.
+    const W = panelWidthOf('files');
 
     let lastCategory: string | undefined;
     for (const group of groups) {
-        if (group.category !== lastCategory) {
+        if (showCategories && group.category !== lastCategory) {
             lastCategory = group.category;
             let label: string = group.category;
             if (state.mode === 'range' && state.range) label = state.range.label;
@@ -1805,9 +1815,15 @@ function buildFilesTree(): FilesTree {
         const dirKey = `dir:${group.dirKey}`;
         out.groupKeys.push(dirKey);
         out.keys.push(dirKey);
+        const dirStats = `  +${added} -${removed}`;
+        // Indent the host adds: 2 per depth level, plus the disclosure glyph.
+        const dirRoom = Math.max(6, W - dirDepth * 2 - 2 - dirStats.length);
         out.nodes.push(treeNode(
-            { text: `${group.dir}  +${added} -${removed}`, style: { fg: STYLE_SECTION_HEADER } },
-            { depth: 1, hasChildren: true },
+            {
+                text: `${elideLeft(group.dir, dirRoom)}${dirStats}`,
+                style: { fg: STYLE_SECTION_HEADER },
+            },
+            { depth: dirDepth, hasChildren: true },
         ));
 
         for (const file of group.files) {
@@ -1818,17 +1834,24 @@ function buildFilesTree(): FilesTree {
             out.fileByNodeKey[nodeKey] = key;
             out.indexByFileKey[key] = out.nodes.length;
             out.keys.push(nodeKey);
+            const stats = `  +${counts.added} -${counts.removed}${badge}`;
+            const nameRoom = Math.max(6, W - (dirDepth + 1) * 2 - 4 - stats.length);
             out.nodes.push(treeNode(
                 {
-                    text: `${file.status || ' '} ${fileBaseOf(file.path)}  +${counts.added} -${counts.removed}${badge}`,
+                    text: `${file.status || ' '} ${elideRight(fileBaseOf(file.path), nameRoom)}${stats}`,
                     properties: { type: "file", fileKey: key, filePath: file.path },
                 },
-                { depth: 2 },
+                { depth: dirDepth + 1 },
             ));
         }
     }
     return out;
 }
+
+/** The node the sidebar tree has selected — `file:…`, `dir:…` or
+ *  `cat:…`. Mirrored from the host's `select` events so Enter knows what
+ *  it is acting on. */
+let filesSelectedNodeKey = "";
 
 /** The sidebar tree as last built — the map from a `select` event's node
  *  key back to a file. */
@@ -1840,7 +1863,7 @@ let filesTree: FilesTree = {
  *  (and the filter field when it is showing). */
 function panelListRows(panel: 'files' | 'comments'): number {
     const height = state.panelHeights[panel] ?? Math.max(8, state.viewportHeight - 6);
-    const chrome = 1 + (panel === 'files' && filterEditing ? 1 : 0);
+    const chrome = 1 + (panel === 'files' ? 1 : 0); // header (+ filter field)
     return Math.max(1, height - chrome);
 }
 
@@ -1851,16 +1874,19 @@ function buildFilesPanelSpec(): WidgetSpec {
     const selected = state.filesCurrentKey !== null
         ? (filesTree.indexByFileKey[state.filesCurrentKey] ?? -1)
         : -1;
-    const parts: WidgetSpec[] = [panelHeaderSpec('files', filesHeaderLabel())];
-    if (filterEditing) {
-        parts.push(text({
+    const parts: WidgetSpec[] = [
+        panelHeaderSpec('files', filesHeaderLabel()),
+        // Always present, whether or not it holds focus: a filter you
+        // cannot see is a filter you forget is on. `/` focuses it, and so
+        // does clicking it.
+        text({
             value: state.fileFilter,
             cursorByte: filterCursor,
             placeholder: editor.t("prompt.filter_files") || "Filter files",
             fullWidth: true,
             key: FILES_FILTER_KEY,
-        }));
-    }
+        }),
+    ];
     if (filesTree.nodes.length === 0) {
         parts.push(raw([{
             text: ` ${(state.fileFilter
@@ -2034,7 +2060,6 @@ function panelVisible(panel: 'files' | 'diff' | 'comments'): boolean {
 function renderFilesPanel(): void {
     if (filesPanel === null || !panelVisible('files')) return;
     filesPanel.set(buildFilesPanelSpec());
-    filesPanel.setFocusKey(filterEditing ? FILES_FILTER_KEY : FILES_TREE_KEY);
 }
 
 /** Repaint the COMMENTS rail, if it is on screen. */
@@ -2069,6 +2094,8 @@ function setReviewPanelVisible(panel: 'files' | 'comments', visible: boolean): v
         } else {
             renderCommentsPanel();
         }
+        // You asked for the panel; the keys go there.
+        reviewSetFocus(panel);
     } else if (state.focusPanel === panel) {
         // Focus cannot stay on a panel that is no longer drawn.
         reviewSetFocus('diff');
@@ -2096,20 +2123,33 @@ editor.on("widget_event", (data) => {
 
     // --- FILES tree: selection, activation, and the filter field --------
     if (data.widget_key === FILES_TREE_KEY) {
+        // Focus moved off the field and onto the tree — back to the
+        // panel's command keys.
+        if (data.event_type === "focus") {
+            leaveFilterMode();
+            return;
+        }
         const nodeKey = String((data.payload as Record<string, unknown>)?.["key"] ?? "");
         if (data.event_type === "select") {
             onFilesTreeSelect(nodeKey);
             return;
         }
         if (data.event_type === "activate") {
-            // Enter on a file opens it the way Enter in the diff does;
-            // on a folder the host has already toggled the fold.
-            if (nodeKey.startsWith("file:")) void review_drill_down();
+            // Double-click on a file row: same as Enter — go to it.
+            if (nodeKey.startsWith("file:")) {
+                filesSelectedNodeKey = nodeKey;
+                onFilesTreeSelect(nodeKey);
+                reviewSetFocus('diff');
+            }
             return;
         }
         return; // `expand` is host-owned; nothing to mirror.
     }
     if (data.widget_key === FILES_FILTER_KEY) {
+        if (data.event_type === "focus") {
+            enterFilterMode();
+            return;
+        }
         if (data.event_type === "change") {
             const payload = (data.payload ?? {}) as Record<string, unknown>;
             if (typeof payload["value"] === "string") state.fileFilter = payload["value"];
@@ -2163,6 +2203,7 @@ editor.on("widget_event", (data) => {
  *  Selecting a file moves the review to it; selecting a category or
  *  directory row is just navigation. */
 function onFilesTreeSelect(nodeKey: string): void {
+    filesSelectedNodeKey = nodeKey;
     const key = filesTree.fileByNodeKey[nodeKey];
     if (key === undefined || key === state.filesCurrentKey) return;
     state.filesCurrentKey = key;
@@ -2862,6 +2903,9 @@ function reviewSetFocus(panel: 'files' | 'diff' | 'comments'): void {
     if (panel === 'files') {
         selectedSidebarFile();
         renderFilesPanel();
+        if (filesPanel !== null) {
+            filesPanel.setFocusKey(filterEditing ? FILES_FILTER_KEY : FILES_TREE_KEY);
+        }
     }
     refreshFocusIndicators();
 }
@@ -2935,6 +2979,16 @@ registerHandler("review_comments_select_next", review_comments_select_next);
 function review_enter_dispatch() {
     if (state.focusPanel === 'comments') {
         review_open_selected_comment();
+        return;
+    }
+    // FILES: Enter is "take me there". The selection already moved the
+    // diff to that file, so Enter hands focus to it — the same place Tab
+    // would put you, without the keystroke reaching the diff buffer (where
+    // it used to land on the file header and fold it). On a directory row
+    // it goes to the tree, which folds or unfolds it.
+    if (state.focusPanel === 'files') {
+        if (filesSelectedNodeKey.startsWith("file:")) reviewSetFocus('diff');
+        else filesKey("Enter");
         return;
     }
     // Side-by-side center: Enter opens the file version under the cursor
@@ -4746,7 +4800,9 @@ async function review_set_layout(layout: 'unified' | 'side-by-side'): Promise<vo
             renderCenter();
         }
         if (anchor) restoreReviewAnchor(anchor);
-        else refreshStickyHeader(state.diffViewportTopRow);
+        // The sticky names the current file in side-by-side and the
+        // top-of-view file in unified — either way it has just changed.
+        refreshStickyHeader(state.diffViewportTopRow);
     }
     editor.setStatus(
         layout === 'side-by-side'
@@ -4911,18 +4967,32 @@ let filterBeforeEdit = "";
 
 const REVIEW_FILTER_MODE = "review-filter";
 
+/** Put the panel into text-entry mode: while the filter field holds
+ *  focus its single-key commands (`s`, `c`, `n`, …) are letters, not
+ *  commands, so the FILES buffer switches to a mode that says so. */
+function enterFilterMode(): void {
+    if (filterEditing) return;
+    filterEditing = true;
+    filterBeforeEdit = state.fileFilter;
+    const filesBuf = state.panelBuffers["files"];
+    if (filesBuf !== undefined) editor.setBufferMode(filesBuf, REVIEW_FILTER_MODE);
+}
+
+/** Focus has left the field — the panel's command keys are back. */
+function leaveFilterMode(): void {
+    if (!filterEditing) return;
+    filterEditing = false;
+    const filesBuf = state.panelBuffers["files"];
+    if (filesBuf !== undefined) editor.setBufferMode(filesBuf, "review-mode");
+}
+
 function review_filter_files() {
     if (state.groupId === null) return;
     setReviewPanelVisible('files', true);
-    filterBeforeEdit = state.fileFilter;
     filterCursor = getByteLength(state.fileFilter);
-    filterEditing = true;
-    const filesBuf = state.panelBuffers["files"];
-    // While the field is open the panel's single-key commands (`s`, `c`,
-    // `n`, …) must not fire — they are letters the user is typing.
-    if (filesBuf !== undefined) editor.setBufferMode(filesBuf, REVIEW_FILTER_MODE);
+    enterFilterMode();
     reviewSetFocus('files');
-    renderFilesPanel();
+    if (filesPanel !== null) filesPanel.setFocusKey(FILES_FILTER_KEY);
 }
 registerHandler("review_filter_files", review_filter_files);
 
@@ -4945,13 +5015,13 @@ function applyFileFilter(): void {
  *  field opened (Esc); otherwise the typed query stands (Enter). */
 function closeFileFilter(revert: boolean): void {
     if (!filterEditing) return;
-    filterEditing = false;
     if (revert && state.fileFilter !== filterBeforeEdit) {
         state.fileFilter = filterBeforeEdit;
         applyFileFilter();
     }
-    const filesBuf = state.panelBuffers["files"];
-    if (filesBuf !== undefined) editor.setBufferMode(filesBuf, "review-mode");
+    leaveFilterMode();
+    // Focus lands on the tree — you filtered to pick a file.
+    if (filesPanel !== null) filesPanel.setFocusKey(FILES_TREE_KEY);
     renderFilesPanel();
 }
 
@@ -4982,8 +5052,16 @@ function review_filter_key(name: string): void {
 }
 registerHandler("review_filter_backspace", () => review_filter_key("Backspace"));
 registerHandler("review_filter_delete", () => review_filter_key("Delete"));
-registerHandler("review_filter_up", () => review_filter_key("Up"));
-registerHandler("review_filter_down", () => review_filter_key("Down"));
+/** ↑ / ↓ from the field step into the results: focus moves to the tree
+ *  (which puts the panel back in command mode) and the key walks it. */
+function review_filter_step(name: "Up" | "Down"): void {
+    if (filesPanel === null) return;
+    filesPanel.setFocusKey(FILES_TREE_KEY);
+    leaveFilterMode();
+    filesPanel.command(key(name));
+}
+registerHandler("review_filter_up", () => review_filter_step("Up"));
+registerHandler("review_filter_down", () => review_filter_step("Down"));
 registerHandler("review_filter_left", () => review_filter_key("Left"));
 registerHandler("review_filter_right", () => review_filter_key("Right"));
 
@@ -5072,7 +5150,9 @@ function jumpDiffCursorToRow(row: number, options?: { recenter?: boolean }): voi
     }
     state.diffCursorRow = row;
     applyCursorLineOverlay('diff');
-    refreshStickyHeader(idx);
+    // The scroll this jump triggers reports back through
+    // `viewport_changed`, which is what re-derives the sticky header.
+    refreshStickyHeader(state.diffViewportTopRow);
     updateReviewStatus();
 }
 
@@ -6414,8 +6494,11 @@ function refreshFocusIndicators(): void {
     if (state.panelBuffers["comments"] !== undefined) {
         renderCommentsPanel();
     }
-    // The diff's "header" is the sticky bar; refresh it in place.
-    refreshStickyHeader(Math.max(0, state.diffCursorRow - 1));
+    // The diff's "header" is the sticky bar; refresh it in place. It
+    // names what sits at the *top of the view*, so it is driven by the
+    // viewport, never by the cursor — feeding it the cursor row made it
+    // name a file that wasn't on screen.
+    refreshStickyHeader(state.diffViewportTopRow);
 }
 
 /**
