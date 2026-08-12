@@ -113,6 +113,34 @@ fn buffer_line_byte_offset(
     }
 }
 
+/// The agent argv a window runs, or will run once its terminals come up.
+///
+/// Resume argv first: it is the one that will actually be spawned when a
+/// restored workspace is activated (`claude --resume <id>`), and it names the
+/// agent as surely as the launch command does. Falls back to the launch
+/// command, which is what a window that has never been restarted carries.
+///
+/// The first terminal that has one wins. A window with several agent
+/// terminals has no single answer, and the question this serves — "is there
+/// an agent here, and which one" — is answered by any of them.
+fn agent_argv_for_window(w: &crate::app::window::Window) -> Vec<String> {
+    agent_argv_from_maps(&w.terminal_resume_commands, &w.terminal_commands)
+}
+
+/// The map-level half of [`agent_argv_for_window`], so the choice between
+/// resume and launch can be pinned without standing up a whole `Window`.
+fn agent_argv_from_maps(
+    resume: &std::collections::HashMap<fresh_core::TerminalId, Vec<String>>,
+    launch: &std::collections::HashMap<fresh_core::TerminalId, Vec<String>>,
+) -> Vec<String> {
+    let pick = |m: &std::collections::HashMap<fresh_core::TerminalId, Vec<String>>| {
+        let mut v: Vec<_> = m.iter().filter(|(_, argv)| !argv.is_empty()).collect();
+        v.sort_by_key(|(id, _)| id.0);
+        v.first().map(|(_, argv)| (*argv).clone())
+    };
+    pick(resume).or_else(|| pick(launch)).unwrap_or_default()
+}
+
 impl Editor {
     /// Update the plugin state snapshot with current editor state.
     ///
@@ -290,6 +318,10 @@ impl Editor {
                     .unwrap_or_else(|| d.root.clone());
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(d.id),
+                    // A dormant remote descriptor has no window and therefore
+                    // no terminal maps to read; its agent becomes visible when
+                    // the connect lands and a real window exists.
+                    agent_command: Vec::new(),
                     // A dormant shell carries the persisted id when its
                     // workspace file had one; legacy files leave it empty.
                     stable_id: d.stable_id.clone().unwrap_or_default(),
@@ -325,6 +357,7 @@ impl Editor {
                     .unwrap_or(false);
                 fresh_core::api::WindowInfo {
                     id: s.id,
+                    agent_command: agent_argv_for_window(s),
                     stable_id: s.stable_id.clone(),
                     label: s.label.clone(),
                     root: normalize_plugin_path(s.root.clone()),

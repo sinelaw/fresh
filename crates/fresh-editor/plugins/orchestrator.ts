@@ -176,6 +176,15 @@ interface AgentSession {
   // workspace, so it cannot take the workspace's id without colliding with
   // it. `undefined` for every ordinary row, where the two are the same.
   terminalWindowId?: number;
+  // Argv of the agent this workspace runs, or will run when it is restored —
+  // the host's `WindowInfo.agent_command`. Joined to a string because that is
+  // what the agent registry matches against.
+  //
+  // This is what makes a workspace restored from disk legible before anything
+  // has been started in it. After a restart nothing is running, no mailbox has
+  // been written, and the terminal has no title yet — but the workspace file
+  // remembers `claude --resume <id>`, so the row can say so.
+  agentCommand?: string;
   // This session's agent's mailbox name — its address, and the thing you
   // type after `@` in Home's chat. Assigned at launch (`uniqueAgentName`)
   // and persisted with the workspace, so it survives a restart. `undefined`
@@ -2025,6 +2034,7 @@ function reconcileSessions(): void {
       orchestratorSessions.set(s.id, {
         id: s.id,
         stableId: s.stable_id || undefined,
+        agentCommand: (s.agent_command ?? []).join(" ") || undefined,
         label: customNameFor(s.stable_id || undefined, s.root) ?? s.label,
         hostLabel: s.label,
         root: s.root,
@@ -2044,6 +2054,7 @@ function reconcileSessions(): void {
       // manual rename or terminal auto-name overrides it). The stable id
       // is adopted first — the manual-name lookup is keyed by it.
       existing.stableId = s.stable_id || undefined;
+      existing.agentCommand = (s.agent_command ?? []).join(" ") || undefined;
       existing.hostLabel = s.label;
       applyResolvedLabel(existing);
       existing.root = s.root;
@@ -14364,12 +14375,30 @@ function fleetLive(): AgentSession[] {
 /// without one may well have a shell in it, but nothing has said it is an
 /// agent, and this view is a list of agents.
 function hasKnownAgent(s: AgentSession): boolean {
+  // The workspace *is* an agent's, whether or not it has said anything: the
+  // host tells us what it runs or will run, and that answers the question
+  // outright. This is the case a restart leaves behind — nothing running, no
+  // mailbox, no terminal title, and a workspace that will bring `claude` back
+  // the moment it is opened.
+  if (agentKindFor(s)) return true;
   if (!s.agentName || !s.root) return false;
-  // An empty mailbox is a directory, not an agent — see `mailboxHasStatus`.
-  // One we started ourselves counts before its first status: its terminal is
-  // right there on screen.
+  // Otherwise a mailbox with something in it. An empty one is a directory,
+  // not an agent — see `mailboxHasStatus`. One we started ourselves counts
+  // before its first status: its terminal is right there on screen.
   return launchedAgents.has(agentKey(s.root, s.agentName)) ||
     mailboxHasStatus(s.root, s.agentName);
+}
+
+/// The agent a row runs, or will run when its workspace comes up.
+///
+/// The terminal's own title first — what is running *now* — then what the
+/// workspace is recorded as launching. Both resolve through the registry, so
+/// "an agent" means one Fresh knows how to talk about rather than any command
+/// at all.
+function agentKindFor(s: AgentSession): AgentEntry | null {
+  const live = s.terminalTitle ? agentEntryForCmd(s.terminalTitle) : null;
+  if (live) return live;
+  return s.agentCommand ? agentEntryForCmd(s.agentCommand) : null;
 }
 
 /// Order by urgency: waiting first, then working, then quiet — and every
@@ -14585,7 +14614,10 @@ function fleetRowEntry(s: AgentSession, width: number, selected = false): TextPr
   }
 
   if (showAgent) {
-    const agent = s.terminalTitle ? (agentEntryForCmd(s.terminalTitle)?.label ?? "") : "";
+    // What it runs, from the terminal if it is up and from the workspace's
+    // own record if it is not — so the column is filled for a restored
+    // workspace as well as a running one.
+    const agent = agentKindFor(s)?.label ?? "";
     segs.push({ text: agent.padEnd(10).slice(0, 10) + " ", style: { fg: dim } });
   }
 

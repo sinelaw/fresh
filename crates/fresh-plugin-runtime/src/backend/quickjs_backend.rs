@@ -11664,6 +11664,7 @@ mod tests {
                     root: std::path::PathBuf::from("/repo"),
                     project_path: std::path::PathBuf::from("/repo"),
                     shared_worktree: false,
+                    agent_command: Vec::new(),
                     remote: None,
                 },
                 fresh_core::api::WindowInfo {
@@ -11673,6 +11674,7 @@ mod tests {
                     root: std::path::PathBuf::from("/wt/feat-auth"),
                     project_path: std::path::PathBuf::from("/wt/feat-auth"),
                     shared_worktree: false,
+                    agent_command: Vec::new(),
                     remote: None,
                 },
             ];

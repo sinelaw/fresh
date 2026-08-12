@@ -574,6 +574,22 @@ pub struct WindowInfo {
     #[ts(type = "boolean")]
     #[serde(skip_serializing_if = "is_false_field", default)]
     pub shared_worktree: bool,
+    /// Argv of the agent this window is running, or will run when it is
+    /// restored: the agent-resume argv (`claude --resume <id>`) when the
+    /// window has one, else the terminal's launch command.
+    ///
+    /// Present for a window whose terminals have not been spawned yet — a
+    /// workspace restored from disk after a restart carries its launch and
+    /// resume argv from the moment it is rebuilt, long before anything runs
+    /// in it. That is the point: without this, "does this workspace have an
+    /// agent" could only be answered by looking at a running process, so
+    /// every workspace looked empty after a reboot until the user activated
+    /// it one at a time.
+    ///
+    /// Empty for a plain shell, and for a window with no recorded terminal
+    /// command at all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_command: Vec<String>,
     /// Remote backend identity when this session's backend is not
     /// host-local (SSH / Kubernetes). Carried for live remote windows
     /// *and* for dormant (not-yet-connected / disconnected) sessions, so
