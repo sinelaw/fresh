@@ -158,6 +158,10 @@ pub struct WidgetPanelView {
     pub focus_key: Option<String>,
     /// The focused widget is a Text input (clipboard chords belong to it).
     pub focused_widget_is_text: bool,
+    /// That Text input has an open completion popup. The popup answers
+    /// Up/Down/Tab/Enter/Esc itself at the widget layer, so the dock's
+    /// own overrides must not reach past it and claim those keys first.
+    pub focused_text_completions_open: bool,
     /// The active window's editor mode, if any. A `defineMode` binding
     /// for a key must win over the panel's default smart-key behaviour.
     pub editor_mode: Option<String>,
@@ -279,7 +283,7 @@ pub fn widget_panel_key(
             KeyCode::Enter => {
                 return if on_filter {
                     FocusWidget("sessions")
-                } else if view.focused_widget_is_text {
+                } else if view.focused_widget_is_text && !view.focused_text_completions_open {
                     // Any other focused text field in the dock — today the
                     // chat's composer — means Enter to the plugin. The generic
                     // single-line-Text fallback below is "picker-style
@@ -287,6 +291,11 @@ pub fn widget_panel_key(
                     // activate, which here is the session tree. So Enter on a
                     // finished message opened a workspace instead of sending
                     // it, and left the message sitting in the box.
+                    //
+                    // Not while a completion popup is open, though: there
+                    // Enter means "take the highlighted candidate", and the
+                    // widget layer already implements that. Claiming it here
+                    // first made the chat's own picker unacceptable by Enter.
                     DockEvent("dock_text_enter")
                 } else if sessions_focused {
                     // Enter on the session list activates the highlighted
@@ -785,6 +794,7 @@ mod tests {
             is_left_dock: true,
             focus_key: focus.map(str::to_string),
             focused_widget_is_text: false,
+            focused_text_completions_open: false,
             editor_mode: None,
         };
         // Esc on the filter returns to the session list; elsewhere it
@@ -807,6 +817,7 @@ mod tests {
             is_left_dock: false,
             focus_key: None,
             focused_widget_is_text: false,
+            focused_text_completions_open: false,
             editor_mode: None,
         };
         assert_eq!(
@@ -822,6 +833,7 @@ mod tests {
             is_left_dock: true,
             focus_key: Some("project-pick:2".to_string()),
             focused_widget_is_text: false,
+            focused_text_completions_open: false,
             editor_mode: None,
         };
         assert_eq!(
@@ -841,6 +853,7 @@ mod tests {
             is_left_dock,
             focus_key: None,
             focused_widget_is_text: false,
+            focused_text_completions_open: false,
             editor_mode: None,
         };
         let ctrl_p = (KeyCode::Char('p'), KeyModifiers::CONTROL);
@@ -1099,6 +1112,7 @@ mod tests {
             is_left_dock: false,
             focus_key: Some("path".to_string()),
             focused_widget_is_text: true,
+            focused_text_completions_open: false,
             editor_mode: None,
         };
         assert_eq!(

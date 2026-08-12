@@ -1705,7 +1705,10 @@ impl Editor {
     /// smart-key dispatcher route Tab/Enter/Up/Down/Esc to the
     /// popup-specific paths before falling through to the
     /// widget's default key behaviour.
-    fn focused_text_completions_open(&self, panel_key: &crate::widgets::PanelKey) -> bool {
+    pub(crate) fn focused_text_completions_open(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+    ) -> bool {
         let panel = match self.widget_registry.get(panel_key) {
             Some(p) => p,
             None => return false,

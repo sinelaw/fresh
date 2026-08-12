@@ -644,6 +644,7 @@ impl Editor {
                 .focus_key(&panel_key)
                 .map(str::to_string),
             focused_widget_is_text: self.panel_focused_widget_is_text(&panel_key),
+            focused_text_completions_open: self.focused_text_completions_open(&panel_key),
             editor_mode: self.active_window().editor_mode.clone(),
         };
         let outcome = {
