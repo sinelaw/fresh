@@ -5022,10 +5022,17 @@ impl Editor {
                     let has_caret = panel_focused
                         && emb.interactive
                         && emb.key.as_deref().is_some_and(|k| k == panel_focus_key);
-                    if emb.interactive {
-                        if let Some(k) = emb.key.as_deref() {
-                            pane_hits.push((k.to_string(), rect));
-                        }
+                    // Every keyed pane is clickable, interactive or not.
+                    // Gating this on `interactive` is circular: a panel that
+                    // only makes its pane an input target once the pane holds
+                    // focus — which is the right way to keep a live terminal
+                    // from eating what you type elsewhere — can then never be
+                    // clicked into, because the click needs a hit the pane
+                    // does not have until after the click. `interactive`
+                    // governs where keys go; it is not a statement about
+                    // whether the rectangle is there.
+                    if let Some(k) = emb.key.as_deref() {
+                        pane_hits.push((k.to_string(), rect));
                     }
                     self.render_pane_into_rect(
                         frame,

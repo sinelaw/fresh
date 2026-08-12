@@ -169,6 +169,12 @@ interface AgentSession {
   // that has not adopted the convention, so this must never be assumed
   // present. See `probeStatus` and the mailbox block above.
   status?: StatusReport;
+  // The window the pane draws this row's terminal from, when that is not
+  // this row's own `id`. Set only for an agent we launched into a workspace
+  // that already had one: it has a real terminal, but it is not the
+  // workspace, so it cannot take the workspace's id without colliding with
+  // it. `undefined` for every ordinary row, where the two are the same.
+  terminalWindowId?: number;
   // This session's agent's mailbox name — its address, and the thing you
   // type after `@` in Home's chat. Assigned at launch (`uniqueAgentName`)
   // and persisted with the workspace, so it survives a restart. `undefined`
@@ -4094,6 +4100,19 @@ interface UnattachedAgent {
 
 /// `root\0name` → agent. The pair is the identity; neither half alone is.
 const unattachedAgents = new Map<string, UnattachedAgent>();
+
+/// Terminals we started an agent in, by mailbox identity.
+///
+/// A workspace has one session record and therefore one `terminalBufferId`,
+/// but a workspace can hold several agents — which is the case per-agent
+/// mailboxes exist for. The first binds to the session and shows in its row; a
+/// second would otherwise come back through discovery as a row with no
+/// terminal, its own terminal sitting one tab away. Remembering the buffer we
+/// created is enough to give its row the same live pane every other row has.
+///
+/// Not persisted: a buffer id means nothing outside this process, and after a
+/// restart the agent is found the way any foreign one is.
+const launchedAgentBuffers = new Map<string, { windowId: number; bufferId: number }>();
 
 function agentKey(root: string, name: string): string {
   return root + "\u0000" + name;
@@ -10879,14 +10898,26 @@ async function launchAgentInCurrentWorkspace(
     systemPrompt: teach?.via === "flag" ? FRESH_CLI_SYSTEM_PROMPT : undefined,
   });
   if (trimmedCmd) editor.setGlobalState("orchestrator.last_cmd", trimmedCmd);
-  // This is the second-agent-in-one-workspace path: the window already exists
-  // and may already have an agent in it. Mint a *fresh* name rather than
-  // reusing the session's, so the two do not share a status file — the whole
-  // reason mailboxes are per-agent. The first agent keeps the session's name;
-  // this one appears as its own row, discovered through its own mailbox.
+  // The window already exists and may already have an agent in it. Mint a
+  // *fresh* name rather than reusing the session's, so the two do not share a
+  // status file — the whole reason mailboxes are per-agent.
+  //
+  // Reconcile first. Without it the host's window may not be in the plugin's
+  // map yet, `here` is undefined, and the name is never pinned to the session
+  // — so the agent about to be launched comes back through discovery as a row
+  // with no terminal, and the workspace it is actually running in sits beside
+  // it saying nothing. Observed by hand, with the agent's own terminal one tab
+  // away from a pane claiming there was none.
+  reconcileSessions();
   const here = orchestratorSessions.get(editor.activeWindow());
-  const agentBase = launch.length > 0
-    ? (editor.pathBasename(launch[0]) || "agent")
+  // The command's own name, which is what a user recognises — `claude`,
+  // `codex`. An interpreter is not: `bash fakeagent` would name the agent
+  // `bash`, which says nothing about which agent it is, so the workspace's
+  // name is the better answer there.
+  const cmdName = launch.length > 0 ? (editor.pathBasename(launch[0]) || "") : "";
+  const generic = ["bash", "sh", "zsh", "fish", "env", "sudo", "nohup", "python", "python3", "node"];
+  const agentBase = cmdName && !generic.includes(cmdName)
+    ? cmdName
     : (here ? workspaceDisplayName(here) : "agent");
   // First agent in this window adopts the session's identity, so the row you
   // already see gains a status. A second one gets its own name and shows up as
@@ -10894,8 +10925,9 @@ async function launchAgentInCurrentWorkspace(
   const agentName = uniqueAgentName(cwd, agentBase);
   ensureAgentMailbox(cwd, agentName);
   if (here && !here.agentName) rememberAgentName(here, agentName);
+  const launchWindow = editor.activeWindow();
   try {
-    await editor.createTerminal({
+    const created = await editor.createTerminal({
       cwd,
       command: launch.length > 0 ? launch : undefined,
       resume,
@@ -10908,6 +10940,14 @@ async function launchAgentInCurrentWorkspace(
       env: mailboxEnv(cwd, agentName),
       focus: true,
     });
+    // So a second agent in this workspace still has a live pane in Home. The
+    // session's own `terminalBufferId` names only the first one.
+    if (created?.bufferId !== undefined) {
+      launchedAgentBuffers.set(agentKey(cwd, agentName), {
+        windowId: launchWindow,
+        bufferId: created.bufferId,
+      });
+    }
   } catch (e) {
     editor.setStatus(
       editor.t("status.prefix", { msg: e instanceof Error ? e.message : String(e) }),
@@ -13703,11 +13743,23 @@ let fleetOrder: number[] | null = null;
 /// It has no terminal, so the live pane shows nothing for it — which is
 /// honest: we can read what it says about itself and nothing else.
 function unattachedAsSession(u: UnattachedAgent): AgentSession {
+  // A terminal we started for this agent, if it was us. Its row then has a
+  // window to focus and a buffer to draw, exactly like a workspace's own row.
+  const launched = launchedAgentBuffers.get(agentKey(u.root, u.name));
   return {
     // Hashed over root *and* name: two agents in one checkout are the case
     // this exists for, and a root-only hash would give them one row between
     // them — the selection would flip between agents on every scan.
+    //
+    // Always the synthetic id, even when we know the window. Row identity is
+    // the id — selection, the frozen order and the row map are all keyed by
+    // it — so a second agent that borrowed its workspace's window id
+    // collapsed into the same row as the workspace itself, and both rows
+    // rendered whichever of the two was built last. The window it draws from
+    // travels separately.
     id: -Math.abs(hashToId(agentKey(u.root, u.name))),
+    terminalWindowId: launched?.windowId,
+    terminalBufferId: launched?.bufferId,
     label: u.label,
     hostLabel: u.label,
     root: u.root,
@@ -13935,24 +13987,28 @@ function fleetRowEntry(s: AgentSession, width: number): TextPropertyEntry {
     segs.push({ text: branch.padEnd(16).slice(0, 16) + "  ", style: { fg: dim } });
   }
 
-  // The reason column. A waiting agent's question outranks its last line —
-  // if it is blocked, that is the only thing worth the space.
-  // The agent's own summary wins: "running cargo bench --bench io" is what it
-  // knows it is doing, where the last terminal line is whatever happened to be
-  // printed — often a progress bar, a blank, or half a redraw.
+  // The reason column.
+  //
+  // The agent's own summary wins outright wherever it wrote one: "running
+  // cargo bench --bench io" is what it knows it is doing, where the last
+  // terminal line is whatever happened to be printed — often a progress bar, a
+  // blank, or half a redraw. Falling back to the screen *per field* rather
+  // than as a whole produced rows whose glyph and text disagreed: an agent
+  // reporting `working` beside a question its terminal had printed minutes
+  // earlier and already moved past.
+  //
+  // With no report, the screen is all there is, and there a waiting agent's
+  // question outranks its last line — if it is blocked, that is the only thing
+  // worth the space.
   const reported = s.status?.summary ?? "";
-  const waiting = reported && sessionState(s) === "waiting"
-    ? reported
-    : (s.tail?.waitingOn ?? "");
-  const said = reported || (s.tail?.lastLine ?? "");
+  const detail = reported || s.tail?.waitingOn || s.tail?.lastLine || "";
   const used = 2 + (nameW + 1) + (showProject ? 15 : 0) + (showAgent ? 11 : 0) +
     (showBranch ? 18 : 0);
   const room = Math.max(8, width - used);
-  const detail = waiting || said;
   const clipped = detail.length > room ? detail.slice(0, room - 1) + "…" : detail;
   segs.push({
     text: clipped,
-    style: waiting
+    style: st === "waiting"
       ? { fg: "diagnostic.error_fg" }
       : { fg: dim, italic: st === "idle" },
   });
@@ -14117,8 +14173,13 @@ function buildHomeSpec(): WidgetSpec {
 
   // Rows are budgeted against the column they land in, not the panel, or they
   // run over the section border (see `fleetRowWidth`).
-  const rightCols = Math.max(30, Math.floor((cols * (100 - HOME_CHAT_PCT)) / 100) - 2);
-  const chatCols = Math.max(24, Math.floor((cols * HOME_CHAT_PCT) / 100) - 4);
+  // Each column's section costs two border columns plus padding on each side,
+  // and a row that exactly fills its budget still has to stop short of the
+  // right border rather than draw over it. Budget under all of that: an
+  // over-wide row is not clipped — the section grows to its widest child and
+  // runs past the column, so the frame's own border lands a cell late.
+  const rightCols = Math.max(30, Math.floor((cols * (100 - HOME_CHAT_PCT)) / 100) - 7);
+  const chatCols = Math.max(24, Math.floor((cols * HOME_CHAT_PCT) / 100) - 7);
 
   const chatSection = labeledSection({
     label: homeFocus === "chat" ? "▸ chat" : "chat",
@@ -14176,7 +14237,7 @@ function buildHomeSpec(): WidgetSpec {
       // `windowEmbed` because an embed paints the whole session — tab bar and
       // all — when what this wants is one terminal, named explicitly.
       child: pane({
-        windowId: selected.id,
+        windowId: selected.terminalWindowId ?? selected.id,
         bufferId: selected.terminalBufferId,
         rows: tailRows,
         // Not an input target unless the keyboard is actually aimed here: an
@@ -14206,7 +14267,7 @@ function buildHomeSpec(): WidgetSpec {
           { keys: "keys", label: "go to the agent" },
         ]
         : [
-          { keys: "Tab", label: "chat / list / agent" },
+          { keys: "Tab", label: "chat / list" },
           { keys: "↑↓", label: "select" },
           { keys: "@name", label: "address" },
           { keys: "Alt+`", label: "type at agent" },
@@ -14343,17 +14404,20 @@ function homeModeForFocus(): string {
     : HOME_MODE;
 }
 
-/// Cycle focus chat → list → agent → chat.
+/// Toggle focus between the chat and the list.
 ///
-/// Skips the terminal when the selected row has none, so Tab never appears to
-/// do nothing.
+/// Deliberately two stops, not three. The terminal is reachable only through
+/// `Alt+\``, because a focused terminal takes every key the mode does not
+/// claim: with the pane in the Tab cycle, one Tab too many turns the next
+/// sentence you type from a message *about* an agent into keystrokes sent
+/// *to* it — observed by hand, twice, while testing this very view. `Alt+\``
+/// is a deliberate gesture and says what it does in the hint bar; Tab is not
+/// and cannot.
+///
+/// From the terminal, Tab means what it means to the agent, so getting out is
+/// `Alt+\`` — which returns to the chat, since that is where you were going.
 function cycleHomeFocus(): void {
-  const rows = fleetRows();
-  const sel = rows[fleetSelectedIndex(rows)];
-  const order: HomeFocus[] = ["chat", "list"];
-  if (sel?.terminalBufferId !== undefined) order.push("tail");
-  const at = order.indexOf(homeFocus);
-  homeFocus = order[(at + 1) % order.length];
+  homeFocus = homeFocus === "chat" ? "list" : "chat";
   editor.setEditorMode(homeModeForFocus());
   renderHome(true);
 }
@@ -14366,7 +14430,7 @@ registerHandler("orchestrator_home_type_toggle", function () {
   // where the pane holds focus but swallows the keys, so the toggle is
   // "go to the agent" / "come back", not a modifier on top of focus.
   if (homeFocus === "tail") {
-    homeFocus = "list";
+    homeFocus = "chat";
   } else {
     const rows = fleetRows();
     const sel = rows[fleetSelectedIndex(rows)];
@@ -14388,7 +14452,10 @@ registerHandler("orchestrator_home_open_selected", function () {
   const rows = fleetRows();
   const target = rows[fleetSelectedIndex(rows)];
   closeHome();
-  if (target) void focusWorkspace(target.id);
+  // The window it lives in, which for a second agent in a workspace is that
+  // workspace rather than the row's own synthetic id.
+  const windowId = target?.terminalWindowId ?? target?.id;
+  if (windowId !== undefined) void focusWorkspace(windowId);
 });
 registerHandler("orchestrator_home_send", function () { void sendChat(); });
 /// Make an agent from Home.

@@ -662,3 +662,67 @@ fn home_chat_carries_an_outbox_message_and_delivers_the_reply() {
         "the chat shows what the user sent:\n{screen}"
     );
 }
+
+/// Clicking the live terminal makes it the input target.
+///
+/// Home only makes the pane interactive while the keyboard is aimed at it —
+/// otherwise a live terminal beside a focused chat line eats the message you
+/// are typing *about* that agent. Recording the pane's click rectangle only
+/// for interactive panes turns that into a circle: the pane cannot be clicked
+/// into because it is not interactive, and it is not interactive because it
+/// was never clicked into. Without the fix the click does nothing and this
+/// times out.
+///
+/// The header is the assertion because it is the visible statement of where
+/// keys are going: `live · <name>` when they are not, `typing → <name>` when
+/// they are.
+#[test]
+fn clicking_the_live_terminal_aims_the_keyboard_at_it() {
+    let (_tmp, root) = setup_project("etaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    h.editor_mut().open_terminal();
+    h.render().unwrap();
+    let buffer_id = h.editor().active_buffer_id();
+    let terminal_id = h
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("the active buffer should be the terminal just opened");
+    let home = h.editor().active_window_id();
+    h.wait_until(|h| {
+        h.editor()
+            .terminal_screen(home, terminal_id, None, true)
+            .is_ok_and(|s| !s.text.is_empty())
+    })
+    .unwrap();
+
+    open_home(&mut h);
+    // The pane has to be a real pane before clicking it means anything.
+    h.wait_until(|h| {
+        let pane = pane_text(h);
+        !pane.is_empty() && !pane.contains("[No Name]") && !pane.contains("*Terminal")
+    })
+    .unwrap();
+
+    // A cell inside the pane: two rows below its title line, and to the right
+    // of the chat column so the click is unambiguously in the terminal.
+    let title_row = h
+        .screen_to_string()
+        .lines()
+        .position(|l| l.contains("live \u{b7} "))
+        .expect("the pane's title line") as u16;
+    let col = list_column(&h) as u16 + 10;
+    h.mouse_click(col, title_row + 2).unwrap();
+
+    h.wait_until(|h| h.screen_to_string().contains("typing \u{2192} "))
+        .unwrap();
+    assert!(
+        h.screen_to_string().contains("stop typing"),
+        "the hint bar states that keys now reach the agent:\n{}",
+        h.screen_to_string()
+    );
+}
