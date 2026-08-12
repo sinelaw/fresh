@@ -1924,28 +1924,57 @@ impl Editor {
     }
 
     /// Handle SetLineWrap command
+    ///
+    /// With no `split_id`, the wrap flag lands on every split showing
+    /// `buffer_id` — including a buffer-group panel, whose leaf is not in
+    /// the main split tree and is never the "active split". Aiming at the
+    /// active split there set the flag on whatever pane happened to be
+    /// focused and left the panel alone, so a panel plugin asking for wrap
+    /// (git-log's commit-detail pane, where a lock-file diff is unreadable
+    /// unwrapped) silently got none. Falls back to the active split when
+    /// the buffer isn't on screen anywhere.
     pub(super) fn handle_set_line_wrap(
         &mut self,
-        _buffer_id: BufferId,
+        buffer_id: BufferId,
         split_id: Option<SplitId>,
         enabled: bool,
     ) {
-        let target_split = split_id.map(LeafId).unwrap_or(
-            self.windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
+        let targets: Vec<LeafId> = match split_id {
+            Some(id) => vec![LeafId(id)],
+            None => {
+                let showing: Vec<LeafId> = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
+                    .iter()
+                    .filter(|(_, vs)| vs.active_buffer == buffer_id)
+                    .map(|(leaf_id, _)| *leaf_id)
+                    .collect();
+                if showing.is_empty() {
+                    vec![self
+                        .windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.buffers.splits())
+                        .map(|(mgr, _)| mgr)
+                        .expect("active window must have a populated split layout")
+                        .active_split()]
+                } else {
+                    showing
+                }
+            }
+        };
+        for target_split in targets {
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
                 .expect("active window must have a populated split layout")
-                .active_split(),
-        );
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
-            view_state.viewport.line_wrap_enabled = enabled;
+                .get_mut(&target_split)
+            {
+                view_state.viewport.line_wrap_enabled = enabled;
+            }
         }
     }
 
