@@ -1,35 +1,29 @@
-//! Reproduction and attribution for "scrolling down a large markdown buffer is
-//! very slow the first time" — driven through the real `markdown_compose`
-//! plugin, on a document with the inline markup compose mode actually
-//! decorates.
+//! Attribution tests for "scrolling down a large markdown buffer is very slow
+//! the first time" — driven through the real `markdown_compose` plugin, on a
+//! document with the inline markup compose mode actually decorates.
 //!
-//! # The symptom is real
+//! The asymmetry the report described comes from `Window::seen_byte_ranges`:
+//! `lines_changed` only ever carries lines the editor has never offered the
+//! plugin before, so a first pass runs the whole per-line decoration pipeline
+//! — emphasis overlays, conceals, soft breaks, heading marks — and a second
+//! pass over the same lines runs none of it. The dominant cost — the wrap
+//! index rebuilding the whole document once per frame — is fixed (diff
+//! repair; see `markdown_compose_first_scroll_relayout`, which locks it), so
+//! the first pass now pays only the one-time decoration work itself.
 //!
-//! A first downward pass costs several times what a second pass over the same
-//! lines costs (`first_scroll_costs_far_more_than_the_second`). The asymmetry
-//! comes from `Window::seen_byte_ranges`: `lines_changed` only ever carries
-//! lines the editor has never offered the plugin before, so the first pass
-//! runs the whole per-line decoration pipeline — emphasis overlays, conceals,
-//! soft breaks, heading marks — and the second pass runs none of it.
+//! What this file pins down is the scrollbar half of the story:
 //!
-//! # It is not the scrollbar's heading marks
-//!
-//! The report suspected the heading marks on the scrollbar track, and there is
-//! a genuine inefficiency there: the plugin republishes for every batch, which
-//! moves the marker version, which misses `ProjectionKey` and re-walks every
-//! heading found so far — once per frame of the scroll, i.e. O(frames ×
-//! headings). `first_scroll_reprojects_every_heading_on_every_frame` measures
-//! that, and `view::ui::split_rendering::scrollbar_marker_scroll_perf` measures
-//! its growth in isolation.
-//!
-//! But it is nowhere near big enough to be the reported slowness.
-//! `heading_marks_are_not_the_reason` runs the same scroll over the same
-//! document with the headings removed: the marker work drops by more than an
-//! order of magnitude and the first pass costs the same. What the first pass
-//! is actually paying for is the per-line decoration rebuild, whose dominant
-//! term is `OverlayManager` — see `view::overlay::tests::perf_full_buffer_rebuild_pass`
-//! and its conceal/soft-break siblings, which walk every stored entry per
-//! line.
+//! * The heading marks were the report's suspect, and there is a genuine
+//!   inefficiency there — the plugin republishes for every batch, which moves
+//!   the marker version, misses `ProjectionKey`, and re-walks every heading
+//!   found so far, once per frame: O(frames × headings).
+//!   `first_scroll_reprojects_every_heading_on_every_frame` measures it, and
+//!   `view::ui::split_rendering::scrollbar_marker_scroll_perf` measures its
+//!   growth in isolation.
+//! * But it was never big enough to be the reported slowness:
+//!   `heading_marks_are_not_the_reason` runs the same scroll with the
+//!   headings removed — the marker work drops by an order of magnitude and
+//!   the pass costs about the same.
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
@@ -193,10 +187,14 @@ fn scroll_down(harness: &mut EditorTestHarness, pages: usize) -> ScrollCost {
     }
 }
 
-/// The reported symptom: the first pass down a markdown document in compose
-/// mode costs several times what the identical second pass costs.
+/// The first/second-pass asymmetry, post-fix: the first pass still does the
+/// one-time decoration work, but the second pass is a pure replay — nothing
+/// republishes, so the marker projection is a cache hit on every frame. (The
+/// wall-clock ratio between the passes is reported for eyeballs but not
+/// asserted; the counted bound on first-pass layout work lives in
+/// `markdown_compose_first_scroll_relayout`.)
 #[test]
-fn first_scroll_costs_far_more_than_the_second() {
+fn second_scroll_is_a_pure_replay() {
     let (mut harness, _tmp) = compose_harness(&document_with_headings(120, 8));
 
     let first = scroll_down(&mut harness, PAGES);
@@ -221,13 +219,6 @@ fn first_scroll_costs_far_more_than_the_second() {
         decoration_census(&harness),
     );
 
-    assert!(
-        first.render_total() > second.render_total() * 3 / 2,
-        "the first pass should cost distinctly more than the second; \
-         first {:?}, second {:?}",
-        first.render_total(),
-        second.render_total(),
-    );
     assert_eq!(
         second.stats.markers_walked, 0,
         "nothing republishes on a second pass, so the projection is cached"

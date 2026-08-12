@@ -119,33 +119,39 @@ pub fn cursor_sig_for_line(cursors: &[usize], line_start: usize, line_end: usize
     sig
 }
 
-/// Derive the combined pipeline-inputs version from the three source
-/// versions.  Any change to any of them flips the combined value.  This
-/// is not a hash — it's a packed integer with enough bit-budget to make
-/// accidental collisions astronomically unlikely in a single session.
+/// The versions of everything that feeds line layout, kept apart.
 ///
-/// * `buffer_version` gets the low 32 bits (wrapped to u32).  Buffer
-///   edits are the most frequent source of change.
-/// * `soft_breaks_version` is shifted up 32 bits.
-/// * `conceal_version` is shifted up 48 bits.
-/// * `virtual_text_version` is shifted up 16 bits.  Folded so that
-///   adding / removing plugin virtual lines (e.g.
-///   markdown_compose's table borders, git blame headers)
-///   invalidates the same caches the other three sources do —
-///   `WrapIndex` adds virtual line counts to its prefix sums and
-///   would otherwise serve a stale total when the plugin re-tiles a
-///   table.
-#[inline]
-pub fn pipeline_inputs_version(
-    buffer_version: u64,
-    soft_breaks_version: u32,
-    conceal_version: u32,
-    virtual_text_version: u32,
-) -> u64 {
-    (buffer_version & 0xFFFF_FFFF)
-        ^ ((soft_breaks_version as u64) << 32)
-        ^ ((conceal_version as u64) << 48)
-        ^ ((virtual_text_version as u64) << 16)
+/// This replaces a packed-XOR `u64`: equality still answers "is anything
+/// stale", but the components stay visible, and *which* one moved is the
+/// load-bearing distinction — a buffer edit is repaired locally by
+/// [`WrapIndex::damage_bytes`](crate::view::wrap_index::WrapIndex::damage_bytes),
+/// while a decoration change is repaired by diffing the old decoration
+/// snapshot against the new one. A packed integer could express neither
+/// without unpacking tricks, and its collision story ("astronomically
+/// unlikely") is replaced by plain field equality.
+///
+/// `virtual_text` is folded in so that adding / removing plugin virtual
+/// lines (e.g. markdown_compose's table borders, git blame headers)
+/// invalidates the same consumers the other sources do — `WrapIndex` adds
+/// virtual line counts to its prefix sums and would otherwise serve a
+/// stale total when the plugin re-tiles a table.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct PipelineInputs {
+    pub buffer: u64,
+    pub soft_breaks: u32,
+    pub conceals: u32,
+    pub virtual_text: u32,
+}
+
+impl PipelineInputs {
+    /// Do the decoration components (everything except the buffer text)
+    /// match? The buffer half has its own repair channel, so this is the
+    /// question `ensure_built` asks to pick diff-repair over rebuild.
+    pub fn decorations_match(&self, other: &PipelineInputs) -> bool {
+        self.soft_breaks == other.soft_breaks
+            && self.conceals == other.conceals
+            && self.virtual_text == other.virtual_text
+    }
 }
 
 /// Estimate the in-memory size of a `Vec<ViewLine>` for byte-budget
@@ -621,18 +627,6 @@ pub fn compute_line_layout(
     result
 }
 
-/// Combined version of all pipeline inputs on the given state.  Fold into
-/// a `LineWrapKey` to make stale entries unreachable on any mutation.
-#[inline]
-pub fn state_pipeline_inputs_version(state: &EditorState) -> u64 {
-    pipeline_inputs_version(
-        state.buffer.version(),
-        state.soft_breaks.version(),
-        state.conceals.version(),
-        state.virtual_texts.version(),
-    )
-}
-
 /// Row counts keyed the same way [`LineWrapCache`] keys layouts, for the
 /// consumers that only ever ask "how many rows?" — the viewport's scroll
 /// hot paths.
@@ -1093,28 +1087,32 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_inputs_version_changes_when_any_source_changes() {
-        let a = pipeline_inputs_version(100, 5, 3, 7);
-        assert_ne!(
-            a,
-            pipeline_inputs_version(101, 5, 3, 7),
-            "buffer bump changes version"
+    fn pipeline_inputs_distinguishes_the_buffer_from_the_decorations() {
+        let a = PipelineInputs {
+            buffer: 100,
+            soft_breaks: 5,
+            conceals: 3,
+            virtual_text: 7,
+        };
+        assert_ne!(a, PipelineInputs { buffer: 101, ..a });
+        assert!(
+            a.decorations_match(&PipelineInputs { buffer: 101, ..a }),
+            "a buffer edit alone leaves the decoration half current"
         );
-        assert_ne!(
-            a,
-            pipeline_inputs_version(100, 6, 3, 7),
-            "soft-break bump changes version"
-        );
-        assert_ne!(
-            a,
-            pipeline_inputs_version(100, 5, 4, 7),
-            "conceal bump changes version"
-        );
-        assert_ne!(
-            a,
-            pipeline_inputs_version(100, 5, 3, 8),
-            "virtual-text bump changes version"
-        );
+        for changed in [
+            PipelineInputs {
+                soft_breaks: 6,
+                ..a
+            },
+            PipelineInputs { conceals: 4, ..a },
+            PipelineInputs {
+                virtual_text: 8,
+                ..a
+            },
+        ] {
+            assert_ne!(a, changed);
+            assert!(!a.decorations_match(&changed));
+        }
     }
 
     #[test]

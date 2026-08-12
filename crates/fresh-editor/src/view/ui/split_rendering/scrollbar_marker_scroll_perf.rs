@@ -3,10 +3,11 @@
 //!
 //! This isolates a real inefficiency — the marks are re-projected on every
 //! frame of a first scroll, so the cost is quadratic in document length — and
-//! measures it. It is *not* the explanation for a first scroll feeling slow:
-//! the end-to-end attribution in `e2e::markdown_compose_scroll_perf` shows the
-//! per-line decoration rebuild dominating by orders of magnitude. Keep this as
-//! the bound on what the marks can cost as documents (and heading counts) grow.
+//! measures it. It was *not* the explanation for a first scroll feeling slow:
+//! that was the wrap index rebuilding the whole document per frame, since
+//! fixed by diff repair (see `e2e::markdown_compose_first_scroll_relayout`).
+//! Keep this as the bound on what the marks can cost as documents (and
+//! heading counts) grow.
 //!
 //! # What the production path does
 //!

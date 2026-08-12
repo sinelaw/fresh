@@ -357,12 +357,7 @@ impl crate::app::window::Window {
             if buffer_len <= large_file_threshold {
                 // When line wrapping is enabled, use visual row calculations
                 if line_wrap_enabled {
-                    let pipeline_inputs_ver = crate::view::line_wrap_cache::pipeline_inputs_version(
-                        state.buffer.version(),
-                        state.soft_breaks.version(),
-                        state.conceals.version(),
-                        state.virtual_texts.version(),
-                    );
+                    let pipeline_inputs_ver = state.pipeline_inputs();
                     super::scrollbar_math::scrollbar_drag_relative_visual(
                         state,
                         row,
@@ -576,12 +571,7 @@ impl crate::app::window::Window {
                 if line_wrap_enabled {
                     // calculate_scrollbar_jump_visual already handles max scroll limiting
                     // and returns both byte position and view line offset
-                    let pipeline_inputs_ver = crate::view::line_wrap_cache::pipeline_inputs_version(
-                        state.buffer.version(),
-                        state.soft_breaks.version(),
-                        state.conceals.version(),
-                        state.virtual_texts.version(),
-                    );
+                    let pipeline_inputs_ver = state.pipeline_inputs();
                     super::scrollbar_math::scrollbar_jump_visual(
                         state,
                         ratio,

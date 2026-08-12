@@ -1,7 +1,8 @@
-//! Why the *first* mouse-wheel scroll down a markdown file in compose mode is
-//! extremely slow, and every pass after it is fast.
+//! Regression tests for the bug where the *first* mouse-wheel scroll down a
+//! markdown file in compose mode was extremely slow while every pass after it
+//! was fast.
 //!
-//! # The loop
+//! # The loop that caused it
 //!
 //! 1. `lines_changed` only carries lines the editor has never offered the
 //!    plugin (`Window::seen_byte_ranges`), so a first downward scroll produces
@@ -9,34 +10,25 @@
 //!    produces none.
 //! 2. For each batch `markdown_compose` adds conceals and soft breaks, which
 //!    bump `ConcealManager::version` / `SoftBreakManager::version`.
-//! 3. Those versions are folded into
-//!    [`pipeline_inputs_version`](fresh::view::line_wrap_cache::pipeline_inputs_version),
-//!    which is the cache key of [`WrapIndex`](fresh::view::wrap_index::WrapIndex).
-//! 4. A key change means `WrapIndex::ensure_built` cannot repair, so it lays
-//!    out **every logical line in the document** again — the one O(buffer)
-//!    operation in the design — on that frame.
+//! 3. Those versions are part of
+//!    [`PipelineInputs`](fresh::view::line_wrap_cache::PipelineInputs), the
+//!    cache key of [`WrapIndex`](fresh::view::wrap_index::WrapIndex).
+//! 4. The key was a packed integer, so `ensure_built` could only compare it
+//!    for equality — any decoration change forced a re-layout of **every
+//!    logical line in the document**, once per frame. Cost was O(notches ×
+//!    document); measured against the release binary in tmux, a 60-notch
+//!    first pass on a 4 915-line file cost 1.95 s of CPU against 0.14 s for
+//!    the second pass, growing linearly with document length up to
+//!    `MAX_WRAP_SCROLLBAR_LINES` (5 000), past which the index is not built.
 //!
-//! So a first scroll re-lays-out the whole file once per frame. Wheel
-//! scrolling is the worst case because each notch is its own frame with its
-//! own batch: cost is O(notches × document), not O(notches × viewport).
+//! # The fix these tests lock in
 //!
-//! # Measured against the real binary
-//!
-//! Driving `fresh` in tmux with SGR wheel events, 60 notches, measuring the
-//! process's own CPU (first pass / second pass over the same lines):
-//!
-//! | document | first | second |
-//! |---|---|---|
-//! | 2 003 lines | 0.92 s | 0.12 s |
-//! | 3 511 lines | 1.50 s | 0.11 s |
-//! | 4 915 lines | 1.95 s | 0.14 s |
-//! | 5 201 lines | 0.18 s | 0.12 s |
-//! | 4 915 lines, compose **off** | 0.10 s | 0.11 s |
-//!
-//! First-pass cost is linear in document length and vanishes just past 5 000
-//! lines — `MAX_WRAP_SCROLLBAR_LINES`, above which the index is not built at
-//! all and the effect disappears along with it. So the pathology is bounded to
-//! documents under that ceiling; a genuinely huge file is accidentally spared.
+//! `WrapIndex` now keeps its decoration snapshot in current buffer
+//! coordinates and, when only the decoration versions moved, diffs the stored
+//! snapshot against the fresh one and re-lays-out exactly the disagreeing
+//! lines (`WrapIndex::repair_decorations`). A first scroll therefore costs
+//! O(notches × batch) — the lines the plugin actually decorated — and the
+//! whole-document rebuild happens once, when the index is first built.
 //!
 //! These tests assert on `WrapIndexStats` — counted layout work, not
 //! wall-clock — so they mean the same thing on any machine.
@@ -122,6 +114,8 @@ fn delta(before: WrapIndexStats, after: WrapIndexStats) -> WrapIndexStats {
     WrapIndexStats {
         rebuilds: after.rebuilds - before.rebuilds,
         lines_built: after.lines_built - before.lines_built,
+        decoration_repairs: after.decoration_repairs - before.decoration_repairs,
+        lines_repaired: after.lines_repaired - before.lines_repaired,
     }
 }
 
@@ -147,10 +141,17 @@ fn wheel_up(harness: &mut EditorTestHarness, notches: usize) {
     harness.wait_until_stable(|_| true).unwrap();
 }
 
-/// The reproduction: a first wheel-scroll re-lays-out the whole document over
-/// and over, a second scroll over the same lines lays out nothing.
+/// The regression this file exists for: a first wheel-scroll must cost the
+/// lines the plugin decorated, not the document times the frame count.
+///
+/// Layout work is bounded by a small multiple of the document: the initial
+/// index build(s) are O(document) each and legitimate, and the diff repairs
+/// touch each newly decorated line a bounded number of times. Before the fix
+/// this scroll laid out ~82x the document (197 702 lines for a 2 411-line
+/// file); the bound here is an order of magnitude under that while leaving
+/// room for an extra build on a geometry change.
 #[test]
-fn first_wheel_scroll_relayouts_the_whole_document_repeatedly() {
+fn first_wheel_scroll_costs_the_batches_not_the_document() {
     let (mut harness, _tmp) = compose_harness(&document(DOC_LINES));
     let doc_lines = harness
         .editor()
@@ -165,34 +166,46 @@ fn first_wheel_scroll_relayouts_the_whole_document_repeatedly() {
     let second = wheel_down(&mut harness, NOTCHES);
 
     eprintln!(
-        "document {doc_lines} lines; first pass: {} rebuilds, {} lines laid out \
-         ({:.1}x the document); second pass: {} rebuilds, {} lines laid out",
+        "document {doc_lines} lines; first pass: {} rebuilds / {} lines built, \
+         {} repairs / {} lines repaired; second pass: {} rebuilds / {} lines \
+         built, {} repairs / {} lines repaired",
         first.rebuilds,
         first.lines_built,
-        first.lines_built as f64 / doc_lines as f64,
+        first.decoration_repairs,
+        first.lines_repaired,
         second.rebuilds,
         second.lines_built,
+        second.decoration_repairs,
+        second.lines_repaired,
     );
 
     assert!(
-        first.lines_built > doc_lines * 5,
-        "a first wheel-scroll should be re-laying out the whole document many \
-         times over: {} lines laid out for a {doc_lines}-line document",
+        first.lines_built <= doc_lines * 4,
+        "a first wheel-scroll must not re-lay-out the document per frame: \
+         {} lines built for a {doc_lines}-line document",
         first.lines_built,
     );
     assert!(
-        second.lines_built * 4 < first.lines_built,
-        "the second pass over the same lines should lay out far less; \
-         first {} lines, second {}",
-        first.lines_built,
-        second.lines_built,
+        first.decoration_repairs > 0,
+        "the plugin's batches should be arriving as diff repairs"
+    );
+    assert!(
+        first.lines_repaired <= doc_lines * 4,
+        "diff repairs should touch each decorated line a bounded number of \
+         times: {} lines repaired for a {doc_lines}-line document",
+        first.lines_repaired,
+    );
+    assert_eq!(
+        second.lines_built, 0,
+        "a second pass over the same lines produces no batches and must \
+         build nothing"
     );
 }
 
 /// The control that names the trigger: the same document, the same scroll,
-/// with compose mode off. No plugin decorations arrive, so
-/// `pipeline_inputs_version` never moves, the index is built once, and the
-/// first pass costs the same as the second.
+/// with compose mode off. No plugin decorations arrive, so the pipeline
+/// inputs never move, the index is built once, and the first pass costs the
+/// same as the second.
 #[test]
 fn without_compose_mode_the_index_is_built_once() {
     init_tracing_from_env();

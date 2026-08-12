@@ -290,7 +290,7 @@ pub(super) fn scrollbar_visual_row_counts(
     fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize) {
     use crate::primitives::line_wrapping::WrapConfig;
-    use crate::view::line_wrap_cache::{pipeline_inputs_version, CacheViewMode};
+    use crate::view::line_wrap_cache::CacheViewMode;
     use crate::view::ui::split_rendering::MAX_SAFE_LINE_WIDTH;
     use crate::view::wrap_index::WrapIndexGeometry;
     use crate::view::wrap_machine::WrapRule;
@@ -317,12 +317,7 @@ pub(super) fn scrollbar_visual_row_counts(
             .max(2);
         (effective_width, gutter_width, wrap_config.hanging_indent)
     };
-    let pipeline_inputs_ver = pipeline_inputs_version(
-        state.buffer.version(),
-        state.soft_breaks.version(),
-        state.conceals.version(),
-        state.virtual_texts.version(),
-    );
+    let inputs = state.pipeline_inputs();
 
     // The wrap index answers both numbers directly: `total_rows` is O(1) off the
     // Fenwick tree and `row_of_byte` is a binary search. The path this replaced
@@ -350,36 +345,16 @@ pub(super) fn scrollbar_visual_row_counts(
         fold_signature: crate::view::wrap_index::fold_signature(&fold_ranges),
     };
 
-    // Snapshot virtual-line anchors so the per-line lookup borrows this list
-    // rather than `state`, whose buffer the build holds mutably.
-    let virtual_positions: Vec<usize> = if state.virtual_texts.is_empty() {
-        Vec::new()
-    } else {
-        let mut v: Vec<usize> = state
-            .virtual_texts
-            .query_lines_in_range(&state.marker_list, 0, buffer_len + 1)
-            .into_iter()
-            .map(|(pos, _)| pos)
-            .collect();
-        v.sort_unstable();
-        v
-    };
-    let virtual_rows = |start: usize, end: usize| -> u32 {
-        let lo = virtual_positions.partition_point(|p| *p < start);
-        let hi = virtual_positions.partition_point(|p| *p < end);
-        (hi - lo) as u32
-    };
-
     let line_ending = state.buffer.line_ending();
-    // Resolved before `entry` takes `&mut state`.
+    // Decorations — virtual-line anchors included — resolved into one owned
+    // snapshot before `entry` takes `&mut state`.
     let decorations = state.index_decorations(geometry.view_mode, fold_ranges, &[]);
     let index = state.wrap_indices.entry(geometry);
     index.ensure_built(
         &mut state.buffer,
         geometry,
-        pipeline_inputs_ver,
+        inputs,
         line_ending,
-        &virtual_rows,
         &decorations,
     );
 

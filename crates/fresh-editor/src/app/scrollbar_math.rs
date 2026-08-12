@@ -83,39 +83,18 @@ fn scroll_geometry(
 fn total_rows(
     state: &mut EditorState,
     geometry: WrapIndexGeometry,
-    pipeline_inputs_ver: u64,
+    inputs: crate::view::line_wrap_cache::PipelineInputs,
     fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> usize {
     let line_ending = state.buffer.line_ending();
-    // Snapshot virtual-line anchors so the per-line lookup borrows this list
-    // rather than `state`, whose buffer the build holds mutably.
-    let virtual_positions: Vec<usize> = if state.virtual_texts.is_empty() {
-        Vec::new()
-    } else {
-        let end = state.buffer.len() + 1;
-        let mut v: Vec<usize> = state
-            .virtual_texts
-            .query_lines_in_range(&state.marker_list, 0, end)
-            .into_iter()
-            .map(|(pos, _)| pos)
-            .collect();
-        v.sort_unstable();
-        v
-    };
-    let virtual_rows = |start: usize, end: usize| -> u32 {
-        let lo = virtual_positions.partition_point(|p| *p < start);
-        let hi = virtual_positions.partition_point(|p| *p < end);
-        (hi - lo) as u32
-    };
     // Resolved before `entry` takes `&mut state`.
     let decorations = state.index_decorations(geometry.view_mode, fold_ranges, &[]);
     let index = state.wrap_indices.entry(geometry);
     index.ensure_built(
         &mut state.buffer,
         geometry,
-        pipeline_inputs_ver,
+        inputs,
         line_ending,
-        &virtual_rows,
         &decorations,
     );
     index.total_rows() as usize
@@ -133,7 +112,7 @@ pub(crate) fn scrollbar_jump_visual(
     wrap_width: usize,
     show_line_numbers: bool,
     grid_cols: Option<usize>,
-    pipeline_inputs_ver: u64,
+    pipeline_inputs_ver: crate::view::line_wrap_cache::PipelineInputs,
     fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 {
@@ -182,7 +161,7 @@ pub(crate) fn scrollbar_drag_relative_visual(
     wrap_width: usize,
     show_line_numbers: bool,
     grid_cols: Option<usize>,
-    pipeline_inputs_ver: u64,
+    pipeline_inputs_ver: crate::view::line_wrap_cache::PipelineInputs,
     fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 || scrollbar_height <= 1 {
