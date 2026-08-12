@@ -1234,8 +1234,7 @@ fn assemble_inline_row(
                     None => 0,
                 };
                 for mut h in child_hits {
-                    h.byte_start += inline_shift;
-                    h.byte_end += inline_shift;
+                    h.shift(inline_shift, None);
                     hits.push(h);
                 }
                 if let Some(mut fc) = child_focus {
@@ -1483,6 +1482,7 @@ fn collect_toggle(
     }
     out.hits.push(HitArea {
         overlay: false,
+        column: None,
         widget_key: key.unwrap_or("").to_string(),
         widget_kind: "toggle",
         buffer_row: 0,
@@ -1555,6 +1555,7 @@ fn collect_number(
     // (see `deliver_widget_hit`'s `number_value` special case).
     out.hits.push(HitArea {
         overlay: false,
+        column: None,
         widget_key: key.unwrap_or("").to_string(),
         widget_kind: "number",
         buffer_row: 0,
@@ -1657,6 +1658,7 @@ fn collect_dropdown(
     // (see `deliver_widget_hit`'s `dropdown_toggle` special case).
     out.hits.push(HitArea {
         overlay: false,
+        column: None,
         widget_key: widget_key.clone(),
         widget_kind: "dropdown",
         buffer_row: 0,
@@ -1777,6 +1779,7 @@ fn collect_button(
         let byte_end = entry.text.len();
         out.hits.push(HitArea {
             overlay: false,
+            column: None,
             widget_key: key.unwrap_or("").to_string(),
             widget_kind: "button",
             buffer_row: 0,
@@ -2172,6 +2175,7 @@ fn collect_list(
                 entries.push(entry);
                 hits.push(HitArea {
                     overlay: false,
+                    column: None,
                     widget_key: item_key.clone(),
                     widget_kind: "list",
                     buffer_row: hit_row,
@@ -2206,6 +2210,7 @@ fn collect_list(
             let hit_row = (entries.len() - 1) as u32;
             hits.push(HitArea {
                 overlay: false,
+                column: None,
                 widget_key: item_key.clone(),
                 widget_kind: "list",
                 buffer_row: hit_row,
@@ -2333,8 +2338,7 @@ fn collect_labeled_section(
     let prefix_bytes = LEFT_BORDER_PREFIX.len();
     for mut h in child_out.hits {
         h.buffer_row += 1;
-        h.byte_start += prefix_bytes;
-        h.byte_end += prefix_bytes;
+        h.shift(prefix_bytes, None);
         hits.push(h);
     }
     if let Some(mut fc) = child_out.focus_cursor {
@@ -2851,6 +2855,7 @@ fn render_markdown_text_area(
         if let Some(k) = key.filter(|k| !k.is_empty()) {
             out.hits.push(HitArea {
                 overlay: false,
+                column: None,
                 widget_key: k.to_string(),
                 widget_kind: "text",
                 buffer_row: vis,
@@ -3099,6 +3104,7 @@ fn render_widget_text(
             if let Some(k) = key.filter(|k| !k.is_empty()) {
                 out.hits.push(HitArea {
                     overlay: false,
+                    column: None,
                     widget_key: k.to_string(),
                     widget_kind: "text",
                     buffer_row: row_idx as u32,
@@ -3183,6 +3189,7 @@ fn render_widget_text(
             let inner_start = marker_bytes + rendered.inner_byte_start;
             out.hits.push(HitArea {
                 overlay: false,
+                column: None,
                 widget_key: k.to_string(),
                 widget_kind: "text",
                 buffer_row: 0,
@@ -3511,6 +3518,7 @@ fn render_widget_tree(
             if extra_byte_end > 0 {
                 out.hits.push(HitArea {
                     overlay: false,
+                    column: None,
                     widget_key: tree_spec_key.clone(),
                     widget_kind: "tree",
                     buffer_row: (out.entries.len() - 1) as u32,
@@ -3532,6 +3540,7 @@ fn render_widget_tree(
         if let Some(disc_range) = rendered.disclosure_range {
             out.hits.push(HitArea {
                 overlay: false,
+                column: None,
                 widget_key: tree_spec_key.clone(),
                 widget_kind: "tree",
                 buffer_row: hit_row,
@@ -3555,6 +3564,7 @@ fn render_widget_tree(
             let new_checked = !nodes[abs_idx].checked.unwrap_or(false);
             out.hits.push(HitArea {
                 overlay: false,
+                column: None,
                 widget_key: tree_spec_key.clone(),
                 widget_kind: "tree",
                 buffer_row: hit_row,
@@ -3579,6 +3589,7 @@ fn render_widget_tree(
         if body_start < row_byte_end {
             out.hits.push(HitArea {
                 overlay: false,
+                column: None,
                 widget_key: tree_spec_key.clone(),
                 widget_kind: "tree",
                 buffer_row: hit_row,
@@ -5244,6 +5255,7 @@ fn collect_dual_list(
         if left_val.is_some() {
             out.hits.push(HitArea {
                 overlay: false,
+                column: None,
                 widget_key: widget_key.clone(),
                 widget_kind: "dual_list",
                 buffer_row: row,
@@ -5256,6 +5268,7 @@ fn collect_dual_list(
         if right_val.is_some() {
             out.hits.push(HitArea {
                 overlay: false,
+                column: None,
                 widget_key: widget_key.clone(),
                 widget_kind: "dual_list",
                 buffer_row: row,
@@ -6530,8 +6543,7 @@ fn assemble_wrapped_row(
         }
         let shift = acc.as_ref().map(|e| e.text.len()).unwrap_or(0);
         for mut h in child_hits {
-            h.byte_start += shift;
-            h.byte_end += shift;
+            h.shift(shift, None);
             h.buffer_row = row;
             hits.push(h);
         }
@@ -6721,8 +6733,11 @@ fn zip_row_blocks(
                         }
                         for h in hits {
                             let mut h = h.clone();
-                            h.byte_start += byte_shift;
-                            h.byte_end += byte_shift;
+                            // An inline piece is not a column: it and its
+                            // siblings share one line with no allotted
+                            // widths, so there is nothing narrower to say
+                            // than "somewhere on this row".
+                            h.shift(byte_shift, None);
                             h.buffer_row = starting_row;
                             out_hits.push(h);
                         }
@@ -6847,8 +6862,12 @@ fn zip_row_blocks(
                                 continue;
                             }
                             let mut h = h.clone();
-                            h.byte_start += byte_shift;
-                            h.byte_end += byte_shift;
+                            // The block's own columns in the merged row.
+                            // This is the layout fact that resolution
+                            // downstream would otherwise have to guess at,
+                            // and the reason a pointer in one column can no
+                            // longer be claimed by a widget in another.
+                            h.shift(byte_shift, Some((byte_shift, byte_shift + padded_byte_len)));
                             h.buffer_row = starting_row + row_idx as u32;
                             out_hits.push(h);
                         }

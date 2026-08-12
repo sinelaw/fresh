@@ -4417,6 +4417,7 @@ impl Editor {
         if let Some(hit) = hits.iter().find(|h| in_rect(col, row, h.rect)) {
             let ha = crate::widgets::HitArea {
                 overlay: false,
+                column: None,
                 widget_key: key,
                 widget_kind: "dropdown",
                 buffer_row: 0,
