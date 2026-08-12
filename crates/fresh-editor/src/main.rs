@@ -50,6 +50,10 @@ struct Cli {
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
+    /// Everything an agent working inside Fresh needs, in one page
+    #[arg(long)]
+    skills: bool,
+
     /// Files to open (supports file:line:col, ranges, and @"message" syntax)
     #[arg(value_name = "FILES")]
     files: Vec<String>,
@@ -3645,6 +3649,13 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
     match rest.first().copied() {
         Some("script") => {
             match &rest[1..] {
+                [.., "--help"] | [.., "-h"] => {
+                    eprintln!("usage: fresh --cmd script api <query> [--json]   search the API by name or description");
+                    eprintln!("       fresh --cmd script check [FILE|-]        parse + check editor.* names, without running");
+                    eprintln!("       fresh --cmd script run [--as NAME] [FILE|-]  evaluate against this workspace");
+                    eprintln!("       fresh --cmd script types                 paths of the API declaration files");
+                    Ok(())
+                }
                 ["run", from @ ..] => script_run(session, from),
                 ["check", from @ ..] => script_check(from),
                 ["api", query, flags @ ..] => script_api(query, flags),
@@ -3673,6 +3684,14 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
         // which is the whole reason an agent should not be reaching for the
         // filesystem to do this.
         Some("agent") => match &rest[1..] {
+            [.., "--help"] | [.., "-h"] | [] => {
+                eprintln!(
+                    "usage: fresh --cmd agent status <working|waiting|idle|done|blocked> [summary]"
+                );
+                eprintln!("       fresh --cmd agent say <message>     say something in the user's chat");
+                eprintln!("       fresh --cmd agent inbox [--take]    read what the user asked for");
+                Ok(())
+            }
             ["status", state, summary @ ..] => agent_status_command(session, state, summary),
             ["say", words @ ..] => agent_say_command(session, words),
             ["inbox", flags @ ..] => {
@@ -3688,6 +3707,17 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
             }
         },
         Some("command") => match &rest[1..] {
+            // Before the verb arms, or `run --help` runs a command named
+            // `--help` and reports that no such command is registered.
+            [.., "--help"] | [.., "-h"] | [] => {
+                eprintln!(
+                    "usage: fresh --cmd command run \"<name>\"   run a registered command by its palette name"
+                );
+                eprintln!(
+                    "       fresh --cmd command list [QUERY]    list registered commands (built-in + plugin)"
+                );
+                Ok(())
+            }
             ["run", name] => command_run_command(session, name),
             ["list", query] => command_list_command(session, Some(query)),
             ["list"] => command_list_command(session, None),
@@ -3956,6 +3986,112 @@ See also: fresh --cmd help plugin   — the runtime contract, and a worked
     out
 }
 
+/// `fresh --skills` — everything an agent working inside Fresh needs, in one
+/// page.
+///
+/// The topics already exist (`help agents`, `help script`, `help plugin`) and
+/// that turned out to be the problem: an agent has to know they exist, guess
+/// which one holds the thing it needs, and read three of them to find out that
+/// the high-level call it wanted lives behind an indirection none of them
+/// mention up front. This is the page you print when you know nothing —
+/// deliberately short, deliberately duplicating the parts that get missed, and
+/// pointing at the long topics for the rest.
+fn skills_text() -> String {
+    let mut out = String::new();
+    out.push_str(
+        r#"Working inside Fresh — everything you need, shortest first
+
+You are running in a terminal inside the Fresh editor. You can report what you
+are doing, talk to the user, take instructions, and drive the editor itself.
+
+Always invoke the CLI through $FRESH_BIN — it is the exact binary running this
+editor. $FRESH_SESSION says which instance you belong to; the commands below
+use it for you.
+
+1. SAY HELLO. Do this first, before anything else, even with nothing to report.
+
+    "$FRESH_BIN" --cmd agent status idle ready
+    "$FRESH_BIN" --cmd agent say "$FRESH_AGENT_NAME here. What do you need?"
+
+   The user's chat is where agents appear. One that says nothing is
+   indistinguishable from one that failed to start. If Fresh did not start you,
+   you have no name yet — saying something is what gets you one.
+
+2. REPORT YOUR STATE whenever it changes, and above all when you are blocked.
+
+    "$FRESH_BIN" --cmd agent status working running the e2e suite
+    "$FRESH_BIN" --cmd agent status waiting approve my edit to tests/e2e.rs
+    "$FRESH_BIN" --cmd agent status done 3 files changed, suite green
+
+   States: working / waiting / idle / done / blocked. `waiting` is the one that
+   puts you in front of the user. Without a status, Fresh guesses from your
+   terminal output, which is usually a spinner or half a redraw.
+
+3. SAY THINGS. Status is one line you overwrite; a message is said once and
+   stays. Use it when you finish, when you have a question, when you find
+   something they should know.
+
+    "$FRESH_BIN" --cmd agent say "pushed the 3 PRs; want me to start the fourth?"
+
+   With no arguments it reads the message from stdin, so long text needs no
+   quoting.
+
+4. READ YOUR INBOX at the start of each turn. `--take` acknowledges what it
+   returns, so nothing is handed to you twice or lost to a crash.
+
+    "$FRESH_BIN" --cmd agent inbox --take
+
+5. DRIVE THE EDITOR by submitting TypeScript. The body is an async function:
+   top-level `await` works, `return value` is the answer and prints as JSON.
+
+    "$FRESH_BIN" --cmd script run <<'EOF'
+    return editor.describeWorkspace();
+    EOF
+
+FINDING THE CALL YOU NEED
+
+    "$FRESH_BIN" --cmd script api <query>
+
+   Searches by name and by description, prints the doc comment, and expands the
+   option types — so one call usually answers the question outright. Two things
+   that are not obvious and cost people rounds:
+
+   * Plugin APIs are not on `editor`. They are behind `getPluginApi`, and the
+     search output says which one:
+
+         const orch = editor.getPluginApi("orchestrator");
+
+   * Prefer the high-level call. `createWindowWithTerminal` is a primitive and
+     will let you hand-build a worktree, a branch, an agent launch and the
+     wiring between them. `orch.newWorkspace({...})` does all of that in one
+     call and is the headless twin of the New Workspace dialog. When a palette
+     command does what you want, look for its scriptable twin before building
+     it yourself.
+
+WORKING WITH THE OTHER AGENTS
+
+    const orch = editor.getPluginApi("orchestrator");
+    orch.fleet()               who is doing what, most urgent first
+    orch.delegate({...})       give another agent an instruction
+    orch.newWorkspace({...})   create a workspace and start an agent in it
+
+   $FRESH_FLEET_EVENTS is a file with one JSON object per line: every state
+   change and every delegation, for every workspace. `tail -f` it to notice
+   something instead of being told.
+
+MORE
+
+    "$FRESH_BIN" --cmd agent --help      the mailbox verbs
+    "$FRESH_BIN" --cmd script --help     the script verbs
+    "$FRESH_BIN" --cmd help agents       the control plane in full
+    "$FRESH_BIN" --cmd help script       the API surface of this build
+    "$FRESH_BIN" --cmd help plugin       panels, events, the runtime contract
+    "$FRESH_BIN" --cmd command list      every palette command, built-in and plugin
+"#,
+    );
+    out
+}
+
 /// `fresh --cmd help plugin` — how to write init.ts / a plugin.
 /// `fresh --cmd help agents` — the control plane, from an agent's side.
 fn help_agents() -> AnyhowResult<()> {
@@ -4122,7 +4258,8 @@ chat. Keeping both current is what puts you in front of the user at the right
 moment, and what makes their reply reach you rather than a terminal nobody is
 looking at.
 
-See also: fresh --cmd help script   — the API surface of this build
+See also: fresh --skills             — all of this on one page, shortest first
+          fresh --cmd help script   — the API surface of this build
           fresh --cmd help plugin   — panels, events, the runtime contract
 "#
     .to_string()
@@ -4675,10 +4812,25 @@ fn parse_dts_entries(text: &str, source: &str) -> Vec<ApiEntry> {
             continue;
         }
         if in_doc {
-            if t.starts_with("*/") {
+            // `*/` closes the comment wherever it appears, not only at the
+            // start of a line. Requiring it to lead made every declaration in
+            // `plugins.d.ts` invisible to search: that file is generated by a
+            // different emitter, which ends the last text line with ` */`, so
+            // `in_doc` never cleared and every member after the first doc
+            // comment was swallowed as more comment text. `script api
+            // newWorkspace` answering "no API member matches" — about a method
+            // that is right there — was this, and it is the worst possible
+            // answer, because it reads as "the editor cannot do this".
+            let (body, closes) = match t.find("*/") {
+                Some(i) => (&t[..i], true),
+                None => (t, false),
+            };
+            let body = body.trim_start_matches('*').trim();
+            if !body.is_empty() {
+                doc.push(body.to_string());
+            }
+            if closes {
                 in_doc = false;
-            } else {
-                doc.push(t.trim_start_matches('*').trim().to_string());
             }
             continue;
         }
@@ -4719,6 +4871,142 @@ fn parse_dts_entries(text: &str, source: &str) -> Vec<ApiEntry> {
         }
     }
     entries
+}
+
+/// Which plugin exposes `member`, by finding the `XxxApi` type it is declared
+/// in and looking that type up in the `getPluginApi` map at the end of
+/// `plugins.d.ts`.
+fn owning_plugin_api(member: &str, files: &[(String, String)]) -> Option<String> {
+    let (_, text) = files.iter().find(|(n, _)| n.contains("plugins.d.ts"))?;
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        let t = line.trim_start_matches("export ").trim();
+        if let Some(rest) = t.strip_prefix("type ") {
+            current = rest
+                .split(|c: char| c == ' ' || c == '=' || c == '<')
+                .next()
+                .map(|s| s.to_string());
+        }
+        let head: String = t
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if head == member && t[head.len()..].trim_start().starts_with('(') {
+            let ty = current?;
+            // `  orchestrator: OrchestratorApi;` — the key is the name
+            // `getPluginApi` takes.
+            for l in text.lines() {
+                let l = l.trim().trim_end_matches(';');
+                if let Some((k, v)) = l.split_once(':') {
+                    if v.trim() == ty {
+                        return Some(k.trim().to_string());
+                    }
+                }
+            }
+            return None;
+        }
+    }
+    None
+}
+
+/// Type names a signature refers to, in order, ignoring the built-ins that
+/// carry no information worth printing.
+fn referenced_type_names(signature: &str) -> Vec<String> {
+    const BORING: &[&str] = &[
+        "string", "number", "boolean", "void", "null", "undefined", "any", "unknown", "never",
+        "Promise", "Array", "Record", "Partial", "Map", "Set", "true", "false", "type", "readonly",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    let mut word = String::new();
+    for ch in signature.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            word.push(ch);
+            continue;
+        }
+        if !word.is_empty() {
+            let w = std::mem::take(&mut word);
+            let looks_like_a_type = w.chars().next().is_some_and(|c| c.is_uppercase());
+            if looks_like_a_type && !BORING.contains(&w.as_str()) && !out.contains(&w) {
+                out.push(w);
+            }
+        }
+    }
+    out
+}
+
+/// The body of `type Name = …`, as printable lines.
+///
+/// Follows one level of `|` and `&` composition, because that is how the
+/// option types are actually written — `NewWorkspaceOptions` is a union of
+/// two intersections, and printing only the alias line ("A | B") repeats the
+/// problem it was supposed to solve.
+fn type_body(name: &str, files: &[(String, String)], depth: usize) -> Option<Vec<String>> {
+    // Deep enough for the option types as they are actually written:
+    // `NewWorkspaceOptions` is a union of intersections that bottoms out in
+    // `RunAgentOptions` four hops down, and stopping short of it hides
+    // `agent` and `prompt` — the two fields a caller most needs.
+    if depth > 3 {
+        return None;
+    }
+    for (_, text) in files {
+        let head = format!("type {name} ");
+        let Some(at) = text.lines().position(|l| {
+            let t = l.trim_start_matches("export ").trim();
+            t.starts_with(&head) || t.starts_with(&format!("type {name}="))
+        }) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        let first = lines[at].trim().trim_start_matches("export ").trim();
+        // `type X = A | B;` — an alias with no body of its own. Print what it
+        // is, then the things it is made of.
+        if !first.ends_with('{') {
+            let mut out = vec![first.to_string()];
+            for part in referenced_type_names(first.split('=').nth(1).unwrap_or("")) {
+                if let Some(body) = type_body(&part, files, depth + 1) {
+                    out.push(format!("{part}:"));
+                    out.extend(body.into_iter().map(|l| format!("  {l}")));
+                }
+            }
+            return Some(out);
+        }
+        // A record body: everything up to the closing brace, comments and all
+        // — the comments are where the meaning of each field is.
+        let mut out = Vec::new();
+        let mut depth_braces = 1usize;
+        for line in lines.iter().skip(at + 1) {
+            let t = line.trim();
+            depth_braces += t.matches('{').count();
+            depth_braces = depth_braces.saturating_sub(t.matches('}').count());
+            if depth_braces == 0 {
+                break;
+            }
+            out.push(t.to_string());
+        }
+        // An intersection body (`A & { ... }`) still names its other half.
+        for part in referenced_type_names(first.split('=').nth(1).unwrap_or("")) {
+            if let Some(body) = type_body(&part, files, depth + 1) {
+                out.push(format!("{part}:"));
+                out.extend(body.into_iter().map(|l| format!("  {l}")));
+            }
+        }
+        return Some(out);
+    }
+    None
+}
+
+/// Option/record types a signature mentions, expanded. Capped, because a
+/// signature that names five types wants a summary, not a type dump.
+fn expand_types(signature: &str, files: &[(String, String)]) -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    for name in referenced_type_names(signature).into_iter().take(3) {
+        if let Some(body) = type_body(&name, files, 0) {
+            if !body.is_empty() {
+                out.push((name, body));
+            }
+        }
+    }
+    out
 }
 
 /// Where the API declarations live, and their contents.
@@ -4842,11 +5130,31 @@ fn script_api(query: &str, flags: &[&str]) -> AnyhowResult<()> {
 
     for entry in hits.iter().take(20) {
         println!("{}  [{}]", entry.signature, entry.source);
+        // How to reach it. A plugin API is not on `editor` — it is behind
+        // `getPluginApi`, and nothing about a signature says so, which left
+        // that indirection to be learned from an unrelated doc comment.
+        if entry.source.contains("plugins.d.ts") {
+            if let Some(owner) = owning_plugin_api(&entry.name, &files) {
+                println!("    reach it with: editor.getPluginApi(\"{owner}\")");
+            }
+        }
         for line in &entry.doc {
             if line.is_empty() {
                 println!();
             } else {
                 println!("    {}", line);
+            }
+        }
+        // The shape of what it takes, not just the name of it. A signature
+        // reading `newWorkspace(options?: NewWorkspaceOptions)` tells the
+        // caller nothing they can act on — and the type it names is a union of
+        // intersections four aliases deep, so finding the actual field list
+        // meant grepping the declaration file by hand. Expand the option types
+        // it mentions, following aliases, so one call answers the question.
+        for (name, body) in expand_types(&entry.signature, &files) {
+            println!("  {name}:");
+            for line in body {
+                println!("    {line}");
             }
         }
         println!();
@@ -5687,6 +5995,14 @@ fn real_main() -> AnyhowResult<()> {
 
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);
+
+    // One page, no editor, no arguments to get right. Top-level rather than a
+    // `--cmd help` topic because it is the thing you run when you do not yet
+    // know that `--cmd help` exists.
+    if cli.skills {
+        print!("{}", skills_text());
+        return Ok(());
+    }
 
     // The agent script verbs run against a live editor and never spawn a
     // daemon, so handle them here — before the `Args` conversion, whose slice

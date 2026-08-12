@@ -7870,6 +7870,9 @@ const FRESH_CLI_SYSTEM_PROMPT = [
   "You are running inside a Fresh editor workspace and can drive it \u2014 arrange panes, open files, show output, start other agents \u2014 by submitting TypeScript to the editor's plugin runtime.",
   "Always invoke the CLI through $FRESH_BIN: it is the exact binary running this workspace.",
   "",
+  "If you read one thing, read `\"$FRESH_BIN\" --skills` — everything below plus how",
+  "to find any call you need, on one page.",
+  "",
   "Run a script (the body is an async function: top-level `await` works, `return value` is the answer and prints as JSON, a throw exits non-zero):",
   "    \"$FRESH_BIN\" --cmd script run <<'EOF'",
   "    return editor.describeWorkspace();",
@@ -11435,6 +11438,39 @@ export type OrchestratorApi = {
   setDockView(view: "card" | "compact"): void;
   /** Set any of the dock's filter controls. See `DockFilterOptions`. */
   setDockFilter(options?: DockFilterOptions): void;
+  /** Report what this agent is doing — what `fresh --cmd agent status`
+   *  calls. `window` is the calling window (`FRESH_WINDOW_ID` inside a
+   *  submitted script); `name` is the agent's mailbox name when it knows it
+   *  (`$FRESH_AGENT_NAME`), and is minted from the workspace when it does
+   *  not — which is how an agent nobody launched becomes visible. */
+  agentStatus(options: {
+    window: number;
+    name?: string;
+    state?: string;
+    summary?: string;
+  }): { ok: boolean; agent?: string; reason?: string };
+  /** Say something in the user's chat, attributed to this agent — what
+   *  `fresh --cmd agent say` calls. Same resolution rules as
+   *  `agentStatus`. */
+  agentSay(options: {
+    window: number;
+    name?: string;
+    text?: string;
+  }): { ok: boolean; agent?: string; reason?: string };
+  /** Read this agent's inbox — what `fresh --cmd agent inbox` calls. With
+   *  `take`, each message returned is acknowledged (moved to `done/`) in the
+   *  same call, so a crash between reading and acting cannot lose or replay
+   *  one. */
+  agentInbox(options: {
+    window: number;
+    name?: string;
+    take?: boolean;
+  }): {
+    ok: boolean;
+    agent?: string;
+    messages: Array<{ from: string; text: string }>;
+    reason?: string;
+  };
 };
 
 declare global {
