@@ -1468,6 +1468,18 @@ impl EditorState {
     }
 
     /// Restore displaced markers to their exact original positions.
+    ///
+    /// This teleports marker positions rather than shifting them, so it is the
+    /// one mutation that moves a decoration without any manager's version
+    /// moving with it. `WrapIndex` mirrors those positions and repairs itself
+    /// by diffing snapshots *keyed on those versions*, so it cannot notice
+    /// this on its own: undoing a deletion that displaced a conceal's markers
+    /// would otherwise leave the index laid out against positions the
+    /// renderer no longer uses, and nothing would ever correct it.
+    ///
+    /// Dropping the builds is the honest response — a teleport has no local
+    /// damage to describe — and it is rare enough (only undo, and only for
+    /// deletions that displaced markers) to be worth a rebuild.
     pub fn restore_displaced_markers(&mut self, displaced: &[(u64, usize)]) {
         for &(tagged_id, original_pos) in displaced {
             let dm = DisplacedMarker::decode(tagged_id, original_pos);
@@ -1479,6 +1491,9 @@ impl EditorState {
                     self.margins.set_indicator_position(MarkerId(id), position);
                 }
             }
+        }
+        if !displaced.is_empty() {
+            self.wrap_indices.damage_all();
         }
     }
 
