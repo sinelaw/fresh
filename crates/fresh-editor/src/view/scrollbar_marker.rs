@@ -387,6 +387,20 @@ pub struct MarkerCell {
 #[derive(Debug, Default)]
 pub struct ScrollbarMarkerBuckets {
     entries: Vec<(ProjectionKey, Vec<Option<MarkerCell>>)>,
+    stats: ProjectionStats,
+}
+
+/// How much projecting has actually cost this buffer.
+///
+/// A rebuild walks every stored marker, so `markers_walked / marker count` is
+/// how many times the whole set has been re-projected — the number that
+/// separates "projected once, then cached" from "re-projected on every frame
+/// of a scroll". Kept per-buckets rather than in a process-wide counter so
+/// concurrent tests (and split panes) observe only their own work.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectionStats {
+    pub rebuilds: u64,
+    pub markers_walked: u64,
 }
 
 /// How many distinct scrollbar geometries to keep projected at once.
@@ -399,6 +413,11 @@ impl ScrollbarMarkerBuckets {
 
     pub fn clear(&mut self) {
         self.entries.clear();
+    }
+
+    /// Projection work done for this buffer so far. See [`ProjectionStats`].
+    pub fn stats(&self) -> ProjectionStats {
+        self.stats
     }
 
     fn lookup(&self, key: &ProjectionKey) -> Option<usize> {
@@ -467,6 +486,8 @@ pub fn project<'a>(
     }
 
     let cells = build_cells(manager, core, basis, track_height, row_of_byte);
+    buckets.stats.rebuilds += 1;
+    buckets.stats.markers_walked += manager.len() as u64;
 
     if buckets.entries.len() >= MAX_CACHED_PROJECTIONS {
         buckets.entries.remove(0);

@@ -383,6 +383,13 @@ impl ConcealManager {
         None
     }
 
+    /// Number of stored conceal ranges. Every viewport query walks all of
+    /// them (see [`query_viewport_excluding`](Self::query_viewport_excluding)),
+    /// so this is the size of a per-frame scan.
+    pub fn len(&self) -> usize {
+        self.ranges.len()
+    }
+
     /// Returns true if there are no conceal ranges
     pub fn is_empty(&self) -> bool {
         self.ranges.is_empty()

@@ -257,6 +257,13 @@ impl SoftBreakManager {
             .min()
     }
 
+    /// Number of stored soft breaks. Every viewport query walks all of them
+    /// (see [`query_viewport`](Self::query_viewport)), so this is the size of
+    /// a per-frame scan.
+    pub fn len(&self) -> usize {
+        self.breaks.len()
+    }
+
     /// Returns true if there are no soft breaks
     pub fn is_empty(&self) -> bool {
         self.breaks.is_empty()

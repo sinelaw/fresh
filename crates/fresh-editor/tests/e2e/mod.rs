@@ -172,6 +172,8 @@ pub mod macros;
 pub mod mark_mode_actions;
 pub mod markdown_compose;
 pub mod markdown_compose_diagnostics;
+#[cfg(feature = "plugins")]
+pub mod markdown_compose_scroll_perf;
 pub mod markdown_compose_scroll_reach;
 #[cfg(feature = "plugins")]
 pub mod markdown_compose_scrollbar_markers;
