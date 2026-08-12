@@ -5710,8 +5710,11 @@ function dockChatBlock(rows: number): WidgetSpec[] {
     header,
     raw(padTop(chatLines(cols), logRows), "dock_chat_log"),
     divider({ style: { fg: "ui.menu_disabled_fg" } }),
-    textInput(picking ? chatFilter : chatDraft, {
-      label: picking ? "to" : `@${chatTarget}`,
+    textInput(chatComposerValue(), {
+      // A label only while picking, where it names the question ("to") and is
+      // what switches the host's popup chrome on. Once an agent is chosen the
+      // address is the first word of the field itself.
+      label: picking ? "to" : "",
       placeholder: chatPlaceholder(picking),
       focused: dockFocus === "chat",
       fullWidth: true,
@@ -13865,12 +13868,7 @@ editor.on("widget_event", (e) => {
         pushChatCandidates();
         return;
       }
-      // `@` on an empty message means "not that agent, this one".
-      if (value.startsWith("@")) {
-        openChatPicker(value.slice(1));
-        return;
-      }
-      chatDraft = value;
+      chatComposerEdit(value);
       return;
     }
     // The host's Alt+C — the dock has no editor mode, so the key arrives as
@@ -15048,16 +15046,17 @@ function openChatPicker(filter = ""): void {
 function acceptChatTarget(name: string): void {
   chatTarget = name;
   chatFilter = "";
-  chatDraft = "";
+  // `chatDraft` is deliberately kept: reaching the picker from a half-written
+  // message (a Backspace into the address) must not cost the sentence.
   const f = chatField();
   // The popup belongs to the picker; the message line is a free text field.
   f?.panel.setCompletions(f.key, []);
   renderChatSurface(true);
   // Explicitly, not via the rebuilt spec: the host owns the field's text and
   // only a *mount* re-seeds it from the spec. The dock rebuilds with
-  // `update`, which keeps instance state — so without this the name you just
-  // completed stays in the box as the first three letters of your message.
-  setChatFieldValue("");
+  // `update`, which keeps instance state — so without this the letters you
+  // typed to find the agent stay in the box ahead of the address.
+  setChatFieldValue(chatComposerValue());
   refocusChatField();
 }
 
@@ -15065,6 +15064,60 @@ function acceptChatTarget(name: string): void {
 function setChatFieldValue(v: string): void {
   const f = chatField();
   f?.panel.setValue(f.key, v, v.length);
+}
+
+/// What the chat line holds: the filter while picking, otherwise the address
+/// followed by the message.
+///
+/// The address is *in* the field rather than beside it as a label. It reads
+/// as the sentence it is — `@ws/agent run the suite` is what you would write
+/// to a person — and it puts the thing you are about to change within reach
+/// of the caret instead of behind a rebuild.
+///
+/// That is safe only because the address cannot be half-deleted into
+/// something wrong: any edit that breaks the `@name ` prefix is not treated
+/// as text at all, it reopens the picker (see `chatComposerEdit`). So the
+/// field holds either a valid address or no address.
+function chatComposerValue(): string {
+  return chatTarget === null ? chatFilter : `@${chatTarget} ${chatDraft}`;
+}
+
+/// Take a `change` on the composer and decide what it meant.
+///
+/// Returns `true` when the edit was ordinary message text (already recorded);
+/// `false` when it disturbed the address, in which case the picker has been
+/// reopened with whatever is left of the name as its filter and the message
+/// kept, so choosing again puts you back where you were with the sentence
+/// intact.
+function chatComposerEdit(value: string): boolean {
+  const prefix = `@${chatTarget} `;
+  if (value.startsWith(prefix)) {
+    chatDraft = value.slice(prefix.length);
+    return true;
+  }
+  // Everything else is an edit to the address — including deleting the space
+  // that ends it, which is exactly the Backspace you press when the caret is
+  // sitting right after the name and you want a different agent.
+  const rest = value.replace(/^@/, "");
+  const was = chatTarget ?? "";
+  let typed: string;
+  if (was && rest.startsWith(was)) {
+    // The name survived and the separator did not, so the message is now
+    // welded to it. Split on the name we know rather than on the first
+    // space, which is somewhere in the middle of the sentence and would take
+    // the message with it.
+    typed = was;
+    chatDraft = rest.slice(was.length).replace(/^ /, "");
+  } else {
+    const sp = rest.indexOf(" ");
+    typed = sp < 0 ? rest : rest.slice(0, sp);
+    chatDraft = sp < 0 ? "" : rest.slice(sp + 1);
+  }
+  // A name mangled past recognition would leave the picker with a filter
+  // nothing matches and no way to widen it, since a keystroke that matches
+  // nothing is refused. Fall back to the whole list.
+  openChatPicker(chatFilterMatches(typed).length > 0 ? typed : "");
+  return false;
 }
 
 /// Re-render whichever surface is showing the chat, from the ground up.
@@ -15098,7 +15151,7 @@ async function sendChat(): Promise<void> {
   // — the sent message stayed in the box and was sent again on the next
   // Enter.
   renderChatSurface(true);
-  setChatFieldValue("");
+  setChatFieldValue(chatComposerValue());
   refocusChatField();
   if (!to) {
     // Unreachable through the keyboard — there is no message field without a
@@ -15120,7 +15173,7 @@ async function sendChat(): Promise<void> {
     chatSay(`Could not deliver that to @${to}: ${res.reason ?? "unknown"}.`);
   }
   renderChatSurface(true);
-  setChatFieldValue("");
+  setChatFieldValue(chatComposerValue());
   refocusChatField();
 }
 
@@ -15171,11 +15224,10 @@ function buildHomeSpec(): WidgetSpec {
     // Padded to a fixed height and sliced from the end: the newest message is
     // the one you came to read, so the transcript is pinned to the bottom.
     raw(padTop(chatLines(chatCols), chatBodyRows), "home_chat_log"),
-    textInput(picking ? chatFilter : chatDraft, {
-      // The label carries the address. A field that shows `@name` as part of
-      // its own text invites editing it, and an address you can half-delete
-      // is an address that can be wrong.
-      label: picking ? "to" : `@${chatTarget}`,
+    textInput(chatComposerValue(), {
+      // See the dock's copy: the address is in the field, and a label only
+      // while picking.
+      label: picking ? "to" : "",
       placeholder: chatPlaceholder(picking),
       focused: homeFocus === "chat",
       fullWidth: true,
@@ -15612,17 +15664,11 @@ registerHandler("orchestrator_home_new", function () {
   openForm({ target: "current", fromHome: true });
 });
 registerHandler("orchestrator_home_chat_backspace", function () {
-  // Backspace on an empty message goes back to choosing. The address is not
-  // part of the text, so this is the only way to unsay it — and it is the
-  // gesture you would reach for anyway, having deleted the message you no
-  // longer want to send to that agent.
-  if (chatTarget !== null && chatDraft.length === 0) {
-    openChatPicker();
-    return;
-  }
-  // Otherwise the host's own text control does the edit and answers with a
-  // `change` event, which is where our copy is updated. Editing our copy here
-  // instead would leave the widget showing a character we think is gone.
+  // Always the host's own text control, which does the edit and answers with
+  // a `change` event — where the address prefix is checked and a Backspace
+  // that ate into it reopens the picker. Deciding here instead would mean
+  // guessing where the caret is, and editing our copy would leave the widget
+  // showing a character we think is gone.
   if (homePanel) homePanel.command(textInputKey("Backspace"));
 });
 
@@ -15652,14 +15698,10 @@ registerHandler("orchestrator_home_event", function (ev: Record<string, unknown>
       pushChatCandidates();
       return;
     }
-    // `@` at the start of an empty message means "not that agent, this one".
-    if (value.startsWith("@")) {
-      openChatPicker(value.slice(1));
-      return;
-    }
-    // No re-render: the field already shows this, and re-mounting would
-    // rebuild it from our copy — losing whatever was typed in between.
-    chatDraft = value;
+    // No re-render on the ordinary path: the field already shows this, and
+    // re-mounting would rebuild it from our copy — losing whatever was typed
+    // in between. An edit to the address is the exception, and reopens.
+    chatComposerEdit(value);
     return;
   }
   // The picker's answer, from Tab, Enter or a click on a candidate alike.
