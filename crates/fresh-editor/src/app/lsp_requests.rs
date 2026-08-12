@@ -4271,12 +4271,12 @@ mod tests {
         use crate::model::marker::MarkerList;
 
         let mut markers = MarkerList::new();
-        let m0 = markers.create(200, false);
-        let m1 = markers.create(401, false);
-        let m2 = markers.create(602, false);
-        let m3 = markers.create(803, false);
-        let m5 = markers.create(1205, false);
-        let m6 = markers.create(1406, false);
+        let m0 = markers.create(200);
+        let m1 = markers.create(401);
+        let m2 = markers.create(602);
+        let m3 = markers.create(803);
+        let m5 = markers.create(1205);
+        let m6 = markers.create(1406);
 
         // Simulate remove_in_range removing marker m5 inside [1005, 1206).
         markers.delete(m5);

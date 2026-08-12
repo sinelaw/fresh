@@ -121,10 +121,12 @@ impl IndexDecorations {
     ///   inside it clamps to `start`, one after it moves back by `removed`.
     /// * **Insertion** is *right gravity*: a position sitting exactly at the
     ///   insertion point is pushed forward. Every decoration anchor in the
-    ///   editor is right-gravity, because `MarkerList::create` stores its
-    ///   `left_affinity` argument in a map nothing reads and always calls
-    ///   `tree.insert`, which is right-gravity. (`conceal.rs` even labels its
-    ///   start marker "left affinity"; the tree does not honour it.)
+    ///   editor is right-gravity, because that is all `MarkerList::create`
+    ///   makes. (It used to take a `left_affinity` flag that never reached
+    ///   the tree, and call sites labelled their markers by that flag rather
+    ///   than by what the tree did — which is how this was written backwards
+    ///   in the first place. The flag is gone; `create_left_gravity` is the
+    ///   real thing.)
     ///
     /// Getting the insertion rule backwards is not a boundary nicety: typing
     /// one character immediately before a conceal left the snapshot's copy of

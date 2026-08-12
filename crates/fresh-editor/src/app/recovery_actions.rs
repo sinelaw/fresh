@@ -154,6 +154,9 @@ impl Editor {
                                     state.buffer.insert(0, &text);
                                     // Mark as modified since it differs from disk
                                     state.buffer.set_modified(true);
+                                    // Wholesale replacement, never described as
+                                    // edit damage. See `WrapIndex::damage_all`.
+                                    state.wrap_indices.damage_all();
                                 }
                                 // Invalidate the event log's saved position so undo
                                 // can't incorrectly clear the modified flag
@@ -311,6 +314,9 @@ impl Editor {
                                     state.buffer.insert(0, &text);
                                     state.buffer.set_modified(true);
                                     state.buffer.set_recovery_pending(false);
+                                    // Wholesale replacement, never described as
+                                    // edit damage. See `WrapIndex::damage_all`.
+                                    state.wrap_indices.damage_all();
                                 }
                                 self.active_event_log_mut().clear_saved_position();
                                 self.sync_lsp_after_recovery_replay(buffer_id);

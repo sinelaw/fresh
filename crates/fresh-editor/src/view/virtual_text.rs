@@ -214,7 +214,7 @@ impl VirtualTextManager {
     ) -> VirtualTextId {
         // Create marker at position
         // Use right affinity (false) so the marker stays with the following character
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -265,7 +265,7 @@ impl VirtualTextManager {
             "add_with_theme_keys requires BeforeChar or AfterChar"
         );
 
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -306,7 +306,7 @@ impl VirtualTextManager {
         priority: i32,
         string_id: String,
     ) -> VirtualTextId {
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -353,7 +353,7 @@ impl VirtualTextManager {
             "add_with_id_and_theme_keys requires BeforeChar or AfterChar"
         );
 
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -446,7 +446,7 @@ impl VirtualTextManager {
             "add_line requires LineAbove or LineBelow"
         );
 
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;

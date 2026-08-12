@@ -144,10 +144,10 @@ pub struct Overlay {
     /// Namespace this overlay belongs to (for bulk removal)
     pub namespace: Option<OverlayNamespace>,
 
-    /// Start marker (left affinity - stays before inserted text)
+    /// Start marker. Right gravity, like every `MarkerList::create` marker.
     pub start_marker: MarkerId,
 
-    /// End marker (right affinity - moves after inserted text)
+    /// End marker, also right gravity: text typed at the end extends it.
     pub end_marker: MarkerId,
 
     /// Visual appearance of the overlay
@@ -183,8 +183,8 @@ impl Overlay {
     ///
     /// Returns the overlay (which contains its handle for later removal)
     pub fn new(marker_list: &mut MarkerList, range: Range<usize>, face: OverlayFace) -> Self {
-        let start_marker = marker_list.create(range.start, true); // left affinity
-        let end_marker = marker_list.create(range.end, false); // right affinity
+        let start_marker = marker_list.create(range.start); // left affinity
+        let end_marker = marker_list.create(range.end); // right affinity
 
         Self {
             handle: OverlayHandle::new(),
@@ -225,7 +225,7 @@ impl Overlay {
         face: OverlayFace,
         namespace: OverlayNamespace,
     ) -> Self {
-        let start_marker = marker_list.create(range.start, true); // left affinity
+        let start_marker = marker_list.create(range.start); // left affinity
         let end_marker = marker_list.create_left_gravity(range.end);
 
         Self {

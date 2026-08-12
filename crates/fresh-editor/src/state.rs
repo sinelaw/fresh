@@ -1343,6 +1343,14 @@ impl EditorState {
         // consolidate_after_save() can replace buffers between snapshot and restore.
         if let Some(snapshot) = new_snapshot {
             self.buffer.restore_buffer_state(snapshot);
+            // Swapping the piece tree replaces the document without ever
+            // describing the change as edit damage, so any built row index
+            // now describes a document that no longer exists. The version
+            // bump would route the next `ensure_built` to a rebuild anyway,
+            // but `damage_bytes` checks only whether a build exists — an edit
+            // arriving before the next render would repair the stale one and
+            // then mark it current. See `WrapIndex::damage_all`.
+            self.wrap_indices.damage_all();
 
             // A snapshot restore with no per-edit triples (hot-exit recovery,
             // logs loaded from disk) changes content opaquely: the ring can't
