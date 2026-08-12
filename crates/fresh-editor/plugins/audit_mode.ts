@@ -18,6 +18,16 @@ import {
   fetchGitLog,
 } from "./lib/git_history.ts";
 import { type GitRepo, resolveGitRepo } from "./lib/git_repo.ts";
+import {
+  WidgetPanel,
+  button,
+  col,
+  flexSpacer,
+  raw,
+  row,
+  spacer,
+  styledRow,
+} from "./lib/widgets.ts";
 const VirtualBufferFactory = createVirtualBufferFactory(editor);
 
 
@@ -206,9 +216,6 @@ interface ReviewState {
   // Maps a sidebar row to a directory-group key (`${category} ${dir}`) so
   // clicking a directory header toggles its collapse.
   filesPanelDirByRow: Record<number, string>;
-  // Byte offset of each file's row in the files panel buffer, so the panel
-  // can be scrolled to keep the selected file visible (B2).
-  filesPanelByteByKey: Record<string, number>;
   // File key currently highlighted in the sidebar (tracks the diff
   // viewport's top file). Lets the scroll handler skip a sidebar repaint
   // when the current file hasn't changed.
@@ -219,15 +226,27 @@ interface ReviewState {
   showComments: boolean;
   // Active file-filter query (the `/` filter). Empty = show all files.
   fileFilter: string;
-  // When true (default), the center panel renders only the focused file
-  // (`filesCurrentKey`) instead of every file's hunks. The sidebar is the
-  // multi-file navigator; this keeps the center buffer small and fast even
-  // on huge changesets. `,`/`.` move the focus between files.
+  // When true, the center panel renders only the focused file
+  // (`filesCurrentKey`) instead of every file's hunks. Derived, not a
+  // user setting — see `syncFocusMode`: the unified stream expands every
+  // file so the mouse wheel walks the whole review, and only falls back
+  // to one-file-at-a-time for the side-by-side composite (which is
+  // per-file by construction) or a changeset too big to lay out at once.
   focusOnly: boolean;
   // When true, the focused file renders as a two-column side-by-side
   // (OLD | NEW) in the center panel instead of the unified stream. The
   // `1`/`2` keys toggle it; the sidebar and other panels stay put.
   splitView: boolean;
+  // Which of the two optional side panels are on screen. Both start
+  // hidden so the diff owns the full width — the reading surface is what
+  // a review is about. `F` / `C` (or the toolbar buttons, or the `✕` in a
+  // panel header) toggle them; the choice sticks for the editor session.
+  panelsVisible: { files: boolean; comments: boolean };
+  // Last width in columns the host reported for each panel, keyed by
+  // panel name. Used to right-align the `✕` close button in a panel
+  // header; falls back to a ratio-derived estimate until the first
+  // viewport_changed for that panel arrives.
+  panelWidths: Record<string, number>;
   // Current selection in the comments panel (1-indexed row, 0 means none)
   commentsSelectedRow: number;
   // Comment-id the diff cursor is sitting on / attached to. Drives the
@@ -298,10 +317,11 @@ const state: ReviewState = {
   commentsByRow: {},
   filesPanelByRow: {},
   filesPanelDirByRow: {},
-  filesPanelByteByKey: {},
   filesCurrentKey: null,
   showComments: true,
   fileFilter: "",
+  panelsVisible: { files: false, comments: false },
+  panelWidths: {},
   focusOnly: true,
   splitView: false,
   commentsSelectedRow: 0,
@@ -879,6 +899,14 @@ function wrapText(text: string, width: number): string[] {
     return out.length > 0 ? out : [''];
 }
 
+/** Width in columns of the center diff panel — the host's last reported
+ *  viewport width for it, falling back to the terminal width before the
+ *  first `viewport_changed` arrives. */
+function diffPanelWidth(): number {
+    const known = state.panelWidths["diff"];
+    return known && known > 0 ? known : state.viewportWidth;
+}
+
 /**
  * Push inline comment box rows for a given diff line into the lines array.
  * Each comment becomes a bordered, word-wrapped callout whose border title
@@ -902,10 +930,13 @@ function pushLineComments(
     // Indent the box so its left border aligns with the diff content
     // column (just past the OLD/NEW number gutter and the +/- indicator).
     const commentIndent = ' '.repeat(LINE_NUM_W + 1 + LINE_NUM_W + 1 + 1 + 1);
-    // Box outer width, clamped to the visible content area.
+    // Box outer width, clamped to the visible content area. The diff
+    // panel's own width (not the terminal's) is what the box has to fit
+    // in — with a side panel open they differ, and nothing soft-wraps a
+    // box that overshoots any more; it just gets clipped.
     const boxW = Math.max(
         COMMENT_BOX_MIN_W,
-        Math.min(COMMENT_BOX_MAX_W, state.viewportWidth - commentIndent.length - 1)
+        Math.min(COMMENT_BOX_MAX_W, diffPanelWidth() - commentIndent.length - 1)
     );
     const innerW = boxW - 4; // "| " + content + " |"
     for (const comment of lineComments) {
@@ -1438,9 +1469,52 @@ function buildToolbar(W: number): TextPropertyEntry[] {
 
 // --- Buffer Group panel content builders ---
 
-function buildToolbarPanelEntries(): TextPropertyEntry[] {
-    // Two-row toolbar: navigation hints on row 1, actions on row 2.
-    return buildToolbar(state.viewportWidth);
+// The toolbar is a widget panel: two hint rows (still built as styled
+// text entries and wrapped in `raw`) plus the two panel buttons pinned to
+// the right of the second row by a `flexSpacer`. The buttons are real
+// `Button` widgets, so the host owns their hit-testing, hover styling and
+// keyboard activation and the plugin only handles `widget_event`.
+const PANEL_BUTTON_KEYS = {
+    files: "toolbar.files",
+    comments: "toolbar.comments",
+} as const;
+
+/** Columns the two toolbar buttons take, including the gap between them
+ *  and the `[ ]` frames the host draws — the budget the hint text has to
+ *  leave free. Used only to size the *text*; where the buttons actually
+ *  land is the host's layout, not ours. */
+function toolbarButtonsWidth(): number {
+    return panelButtonLabel('files').length
+        + panelButtonLabel('comments').length
+        + 10; // two `[ ]` frames + the gap between the buttons
+}
+
+function panelButtonLabel(panel: 'files' | 'comments'): string {
+    const name = panel === 'files'
+        ? (editor.t("panel.files") || "Files")
+        : (editor.t("panel.comments") || "Comments");
+    return `${state.panelsVisible[panel] ? '▾' : '▸'} ${name}`;
+}
+
+function panelButton(panel: 'files' | 'comments'): WidgetSpec {
+    return button(panelButtonLabel(panel), {
+        key: PANEL_BUTTON_KEYS[panel],
+        // Mouse-first affordance: the review mode's Tab cycle belongs to
+        // the three content panels, and `F` / `C` already drive these
+        // from the keyboard.
+        focusable: false,
+    });
+}
+
+/** Render the toolbar panel: hint rows plus the panel buttons. */
+function renderToolbar(): void {
+    if (toolbarPanel === null) return;
+    const W = state.viewportWidth;
+    const rows = buildToolbar(Math.max(20, W - toolbarButtonsWidth()));
+    toolbarPanel.set(col(
+        raw([rows[0]]),
+        row(raw([rows[1]]), flexSpacer(), panelButton('files'), spacer(1), panelButton('comments')),
+    ));
 }
 
 /**
@@ -1601,6 +1675,52 @@ function focusMark(panel: 'files' | 'diff' | 'comments'): string {
     return state.focusPanel === panel ? '▸' : ' ';
 }
 
+// The toolbar and the two side panels are widget panels: the host owns
+// their buttons' hit-testing, hover styling and activation, and the
+// plugin only reacts to `widget_event`. Their bodies are still
+// entry-based text, wrapped in `raw`.
+let toolbarPanel: WidgetPanel | null = null;
+let filesPanel: WidgetPanel | null = null;
+let commentsPanel: WidgetPanel | null = null;
+
+/** The close button at the right edge of an open side panel's header.
+ *  Clicking it hides that panel (same as `F` / `C`). */
+const PANEL_CLOSE_GLYPH = '✕';
+
+const PANEL_CLOSE_KEYS = {
+    files: "files.close",
+    comments: "comments.close",
+} as const;
+
+/**
+ * Header row for a side panel: the focus marker and label on the left, a
+ * `✕` hard against the right edge. A `flexSpacer` between them is sized
+ * by the host against the panel's real width, so the button stays pinned
+ * to the edge without the plugin measuring anything — and the `✕` is a
+ * real `Button`, so the host owns its hit-testing and hover styling.
+ */
+function panelHeaderSpec(panel: 'files' | 'comments', label: string): WidgetSpec {
+    const base: Partial<OverlayOptions> = {
+        fg: STYLE_INVERSE_FG,
+        bg: STYLE_INVERSE_BG,
+        bold: true,
+        extendToLineEnd: true,
+    };
+    return row(
+        raw([styledRow([{ text: `${focusMark(panel)}${label}`, style: base }], { style: base })]),
+        flexSpacer(),
+        button(PANEL_CLOSE_GLYPH, {
+            key: PANEL_CLOSE_KEYS[panel],
+            // Mouse-only, like the file explorer's and the orchestrator
+            // dock's `✕`: the keyboard has `F` / `C`, and this panel's Tab
+            // stop belongs to its list.
+            focusable: false,
+            bare: true,
+            hoverStyle: { fg: "ui.tab_close_hover_fg" },
+        }),
+    );
+}
+
 /** Parent directory of a path (with trailing slash; `./` for repo root). */
 function fileDirOf(p: string): string {
     const i = p.lastIndexOf('/');
@@ -1651,18 +1771,19 @@ function fileGroups(): FileGroup[] {
     return groups;
 }
 
+/** The FILES panel's header label (the panel's `✕` and the focus marker
+ *  are drawn by `panelHeaderSpec`). */
+function filesHeaderLabel(): string {
+    return (editor.t("panel.files") || "Files").toUpperCase()
+        + (state.fileFilter ? `  /${state.fileFilter}` : "");
+}
+
+/** The FILES panel body, one entry per row *below* the header row that
+ *  `panelHeaderSpec` occupies — hence the row counter starting at 1. */
 function buildFilesPanelEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     state.filesPanelByRow = {};
     state.filesPanelDirByRow = {};
-
-    const headerLabel = (editor.t("panel.files") || "Files").toUpperCase()
-        + (state.fileFilter ? `  /${state.fileFilter}` : "");
-    entries.push({
-        text: `${focusMark('files')}${headerLabel}\n`,
-        style: { fg: STYLE_INVERSE_FG, bg: STYLE_INVERSE_BG, bold: true, extendToLineEnd: true },
-        properties: { type: "header" },
-    });
 
     if (state.files.length === 0) {
         entries.push({
@@ -1750,45 +1871,35 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
             properties: { type: "empty" },
         });
     }
-    // Record each file row's byte offset so the panel can be scrolled to keep
-    // the selected file visible (B2).
-    state.filesPanelByteByKey = {};
-    let acc = 0;
-    for (const e of entries) {
-        const fk = e.properties && (e.properties as Record<string, unknown>)["fileKey"];
-        if (typeof fk === 'string') state.filesPanelByteByKey[fk] = acc;
-        acc += getByteLength(e.text);
-    }
     return entries;
 }
 
 /** Scroll the FILES panel so the currently-selected file row stays visible.
- *  Uses setBufferCursor (which runs ensure_cursor_visible) so the panel only
- *  scrolls when the selection would otherwise be off-screen — no jumpy
- *  re-centering when it is already in view. */
+ *  The panel's selection is plugin state, not a buffer cursor, so the host
+ *  needs telling which row to keep in view — `scrollBufferToLine` is the
+ *  buffer-group panel's version of "ensure this row is visible", and it
+ *  leaves the viewport alone when the row already is. */
 function scrollFilesToSelected(): void {
     if (state.groupId === null || !state.filesCurrentKey) return;
     const filesId = state.panelBuffers["files"];
     if (filesId === undefined) return;
-    const byte = state.filesPanelByteByKey[state.filesCurrentKey];
-    if (byte !== undefined) editor.setBufferCursor(filesId, byte);
+    for (const rowStr of Object.keys(state.filesPanelByRow)) {
+        if (state.filesPanelByRow[Number(rowStr)] === state.filesCurrentKey) {
+            editor.scrollBufferToLine(filesId, Number(rowStr) - 1);
+            return;
+        }
+    }
 }
 
+/** The COMMENTS panel's header label. */
+function commentsHeaderLabel(): string {
+    return (editor.t("panel.comments") || "Comments").toUpperCase();
+}
+
+/** The COMMENTS panel body, one entry per row below the header row. */
 function buildCommentsPanelEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     state.commentsByRow = {};
-
-    const headerLabel = (editor.t("panel.comments") || "Comments").toUpperCase();
-    entries.push({
-        text: `${focusMark('comments')}${headerLabel}\n`,
-        style: {
-            fg: STYLE_INVERSE_FG,
-            bg: STYLE_INVERSE_BG,
-            bold: true,
-            extendToLineEnd: true,
-        },
-        properties: { type: "header" },
-    });
 
     if (state.comments.length === 0) {
         entries.push({
@@ -1867,6 +1978,137 @@ function buildCommentsPanelEntries(): TextPropertyEntry[] {
     return entries;
 }
 
+/** Total number of raw diff lines across every hunk that passes the
+ *  active `/` filter — the cost of laying the whole review out at once. */
+function totalVisibleDiffLines(): number {
+    let n = 0;
+    if (!state.fileFilter) {
+        for (const h of state.hunks) n += h.lines.length;
+        return n;
+    }
+    const keys = new Set<string>();
+    for (const f of state.files) {
+        if (fileMatchesFilter(f)) keys.add(fileKey(f));
+    }
+    for (const h of state.hunks) {
+        if (keys.has(fileKeyOf(h.file, h.gitStatus || 'unstaged'))) n += h.lines.length;
+    }
+    return n;
+}
+
+/** Above this many diff lines the unified stream keeps rendering one file
+ *  at a time. Laying out every hunk of a changeset that size costs more
+ *  than the scrolling it buys, and the FILES sidebar is still the way
+ *  across such a review. */
+const EXPAND_ALL_MAX_DIFF_LINES = 20000;
+
+/**
+ * Decide whether the center renders every file or just the focused one.
+ *
+ * Unified is a single scrollable stream, so it expands everything: the
+ * mouse wheel is the primary way through a review and it must reach the
+ * whole diff, not stop at the first file's last hunk. Side-by-side builds
+ * a composite of one file's OLD/NEW buffers and is per-file by
+ * construction, so it stays focused. Oversized changesets stay focused
+ * too — see `EXPAND_ALL_MAX_DIFF_LINES`.
+ */
+function syncFocusMode(): void {
+    state.focusOnly = state.reviewLayout === 'side-by-side'
+        || totalVisibleDiffLines() > EXPAND_ALL_MAX_DIFF_LINES;
+}
+
+/** Whether `panel` is currently on screen. The diff and its sticky header
+ *  are never hidden; the two side panels are. */
+function panelVisible(panel: 'files' | 'diff' | 'comments'): boolean {
+    if (panel === 'diff') return true;
+    return state.panelsVisible[panel];
+}
+
+/** Repaint the FILES sidebar, if it is on screen. Hidden panels are not
+ *  rendered, so rebuilding their content is work nobody sees —
+ *  `setReviewPanelVisible` repaints on the way back in. */
+function renderFilesPanel(): void {
+    if (filesPanel === null || !panelVisible('files')) return;
+    filesPanel.set(col(
+        panelHeaderSpec('files', filesHeaderLabel()),
+        raw(buildFilesPanelEntries()),
+    ));
+}
+
+/** Repaint the COMMENTS rail, if it is on screen. */
+function renderCommentsPanel(): void {
+    if (commentsPanel === null || !panelVisible('comments')) return;
+    commentsPanel.set(col(
+        panelHeaderSpec('comments', commentsHeaderLabel()),
+        raw(buildCommentsPanelEntries()),
+    ));
+}
+
+/** Push the plugin's visibility state into the host's group layout. */
+function applyPanelVisibility(): void {
+    if (state.groupId === null) return;
+    for (const panel of ['files', 'comments'] as const) {
+        editor.setBufferGroupPanelVisible(state.groupId, panel, state.panelsVisible[panel]);
+    }
+}
+
+/**
+ * Show or hide one of the side panels. Hiding the panel that holds
+ * keyboard focus hands focus back to the diff (the host refuses to focus
+ * an unrendered panel, so leaving `focusPanel` pointing at it would
+ * strand the arrow keys).
+ */
+function setReviewPanelVisible(panel: 'files' | 'comments', visible: boolean): void {
+    if (state.groupId === null) return;
+    if (state.panelsVisible[panel] === visible) return;
+    state.panelsVisible[panel] = visible;
+    editor.setBufferGroupPanelVisible(state.groupId, panel, visible);
+    if (visible) {
+        if (panel === 'files') {
+            renderFilesPanel();
+            scrollFilesToSelected();
+        } else {
+            renderCommentsPanel();
+        }
+    } else if (state.focusPanel === panel) {
+        reviewSetFocus('diff');
+    }
+    // The panel appearing or vanishing is its own feedback — no status
+    // message — but the toolbar button carries the open/closed marker.
+    renderToolbar();
+}
+
+function review_toggle_files_panel(): void {
+    setReviewPanelVisible('files', !state.panelsVisible.files);
+}
+registerHandler("review_toggle_files_panel", review_toggle_files_panel);
+
+function review_toggle_comments_panel(): void {
+    setReviewPanelVisible('comments', !state.panelsVisible.comments);
+}
+registerHandler("review_toggle_comments_panel", review_toggle_comments_panel);
+
+/** Buttons in the toolbar and in the two panel headers. The host does the
+ *  hit-testing and hands us the widget key. */
+editor.on("widget_event", (data) => {
+    if (state.groupId === null) return;
+    if (data.event_type !== "activate") return;
+    switch (data.widget_key) {
+        case PANEL_BUTTON_KEYS.files:
+            review_toggle_files_panel();
+            return;
+        case PANEL_BUTTON_KEYS.comments:
+            review_toggle_comments_panel();
+            return;
+        case PANEL_CLOSE_KEYS.files:
+            setReviewPanelVisible('files', false);
+            return;
+        case PANEL_CLOSE_KEYS.comments:
+            setReviewPanelVisible('comments', false);
+            return;
+    }
+});
+
 /**
  * Full refresh — rebuild all three panels. Called on data changes
  * (refreshMagitData, comment add/edit, note edit, resize). NOT called on
@@ -1875,13 +2117,12 @@ function buildCommentsPanelEntries(): TextPropertyEntry[] {
 function updateMagitDisplay(): void {
     refreshViewportDimensions();
     if (state.groupId === null) return;
+    syncFocusMode();
     ensureFocusFile();
-    editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
+    renderToolbar();
     renderCenter();
-    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
-    if (state.panelBuffers["files"] !== undefined) {
-        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
-    }
+    renderCommentsPanel();
+    renderFilesPanel();
     refreshStickyHeader(0);
 }
 
@@ -2009,7 +2250,7 @@ function refreshStickyHeader(topVisibleRow: number): void {
         if (curKey !== state.filesCurrentKey) {
             state.filesCurrentKey = curKey;
             if (state.panelBuffers["files"] !== undefined) {
-                editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+                renderFilesPanel();
             }
         }
     }
@@ -2068,6 +2309,9 @@ function on_review_mouse_click(data: {
     const diffId = state.panelBuffers["diff"];
     const stickyId = state.panelBuffers["sticky"];
     const commentsId = state.panelBuffers["comments"];
+
+    // Clicks on the toolbar's and the panel headers' buttons arrive as
+    // `widget_event`, not here.
 
     // Click in the diff buffer: section headers and file headers are
     // both interactive — clicking either toggles its fold state.
@@ -2140,12 +2384,15 @@ function on_review_mouse_click(data: {
     // Click in the file sidebar: jump to that file and hand focus to the
     // diff so the user can immediately keep navigating.
     if (data.buffer_id === state.panelBuffers["files"]) {
+        // Row 0 is the widget header (label + `✕`); its button reports
+        // through `widget_event`, and the rest of the row is inert.
+        if (data.buffer_row === 0) return;
         // Directory header click: toggle that group's collapse.
         const dirKey = state.filesPanelDirByRow[data.buffer_row + 1];
         if (dirKey) {
             if (state.collapsedDirs.has(dirKey)) state.collapsedDirs.delete(dirKey);
             else state.collapsedDirs.add(dirKey);
-            editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+            renderFilesPanel();
             return;
         }
         const key = state.filesPanelByRow[data.buffer_row + 1];
@@ -2169,13 +2416,15 @@ function on_review_mouse_click(data: {
     // Click in the comments panel: jump to the comment's location and
     // hand focus to the diff so the user can immediately keep navigating.
     if (data.buffer_id === commentsId) {
+        // Row 0 is the widget header — see the FILES panel above.
+        if (data.buffer_row === 0) return;
         const targetRow1 = data.buffer_row + 1;
         const commentId = state.commentsByRow[targetRow1];
         if (commentId) {
             state.commentsSelectedRow = targetRow1;
             jumpToComment(commentId);
             editor.focusBufferGroupPanel(state.groupId, "diff");
-            editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+            renderCommentsPanel();
         }
         return;
     }
@@ -2206,11 +2455,11 @@ function jumpToComment(commentId: string): void {
         void (async () => {
             await buildCenterComposite(idx);
             if (state.groupId !== null && state.panelBuffers["files"] !== undefined) {
-                editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+                renderFilesPanel();
                 scrollFilesToSelected();
             }
             if (state.groupId !== null) {
-                editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+                renderCommentsPanel();
             }
             refreshStickyHeader(0);
         })();
@@ -2250,7 +2499,7 @@ function jumpToComment(commentId: string): void {
     const prevHighlight = state.commentsHighlightId;
     state.commentsHighlightId = commentId;
     if (state.groupId !== null && prevHighlight !== commentId) {
-        editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+        renderCommentsPanel();
     }
     // Prefer the diff line the comment is anchored to (line-based);
     // fall back to the hunk header if the lookup hasn't seen the
@@ -2263,7 +2512,21 @@ function jumpToComment(commentId: string): void {
 
 function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
     if (state.groupId === null) return;
+    // Side panels: remember how wide the host actually made them, and
+    // repaint once when that changes so the header's `✕` lands on the
+    // right edge instead of a guessed column.
+    for (const panel of ['files', 'comments'] as const) {
+        if (data.buffer_id !== state.panelBuffers[panel]) continue;
+        if (state.panelWidths[panel] === data.width) return;
+        state.panelWidths[panel] = data.width;
+        if (panel === 'files') renderFilesPanel();
+        else renderCommentsPanel();
+        return;
+    }
     if (data.buffer_id !== state.panelBuffers["diff"]) return;
+    // Inline comment boxes are laid out to this width (see
+    // `diffPanelWidth`); the next center rebuild picks up a change.
+    state.panelWidths["diff"] = data.width;
     // Prefer top_line when the host provides it. Virtual buffers may not
     // have line metadata, in which case top_line is null — fall back to
     // converting top_byte using our own row-byte index.
@@ -2475,7 +2738,7 @@ function selectAndJumpToComment(c: ReviewComment) {
     const idx = sorted.findIndex(x => x.id === c.id);
     if (idx >= 0) {
         state.commentsSelectedRow = idx + 2;
-        editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+        renderCommentsPanel();
     }
 }
 
@@ -2514,20 +2777,26 @@ registerHandler("review_prev_comment", review_prev_comment);
  */
 function review_focus_comments() {
     if (state.groupId === null) return;
+    // Asking for the comments panel is asking to see it.
+    setReviewPanelVisible('comments', true);
     reviewSetFocus('comments');
     // Ensure the selection highlight shows immediately.
     if (state.commentsSelectedRow < 2 && state.comments.length > 0) {
         state.commentsSelectedRow = 2;
     }
-    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    renderCommentsPanel();
 }
 registerHandler("review_focus_comments", review_focus_comments);
 
 /** The Tab/BackTab focus ring: file list → diff → comments → (wrap).
- *  Comments join the ring only when there are comments to step through. */
+ *  A hidden panel is not in the ring — there is nothing on screen to move
+ *  a cursor into. Comments join it only when there are comments to step
+ *  through. */
 function reviewFocusOrder(): Array<'files' | 'diff' | 'comments'> {
-    const order: Array<'files' | 'diff' | 'comments'> = ['files', 'diff'];
-    if (state.comments.length > 0) order.push('comments');
+    const order: Array<'files' | 'diff' | 'comments'> = [];
+    if (panelVisible('files')) order.push('files');
+    order.push('diff');
+    if (panelVisible('comments') && state.comments.length > 0) order.push('comments');
     return order;
 }
 
@@ -2613,7 +2882,7 @@ function review_comments_select_next() {
     const currentIdx = Math.max(0, state.commentsSelectedRow - 2);
     const nextIdx = Math.min(total - 1, currentIdx + 1);
     state.commentsSelectedRow = nextIdx + 2;
-    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    renderCommentsPanel();
 }
 registerHandler("review_comments_select_next", review_comments_select_next);
 
@@ -2702,7 +2971,7 @@ function review_comments_select_prev() {
     const currentIdx = Math.max(0, state.commentsSelectedRow - 2);
     const prevIdx = Math.max(0, currentIdx - 1);
     state.commentsSelectedRow = prevIdx + 2;
-    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    renderCommentsPanel();
 }
 registerHandler("review_comments_select_prev", review_comments_select_prev);
 
@@ -3954,6 +4223,7 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
  *  composite is showing). */
 function renderCenter(): void {
     if (state.groupId === null) return;
+    syncFocusMode();
     if (state.reviewLayout === 'side-by-side') {
         void buildCenterComposite();
         return;
@@ -3984,7 +4254,7 @@ function refreshFocusedFile(): void {
     const keepFocus = state.focusPanel;
     renderCenter();
     if (state.panelBuffers["files"] !== undefined) {
-        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+        renderFilesPanel();
         scrollFilesToSelected();
     }
     // Unified: scroll the newly-focused file into position and put the cursor
@@ -4200,7 +4470,11 @@ const AUTO_SPLIT_MIN_WIDTH = 140;
 function review_set_layout(layout: 'unified' | 'side-by-side'): void {
     if (state.reviewLayout !== layout) {
         state.reviewLayout = layout;
+        // Unified expands every file, side-by-side renders one — the
+        // center rebuild below has to see the new mode.
+        syncFocusMode();
         renderCenter();
+        refreshStickyHeader(state.diffViewportTopRow);
     }
     editor.setStatus(
         layout === 'side-by-side'
@@ -4246,6 +4520,8 @@ async function review_help() {
         "             ] / [      next / prev comment",
         "             z a / z r  fold all / unfold all (Enter folds one)",
         " Layout      1 / 2 / 0  split (side-by-side) / stack (unified) / auto",
+        " Panels      F / C      show / hide the files sidebar / comments rail",
+        "                        (both start hidden; ✕ in a header closes it)",
         " View        a          show / hide inline notes",
         "             /          filter files (empty to clear)",
         "             W          watch: auto-reload when a file is saved",
@@ -4804,7 +5080,7 @@ async function compositeHunkNav(dir: 1 | -1): Promise<void> {
     state.filesCurrentKey = fileKey(vis[next]);
     await buildCenterComposite(); // rebuilds the composite, resets compositeHunkIdx = 0
     if (state.groupId !== null && state.panelBuffers["files"] !== undefined) {
-        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+        renderFilesPanel();
         scrollFilesToSelected();
     }
     refreshStickyHeader(0);
@@ -5394,6 +5670,21 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
         (editor as any).setBufferShowCursors(state.panelBuffers["diff"], true);
     }
 
+    // Mount the widget panels over the group's toolbar / sidebar / rail
+    // buffers. Everything with a button on it goes through the widget
+    // runtime; the diff and its sticky header stay plain text panels.
+    toolbarPanel = state.panelBuffers["toolbar"] !== undefined
+        ? new WidgetPanel(state.panelBuffers["toolbar"]) : null;
+    filesPanel = state.panelBuffers["files"] !== undefined
+        ? new WidgetPanel(state.panelBuffers["files"]) : null;
+    commentsPanel = state.panelBuffers["comments"] !== undefined
+        ? new WidgetPanel(state.panelBuffers["comments"]) : null;
+
+    // The group is created with every panel in its layout; the two side
+    // panels are then hidden (the session default) before anything is
+    // drawn, so the diff opens at full width without a visible reflow.
+    applyPanelVisibility();
+
     updateMagitDisplay();
 
     editor.focusBufferGroupPanel(state.groupId!, "diff");
@@ -5477,6 +5768,12 @@ registerHandler("start_review_diff", start_review_diff);
 
 function stop_review_diff() {
     teardownCenterComposite();
+    // Unmount before the buffers go away, so the host drops the panels'
+    // widget state instead of holding it against dead buffer ids.
+    for (const panel of [toolbarPanel, filesPanel, commentsPanel]) panel?.unmount();
+    toolbarPanel = null;
+    filesPanel = null;
+    commentsPanel = null;
     if (state.groupId !== null) {
         editor.closeBufferGroup(state.groupId);
         state.groupId = null;
@@ -5754,10 +6051,10 @@ registerHandler("on_review_buffer_activated", on_review_buffer_activated);
 function refreshFocusIndicators(): void {
     if (state.groupId === null) return;
     if (state.panelBuffers["files"] !== undefined) {
-        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+        renderFilesPanel();
     }
     if (state.panelBuffers["comments"] !== undefined) {
-        editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+        renderCommentsPanel();
     }
     // The diff's "header" is the sticky bar; refresh it in place.
     refreshStickyHeader(Math.max(0, state.diffCursorRow - 1));
@@ -5835,7 +6132,7 @@ function on_review_cursor_moved(data: {
         const newHighlight = currentCommentIdAtCursor();
         if (newHighlight !== prevHighlight) {
             state.commentsHighlightId = newHighlight;
-            editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+            renderCommentsPanel();
         }
         return;
     }
@@ -6629,6 +6926,10 @@ editor.defineMode("review-mode", [
     ["1", "review_layout_split"],
     ["2", "review_layout_stack"],
     ["0", "review_layout_auto"],
+    // Show / hide the two side panels (both start hidden, so the diff
+    // gets the full width until you ask for them).
+    ["F", "review_toggle_files_panel"],
+    ["C", "review_toggle_comments_panel"],
     // Toggle inline review-note visibility; filter files; watch; help.
     ["a", "review_toggle_agent_notes"],
     ["/", "review_filter_files"],

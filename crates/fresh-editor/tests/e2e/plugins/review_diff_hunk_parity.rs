@@ -92,6 +92,27 @@ fn open_review_diff(harness: &mut EditorTestHarness) -> String {
     harness.screen_to_string()
 }
 
+/// Reveal the FILES sidebar (`F`); it starts hidden so the diff owns the
+/// full width.
+fn show_files_panel(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('F'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("FILES"))
+        .unwrap();
+}
+
+/// Reveal the COMMENTS rail (`C`).
+fn show_comments_panel(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('C'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("COMMENTS"))
+        .unwrap();
+}
+
 /// §5.2 — the review sidebar lists the changed file under a section header
 /// and shows add/remove counts.
 #[test]
@@ -100,6 +121,7 @@ fn test_review_sidebar_lists_files() {
     let repo = repo_with_modification();
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
 
     // The sidebar is populated asynchronously after the toolbar (with its
     // "next hunk" hint) appears, while "Generating Review Diff Stream..." is
@@ -124,6 +146,7 @@ fn test_review_layout_toggle_split_and_back() {
     let repo = repo_with_modification();
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
 
     // `1` renders the focused file as an in-panel side-by-side (the sidebar
     // stays); the status line confirms the mode.
@@ -375,6 +398,7 @@ fn test_review_help_opens_and_q_closes() {
     let repo = repo_with_modification();
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
 
     harness
         .send_key(KeyCode::Char('?'), KeyModifiers::NONE)
@@ -403,6 +427,7 @@ fn test_review_comments_rail_is_narrow() {
     let repo = repo_with_modification();
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
+    show_comments_panel(&mut harness);
 
     // The comments rail is populated asynchronously after the hint bar
     // appears — wait for its header rather than reading the first frame.

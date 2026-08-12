@@ -4319,6 +4319,26 @@ interface EditorAPI {
 	*/
 	closeBufferGroup(groupId: number): boolean;
 	/**
+	* Show or hide one panel of a buffer group, without tearing the
+	* group down.
+	* 
+	* The panel's buffer, its content and its scroll position all
+	* survive being hidden — only the group's split tree changes, so
+	* the remaining panels take over the freed space and a re-shown
+	* panel comes back where it was. Use it for optional sidebars a
+	* mode wants to toggle (a file list, a comments rail) instead of
+	* closing and recreating the group.
+	* 
+	* Hiding a panel that holds focus moves focus to a panel that is
+	* still rendered; focusing a hidden panel is a no-op. Returns
+	* `false` if the group or panel is unknown, or if the call would
+	* hide the group's last visible panel.
+	* 
+	* Queued, like every layout mutation: the returned bool only reports
+	* that the command was sent.
+	*/
+	setBufferGroupPanelVisible(groupId: number, panelName: string, visible: boolean): boolean;
+	/**
 	* Focus a specific panel within a buffer group
 	*/
 	focusBufferGroupPanel(groupId: number, panelName: string): boolean;

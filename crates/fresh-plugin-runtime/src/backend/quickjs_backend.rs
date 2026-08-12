@@ -6325,6 +6325,39 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Show or hide one panel of a buffer group, without tearing the
+    /// group down.
+    ///
+    /// The panel's buffer, its content and its scroll position all
+    /// survive being hidden — only the group's split tree changes, so
+    /// the remaining panels take over the freed space and a re-shown
+    /// panel comes back where it was. Use it for optional sidebars a
+    /// mode wants to toggle (a file list, a comments rail) instead of
+    /// closing and recreating the group.
+    ///
+    /// Hiding a panel that holds focus moves focus to a panel that is
+    /// still rendered; focusing a hidden panel is a no-op. Returns
+    /// `false` if the group or panel is unknown, or if the call would
+    /// hide the group's last visible panel.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports
+    /// that the command was sent.
+    #[qjs(rename = "setBufferGroupPanelVisible")]
+    pub fn set_buffer_group_panel_visible(
+        &self,
+        group_id: u32,
+        panel_name: String,
+        visible: bool,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBufferGroupPanelVisible {
+                group_id: group_id as usize,
+                panel_name,
+                visible,
+            })
+            .is_ok()
+    }
+
     /// Focus a specific panel within a buffer group
     #[qjs(rename = "focusBufferGroupPanel")]
     pub fn focus_buffer_group_panel(&self, group_id: u32, panel_name: String) -> bool {

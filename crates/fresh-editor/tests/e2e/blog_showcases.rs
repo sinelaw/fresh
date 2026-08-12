@@ -4354,7 +4354,8 @@ fn blog_showcase_fresh_0_4_0_review_diff() {
 
     hold(&mut h, &mut s, 4, 110);
 
-    // Open Review Diff — a three-column layout: FILES | diff | COMMENTS.
+    // Open Review Diff — the full-width unified stream, with the FILES and
+    // COMMENTS panels a keystroke away.
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
@@ -4363,13 +4364,22 @@ fn blog_showcase_fresh_0_4_0_review_diff() {
         .unwrap();
     snap(&mut h, &mut s, Some("Review Diff"), 150);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| {
-        let scr = h.screen_to_string();
-        scr.contains("FILES") && scr.contains("auth.rs") && scr.contains("COMMENTS")
-    })
-    .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("auth.rs"))
+        .unwrap();
     snap(&mut h, &mut s, Some("Enter"), 260);
-    hold(&mut h, &mut s, 7, 140);
+    hold(&mut h, &mut s, 5, 140);
+
+    // The diff opens full-width; [F] and [C] bring in the file sidebar and
+    // the comments rail for the three-column review layout.
+    h.send_key(KeyCode::Char('F'), KeyModifiers::SHIFT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("FILES"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("F"), 220);
+    h.send_key(KeyCode::Char('C'), KeyModifiers::SHIFT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("COMMENTS"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("C"), 220);
+    hold(&mut h, &mut s, 6, 140);
 
     // [1] switches the center panel to a side-by-side OLD/NEW view.
     h.send_key(KeyCode::Char('1'), KeyModifiers::NONE).unwrap();
