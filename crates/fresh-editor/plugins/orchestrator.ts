@@ -4227,7 +4227,32 @@ function unclaimedSessionAt(root: string): AgentSession | undefined {
   return undefined;
 }
 
+/// Give every agent we can see a name to be addressed by.
+///
+/// A workspace can be *known* to hold an agent — the host says what it runs
+/// or will run — while having no mailbox at all: nobody launched it through
+/// us, or the launch was in a previous run and the name went with it. Such a
+/// row appears in the list and, without this, appears nowhere in the picker.
+///
+/// Naming it here rather than at render time because this runs on the poll,
+/// which is already where the session model is reconciled — a render that
+/// mints directories as a side effect of being drawn would be a surprise.
+function nameVisibleAgents(): void {
+  for (const s of orchestratorSessions.values()) {
+    if (s.discovered || s.pending || !s.root || s.agentName) continue;
+    if (!hasKnownAgent(s)) continue;
+    // Named after the agent it runs — `claude`, `codex` — which is what the
+    // user would reach for, and made unique within the checkout so two of
+    // them never share a mailbox.
+    const base = agentKindFor(s)?.label ?? workspaceDisplayName(s);
+    const name = uniqueAgentName(s.root, base);
+    ensureAgentMailbox(s.root, name);
+    rememberAgentName(s, name);
+  }
+}
+
 function scanForUnattachedAgents(): void {
+  nameVisibleAgents();
   const attached = attachedMailboxes();
   const now = Date.now();
   const seen = new Set<string>();
@@ -4376,6 +4401,12 @@ function saveChat(): void {
 
 function appendChat(m: ChatMessage): void {
   loadChat();
+  // The control plane never says the same thing twice in a row. Its messages
+  // are answers to a key that did not work, so a user pressing that key four
+  // times got four identical paragraphs — a transcript that is mostly Fresh
+  // repeating itself, crowding out what the agents said.
+  const last = chatLog[chatLog.length - 1];
+  if (m.from === CHAT_SYSTEM && last?.from === CHAT_SYSTEM && last.text === m.text) return;
   chatLog.push(m);
   if (chatLog.length > CHAT_MAX_LINES) chatLog.splice(0, chatLog.length - CHAT_MAX_LINES);
   saveChat();
@@ -4394,9 +4425,14 @@ function knownAgentMailboxes(): Array<{ root: string; name: string }> {
   const seen = new Set<string>();
   for (const s of orchestratorSessions.values()) {
     if (s.discovered || s.pending || !s.root || !s.agentName) continue;
+    // Anything the list calls an agent can be addressed. Requiring a status
+    // file here was the reason a restored `claude` was a row you could see
+    // and not a name you could pick: it had not spoken yet, and an agent you
+    // cannot message until it speaks is useless in exactly the moment you
+    // want it — right after a restart, before it has done anything.
+    if (!hasKnownAgent(s)) continue;
     const key = agentKey(s.root, s.agentName);
     if (seen.has(key)) continue;
-    if (!launchedAgents.has(key) && !mailboxHasStatus(s.root, s.agentName)) continue;
     seen.add(key);
     out.push({ root: s.root, name: s.agentName });
   }
@@ -7493,10 +7529,25 @@ editor.defineMode(
     // the key back to the panel in the second case keeps the tree's own
     // behaviour — dive, or fold a folder — rather than reimplementing it.
     ["Enter", "orchestrator_dock_enter"],
+    // Same rule as Enter and the arrows: ours while the caret is in the chat,
+    // handed straight back otherwise so the dock's own focus cycle is
+    // unchanged for everything else.
+    ["Tab", "orchestrator_dock_tab"],
   ],
   true,
   true,
 );
+
+registerHandler("orchestrator_dock_tab", function () {
+  if (dockMode && dockFocus === "chat") {
+    chatCompleteToPick((v) => {
+      if (openPanel) openPanel.setValue("dock_chat", v, v.length);
+      refreshDockChatInPlace();
+    });
+    return;
+  }
+  if (openPanel) openPanel.command(widgetKey("Tab"));
+});
 
 /// Move the caret between the dock's chat and its list.
 registerHandler("orchestrator_dock_chat_focus", function () {
@@ -14729,7 +14780,7 @@ function chatLines(width: number): TextPropertyEntry[] {
   }
   if (out.length === 0) {
     out.push(styledRow([{
-      text: "  nothing said yet",
+      text: "  nothing said yet — agents appear here when they report",
       style: { fg: "ui.menu_disabled_fg", italic: true },
     }]));
   }
@@ -14858,6 +14909,25 @@ function moveChatPick(delta: number): void {
   if (next === chatPick) return;
   chatPick = next;
   pushChatCandidates();
+}
+
+/// Tab: fill the line in with the highlighted agent, rather than moving the
+/// caret somewhere else.
+///
+/// Tab in a text field means "complete what I am typing" everywhere else a
+/// person has ever typed a name, and a chat that used it to jump focus took
+/// the one key you would reach for and did the opposite with it. Focus moves
+/// on Alt+C; Tab completes.
+///
+/// The caller supplies the write-back because the two surfaces hold the field
+/// under different keys, and the host owns its value in both.
+function chatCompleteToPick(setValue: (v: string) => void): void {
+  if (chatTarget !== null) return;
+  const cands = chatCandidates();
+  if (cands.length === 0) return;
+  const name = cands[Math.min(chatPick, cands.length - 1)];
+  chatFilter = name;
+  setValue(name);
 }
 
 /// Send what is in the chat line to the agent that was picked.
@@ -15048,16 +15118,16 @@ function buildHomeSpec(): WidgetSpec {
         ? [
           { keys: "type", label: "filter" },
           { keys: "↑↓", label: "pick" },
+          { keys: "Tab", label: "complete" },
           { keys: "Enter", label: "choose" },
-          { keys: "Tab", label: "list" },
-          { keys: "Alt+n", label: "new agent" },
+          { keys: "Alt+c", label: "list" },
           { keys: "Esc", label: "close" },
         ]
         : homeFocus === "chat"
         ? [
           { keys: "Enter", label: `send to @${chatTarget}` },
           { keys: "@", label: "another agent" },
-          { keys: "Tab", label: "list" },
+          { keys: "Alt+c", label: "list" },
           { keys: "Alt+`", label: "type at agent" },
           { keys: "Esc", label: "close" },
         ]
@@ -15089,8 +15159,15 @@ function chatColsNow(): number {
 function candidateRows(cands: string[], width: number, rows: number): TextPropertyEntry[] {
   const out: TextPropertyEntry[] = [];
   if (cands.length === 0) {
+    // Two different empty states, and conflating them is what made this
+    // unreadable: "nothing matches what you typed" and "there is nothing to
+    // match" want different answers, and neither is served by a line that
+    // only names a key.
+    const any = knownAgentMailboxes().length > 0;
     out.push(styledRow([{
-      text: "  no agent matches — Alt+n starts one",
+      text: any
+        ? `  nothing matches "${chatFilter}" — Backspace to widen`
+        : "  no agents yet — Alt+n starts one in the selected workspace",
       style: { fg: "ui.menu_disabled_fg", italic: true },
     }]));
   } else {
@@ -15108,6 +15185,15 @@ function candidateRows(cands: string[], width: number, rows: number): TextProper
           : { fg: "ui.menu_fg" },
       }]));
     }
+  }
+  // A one-line reminder of the gesture, because the picker is the only part
+  // of the chat whose rules are not obvious from looking at it: you type to
+  // narrow, Tab fills the name in, Enter commits it.
+  if (cands.length > 1) {
+    out.unshift(styledRow([{
+      text: "  type to filter · Tab completes · Enter picks",
+      style: { fg: "ui.menu_disabled_fg", italic: true },
+    }]));
   }
   // Padded at the top, not the bottom: the block keeps one height so a
   // mutation never has to move the field, but the candidates belong *against*
@@ -15350,6 +15436,12 @@ registerHandler("orchestrator_home_open_selected", function () {
   const windowId = target?.terminalWindowId ?? target?.id;
   if (windowId !== undefined) void focusWorkspace(windowId);
 });
+registerHandler("orchestrator_home_chat_complete", function () {
+  chatCompleteToPick((v) => {
+    if (homePanel) homePanel.setValue("home_chat", v, v.length);
+    pushChatCandidates();
+  });
+});
 registerHandler("orchestrator_home_send", function () {
   // Enter means "choose" while the picker is up and "send" once it is not.
   // One key for "commit what is in front of me" reads as one gesture, where
@@ -15501,7 +15593,7 @@ editor.defineMode(HOME_MODE, [
 editor.defineMode(HOME_CHAT_MODE, [
   ["Enter", "orchestrator_home_send"],
   ["Backspace", "orchestrator_home_chat_backspace"],
-  ["Tab", "orchestrator_home_cycle"],
+  ["Tab", "orchestrator_home_chat_complete"],
   ["Escape", "orchestrator_home_close"],
   ["Up", "orchestrator_home_prev"],
   ["Down", "orchestrator_home_next"],
