@@ -622,14 +622,37 @@ impl Editor {
                     changed
                 );
                 if changed {
-                    if let Some(buffer_id) = self
+                    // Buffer-group panels are leaves of a stashed `Grouped`
+                    // subtree, not of the main split tree, so `get_buffer_id`
+                    // comes back empty for them and the hook used to be
+                    // dropped — a panel plugin never heard that its panel had
+                    // scrolled or been resized. Fall back to the grouped
+                    // subtrees for those leaves.
+                    let buffer_id = self
                         .windows
                         .get(&self.active_window)
                         .and_then(|w| w.buffers.splits())
                         .map(|(mgr, _)| mgr)
                         .expect("active window must have a populated split layout")
                         .get_buffer_id((*split_id).into())
-                    {
+                        .or_else(|| {
+                            self.active_window()
+                                .grouped_subtrees
+                                .values()
+                                .find_map(|node| {
+                                    if let crate::view::split::SplitNode::Grouped {
+                                        layout, ..
+                                    } = node
+                                    {
+                                        layout
+                                            .find((*split_id).into())
+                                            .and_then(|leaf| leaf.buffer_id())
+                                    } else {
+                                        None
+                                    }
+                                })
+                        });
+                    if let Some(buffer_id) = buffer_id {
                         // Compute top_line if line info is available
                         let top_line = self
                             .windows

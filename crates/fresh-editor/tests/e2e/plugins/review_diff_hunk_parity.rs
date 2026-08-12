@@ -138,8 +138,8 @@ fn test_review_sidebar_lists_files() {
         .unwrap();
 }
 
-/// §5.1 — `1` switches to the side-by-side split, `2` returns to the
-/// unified stack with the sidebar intact.
+/// §5.1 — `2` switches to the side-by-side split (two columns, two
+/// sides), `1` returns to the unified stack with the sidebar intact.
 #[test]
 fn test_review_layout_toggle_split_and_back() {
     init_tracing_from_env();
@@ -148,10 +148,10 @@ fn test_review_layout_toggle_split_and_back() {
     open_review_diff(&mut harness);
     show_files_panel(&mut harness);
 
-    // `1` renders the focused file as an in-panel side-by-side (the sidebar
+    // `2` renders the focused file as an in-panel side-by-side (the sidebar
     // stays); the status line confirms the mode.
     harness
-        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
         .unwrap();
     harness
         .wait_until(|h| {
@@ -160,9 +160,9 @@ fn test_review_layout_toggle_split_and_back() {
         })
         .unwrap();
 
-    // `2` returns to the unified stack, sidebar intact.
+    // `1` returns to the unified stack, sidebar intact.
     harness
-        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
         .unwrap();
     harness
         .wait_until(|h| {
@@ -473,7 +473,7 @@ fn test_review_side_by_side_shift_wheel_scrolls_horizontally() {
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
     harness
-        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
         .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Side-by-side view"))

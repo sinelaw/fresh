@@ -4381,11 +4381,11 @@ fn blog_showcase_fresh_0_4_0_review_diff() {
     snap(&mut h, &mut s, Some("C"), 220);
     hold(&mut h, &mut s, 6, 140);
 
-    // [1] switches the center panel to a side-by-side OLD/NEW view.
-    h.send_key(KeyCode::Char('1'), KeyModifiers::NONE).unwrap();
+    // [2] switches the center panel to a side-by-side OLD/NEW view.
+    h.send_key(KeyCode::Char('2'), KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("OLD (HEAD)"))
         .unwrap();
-    snap(&mut h, &mut s, Some("1"), 240);
+    snap(&mut h, &mut s, Some("2"), 240);
     hold(&mut h, &mut s, 6, 150);
 
     // Move onto a changed line and leave a comment with [c].

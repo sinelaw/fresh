@@ -1456,7 +1456,7 @@ function buildToolbar(W: number): TextPropertyEntry[] {
                { key: "c", label: "comment" }],
     ];
     const row2: HintItem[][] = [
-        [{ key: "1 2", label: "split/stack" }, { key: "↑↓", label: "move in panel" },
+        [{ key: "1 2", label: "unified/split" }, { key: "↑↓", label: "move in panel" },
          { key: "Enter", label: "jump" }, { key: "Alt+o", label: "open file" }],
         inRange
             ? [{ key: "/", label: "filter" }, { key: "?", label: "help" },
@@ -2071,8 +2071,10 @@ function setReviewPanelVisible(panel: 'files' | 'comments', visible: boolean): v
             renderCommentsPanel();
         }
     } else if (state.focusPanel === panel) {
+        // Focus cannot stay on a panel that is no longer drawn.
         reviewSetFocus('diff');
     }
+    if (!visible && state.focusPanel === panel) state.focusPanel = 'diff';
     // The panel appearing or vanishing is its own feedback — no status
     // message — but the toolbar button carries the open/closed marker.
     renderToolbar();
@@ -4116,6 +4118,25 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
     return { oldContent, newContent, absPath };
 }
 
+/** How many review comments are anchored in `file`. Shown in the
+ *  side-by-side pane labels: the composite renders two real file buffers
+ *  with nowhere to put an inline comment box, so the label says the
+ *  comments are there and the COMMENTS rail (opened by
+ *  `review_set_layout` on the way in) carries the text. */
+function commentCountForFile(file: FileEntry): number {
+    let n = 0;
+    for (const c of state.comments) if (c.file === file.path) n++;
+    return n;
+}
+
+/** `label` with a `· N comments` suffix when the file carries any, and a
+ *  pointer at the rail while the rail is closed. */
+function paneLabelWithComments(label: string, count: number): string {
+    if (count === 0) return label;
+    const where = panelVisible('comments') ? '' : ' — see COMMENTS (C)';
+    return `${label}  ·  ${count} comment${count === 1 ? '' : 's'}${where}`;
+}
+
 async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
     if (state.groupId === null) return;
     ensureFocusFile();
@@ -4166,7 +4187,12 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
         layout: layoutCfg as never,
         sources: [
             { bufferId: oldRes.bufferId, label: "OLD (HEAD)", editable: false, style: { gutterStyle: "diff-markers" } },
-            { bufferId: newRes.bufferId, label: "NEW (Working)", editable: false, style: { gutterStyle: "diff-markers" } },
+            {
+                bufferId: newRes.bufferId,
+                label: paneLabelWithComments("NEW (Working)", commentCountForFile(file)),
+                editable: false,
+                style: { gutterStyle: "diff-markers" },
+            },
         ],
         hunks: compositeHunks.length > 0 ? compositeHunks : null,
         initialFocusHunk: compositeHunks.length > 0
@@ -4473,6 +4499,14 @@ function review_set_layout(layout: 'unified' | 'side-by-side'): void {
         // Unified expands every file, side-by-side renders one — the
         // center rebuild below has to see the new mode.
         syncFocusMode();
+        // Side-by-side has nowhere to draw an inline comment box: the
+        // center is two real file buffers. The NEW pane's label says how
+        // many the file carries and the rail carries the text (Enter on a
+        // row jumps the composite to it), so open it on the way in rather
+        // than leaving the comments written but unreadable.
+        if (layout === 'side-by-side' && state.comments.length > 0) {
+            setReviewPanelVisible('comments', true);
+        }
         renderCenter();
         refreshStickyHeader(state.diffViewportTopRow);
     }
@@ -4519,7 +4553,7 @@ async function review_help() {
         "             , / .      prev / next file",
         "             ] / [      next / prev comment",
         "             z a / z r  fold all / unfold all (Enter folds one)",
-        " Layout      1 / 2 / 0  split (side-by-side) / stack (unified) / auto",
+        " Layout      1 / 2 / 0  stack (unified) / split (side-by-side) / auto",
         " Panels      F / C      show / hide the files sidebar / comments rail",
         "                        (both start hidden; ✕ in a header closes it)",
         " View        a          show / hide inline notes",
@@ -6036,6 +6070,10 @@ function on_review_buffer_activated(data: { buffer_id: number }): void {
     if (data.buffer_id === diffId || data.buffer_id === compositeId) newPanel = 'diff';
     else if (data.buffer_id === commentsId) newPanel = 'comments';
     else if (data.buffer_id === filesId) newPanel = 'files';
+    // A hidden panel's buffer can still be "activated" (repainting it
+    // touches the buffer). It is not on screen, so it must not take the
+    // arrow keys — that stranded `j` / `Down` on an invisible file list.
+    if (newPanel !== null && !panelVisible(newPanel)) return;
     if (newPanel === null || newPanel === state.focusPanel) return;
     state.focusPanel = newPanel;
     // Pin the FILES cursor to the selected row's start on *any* focus path
@@ -6917,14 +6955,21 @@ editor.defineMode("review-mode", [
     // to. Mode bindings replace globals, so we must bind these
     // explicitly even though the actions are built-in.
     ["Home", "move_line_start"], ["End", "move_line_end"],
+    // Left / Right pan the unified stream horizontally. Nothing wraps
+    // in the diff panel, so a long line runs past the right edge; the
+    // cursor walking off it is what scrolls the viewport across, the
+    // same way it does in a normal buffer (Shift+wheel pans too).
+    ["Left", "move_left"], ["Right", "move_right"],
     // Hunk navigation across the unified stream.
     ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
     // File navigation (hunk-style): focus the prev / next file.
     [",", "review_goto_prev_file"], [".", "review_goto_next_file"],
-    // Layout toggle (hunk-style): 1 = split (side-by-side of the file
-    // under the cursor), 2 = stack (unified), 0 = auto by terminal width.
-    ["1", "review_layout_split"],
-    ["2", "review_layout_stack"],
+    // Layout toggle: 1 = stack (the unified stream), 2 = split
+    // (side-by-side of the file under the cursor — two columns, two
+    // sides), 0 = auto by terminal width.
+    // 1 = one column (the unified stream), 2 = two columns (side-by-side).
+    ["1", "review_layout_stack"],
+    ["2", "review_layout_split"],
     ["0", "review_layout_auto"],
     // Show / hide the two side panels (both start hidden, so the diff
     // gets the full width until you ask for them).

@@ -540,13 +540,18 @@ impl super::Editor {
             hidden.insert(panel_name.to_string());
         }
         let existing_leaves = group.panel_splits.clone();
+        let current_buffers = group.panel_buffers.clone();
 
         // Rebuild the tree first: if the request would empty the group,
         // nothing has been mutated yet and we can decline it outright.
         let mut panel_splits: HashMap<String, LeafId> = HashMap::new();
-        let Some(inner_tree) =
-            self.build_visible_split_tree(&layout, &hidden, &existing_leaves, &mut panel_splits)
-        else {
+        let Some(inner_tree) = self.build_visible_split_tree(
+            &layout,
+            &hidden,
+            &existing_leaves,
+            &current_buffers,
+            &mut panel_splits,
+        ) else {
             tracing::warn!(
                 "setBufferGroupPanelVisible: hiding '{}' would leave group {} empty",
                 panel_name,
@@ -654,6 +659,7 @@ impl super::Editor {
         node: &GroupLayoutNode,
         hidden: &std::collections::HashSet<String>,
         existing: &HashMap<String, LeafId>,
+        current_buffers: &HashMap<String, BufferId>,
         panel_splits: &mut HashMap<String, LeafId>,
     ) -> Option<crate::view::split::SplitNode> {
         use crate::view::split::SplitNode;
@@ -664,7 +670,13 @@ impl super::Editor {
                 if hidden.contains(id) {
                     return None;
                 }
-                let buffer_id = (*buffer_id)?;
+                // `layout` records the buffer each panel was *created*
+                // with. A panel that has since been retargeted
+                // (`setBufferGroupPanelBuffer` — the review diff swaps its
+                // center panel to a composite for the side-by-side view)
+                // must keep the buffer it holds now; rebuilding from the
+                // layout's id would silently revert it.
+                let buffer_id = current_buffers.get(id).copied().or(*buffer_id)?;
                 let leaf_id = existing.get(id).copied().unwrap_or_else(|| {
                     LeafId(
                         self.windows
@@ -683,10 +695,10 @@ impl super::Editor {
                 first,
                 second,
             } => {
-                let first_node =
-                    self.build_visible_split_tree(first, hidden, existing, panel_splits);
-                let second_node =
-                    self.build_visible_split_tree(second, hidden, existing, panel_splits);
+                let first_node = self
+                    .build_visible_split_tree(first, hidden, existing, current_buffers, panel_splits);
+                let second_node = self
+                    .build_visible_split_tree(second, hidden, existing, current_buffers, panel_splits);
                 match (first_node, second_node) {
                     (Some(f), Some(s)) => {
                         let split_id = self
