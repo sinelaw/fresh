@@ -4068,6 +4068,12 @@ pub enum PluginCommand {
     /// Focus a specific panel within a buffer group
     FocusPanel { group_id: usize, panel_name: String },
 
+    /// Switch a virtual buffer's mode, and with it the keybindings that
+    /// apply while it is focused. Lets a panel enter a text-entry mode
+    /// (an in-panel filter field) without the mode's other single-key
+    /// commands eating the typing.
+    SetBufferMode { buffer_id: BufferId, mode: String },
+
     /// Show or hide one panel of a buffer group without tearing the
     /// group down. The panel's buffer and its scroll position survive
     /// while hidden; only the group's split tree changes.

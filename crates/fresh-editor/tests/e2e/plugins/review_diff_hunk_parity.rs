@@ -221,14 +221,16 @@ fn test_review_inline_comment_renders_as_box() {
     );
 }
 
-/// §5.11 — `/` filters the file list: typing a query narrows the sidebar to
-/// matching files and hides the rest.
+/// §5.11 — `/` filters the file list: it opens the sidebar with a filter
+/// field under the header, and typing narrows the tree (and the stream) to
+/// matching files as you type — no bottom prompt involved.
 #[test]
 fn test_review_filter_narrows_files() {
     init_tracing_from_env();
     let repo = repo_with_two_files();
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
     // The file sidebar populates asynchronously after the toolbar appears, so
     // wait for both files rather than snapshotting a single (possibly early)
     // frame.
@@ -242,18 +244,23 @@ fn test_review_filter_narrows_files() {
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
-    harness.wait_for_prompt().unwrap();
+    // The field lives in the panel, so no prompt opens; type straight into it.
     harness.type_text("widget").unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.wait_for_prompt_closed().unwrap();
-
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("widget.rs") && !s.contains("main.rs") && s.contains("/widget")
+            s.contains("widget.rs") && !s.contains("main.rs")
+        })
+        .unwrap();
+
+    // Enter closes the field and keeps the query.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("widget.rs") && !s.contains("main.rs")
         })
         .unwrap();
 }

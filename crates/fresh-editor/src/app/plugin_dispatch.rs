@@ -1662,6 +1662,12 @@ impl Editor {
             } => {
                 self.focus_panel(group_id, panel_name);
             }
+            PluginCommand::SetBufferMode { buffer_id, mode } => {
+                let buffer_id = self.resolve_buffer_id(buffer_id);
+                if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
+                    meta.set_virtual_mode(mode);
+                }
+            }
             PluginCommand::SetBufferGroupPanelVisible {
                 group_id,
                 panel_name,

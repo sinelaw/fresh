@@ -18,15 +18,24 @@ import {
   fetchGitLog,
 } from "./lib/git_history.ts";
 import { type GitRepo, resolveGitRepo } from "./lib/git_repo.ts";
+import type { HintEntry, TreeNode, WidgetSpec } from "./lib/widgets.ts";
 import {
   WidgetPanel,
   button,
   col,
   flexSpacer,
+  hintBar,
+  key,
+  list,
   raw,
   row,
   spacer,
   styledRow,
+  text,
+  textInputChar,
+  textInputKey,
+  tree,
+  treeNode,
 } from "./lib/widgets.ts";
 const VirtualBufferFactory = createVirtualBufferFactory(editor);
 
@@ -208,8 +217,6 @@ interface ReviewState {
   // Maps a category name (`'staged'` etc.) -> 1-indexed row of its
   // section-header row in the unified stream. Used by Tab toggle.
   sectionHeaderRows: Record<string, number>;
-  // Maps a 1-indexed row in the comments panel -> comment id
-  commentsByRow: Record<number, string>;
   // Maps a 1-indexed row in the files sidebar -> file key. Lets clicks in
   // the sidebar resolve back to a FileEntry.
   filesPanelByRow: Record<number, string>;
@@ -247,8 +254,13 @@ interface ReviewState {
   // header; falls back to a ratio-derived estimate until the first
   // viewport_changed for that panel arrives.
   panelWidths: Record<string, number>;
-  // Current selection in the comments panel (1-indexed row, 0 means none)
-  commentsSelectedRow: number;
+  // Last height in rows the host reported for each panel. The tree and
+  // list widgets need a row budget (`visibleRows`) to scroll within.
+  panelHeights: Record<string, number>;
+  // Which comment the rail has selected (null = none). The rail is a
+  // List widget: the host owns the selected *row*, the plugin owns which
+  // comment that row belongs to.
+  commentsSelectedId: string | null;
   // Comment-id the diff cursor is sitting on / attached to. Drives the
   // `>` follow-cursor marker in the comments panel.
   commentsHighlightId: string | null;
@@ -314,7 +326,6 @@ const state: ReviewState = {
   fileBodyRange: {},
   hunkBodyRange: {},
   sectionHeaderRows: {},
-  commentsByRow: {},
   filesPanelByRow: {},
   filesPanelDirByRow: {},
   filesCurrentKey: null,
@@ -322,9 +333,10 @@ const state: ReviewState = {
   fileFilter: "",
   panelsVisible: { files: false, comments: false },
   panelWidths: {},
+  panelHeights: {},
   focusOnly: true,
   splitView: false,
-  commentsSelectedRow: 0,
+  commentsSelectedId: null,
   commentsHighlightId: null,
   stickyCurrentFile: null,
   diffViewportTopRow: 0,
@@ -1368,74 +1380,11 @@ interface HintItem {
 }
 
 /**
- * Build a styled toolbar entry with highlighted key hints.
- * Keys get bold + keyword color; labels get dim text; groups separated by │.
- */
-function buildToolbarRow(W: number, groups: HintItem[][]): TextPropertyEntry {
-    const overlays: InlineOverlay[] = [];
-    let text = " ";
-    let bytePos = getByteLength(" ");
-    let done = false;
-
-    for (let g = 0; g < groups.length && !done; g++) {
-        if (g > 0) {
-            const sep = " │ ";
-            if (text.length + sep.length > W) { done = true; break; }
-            overlays.push({ start: bytePos, end: bytePos + getByteLength(sep), style: { fg: STYLE_TOOLBAR_SEP } });
-            text += sep;
-            bytePos += getByteLength(sep);
-        }
-        for (let h = 0; h < groups[g].length && !done; h++) {
-            const item = groups[g][h];
-            const gap = h > 0 ? "  " : "";
-            // Bracket-style key hint: "[key] label" — the brackets make
-            // the keys legible without a saturated bg, which works in
-            // every theme (no Dracula hot-pink toolbar problem). When
-            // the key itself is `[` or `]`, drop the brackets so we
-            // don't render `[[]` / `[]]`.
-            const isBracket = item.key === '[' || item.key === ']';
-            const keyDisplay = isBracket ? item.key : `[${item.key}]`;
-            const fullLen = gap.length + keyDisplay.length + 1 + item.label.length;
-            const keyOnlyLen = gap.length + keyDisplay.length;
-
-            if (text.length + fullLen <= W) {
-                if (gap) { text += gap; bytePos += getByteLength(gap); }
-                const keyLen = getByteLength(keyDisplay);
-                overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bold: true } });
-                text += keyDisplay;
-                bytePos += keyLen;
-                const labelText = " " + item.label;
-                const labelLen = getByteLength(labelText);
-                overlays.push({ start: bytePos, end: bytePos + labelLen, style: { fg: STYLE_HINT_FG } });
-                text += labelText;
-                bytePos += labelLen;
-            } else if (text.length + keyOnlyLen <= W) {
-                if (gap) { text += gap; bytePos += getByteLength(gap); }
-                const keyLen = getByteLength(keyDisplay);
-                overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bold: true } });
-                text += keyDisplay;
-                bytePos += keyLen;
-            } else {
-                done = true;
-            }
-        }
-    }
-
-    const padded = text.padEnd(W) + "\n";
-    return {
-        text: padded,
-        properties: { type: "toolbar" },
-        style: { bg: STYLE_TOOLBAR_BG, extendToLineEnd: true },
-        inlineOverlays: overlays,
-    };
-}
-
-/**
  * Build the (two-row) toolbar with all review-diff shortcuts.
  * Row 1 — navigation; row 2 — actions. Identical regardless of which
  * panel currently has focus (no more files-pane vs diff-pane variants).
  */
-function buildToolbar(W: number): TextPropertyEntry[] {
+function buildToolbar(): HintEntry[][] {
     // In range mode, stage / unstage / discard are meaningless (there is
     // no working tree to mutate), so hide them from the hint bar to keep
     // the toolbar honest. The key-bindings themselves are harmless if
@@ -1464,7 +1413,9 @@ function buildToolbar(W: number): TextPropertyEntry[] {
             : [{ key: "S U D", label: "file-level" }, { key: "/", label: "filter" },
                { key: "?", label: "help" }, { key: "q", label: "close" }],
     ];
-    return [buildToolbarRow(W, row1), buildToolbarRow(W, row2)];
+    return [row1, row2].map(groups => groups.flat().map(
+        (item): HintEntry => ({ keys: item.key, label: item.label }),
+    ));
 }
 
 // --- Buffer Group panel content builders ---
@@ -1478,16 +1429,6 @@ const PANEL_BUTTON_KEYS = {
     files: "toolbar.files",
     comments: "toolbar.comments",
 } as const;
-
-/** Columns the two toolbar buttons take, including the gap between them
- *  and the `[ ]` frames the host draws — the budget the hint text has to
- *  leave free. Used only to size the *text*; where the buttons actually
- *  land is the host's layout, not ours. */
-function toolbarButtonsWidth(): number {
-    return panelButtonLabel('files').length
-        + panelButtonLabel('comments').length
-        + 10; // two `[ ]` frames + the gap between the buttons
-}
 
 function panelButtonLabel(panel: 'files' | 'comments'): string {
     const name = panel === 'files'
@@ -1509,11 +1450,10 @@ function panelButton(panel: 'files' | 'comments'): WidgetSpec {
 /** Render the toolbar panel: hint rows plus the panel buttons. */
 function renderToolbar(): void {
     if (toolbarPanel === null) return;
-    const W = state.viewportWidth;
-    const rows = buildToolbar(Math.max(20, W - toolbarButtonsWidth()));
+    const rows = buildToolbar();
     toolbarPanel.set(col(
-        raw([rows[0]]),
-        row(raw([rows[1]]), flexSpacer(), panelButton('files'), spacer(1), panelButton('comments')),
+        hintBar(rows[0]),
+        row(hintBar(rows[1]), flexSpacer(), panelButton('files'), spacer(1), panelButton('comments')),
     ));
 }
 
@@ -1797,46 +1737,49 @@ function fileGroups(): FileGroup[] {
 /** The FILES panel's header label (the panel's `✕` and the focus marker
  *  are drawn by `panelHeaderSpec`). */
 function filesHeaderLabel(): string {
-    return (editor.t("panel.files") || "Files").toUpperCase()
-        + (state.fileFilter ? `  /${state.fileFilter}` : "");
+    return (editor.t("panel.files") || "Files").toUpperCase();
 }
 
-/** The FILES panel body, one entry per row *below* the header row that
- *  `panelHeaderSpec` occupies — hence the row counter starting at 1. */
-function buildFilesPanelEntries(): TextPropertyEntry[] {
-    const entries: TextPropertyEntry[] = [];
-    state.filesPanelByRow = {};
-    state.filesPanelDirByRow = {};
-    // Every row is cut to the panel's width. A row wider than the panel
-    // would let the buffer scroll sideways (nothing wraps in a panel), and
-    // that pans the *whole* viewport — header included — the moment the
-    // hidden cursor lands past the right edge.
-    const W = panelWidthOf('files');
+// --- FILES sidebar: a host-owned Tree -------------------------------------
+//
+// The sidebar is a `Tree` widget, not plugin-drawn rows. The host owns
+// what a file list keeps getting wrong when a plugin hand-rolls it:
+// selection, expand/collapse, scrolling the selection into view, clipping
+// rows to the panel, and routing clicks. The plugin's job is to emit the
+// hierarchy (category → directory → file) and to react to `select` /
+// `activate` / `expand` events.
 
-    if (state.files.length === 0) {
-        entries.push({
-            text: ` ${editor.t("panel.no_changes") || "No changes."}\n`,
-            style: { fg: STYLE_SECTION_HEADER, italic: true },
-            properties: { type: "empty" },
-        });
-        return entries;
-    }
+const FILES_TREE_KEY = "files-tree";
+const FILES_FILTER_KEY = "files-filter";
 
-    // Per-file comment counts drive the `*N` badge.
+interface FilesTree {
+    nodes: TreeNode[];
+    keys: string[];
+    /** Node key → file key, for the file rows only. */
+    fileByNodeKey: Record<string, string>;
+    /** Index in `nodes` of each file row, so the selection can be
+     *  restored from `state.filesCurrentKey` on every rebuild. */
+    indexByFileKey: Record<string, number>;
+    /** Every category / directory key, the initial expanded set. */
+    groupKeys: string[];
+}
+
+/** Build the sidebar's node list: one row per category, per directory,
+ *  and per file, depth-first. The tree draws its own disclosure glyphs
+ *  and indents by depth, so the rows carry text only. */
+function buildFilesTree(): FilesTree {
+    const out: FilesTree = {
+        nodes: [], keys: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
+    };
     const commentCounts: Record<string, number> = {};
     for (const c of state.comments) commentCounts[c.file] = (commentCounts[c.file] || 0) + 1;
 
-    // Render straight from the shared grouping so the list and arrow-key
-    // navigation (visibleFiles) traverse the same order.
     const groups = fileGroups();
     const catCounts: Record<string, number> = {};
     for (const g of groups) catCounts[g.category] = (catCounts[g.category] || 0) + g.files.length;
 
-    let row1 = 1; // header occupied row 1
-    let shownAny = false;
     let lastCategory: string | undefined;
     for (const group of groups) {
-        shownAny = true;
         if (group.category !== lastCategory) {
             lastCategory = group.category;
             let label: string = group.category;
@@ -1845,82 +1788,97 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
             else if (group.category === 'unstaged') label = editor.t("section.unstaged") || "Changes";
             else if (group.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
             const display = state.mode === 'range' ? label : label.toUpperCase();
-            row1++;
-            entries.push({
-                text: `${elideRight(` ${display} (${catCounts[group.category]})`, W)}\n`,
-                style: { fg: STYLE_SECTION_HEADER, bold: true },
-                properties: { type: "files-section" },
-            });
+            const key = `cat:${group.category}`;
+            out.groupKeys.push(key);
+            out.keys.push(key);
+            out.nodes.push(treeNode(
+                { text: `${display} (${catCounts[group.category]})`, style: { fg: STYLE_SECTION_HEADER, bold: true } },
+                { depth: 0, hasChildren: true },
+            ));
         }
 
-        const dirFiles = group.files;
-        const collapsed = state.collapsedDirs.has(group.dirKey);
         let added = 0, removed = 0;
-        for (const f of dirFiles) {
+        for (const f of group.files) {
             const c = fileChangeCounts(f);
             added += c.added; removed += c.removed;
         }
-        const tri = collapsed ? '▸' : '▾';
-        const countNote = collapsed
-            ? `  ${dirFiles.length} file${dirFiles.length === 1 ? '' : 's'}` : '';
-        row1++;
-        state.filesPanelDirByRow[row1] = group.dirKey;
-        // The counts are the part worth keeping when a path is too long,
-        // so the path is what gets elided (from the left — the leaf
-        // directory says more than the repo root).
-        const dirStats = `${countNote}  +${added} -${removed}`;
-        entries.push({
-            text: ` ${tri} ${elideLeft(group.dir, Math.max(4, W - 3 - dirStats.length))}${dirStats}\n`,
-            style: { fg: STYLE_SECTION_HEADER },
-            properties: { type: "files-dir", dirKey: group.dirKey },
-        });
-        if (collapsed) continue;
+        const dirKey = `dir:${group.dirKey}`;
+        out.groupKeys.push(dirKey);
+        out.keys.push(dirKey);
+        out.nodes.push(treeNode(
+            { text: `${group.dir}  +${added} -${removed}`, style: { fg: STYLE_SECTION_HEADER } },
+            { depth: 1, hasChildren: true },
+        ));
 
-        for (const file of dirFiles) {
+        for (const file of group.files) {
             const counts = fileChangeCounts(file);
             const key = fileKey(file);
-            const glyph = file.status || ' ';
             const badge = commentCounts[file.path] ? ` *${commentCounts[file.path]}` : '';
-            const stats = `  +${counts.added} -${counts.removed}${badge}`;
-            row1++;
-            const selected = key === state.filesCurrentKey;
-            const style: Partial<OverlayOptions> = selected
-                ? { bg: STYLE_SELECTED_BG, bold: true, extendToLineEnd: true }
-                : {};
-            state.filesPanelByRow[row1] = key;
-            // Basename only — the directory header carries the path.
-            entries.push({
-                text: `   ${glyph} ${elideRight(fileBaseOf(file.path), Math.max(4, W - 5 - stats.length))}${stats}\n`,
-                style,
-                properties: { type: "file", fileKey: key, filePath: file.path },
-            });
+            const nodeKey = `file:${key}`;
+            out.fileByNodeKey[nodeKey] = key;
+            out.indexByFileKey[key] = out.nodes.length;
+            out.keys.push(nodeKey);
+            out.nodes.push(treeNode(
+                {
+                    text: `${file.status || ' '} ${fileBaseOf(file.path)}  +${counts.added} -${counts.removed}${badge}`,
+                    properties: { type: "file", fileKey: key, filePath: file.path },
+                },
+                { depth: 2 },
+            ));
         }
     }
-    if (!shownAny && state.fileFilter) {
-        entries.push({
-            text: ` ${editor.t("status.filter_no_match") || "No files match"}\n`,
-            style: { fg: STYLE_SECTION_HEADER, italic: true },
-            properties: { type: "empty" },
-        });
-    }
-    return entries;
+    return out;
 }
 
-/** Scroll the FILES panel so the currently-selected file row stays visible.
- *  The panel's selection is plugin state, not a buffer cursor, so the host
- *  needs telling which row to keep in view — `scrollBufferToLine` is the
- *  buffer-group panel's version of "ensure this row is visible", and it
- *  leaves the viewport alone when the row already is. */
-function scrollFilesToSelected(): void {
-    if (state.groupId === null || !state.filesCurrentKey) return;
-    const filesId = state.panelBuffers["files"];
-    if (filesId === undefined) return;
-    for (const rowStr of Object.keys(state.filesPanelByRow)) {
-        if (state.filesPanelByRow[Number(rowStr)] === state.filesCurrentKey) {
-            editor.scrollBufferToLine(filesId, Number(rowStr) - 1);
-            return;
-        }
+/** The sidebar tree as last built — the map from a `select` event's node
+ *  key back to a file. */
+let filesTree: FilesTree = {
+    nodes: [], keys: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
+};
+
+/** Rows a side panel's list/tree can use: its height minus the header
+ *  (and the filter field when it is showing). */
+function panelListRows(panel: 'files' | 'comments'): number {
+    const height = state.panelHeights[panel] ?? Math.max(8, state.viewportHeight - 6);
+    const chrome = 1 + (panel === 'files' && filterEditing ? 1 : 0);
+    return Math.max(1, height - chrome);
+}
+
+/** The FILES panel spec: header, the filter field while `/` is open, and
+ *  the file tree. */
+function buildFilesPanelSpec(): WidgetSpec {
+    filesTree = buildFilesTree();
+    const selected = state.filesCurrentKey !== null
+        ? (filesTree.indexByFileKey[state.filesCurrentKey] ?? -1)
+        : -1;
+    const parts: WidgetSpec[] = [panelHeaderSpec('files', filesHeaderLabel())];
+    if (filterEditing) {
+        parts.push(text({
+            value: state.fileFilter,
+            cursorByte: filterCursor,
+            placeholder: editor.t("prompt.filter_files") || "Filter files",
+            fullWidth: true,
+            key: FILES_FILTER_KEY,
+        }));
     }
+    if (filesTree.nodes.length === 0) {
+        parts.push(raw([{
+            text: ` ${(state.fileFilter
+                ? editor.t("status.filter_no_match") || "No files match"
+                : editor.t("panel.no_changes") || "No changes.")}\n`,
+            style: { fg: STYLE_SECTION_HEADER, italic: true },
+        }]));
+    } else {
+        parts.push(tree({
+            nodes: filesTree.nodes,
+            itemKeys: filesTree.keys,
+            selectedIndex: selected,
+            visibleRows: panelListRows('files'),
+            expandedKeys: filesTree.groupKeys,
+            key: FILES_TREE_KEY,
+        }));
+    }
+    return col(...parts);
 }
 
 /** The COMMENTS panel's header label. */
@@ -1928,86 +1886,100 @@ function commentsHeaderLabel(): string {
     return (editor.t("panel.comments") || "Comments").toUpperCase();
 }
 
-/** The COMMENTS panel body, one entry per row below the header row. */
-function buildCommentsPanelEntries(): TextPropertyEntry[] {
-    const entries: TextPropertyEntry[] = [];
-    state.commentsByRow = {};
+// --- COMMENTS rail: a host-owned List ------------------------------------
+//
+// One list item per rendered row — a comment's location row plus the rows
+// its note wraps onto — all keyed back to the same comment. The host owns
+// selection, scrolling and click routing; the plugin maps the selected
+// item back to a comment and snaps the selection to that comment's
+// location row, so stepping with ↑↓ moves comment by comment while the
+// note still renders in full.
 
-    if (state.comments.length === 0) {
-        entries.push({
-            text: ` ${editor.t("panel.no_comments") || "No comments yet."}\n`,
-            style: { fg: STYLE_SECTION_HEADER, italic: true },
-            properties: { type: "empty" },
-        });
-        return entries;
-    }
+const COMMENTS_LIST_KEY = "comments-list";
 
-    // Order comments by their position in the unified stream. We approximate
-    // by sorting by (file index, line number, removed/added preference).
-    const fileIndex = (file: string, category: string | undefined): number => {
+interface CommentsList {
+    items: TextPropertyEntry[];
+    keys: string[];
+    /** Item index of each comment's location row. */
+    indexById: Record<string, number>;
+}
+
+/** Comments in stream order: by file, then by line. */
+function commentsInStreamOrder(): ReviewComment[] {
+    const fileIndex = (file: string): number => {
         for (let i = 0; i < state.files.length; i++) {
-            const f = state.files[i];
-            if (f.path === file) return i;
+            if (state.files[i].path === file) return i;
         }
         return Number.MAX_SAFE_INTEGER;
     };
-
-    const sortedComments = [...state.comments].sort((a, b) => {
-        // Look up via hunk's file
-        const hunkA = state.hunks.find(h => h.id === a.hunk_id);
-        const hunkB = state.hunks.find(h => h.id === b.hunk_id);
-        const fa = fileIndex(a.file, hunkA?.gitStatus);
-        const fb = fileIndex(b.file, hunkB?.gitStatus);
+    return [...state.comments].sort((a, b) => {
+        const fa = fileIndex(a.file);
+        const fb = fileIndex(b.file);
         if (fa !== fb) return fa - fb;
-        const la = a.new_line ?? a.old_line ?? 0;
-        const lb = b.new_line ?? b.old_line ?? 0;
-        return la - lb;
+        return (a.new_line ?? a.old_line ?? 0) - (b.new_line ?? b.old_line ?? 0);
     });
+}
 
-    // Each comment renders as a block: a "path:line" location row followed
-    // by the note text wrapped over as many rows as needed (no truncation).
-    // Every row maps back to the comment id, so clicking or selecting any
-    // row of the block jumps to that comment.
-    const panelWidth = Math.max(20, Math.floor(state.viewportWidth * 0.25) - 2);
-    let rowIdx = 1; // header is row 0 (0-indexed); comments start at row 1
-    for (const c of sortedComments) {
+function buildCommentsList(): CommentsList {
+    const out: CommentsList = { items: [], keys: [], indexById: {} };
+    const width = Math.max(12, panelWidthOf('comments') - 1);
+    for (const c of commentsInStreamOrder()) {
         const lineRef = c.new_line ?? c.old_line ?? 0;
         const path = c.file.split('/').pop() || c.file;
         const isCurrent = c.id === state.commentsHighlightId;
         const marker = isCurrent ? '>' : ' ';
-
-        // Location row.
-        rowIdx++;
         const locText = `${marker} ${path}:${lineRef}`;
-        const locSelected = rowIdx === state.commentsSelectedRow && state.focusPanel === 'comments';
-        const locDisplay = locText.length > panelWidth ? locText.slice(0, panelWidth - 1) + '…' : locText;
-        state.commentsByRow[rowIdx] = c.id;
-        entries.push({
-            text: locDisplay + "\n",
-            style: locSelected
-                ? { bg: STYLE_SELECTED_BG, bold: true, extendToLineEnd: true }
-                : { bold: true },
-            inlineOverlays: [{ start: 2, end: getByteLength(locText), style: { fg: STYLE_KEY_FG } }],
+        out.indexById[c.id] = out.items.length;
+        out.keys.push(`c:${c.id}#loc`);
+        out.items.push({
+            text: elideRight(locText, width),
+            style: { bold: true },
+            inlineOverlays: [{ start: 2, end: getByteLength(elideRight(locText, width)), style: { fg: STYLE_KEY_FG } }],
             properties: { type: "comment-nav", commentId: c.id, file: c.file, line: lineRef },
         });
-
-        // Body rows: the full note text, wrapped and indented.
         const body = c.text.replace(/\s+/g, ' ').trim();
-        for (const wl of wrapText(body, panelWidth - 3)) {
-            rowIdx++;
-            const bodySelected = rowIdx === state.commentsSelectedRow && state.focusPanel === 'comments';
-            state.commentsByRow[rowIdx] = c.id;
-            entries.push({
-                text: `   ${wl}\n`,
-                style: bodySelected
-                    ? { bg: STYLE_SELECTED_BG, extendToLineEnd: true }
-                    : (isCurrent ? undefined : { fg: STYLE_COMMENT }),
+        const lines = wrapText(body, Math.max(4, width - 3));
+        for (let i = 0; i < lines.length; i++) {
+            out.keys.push(`c:${c.id}#${i}`);
+            out.items.push({
+                text: `   ${lines[i]}`,
+                style: isCurrent ? undefined : { fg: STYLE_COMMENT },
                 properties: { type: "comment-nav", commentId: c.id, file: c.file, line: lineRef },
             });
         }
     }
+    return out;
+}
 
-    return entries;
+/** The rail as last built, for mapping a selection back to a comment. */
+let commentsList: CommentsList = { items: [], keys: [], indexById: {} };
+
+/** The COMMENTS panel spec: header plus the comment list. */
+function buildCommentsPanelSpec(): WidgetSpec {
+    commentsList = buildCommentsList();
+    if (commentsList.items.length === 0) {
+        return col(
+            panelHeaderSpec('comments', commentsHeaderLabel()),
+            raw([{
+                text: ` ${editor.t("panel.no_comments") || "No comments yet."}\n`,
+                style: { fg: STYLE_SECTION_HEADER, italic: true },
+            }]),
+        );
+    }
+    const selected = state.commentsSelectedId !== null
+        ? (commentsList.indexById[state.commentsSelectedId] ?? -1)
+        : -1;
+    return col(
+        panelHeaderSpec('comments', commentsHeaderLabel()),
+        list({
+            items: commentsList.items,
+            itemKeys: commentsList.keys,
+            selectedIndex: selected,
+            visibleRows: panelListRows('comments'),
+            focusable: true,
+            key: COMMENTS_LIST_KEY,
+        }),
+    );
 }
 
 /** Total number of raw diff lines across every hunk that passes the
@@ -2061,19 +2033,15 @@ function panelVisible(panel: 'files' | 'diff' | 'comments'): boolean {
  *  `setReviewPanelVisible` repaints on the way back in. */
 function renderFilesPanel(): void {
     if (filesPanel === null || !panelVisible('files')) return;
-    filesPanel.set(col(
-        panelHeaderSpec('files', filesHeaderLabel()),
-        raw(buildFilesPanelEntries()),
-    ));
+    filesPanel.set(buildFilesPanelSpec());
+    filesPanel.setFocusKey(filterEditing ? FILES_FILTER_KEY : FILES_TREE_KEY);
 }
 
 /** Repaint the COMMENTS rail, if it is on screen. */
 function renderCommentsPanel(): void {
     if (commentsPanel === null || !panelVisible('comments')) return;
-    commentsPanel.set(col(
-        panelHeaderSpec('comments', commentsHeaderLabel()),
-        raw(buildCommentsPanelEntries()),
-    ));
+    commentsPanel.set(buildCommentsPanelSpec());
+    if (state.focusPanel === 'comments') commentsPanel.setFocusKey(COMMENTS_LIST_KEY);
 }
 
 /** Push the plugin's visibility state into the host's group layout. */
@@ -2098,7 +2066,6 @@ function setReviewPanelVisible(panel: 'files' | 'comments', visible: boolean): v
     if (visible) {
         if (panel === 'files') {
             renderFilesPanel();
-            scrollFilesToSelected();
         } else {
             renderCommentsPanel();
         }
@@ -2126,6 +2093,55 @@ registerHandler("review_toggle_comments_panel", review_toggle_comments_panel);
  *  hit-testing and hands us the widget key. */
 editor.on("widget_event", (data) => {
     if (state.groupId === null) return;
+
+    // --- FILES tree: selection, activation, and the filter field --------
+    if (data.widget_key === FILES_TREE_KEY) {
+        const nodeKey = String((data.payload as Record<string, unknown>)?.["key"] ?? "");
+        if (data.event_type === "select") {
+            onFilesTreeSelect(nodeKey);
+            return;
+        }
+        if (data.event_type === "activate") {
+            // Enter on a file opens it the way Enter in the diff does;
+            // on a folder the host has already toggled the fold.
+            if (nodeKey.startsWith("file:")) void review_drill_down();
+            return;
+        }
+        return; // `expand` is host-owned; nothing to mirror.
+    }
+    if (data.widget_key === FILES_FILTER_KEY) {
+        if (data.event_type === "change") {
+            const payload = (data.payload ?? {}) as Record<string, unknown>;
+            if (typeof payload["value"] === "string") state.fileFilter = payload["value"];
+            if (typeof payload["cursorByte"] === "number") filterCursor = payload["cursorByte"];
+            applyFileFilter();
+            return;
+        }
+        if (data.event_type === "activate" || data.event_type === "cancel") {
+            closeFileFilter(data.event_type === "cancel");
+            return;
+        }
+        return;
+    }
+    // --- COMMENTS list --------------------------------------------------
+    if (data.widget_key === COMMENTS_LIST_KEY) {
+        const itemKey = String((data.payload as Record<string, unknown>)?.["key"] ?? "");
+        const commentId = itemKey.startsWith("c:") ? itemKey.slice(2).split("#")[0] : "";
+        if (!commentId) return;
+        if (data.event_type === "select") {
+            state.commentsSelectedId = commentId;
+            renderCommentsPanel();
+            return;
+        }
+        if (data.event_type === "activate") {
+            state.commentsSelectedId = commentId;
+            jumpToComment(commentId);
+            renderCommentsPanel();
+            return;
+        }
+        return;
+    }
+
     if (data.event_type !== "activate") return;
     switch (data.widget_key) {
         case PANEL_BUTTON_KEYS.files:
@@ -2142,6 +2158,25 @@ editor.on("widget_event", (data) => {
             return;
     }
 });
+
+/** A row of the FILES tree became the selection — by arrow key or click.
+ *  Selecting a file moves the review to it; selecting a category or
+ *  directory row is just navigation. */
+function onFilesTreeSelect(nodeKey: string): void {
+    const key = filesTree.fileByNodeKey[nodeKey];
+    if (key === undefined || key === state.filesCurrentKey) return;
+    state.filesCurrentKey = key;
+    if (state.focusOnly) {
+        // One file at a time (side-by-side, or an oversized changeset):
+        // the centre has to be rebuilt around the new file.
+        refreshFocusedFile();
+        return;
+    }
+    // The expanded stream already holds every file — just go there. No
+    // rebuild, so walking the sidebar with ↑↓ stays instant on a big diff.
+    const headerRow = state.fileHeaderRows[key];
+    if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+}
 
 /**
  * Full refresh — rebuild all three panels. Called on data changes
@@ -2432,54 +2467,16 @@ function on_review_mouse_click(data: {
         return;
     }
 
-    // Click in the file sidebar: jump to that file and hand focus to the
-    // diff so the user can immediately keep navigating.
-    if (data.buffer_id === state.panelBuffers["files"]) {
-        // Row 0 is the widget header (label + `✕`); its button reports
-        // through `widget_event`, and the rest of the row is inert.
-        if (data.buffer_row === 0) return;
-        // Directory header click: toggle that group's collapse.
-        const dirKey = state.filesPanelDirByRow[data.buffer_row + 1];
-        if (dirKey) {
-            if (state.collapsedDirs.has(dirKey)) state.collapsedDirs.delete(dirKey);
-            else state.collapsedDirs.add(dirKey);
-            renderFilesPanel();
-            return;
-        }
-        const key = state.filesPanelByRow[data.buffer_row + 1];
-        if (key) {
-            const file = state.files.find(f => fileKey(f) === key);
-            if (file) {
-                if (state.focusOnly) {
-                    // Focus mode: switch the center to the clicked file
-                    // (light refresh — center + sidebar + sticky only).
-                    state.filesCurrentKey = key;
-                    refreshFocusedFile();
-                } else {
-                    jumpToFile(file);
-                }
-            }
-        }
-        return;
-    }
+    // The FILES sidebar is a Tree widget: its rows, disclosure glyphs and
+    // header button all report through `widget_event`, so a raw click in
+    // that buffer has nothing left to do here.
+    if (data.buffer_id === state.panelBuffers["files"]) return;
 
     // Click in the comments panel: jump to the comment's location and
     // hand focus to the diff so the user can immediately keep navigating.
-    if (data.buffer_id === commentsId) {
-        // Row 0 is the widget header — see the FILES panel above.
-        if (data.buffer_row === 0) return;
-        const targetRow1 = data.buffer_row + 1;
-        const commentId = state.commentsByRow[targetRow1];
-        if (commentId) {
-            // Clicking a comment moves the diff to it but leaves focus in
-            // the rail — you clicked the rail, so the next arrow key
-            // should step to the next comment, not scroll the diff.
-            state.commentsSelectedRow = targetRow1;
-            jumpToComment(commentId);
-            renderCommentsPanel();
-        }
-        return;
-    }
+    // The COMMENTS rail is a List widget: its rows report through
+    // `widget_event`, so a raw click there has nothing left to do here.
+    if (data.buffer_id === commentsId) return;
 }
 registerHandler("on_review_mouse_click", on_review_mouse_click);
 
@@ -2508,7 +2505,6 @@ function jumpToComment(commentId: string): void {
             await buildCenterComposite(idx);
             if (state.groupId !== null && state.panelBuffers["files"] !== undefined) {
                 renderFilesPanel();
-                scrollFilesToSelected();
             }
             if (state.groupId !== null) {
                 renderCommentsPanel();
@@ -2569,8 +2565,10 @@ function on_review_viewport_changed(data: { split_id: number; buffer_id: number;
     // right edge instead of a guessed column.
     for (const panel of ['files', 'comments'] as const) {
         if (data.buffer_id !== state.panelBuffers[panel]) continue;
-        if (state.panelWidths[panel] === data.width) return;
+        if (state.panelWidths[panel] === data.width
+            && state.panelHeights[panel] === data.height) return;
         state.panelWidths[panel] = data.width;
+        state.panelHeights[panel] = data.height;
         if (panel === 'files') renderFilesPanel();
         else renderCommentsPanel();
         return;
@@ -2785,13 +2783,14 @@ function commentsInPanelOrder(): ReviewComment[] {
 function selectAndJumpToComment(c: ReviewComment) {
     if (state.groupId === null) return;
     jumpToComment(c.id);
-    // Find the comment's row in the panel (header is row 1, comments start at 2).
-    const sorted = commentsInPanelOrder();
-    const idx = sorted.findIndex(x => x.id === c.id);
-    if (idx >= 0) {
-        state.commentsSelectedRow = idx + 2;
-        renderCommentsPanel();
-    }
+    state.commentsSelectedId = c.id;
+    renderCommentsPanel();
+}
+
+/** Index of the selected comment among the comments, or -1. */
+function selectedCommentIndex(): number {
+    if (state.commentsSelectedId === null) return -1;
+    return commentsInPanelOrder().findIndex(c => c.id === state.commentsSelectedId);
 }
 
 function review_next_comment() {
@@ -2800,9 +2799,7 @@ function review_next_comment() {
         return;
     }
     const sorted = commentsInPanelOrder();
-    // Determine the comment-id currently under the diff cursor (if any).
-    const currentRow = state.commentsSelectedRow;
-    const currentIdx = currentRow >= 2 ? currentRow - 2 : -1;
+    const currentIdx = selectedCommentIndex();
     const nextIdx = Math.min(sorted.length - 1, currentIdx + 1);
     if (nextIdx === currentIdx && currentIdx >= 0) return;
     selectAndJumpToComment(sorted[nextIdx >= 0 ? nextIdx : 0]);
@@ -2815,9 +2812,8 @@ function review_prev_comment() {
         return;
     }
     const sorted = commentsInPanelOrder();
-    const currentRow = state.commentsSelectedRow;
-    const currentIdx = currentRow >= 2 ? currentRow - 2 : sorted.length;
-    const prevIdx = Math.max(0, currentIdx - 1);
+    const cur = selectedCommentIndex();
+    const prevIdx = Math.max(0, (cur < 0 ? sorted.length : cur) - 1);
     selectAndJumpToComment(sorted[prevIdx]);
 }
 registerHandler("review_prev_comment", review_prev_comment);
@@ -2833,8 +2829,8 @@ function review_focus_comments() {
     setReviewPanelVisible('comments', true);
     reviewSetFocus('comments');
     // Ensure the selection highlight shows immediately.
-    if (state.commentsSelectedRow < 2 && state.comments.length > 0) {
-        state.commentsSelectedRow = 2;
+    if (state.commentsSelectedId === null && state.comments.length > 0) {
+        state.commentsSelectedId = commentsInPanelOrder()[0].id;
     }
     renderCommentsPanel();
 }
@@ -2866,7 +2862,6 @@ function reviewSetFocus(panel: 'files' | 'diff' | 'comments'): void {
     if (panel === 'files') {
         selectedSidebarFile();
         renderFilesPanel();
-        scrollFilesToSelected();
     }
     refreshFocusIndicators();
 }
@@ -2923,20 +2918,16 @@ registerHandler("review_focus_prev", review_focus_prev);
  * jump the diff cursor to it (auto-expanding the file if collapsed).
  */
 function review_open_selected_comment() {
-    if (state.commentsSelectedRow < 2) return;
-    const commentId = state.commentsByRow[state.commentsSelectedRow];
-    if (!commentId) return;
-    jumpToComment(commentId);
+    if (state.commentsSelectedId === null) return;
+    jumpToComment(state.commentsSelectedId);
 }
 registerHandler("review_open_selected_comment", review_open_selected_comment);
 
 function review_comments_select_next() {
-    if (state.groupId === null) return;
-    if (state.comments.length === 0) return;
-    const total = state.comments.length;
-    const currentIdx = Math.max(0, state.commentsSelectedRow - 2);
-    const nextIdx = Math.min(total - 1, currentIdx + 1);
-    state.commentsSelectedRow = nextIdx + 2;
+    if (state.groupId === null || state.comments.length === 0) return;
+    const sorted = commentsInPanelOrder();
+    const next = Math.min(sorted.length - 1, selectedCommentIndex() + 1);
+    state.commentsSelectedId = sorted[Math.max(0, next)].id;
     renderCommentsPanel();
 }
 registerHandler("review_comments_select_next", review_comments_select_next);
@@ -3021,11 +3012,10 @@ function review_open_working_file() {
 registerHandler("review_open_working_file", review_open_working_file);
 
 function review_comments_select_prev() {
-    if (state.groupId === null) return;
-    if (state.comments.length === 0) return;
-    const currentIdx = Math.max(0, state.commentsSelectedRow - 2);
-    const prevIdx = Math.max(0, currentIdx - 1);
-    state.commentsSelectedRow = prevIdx + 2;
+    if (state.groupId === null || state.comments.length === 0) return;
+    const sorted = commentsInPanelOrder();
+    const cur = selectedCommentIndex();
+    state.commentsSelectedId = sorted[Math.max(0, (cur < 0 ? sorted.length : cur) - 1)].id;
     renderCommentsPanel();
 }
 registerHandler("review_comments_select_prev", review_comments_select_prev);
@@ -3033,13 +3023,14 @@ registerHandler("review_comments_select_prev", review_comments_select_prev);
 /** Home / End in the COMMENTS rail: first / last comment. */
 function review_comments_select_first() {
     if (state.groupId === null || state.comments.length === 0) return;
-    state.commentsSelectedRow = 2;
+    state.commentsSelectedId = commentsInPanelOrder()[0].id;
     renderCommentsPanel();
 }
 
 function review_comments_select_last() {
     if (state.groupId === null || state.comments.length === 0) return;
-    state.commentsSelectedRow = state.comments.length + 1;
+    const sorted = commentsInPanelOrder();
+    state.commentsSelectedId = sorted[sorted.length - 1].id;
     renderCommentsPanel();
 }
 
@@ -3205,7 +3196,7 @@ registerHandler("review_expand_all", review_expand_all);
 
 function review_nav_up() {
     if (state.focusPanel === 'comments') { review_comments_select_prev(); return; }
-    if (state.focusPanel === 'files') { review_goto_file(-1); return; }
+    if (state.focusPanel === 'files') { filesKey("Up"); return; }
     editor.executeAction("move_up");
     if (state.lineSelection) {
         // executeAction has already moved the cursor; sync the selection.
@@ -3219,7 +3210,7 @@ registerHandler("review_nav_up", review_nav_up);
 
 function review_nav_down() {
     if (state.focusPanel === 'comments') { review_comments_select_next(); return; }
-    if (state.focusPanel === 'files') { review_goto_file(1); return; }
+    if (state.focusPanel === 'files') { filesKey("Down"); return; }
     editor.executeAction("move_down");
     if (state.lineSelection) {
         state.lineSelection.endRow = state.lineSelection.endRow + 1;
@@ -3229,22 +3220,31 @@ function review_nav_down() {
 registerHandler("review_nav_down", review_nav_down);
 
 /** Left / Right belong to whichever panel has focus. In the diff they pan
- *  the (unwrapped) stream horizontally; in the FILES sidebar they fold and
- *  unfold the selected file's directory group — a sidebar keystroke must
- *  never reach through and scroll the diff behind it. */
+ *  the (unwrapped) stream horizontally; in the FILES sidebar the host's
+ *  tree folds and unfolds with them — a sidebar keystroke must never
+ *  reach through and scroll the diff behind it. */
 function review_nav_left() {
-    if (state.focusPanel === 'files') { setSelectedDirCollapsed(true); return; }
+    if (state.focusPanel === 'files') { filesKey("Left"); return; }
     if (state.focusPanel === 'comments') return;
     editor.executeAction("move_left");
 }
 registerHandler("review_nav_left", review_nav_left);
 
 function review_nav_right() {
-    if (state.focusPanel === 'files') { setSelectedDirCollapsed(false); return; }
+    if (state.focusPanel === 'files') { filesKey("Right"); return; }
     if (state.focusPanel === 'comments') return;
     editor.executeAction("move_right");
 }
 registerHandler("review_nav_right", review_nav_right);
+
+/** Hand a keystroke to the FILES panel's focused widget. The host's
+ *  smart-key dispatch does the rest: Up/Down move the tree's selection,
+ *  Left/Right fold and unfold, PageUp/PageDown page it, Enter activates —
+ *  and it scrolls the selection into view itself. */
+function filesKey(name: string): void {
+    if (filesPanel === null) return;
+    filesPanel.command(key(name));
+}
 
 /** The file the sidebar points at, falling back to the first visible one.
  *  In the expanded stream the selection tracks the diff cursor, which sits
@@ -3259,29 +3259,17 @@ function selectedSidebarFile(): FileEntry | null {
     return vis[0];
 }
 
-/** Collapse or expand the directory group holding the selected file. */
-function setSelectedDirCollapsed(collapsed: boolean): void {
-    const file = selectedSidebarFile();
-    if (!file) return;
-    const dirKey = `${file.category} ${fileDirOf(file.path)}`;
-    const had = state.collapsedDirs.has(dirKey);
-    if (collapsed === had) return;
-    if (collapsed) state.collapsedDirs.add(dirKey);
-    else state.collapsedDirs.delete(dirKey);
-    renderFilesPanel();
-}
-
 /** Home / End in a side panel jump to its first / last row; in the diff
  *  they keep the editor's start-of-line / end-of-line meaning. */
 function review_nav_home() {
-    if (state.focusPanel === 'files') { review_goto_file(-state.files.length); return; }
+    if (state.focusPanel === 'files') { filesKey("Home"); return; }
     if (state.focusPanel === 'comments') { review_comments_select_first(); return; }
     editor.executeAction("move_line_start");
 }
 registerHandler("review_nav_home", review_nav_home);
 
 function review_nav_end() {
-    if (state.focusPanel === 'files') { review_goto_file(state.files.length); return; }
+    if (state.focusPanel === 'files') { filesKey("End"); return; }
     if (state.focusPanel === 'comments') { review_comments_select_last(); return; }
     editor.executeAction("move_line_end");
 }
@@ -3289,14 +3277,14 @@ registerHandler("review_nav_end", review_nav_end);
 
 function review_page_up() {
     if (state.focusPanel === 'comments') { review_comments_select_prev(); return; }
-    if (state.focusPanel === 'files') { review_goto_file(-1); return; }
+    if (state.focusPanel === 'files') { filesKey("PageUp"); return; }
     editor.executeAction("move_page_up");
 }
 registerHandler("review_page_up", review_page_up);
 
 function review_page_down() {
     if (state.focusPanel === 'comments') { review_comments_select_next(); return; }
-    if (state.focusPanel === 'files') { review_goto_file(1); return; }
+    if (state.focusPanel === 'files') { filesKey("PageDown"); return; }
     editor.executeAction("move_page_down");
 }
 registerHandler("review_page_down", review_page_down);
@@ -4355,8 +4343,12 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
     editor.setBufferGroupPanelBuffer(state.groupId, "diff", compositeBufId);
     // createCompositeBuffer registers the composite as the active buffer of
     // the host split; re-focus the group panel so the review group stays the
-    // active tab and the sidebar/comments/toolbar remain visible.
+    // active tab and the sidebar/comments/toolbar remain visible — then hand
+    // focus back to whichever panel the user was actually in.
     editor.focusBufferGroupPanel(state.groupId, "diff");
+    if (state.focusPanel !== 'diff' && panelVisible(state.focusPanel)) {
+        editor.focusBufferGroupPanel(state.groupId, state.focusPanel);
+    }
     if (prev) {
         try {
             editor.closeCompositeBuffer(prev.compositeBufId);
@@ -4387,7 +4379,13 @@ function renderCenter(): void {
     if (state.panelBuffers["diff"] !== undefined) {
         editor.setBufferGroupPanelBuffer(state.groupId, "diff", state.panelBuffers["diff"]);
         editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
-        editor.focusBufferGroupPanel(state.groupId, "diff");
+        // Only claim focus when the diff is where focus belongs. Rebuilding
+        // the centre happens for reasons that have nothing to do with focus
+        // — a filter keystroke in the sidebar, a comment added — and
+        // stealing it there sends the next keystroke to the wrong panel.
+        if (state.focusPanel === 'diff') {
+            editor.focusBufferGroupPanel(state.groupId, "diff");
+        }
         applyFolds();
         applyCursorLineOverlay('diff');
     }
@@ -4406,7 +4404,6 @@ function refreshFocusedFile(): void {
     renderCenter();
     if (state.panelBuffers["files"] !== undefined) {
         renderFilesPanel();
-        scrollFilesToSelected();
     }
     // Unified: scroll the newly-focused file into position and put the cursor
     // on it, so navigating files actually moves the view to that file's diff
@@ -4895,19 +4892,46 @@ function review_goto_prev_file() { review_goto_file(-1); }
 registerHandler("review_goto_next_file", review_goto_next_file);
 registerHandler("review_goto_prev_file", review_goto_prev_file);
 
-// --- File filter (hunk-style `/`) ---
+// --- File filter: a field in the FILES panel -----------------------------
+//
+// `/` opens the sidebar with a Text widget under its header and puts the
+// panel into `review-filter` mode, where every printable key is text
+// rather than a review command. The host owns the field — caret,
+// selection, editing — and reports each edit as a `change` event; the
+// plugin only re-filters the tree. ↑↓ still walk the tree while the field
+// holds focus (the host forwards them), so you can type and pick without
+// leaving the panel.
+
+/** True while the filter field is open. */
+let filterEditing = false;
+/** Caret byte offset inside the field, mirrored from the host. */
+let filterCursor = 0;
+/** The filter as it was when the field opened, so Esc can put it back. */
+let filterBeforeEdit = "";
+
+const REVIEW_FILTER_MODE = "review-filter";
+
 function review_filter_files() {
-    const label = editor.t("prompt.filter_files") || "Filter files: ";
-    editor.startPromptWithInitial(label, "review-filter", state.fileFilter);
+    if (state.groupId === null) return;
+    setReviewPanelVisible('files', true);
+    filterBeforeEdit = state.fileFilter;
+    filterCursor = getByteLength(state.fileFilter);
+    filterEditing = true;
+    const filesBuf = state.panelBuffers["files"];
+    // While the field is open the panel's single-key commands (`s`, `c`,
+    // `n`, …) must not fire — they are letters the user is typing.
+    if (filesBuf !== undefined) editor.setBufferMode(filesBuf, REVIEW_FILTER_MODE);
+    reviewSetFocus('files');
+    renderFilesPanel();
 }
 registerHandler("review_filter_files", review_filter_files);
 
-editor.on("prompt_confirmed", (args) => {
-    if (args.prompt_type !== "review-filter") return true;
-    state.fileFilter = (args.input || "").trim();
+/** Re-filter after an edit: the tree, the centre (the stream renders only
+ *  matching files) and the status line. */
+function applyFileFilter(): void {
     ensureFocusFile();
-    updateMagitDisplay();
-    jumpDiffCursorToRow(1, { recenter: false });
+    renderFilesPanel();
+    renderCenter();
     const vis = visibleFiles().length;
     editor.setStatus(
         state.fileFilter
@@ -4915,8 +4939,65 @@ editor.on("prompt_confirmed", (args) => {
                 || `Filter "${state.fileFilter}" — ${vis} file(s)`)
             : (editor.t("status.filter_cleared") || "Filter cleared")
     );
-    return true;
-});
+}
+
+/** Close the field. `revert` puts the query back to what it was when the
+ *  field opened (Esc); otherwise the typed query stands (Enter). */
+function closeFileFilter(revert: boolean): void {
+    if (!filterEditing) return;
+    filterEditing = false;
+    if (revert && state.fileFilter !== filterBeforeEdit) {
+        state.fileFilter = filterBeforeEdit;
+        applyFileFilter();
+    }
+    const filesBuf = state.panelBuffers["files"];
+    if (filesBuf !== undefined) editor.setBufferMode(filesBuf, "review-mode");
+    renderFilesPanel();
+}
+
+function review_filter_accept() { closeFileFilter(false); }
+registerHandler("review_filter_accept", review_filter_accept);
+
+function review_filter_cancel() { closeFileFilter(true); }
+registerHandler("review_filter_cancel", review_filter_cancel);
+
+/** Printable keys while the field is open. The host applies them to the
+ *  focused Text widget and reports the new value back as a `change`. */
+function review_filter_text_input(args: { text: string }): void {
+    if (!filterEditing || filesPanel === null || !args?.text) return;
+    filesPanel.command(textInputChar(args.text));
+}
+// The host dispatches unbound printable keys in an `allowTextInput`
+// mode as the `mode_text_input` action; the `filterEditing` guard keeps
+// this a no-op everywhere else (other plugins register it too).
+registerHandler("mode_text_input", review_filter_text_input);
+
+/** Editing keys (Backspace, arrows, …) and the tree-walking keys, both
+ *  handed to the host's smart-key dispatch for the focused field. */
+function review_filter_key(name: string): void {
+    if (filesPanel === null) return;
+    filesPanel.command(name === "Backspace" || name === "Delete"
+        ? textInputKey(name)
+        : key(name));
+}
+registerHandler("review_filter_backspace", () => review_filter_key("Backspace"));
+registerHandler("review_filter_delete", () => review_filter_key("Delete"));
+registerHandler("review_filter_up", () => review_filter_key("Up"));
+registerHandler("review_filter_down", () => review_filter_key("Down"));
+registerHandler("review_filter_left", () => review_filter_key("Left"));
+registerHandler("review_filter_right", () => review_filter_key("Right"));
+
+editor.defineMode(REVIEW_FILTER_MODE, [
+    ["Esc", "review_filter_cancel"],
+    ["Enter", "review_filter_accept"],
+    ["Backspace", "review_filter_backspace"],
+    ["Delete", "review_filter_delete"],
+    ["Up", "review_filter_up"],
+    ["Down", "review_filter_down"],
+    ["Left", "review_filter_left"],
+    ["Right", "review_filter_right"],
+    ["Tab", "review_filter_accept"],
+], true, true, false);
 
 // --- Watch / auto-reload (hunk-style `--watch`, opt-in via `W`) ---
 // When enabled, saving any file in the editor re-runs the diff and rebuilds,
@@ -5360,7 +5441,6 @@ async function compositeHunkNav(dir: 1 | -1): Promise<void> {
     await buildCenterComposite(); // rebuilds the composite, resets compositeHunkIdx = 0
     if (state.groupId !== null && state.panelBuffers["files"] !== undefined) {
         renderFilesPanel();
-        scrollFilesToSelected();
     }
     refreshStickyHeader(0);
 }
@@ -5890,8 +5970,7 @@ function resetPerSessionState(): void {
     state.collapsedFiles = new Set();
     state.collapsedSections = new Set();
     state.collapsedHunks = new Set();
-    state.commentsByRow = {};
-    state.commentsSelectedRow = 0;
+    state.commentsSelectedId = null;
     state.focusPanel = 'diff';
     state.commentsHighlightId = null;
     state.stickyCurrentFile = null;
@@ -6321,10 +6400,6 @@ function on_review_buffer_activated(data: { buffer_id: number }): void {
     if (newPanel !== null && !panelVisible(newPanel)) return;
     if (newPanel === null || newPanel === state.focusPanel) return;
     state.focusPanel = newPanel;
-    // Pin the FILES cursor to the selected row's start on *any* focus path
-    // (mouse included), so the panel never lands horizontally scrolled to a
-    // long row's end.
-    if (newPanel === 'files') scrollFilesToSelected();
     refreshFocusIndicators();
 }
 registerHandler("on_review_buffer_activated", on_review_buffer_activated);
