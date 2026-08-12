@@ -83,16 +83,10 @@ impl Editor {
 
         // Check for keys that should re-enter terminal mode from scrollback view.
         // Any plain character key exits scrollback and is forwarded to the terminal.
-        //
-        // Gated on the editor pane owning the keyboard, for the same reason the
-        // live branch above is: the active buffer is still the terminal while
-        // the user is off in the file explorer, so "the active buffer is a
-        // terminal" alone would forward the explorer's own keys to the PTY.
-        // That is exactly what happened to Enter — it dived into the shell,
-        // which then took focus back, instead of opening the selected entry —
-        // and to Tab, Backspace and every plain character. `focused_terminal_live`
-        // fixed the same class for the live branch (issue #2029); this is the
-        // scroll-back branch, which the gate never reached.
+        // The focus gate matters because the active buffer is still the
+        // terminal while the user is off in the file explorer — without it
+        // Enter and every other plain key went to the PTY from under the
+        // explorer. Issue #2029 was the same class, on the live branch above.
         if self.active_window().editor_pane_owns_keyboard()
             && self
                 .active_window()

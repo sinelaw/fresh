@@ -281,7 +281,7 @@ impl KeyContext {
 
     /// Whether this context should allow Normal-context bindings to fall
     /// through when the action is in the curated UI / navigation set
-    /// (`is_terminal_ui_action`): tab/buffer switching, split navigation,
+    /// (`is_ui_fallthrough_action`): tab/buffer switching, split navigation,
     /// palette, settings, etc. These actions don't depend on a text cursor
     /// and naturally apply to whichever buffer is currently active, so
     /// users expect them to work even when keyboard focus is elsewhere
@@ -289,7 +289,7 @@ impl KeyContext {
     ///
     /// Also true for plugin `Mode(_)` contexts so that focus inside a
     /// panel (search/replace, dashboard, git log, …) doesn't swallow
-    /// global navigation keys. `is_terminal_ui_action` is the curated
+    /// global navigation keys. `is_ui_fallthrough_action` is the curated
     /// whitelist (split nav, palette, save, quit, help, …) — none of
     /// which a sensible plugin mode would want to suppress. See §18 of
     /// `docs/internal/search-replace-scope-replan-on-widgets.md`.
@@ -1967,64 +1967,88 @@ impl KeybindingResolver {
         )
     }
 
-    /// Check if an action is a UI action that should work in terminal mode
-    /// (without keyboard capture). These are general navigation and UI actions
-    /// that don't involve text editing.
-    pub fn is_terminal_ui_action(action: &Action) -> bool {
+    fn is_global_ui_action(action: &Action) -> bool {
         matches!(
             action,
-            // Global UI actions
             Action::CommandPalette
                 | Action::QuickOpen
                 | Action::QuickOpenBuffers
                 | Action::QuickOpenFiles
                 | Action::OpenLiveGrep
                 | Action::ResumeLiveGrep
+                | Action::CycleLiveGrepProvider
                 | Action::ToggleUtilityDock
                 | Action::OpenTerminalInDock
                 | Action::ToggleDockFocus
-                | Action::CycleLiveGrepProvider
                 | Action::OpenSettings
                 | Action::MenuActivate
                 | Action::MenuOpen(_)
+                | Action::ToggleMenuBar
                 | Action::ShowHelp
                 | Action::ShowKeyboardShortcuts
                 | Action::Quit
                 | Action::ForceQuit
-                // Split navigation
-                | Action::NextSplit
+        )
+    }
+
+    fn is_layout_navigation_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::NextSplit
                 | Action::PrevSplit
-                // Pane navigation (cycle through all splits + tabs)
                 | Action::NextPane
                 | Action::PrevPane
-                // Window navigation
                 | Action::NextWindow
                 | Action::PrevWindow
                 | Action::SplitHorizontal
                 | Action::SplitVertical
                 | Action::CloseSplit
                 | Action::ToggleMaximizeSplit
-                // Tab/buffer navigation
                 | Action::NextBuffer
                 | Action::PrevBuffer
                 | Action::Close
                 | Action::CloseTab
                 | Action::ScrollTabsLeft
                 | Action::ScrollTabsRight
-                // Terminal control
-                | Action::TerminalEscape
+        )
+    }
+
+    fn is_terminal_control_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::TerminalEscape
                 | Action::ToggleKeyboardCapture
                 | Action::OpenTerminal
                 | Action::OpenTerminalRight
                 | Action::OpenTerminalBelow
                 | Action::CloseTerminal
                 | Action::TerminalPaste
-                // File explorer
-                | Action::ToggleFileExplorer
-                | Action::ToggleFileExplorerSide
-                // Menu bar
-                | Action::ToggleMenuBar
         )
+    }
+
+    /// Its own group because its default keys are readline's: Ctrl+B is
+    /// backward-char, Ctrl+E is end-of-line.
+    fn is_file_explorer_ui_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::ToggleFileExplorer | Action::ToggleFileExplorerSide
+        )
+    }
+
+    /// UI actions a focused terminal yields to the editor instead of sending to
+    /// the PTY. `terminal_escape` is among them, so what is left out stays one
+    /// keystroke away rather than unreachable.
+    fn is_terminal_ui_action(action: &Action) -> bool {
+        Self::is_global_ui_action(action)
+            || Self::is_layout_navigation_action(action)
+            || Self::is_terminal_control_action(action)
+    }
+
+    /// Adds the explorer's keys back, for contexts the user looks at rather
+    /// than types into ([`KeyContext::allows_ui_fallthrough`] and the lookups
+    /// that draw keybinding hints).
+    pub fn is_ui_fallthrough_action(action: &Action) -> bool {
+        Self::is_terminal_ui_action(action) || Self::is_file_explorer_ui_action(action)
     }
 
     /// The context chain for a lookup: the context itself, its ancestors
@@ -2247,7 +2271,7 @@ impl KeybindingResolver {
                 if let Some(action) = normal_bindings.get(norm) {
                     if full_fallthrough
                         || Self::is_application_wide_action(action)
-                        || (ui_fallthrough && Self::is_terminal_ui_action(action))
+                        || (ui_fallthrough && Self::is_ui_fallthrough_action(action))
                     {
                         tracing::trace!(
                             "  -> Found action in custom normal bindings (fallthrough): {:?}",
@@ -2263,7 +2287,7 @@ impl KeybindingResolver {
                     if let Some(action) = normal_bindings.get(norm) {
                         if full_fallthrough
                             || Self::is_application_wide_action(action)
-                            || (ui_fallthrough && Self::is_terminal_ui_action(action))
+                            || (ui_fallthrough && Self::is_ui_fallthrough_action(action))
                         {
                             tracing::trace!(
                                 "  -> Found action in default normal bindings (fallthrough): {:?}",
@@ -2340,8 +2364,9 @@ impl KeybindingResolver {
     }
 
     /// Resolve a key event to a UI action for terminal mode.
-    /// Only returns actions that are classified as UI actions (is_terminal_ui_action).
-    /// Returns Action::None if the key doesn't map to a UI action.
+    /// Only returns actions the terminal yields to the editor
+    /// ([`Self::is_terminal_ui_action`]).
+    /// Returns Action::None if the key doesn't map to such an action.
     pub fn resolve_terminal_ui_action(&self, event: &KeyEvent) -> Action {
         let norm = normalize_key(event.code, event.modifiers);
         tracing::trace!(
@@ -3137,7 +3162,7 @@ impl KeybindingResolver {
         if context != KeyContext::Normal
             && (context.allows_normal_fallthrough()
                 || Self::is_application_wide_action(action)
-                || (context.allows_ui_fallthrough() && Self::is_terminal_ui_action(action)))
+                || (context.allows_ui_fallthrough() && Self::is_ui_fallthrough_action(action)))
         {
             // Check custom normal bindings
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
@@ -3445,7 +3470,7 @@ mod tests {
         );
 
         // Ctrl+S is application-wide (covered by `is_application_wide_action`),
-        // but also `is_terminal_ui_action`-true — verify the UI fallthrough
+        // but also `is_ui_fallthrough_action`-true — verify the UI fallthrough
         // path doesn't accidentally exclude it.
         let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
         assert_eq!(
@@ -3456,7 +3481,7 @@ mod tests {
 
         // Editing actions on the source buffer must NOT pass through.
         // Ctrl+D (add cursor next match) is editor-only and absent from
-        // `is_terminal_ui_action`.
+        // `is_ui_fallthrough_action`.
         let ctrl_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
         assert_ne!(
             resolver.resolve(&ctrl_d, mode_ctx),

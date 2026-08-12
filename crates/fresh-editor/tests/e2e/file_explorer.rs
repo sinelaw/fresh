@@ -366,7 +366,7 @@ fn test_palette_runs_focus_independent_command_while_explorer_focused() {
     );
 
     // And a command whose keybinding already falls through to the explorer
-    // (`is_terminal_ui_action`) is no longer greyed out in the palette either.
+    // (`is_ui_fallthrough_action`) is no longer greyed out in the palette either.
     let screen = run_from_palette(&mut harness, "Toggle Utility Dock");
     assert!(
         screen.contains("No Utility Dock open"),
