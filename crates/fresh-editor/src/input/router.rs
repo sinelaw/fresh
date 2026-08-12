@@ -317,6 +317,16 @@ pub fn widget_panel_key(
             KeyCode::Char('n' | 'N') if modifiers.contains(KeyModifiers::ALT) => {
                 return DockEvent("dock_new")
             }
+            // Alt+C — the chat's mnemonic: put the caret in the dock's chat
+            // section (expanding it first) and take it back out again. Same
+            // reason as the four above, and it has to be here rather than
+            // only in `OPEN_MODE`: without a branch the generic
+            // Alt-chord fallthrough below reads it as an unhandled shortcut
+            // and *blurs* the dock, which is what made the key look like it
+            // did nothing while quietly moving focus to the editor.
+            KeyCode::Char('c' | 'C') if modifiers.contains(KeyModifiers::ALT) => {
+                return DockEvent("dock_chat_focus")
+            }
             // Toggle the highlighted row's multi-select checkbox (plugin
             // owns the selection set).
             KeyCode::Char(' ') => return DockEvent("dock_space"),

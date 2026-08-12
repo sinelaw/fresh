@@ -5704,27 +5704,23 @@ function dockChatBlock(rows: number): WidgetSpec[] {
   if (collapsed) return [divider({ style: { fg: "ui.menu_disabled_fg" } }), header];
 
   const cols = dockChatCols();
-  const pickRows = picking ? chatPickRows() : 0;
-  const logRows = Math.max(1, rows - DOCK_CHAT_CHROME_ROWS - pickRows);
-  const out: WidgetSpec[] = [
+  const logRows = Math.max(1, rows - DOCK_CHAT_CHROME_ROWS);
+  return [
     divider({ style: { fg: "ui.menu_disabled_fg" } }),
     header,
     raw(padTop(chatLines(cols), logRows), "dock_chat_log"),
     divider({ style: { fg: "ui.menu_disabled_fg" } }),
-  ];
-  if (picking) {
-    out.push(raw(candidateRows(chatCandidates(), cols, pickRows), "dock_chat_pick"));
-  }
-  out.push(
     textInput(picking ? chatFilter : chatDraft, {
       label: picking ? "to" : `@${chatTarget}`,
-      placeholder: picking ? "which agent?" : "what should it do?",
+      placeholder: chatPlaceholder(picking),
       focused: dockFocus === "chat",
       fullWidth: true,
+      // The dock's chat is the bottom of the dock, so the candidates go up
+      // over the transcript — see the Home copy.
+      completionsAbove: true,
       key: "dock_chat",
     }),
-  );
-  return out;
+  ];
 }
 
 /// Redraw the chat's moving parts without rebuilding the dock.
@@ -5738,18 +5734,10 @@ function refreshDockChatInPlace(): void {
   const cols = dockChatCols();
   const rows = dockChatRows(screenRows());
   if (rows <= 0) return;
-  const picking = chatTarget === null;
-  const pickRows = picking ? chatPickRows() : 0;
   openPanel.setRawEntries(
     "dock_chat_log",
-    padTop(chatLines(cols), Math.max(1, rows - DOCK_CHAT_CHROME_ROWS - pickRows)),
+    padTop(chatLines(cols), Math.max(1, rows - DOCK_CHAT_CHROME_ROWS)),
   );
-  if (picking) {
-    openPanel.setRawEntries(
-      "dock_chat_pick",
-      candidateRows(chatCandidates(), cols, pickRows),
-    );
-  }
 }
 
 // Screen rows the dock tree's *visible* content occupies, mirroring the
@@ -7565,16 +7553,21 @@ registerHandler("orchestrator_dock_tab", function () {
     dockFocus = "chat";
     openPanel.update(buildDockSpec());
     openPanel.setFocusKey("dock_chat");
+    pushChatCandidates(true);
     return;
   }
-  chatCompleteToPick((v) => {
-    openPanel?.setValue("dock_chat", v, v.length);
-    refreshDockChatInPlace();
-  });
+  // Already in the chat: the completion popup owns Tab from here, and the
+  // host answers it before any of this runs. Nothing to do.
 });
 
 /// Move the caret between the dock's chat and its list.
-registerHandler("orchestrator_dock_chat_focus", function () {
+///
+/// Reachable two ways, and both matter: the `dock_chat_focus` widget_event
+/// the host routes Alt+C to, and this handler for the picker's own mode. The
+/// dock has no editor mode — it floats over the active buffer's — so a mode
+/// binding alone never fired there, and the host read Alt+C as an unclaimed
+/// Alt chord and blurred the dock instead.
+function toggleDockChatFocus(): void {
   if (!openPanel || !dockMode) return;
   // Expand on the way in: asking for the chat is asking to see it, and a key
   // that silently did nothing because the section was folded would read as a
@@ -7592,18 +7585,14 @@ registerHandler("orchestrator_dock_chat_focus", function () {
   // against a spec that still says otherwise leaves the two disagreeing.
   openPanel.update(buildDockSpec());
   openPanel.setFocusKey(dockFocus === "chat" ? "dock_chat" : "sessions");
-});
+  if (dockFocus === "chat") pushChatCandidates(true);
+}
+registerHandler("orchestrator_dock_chat_focus", toggleDockChatFocus);
 
 function dockArrow(delta: number): void {
-  if (dockMode && dockFocus === "chat" && chatTarget === null) {
-    const n = chatCandidates().length;
-    if (n === 0) return;
-    const next = Math.min(n - 1, Math.max(0, chatPick + delta));
-    if (next === chatPick) return;
-    chatPick = next;
-    refreshDockChatInPlace();
-    return;
-  }
+  // The chat's own arrows are the completion popup's, and the host moves that
+  // selection itself while the field holds the caret — so there is one
+  // forward for both cases and no plugin-side highlight to keep in step.
   if (openPanel) openPanel.command(widgetKey(delta < 0 ? "Up" : "Down"));
 }
 
@@ -7612,17 +7601,8 @@ registerHandler("orchestrator_dock_down", function () { dockArrow(1); });
 
 registerHandler("orchestrator_dock_enter", function () {
   if (dockMode && dockFocus === "chat") {
-    if (chatTarget === null) {
-      const cands = chatCandidates();
-      if (cands.length === 0) return;
-      chatTarget = cands[Math.min(chatPick, cands.length - 1)];
-      chatFilter = "";
-      chatDraft = "";
-      chatPick = 0;
-      if (openPanel) openPanel.update(buildDockSpec());
-      openPanel?.setFocusKey("dock_chat");
-      return;
-    }
+    // Picking: Enter belongs to the completion popup, which the host drives.
+    if (chatTarget === null) return;
     void sendChat();
     return;
   }
@@ -13873,20 +13853,21 @@ editor.on("widget_event", (e) => {
           return;
         }
         chatFilter = value;
-        chatPick = 0;
-        refreshDockChatInPlace();
+        pushChatCandidates();
         return;
       }
       // `@` on an empty message means "not that agent, this one".
       if (value.startsWith("@")) {
-        chatTarget = null;
-        chatFilter = value.slice(1);
-        chatPick = 0;
-        if (openPanel) openPanel.update(buildDockSpec());
-        openPanel?.setFocusKey("dock_chat");
+        openChatPicker(value.slice(1));
         return;
       }
       chatDraft = value;
+      return;
+    }
+    // The host's Alt+C — the dock has no editor mode, so the key arrives as
+    // an event rather than through the picker's keymap.
+    if (e.event_type === "dock_chat_focus") {
+      toggleDockChatFocus();
       return;
     }
     // Clicking the chat line is how the mouse aims the keyboard at it.
@@ -13897,7 +13878,14 @@ editor.on("widget_event", (e) => {
         // the same rebuild — the hints and the row budget depend on it.
         if (openPanel) openPanel.update(buildDockSpec());
         openPanel?.setFocusKey("dock_chat");
+        pushChatCandidates(true);
       }
+      return;
+    }
+    // The picker's answer, from Tab, Enter or a click on a candidate alike.
+    if (e.event_type === "completion_accept" && e.widget_key === "dock_chat") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      if (typeof payload.value === "string") acceptChatTarget(payload.value);
       return;
     }
     if (e.event_type === "focus" && e.widget_key === "sessions") {
@@ -14875,22 +14863,6 @@ function wrapPlain(text: string, width: number): string[] {
 let chatTarget: string | null = null;
 /// What has been typed into the picker's filter.
 let chatFilter = "";
-/// Which candidate is highlighted, as an index into `chatCandidates()`.
-let chatPick = 0;
-
-/// Rows the candidate list occupies while the picker is up.
-///
-/// Sized to how many agents there *are*, not how many match. Filtering must
-/// not change the layout: the list is redrawn by mutation, and a mutation
-/// cannot move the field it sits above — a height that shrank with the
-/// matches would need a re-mount, and a re-mount rebuilds the text field from
-/// our copy, which is how a keystroke gets lost between the key and its
-/// `change` event ("bash" arriving as "bsh"). Sizing to the total means the
-/// unfiltered list — what you see when the picker opens — has no wasted rows
-/// at all, and only a narrowing filter leaves any.
-function chatPickRows(): number {
-  return Math.min(Math.max(knownAgentMailboxes().length, 1), 6);
-}
 
 /// Agent names matching the filter, best-first.
 ///
@@ -14912,71 +14884,98 @@ function chatFilterMatches(filter: string): string[] {
   return [...starts, ...rest];
 }
 
-/// Redraw the candidate list in place.
-///
-/// A *mutation*, deliberately, not a re-render — see `chatPickRows`. The
-/// host's own completion popup would be the obvious primitive, and is not
-/// usable here: it paints *below* its field by extending the section
-/// downwards, and this field is the last row of a full-height panel, so the
-/// candidates would render past the frame and be clipped away entirely.
-function pushChatCandidates(): void {
-  if (!homePanel || chatTarget !== null) return;
-  homePanel.setRawEntries(
-    "home_pick",
-    candidateRows(chatCandidates(), chatColsNow(), chatPickRows()),
-  );
+/// The panel and widget key the chat line currently lives under, or `null`
+/// when no surface is showing it. Both surfaces hold the same picker under
+/// different keys, so everything that drives it asks here rather than
+/// branching on which one is up.
+function chatField(): { panel: FloatingWidgetPanel; key: string } | null {
+  if (homePanel) return { panel: homePanel, key: "home_chat" };
+  if (openPanel && dockMode && !dockChatIsCollapsed()) {
+    return { panel: openPanel, key: "dock_chat" };
+  }
+  return null;
 }
+
+/// Put the current candidates into the host's completion popup.
+///
+/// The popup is the host's, not ours: it floats above the field
+/// (`completionsAbove`), and while the field holds the caret the host's own
+/// text-input path answers Up/Down/Tab/Enter/Esc before any plugin mode
+/// binding is consulted. A hand-painted list under a plugin-owned highlight
+/// could not be driven at all from a focused dock field — Tab and Enter never
+/// reached us.
+///
+/// `setCompletions` is a mutation, so this never re-mounts: a mount rebuilds
+/// the text field from our copy, and one landing between a keystroke and its
+/// `change` event puts back a value one character old ("bash" arriving as
+/// "bsh").
+///
+/// The `Down` afterwards *enters* the popup without moving the selection —
+/// the host's first-arrow rule. It is what makes this a picker rather than a
+/// suggestion list: the top candidate is highlighted from the start, so Tab
+/// and Enter accept it instead of committing half-typed text and moving the
+/// focus on.
+function pushChatCandidates(force = false): void {
+  const f = chatField();
+  if (!f || chatTarget !== null) {
+    chatPushed = null;
+    return;
+  }
+  const cands = chatCandidates();
+  const stamp = f.key + "\u0000" + cands.join("\u0000");
+  // Skipping an unchanged push is not just an economy: it is what lets the
+  // poll call this every tick. `setCompletions` resets the host's selection
+  // to the top, so an unconditional re-push would drag the highlight back
+  // under the user's ↑/↓ once a second. A `force` is for the cases where the
+  // widget itself is new — a mount wipes instance state, so the popup that
+  // stamp describes is gone even though the candidates match.
+  if (!force && stamp === chatPushed) return;
+  chatPushed = stamp;
+  f.panel.setCompletions(f.key, cands);
+  f.panel.command(widgetKey("Down"));
+}
+
+/// The candidate list last handed to the host, and the field it went to.
+let chatPushed: string | null = null;
 
 /// Open the picker, keeping whatever is half-typed as the filter.
 function openChatPicker(filter = ""): void {
   chatTarget = null;
   chatFilter = filter;
-  chatPick = 0;
-  renderHome(true);
-  pushChatCandidates();
+  renderChatSurface(true);
+  refocusChatField();
+  pushChatCandidates(true);
 }
 
-function chooseChatTarget(): void {
-  const cands = chatCandidates();
-  // Nothing to choose: do nothing. Saying so in the chat put a line in the
-  // transcript for every press of a key that did not work — three identical
-  // paragraphs about there being no agents, which is both the least useful
-  // thing the chat could contain and a growing one. The candidate area
-  // already says "no agent matches".
-  if (cands.length === 0) return;
-  chatTarget = cands[Math.min(chatPick, cands.length - 1)];
+/// Address the chat at `name` and put the caret on the message line.
+///
+/// Called from `completion_accept` — the host fires it with the candidate
+/// that was highlighted, for Tab, Enter and a click alike, so the plugin
+/// never has to track which row that was.
+function acceptChatTarget(name: string): void {
+  chatTarget = name;
   chatFilter = "";
   chatDraft = "";
-  chatPick = 0;
-  renderHome(true);
+  const f = chatField();
+  // The popup belongs to the picker; the message line is a free text field.
+  f?.panel.setCompletions(f.key, []);
+  renderChatSurface(true);
+  refocusChatField();
 }
 
-function moveChatPick(delta: number): void {
-  const n = chatCandidates().length;
-  if (n === 0) return;
-  const next = Math.min(n - 1, Math.max(0, chatPick + delta));
-  if (next === chatPick) return;
-  chatPick = next;
-  pushChatCandidates();
+/// Re-render whichever surface is showing the chat, from the ground up.
+function renderChatSurface(force = false): void {
+  if (homePanel) {
+    renderHome(force);
+    return;
+  }
+  if (openPanel && dockMode) openPanel.update(buildDockSpec());
 }
 
-/// Tab: fill the line in with the highlighted agent, rather than moving the
-/// caret somewhere else.
-///
-/// Tab in a text field means "complete what I am typing" everywhere else a
-/// person has ever typed a name, and a chat that used it to jump focus took
-/// the one key you would reach for and did the opposite with it. Focus moves
-/// on Alt+C; Tab completes.
-///
-/// The caller supplies the write-back because the two surfaces hold the field
-/// under different keys, and the host owns its value in both.
-function chatCompleteToPick(setValue: (v: string) => void): void {
-  if (chatTarget !== null) return;
-  const cands = chatCandidates();
-  if (cands.length === 0) return;
-  const name = cands[Math.min(chatPick, cands.length - 1)];
-  chatFilter = name;
-  setValue(name);
+/// Put the caret back on the chat line after a rebuild.
+function refocusChatField(): void {
+  const f = chatField();
+  f?.panel.setFocusKey(f.key);
 }
 
 /// Send what is in the chat line to the agent that was picked.
@@ -15053,34 +15052,31 @@ function buildHomeSpec(): WidgetSpec {
   const rightCols = Math.max(30, Math.floor((cols * (100 - HOME_CHAT_PCT)) / 100) - 7);
   const chatCols = Math.max(24, Math.floor((cols * HOME_CHAT_PCT) / 100) - 7);
 
-  // The popup paints over the rows above the field without reflowing them, so
-  // the transcript keeps the whole height either way and the input line stays
-  // on the panel's last row. A composer that moves the thing you are reading
-  // when you start typing is the same complaint as a pane that collapses
-  // while a terminal starts.
+  // The candidates float over the transcript instead of taking rows from it:
+  // the popup is an overlay, so the input line stays on the panel's last row
+  // and the transcript keeps its whole height whether the picker is up or
+  // not. A composer that moves the thing you are reading when you start
+  // typing is the same complaint as a pane that collapses while a terminal
+  // starts.
   const picking = chatTarget === null;
-  const pickRows = picking ? chatPickRows() : 0;
-  const logRows = Math.max(2, chatBodyRows - pickRows);
   const chatChildren: WidgetSpec[] = [
     // Padded to a fixed height and sliced from the end: the newest message is
     // the one you came to read, so the transcript is pinned to the bottom.
-    raw(padTop(chatLines(chatCols), logRows), "home_chat_log"),
-  ];
-  if (picking) {
-    chatChildren.push(raw(candidateRows(chatCandidates(), chatCols, pickRows), "home_pick"));
-  }
-  chatChildren.push(
-    textInput(chatTarget === null ? chatFilter : chatDraft, {
+    raw(padTop(chatLines(chatCols), chatBodyRows), "home_chat_log"),
+    textInput(picking ? chatFilter : chatDraft, {
       // The label carries the address. A field that shows `@name` as part of
       // its own text invites editing it, and an address you can half-delete
       // is an address that can be wrong.
-      label: chatTarget === null ? "to" : `@${chatTarget}`,
-      placeholder: chatTarget === null ? "which agent?" : "what should it do?",
+      label: picking ? "to" : `@${chatTarget}`,
+      placeholder: chatPlaceholder(picking),
       focused: homeFocus === "chat",
       fullWidth: true,
+      // Upward, because this field is the panel's last row: a popup that
+      // grew downward would be drawn past the frame and clipped away.
+      completionsAbove: true,
       key: "home_chat",
     }),
-  );
+  ];
 
   const chatSection = labeledSection({
     label: homeFocus === "chat"
@@ -15200,57 +15196,19 @@ function chatColsNow(): number {
   return Math.max(24, Math.floor((fleetRowWidth() * HOME_CHAT_PCT) / 100) - 7);
 }
 
-/// The picker's candidate rows.
+/// What the empty chat line says when nothing has been typed into it.
 ///
-/// Not a `list` widget: the chat line has to keep the keyboard so typing
-/// filters it, and a focused list eats printable characters for its own
-/// type-ahead. So the rows are painted and the highlight is ours.
-function candidateRows(cands: string[], width: number, rows: number): TextPropertyEntry[] {
-  const out: TextPropertyEntry[] = [];
-  if (cands.length === 0) {
-    // Two different empty states, and conflating them is what made this
-    // unreadable: "nothing matches what you typed" and "there is nothing to
-    // match" want different answers, and neither is served by a line that
-    // only names a key.
-    const any = knownAgentMailboxes().length > 0;
-    out.push(styledRow([{
-      text: any
-        ? `  nothing matches "${chatFilter}" — Backspace to widen`
-        : "  no agents yet — Alt+n starts one in the selected workspace",
-      style: { fg: "ui.menu_disabled_fg", italic: true },
-    }]));
-  } else {
-    // Scroll to keep the highlight in view rather than clipping to the first
-    // the block's height: with eight agents, the one you arrowed down to has to
-    // be visible.
-    const pick = Math.min(chatPick, cands.length - 1);
-    const start = Math.max(0, Math.min(pick - rows + 1, cands.length - rows));
-    for (let i = start; i < Math.min(start + rows, cands.length); i++) {
-      const on = i === pick;
-      out.push(styledRow([{
-        text: (on ? "  ▸ @" : "    @") + cands[i],
-        style: on
-          ? { fg: "ui.menu_selected_fg", bold: true }
-          : { fg: "ui.menu_fg" },
-      }]));
-    }
-  }
-  // A one-line reminder of the gesture, because the picker is the only part
-  // of the chat whose rules are not obvious from looking at it: you type to
-  // narrow, Tab fills the name in, Enter commits it.
-  if (cands.length > 1) {
-    out.unshift(styledRow([{
-      text: "  type to filter · Tab completes · Enter picks",
-      style: { fg: "ui.menu_disabled_fg", italic: true },
-    }]));
-  }
-  // Padded at the top, not the bottom: the block keeps one height so a
-  // mutation never has to move the field, but the candidates belong *against*
-  // the line you are typing into. Padding below them pushed them up into the
-  // transcript and left a hand's width of blank between the last match and
-  // the caret.
-  while (out.length < rows) out.unshift(styledRow([{ text: " " }]));
-  return out.slice(-rows);
+/// Two different empty states, and conflating them is what made the old
+/// candidate block unreadable: "there is nothing to address" and "say
+/// something to the agent you picked" want different answers. The third —
+/// "nothing matches what you typed" — cannot happen: a keystroke that
+/// matches no agent is refused before it lands (see the `change` handlers),
+/// so the filter always names at least one candidate.
+function chatPlaceholder(picking: boolean): string {
+  if (!picking) return "what should it do?";
+  return knownAgentMailboxes().length === 0
+    ? "no agents yet — Alt+n starts one"
+    : "which agent?";
 }
 
 /// Take the last `rows` entries, padding at the top when there are fewer.
@@ -15272,7 +15230,7 @@ let homeLastSpec: string | null = null;
 /// How many transcript rows the chat pane has right now.
 function chatLogRowsNow(): number {
   const { chat } = homeLayout(fleetRows().length);
-  return Math.max(2, chat - (chatTarget === null ? chatPickRows() : 0));
+  return Math.max(2, chat);
 }
 
 /// Bring the view up to date without rebuilding it.
@@ -15321,6 +15279,10 @@ function renderHome(force = false): void {
   // the dock.
   editor.floatingPanelControl(homePanel.id(), "fullscreen", 1);
   homePanel.setFocusKey(homeFocusKey());
+  // A mount rebuilds the panel's instance state from nothing, and the
+  // completion popup lives there — so the candidates have to go back in, or
+  // the picker comes up as an ordinary text box.
+  pushChatCandidates(true);
 }
 
 /// Re-assert focus without repainting.
@@ -15386,8 +15348,11 @@ function openHome(): void {
   homeFocus = "chat";
   // Every open starts at "who is this for". Carrying a target across opens
   // would mean the first thing you type after coming back goes somewhere you
-  // chose in a different sitting.
-  openChatPicker();
+  // chose in a different sitting. Set directly rather than through
+  // `openChatPicker`, which would push the candidates at whichever surface is
+  // showing the chat *now* — the dock, which is about to be covered.
+  chatTarget = null;
+  chatFilter = "";
   homePanel = new FloatingWidgetPanel();
   homeLastSpec = null;
   renderHome(true);
@@ -15400,6 +15365,10 @@ function closeHome(): void {
   if (!homePanel) return;
   homePanel.unmount();
   homePanel = null;
+  // The dock's copy of the chat inherits the picker, and its popup is a
+  // different widget's instance state — so the stamp from Home's field must
+  // not make the next push look redundant.
+  chatPushed = null;
   // Next open re-sorts by urgency; the frozen order is per-viewing.
   fleetOrder = null;
   editor.setEditorMode(null);
@@ -15466,16 +15435,22 @@ registerHandler("orchestrator_home_type_toggle", function () {
   editor.setEditorMode(homeModeForFocus());
   renderHome(true);
 });
-registerHandler("orchestrator_home_prev", function () {
-  // In the picker the arrows steer the candidates; anywhere else they steer
-  // the agent list. Both are "move the selection in front of me".
-  if (homeFocus === "chat" && chatTarget === null) moveChatPick(-1);
-  else fleetMove(-1);
-});
-registerHandler("orchestrator_home_next", function () {
-  if (homeFocus === "chat" && chatTarget === null) moveChatPick(1);
-  else fleetMove(1);
-});
+/// In the picker the arrows steer the candidates; anywhere else they steer
+/// the agent list. Both are "move the selection in front of me".
+///
+/// Home *does* have an editor mode, and a mode binding outranks the host's
+/// own completion dispatch — so unlike the dock, where the host answers the
+/// arrows directly, these have to hand the key back to the panel for the
+/// popup to see it at all.
+function homeArrow(delta: number): void {
+  if (homeFocus === "chat" && chatTarget === null) {
+    homePanel?.command(widgetKey(delta < 0 ? "Up" : "Down"));
+    return;
+  }
+  fleetMove(delta);
+}
+registerHandler("orchestrator_home_prev", function () { homeArrow(-1); });
+registerHandler("orchestrator_home_next", function () { homeArrow(1); });
 registerHandler("orchestrator_home_open_selected", function () {
   const rows = fleetRows();
   const target = rows[fleetSelectedIndex(rows)];
@@ -15486,16 +15461,19 @@ registerHandler("orchestrator_home_open_selected", function () {
   if (windowId !== undefined) void focusWorkspace(windowId);
 });
 registerHandler("orchestrator_home_chat_complete", function () {
-  chatCompleteToPick((v) => {
-    if (homePanel) homePanel.setValue("home_chat", v, v.length);
-    pushChatCandidates();
-  });
+  // Tab completes the address, and the popup is what knows to what: hand the
+  // key back to the panel so the host accepts its highlighted candidate and
+  // answers with `completion_accept`. Once an agent is chosen there is
+  // nothing to complete and Tab is inert, rather than throwing the caret out
+  // of the message you are half-way through.
+  if (chatTarget === null) homePanel?.command(widgetKey("Tab"));
 });
 registerHandler("orchestrator_home_send", function () {
   // Enter means "choose" while the picker is up and "send" once it is not.
   // One key for "commit what is in front of me" reads as one gesture, where
-  // a separate accept key would be a second thing to know.
-  if (chatTarget === null) chooseChatTarget();
+  // a separate accept key would be a second thing to know. Choosing is the
+  // popup's job, so that half is forwarded rather than reimplemented.
+  if (chatTarget === null) homePanel?.command(widgetKey("Enter"));
   else void sendChat();
 });
 /// Start an agent in the selected workspace.
@@ -15560,8 +15538,7 @@ registerHandler("orchestrator_home_event", function (ev: Record<string, unknown>
         return;
       }
       chatFilter = value;
-      chatPick = 0;
-      // Deliberately no re-render: the candidate list is redrawn by mutation.
+      // Deliberately no re-render: the candidates go in by mutation.
       // Re-mounting here would rebuild the field from our copy and lose
       // whatever was typed between the keystroke and this event.
       pushChatCandidates();
@@ -15575,6 +15552,11 @@ registerHandler("orchestrator_home_event", function (ev: Record<string, unknown>
     // No re-render: the field already shows this, and re-mounting would
     // rebuild it from our copy — losing whatever was typed in between.
     chatDraft = value;
+    return;
+  }
+  // The picker's answer, from Tab, Enter or a click on a candidate alike.
+  if (type === "completion_accept" && widget === "home_chat") {
+    if (typeof payload.value === "string") acceptChatTarget(payload.value);
     return;
   }
   if (type === "select" || type === "change") {
