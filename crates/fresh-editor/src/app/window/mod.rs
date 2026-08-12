@@ -4413,12 +4413,7 @@ fn wrap_scroll_geometry(
     if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
         return None;
     }
-    let inputs_version = crate::view::line_wrap_cache::pipeline_inputs_version(
-        state.buffer.version(),
-        state.soft_breaks.version(),
-        state.conceals.version(),
-        state.virtual_texts.version(),
-    );
+    let inputs = state.pipeline_inputs();
     let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
         &view_state.viewport,
         &state.buffer,
@@ -4429,6 +4424,6 @@ fn wrap_scroll_geometry(
     state
         .wrap_indices
         .get(&geometry)
-        .is_some_and(|index| index.is_built_for(&geometry, inputs_version))
+        .is_some_and(|index| index.is_built_for(&geometry, inputs))
         .then_some(geometry)
 }

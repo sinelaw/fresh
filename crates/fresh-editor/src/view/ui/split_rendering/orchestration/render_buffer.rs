@@ -215,12 +215,7 @@ pub(crate) fn compute_buffer_layout(
             &view_mode,
             crate::view::wrap_index::fold_signature(&fold_ranges),
         );
-        let inputs_version = crate::view::line_wrap_cache::pipeline_inputs_version(
-            state.buffer.version(),
-            state.soft_breaks.version(),
-            state.conceals.version(),
-            state.virtual_texts.version(),
-        );
+        let inputs = state.pipeline_inputs();
         let cursor_byte = cursors.primary().position;
         let buffer_len = state.buffer.len();
         // Large-file mode has no line data at all — the gutter is byte-based
@@ -237,35 +232,15 @@ pub(crate) fn compute_buffer_layout(
             });
         if within_bounds || (indexable && state.wrap_indices.get(&geometry).is_some()) {
             let line_ending = state.buffer.line_ending();
-            // Snapshot virtual-line anchors so the per-line lookup borrows
-            // this list rather than `state`, whose buffer the build holds
-            // mutably (same shape as scrollbar_math::total_rows).
-            let virtual_positions: Vec<usize> = if state.virtual_texts.is_empty() {
-                Vec::new()
-            } else {
-                let end = state.buffer.len() + 1;
-                let mut v: Vec<usize> = state
-                    .virtual_texts
-                    .query_lines_in_range(&state.marker_list, 0, end)
-                    .into_iter()
-                    .map(|(pos, _)| pos)
-                    .collect();
-                v.sort_unstable();
-                v
-            };
-            let virtual_rows = |start: usize, end: usize| -> u32 {
-                let lo = virtual_positions.partition_point(|p| *p < start);
-                let hi = virtual_positions.partition_point(|p| *p < end);
-                (hi - lo) as u32
-            };
+            // Decorations — virtual-line anchors included — are resolved into
+            // one owned snapshot before `entry` takes `&mut state`.
             let decorations = state.index_decorations(geometry.view_mode, fold_ranges.clone(), &[]);
             let index = state.wrap_indices.entry(geometry);
             index.ensure_built(
                 &mut state.buffer,
                 geometry,
-                inputs_version,
+                inputs,
                 line_ending,
-                &virtual_rows,
                 &decorations,
             );
 

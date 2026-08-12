@@ -2041,9 +2041,8 @@ mod tests {
         index.ensure_built(
             &mut state.buffer,
             geometry,
-            0,
+            Default::default(),
             crate::model::buffer::LineEnding::LF,
-            &|_, _| 0,
             &Default::default(),
         );
 

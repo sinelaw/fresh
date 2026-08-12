@@ -728,11 +728,36 @@ impl EditorState {
             crate::view::ui::split_rendering::transforms::resolve_inline_hints(self, None, 0, end)
         };
 
+        let virtual_lines = if self.virtual_texts.is_empty() {
+            Vec::new()
+        } else {
+            let mut v: Vec<usize> = self
+                .virtual_texts
+                .query_lines_in_range(&self.marker_list, 0, end)
+                .into_iter()
+                .map(|(pos, _)| pos)
+                .collect();
+            v.sort_unstable();
+            v
+        };
+
         crate::view::wrap_index::IndexDecorations {
             soft_breaks,
             conceals,
             inline_hints,
             folds,
+            virtual_lines,
+        }
+    }
+
+    /// The versions of everything that feeds line layout, as one value — the
+    /// currency `WrapIndex` and its callers trade in.
+    pub fn pipeline_inputs(&self) -> crate::view::line_wrap_cache::PipelineInputs {
+        crate::view::line_wrap_cache::PipelineInputs {
+            buffer: self.buffer.version(),
+            soft_breaks: self.soft_breaks.version(),
+            conceals: self.conceals.version(),
+            virtual_text: self.virtual_texts.version(),
         }
     }
 
@@ -759,40 +784,14 @@ impl EditorState {
             return;
         }
         let line_ending = self.buffer.line_ending();
-        // Snapshot the virtual-line anchors so the lookup borrows this list
-        // rather than `self`, whose buffer the repair holds mutably.
-        let virtual_positions: Vec<usize> = if self.virtual_texts.is_empty() {
-            Vec::new()
-        } else {
-            let mut v: Vec<usize> = self
-                .virtual_texts
-                .query_lines_in_range(&self.marker_list, 0, self.buffer.len() + 1)
-                .into_iter()
-                .map(|(pos, _)| pos)
-                .collect();
-            v.sort_unstable();
-            v
-        };
-        let virtual_rows = |start: usize, end: usize| -> u32 {
-            let lo = virtual_positions.partition_point(|p| *p < start);
-            let hi = virtual_positions.partition_point(|p| *p < end);
-            (hi - lo) as u32
-        };
         // Computed after the edit, so the repaired index is marked current and
-        // the next render reuses it instead of rebuilding.
-        let new_version = crate::view::line_wrap_cache::pipeline_inputs_version(
-            self.buffer.version(),
-            self.soft_breaks.version(),
-            self.conceals.version(),
-            self.virtual_texts.version(),
-        );
-        self.wrap_indices.damage_bytes(
-            &mut self.buffer,
-            damage,
-            line_ending,
-            &virtual_rows,
-            new_version,
-        );
+        // the next render reuses it instead of rebuilding. Virtual-line
+        // positions are no longer snapshotted here — each index carries them
+        // in its decoration snapshot, which the repair shifts along with the
+        // edit.
+        let new_inputs = self.pipeline_inputs();
+        self.wrap_indices
+            .damage_bytes(&mut self.buffer, damage, line_ending, new_inputs);
     }
 
     fn apply_insert(
