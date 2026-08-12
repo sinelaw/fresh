@@ -883,7 +883,30 @@ function dockContentCols(dockWidth: number): number {
 // filter input. Tracked from the host's `focus` widget_event. The host
 // (dispatch_floating_widget_key) reads the panel focus directly to route
 // Enter/Esc/Space//'; this mirror is informational for the plugin.
-let dockFocus: "list" | "filter" = "list";
+let dockFocus: "list" | "filter" | "chat" = "list";
+
+// The dock's chat section, collapsed or not. Persisted: it is a layout
+// preference, and having it spring back open every restart would make the
+// button feel like it did not work.
+const DOCK_CHAT_COLLAPSED_KEY = "orchestrator.dock_chat_collapsed";
+let dockChatCollapsed: boolean | null = null;
+
+function dockChatIsCollapsed(): boolean {
+  if (dockChatCollapsed === null) {
+    // Collapsed until asked for. A new section that takes 40% of the dock the
+    // first time you open it decides for the user what the dock is mostly
+    // for; the header is one row, says what it is, and opens with a click or
+    // Alt+C.
+    const stored = editor.getGlobalState(DOCK_CHAT_COLLAPSED_KEY);
+    dockChatCollapsed = stored === undefined || stored === null ? true : stored === true;
+  }
+  return dockChatCollapsed;
+}
+
+function setDockChatCollapsed(v: boolean): void {
+  dockChatCollapsed = v;
+  editor.setGlobalState(DOCK_CHAT_COLLAPSED_KEY, v as unknown as object);
+}
 // Set just before the dock blurs *because the user picked a workspace*
 // (a row click, Enter on the list, or attaching a discovered worktree
 // with `dive`). The `blur` handler clears the search filter so a stale
@@ -3826,6 +3849,14 @@ function refreshOpenDialog(): void {
   } else if (openDialog.selectedIndex < 0) {
     openDialog.selectedIndex = 0;
   }
+  // Hold the panel still while the chat holds the caret, and bring its
+  // moving parts up to date by mutation instead — see
+  // `refreshDockChatInPlace`. Everything else on the dock can wait the few
+  // seconds it takes to type a sentence; a swallowed keystroke cannot.
+  if (dockMode && dockFocus === "chat") {
+    refreshDockChatInPlace();
+    return;
+  }
   openPanel.update(dockMode ? buildDockSpec() : buildOpenSpec());
   // The list/tree widget's `selectedIndex` in the spec is initial-only;
   // pin it via mutation so re-renders don't snap back to 0. In the dock
@@ -4276,6 +4307,7 @@ const CHAT_SYSTEM = "fresh";
 function chatSay(text: string): void {
   appendChat({ at: Date.now(), from: CHAT_SYSTEM, text });
   renderHome(true);
+  refreshDockChatInPlace();
 }
 
 /// Keep the tail rather than the whole history: this is a conversation you
@@ -4856,6 +4888,17 @@ function startProbePolling(): void {
     // than all firing on this tick — each completion refills the freed slot,
     // so throughput is preserved without the same-tick spawn burst.
     drainGitProbes();
+    // Collect what agents have said, so the dock's chat stays live without
+    // Home being open. Home is a thing you go to; the dock is a thing that is
+    // there, and a message that only arrived while a panel was up would miss
+    // the whole point of putting the chat where you are already looking.
+    if (dockMode) {
+      scanForUnattachedAgents();
+      if (drainOutboxes()) {
+        if (dockFocus === "chat") refreshDockChatInPlace();
+        else refreshOpenDialog();
+      }
+    }
     void editor.delay(PROBE_POLL_INTERVAL_MS).then(tick);
   };
   tick();
@@ -5369,7 +5412,11 @@ function buildDockSpec(): WidgetSpec {
   // The hints belong to the dock only while it has keyboard focus
   // (req: hide them when the editor owns the keyboard). A blurred dock
   // gives the row back to the tree.
-  const showHints = !dockBlurred;
+  // The chat is part of the dock, so a caret in it is still the dock having
+  // the keyboard. Without this the hints vanish the moment you focus the
+  // chat, the chrome shrinks by two rows, and every row below reflows — which
+  // reads as the section falling apart under you.
+  const showHints = !dockBlurred || dockFocus === "chat";
   const menuOpen = openDialog.projectMenuOpen || openDialog.dockMenu !== null;
   // While a dropdown owns the keyboard, the hints describe the dropdown
   // (choose/select/cancel), not the session tree. The tree's own hints
@@ -5445,7 +5492,10 @@ function buildDockSpec(): WidgetSpec {
   const screen = editor.getScreenSize();
   const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
   const toolbarRows = toolbarWraps ? 2 : 1;
-  const chromeRows = 3 + toolbarRows + filterBody.length + bottomRows;
+  // The chat takes its rows off the top of the tree's budget, so adding it
+  // shortens the list rather than pushing anything off the dock's bottom.
+  const chatRows = dockChatRows(innerH);
+  const chromeRows = 3 + toolbarRows + filterBody.length + bottomRows + chatRows;
   const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
   // Rows of chrome above the tree (everything in chromeRows except the
@@ -5513,7 +5563,131 @@ function buildDockSpec(): WidgetSpec {
     }),
     ...bottomPad,
     ...bottom,
+    ...dockChatBlock(chatRows),
   );
+}
+
+// =============================================================================
+// The dock's chat
+//
+// The same conversation Home shows, in the surface that is already open. Home
+// is a thing you go to; the dock is a thing that is *there*, so an agent that
+// says something while you are working should land where you are already
+// looking rather than behind a panel you have to summon.
+//
+// One implementation, two surfaces: the transcript, the picker, the send path
+// and the drain are the ones Home uses, so a message read here is read there
+// and the address you pick in one is the address in the other.
+// =============================================================================
+
+/// Rows the chat section spends on itself: the rule that separates it from
+/// the list, the header, the rule above the input, and the input line.
+const DOCK_CHAT_CHROME_ROWS = 4;
+
+/// Total rows the chat section occupies, chrome included.
+///
+/// Collapsed it is exactly its header, which is what makes the accordion an
+/// accordion rather than a hide. Expanded it takes a share of the dock, with a
+/// floor so it is never a sliver — and it disappears entirely on a dock too
+/// short to hold both it and a usable list, because a list is what the dock is
+/// for.
+function dockChatRows(innerH: number): number {
+  // Collapsed is the rule plus the header — two rows, which is what
+  // `dockChatBlock` emits. Claiming one pushed the header off the dock's
+  // bottom edge, so the accordion looked like it had removed itself.
+  if (dockChatIsCollapsed()) return 2;
+  if (innerH < 24) return 0;
+  // The section's own chrome is 4 rows: the rule that separates it from the
+  // list, the header, the rule above the input, and the input. The floor
+  // leaves four rows of transcript under that.
+  return Math.max(8, Math.floor(innerH * 0.4));
+}
+
+/// Columns the chat's text may use inside the dock.
+function dockChatCols(): number {
+  return Math.max(20, dockContentCols(dockDefaultWidth()) - 2);
+}
+
+/// The chat section: a header you can collapse from, the transcript, a rule,
+/// the picker's candidates when it is open, and the line you type on.
+function dockChatBlock(rows: number): WidgetSpec[] {
+  if (rows <= 0) return [];
+  const collapsed = dockChatIsCollapsed();
+  const picking = chatTarget === null;
+  const label = collapsed
+    ? "chat"
+    : picking
+    ? "chat · pick an agent"
+    : `chat · → @${chatTarget}`;
+  // The header is the section's border and its control at once: the label on
+  // the left, the accordion button on the right. `x` closes it, and flips to
+  // `□` — the maximize glyph — when it is closed, so the button always says
+  // what it will do rather than what state you are in.
+  // The dock's own title bar's shape: a raw styled row for the label, a flex
+  // spacer sized by the host against the dock's real width, and the button
+  // pinned to the right edge. A `text` widget would have been a bracketed
+  // *input* — the header would have looked like somewhere to type.
+  const base = { fg: "ui.menu_fg", bg: "ui.menu_bg" };
+  const header = row(
+    raw([styledRow([{ text: label, style: { ...base, bold: true } }], { style: base })]),
+    flexSpacer(),
+    button(collapsed ? "□" : "x", {
+      key: "chat-collapse",
+      focusable: false,
+      bare: true,
+      hoverStyle: { fg: "ui.tab_close_hover_fg" },
+    }),
+  );
+  if (collapsed) return [divider({ style: { fg: "ui.menu_disabled_fg" } }), header];
+
+  const cols = dockChatCols();
+  const pickRows = picking ? chatPickRows() : 0;
+  const logRows = Math.max(1, rows - DOCK_CHAT_CHROME_ROWS - pickRows);
+  const out: WidgetSpec[] = [
+    divider({ style: { fg: "ui.menu_disabled_fg" } }),
+    header,
+    raw(padTop(chatLines(cols), logRows), "dock_chat_log"),
+    divider({ style: { fg: "ui.menu_disabled_fg" } }),
+  ];
+  if (picking) {
+    out.push(raw(candidateRows(chatCandidates(), cols, pickRows), "dock_chat_pick"));
+  }
+  out.push(
+    textInput(picking ? chatFilter : chatDraft, {
+      label: picking ? "to" : `@${chatTarget}`,
+      placeholder: picking ? "which agent?" : "what should it do?",
+      focused: dockFocus === "chat",
+      fullWidth: true,
+      key: "dock_chat",
+    }),
+  );
+  return out;
+}
+
+/// Redraw the chat's moving parts without rebuilding the dock.
+///
+/// Same reason as Home: a re-mount rebuilds the text field from our copy, and
+/// one landing between a keystroke and its `change` event puts back a value a
+/// character old. The dock polls, so this is not hypothetical — it would eat a
+/// character every poll while you typed.
+function refreshDockChatInPlace(): void {
+  if (!openPanel || !dockMode || dockChatIsCollapsed()) return;
+  const cols = dockChatCols();
+  const innerH = Math.max(8, editor.getScreenSize().height);
+  const rows = dockChatRows(innerH);
+  if (rows <= 0) return;
+  const picking = chatTarget === null;
+  const pickRows = picking ? chatPickRows() : 0;
+  openPanel.setRawEntries(
+    "dock_chat_log",
+    padTop(chatLines(cols), Math.max(1, rows - DOCK_CHAT_CHROME_ROWS - pickRows)),
+  );
+  if (picking) {
+    openPanel.setRawEntries(
+      "dock_chat_pick",
+      candidateRows(chatCandidates(), cols, pickRows),
+    );
+  }
 }
 
 // Screen rows the dock tree's *visible* content occupies, mirroring the
@@ -7294,10 +7468,81 @@ editor.defineMode(
     // (Alt+E is unavailable: it's the Edit menu's mnemonic, which the
     // menu bar claims before the picker's mode keymap sees it.)
     ["M-i", "orchestrator_toggle_trivial"],
+    // Alt+C puts the caret in the chat and takes it back out — the mnemonic,
+    // and the one that always works. Tab reaches it too, through the host's
+    // ordinary focus cycle, but Tab depends on where you already are.
+    ["M-c", "orchestrator_dock_chat_focus"],
+    // The arrows steer the picker while the chat holds the caret, and the
+    // session tree the rest of the time. Same rule as Enter: claimed here,
+    // forwarded back when it is not ours.
+    ["Up", "orchestrator_dock_up"],
+    ["Down", "orchestrator_dock_down"],
+    // Enter has to mean two things: send, when the caret is in the chat; and
+    // whatever the tree does, everywhere else. Claiming it here and forwarding
+    // the key back to the panel in the second case keeps the tree's own
+    // behaviour — dive, or fold a folder — rather than reimplementing it.
+    ["Enter", "orchestrator_dock_enter"],
   ],
   true,
   true,
 );
+
+/// Move the caret between the dock's chat and its list.
+registerHandler("orchestrator_dock_chat_focus", function () {
+  if (!openPanel || !dockMode) return;
+  // Expand on the way in: asking for the chat is asking to see it, and a key
+  // that silently did nothing because the section was folded would read as a
+  // broken binding.
+  if (dockFocus !== "chat" && dockChatIsCollapsed()) {
+    setDockChatCollapsed(false);
+    openPanel.update(buildDockSpec());
+  }
+  if (dockChatRows(Math.max(8, editor.getScreenSize().height)) <= 0) {
+    return;
+  }
+  dockFocus = dockFocus === "chat" ? "list" : "chat";
+  // Rebuild before moving the caret: the spec carries which section is
+  // focused, and the host renders the stored spec — so a focus key set
+  // against a spec that still says otherwise leaves the two disagreeing.
+  openPanel.update(buildDockSpec());
+  openPanel.setFocusKey(dockFocus === "chat" ? "dock_chat" : "sessions");
+});
+
+function dockArrow(delta: number): void {
+  if (dockMode && dockFocus === "chat" && chatTarget === null) {
+    const n = chatCandidates().length;
+    if (n === 0) return;
+    const next = Math.min(n - 1, Math.max(0, chatPick + delta));
+    if (next === chatPick) return;
+    chatPick = next;
+    refreshDockChatInPlace();
+    return;
+  }
+  if (openPanel) openPanel.command(widgetKey(delta < 0 ? "Up" : "Down"));
+}
+
+registerHandler("orchestrator_dock_up", function () { dockArrow(-1); });
+registerHandler("orchestrator_dock_down", function () { dockArrow(1); });
+
+registerHandler("orchestrator_dock_enter", function () {
+  if (dockMode && dockFocus === "chat") {
+    if (chatTarget === null) {
+      const cands = chatCandidates();
+      if (cands.length === 0) return;
+      chatTarget = cands[Math.min(chatPick, cands.length - 1)];
+      chatFilter = "";
+      chatDraft = "";
+      chatPick = 0;
+      if (openPanel) openPanel.update(buildDockSpec());
+      openPanel?.setFocusKey("dock_chat");
+      return;
+    }
+    void sendChat();
+    return;
+  }
+  // Not ours: hand the key back so the tree answers it as it always has.
+  if (openPanel) openPanel.command(widgetKey("Enter"));
+});
 
 // The dock's Enter / Esc / Space / "/" are handled at the host's
 // floating-panel layer (see dispatch_floating_widget_key), not via an
@@ -12171,6 +12416,7 @@ function apiAgentSay(options: {
   // something and immediately blocks on the answer.
   appendChat({ at: Date.now(), from: who.name, text });
   renderHome(true);
+  refreshDockChatInPlace();
   return { ok: true, agent: who.name };
 }
 
@@ -13504,6 +13750,55 @@ editor.on("widget_event", (e) => {
       if (dockMode) closeOpenDialog();
       return;
     }
+    // The chat's accordion button.
+    if (e.event_type === "activate" && e.widget_key === "chat-collapse") {
+      setDockChatCollapsed(!dockChatIsCollapsed());
+      // Leaving the caret in a section that is no longer there would strand
+      // every keystroke.
+      if (dockChatIsCollapsed() && dockFocus === "chat") dockFocus = "list";
+      if (openPanel) openPanel.update(buildDockSpec());
+      if (dockFocus === "list") openPanel?.setFocusKey("sessions");
+      return;
+    }
+    // Typing in the dock's chat. The host routes printable characters into
+    // the focused control, so this event is where the text actually arrives.
+    if (e.event_type === "change" && e.widget_key === "dock_chat") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      if (typeof payload.value !== "string") return;
+      const value = payload.value;
+      if (chatTarget === null) {
+        chatFilter = value;
+        chatPick = 0;
+        refreshDockChatInPlace();
+        return;
+      }
+      // `@` on an empty message means "not that agent, this one".
+      if (value.startsWith("@")) {
+        chatTarget = null;
+        chatFilter = value.slice(1);
+        chatPick = 0;
+        if (openPanel) openPanel.update(buildDockSpec());
+        openPanel?.setFocusKey("dock_chat");
+        return;
+      }
+      chatDraft = value;
+      return;
+    }
+    // Clicking the chat line is how the mouse aims the keyboard at it.
+    if (e.event_type === "focus" && e.widget_key === "dock_chat") {
+      if (dockFocus !== "chat") {
+        dockFocus = "chat";
+        // A click into the chat is the same transition Alt+C makes, and needs
+        // the same rebuild — the hints and the row budget depend on it.
+        if (openPanel) openPanel.update(buildDockSpec());
+        openPanel?.setFocusKey("dock_chat");
+      }
+      return;
+    }
+    if (e.event_type === "focus" && e.widget_key === "sessions") {
+      if (dockFocus === "chat") dockFocus = "list";
+      return;
+    }
     // Toggle the collapsible Filters section.
     if (e.event_type === "activate" && e.widget_key === "filters-toggle") {
       openDialog.filtersExpanded = !openDialog.filtersExpanded;
@@ -14563,6 +14858,12 @@ async function sendChat(): Promise<void> {
     chatSay(`Could not deliver that to @${to}: ${res.reason ?? "unknown"}.`);
   }
   renderHome(true);
+  if (openPanel && dockMode) {
+    // A forced rebuild, not a mutation: the field has to be cleared, and the
+    // spec is what clears it.
+    openPanel.update(buildDockSpec());
+    if (dockFocus === "chat") openPanel.setFocusKey("dock_chat");
+  }
 }
 
 // -----------------------------------------------------------------------------
