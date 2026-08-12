@@ -14036,9 +14036,10 @@ function wrapPlain(text: string, width: number): string[] {
   return out.length > 0 ? out : [""];
 }
 
-/// Every name the chat will accept after an `@`.
-function addressableAgents(): string[] {
-  return knownAgentMailboxes().map((m) => m.name).sort();
+/// Every name the chat will accept after an `@`, as one readable phrase.
+function knownNames(): string {
+  const names = knownAgentMailboxes().map((m) => "@" + m.name).sort();
+  return names.length > 0 ? names.join(", ") : "no agents (Alt+n makes one)";
 }
 
 /// Split a typed line into "who it is for" and "what it says".
@@ -14068,7 +14069,7 @@ async function sendChat(): Promise<void> {
   const { to, body } = parseChatTarget(text);
   if (!to) {
     editor.setStatus(
-      "Say who it is for: start the line with @ and an agent's name.",
+      `Say who it is for: start the line with @ and one of ${knownNames()}.`,
     );
     return;
   }
@@ -14083,7 +14084,12 @@ async function sendChat(): Promise<void> {
   // you end up waiting on an agent that was never told anything.
   appendChat({ at: Date.now(), from: "user", to, text: res.delivered ? text : `${text}` });
   if (!res.delivered) {
-    editor.setStatus(`Could not send to @${to}: ${res.reason ?? "unknown"}`);
+    // Name the alternatives rather than only the failure: a mistyped
+    // address is the likeliest reason to be here, and the set of agents is
+    // short enough to state.
+    editor.setStatus(
+      `Could not send to @${to}: ${res.reason ?? "unknown"}. Known: ${knownNames()}.`,
+    );
   }
   renderHome(true);
 }
