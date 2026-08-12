@@ -526,7 +526,7 @@ impl super::Editor {
             return false;
         }
         let already_hidden = group.hidden_panels.contains(panel_name);
-        if already_hidden == !visible {
+        if already_hidden != visible {
             return true;
         }
         let Some(group_leaf_id) = group.representative_split else {
@@ -616,7 +616,7 @@ impl super::Editor {
             .grouped_subtrees
             .get_mut(&group_leaf_id)
         {
-            *node_layout = Box::new(inner_tree);
+            **node_layout = inner_tree;
             if !visible_leaves.contains(active_inner_leaf) {
                 if let Some(leaf) = node_layout.leaf_split_ids().first().copied() {
                     *active_inner_leaf = leaf;
@@ -639,7 +639,8 @@ impl super::Editor {
         {
             vs.layout_dirty = true;
             if let (Some(focused), Some(fallback)) = (vs.focused_group_leaf, fallback_leaf) {
-                if !visible_leaves.contains(&focused) && existing_leaves.values().any(|l| *l == focused)
+                if !visible_leaves.contains(&focused)
+                    && existing_leaves.values().any(|l| *l == focused)
                 {
                     vs.focused_group_leaf = Some(fallback);
                 }
@@ -695,10 +696,20 @@ impl super::Editor {
                 first,
                 second,
             } => {
-                let first_node = self
-                    .build_visible_split_tree(first, hidden, existing, current_buffers, panel_splits);
-                let second_node = self
-                    .build_visible_split_tree(second, hidden, existing, current_buffers, panel_splits);
+                let first_node = self.build_visible_split_tree(
+                    first,
+                    hidden,
+                    existing,
+                    current_buffers,
+                    panel_splits,
+                );
+                let second_node = self.build_visible_split_tree(
+                    second,
+                    hidden,
+                    existing,
+                    current_buffers,
+                    panel_splits,
+                );
                 match (first_node, second_node) {
                     (Some(f), Some(s)) => {
                         let split_id = self
