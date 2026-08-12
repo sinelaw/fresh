@@ -1767,6 +1767,53 @@ interface FilesTree {
 /** Build the sidebar's node list: one row per category, per directory,
  *  and per file, depth-first. The tree draws its own disclosure glyphs
  *  and indents by depth, so the rows carry text only. */
+/** One directory in the sidebar's hierarchy. Built per category from the
+ *  changed files' paths, so the panel shows `crates` → `fresh-editor` →
+ *  `src` as nested rows carrying short names — the file explorer's shape —
+ *  rather than one row repeating the whole path per group. */
+interface DirNode {
+    /** Path segment shown on the row (empty for a category's root). */
+    name: string;
+    /** Full path from the repo root, with a trailing slash. */
+    path: string;
+    children: Map<string, DirNode>;
+    files: FileEntry[];
+    /** Added / removed across everything beneath, so an ancestor row
+     *  totals its subtree the way its own files' rows total themselves. */
+    added: number;
+    removed: number;
+}
+
+function newDirNode(name: string, path: string): DirNode {
+    return { name, path, children: new Map(), files: [], added: 0, removed: 0 };
+}
+
+/** Insert `file` under its directory chain, creating the ancestors it
+ *  needs and adding its counts to each of them. */
+function insertIntoDirTree(root: DirNode, file: FileEntry): void {
+    const counts = fileChangeCounts(file);
+    const dir = fileDirOf(file.path);
+    let node = root;
+    node.added += counts.added;
+    node.removed += counts.removed;
+    if (dir !== './') {
+        let prefix = '';
+        for (const segment of dir.split('/')) {
+            if (segment === '') continue;
+            prefix += `${segment}/`;
+            let child = node.children.get(segment);
+            if (!child) {
+                child = newDirNode(segment, prefix);
+                node.children.set(segment, child);
+            }
+            child.added += counts.added;
+            child.removed += counts.removed;
+            node = child;
+        }
+    }
+    node.files.push(file);
+}
+
 function buildFilesTree(): FilesTree {
     const out: FilesTree = {
         nodes: [], keys: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
@@ -1774,76 +1821,93 @@ function buildFilesTree(): FilesTree {
     const commentCounts: Record<string, number> = {};
     for (const c of state.comments) commentCounts[c.file] = (commentCounts[c.file] || 0) + 1;
 
+    // `fileGroups()` stays the ordering authority (category order, then
+    // directory, then file) — this only re-shapes it into a hierarchy.
     const groups = fileGroups();
     const catCounts: Record<string, number> = {};
-    for (const g of groups) catCounts[g.category] = (catCounts[g.category] || 0) + g.files.length;
+    const roots: Array<{ category: string; root: DirNode }> = [];
+    for (const g of groups) {
+        catCounts[g.category] = (catCounts[g.category] || 0) + g.files.length;
+        let entry = roots.find(r => r.category === g.category);
+        if (!entry) {
+            entry = { category: g.category, root: newDirNode('', '') };
+            roots.push(entry);
+        }
+        for (const f of g.files) insertIntoDirTree(entry.root, f);
+    }
     // With one category (the usual worktree review: everything unstaged)
     // a category row would be a header over the whole tree and one wasted
     // indent level in a panel that has ~24 columns to work with.
-    const categories = Object.keys(catCounts);
-    const showCategories = categories.length > 1;
-    const dirDepth = showCategories ? 1 : 0;
-    // Rows are clipped by the host to the panel width; a path clipped from
-    // the right leaves three sibling directories looking identical, so
-    // elide from the left and keep the leaf.
+    const showCategories = roots.length > 1;
+    const baseDepth = showCategories ? 1 : 0;
     const W = panelWidthOf('files');
 
-    let lastCategory: string | undefined;
-    for (const group of groups) {
-        if (showCategories && group.category !== lastCategory) {
-            lastCategory = group.category;
-            let label: string = group.category;
+    const pushDir = (category: string, node: DirNode, depth: number): void => {
+        const key = `dir:${category} ${node.path}`;
+        out.groupKeys.push(key);
+        out.keys.push(key);
+        const stats = `  +${node.added} -${node.removed}`;
+        // The host indents 2 columns per depth level and draws a
+        // disclosure glyph; a segment is short, so this only bites on a
+        // deeply nested path in a narrow panel.
+        const room = Math.max(4, W - depth * 2 - 2 - stats.length);
+        out.nodes.push(treeNode(
+            { text: `${elideRight(node.name, room)}${stats}`, style: { fg: STYLE_SECTION_HEADER } },
+            { depth, hasChildren: true },
+        ));
+    };
+
+    const pushFile = (file: FileEntry, depth: number): void => {
+        const counts = fileChangeCounts(file);
+        const key = fileKey(file);
+        const badge = commentCounts[file.path] ? ` *${commentCounts[file.path]}` : '';
+        const nodeKey = `file:${key}`;
+        out.fileByNodeKey[nodeKey] = key;
+        out.indexByFileKey[key] = out.nodes.length;
+        out.keys.push(nodeKey);
+        const stats = `  +${counts.added} -${counts.removed}${badge}`;
+        const room = Math.max(4, W - depth * 2 - 4 - stats.length);
+        out.nodes.push(treeNode(
+            {
+                text: `${file.status || ' '} ${elideRight(fileBaseOf(file.path), room)}${stats}`,
+                properties: { type: "file", fileKey: key, filePath: file.path },
+            },
+            { depth },
+        ));
+    };
+
+    /** Depth-first: a directory's own rows, then its children, then its
+     *  files — the file explorer's order. */
+    const emit = (category: string, node: DirNode, depth: number): void => {
+        const childNames = [...node.children.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+        for (const name of childNames) {
+            const child = node.children.get(name)!;
+            pushDir(category, child, depth);
+            emit(category, child, depth + 1);
+        }
+        for (const file of node.files) pushFile(file, depth);
+    };
+
+    for (const { category, root } of roots) {
+        if (showCategories) {
+            let label: string = category;
             if (state.mode === 'range' && state.range) label = state.range.label;
-            else if (group.category === 'staged') label = editor.t("section.staged") || "Staged";
-            else if (group.category === 'unstaged') label = editor.t("section.unstaged") || "Changes";
-            else if (group.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
+            else if (category === 'staged') label = editor.t("section.staged") || "Staged";
+            else if (category === 'unstaged') label = editor.t("section.unstaged") || "Changes";
+            else if (category === 'untracked') label = editor.t("section.untracked") || "Untracked";
             const display = state.mode === 'range' ? label : label.toUpperCase();
-            const key = `cat:${group.category}`;
+            const key = `cat:${category}`;
             out.groupKeys.push(key);
             out.keys.push(key);
             out.nodes.push(treeNode(
-                { text: `${display} (${catCounts[group.category]})`, style: { fg: STYLE_SECTION_HEADER, bold: true } },
+                {
+                    text: `${display} (${catCounts[category]})`,
+                    style: { fg: STYLE_SECTION_HEADER, bold: true },
+                },
                 { depth: 0, hasChildren: true },
             ));
         }
-
-        let added = 0, removed = 0;
-        for (const f of group.files) {
-            const c = fileChangeCounts(f);
-            added += c.added; removed += c.removed;
-        }
-        const dirKey = `dir:${group.dirKey}`;
-        out.groupKeys.push(dirKey);
-        out.keys.push(dirKey);
-        const dirStats = `  +${added} -${removed}`;
-        // Indent the host adds: 2 per depth level, plus the disclosure glyph.
-        const dirRoom = Math.max(6, W - dirDepth * 2 - 2 - dirStats.length);
-        out.nodes.push(treeNode(
-            {
-                text: `${elideLeft(group.dir, dirRoom)}${dirStats}`,
-                style: { fg: STYLE_SECTION_HEADER },
-            },
-            { depth: dirDepth, hasChildren: true },
-        ));
-
-        for (const file of group.files) {
-            const counts = fileChangeCounts(file);
-            const key = fileKey(file);
-            const badge = commentCounts[file.path] ? ` *${commentCounts[file.path]}` : '';
-            const nodeKey = `file:${key}`;
-            out.fileByNodeKey[nodeKey] = key;
-            out.indexByFileKey[key] = out.nodes.length;
-            out.keys.push(nodeKey);
-            const stats = `  +${counts.added} -${counts.removed}${badge}`;
-            const nameRoom = Math.max(6, W - (dirDepth + 1) * 2 - 4 - stats.length);
-            out.nodes.push(treeNode(
-                {
-                    text: `${file.status || ' '} ${elideRight(fileBaseOf(file.path), nameRoom)}${stats}`,
-                    properties: { type: "file", fileKey: key, filePath: file.path },
-                },
-                { depth: dirDepth + 1 },
-            ));
-        }
+        emit(category, root, baseDepth);
     }
     return out;
 }
@@ -1871,9 +1935,17 @@ function panelListRows(panel: 'files' | 'comments'): number {
  *  the file tree. */
 function buildFilesPanelSpec(): WidgetSpec {
     filesTree = buildFilesTree();
-    const selected = state.filesCurrentKey !== null
-        ? (filesTree.indexByFileKey[state.filesCurrentKey] ?? -1)
-        : -1;
+    // The spec's `selectedIndex` is authoritative on every render, so it
+    // has to agree with where the host's own navigation left the
+    // selection — otherwise each repaint drags the selection back to the
+    // current file and folding a directory (which selects a directory
+    // row first) never gets to happen.
+    const fileNodeKey = state.filesCurrentKey !== null ? `file:${state.filesCurrentKey}` : "";
+    const trackedKey = filesSelectedNodeKey.startsWith("file:")
+        ? fileNodeKey                       // a file row: the review's current file wins
+        : filesSelectedNodeKey;             // a directory / category row: keep it
+    let selected = trackedKey ? filesTree.keys.indexOf(trackedKey) : -1;
+    if (selected < 0 && fileNodeKey) selected = filesTree.keys.indexOf(fileNodeKey);
     const parts: WidgetSpec[] = [
         panelHeaderSpec('files', filesHeaderLabel()),
         // Always present, whether or not it holds focus: a filter you
