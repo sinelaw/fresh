@@ -1,10 +1,10 @@
-//! E2E coverage for the Orchestrator **Fleet** view — the wide panel that
-//! answers "which of my agents needs me", with a live pane showing the
-//! selected workspace's terminal.
+//! E2E coverage for Orchestrator **Home** — the full-screen panel that
+//! answers "which of my agents needs me", with a chat carrying what they have
+//! said and a live pane showing the selected workspace's terminal.
 //!
 //! Per CONTRIBUTING.md §2 these drive only the keyboard and assert on
 //! rendered output. The pane's title line (`live · <name>`) is the visible
-//! statement of which workspace the Fleet is pointed at, so it is what the
+//! statement of which workspace Home is pointed at, so it is what the
 //! selection assertions read.
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
@@ -32,24 +32,29 @@ fn setup_project(name: &str) -> (tempfile::TempDir, PathBuf) {
     (temp_dir, root)
 }
 
-/// Open the Fleet through the command palette and wait for it to render.
-fn open_fleet(h: &mut EditorTestHarness) {
+/// Open Home through the command palette and wait for it to render.
+fn open_home(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
-    h.type_text("Orchestrator: Fleet").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Fleet"))
+    h.type_text("Orchestrator: Home").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Home"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    // The hint bar is the Fleet's own chrome and is present exactly when the
-    // panel has painted. The header is not usable here: it reads "1 agent" or
+    // The hint bar is Home's own chrome and is present exactly when the panel
+    // has painted. The header is not usable here: it reads "1 agent" or
     // "N agents" depending on how many there are.
-    h.wait_until(|h| h.screen_to_string().contains("Enter go to workspace"))
+    h.wait_until(|h| h.screen_to_string().contains("Enter send / go"))
+        .unwrap();
+    // Home opens with the keyboard in the chat line. Tab moves it to the list,
+    // which is what every selection assertion below drives.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("\u{25b8} "))
         .unwrap();
 }
 
-/// The workspace named on the live pane's title line, i.e. the one the Fleet
-/// says it is showing. `None` before the pane has painted.
+/// The workspace named on the live pane's title line, i.e. the one Home says
+/// it is showing. `None` before the pane has painted.
 fn shown_workspace(h: &EditorTestHarness) -> Option<String> {
     h.screen_to_string()
         .lines()
@@ -86,16 +91,45 @@ fn pane_text(h: &EditorTestHarness) -> String {
         .join("\n")
 }
 
-/// Workspace names as the Fleet lists them, top to bottom. Read off the panel
-/// so the test sees the same order the user does.
+/// The column the agent list starts at.
+///
+/// Home is two columns: a chat on the left and the list over the live pane on
+/// the right. Both halves are on the same screen rows, so a row parser that
+/// reads a whole line picks up whatever the chat happens to be saying. The
+/// list section's left border is at a fixed column, and the header legend is
+/// drawn inside it, so the `\u{256d}` that precedes the header locates it.
+fn list_column(h: &EditorTestHarness) -> usize {
+    let screen = h.screen_to_string();
+    let header = screen
+        .lines()
+        .find(|l| l.contains("needs you") || l.contains("none waiting"))
+        .unwrap_or_default()
+        .to_string();
+    let legend = header
+        .find(" agents \u{b7}")
+        .or_else(|| header.find(" agent \u{b7}"))
+        .unwrap_or(0);
+    // Char index of the section corner that opens the list, counting in chars
+    // because the borders are multi-byte.
+    header[..legend]
+        .rfind('\u{256d}')
+        .map(|b| header[..b].chars().count())
+        .unwrap_or(0)
+}
+
+/// Workspace names as Home lists them, top to bottom. Read off the panel so
+/// the test sees the same order the user does.
 fn row_labels(h: &EditorTestHarness) -> Vec<String> {
     let screen = h.screen_to_string();
+    let col = list_column(h);
     screen
         .lines()
         .skip_while(|l| !l.contains("needs you") && !l.contains("none waiting"))
         .skip(1)
-        .take_while(|l| !l.contains("live · "))
+        .take_while(|l| !l.contains("live \u{b7} "))
+        .map(|l| l.chars().skip(col).collect::<String>())
         .filter_map(|l| {
+            let l = l.as_str();
             // `│ ! name   agent   branch   detail │` — the name is the token
             // after the state glyph.
             let body = l.trim_start_matches(|c: char| !c.is_alphanumeric() && c != '!');
@@ -111,7 +145,7 @@ fn row_labels(h: &EditorTestHarness) -> Vec<String> {
         .collect()
 }
 
-/// The window id behind a Fleet row label.
+/// The window id behind a Home row label.
 fn window_id_for(h: &EditorTestHarness, label: &str) -> fresh_core::WindowId {
     h.editor()
         .describe_environment()
@@ -122,7 +156,7 @@ fn window_id_for(h: &EditorTestHarness, label: &str) -> fresh_core::WindowId {
         .window_id
 }
 
-/// The Fleet's selection follows the *workspace*, not the row it happened to
+/// Home's selection follows the *workspace*, not the row it happened to
 /// be on.
 ///
 /// Rows are sorted by urgency — waiting first, then working, then quiet — so
@@ -137,7 +171,7 @@ fn window_id_for(h: &EditorTestHarness, label: &str) -> fresh_core::WindowId {
 /// produce output — and asserts the pane still names the workspace the user
 /// chose.
 #[test]
-fn fleet_selection_survives_a_reorder() {
+fn home_selection_survives_a_reorder() {
     let (_tmp, root) = setup_project("alphaproj");
     let parent = root.parent().unwrap().to_path_buf();
     let mut h =
@@ -152,10 +186,7 @@ fn fleet_selection_survives_a_reorder() {
         h.editor_mut().create_window_at(dir, name.to_string());
     }
     h.render().unwrap();
-    let launch_id = h.editor().active_window_id();
-    let launch_label = h.editor().active_window().label.clone();
-
-    open_fleet(&mut h);
+    open_home(&mut h);
     h.wait_until(|h| h.screen_to_string().contains("projD"))
         .unwrap();
 
@@ -168,7 +199,7 @@ fn fleet_selection_survives_a_reorder() {
     let chosen = shown_workspace(&h).expect("the live pane names a workspace");
 
     // Shorten the list above the selection, which shifts every row below it up
-    // by one. Deliberately not driven by agent activity: the Fleet only sees
+    // by one. Deliberately not driven by agent activity: Home only sees
     // activity for terminals the Orchestrator itself created, so a
     // host-created terminal never changes a row's rank and the reorder would
     // never happen.
@@ -202,13 +233,13 @@ fn fleet_selection_survives_a_reorder() {
     assert_eq!(
         shown_workspace(&h).as_deref(),
         Some(chosen.as_str()),
-        "the Fleet must keep showing the workspace the user selected after the \
+        "Home must keep showing the workspace the user selected after the \
          row above it went away. Screen:\n{}",
         h.screen_to_string()
     );
 }
 
-/// The Fleet's live pane shows one *terminal*, not the whole session.
+/// Home's live pane shows one *terminal*, not the whole session.
 ///
 /// It renders through the `pane` widget rather than the whole-window embed,
 /// so a workspace's tab bar and editor chrome must not appear inside it — the
@@ -216,7 +247,7 @@ fn fleet_selection_survives_a_reorder() {
 /// noise that also makes the pane ambiguous when a workspace holds two
 /// terminals.
 #[test]
-fn fleet_pane_shows_the_terminal_without_session_chrome() {
+fn home_pane_shows_the_terminal_without_session_chrome() {
     let (_tmp, root) = setup_project("betaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
@@ -242,7 +273,7 @@ fn fleet_pane_shows_the_terminal_without_session_chrome() {
     h.editor_mut()
         .send_terminal_input_to(home, terminal_id, "echo FLEETPANE\n");
 
-    open_fleet(&mut h);
+    open_home(&mut h);
     h.wait_until(|h| h.screen_to_string().contains("FLEETPANE"))
         .unwrap();
 
@@ -250,8 +281,8 @@ fn fleet_pane_shows_the_terminal_without_session_chrome() {
     // present, and none of the tab-bar chrome the whole-session embed paints.
     //
     // A wait rather than a bare assertion because the pane's buffer is
-    // resolved by the Fleet's probe a tick after it opens; without the fix it
-    // never resolves and the Fleet keeps embedding the whole session, so this
+    // resolved by Home's probe a tick after it opens; without the fix it
+    // never resolves and Home keeps embedding the whole session, so this
     // times out — which CONTRIBUTING.md §1 accepts as the failing half of a
     // regression test.
     h.wait_until(|h| {
@@ -272,7 +303,7 @@ fn fleet_pane_shows_the_terminal_without_session_chrome() {
     );
 }
 
-/// Typing in the Fleet reaches the selected agent's terminal, Alt+` is the way
+/// Typing in Home reaches the selected agent's terminal, Alt+` is the way
 /// in and back out, and Tab reaches the agent rather than toggling.
 ///
 /// This is the point of the pane being interactive rather than a picture: a
@@ -286,7 +317,7 @@ fn fleet_pane_shows_the_terminal_without_session_chrome() {
 /// own TUI), so a toggle that ate it would make the one view built for
 /// answering an agent unable to send it.
 #[test]
-fn fleet_typing_reaches_the_selected_terminal() {
+fn home_typing_reaches_the_selected_terminal() {
     let (_tmp, root) = setup_project("gammaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
@@ -310,7 +341,7 @@ fn fleet_typing_reaches_the_selected_terminal() {
     })
     .unwrap();
 
-    open_fleet(&mut h);
+    open_home(&mut h);
     // The pane must be a real pane before typing means anything.
     h.wait_until(|h| {
         let pane = pane_text(h);
@@ -331,26 +362,26 @@ fn fleet_typing_reaches_the_selected_terminal() {
         .unwrap();
 
     // Tab reaches the agent instead of toggling: the shell echoes a completion
-    // or a literal tab, but either way the Fleet stays in typing mode. Without
+    // or a literal tab, but either way Home stays in typing mode. Without
     // this the toggle would be eating a key the agent needs.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     assert!(
         h.screen_to_string().contains("typing →"),
-        "Tab must reach the agent, not toggle the Fleet out of typing mode:\n{}",
+        "Tab must reach the agent, not toggle Home out of typing mode:\n{}",
         h.screen_to_string()
     );
 
     // The same key that focused the pane un-focuses it.
     h.send_key(KeyCode::Char('`'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("answer agent"))
+    h.wait_until(|h| h.screen_to_string().contains("type at agent"))
         .unwrap();
 }
 
 /// An agent parked on a question shows `!`, and the reason it shows is the
 /// question rather than one of its options.
 ///
-/// This is the state the Fleet exists for: "working" and "idle" are both
+/// This is the state Home exists for: "working" and "idle" are both
 /// derived from whether a PTY printed recently, and a blocked agent prints
 /// nothing, so without this it is indistinguishable from one that finished.
 /// Recognition is per agent kind and reads the terminal's own screen, so the
@@ -362,7 +393,7 @@ fn fleet_typing_reaches_the_selected_terminal() {
 /// the pattern, and "1. Yes" as the stated reason a workspace is blocked would
 /// tell the user nothing they could act on.
 #[test]
-fn fleet_shows_why_an_agent_is_blocked() {
+fn home_shows_why_an_agent_is_blocked() {
     let (_tmp, root) = setup_project("deltaproj");
 
     // A stand-in agent: asks the way Claude Code asks, then goes quiet. Quiet
@@ -418,7 +449,7 @@ fn fleet_shows_why_an_agent_is_blocked() {
     })
     .unwrap();
 
-    open_fleet(&mut h);
+    open_home(&mut h);
 
     // The row must state that this workspace wants something, and say what.
     h.wait_until(|h| {
@@ -439,7 +470,7 @@ fn fleet_shows_why_an_agent_is_blocked() {
         .screen_to_string()
         .lines()
         .find(|l| l.contains("deltaproj") && l.contains("Do you want"))
-        .expect("the Fleet row for the blocked workspace")
+        .expect("Home row for the blocked workspace")
         .to_string();
     assert!(
         !row.contains("1. Yes"),
@@ -495,16 +526,11 @@ fn an_agents_own_status_outranks_its_screen() {
     })
     .unwrap();
 
-    // …and contradict it in the outbox. The window id is the workspace id the
-    // mailbox is keyed by, which is what the plugin passes as
-    // `$FRESH_AGENT_STATUS` at launch.
-    let status_dir = h
-        .editor()
-        .dir_context()
-        .data_dir
-        .join("orchestrator")
-        .join("agents")
-        .join(home.0.to_string());
+    // …and contradict it in the outbox. Written the way an agent nobody
+    // launched from the editor writes it — `.fresh/agents/<name>/status` in
+    // its own checkout — which is also the path the plugin hands its own
+    // agents as `$FRESH_AGENT_STATUS`.
+    let status_dir = root.join(".fresh").join("agents").join("byhand");
     fs::create_dir_all(&status_dir).unwrap();
     fs::write(
         status_dir.join("status"),
@@ -512,7 +538,7 @@ fn an_agents_own_status_outranks_its_screen() {
     )
     .unwrap();
 
-    open_fleet(&mut h);
+    open_home(&mut h);
 
     // The agent's summary is what the row shows…
     h.wait_until(|h| h.screen_to_string().contains("rebuilding the index"))

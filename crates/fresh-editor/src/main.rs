@@ -3951,13 +3951,17 @@ fn help_agents() -> AnyhowResult<()> {
 fn agents_help_text() -> String {
     r#"Working with the other agents
 
-Fresh runs many workspaces at once, each usually with an agent in it. Three
-files and three calls are the whole interface between you and the rest.
+Fresh runs many workspaces at once, and a workspace may hold more than one
+agent. Your mailbox is yours alone — it is keyed by your name, not by the
+checkout — so two agents in one directory never overwrite each other.
 
 WHAT YOU ARE EXPECTED TO WRITE
 
+  $FRESH_AGENT_NAME     your name. Everyone else addresses you as @<name>
   $FRESH_AGENT_STATUS   one line, rewritten whenever your state changes
   $FRESH_AGENT_INBOX    a directory; each file in it is an instruction for you
+  $FRESH_AGENT_OUTBOX   a directory; each file you drop in it is a message to
+                        the user, and shows up in their chat attributed to you
 
 Status is `<state> <summary>`, where state is one of:
 
@@ -3971,21 +3975,35 @@ Status is `<state> <summary>`, where state is one of:
     echo "waiting approve my edit to tests/e2e.rs"    > "$FRESH_AGENT_STATUS"
     echo "done 3 files changed, suite green"          > "$FRESH_AGENT_STATUS"
 
-If you were not started by Fresh, $FRESH_AGENT_STATUS will not be set — write
-`.fresh/agent-status` in your working directory instead, same format. Fresh
-looks there for every checkout it knows about, so an agent nobody launched
-from the editor still shows up in the fleet and can still be messaged. Create
-`.fresh/.gitignore` containing `*` alongside it so the directory excludes
-itself from the repository:
+If you were not started by Fresh, none of those will be set — pick a short
+name for yourself and build the mailbox by hand, in your working directory.
+Fresh looks under `.fresh/agents/` for every checkout it knows about, so an
+agent nobody launched from the editor still shows up in the list and can
+still be messaged. The `.gitignore` containing `*` excludes the directory and
+itself, so none of this touches `git status`:
 
-    mkdir -p .fresh/inbox/done && printf '*\n' > .fresh/.gitignore
-    echo "waiting need a decision on the schema" > .fresh/agent-status
+    NAME=schema-work
+    mkdir -p ".fresh/agents/$NAME/inbox/done" ".fresh/agents/$NAME/outbox/read"
+    printf '*\n' > .fresh/.gitignore
+    echo "waiting need a decision on the schema" > ".fresh/agents/$NAME/status"
 
 Write it often, and above all the moment you need the user. Without it, Fresh
 falls back to guessing your state from your terminal output — which is usually
 a spinner, a progress bar, or half a redraw, and cannot tell "I am asking you
 to approve" from "the word approve appeared in a diff I am showing you". A
 line you write is the only reliable way the user sees that you are waiting.
+
+The status is a state, not a conversation: it is one line and you overwrite
+it, so anything you say there is gone the next time you change state. When you
+have something to SAY — you finished, you have a question, you found something
+the user should know — write a file into your outbox instead. Fresh moves it
+into the user's chat, attributed to you, and their reply lands in your inbox:
+
+    echo "pushed the 3 PRs; want me to start the fourth?" \
+      > "$FRESH_AGENT_OUTBOX/$(date +%s%N).md"
+
+Files are drained in name order, so a numeric timestamp keeps several messages
+written in one turn in the order you said them.
 
 Read your inbox at the start of each turn. Act on each file, then move it to
 `done/` — that move is the acknowledgement, and an instruction that never
@@ -4011,15 +4029,18 @@ WHAT YOU MAY ASK FOR
     return orch.fleet();
     EOF
 
-Each `fleet()` row carries `state`, `summary` and `source`. `source` is
-"agent" when that agent wrote its own status and "inferred" when the summary
-was guessed from its screen — weigh them differently.
+Each `fleet()` row carries `agentName`, `project`, `state`, `summary` and
+`source`. `source` is "agent" when that agent wrote its own status and
+"inferred" when the summary was guessed from its screen — weigh them
+differently.
 
 Delegation reports **delivery, not completion**. The peer acts because its
-briefing tells it to read its inbox; nothing is injected into its terminal:
+briefing tells it to read its inbox; nothing is injected into its terminal.
+Address it by name — that is the form that still means one agent when two of
+them share a checkout:
 
     await orch.delegate({
-      target: <workspaceId>,
+      target: "refactor-1",
       instruction: "Rerun the flaky test with --nocapture and report what fails.",
     });
 
@@ -4047,13 +4068,14 @@ and its terminals with their ids.
 
 WHAT THE USER SEES
 
-  Orchestrator: Fleet   every agent, sorted by who needs them, with your
-                        status as the reason
-  Orchestrator: Home    the fleet, a master agent they talk to, and the
-                        selected agent's live terminal
+  Orchestrator: Home    a chat carrying everything every agent has said, the
+                        agent list sorted by who needs them, and the selected
+                        agent's live terminal
 
-Both read your status file directly. Keeping it current is what puts you in
-front of them at the right moment.
+Your status is the reason column on your row; your outbox is your half of the
+chat. Keeping both current is what puts you in front of the user at the right
+moment, and what makes their reply reach you rather than a terminal nobody is
+looking at.
 
 See also: fresh --cmd help script   — the API surface of this build
           fresh --cmd help plugin   — panels, events, the runtime contract
