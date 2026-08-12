@@ -23,6 +23,8 @@ mod orchestration;
 pub(crate) use orchestration::render_buffer::wrap_index_geometry_for;
 mod post_pass;
 pub(crate) mod scrollbar;
+#[cfg(test)]
+mod scrollbar_marker_scroll_perf;
 mod spans;
 mod style;
 pub(crate) mod transforms;
