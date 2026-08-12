@@ -141,7 +141,85 @@ fn agent_argv_from_maps(
     pick(resume).or_else(|| pick(launch)).unwrap_or_default()
 }
 
+/// The same answer as [`agent_argv_for_window`], read off a persisted
+/// workspace snapshot instead of a live window.
+///
+/// Same precedence — resume argv before launch command — because it is the
+/// same decision the restore path makes when it eventually spawns
+/// (`restore_terminal_from_workspace`). Terminals are considered in their
+/// saved order so a workspace with two agents answers consistently across
+/// runs, matching the id-sorted pick the map version makes.
+fn agent_argv_from_workspace(ws: &crate::workspace::Workspace) -> Vec<String> {
+    let mut terminals: Vec<&crate::workspace::SerializedTerminalWorkspace> =
+        ws.terminals.iter().collect();
+    terminals.sort_by_key(|t| t.terminal_index);
+    terminals
+        .iter()
+        .find_map(|t| {
+            t.agent_resume
+                .as_ref()
+                .map(|r| &r.argv)
+                .filter(|argv| !argv.is_empty())
+        })
+        .or_else(|| {
+            terminals
+                .iter()
+                .find_map(|t| t.command.as_ref().filter(|argv| !argv.is_empty()))
+        })
+        .cloned()
+        .unwrap_or_default()
+}
+
 impl Editor {
+    /// Fill `dormant_agent_argv` for every not-yet-materialized window that
+    /// has no entry, by reading its persisted workspace.
+    ///
+    /// Called from the snapshot refresh, which runs on every keystroke — so
+    /// the loop must normally do nothing at all. It does: the map gains one
+    /// entry per dormant window on the first refresh after startup and is
+    /// then only ever read, and `materialize_window` drops an entry exactly
+    /// when a live window takes over answering for it. A window that gains
+    /// its agent later (an agent launched into it while it is still
+    /// dormant) is not a case this has to cover — launching materializes it.
+    fn refresh_dormant_agent_argv(&mut self) {
+        let missing: Vec<fresh_core::WindowId> = self
+            .materialize_pending
+            .iter()
+            .copied()
+            .filter(|id| !self.dormant_agent_argv.contains_key(id))
+            .collect();
+        for id in missing {
+            let Some((root, stable_id)) = self
+                .windows
+                .get(&id)
+                .map(|w| (w.root.clone(), w.stable_id.clone()))
+            else {
+                continue;
+            };
+            // Same resolution as `restore_workspace_for`: a window with a
+            // durable id restores its own co-tenant file, not merely the
+            // freshest one for the root.
+            let loaded = if stable_id.is_empty() {
+                crate::workspace::Workspace::load(&root)
+            } else {
+                crate::workspace::Workspace::load_by_id(&root, &stable_id)
+            };
+            let argv = match loaded {
+                Ok(Some(ws)) => agent_argv_from_workspace(&ws),
+                // No file, or an unreadable / too-new one. Record the empty
+                // answer anyway: retrying a parse failure on every keystroke
+                // would be worse than saying "no agent" about a workspace we
+                // cannot read.
+                Ok(None) => Vec::new(),
+                Err(e) => {
+                    tracing::debug!("No agent argv for dormant window {id}: {e}");
+                    Vec::new()
+                }
+            };
+            self.dormant_agent_argv.insert(id, argv);
+        }
+    }
+
     /// Update the plugin state snapshot with current editor state.
     ///
     /// Per-window snapshot population (active buffer, splits, view
@@ -303,6 +381,10 @@ impl Editor {
         // a *failed* dive leaves the descriptor AND a disconnected shell
         // window at the same id, so descriptors shadowed by a window are
         // skipped to keep the list one-row-per-session.
+        // Before enumerating: a workspace that has not been restored yet has
+        // empty terminal maps, so its agent has to come off disk. Ahead of
+        // the borrows below, which run to the end of the enumeration.
+        self.refresh_dormant_agent_argv();
         let dormant_infos = self
             .dormant_remote
             .iter()
@@ -357,7 +439,14 @@ impl Editor {
                     .unwrap_or(false);
                 fresh_core::api::WindowInfo {
                     id: s.id,
-                    agent_command: agent_argv_for_window(s),
+                    // A dormant window's maps are empty until it is
+                    // materialized; the persisted snapshot is the only place
+                    // its agent is recorded until then.
+                    agent_command: if self.materialize_pending.contains(&s.id) {
+                        self.dormant_agent_argv.get(&s.id).cloned().unwrap_or_default()
+                    } else {
+                        agent_argv_for_window(s)
+                    },
                     stable_id: s.stable_id.clone(),
                     label: s.label.clone(),
                     root: normalize_plugin_path(s.root.clone()),

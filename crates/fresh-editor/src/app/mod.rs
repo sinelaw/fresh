@@ -820,6 +820,25 @@ pub struct Editor {
     /// `materialize_window`.
     pub(crate) materialize_pending: std::collections::HashSet<fresh_core::WindowId>,
 
+    /// Agent argv read off the *persisted* snapshot of a window still in
+    /// `materialize_pending`, so the dock can say "this workspace has a
+    /// claude in it" before anything has been restored into it.
+    ///
+    /// A live window answers that question from its terminal maps, which
+    /// materialization fills in — but those maps are empty until then, so
+    /// every dormant workspace looked agentless until the user visited it,
+    /// which is exactly backwards: the reason to look at the list is to
+    /// decide *which* one to visit.
+    ///
+    /// Memoized rather than read per enumeration: the snapshot refresh runs
+    /// on every keystroke, and this costs a workspace-file parse. One entry
+    /// per window, filled on first enumeration and dropped by
+    /// `materialize_window` when the real maps take over. An empty vec is
+    /// a real answer — "looked, no agent" — so a shell-only workspace is
+    /// read once rather than on every refresh.
+    pub(crate) dormant_agent_argv:
+        std::collections::HashMap<fresh_core::WindowId, Vec<String>>,
+
     /// Whether workspace files (`workspaces/*.json`) may be written at all;
     /// `false` under `--no-restore`. Quit-time saves and mid-session
     /// checkpoints must be suppressed together — a checkpoint that ignored

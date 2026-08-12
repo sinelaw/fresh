@@ -702,6 +702,9 @@ impl Editor {
         if !self.materialize_pending.remove(&id) {
             return;
         }
+        // The window's own terminal maps answer for its agent from here on;
+        // the snapshot-derived stand-in would only go stale.
+        self.dormant_agent_argv.remove(&id);
         let saved_plugin_state = self.plugin_global_state.clone();
         // Lazy counterpart to the eager startup restore: same
         // `restore_window` flow, so a dock-switched directory applies its
