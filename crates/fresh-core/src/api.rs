@@ -4068,6 +4068,15 @@ pub enum PluginCommand {
     /// Focus a specific panel within a buffer group
     FocusPanel { group_id: usize, panel_name: String },
 
+    /// Show or hide one panel of a buffer group without tearing the
+    /// group down. The panel's buffer and its scroll position survive
+    /// while hidden; only the group's split tree changes.
+    SetBufferGroupPanelVisible {
+        group_id: usize,
+        panel_name: String,
+        visible: bool,
+    },
+
     /// Define a buffer mode with keybindings
     DefineMode {
         name: String,

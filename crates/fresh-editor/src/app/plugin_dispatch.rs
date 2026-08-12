@@ -1655,6 +1655,13 @@ impl Editor {
             } => {
                 self.focus_panel(group_id, panel_name);
             }
+            PluginCommand::SetBufferGroupPanelVisible {
+                group_id,
+                panel_name,
+                visible,
+            } => {
+                self.set_buffer_group_panel_visible(group_id, &panel_name, visible);
+            }
 
             // ==================== File Operations ====================
             PluginCommand::SaveBufferToPath { buffer_id, path } => {
