@@ -2906,21 +2906,9 @@ impl Window {
         self.key_context == crate::input::keybindings::KeyContext::Terminal
     }
 
-    /// Whether the **editor pane** owns the keyboard, as opposed to a
-    /// persistent chrome region beside it (the file explorer) or a plugin
-    /// panel that has claimed keys through a `Mode` context.
-    ///
-    /// The distinction matters for anything that reaches for the active
-    /// buffer to decide where a keystroke goes: the active buffer stays the
-    /// terminal while the user is off in the explorer, so "the active buffer
-    /// is a terminal" on its own is never enough to justify sending a key to
-    /// its PTY. [`Window::focused_terminal_live`] is the narrower "…and it is
-    /// live" case; this is the wider gate every other terminal-input path
-    /// needs (issues #2029 and the Enter-into-the-shell follow-up).
-    ///
-    /// Overlays that own the keyboard (prompts, popups, menus, the dock,
-    /// modals) never reach these paths — `presents_blocking_overlay` stops
-    /// them earlier — so the editor-pane contexts are the whole allowlist.
+    /// Whether the editor pane owns the keyboard, rather than the file
+    /// explorer or a plugin panel beside it. Keyboard-owning overlays are
+    /// turned away before the callers of this, so these two are the whole set.
     pub fn editor_pane_owns_keyboard(&self) -> bool {
         use crate::input::keybindings::KeyContext;
         matches!(self.key_context, KeyContext::Normal | KeyContext::Terminal)

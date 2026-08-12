@@ -265,9 +265,10 @@ impl CommandRegistry {
             }
 
             // Focus-independent actions stay available even when the keyboard
-            // is owned by a non-editing surface. A terminal (or the explorer /
-            // dock / a plugin mode) still lets these actions run from their
-            // keybinding — `is_terminal_ui_action` is exactly that allowlist.
+            // is owned by a non-editing surface. The wider allowlist is
+            // deliberate: the palette runs the action itself instead of routing
+            // a key through that surface, so even the explorer commands a
+            // focused terminal keeps for the shell are runnable here.
             // Greying the same command out in the palette contradicted the
             // keymap: Alt+` opened a dock terminal from a focused terminal
             // while the palette refused "Open Terminal in Utility Dock".
@@ -283,7 +284,7 @@ impl CommandRegistry {
                 && (matches!(current_context, KeyContext::Terminal)
                     || current_context.allows_ui_fallthrough())
             {
-                return crate::input::keybindings::KeybindingResolver::is_terminal_ui_action(
+                return crate::input::keybindings::KeybindingResolver::is_ui_fallthrough_action(
                     &cmd.action,
                 );
             }
