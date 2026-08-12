@@ -3790,7 +3790,11 @@ impl Editor {
     /// editor was constructed single-line. `text` may be a single
     /// codepoint, a grapheme cluster, or a multi-codepoint IME
     /// commit; `insert_str` handles each identically.
-    fn handle_widget_text_char(&mut self, panel_key: &crate::widgets::PanelKey, text: &str) {
+    pub(super) fn handle_widget_text_char(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        text: &str,
+    ) {
         if text.is_empty() || self.focused_text_mode(panel_key).1 {
             return;
         }

@@ -6349,6 +6349,25 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Switch a virtual buffer's mode — the keybinding set that applies
+    /// while it is focused.
+    ///
+    /// A panel that grows a text field (an in-panel filter) needs the
+    /// single-key commands of its normal mode to stop firing while the
+    /// user types; giving the panel a text-input mode for the duration
+    /// does that without the plugin re-registering bindings. Modes are
+    /// declared with `defineMode`; a mode name with no definition falls
+    /// back to the global bindings.
+    #[qjs(rename = "setBufferMode")]
+    pub fn set_buffer_mode(&self, buffer_id: u32, mode: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBufferMode {
+                buffer_id: BufferId(buffer_id as usize),
+                mode,
+            })
+            .is_ok()
+    }
+
     /// Show or hide one panel of a buffer group, without tearing the
     /// group down.
     ///
