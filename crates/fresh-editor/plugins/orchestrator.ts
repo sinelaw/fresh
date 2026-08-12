@@ -14134,11 +14134,22 @@ function buildHomeSpec(): WidgetSpec {
 
   const listSection = labeledSection({
     label: homeFocus === "list" ? `▸ ${header}` : header,
+    // An empty list is the one case where the view cannot do its job, so it
+    // spends the space saying how to fix that rather than stating the
+    // obvious. There is nothing to select, nothing to read, and nothing to
+    // address — the only useful next action is to make an agent.
     child: rows.length === 0
-      ? raw([styledRow([{
-        text: "no live workspaces",
-        style: { fg: "ui.menu_disabled_fg", italic: true },
-      }])])
+      ? raw([
+        styledRow([{
+          text: "  no agents yet",
+          style: { fg: "ui.menu_disabled_fg", italic: true },
+        }]),
+        styledRow([{ text: " " }]),
+        styledRow([{
+          text: "  Alt+n makes a workspace and starts one in it",
+          style: { fg: "ui.menu_disabled_fg" },
+        }]),
+      ])
       : list({
         items: rows.map((s) => fleetRowEntry(s, rightCols)),
         itemKeys: rows.map((s) => String(s.id)),
@@ -14193,6 +14204,7 @@ function buildHomeSpec(): WidgetSpec {
           { keys: "↑↓", label: "select" },
           { keys: "@name", label: "address" },
           { keys: "Alt+`", label: "type at agent" },
+          { keys: "Alt+n", label: "new agent" },
           { keys: "Enter", label: "send / go" },
           { keys: "Esc", label: "close" },
         ]),
@@ -14373,6 +14385,15 @@ registerHandler("orchestrator_home_open_selected", function () {
   if (target) void focusWorkspace(target.id);
 });
 registerHandler("orchestrator_home_send", function () { void sendChat(); });
+/// Make an agent from Home.
+///
+/// Home closes first: the New-Workspace form is its own full-screen panel, so
+/// leaving Home mounted underneath would stack two modals and leave the user
+/// looking at a form over a view neither of which has the keyboard.
+registerHandler("orchestrator_home_new", function () {
+  closeHome();
+  void editor.runCommand("%cmd.new");
+});
 registerHandler("orchestrator_home_chat_backspace", function () {
   chatDraft = [...chatDraft].slice(0, -1).join("");
   renderHome(true);
@@ -14454,6 +14475,10 @@ editor.defineMode(HOME_MODE, [
   ["Enter", "orchestrator_home_open_selected"],
   ["Escape", "orchestrator_home_close"],
   ["M-`", "orchestrator_home_type_toggle"],
+  // Alt+n, not a bare `n`: a focused list eats printable characters for
+  // type-ahead before a mode binding sees them, so a plain letter would look
+  // bound and do nothing.
+  ["M-n", "orchestrator_home_new"],
 ]);
 // The chat line. Enter sends, Backspace edits, Tab moves on, and every
 // printable character arrives through the global `mode_text_input` path —
@@ -14468,6 +14493,7 @@ editor.defineMode(HOME_CHAT_MODE, [
   ["Escape", "orchestrator_home_close"],
   ["Up", "orchestrator_home_prev"],
   ["Down", "orchestrator_home_next"],
+  ["M-n", "orchestrator_home_new"],
 ], false, true);
 // Typing mode claims only the way out, so Tab, Enter, Escape and every
 // printable character reach the focused terminal. Escape falls through on

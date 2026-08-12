@@ -32,6 +32,19 @@ fn setup_project(name: &str) -> (tempfile::TempDir, PathBuf) {
     (temp_dir, root)
 }
 
+/// Open Home and leave the keyboard where it starts: in the chat line.
+fn open_home_on_chat(h: &mut EditorTestHarness) {
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Home").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Home"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Enter send / go"))
+        .unwrap();
+}
+
 /// Open Home through the command palette and wait for it to render.
 fn open_home(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -554,5 +567,98 @@ fn an_agents_own_status_outranks_its_screen() {
     assert!(
         header.contains("none waiting"),
         "the agent said `working`, so nothing should be flagged as waiting:\n{screen}"
+    );
+}
+
+/// An agent's outbox becomes a line in the chat, and a reply addressed to it
+/// by name becomes a file in its inbox.
+///
+/// This is the whole control loop, end to end and through the keyboard: the
+/// agent says something without anyone asking, the user reads it in Home, and
+/// answers by typing `@name`. Nothing here goes through a model — the point of
+/// the chat being deterministic is that both halves are file moves — so the
+/// test can assert on the file that is the actual deliverable as well as on
+/// what is drawn.
+///
+/// The agent is written by hand, the way one nobody launched from the editor
+/// would be: a mailbox under `.fresh/agents/<name>/` in the checkout.
+#[test]
+fn home_chat_carries_an_outbox_message_and_delivers_the_reply() {
+    let (_tmp, root) = setup_project("zetaproj");
+
+    let mailbox = root.join(".fresh").join("agents").join("peer");
+    fs::create_dir_all(mailbox.join("inbox").join("done")).unwrap();
+    fs::create_dir_all(mailbox.join("outbox").join("read")).unwrap();
+    fs::write(mailbox.join("status"), "working pushing the last PR\n").unwrap();
+    fs::write(
+        mailbox.join("outbox").join("100.md"),
+        "pushed the 3 PRs; want me to start the fourth?\n",
+    )
+    .unwrap();
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    open_home_on_chat(&mut h);
+
+    // What the agent said, attributed to it. Without the outbox drain the
+    // transcript stays empty and this times out.
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("peer") && screen.contains("want me to start the fourth")
+    })
+    .unwrap();
+
+    // The message file moves to `read/` — that move is what stops it being
+    // appended again on the next tick.
+    h.wait_until(|_| !mailbox.join("outbox").join("100.md").exists())
+        .unwrap();
+
+    // Answer it. The keyboard is already in the chat line: Home opens there
+    // because reading what happened and replying is why you opened it.
+    h.type_text("@peer yes, start the fourth").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("yes, start the fourth"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Delivered as a file in that agent's own inbox, addressed by name.
+    h.wait_until(|_| {
+        fs::read_dir(mailbox.join("inbox"))
+            .map(|d| {
+                d.filter_map(Result::ok)
+                    .any(|e| e.file_name().to_string_lossy().ends_with(".md"))
+            })
+            .unwrap_or(false)
+    })
+    .unwrap();
+
+    let delivered = fs::read_dir(mailbox.join("inbox"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|e| e.file_name().to_string_lossy().ends_with(".md"))
+        .map(|e| fs::read_to_string(e.path()).unwrap())
+        .expect("the reply is a file in the agent's inbox");
+    assert!(
+        delivered.contains("to: peer"),
+        "the reply names the agent it was addressed to:\n{delivered}"
+    );
+    assert!(
+        delivered.contains("yes, start the fourth"),
+        "the reply carries what was typed:\n{delivered}"
+    );
+    assert!(
+        !delivered.contains("@peer"),
+        "the address is how the message was routed, not part of the \
+         instruction the agent reads:\n{delivered}"
+    );
+
+    // And the transcript records the user's half, so the conversation reads
+    // as one thing rather than as a message into a void.
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("you") && screen.contains("yes, start the fourth"),
+        "the chat shows what the user sent:\n{screen}"
     );
 }
