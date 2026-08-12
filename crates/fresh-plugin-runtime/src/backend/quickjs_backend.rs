@@ -3770,6 +3770,30 @@ impl JsEditorApi {
         self.command_sender.send(PluginCommand::FlushLayout).is_ok()
     }
 
+    /// Put a composite buffer's cursor on the row showing `line`
+    /// (0-indexed) of pane `pane` — 0 is the left/OLD pane — and scroll
+    /// it into view.
+    ///
+    /// `initialFocusHunk` on `createCompositeBuffer` lands the view on a
+    /// hunk; this lands it on a *line*, which is what a plugin holding a
+    /// concrete file position wants (following a review comment, or
+    /// keeping the reader's place when a diff view flips between its
+    /// unified and side-by-side layouts). No-op if that pane has no such
+    /// line.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports
+    /// that the command was sent.
+    #[qjs(rename = "setCompositeCursorLine")]
+    pub fn set_composite_cursor_line(&self, buffer_id: u32, pane: u32, line: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetCompositeCursorLine {
+                buffer_id: BufferId(buffer_id as usize),
+                pane: pane as usize,
+                line: line as usize,
+            })
+            .is_ok()
+    }
+
     /// Navigate to the next hunk in a composite buffer
     pub fn composite_next_hunk(&self, buffer_id: u32) -> bool {
         self.command_sender

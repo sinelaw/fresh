@@ -4270,6 +4270,14 @@ pub enum PluginCommand {
     /// Navigate to the previous hunk in a composite buffer
     CompositePrevHunk { buffer_id: BufferId },
 
+    /// Put a composite buffer's cursor on the aligned row that shows
+    /// `line` (0-indexed) of pane `pane`, and scroll it into view.
+    SetCompositeCursorLine {
+        buffer_id: BufferId,
+        pane: usize,
+        line: usize,
+    },
+
     /// Focus a specific split
     FocusSplit { split_id: SplitId },
 

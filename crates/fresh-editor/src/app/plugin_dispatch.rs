@@ -1623,6 +1623,13 @@ impl Editor {
                     request_id,
                 });
             }
+            PluginCommand::SetCompositeCursorLine {
+                buffer_id,
+                pane,
+                line,
+            } => {
+                self.handle_set_composite_cursor_line(buffer_id, pane, line);
+            }
             PluginCommand::CompositeNextHunk { buffer_id } => {
                 self.handle_composite_next_hunk(buffer_id);
             }
@@ -2207,6 +2214,17 @@ impl Editor {
         let split_id = self.active_window().effective_active_pair().0;
         self.active_window_mut()
             .composite_next_hunk(split_id, buffer_id);
+    }
+
+    fn handle_set_composite_cursor_line(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        pane: usize,
+        line: usize,
+    ) {
+        let split_id = self.active_window().effective_active_pair().0;
+        self.active_window_mut()
+            .composite_cursor_to_source_line(split_id, buffer_id, pane, line);
     }
 
     fn handle_composite_prev_hunk(&mut self, buffer_id: fresh_core::BufferId) {
