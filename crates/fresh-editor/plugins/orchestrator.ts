@@ -5536,8 +5536,7 @@ function buildDockSpec(): WidgetSpec {
   // New+search toolbar (1 row, or 2 when the search wraps below the
   // button on a narrow dock), filter header, divider — plus the expanded
   // filter body rows when open. The tree soaks up the rest.
-  const screen = editor.getScreenSize();
-  const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
+  const innerH = screenRows();
   const toolbarRows = toolbarWraps ? 2 : 1;
   // The chat takes its rows off the top of the tree's budget, so adding it
   // shortens the list rather than pushing anything off the dock's bottom.
@@ -5626,6 +5625,23 @@ function buildDockSpec(): WidgetSpec {
 // and the drain are the ones Home uses, so a message read here is read there
 // and the address you pick in one is the address in the other.
 // =============================================================================
+
+/// The terminal's height, remembered.
+///
+/// `getScreenSize()` answers usefully during a render and can answer with
+/// nothing outside one — and the dock's layout is computed from it in key
+/// handlers too, which is where a bogus height turned into a real bug: the
+/// whole dock collapsed to a dozen rows the moment you pressed Alt+C, because
+/// the row budget was computed against a height of 8 and everything below the
+/// tree fell off. Holding the last plausible value costs one variable and
+/// makes the layout independent of *when* it is computed.
+let lastScreenRows = 0;
+
+function screenRows(): number {
+  const h = editor.getScreenSize().height;
+  if (h >= 10) lastScreenRows = h;
+  return lastScreenRows >= 10 ? lastScreenRows : 30;
+}
 
 /// Rows the chat section spends on itself: the rule that separates it from
 /// the list, the header, the rule above the input, and the input line.
@@ -5720,8 +5736,7 @@ function dockChatBlock(rows: number): WidgetSpec[] {
 function refreshDockChatInPlace(): void {
   if (!openPanel || !dockMode || dockChatIsCollapsed()) return;
   const cols = dockChatCols();
-  const innerH = Math.max(8, editor.getScreenSize().height);
-  const rows = dockChatRows(innerH);
+  const rows = dockChatRows(screenRows());
   if (rows <= 0) return;
   const picking = chatTarget === null;
   const pickRows = picking ? chatPickRows() : 0;
@@ -7559,7 +7574,7 @@ registerHandler("orchestrator_dock_chat_focus", function () {
     setDockChatCollapsed(false);
     openPanel.update(buildDockSpec());
   }
-  if (dockChatRows(Math.max(8, editor.getScreenSize().height)) <= 0) {
+  if (dockChatRows(screenRows()) <= 0) {
     return;
   }
   dockFocus = dockFocus === "chat" ? "list" : "chat";
@@ -13827,6 +13842,16 @@ editor.on("widget_event", (e) => {
     if (e.event_type === "change" && e.widget_key === "dock_chat") {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       if (typeof payload.value !== "string") return;
+      // Typing into it is proof the caret is in it. Focus was only recorded
+      // from Alt+C and from an explicit `focus` event, so reaching the field
+      // any other way — the host's own Tab cycle, most obviously — left the
+      // dock believing the caret was still in the list: Tab kept cycling
+      // focus instead of completing, the candidate list was never redrawn,
+      // and the poll rebuilt the whole dock under every keystroke.
+      if (dockFocus !== "chat") {
+        dockFocus = "chat";
+        if (openPanel) openPanel.setFocusKey("dock_chat");
+      }
       const value = payload.value;
       if (chatTarget === null) {
         chatFilter = value;
