@@ -112,29 +112,50 @@ impl IndexDecorations {
     /// Move every stored position the way the buffer's markers moved for this
     /// edit, so the snapshot stays in current buffer coordinates.
     ///
-    /// Positions inside the removed span clamp to its start; positions after
-    /// it shift by the edit's delta; a position exactly at an insertion point
-    /// stays put (left gravity). The live markers resolve gravity per marker,
-    /// so an entry *at* the edit boundary can land one byte off — but such an
-    /// entry is on the edited line, whose decorations the plugin re-emits (the
-    /// edit re-fires `lines_changed` for it), and the re-emit shows up as a
-    /// snapshot diff that repairs the line exactly. Every entry *away* from
-    /// the boundary shifts identically to its marker, no gravity involved.
+    /// This mirrors `MarkerList`, and has to agree with it exactly: the repair
+    /// paths lay lines out against this snapshot, and a position that drifts
+    /// from its marker makes the index describe a line the renderer never
+    /// draws. Two rules, matching `IntervalTree::adjust_recursive`:
     ///
-    /// The map is monotone, so all five lists stay sorted.
+    /// * **Deletion** collapses the removed span onto its start — a position
+    ///   inside it clamps to `start`, one after it moves back by `removed`.
+    /// * **Insertion** is *right gravity*: a position sitting exactly at the
+    ///   insertion point is pushed forward. Every decoration anchor in the
+    ///   editor is right-gravity, because `MarkerList::create` stores its
+    ///   `left_affinity` argument in a map nothing reads and always calls
+    ///   `tree.insert`, which is right-gravity. (`conceal.rs` even labels its
+    ///   start marker "left affinity"; the tree does not honour it.)
+    ///
+    /// Getting the insertion rule backwards is not a boundary nicety: typing
+    /// one character immediately before a conceal left the snapshot's copy of
+    /// it a full insertion-length behind the live one, so the index believed
+    /// the line had fewer visible columns than the renderer drew. Nothing
+    /// detected it either, because an insertion bumps no decoration version,
+    /// so `ensure_built` short-circuits and never reaches the diff. Sources
+    /// that re-publish per edit (markdown_compose) healed a frame later;
+    /// sources that do not (LSP inlay hints) stayed wrong indefinitely.
+    ///
+    /// The composed map is monotone, so all five lists stay sorted.
     pub fn shift_for_edit(&mut self, start: usize, removed: usize, inserted: usize) {
         if removed == 0 && inserted == 0 {
             return;
         }
         let end_old = start + removed;
-        let delta = inserted as i64 - removed as i64;
         let shift = |p: usize| -> usize {
-            if p <= start {
+            // Production applies the halves as separate marker adjustments
+            // (`apply_delete`, then `apply_insert`); a replace is their
+            // composition, so compose them here in the same order.
+            let p = if p <= start {
                 p
             } else if p < end_old {
                 start
             } else {
-                (p as i64 + delta).max(0) as usize
+                p - removed
+            };
+            if p >= start {
+                p + inserted
+            } else {
+                p
             }
         };
         for (p, _) in &mut self.soft_breaks {
@@ -200,8 +221,12 @@ impl IndexDecorations {
             &mut |p: &usize| ranges.push(*p..*p + 1),
         );
         // Folds are part of the geometry key, so two snapshots under one
-        // geometry should agree — diffed anyway so correctness never rests on
-        // `fold_signature` being collision-free.
+        // geometry normally agree and this arm finds nothing. It is not a
+        // backstop against a `fold_signature` collision — folds are not in
+        // `PipelineInputs`, so a fold-only change with a colliding signature
+        // never reaches the diff at all. It earns its place for the case where
+        // some other manager's version moves in the same frame as a fold
+        // change, where it keeps the two snapshots from disagreeing silently.
         diff_sorted(
             &self.folds,
             &new.folds,
@@ -410,7 +435,13 @@ impl Fenwick {
     }
 
     /// Replace entry `i`'s value.
+    ///
+    /// `i` is always a line the caller has already indexed in `lines`, and the
+    /// tree is rebuilt from `lines` whenever that vector's length changes, so
+    /// an out-of-range index means the two have drifted apart — which would
+    /// otherwise show up only as quietly wrong row totals, forever.
     pub fn set(&mut self, i: usize, old: u32, new: u32) {
+        debug_assert!(i < self.n, "Fenwick index {i} out of range for {}", self.n);
         if old != new && i < self.n {
             self.add(i, new as i64 - old as i64);
         }
@@ -477,11 +508,16 @@ pub struct WrapIndex {
 ///
 /// A full rebuild is O(buffer) — it lays out every logical line — so
 /// `lines_built` divided by the buffer's line count is how many times the
-/// whole document has been re-laid-out; one is the design. Decoration changes
-/// land in `decoration_repairs` / `lines_repaired` instead, and during a
-/// scroll through a plugin-decorated file the repaired count tracks the lines
-/// the plugin touched — the difference between a scroll that costs the
-/// viewport and one that costs the file.
+/// whole document has been re-laid-out; one is the design. Everything
+/// incremental lands in `lines_repaired`, counted at the point a line is
+/// actually re-laid-out, so it covers *both* repair channels: decoration
+/// diffs and text edits. Counting only the decoration side would leave a
+/// regression that made every keystroke repair a wide span invisible to the
+/// tests that use these numbers as their cost oracle.
+///
+/// `decoration_repairs` counts diffs that found real work; a version bump
+/// whose snapshot turned out identical is free and is not counted, so the
+/// number means "batches that changed something", not "batches seen".
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct WrapIndexStats {
     pub rebuilds: u64,
@@ -613,7 +649,13 @@ impl WrapIndex {
         // what repair pays for.
         let mut spans: Vec<(usize, usize)> = Vec::new();
         for range in self.decorations.changed_ranges(decorations) {
-            let first = buffer.get_line_number(range.start.min(buffer.len()));
+            // Both ends clamp to a real line: `get_line_number` falls back to
+            // byte arithmetic when the buffer carries no line metadata, and an
+            // unclamped `first` there could exceed `last` and underflow the
+            // width below.
+            let first = buffer
+                .get_line_number(range.start.min(buffer.len()))
+                .min(last_line);
             let last = buffer
                 .get_line_number(range.end.min(buffer.len()))
                 .min(last_line);
@@ -628,6 +670,14 @@ impl WrapIndex {
         if damaged > line_count / 2 {
             return false;
         }
+        if spans.is_empty() {
+            // The versions moved but the decorations did not — plugins
+            // republish identical state constantly. Adopting the versions is
+            // the whole job; an empty diff means the snapshots are equal, so
+            // there is nothing to copy and no layout work to report.
+            self.inputs = inputs;
+            return true;
+        }
 
         // The new snapshot must be in place before any line is rebuilt —
         // `rebuild_one` reads `self.decorations`.
@@ -635,12 +685,13 @@ impl WrapIndex {
         let geometry = self.geometry.expect("repair_decorations requires a build");
         for (first, last) in spans {
             for line in first..=last {
+                // Each `rebuild_one` reports its own line, so `lines_repaired`
+                // needs no separate accounting here.
                 self.rebuild_one(buffer, line, geometry.rule, line_ending);
             }
         }
         self.inputs = inputs;
         self.stats.decoration_repairs += 1;
-        self.stats.lines_repaired += damaged as u64;
         true
     }
 
@@ -757,6 +808,16 @@ impl WrapIndex {
     /// replaced wholesale). Decoration changes no longer come through here —
     /// `ensure_built` repairs them by diffing the stored snapshot against the
     /// fresh one.
+    ///
+    /// Nothing calls this today. The paths that replace a buffer's contents
+    /// outright — file reload, auto-revert, `apply_bulk_edit`'s snapshot
+    /// restore — leave the index alone and rely on `buffer.version()` moving,
+    /// which routes `ensure_built` to a full rebuild. That works, but it is an
+    /// implicit dependency rather than a stated one: `damage_bytes` checks
+    /// only `self.built`, so an edit arriving between such a replacement and
+    /// the next render would repair lines that describe the *old* document and
+    /// then mark the index current. A render always intervenes in practice.
+    /// Calling this from those paths is the explicit fix.
     pub fn damage_all(&mut self) {
         self.built = false;
     }
@@ -839,6 +900,7 @@ impl WrapIndex {
         line_ending: LineEnding,
     ) {
         let first = first.min(self.lines.len());
+        self.stats.lines_repaired += (new_last + 1).saturating_sub(first) as u64;
         let mut rebuilt = Vec::new();
         for line in first..=new_last {
             let vrows = line_virtual_rows(buffer, line, &self.decorations);
@@ -1007,13 +1069,26 @@ impl WrapIndex {
             resumable = vec![true];
         }
 
+        // Every field `build_line` sets has to be refreshed here too, or a
+        // repaired line and a rebuilt one describe the same text differently.
+        // `hidden` is the easy one to forget: it gates `total_rows()` to zero,
+        // so a stale one hides or reveals a line's whole row budget.
+        let line_start = buffer.line_start_offset(line).unwrap_or(0);
+        let line_end = buffer
+            .line_start_offset(line + 1)
+            .unwrap_or_else(|| buffer.len())
+            .min(buffer.len());
+        let hidden = self.decorations.line_is_hidden(line_start, line_end);
+
         let lw = &mut self.lines[line];
         lw.row_starts = starts;
         lw.carries = carries;
         lw.resumable = resumable;
         lw.virtual_rows = vrows;
+        lw.hidden = hidden;
         let new_total = lw.total_rows();
         self.rows.set(line, old_total, new_total);
+        self.stats.lines_repaired += 1;
     }
 
     fn rebuild_one(
@@ -1028,6 +1103,7 @@ impl WrapIndex {
         self.lines[line] = build_line(buffer, line, rule, line_ending, vrows, &self.decorations);
         let new_total = self.lines[line].total_rows();
         self.rows.set(line, old_total, new_total);
+        self.stats.lines_repaired += 1;
     }
 }
 
@@ -1369,6 +1445,7 @@ fn absorb_finished(
 mod tests {
     use super::*;
     use crate::model::filesystem::StdFileSystem;
+    use crate::state::EditorState;
     use std::sync::Arc;
 
     fn test_fs() -> Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> {
@@ -1446,11 +1523,11 @@ mod tests {
 
     /// A repair must leave the index *usable*, not merely correct.
     ///
-    /// `pipeline_inputs_version` folds in `buffer.version()`, so every edit
-    /// changes it. For one release `damage_bytes` updated the rows and left the
-    /// version stale, so the next `ensure_built` found the index out of date and
-    /// rebuilt the whole buffer — the repair ran and was thrown away, ~26% of a
-    /// keystroke doing the same work twice.
+    /// The inputs include `buffer.version()`, so every edit changes them. For
+    /// one release `damage_bytes` updated the rows and left the version stale,
+    /// so the next `ensure_built` found the index out of date and rebuilt the
+    /// whole buffer — the repair ran and was thrown away, ~26% of a keystroke
+    /// doing the same work twice.
     ///
     /// Nothing caught it: `repair_equals_rebuild` compares a repaired index
     /// against a rebuilt one, which is exactly what kept happening. Equality was
@@ -1493,6 +1570,40 @@ mod tests {
         );
     }
 
+    /// Build (or refresh) the index the renderer would use for `geometry` —
+    /// the same call sequence as `render_buffer`, so tests exercise the
+    /// production path rather than a shortcut.
+    fn build_index(state: &mut EditorState, geometry: WrapIndexGeometry) {
+        let decorations = state.index_decorations(geometry.view_mode, Vec::new(), &[]);
+        let inputs = state.pipeline_inputs();
+        let line_ending = state.buffer.line_ending();
+        let index = state.wrap_indices.entry(geometry);
+        index.ensure_built(
+            &mut state.buffer,
+            geometry,
+            inputs,
+            line_ending,
+            &decorations,
+        );
+    }
+
+    /// An index built from scratch against the state's *live* decorations —
+    /// the oracle for what a maintained index must agree with.
+    fn fresh_index(state: &mut EditorState, geometry: WrapIndexGeometry) -> WrapIndex {
+        let decorations = state.index_decorations(geometry.view_mode, Vec::new(), &[]);
+        let inputs = state.pipeline_inputs();
+        let line_ending = state.buffer.line_ending();
+        let mut index = WrapIndex::default();
+        index.ensure_built(
+            &mut state.buffer,
+            geometry,
+            inputs,
+            line_ending,
+            &decorations,
+        );
+        index
+    }
+
     /// A build with `decorations` from scratch, for comparing repairs against.
     fn built_with(buffer: &mut Buffer, width: usize, decorations: &IndexDecorations) -> WrapIndex {
         let mut index = WrapIndex::default();
@@ -1515,17 +1626,16 @@ mod tests {
             .join("\n")
     }
 
-    /// The core of the diff-repair contract: a decoration change re-lays-out
-    /// only the lines it touched, and the result is indistinguishable from a
-    /// from-scratch build with the new snapshot. This is what turned a first
-    /// scroll through a plugin-decorated file from O(frames x buffer) into
-    /// O(frames x batch).
+    /// The cost contract: a decoration change costs the lines it touched, and
+    /// the answer is still what a from-scratch build would say. This is what
+    /// turned a first scroll through a plugin-decorated file from
+    /// O(frames x buffer) into O(frames x batch).
     #[test]
-    fn decoration_change_repairs_only_touched_lines_and_equals_rebuild() {
+    fn a_decoration_change_costs_the_lines_it_touched() {
         let text = paragraphs(60);
         let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
         let mut index = built(&mut buffer, 20);
-        assert_eq!(index.stats().rebuilds, 1);
+        let before = index.stats();
 
         // A plugin batch decorates a handful of lines mid-document: a soft
         // break, a conceal, and a virtual line, all in lines 30..33.
@@ -1552,17 +1662,18 @@ mod tests {
             &decorations,
         );
 
-        let stats = index.stats();
-        assert_eq!(stats.rebuilds, 1, "the change must not trigger a rebuild");
-        assert_eq!(stats.decoration_repairs, 1);
+        let after = index.stats();
+        let laid_out = (after.lines_built - before.lines_built)
+            + (after.lines_repaired - before.lines_repaired);
         assert!(
-            stats.lines_repaired <= 6,
-            "three decorated lines should repair a handful of lines, not {}",
-            stats.lines_repaired
+            laid_out <= 6,
+            "decorating three lines should lay out a handful of lines, not \
+             {laid_out} (the document is {} lines)",
+            index.lines().len(),
         );
         assert!(
             index.is_built_for(&geometry(20), bumped),
-            "the repair must leave the index current"
+            "the index must be current afterwards, or the next frame pays again"
         );
 
         let fresh = built_with(&mut buffer, 20, &decorations);
@@ -1582,8 +1693,12 @@ mod tests {
             ..Default::default()
         };
         let mut index = built_with(&mut buffer, 20, &decorated);
-        let plain_rows = built(&mut buffer, 20).total_rows();
-        assert_ne!(index.total_rows(), plain_rows, "the soft break added a row");
+        let plain = built(&mut buffer, 20);
+        assert_ne!(
+            index.total_rows(),
+            plain.total_rows(),
+            "the soft break added a row"
+        );
 
         let bumped = crate::view::line_wrap_cache::PipelineInputs {
             soft_breaks: 1,
@@ -1596,9 +1711,8 @@ mod tests {
             LineEnding::LF,
             &IndexDecorations::default(),
         );
-        assert_eq!(index.stats().rebuilds, 1);
-        assert_eq!(index.stats().decoration_repairs, 1);
-        assert_eq!(index.total_rows(), plain_rows);
+        assert_eq!(index.total_rows(), plain.total_rows());
+        assert_eq!(structure(&index), structure(&plain));
     }
 
     /// A version bump with no actual decoration change — plugins republish
@@ -1609,6 +1723,7 @@ mod tests {
         let text = paragraphs(30);
         let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
         let mut index = built(&mut buffer, 20);
+        let before = index.stats();
 
         let bumped = crate::view::line_wrap_cache::PipelineInputs {
             conceals: 7,
@@ -1621,85 +1736,174 @@ mod tests {
             LineEnding::LF,
             &IndexDecorations::default(),
         );
-        let stats = index.stats();
-        assert_eq!(
-            (stats.rebuilds, stats.lines_repaired),
-            (1, 0),
-            "identical snapshots must cost nothing"
+        let after = index.stats();
+        let laid_out = (after.lines_built - before.lines_built)
+            + (after.lines_repaired - before.lines_repaired);
+        assert_eq!(laid_out, 0, "identical snapshots must cost no layout work");
+        assert!(
+            index.is_built_for(&geometry(20), bumped),
+            "and the bump must still be adopted, or every later frame re-diffs"
         );
-        assert!(index.is_built_for(&geometry(20), bumped));
     }
 
-    /// The snapshot shifts with text edits, so a decoration diff computed
-    /// *after* an edit compares like coordinates with like: an edit above the
-    /// decorated region followed by an unrelated decoration change must not
-    /// see the shifted entries as damage and re-lay-out their lines.
+    /// **The spec, in one sentence: an index that has been maintained across
+    /// edits must answer exactly as an index built from scratch right now.**
+    ///
+    /// Snapshots, diffs, shifting, repair channels — all of that is mechanism,
+    /// and this test knows none of it. It drives a real [`EditorState`]: real
+    /// decoration managers, real marker tree, the real edit path, and the same
+    /// build call the renderer makes. After each edit it asks the maintained
+    /// index and a fresh one the same questions, and they must agree.
+    ///
+    /// Edits are placed where maintenance is hardest — exactly on a
+    /// decoration's start and end, inside it, and straddling it. Testing the
+    /// maintenance machinery against a hand-computed expectation is what let
+    /// the original bug through: the expectation was derived the same wrong
+    /// way as the code, so both agreed on the wrong answer. A fresh build
+    /// cannot be wrong in the same direction, because it does no maintenance
+    /// at all.
     #[test]
-    fn snapshot_shifts_with_edits_so_later_diffs_stay_local() {
-        let text = paragraphs(50);
-        let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
-        let l30 = buffer.line_start_offset(30).unwrap();
-        let l40 = buffer.line_start_offset(40).unwrap();
-        let mut decorations = IndexDecorations {
-            soft_breaks: vec![(l30 + 5, 0)],
-            conceals: vec![(l30 + 12..l30 + 15, None)],
-            ..Default::default()
-        };
-        let mut index = built_with(&mut buffer, 20, &decorations);
+    fn a_maintained_index_answers_like_a_fresh_build() {
+        use crate::model::cursor::Cursors;
+        use crate::model::event::Event;
+        use fresh_core::overlay::OverlayNamespace;
 
-        // Text edit on line 0, far above the decorations.
-        let ins = "prefix ";
-        buffer.insert(0, ins);
-        let after_edit = inputs(buffer.version());
-        index.damage_bytes(
-            &mut buffer,
-            EditDamage {
-                start: 0,
-                removed: 0,
-                inserted: ins.len(),
-                line_before: 0,
-                line_start_before: 0,
-                line_end_before: 0,
-            },
-            LineEnding::LF,
-            after_edit,
-        );
+        /// Narrow enough that hiding or revealing a run of text moves a row
+        /// boundary — otherwise every layout compares equal and the test
+        /// proves nothing.
+        const WIDTH: usize = 20;
+        const LINE: usize = 60;
 
-        // The plugin now decorates line 40; the line-30 entries have shifted
-        // in the live managers, and the caller's fresh snapshot reflects that.
-        decorations.shift_for_edit(0, 0, ins.len());
-        decorations.soft_breaks.push((l40 + ins.len() + 4, 0));
-        let bumped = crate::view::line_wrap_cache::PipelineInputs {
-            soft_breaks: 1,
-            ..after_edit
-        };
-        index.ensure_built(
-            &mut buffer,
-            geometry(20),
-            bumped,
-            LineEnding::LF,
-            &decorations,
-        );
+        #[derive(Debug, Clone, Copy)]
+        enum Edit {
+            Insert(usize, usize),
+            Delete(usize, usize),
+        }
 
-        let stats = index.stats();
-        assert_eq!(stats.rebuilds, 1, "no full rebuild anywhere in this dance");
-        assert!(
-            stats.lines_repaired <= 2,
-            "only the newly decorated line should repair; repaired {}",
-            stats.lines_repaired
+        // Three long lines; a conceal hiding a run of line 1, a soft break in
+        // line 2. Byte layout is fixed so the edit positions below can be
+        // written relative to the decorations.
+        let text = format!(
+            "{}\n{}\n{}\n",
+            "a".repeat(LINE),
+            "b".repeat(LINE),
+            "c".repeat(LINE)
         );
-        let fresh = built_with(&mut buffer, 20, &decorations);
-        assert_eq!(structure(&index), structure(&fresh));
+        let line1 = LINE + 1;
+        let line2 = 2 * (LINE + 1);
+        let conceal = line1 + 10..line1 + 30;
+        let soft_break = line2 + 30;
+
+        let cases = [
+            // The case that mattered: typing where a decoration is anchored.
+            ("insert at conceal start", Edit::Insert(conceal.start, 40)),
+            ("insert at conceal end", Edit::Insert(conceal.end, 40)),
+            ("insert at soft break", Edit::Insert(soft_break, 40)),
+            ("insert inside conceal", Edit::Insert(conceal.start + 5, 40)),
+            ("insert before conceal", Edit::Insert(line1, 40)),
+            (
+                "insert one byte at conceal start",
+                Edit::Insert(conceal.start, 1),
+            ),
+            ("delete up to conceal start", Edit::Delete(line1, 10)),
+            ("delete from conceal start", Edit::Delete(conceal.start, 10)),
+            (
+                "delete straddling conceal end",
+                Edit::Delete(conceal.end - 5, 10),
+            ),
+            ("delete across a line break", Edit::Delete(LINE - 3, 8)),
+        ];
+
+        for (label, edit) in cases {
+            let mut state = EditorState::new(
+                80,
+                24,
+                crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+                test_fs(),
+            );
+            let mut cursors = Cursors::new();
+            let cursor_id = cursors.primary_id();
+            state.apply(
+                &mut cursors,
+                &Event::Insert {
+                    position: 0,
+                    text: text.clone(),
+                    cursor_id,
+                },
+            );
+
+            // Decorate through the real managers, so the real markers carry
+            // these positions through the edit.
+            let ns = OverlayNamespace::from_string("test".to_string());
+            state
+                .conceals
+                .add(&mut state.marker_list, ns.clone(), conceal.clone(), None);
+            state
+                .soft_breaks
+                .add(&mut state.marker_list, ns, soft_break, 0);
+
+            let geom = geometry(WIDTH);
+            build_index(&mut state, geom);
+
+            match edit {
+                Edit::Insert(position, len) => state.apply(
+                    &mut cursors,
+                    &Event::Insert {
+                        position,
+                        text: "x".repeat(len),
+                        cursor_id,
+                    },
+                ),
+                Edit::Delete(start, len) => {
+                    let whole = state.buffer.to_string().expect("buffer is utf-8");
+                    let deleted_text = whole[start..start + len].to_string();
+                    state.apply(
+                        &mut cursors,
+                        &Event::Delete {
+                            range: start..start + len,
+                            deleted_text,
+                            cursor_id,
+                        },
+                    )
+                }
+            }
+
+            // A render follows every edit, so run the same build call it makes
+            // before reading anything back.
+            build_index(&mut state, geom);
+            let maintained = state
+                .wrap_indices
+                .get(&geom)
+                .map(|i| (structure(i), i.total_rows()))
+                .expect("index present");
+
+            let fresh = fresh_index(&mut state, geom);
+            assert_eq!(
+                maintained.0,
+                structure(&fresh),
+                "{label}: maintained index disagrees with a fresh build"
+            );
+            assert_eq!(
+                maintained.1,
+                fresh.total_rows(),
+                "{label}: maintained total rows disagree with a fresh build"
+            );
+        }
     }
 
     /// Damage spanning most of the document falls back to one full rebuild —
-    /// cheaper than line-at-a-time repair and the honest description of what
-    /// happened.
+    /// Decorating every line at once stays correct and stays bounded.
+    ///
+    /// Which strategy the index picks to get there is its own business — the
+    /// promise is that the answer is right and the work is proportional to the
+    /// damage, not quadratic in it.
     #[test]
-    fn mass_decoration_change_falls_back_to_rebuild() {
+    fn a_decoration_change_touching_every_line_stays_bounded() {
         let text = paragraphs(40);
         let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
         let mut index = built(&mut buffer, 20);
+        let line_count = buffer.line_count().unwrap() as u64;
+        let before = index.stats();
 
         let breaks: Vec<(usize, u16)> = (0..40)
             .map(|l| (buffer.line_start_offset(l).unwrap() + 3, 0))
@@ -1720,11 +1924,18 @@ mod tests {
             &decorations,
         );
 
-        let stats = index.stats();
-        assert_eq!(stats.rebuilds, 2, "every line damaged -> rebuild, once");
-        assert_eq!(stats.decoration_repairs, 0);
+        let after = index.stats();
+        let laid_out = (after.lines_built - before.lines_built)
+            + (after.lines_repaired - before.lines_repaired);
+        assert!(
+            laid_out <= line_count,
+            "damaging every line should cost about one pass over the document, \
+             not more: {laid_out} lines laid out for {line_count} lines"
+        );
+
         let fresh = built_with(&mut buffer, 20, &decorations);
         assert_eq!(structure(&index), structure(&fresh));
+        assert_eq!(index.total_rows(), fresh.total_rows());
     }
 
     /// The merge gate for incremental repair: a repaired index is

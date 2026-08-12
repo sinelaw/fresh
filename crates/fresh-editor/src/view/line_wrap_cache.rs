@@ -67,10 +67,15 @@ pub enum CacheViewMode {
 /// layout.  Every mutable input must be represented here — if the
 /// caller forgets one, stale entries can be returned.
 ///
-/// The `pipeline_inputs_version` folds in the buffer version plus the
-/// soft-break and conceal managers' versions (see
-/// [`pipeline_inputs_version`]).  The remaining fields are geometry /
-/// viewport config.
+/// `pipeline_inputs_version` is the buffer version, and that is
+/// sufficient: the only live consumer is [`RowCountCache`], whose value
+/// is a pure function of the line's raw text and the geometry fields
+/// below.  Decorations never enter it — `Viewport`'s row counting adds
+/// virtual rows *outside* the cache and returns before consulting it at
+/// all when soft breaks apply — so a decoration version could not stale
+/// an entry.  Layout that does model decorations goes through
+/// [`WrapIndex`](crate::view::wrap_index::WrapIndex), which keys on the
+/// full [`PipelineInputs`] instead.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct LineWrapKey {
     pub pipeline_inputs_version: u64,
