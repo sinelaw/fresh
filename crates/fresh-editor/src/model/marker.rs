@@ -105,6 +105,25 @@ impl MarkerList {
         id
     }
 
+    /// Create a marker covering a whole range, rather than a point.
+    ///
+    /// The tree's `query` is an ordinary max-end interval-overlap query, so a
+    /// marker inserted with its real extent is returned for any range it
+    /// touches — including a query that falls strictly *inside* it. Point
+    /// markers cannot answer that: an interval whose endpoints both sit
+    /// outside the query is invisible to a query over its endpoints. Callers
+    /// that need "give me the things covering this window" (overlay
+    /// viewport lookup) index their extent with this and keep their own
+    /// endpoint markers for the authoritative positions.
+    ///
+    /// Right gravity, matching `create`.
+    pub fn create_span(&mut self, start: usize, end: usize) -> MarkerId {
+        let tree_id = self.tree.insert(start as u64, end.max(start) as u64);
+        let id = MarkerId(tree_id);
+        self._affinity_map.insert(id, false);
+        id
+    }
+
     /// Delete a marker
     pub fn delete(&mut self, id: MarkerId) {
         self.tree.delete(id.0);
