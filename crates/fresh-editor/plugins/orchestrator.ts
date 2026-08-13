@@ -7628,7 +7628,8 @@ editor.defineMode(
     // behaviour — dive, or fold a folder — rather than reimplementing it.
     ["Enter", "orchestrator_dock_enter"],
     // Same rule as Enter and the arrows: ours while the caret is in the chat,
-    // handed straight back otherwise so the dock's own focus cycle is
+    // handed straight back otherwise so the dock's own focus cycle — and the
+    // centered picker's bulk-action bar, which has no chat to claim it — is
     // unchanged for everything else.
     ["Tab", "orchestrator_dock_tab"],
   ],
@@ -7637,14 +7638,24 @@ editor.defineMode(
 );
 
 registerHandler("orchestrator_dock_tab", function () {
-  // Tab belongs to the chat outright, and is never handed back. Forwarding it
-  // when the dock believed the caret was elsewhere is what kept moving focus
-  // *out* of the field you were typing in — and the belief was wrong exactly
-  // when it mattered, because arriving through the host's own focus cycle
-  // never announced itself. The tree steers with the arrows and does not need
-  // Tab, so there is nothing to hand it back for.
-  if (!dockMode || !openPanel || dockChatIsCollapsed()) return;
+  if (!openPanel) return;
+  // Tab is claimed for the whole mode keymap, so every case this handler does
+  // not want has to hand it back — the same rule as Enter and the arrows.
+  // Returning instead swallows it, and a key that silently does nothing is
+  // worse than one that goes to the wrong place: the *centered* picker has no
+  // chat and drives its bulk-action bar with Tab, so `Archive → Delete` stopped
+  // moving and Enter opened the confirm panel for whichever action focus had
+  // never left.
+  if (!dockMode || dockChatIsCollapsed()) {
+    openPanel.command(widgetKey("Tab"));
+    return;
+  }
   if (dockFocus !== "chat") {
+    // Into the chat, and deliberately not handed back. Forwarding it when the
+    // dock believed the caret was elsewhere is what kept moving focus *out* of
+    // the field you were typing in — the belief was wrong exactly when it
+    // mattered, because arriving through the host's own focus cycle never
+    // announced itself. The tree steers with the arrows and does not need Tab.
     dockFocus = "chat";
     openPanel.update(buildDockSpec());
     openPanel.setFocusKey("dock_chat");
