@@ -13,7 +13,7 @@ use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
 use crate::view::soft_break::SoftBreakRender;
 use crate::view::theme::Theme;
-use crate::view::ui::view_pipeline::ViewLine;
+use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
 use crate::view::wrap_machine::{WrapMachine, WrapRule};
 use fresh_core::api::{ViewTokenStyle, ViewTokenWire, ViewTokenWireKind};
@@ -391,6 +391,40 @@ pub(crate) fn apply_conceal_ranges(
     output
 }
 
+/// Whether this visual row continues the source line above it rather than
+/// starting one of its own.
+///
+/// Two different things cut a source line into rows, and neither ends it: the
+/// wrap machine's `Break`, and a plugin *soft break* — which reaches the token
+/// stream as an injected `Newline` (`source_offset: None`, see
+/// `apply_soft_breaks`) and is how compose mode folds a table cell or a framed
+/// code line. Only a newline that came from a source byte ends the line.
+///
+/// Injected newlines from virtual *lines* are not a case here: those are added
+/// by `inject_virtual_lines` itself, downstream of the rows it reads.
+fn continues_previous_line(line: &ViewLine) -> bool {
+    matches!(
+        line.line_start,
+        LineStart::AfterBreak | LineStart::AfterInjectedNewline
+    )
+}
+
+/// End byte of the logical source line whose first visual row is `idx` —
+/// the end of its last continuation row, so a `LineAbove` anchored anywhere
+/// in a wrapped line still resolves against the whole line.
+fn logical_end(source_lines: &[ViewLine], idx: usize) -> Option<usize> {
+    let mut end = None;
+    for (offset, line) in source_lines[idx..].iter().enumerate() {
+        if offset > 0 && !continues_previous_line(line) {
+            break;
+        }
+        if let Some(b) = line.char_source_bytes.iter().rev().find_map(|m| *m) {
+            end = Some(b + 1);
+        }
+    }
+    end
+}
+
 /// Inject `LineAbove` / `LineBelow` virtual lines into the view line stream.
 ///
 /// `wrap_width` is the viewport's effective content width when soft-wrap is
@@ -441,59 +475,93 @@ pub(super) fn inject_virtual_lines(
 
     let mut result = Vec::with_capacity(source_lines.len() + virtual_lines.len());
 
-    for source_line in source_lines {
-        let line_start_byte = source_line.char_source_bytes.iter().find_map(|m| *m);
+    // `source_lines` are *visual* rows: a wrapped source line arrives as a
+    // first row plus one `AfterBreak` continuation per fold. A virtual line
+    // belongs above or below the whole source line, not above or below the
+    // fold its anchor byte happens to land in — so both passes run against
+    // the logical line's byte range, and emit at its first / last visual row.
+    //
+    // Placing a `LineBelow` at the anchor's own row is what put compose
+    // mode's `└─┴─┘` table border directly under the *first* visual row of a
+    // wrapped final row, leaving the rest of that row's text below a frame
+    // that had already closed.
+    let logical_start_of: Vec<Option<usize>> = {
+        let mut starts = Vec::with_capacity(source_lines.len());
+        let mut current: Option<usize> = None;
+        for line in &source_lines {
+            let row_start = line.char_source_bytes.iter().find_map(|m| *m);
+            if !continues_previous_line(line) {
+                current = row_start;
+            }
+            // A continuation row inherits its line's start; a first row that
+            // maps to no source byte (a virtual line already in the stream)
+            // contributes none.
+            starts.push(current.or(row_start));
+        }
+        starts
+    };
+
+    for (idx, source_line) in source_lines.iter().enumerate() {
+        let logical_start = logical_start_of[idx];
         let line_end_byte = source_line
             .char_source_bytes
             .iter()
             .rev()
             .find_map(|m| *m)
             .map(|b| b + 1);
+        let is_first_row = !continues_previous_line(source_line);
+        let is_last_row = source_lines
+            .get(idx + 1)
+            .is_none_or(|next| !continues_previous_line(next));
 
-        if let (Some(start), Some(end)) = (line_start_byte, line_end_byte) {
-            for (anchor_pos, vtext) in &virtual_lines {
-                if *anchor_pos >= start
-                    && *anchor_pos < end
-                    && vtext.position == VirtualTextPosition::LineAbove
-                {
-                    let glyph = vtext.gutter_glyph.as_ref().map(|g| {
-                        (
-                            g.clone(),
-                            vtext.gutter_color.unwrap_or(theme.line_number_fg),
-                        )
-                    });
-                    result.extend(create_wrapped_virtual_lines(
-                        &vtext.text,
-                        vtext.resolved_style(theme),
-                        wrap_width,
-                        glyph,
-                        &vtext.text_overlays,
-                    ));
+        if is_first_row {
+            if let (Some(start), Some(end)) = (logical_start, logical_end(&source_lines, idx)) {
+                for (anchor_pos, vtext) in &virtual_lines {
+                    if *anchor_pos >= start
+                        && *anchor_pos < end
+                        && vtext.position == VirtualTextPosition::LineAbove
+                    {
+                        let glyph = vtext.gutter_glyph.as_ref().map(|g| {
+                            (
+                                g.clone(),
+                                vtext.gutter_color.unwrap_or(theme.line_number_fg),
+                            )
+                        });
+                        result.extend(create_wrapped_virtual_lines(
+                            &vtext.text,
+                            vtext.resolved_style(theme),
+                            wrap_width,
+                            glyph,
+                            &vtext.text_overlays,
+                        ));
+                    }
                 }
             }
         }
 
         result.push(source_line.clone());
 
-        if let (Some(start), Some(end)) = (line_start_byte, line_end_byte) {
-            for (anchor_pos, vtext) in &virtual_lines {
-                if *anchor_pos >= start
-                    && *anchor_pos < end
-                    && vtext.position == VirtualTextPosition::LineBelow
-                {
-                    let glyph = vtext.gutter_glyph.as_ref().map(|g| {
-                        (
-                            g.clone(),
-                            vtext.gutter_color.unwrap_or(theme.line_number_fg),
-                        )
-                    });
-                    result.extend(create_wrapped_virtual_lines(
-                        &vtext.text,
-                        vtext.resolved_style(theme),
-                        wrap_width,
-                        glyph,
-                        &vtext.text_overlays,
-                    ));
+        if is_last_row {
+            if let (Some(start), Some(end)) = (logical_start, line_end_byte) {
+                for (anchor_pos, vtext) in &virtual_lines {
+                    if *anchor_pos >= start
+                        && *anchor_pos < end
+                        && vtext.position == VirtualTextPosition::LineBelow
+                    {
+                        let glyph = vtext.gutter_glyph.as_ref().map(|g| {
+                            (
+                                g.clone(),
+                                vtext.gutter_color.unwrap_or(theme.line_number_fg),
+                            )
+                        });
+                        result.extend(create_wrapped_virtual_lines(
+                            &vtext.text,
+                            vtext.resolved_style(theme),
+                            wrap_width,
+                            glyph,
+                            &vtext.text_overlays,
+                        ));
+                    }
                 }
             }
         }
