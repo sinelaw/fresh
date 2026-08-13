@@ -2004,18 +2004,26 @@ editor.on("lines_changed", (data) => {
     processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, measure, line.line_number);
     processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, line.line_number);
 
-    // Blank row between consecutive list items. Only when the previous line is
-    // itself an item — the first item of a list keeps the spacing the document
-    // already has above it, and items already separated by a blank source line
-    // don't get a second gap.
+    // Blank row after each list item, so items read as discrete entries.
+    //
+    // Deliberately decided from this line ALONE, not from its neighbours. The
+    // obvious rule — "a spacer above an item whose predecessor is also an
+    // item" — needs two lines, and an edit-sized `lines_changed` batch
+    // contains only the lines the edit touched. The spacer would then be
+    // cleared (this line is in the batch) but not re-derivable (its neighbour
+    // isn't), so editing inside a list silently dropped its spacing and never
+    // got it back: unlike the table frame, there is no later batch that
+    // restores it, because `lines_changed` is edge-triggered on ranges it
+    // hasn't seen.
+    //
+    // Anchoring below every item is line-local, so clear-and-rebuild is always
+    // a complete decision. The cost is one blank row after a list's final item
+    // as well as between items, which reads as ordinary block separation.
     if (isListItemContent(line.content)) {
-      const prevLine = byLineNum.get(line.line_number - 1);
-      if (prevLine !== undefined && isListItemContent(prevLine.content)) {
-        editor.addVirtualLine(
-          data.buffer_id, line.byte_start, "",
-          listSpacingOptions, true, LIST_SPACING_NS, 0,
-        );
-      }
+      editor.addVirtualLine(
+        data.buffer_id, line.byte_start, "",
+        listSpacingOptions, false, LIST_SPACING_NS, 0,
+      );
     }
 
     if (isTableRowContent(line.content)) {
