@@ -24,13 +24,36 @@ impl Editor {
     /// settled here, since in that case nothing will ever call
     /// `completeCommand` and the caller would wait for an answer that cannot
     /// come.
-    pub fn eval_agent_script(&mut self, wrapped: &str, request_id: u64) -> Result<(), String> {
+    pub fn eval_agent_script(
+        &mut self,
+        wrapped: &str,
+        request_id: u64,
+        as_name: Option<&str>,
+    ) -> Result<(), String> {
         #[cfg(feature = "plugins")]
         {
-            // A name per request: two scripts in flight must not share a
-            // context, or the second would see (and could clobber) the first's
-            // globals.
-            let name = format!("agent-script-{}", request_id);
+            // A name per request by default: two scripts in flight must not
+            // share a context, or the second would see (and could clobber) the
+            // first's globals.
+            //
+            // `--as` overrides that on purpose. A script is never unloaded on
+            // its own — unloading runs the cleanup path, which tears down the
+            // terminals and workspaces a script is usually run to create — so
+            // a persistent watcher submitted twice would otherwise be running
+            // twice. Unloading the previous copy *of that name* first is what
+            // makes install idempotent, and it is safe precisely because the
+            // caller named it: it is replacing its own earlier submission.
+            let name = match as_name {
+                Some(n) => {
+                    // A first install has nothing to unload; that is the
+                    // common case, not a failure.
+                    if let Err(e) = self.plugin_manager.read().unwrap().unload_plugin(n) {
+                        tracing::debug!("script run --as {n}: no previous load to replace ({e})");
+                    }
+                    n.to_string()
+                }
+                None => format!("agent-script-{}", request_id),
+            };
             let rx = self
                 .plugin_manager
                 .read()

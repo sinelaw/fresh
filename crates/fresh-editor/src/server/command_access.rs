@@ -279,18 +279,40 @@ const FRESH_WINDOW_ID = {window_id};
 /// plugin-cleanup path, which sends compensating commands that would tear down
 /// the very things a script is usually run to create (a terminal, a workspace).
 /// Run-and-forget is what makes the created state outlive the caller.
+/// What a caller with no token is told.
+///
+/// The bare "not authorized" this replaced named the missing token but not the
+/// remedy, and the remedy is not guessable: a terminal opened through **Open
+/// Terminal** gets `FRESH_SESSION` but no `FRESH_CMD_TOKEN`, because only the
+/// Orchestrator launcher mints them. An agent started in such a terminal
+/// follows its briefing, is refused, and reasonably concludes the capability
+/// does not exist — so the refusal has to carry the way out.
+pub(crate) const NO_TOKEN_HELP: &str = "\
+no capability token ($FRESH_CMD_TOKEN is unset), so script evaluation is not \
+authorized from this terminal.
+
+Only terminals started by the Orchestrator launcher carry the capability. To \
+get one, start this shell (or your agent) from the editor via \"Run Agent…\" \
+or \"Orchestrator: New Workspace\" — a plain \"Open Terminal\" pane is not \
+granted editor control.
+
+See: fresh --cmd help script";
+
 pub fn run_script(
     editor: Option<&mut Editor>,
     token: Option<&str>,
     source: &str,
+    as_name: Option<&str>,
 ) -> CommandDispatch {
     let Some(token) = token else {
-        return CommandDispatch::refused(
-            "no capability token: script evaluation is not authorized",
-        );
+        return CommandDispatch::refused(NO_TOKEN_HELP);
     };
     let Some(grant) = lookup(token) else {
-        return CommandDispatch::refused("unknown or expired capability token");
+        return CommandDispatch::refused(
+            "unknown or expired capability token: the workspace that minted \
+             $FRESH_CMD_TOKEN has been torn down. Start a new terminal from \
+             this workspace to get a current one.",
+        );
     };
     if !grant.may_script {
         return CommandDispatch::refused("this workspace's agent was not granted editor control");
@@ -311,7 +333,7 @@ pub fn run_script(
 
     let request_id = next_request_id();
     let wrapped = wrap_script(source, request_id, window_id);
-    match editor.eval_agent_script(&wrapped, request_id) {
+    match editor.eval_agent_script(&wrapped, request_id, as_name) {
         Ok(()) => CommandDispatch::Pending { request_id },
         Err(e) => CommandDispatch::refused(e),
     }
@@ -406,13 +428,18 @@ mod tests {
 
     #[test]
     fn run_script_without_token_is_refused() {
-        let reason = refusal_reason(run_script(None, None, "return 1;"));
+        let reason = refusal_reason(run_script(None, None, "return 1;", None));
         assert!(reason.contains("not authorized"), "{}", reason);
     }
 
     #[test]
     fn run_script_unknown_token_is_refused() {
-        let reason = refusal_reason(run_script(None, Some("not-a-real-token"), "return 1;"));
+        let reason = refusal_reason(run_script(
+            None,
+            Some("not-a-real-token"),
+            "return 1;",
+            None,
+        ));
         assert!(reason.contains("unknown or expired"), "{}", reason);
     }
 
@@ -423,7 +450,7 @@ mod tests {
     #[test]
     fn run_script_without_the_grant_is_refused() {
         let token = mint(Grant::new(Some(1), false));
-        let reason = refusal_reason(run_script(None, Some(&token), "return 1;"));
+        let reason = refusal_reason(run_script(None, Some(&token), "return 1;", None));
         assert!(reason.contains("not granted editor control"), "{}", reason);
         revoke(&token);
     }

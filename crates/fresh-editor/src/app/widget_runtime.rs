@@ -622,6 +622,7 @@ impl Editor {
         };
         Some(crate::widgets::HitArea {
             overlay: false,
+            column: None,
             widget_key: item_key.clone(),
             widget_kind: "list",
             buffer_row: 0,
@@ -704,6 +705,7 @@ impl Editor {
         };
         Some(crate::widgets::HitArea {
             overlay: false,
+            column: None,
             widget_key: widget_key.to_string(),
             widget_kind: "tree",
             buffer_row: 0,
@@ -780,6 +782,7 @@ impl Editor {
         };
         Some(crate::widgets::HitArea {
             overlay: false,
+            column: None,
             widget_key: widget_key.to_string(),
             widget_kind,
             buffer_row: 0,
@@ -1702,7 +1705,10 @@ impl Editor {
     /// smart-key dispatcher route Tab/Enter/Up/Down/Esc to the
     /// popup-specific paths before falling through to the
     /// widget's default key behaviour.
-    fn focused_text_completions_open(&self, panel_key: &crate::widgets::PanelKey) -> bool {
+    pub(crate) fn focused_text_completions_open(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+    ) -> bool {
         let panel = match self.widget_registry.get(panel_key) {
             Some(p) => p,
             None => return false,
@@ -2696,10 +2702,66 @@ impl Editor {
                 Some(fresh_core::api::WidgetSpec::Text { rows, .. }) if *rows > 1 => {
                     consumed |= self.handle_widget_text_wheel(&panel_key, &widget_key, delta);
                 }
+                Some(fresh_core::api::WidgetSpec::Raw { .. }) => {
+                    consumed |= self.handle_widget_raw_wheel(&panel_key, &widget_key, delta);
+                }
                 _ => {}
             }
         }
         consumed
+    }
+
+    /// Wheel over a windowed `Raw` block (a chat transcript, a log):
+    /// shift its viewport by `delta` rows, clamped to the entry count
+    /// recorded in its scroll region.
+    ///
+    /// Sets `user_scrolled` so the next render stops pinning the view
+    /// to the newest row — and clears it again the moment the offset
+    /// lands back at the bottom, so scrolling down to the end re-arms
+    /// following instead of freezing the view one message behind.
+    /// Focus is deliberately untouched: the block sits directly above a
+    /// composer, and reading back through the conversation must not
+    /// take the caret out of the line being typed.
+    fn handle_widget_raw_wheel(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget_key: &str,
+        delta: i32,
+    ) -> bool {
+        let Some(panel) = self.widget_registry.get(panel_key) else {
+            return false;
+        };
+        let Some((total, visible)) = panel
+            .scroll_regions
+            .iter()
+            .find(|r| r.list_key == widget_key)
+            .map(|r| (r.total, r.visible))
+        else {
+            return false;
+        };
+        let max_scroll = total.saturating_sub(visible) as i64;
+        if max_scroll == 0 {
+            return false;
+        }
+        let Some(panel) = self.widget_registry.get_mut(panel_key) else {
+            return false;
+        };
+        match panel.instance_states.get_mut(widget_key) {
+            Some(crate::widgets::WidgetInstanceState::Raw {
+                scroll_offset,
+                user_scrolled,
+            }) => {
+                let new = (*scroll_offset as i64 + delta as i64).clamp(0, max_scroll) as u32;
+                if new == *scroll_offset && *user_scrolled {
+                    return false;
+                }
+                *scroll_offset = new;
+                *user_scrolled = new < max_scroll as u32;
+            }
+            _ => return false,
+        }
+        self.rerender_widget_panel(panel_key);
+        true
     }
 
     /// Wheel over a multi-line (markdown) Text document: shift its

@@ -113,7 +113,124 @@ fn buffer_line_byte_offset(
     }
 }
 
+/// The agent argv a window runs, or will run once its terminals come up.
+///
+/// Resume argv first: it is the one that will actually be spawned when a
+/// restored workspace is activated (`claude --resume <id>`), and it names the
+/// agent as surely as the launch command does. Falls back to the launch
+/// command, which is what a window that has never been restarted carries.
+///
+/// The first terminal that has one wins. A window with several agent
+/// terminals has no single answer, and the question this serves — "is there
+/// an agent here, and which one" — is answered by any of them.
+fn agent_argv_for_window(w: &crate::app::window::Window) -> Vec<String> {
+    agent_argv_from_maps(&w.terminal_resume_commands, &w.terminal_commands)
+}
+
+/// The map-level half of [`agent_argv_for_window`], so the choice between
+/// resume and launch can be pinned without standing up a whole `Window`.
+fn agent_argv_from_maps(
+    resume: &std::collections::HashMap<fresh_core::TerminalId, Vec<String>>,
+    launch: &std::collections::HashMap<fresh_core::TerminalId, Vec<String>>,
+) -> Vec<String> {
+    let pick = |m: &std::collections::HashMap<fresh_core::TerminalId, Vec<String>>| {
+        let mut v: Vec<_> = m.iter().filter(|(_, argv)| !argv.is_empty()).collect();
+        v.sort_by_key(|(id, _)| id.0);
+        v.first().map(|(_, argv)| (*argv).clone())
+    };
+    pick(resume).or_else(|| pick(launch)).unwrap_or_default()
+}
+
+/// The same answer as [`agent_argv_for_window`], read off a persisted
+/// workspace snapshot instead of a live window.
+///
+/// Same precedence — resume argv before launch command — because it is the
+/// same decision the restore path makes when it eventually spawns
+/// (`restore_terminal_from_workspace`). Terminals are considered in their
+/// saved order so a workspace with two agents answers consistently across
+/// runs, matching the id-sorted pick the map version makes.
+fn agent_argv_from_workspace(ws: &crate::workspace::Workspace) -> Vec<String> {
+    let mut terminals: Vec<&crate::workspace::SerializedTerminalWorkspace> = ws
+        .terminals
+        .iter()
+        // A terminal that had already quit when the workspace was saved is
+        // deliberately NOT respawned by restore — it comes back as a dead
+        // transcript with the restart offer re-armed, so that reopening an
+        // editor never silently resumes an agent conversation someone had
+        // finished with. Reading its argv here would promise an agent that
+        // opening the workspace does not produce, which is a worse answer than
+        // the "no agent" this replaced: it sends you to a workspace on the
+        // strength of something that is not there.
+        .filter(|t| t.exited.is_none())
+        .collect();
+    terminals.sort_by_key(|t| t.terminal_index);
+    terminals
+        .iter()
+        .find_map(|t| {
+            t.agent_resume
+                .as_ref()
+                .map(|r| &r.argv)
+                .filter(|argv| !argv.is_empty())
+        })
+        .or_else(|| {
+            terminals
+                .iter()
+                .find_map(|t| t.command.as_ref().filter(|argv| !argv.is_empty()))
+        })
+        .cloned()
+        .unwrap_or_default()
+}
+
 impl Editor {
+    /// Fill `dormant_agent_argv` for every not-yet-materialized window that
+    /// has no entry, by reading its persisted workspace.
+    ///
+    /// Called from the snapshot refresh, which runs on every keystroke — so
+    /// the loop must normally do nothing at all. It does: the map gains one
+    /// entry per dormant window on the first refresh after startup and is
+    /// then only ever read, and `materialize_window` drops an entry exactly
+    /// when a live window takes over answering for it. A window that gains
+    /// its agent later (an agent launched into it while it is still
+    /// dormant) is not a case this has to cover — launching materializes it.
+    fn refresh_dormant_agent_argv(&mut self) {
+        let missing: Vec<fresh_core::WindowId> = self
+            .materialize_pending
+            .iter()
+            .copied()
+            .filter(|id| !self.dormant_agent_argv.contains_key(id))
+            .collect();
+        for id in missing {
+            let Some((root, stable_id)) = self
+                .windows
+                .get(&id)
+                .map(|w| (w.root.clone(), w.stable_id.clone()))
+            else {
+                continue;
+            };
+            // Same resolution as `restore_workspace_for`: a window with a
+            // durable id restores its own co-tenant file, not merely the
+            // freshest one for the root.
+            let loaded = if stable_id.is_empty() {
+                crate::workspace::Workspace::load(&root)
+            } else {
+                crate::workspace::Workspace::load_by_id(&root, &stable_id)
+            };
+            let argv = match loaded {
+                Ok(Some(ws)) => agent_argv_from_workspace(&ws),
+                // No file, or an unreadable / too-new one. Record the empty
+                // answer anyway: retrying a parse failure on every keystroke
+                // would be worse than saying "no agent" about a workspace we
+                // cannot read.
+                Ok(None) => Vec::new(),
+                Err(e) => {
+                    tracing::debug!("No agent argv for dormant window {id}: {e}");
+                    Vec::new()
+                }
+            };
+            self.dormant_agent_argv.insert(id, argv);
+        }
+    }
+
     /// Update the plugin state snapshot with current editor state.
     ///
     /// Per-window snapshot population (active buffer, splits, view
@@ -233,6 +350,19 @@ impl Editor {
         snapshot.terminal_width = self.terminal_width;
         snapshot.terminal_height = self.terminal_height;
 
+        // The width the left dock is actually rendered at, which is not
+        // the width its plugin asked for: `dock_width` is clamped
+        // against the terminal, and a width the user dragged to
+        // overrides the request entirely. A plugin that lays its dock
+        // out against the requested width gets everything downstream of
+        // it wrong whenever the two diverge — see `getDockWidth()`.
+        snapshot.dock_content_width = match self.panel(crate::app::PanelSlot::Dock) {
+            Some(p) if matches!(p.placement, crate::app::PanelPlacement::LeftDock { .. }) => {
+                self.floating_panel_inner_width(crate::app::PanelSlot::Dock) as u16
+            }
+            _ => 0,
+        };
+
         // Authority label tracks `Editor::authority` (the active
         // authority). It can't be sourced from `Window::resources.authority`
         // because `set_boot_authority` replaces `self.authority` by value
@@ -275,6 +405,10 @@ impl Editor {
         // a *failed* dive leaves the descriptor AND a disconnected shell
         // window at the same id, so descriptors shadowed by a window are
         // skipped to keep the list one-row-per-session.
+        // Before enumerating: a workspace that has not been restored yet has
+        // empty terminal maps, so its agent has to come off disk. Ahead of
+        // the borrows below, which run to the end of the enumeration.
+        self.refresh_dormant_agent_argv();
         let dormant_infos = self
             .dormant_remote
             .iter()
@@ -290,6 +424,10 @@ impl Editor {
                     .unwrap_or_else(|| d.root.clone());
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(d.id),
+                    // A dormant remote descriptor has no window and therefore
+                    // no terminal maps to read; its agent becomes visible when
+                    // the connect lands and a real window exists.
+                    agent_command: Vec::new(),
                     // A dormant shell carries the persisted id when its
                     // workspace file had one; legacy files leave it empty.
                     stable_id: d.stable_id.clone().unwrap_or_default(),
@@ -325,6 +463,17 @@ impl Editor {
                     .unwrap_or(false);
                 fresh_core::api::WindowInfo {
                     id: s.id,
+                    // A dormant window's maps are empty until it is
+                    // materialized; the persisted snapshot is the only place
+                    // its agent is recorded until then.
+                    agent_command: if self.materialize_pending.contains(&s.id) {
+                        self.dormant_agent_argv
+                            .get(&s.id)
+                            .cloned()
+                            .unwrap_or_default()
+                    } else {
+                        agent_argv_for_window(s)
+                    },
                     stable_id: s.stable_id.clone(),
                     label: s.label.clone(),
                     root: normalize_plugin_path(s.root.clone()),
@@ -868,6 +1017,23 @@ impl Editor {
             // ==================== Status/Prompt Commands ====================
             PluginCommand::SetStatus { message } => {
                 self.handle_set_status(message);
+            }
+            PluginCommand::EmitEvent {
+                plugin,
+                name,
+                payload,
+            } => {
+                // Straight through to the same hook channel the host's own
+                // events use, under the emitter's chosen name — so
+                // `editor.on("agent_state_change", …)` works identically
+                // whether the host or a peer plugin produced it.
+                self.plugin_manager.read().unwrap().run_hook(
+                    &name,
+                    crate::services::plugins::hooks::HookArgs::PluginEvent {
+                        from: plugin,
+                        payload,
+                    },
+                );
             }
             PluginCommand::ApplyTheme { theme_name } => {
                 self.apply_theme(&theme_name);
@@ -1753,8 +1919,26 @@ impl Editor {
                 );
             }
 
-            PluginCommand::SendTerminalInput { terminal_id, data } => {
-                self.handle_send_terminal_input(terminal_id, data);
+            PluginCommand::SendTerminalInput {
+                terminal_id,
+                window_id,
+                data,
+            } => {
+                self.handle_send_terminal_input(terminal_id, window_id, data);
+            }
+
+            PluginCommand::ReadTerminal {
+                window_id,
+                terminal_id,
+                lines,
+                trim,
+                request_id,
+            } => {
+                self.handle_read_terminal(window_id, terminal_id, lines, trim, request_id);
+            }
+
+            PluginCommand::DescribeEnvironment { request_id } => {
+                self.handle_describe_environment(request_id);
             }
 
             PluginCommand::CloseTerminal { terminal_id } => {
@@ -5587,6 +5771,7 @@ impl Editor {
             entries: Vec::new(),
             focus_cursor: None,
             embeds: Vec::new(),
+            pane_hits: Vec::new(),
             overlays: Vec::new(),
             scroll_regions: Vec::new(),
             scrollbar_tracks: Vec::new(),
@@ -6126,21 +6311,59 @@ impl Editor {
     fn handle_send_terminal_input(
         &mut self,
         terminal_id: crate::services::terminal::TerminalId,
+        window_id: Option<fresh_core::WindowId>,
         data: String,
     ) {
-        if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
-            handle.write(data.as_bytes());
-            tracing::trace!(
-                "Plugin sent {} bytes to terminal {:?}",
-                data.len(),
-                terminal_id
-            );
-        } else {
-            tracing::warn!(
-                "Plugin tried to send input to non-existent terminal {:?}",
-                terminal_id
-            );
+        self.send_terminal_input_to(window_id.unwrap_or(self.active_window), terminal_id, &data);
+    }
+
+    /// Answer `readTerminal` with a terminal's live screen.
+    ///
+    /// Reads the PTY grid rather than the on-disk scrollback capture: the
+    /// agents this exists to watch are full-screen TUIs, for which the
+    /// capture is a poor record of what is actually on screen.
+    ///
+    /// `lines` tails from the bottom, because that is where a TUI keeps its
+    /// prompt — the part that answers "is it waiting for me". `trim` drops
+    /// trailing blanks, which on a fixed-size grid are most of it.
+    fn handle_read_terminal(
+        &mut self,
+        window_id: fresh_core::WindowId,
+        terminal_id: crate::services::terminal::TerminalId,
+        lines: Option<usize>,
+        trim: bool,
+        request_id: u64,
+    ) {
+        let callback_id = fresh_core::api::JsCallbackId::from(request_id);
+        match self.terminal_screen(window_id, terminal_id, lines, trim) {
+            Ok(screen) => {
+                let json = serde_json::to_string(&screen).unwrap_or_else(|_| "null".to_string());
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback_id, json);
+            }
+            Err(error) => {
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .reject_callback(callback_id, error);
+            }
         }
+    }
+
+    /// Answer `describeEnvironment` with every window and its terminals.
+    ///
+    /// Cannot be served from the state snapshot the way `describeWorkspace`
+    /// is: that snapshot covers the active window only, which is precisely
+    /// the limit this call exists to lift.
+    fn handle_describe_environment(&mut self, request_id: u64) {
+        let env = self.describe_environment();
+        let json = serde_json::to_string(&env).unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager
+            .read()
+            .unwrap()
+            .resolve_callback(fresh_core::api::JsCallbackId::from(request_id), json);
     }
 
     fn handle_close_terminal(&mut self, terminal_id: crate::services::terminal::TerminalId) {

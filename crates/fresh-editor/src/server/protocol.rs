@@ -158,7 +158,19 @@ pub enum ClientControl {
     /// The source is TypeScript (plain JS is a subset), evaluated through the
     /// same pipeline as `init.ts` and "Load Plugin from Buffer": one QuickJS
     /// context, the full `editor` API, `await` available at the top level.
-    RunScript { source: String },
+    RunScript {
+        source: String,
+        /// Load the script under this plugin name instead of a generated
+        /// per-request one, replacing any previous load of the same name.
+        ///
+        /// A script is never unloaded (that would tear down the terminals and
+        /// workspaces it was run to create), so an unnamed script that mounts
+        /// a panel or subscribes to an event stacks another copy every time it
+        /// is submitted. A name makes install idempotent, which is what a
+        /// persistent watcher needs. `None` keeps the generated name.
+        #[serde(default)]
+        as_name: Option<String>,
+    },
 }
 
 /// A file to open with optional line/column position, range, and hover message
@@ -365,6 +377,7 @@ mod tests {
             },
             ClientControl::RunScript {
                 source: "return editor.activeWindow();".to_string(),
+                as_name: None,
             },
         ];
 
@@ -416,11 +429,12 @@ mod tests {
         let source = "const w = editor.activeWindow();\nreturn { \"w\": w };\n";
         let msg = ClientControl::RunScript {
             source: source.to_string(),
+            as_name: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"run_script\""));
         match serde_json::from_str::<ClientControl>(&json).unwrap() {
-            ClientControl::RunScript { source: got } => assert_eq!(got, source),
+            ClientControl::RunScript { source: got, .. } => assert_eq!(got, source),
             other => panic!("expected RunScript, got {:?}", other),
         }
     }
