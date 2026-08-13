@@ -551,6 +551,27 @@ pub enum HookArgs {
     },
 }
 
+/// A line's role in an embedded-language region — the classification the
+/// highlighting engine already makes per line while parsing (see
+/// `docs/internal/embedded-language-highlighting.md`). Markdown fenced code
+/// blocks and Vue `<script>`/`<style>` blocks are the current hosts.
+///
+/// This is the *only* answer to "am I inside a fence" that a plugin can trust:
+/// it is not derivable from a line's own text (a bare ``` is an opener or a
+/// closer depending on every fence above it), and a plugin cannot read the
+/// buffer above its batch synchronously.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RegionLine {
+    /// The region's opening delimiter (Markdown: ```` ```rust ````). Its
+    /// info string, if any, is in the line's own `content`.
+    Open,
+    /// A content line strictly inside the region.
+    Body,
+    /// The region's closing delimiter.
+    Close,
+}
+
 /// Information about a single line for the LinesChanged hook
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LineInfo {
@@ -562,6 +583,14 @@ pub struct LineInfo {
     pub byte_end: usize,
     /// The content of the line
     pub content: String,
+    /// This line's role in an embedded-language region, when the buffer's
+    /// grammar hosts them and the engine could resolve the line's region
+    /// state. Absent both for ordinary lines and when the state is
+    /// *unknown* — see `TextMateEngine::region_lines_in` for when that
+    /// happens — so consumers must treat absence as "no framing decision",
+    /// never as "outside a region".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<RegionLine>,
 }
 
 /// Location information for LSP references

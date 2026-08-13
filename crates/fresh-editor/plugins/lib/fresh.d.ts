@@ -5109,6 +5109,17 @@ interface HookEventMap {
 			byte_start: number;
 			byte_end: number;
 			content: string;
+			/** This line's role in an embedded-language region — a Markdown fenced
+			* code block, a Vue `<script>`/`<style>` block — as the highlighting
+			* engine classifies it while parsing. `"open"` and `"close"` are the
+			* delimiter lines; `"body"` is content strictly inside.
+			*
+			* Absent for ordinary lines AND when the region state could not be
+			* resolved (a >1MiB buffer whose viewport has no parse checkpoint before
+			* it yet). Treat absence as *unknown*, never as "outside a region": the
+			* point of this field is that a bare ``` opens or closes depending on
+			* every fence above it, so there is nothing to fall back on. */
+			region?: "open" | "body" | "close";
 		}[];
 		/** Buffer version these byte ranges were captured at. Pass back to
 		* coordinate-mapping APIs to repair stale offsets from this batch. */
