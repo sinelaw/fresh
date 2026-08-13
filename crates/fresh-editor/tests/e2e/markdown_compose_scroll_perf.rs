@@ -48,7 +48,9 @@ fn body_line(section: usize, line: usize) -> String {
 fn document_with_headings(sections: usize, filler_lines: usize) -> String {
     let mut md = String::new();
     for s in 0..sections {
-        md.push_str(&format!("## Section {s}\n\n"));
+        // Level 1: only top-level headings are marked on the scrollbar by
+        // default, and these tests are about the cost of the marks.
+        md.push_str(&format!("# Section {s}\n\n"));
         for l in 0..filler_lines {
             md.push_str(&body_line(s, l));
         }
