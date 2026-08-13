@@ -335,6 +335,7 @@ impl Editor {
                                         byte_end,
                                         content: line_content,
                                         region: None,
+                                        table: None,
                                     });
                                     fresh_ranges.push(byte_range);
                                 }
@@ -346,32 +347,59 @@ impl Editor {
 
                         let count = new_lines.len();
                         if !new_lines.is_empty() {
-                            // Whether each reported line sits inside an
-                            // embedded-language region (a Markdown fence, a Vue
-                            // `<script>`) — the one property of such a line that
-                            // is not derivable from its own text, and that a
-                            // plugin cannot read out of the buffer above its
-                            // batch synchronously. Attached here, alongside the
-                            // live coordinates, so a consumer never has to store
-                            // region structure of its own.
+                            // What the grammar says about each reported line's
+                            // place in the document's structure: whether it sits
+                            // inside an embedded-language region (a Markdown
+                            // fence, a Vue `<script>`), and where it sits in a
+                            // table. These are the properties a decoration
+                            // plugin cannot work out for itself — region
+                            // membership is not derivable from a line's own text
+                            // at all, and a table's first/last row needs the
+                            // neighbouring lines, which an edit-sized batch does
+                            // not contain. Attached here, alongside the live
+                            // coordinates, so a consumer never has to store
+                            // structure of its own.
                             //
-                            // The probe costs nothing for syntaxes that host no
-                            // regions (the overwhelming majority), and is skipped
-                            // entirely when there is nothing to report.
-                            let regions = state
+                            // One probe answers both. It costs nothing for
+                            // syntaxes with neither (the overwhelming majority),
+                            // and each list is skipped when it has nothing to
+                            // report.
+                            let structure = state
                                 .highlighter
-                                .region_lines_in(&state.buffer, top_byte..walked_end);
-                            if !regions.is_empty() {
+                                .structure_lines_in(&state.buffer, top_byte..walked_end);
+                            if !structure.regions.is_empty() {
                                 let mut next = 0usize;
                                 for line in new_lines.iter_mut() {
                                     // Both sides ascend by line start, so one
                                     // forward walk pairs them.
-                                    while next < regions.len() && regions[next].0 < line.byte_start
+                                    while next < structure.regions.len()
+                                        && structure.regions[next].0 < line.byte_start
                                     {
                                         next += 1;
                                     }
-                                    if regions.get(next).is_some_and(|r| r.0 == line.byte_start) {
-                                        line.region = Some(regions[next].1);
+                                    if structure
+                                        .regions
+                                        .get(next)
+                                        .is_some_and(|r| r.0 == line.byte_start)
+                                    {
+                                        line.region = Some(structure.regions[next].1);
+                                    }
+                                }
+                            }
+                            if !structure.tables.is_empty() {
+                                let mut next = 0usize;
+                                for line in new_lines.iter_mut() {
+                                    while next < structure.tables.len()
+                                        && structure.tables[next].0 < line.byte_start
+                                    {
+                                        next += 1;
+                                    }
+                                    if structure
+                                        .tables
+                                        .get(next)
+                                        .is_some_and(|t| t.0 == line.byte_start)
+                                    {
+                                        line.table = Some(structure.tables[next].1);
                                     }
                                 }
                             }

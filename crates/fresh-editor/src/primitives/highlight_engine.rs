@@ -43,7 +43,7 @@ use crate::primitives::highlighter::{
     highlight_bg, highlight_color, HighlightCategory, HighlightSpan, Highlighter, Language,
 };
 use crate::view::theme::Theme;
-use fresh_core::hooks::RegionLine;
+use fresh_core::hooks::{RegionLine, TableLine, TableRole};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
@@ -276,6 +276,9 @@ pub struct TextMateEngine {
     // Region kinds this syntax hosts (see `EMBEDDING_SPECS`); empty for
     // the vast majority of syntaxes.
     embedding: Vec<EmbeddingSpec>,
+    // Body scope of this syntax's tables (see `TABLE_SPECS`); `None` for
+    // every syntax that doesn't scope them.
+    table_body_scope: Option<syntect::parsing::Scope>,
     // Fence-language-token → syntax index memo (None = unrecognized).
     embedded_syntax_memo: HashMap<String, Option<usize>>,
     // Reusable per-line span buffers for embedding hosts, so region
@@ -367,6 +370,97 @@ const EMBEDDING_SPECS: &[EmbeddingSpecDef] = &[
 /// Cap on watched language scopes per host; far above any real spec
 /// table (Vue, the largest host, has one distinct language scope).
 const MAX_WATCH_SCOPES: usize = 8;
+
+/// Declares how a host syntax scopes a *table*: a block whose rows the
+/// grammar recognizes, but which embeds no second language.
+///
+/// Deliberately **not** an `EMBEDDING_SPECS` entry. That table means
+/// something specific — a region whose language the document names, which
+/// the engine runs a child parser over — and a table is neither. What the
+/// two share is the *pattern*: a per-line structural classification the
+/// host grammar already makes while parsing, exported so a decoration
+/// plugin needs no block model of its own.
+///
+/// Only `body_scope` is read from the scope *stack*. The header and
+/// delimiter rows are identified positionally from that stack's
+/// transitions (see `structure_lines_in`), which is why they need no
+/// scope of their own here: a grammar that closes over the body is enough
+/// to place every edge of the frame.
+struct TableSpecDef {
+    host_syntax: &'static str,
+    /// Scope (prefix) the host grammar keeps on the stack from the end of
+    /// the delimiter row through the table's last row.
+    body_scope: &'static str,
+}
+
+/// One entry per host syntax that scopes tables. Markdown is the only
+/// one today; the bundled grammar pushes `meta.table.markdown` on the
+/// delimiter row and pops it after the table's last row.
+const TABLE_SPECS: &[TableSpecDef] = &[TableSpecDef {
+    host_syntax: "Markdown",
+    body_scope: "meta.table",
+}];
+
+/// How far past the requested range `structure_lines_in` may walk to see
+/// the line that closes a table. One line is enough; this is the byte
+/// budget for finding it, generous enough for any realistic line and
+/// small enough that it never turns a viewport probe into a scan.
+const TABLE_LOOKAHEAD_BYTES: usize = 8192;
+
+/// What the host grammar says about each line in a range: its role in an
+/// embedded-language region, and its place in a table. Both lists are
+/// keyed by line start byte, ascending. See
+/// [`TextMateEngine::structure_lines_in`].
+#[derive(Debug, Default, Clone)]
+pub struct StructureLines {
+    pub regions: Vec<(usize, RegionLine)>,
+    pub tables: Vec<(usize, TableLine)>,
+}
+
+impl StructureLines {
+    /// Record a table line, dropping it if it falls outside the caller's
+    /// range — the walk deliberately covers more lines than the caller
+    /// asked about (a checkpoint below `range.start`, one line of
+    /// lookahead past `range.end`), and those extra lines exist only to
+    /// classify the ones inside it.
+    fn push_table(
+        &mut self,
+        line_start: usize,
+        role: TableRole,
+        first_row: bool,
+        range: &Range<usize>,
+    ) {
+        if line_start >= range.start && line_start < range.end {
+            self.tables.push((
+                line_start,
+                TableLine {
+                    role,
+                    first_row,
+                    last: false,
+                },
+            ));
+        }
+    }
+
+    /// Mark the table line starting at `line_start` — the one the walk just
+    /// found the end of the table below — as its table's last.
+    ///
+    /// Keyed by position rather than "whatever was recorded last", because
+    /// the two part company exactly when it matters: a range that stops
+    /// mid-table drops the rows after it, so the last *recorded* line can be
+    /// several rows above the one the table actually ends on. Marking that
+    /// one would close the frame in the middle of the table. When the real
+    /// last row was dropped, this is a no-op — correct, since the caller is
+    /// not rendering it.
+    fn mark_table_line_last(&mut self, line_start: Option<usize>) {
+        let Some(line_start) = line_start else { return };
+        if let Some((start, line)) = self.tables.last_mut() {
+            if *start == line_start {
+                line.last = true;
+            }
+        }
+    }
+}
 
 /// `EmbeddingSpecDef` with its scope selectors interned as syntect `Scope`
 /// atoms for cheap prefix matching in the per-line parse loop.
@@ -614,8 +708,12 @@ impl TextMateEngine {
         syntax_index: usize,
         ts_language: Option<Language>,
     ) -> Self {
-        let embedding =
-            EmbeddingSpec::compile_for_syntax(&syntax_set.syntaxes()[syntax_index].name);
+        let syntax_name = syntax_set.syntaxes()[syntax_index].name.clone();
+        let embedding = EmbeddingSpec::compile_for_syntax(&syntax_name);
+        let table_body_scope = TABLE_SPECS
+            .iter()
+            .find(|d| d.host_syntax == syntax_name)
+            .and_then(|d| syntect::parsing::Scope::new(d.body_scope).ok());
         Self {
             syntax_set,
             syntax_index,
@@ -627,6 +725,7 @@ impl TextMateEngine {
             ts_language,
             stats: HighlightStats::default(),
             embedding,
+            table_body_scope,
             embedded_syntax_memo: HashMap::new(),
             host_span_scratch: Vec::new(),
             child_span_scratch: Vec::new(),
@@ -1716,14 +1815,34 @@ impl TextMateEngine {
     /// embedded-language region — `(line_start_byte, RegionLine)` pairs, in
     /// increasing order. Lines outside any region are omitted.
     ///
-    /// This exposes, read-only, the classification `parse_snapshot_line`
-    /// already makes per line (the `region scope before → after` table in
-    /// `docs/internal/embedded-language-highlighting.md`). It exists because
-    /// region membership is the one thing about a Markdown fence that is *not*
-    /// derivable from a line's own text — a bare ``` opens or closes depending
-    /// on every fence above it — and the `lines_changed` consumers that need it
-    /// (compose-mode code-block framing) run on the plugin thread, where the
-    /// buffer above the batch is not synchronously readable.
+    /// Thin projection of [`Self::structure_lines_in`]; see that method for
+    /// the mechanism, cost and the meaning of an empty answer.
+    pub fn region_lines_in(
+        &mut self,
+        buffer: &Buffer,
+        range: Range<usize>,
+    ) -> Vec<(usize, RegionLine)> {
+        self.structure_lines_in(buffer, range).regions
+    }
+
+    /// Classify every line start in `range` by its role in the structures
+    /// the host grammar recognizes: embedded-language regions
+    /// (`markup.raw.code-fence`, Vue `<script>`) and tables. Both lists are
+    /// in increasing order of line start; lines with no role are omitted.
+    ///
+    /// This exposes, read-only, classifications the parse already makes per
+    /// line — for regions the `region scope before → after` table in
+    /// `docs/internal/embedded-language-highlighting.md`, for tables the same
+    /// before/after test against the table body scope. It exists because
+    /// those are the properties of a Markdown line that a decoration plugin
+    /// cannot work out for itself: region membership is not derivable from a
+    /// line's own text at all (a bare ``` opens or closes depending on every
+    /// fence above it), and while "is this a table row" *is* line-local,
+    /// "is this the table's first/last row" is not — the plugin thread sees
+    /// one `lines_changed` batch and cannot read the buffer around it
+    /// synchronously.
+    ///
+    /// One walk answers both, so a Markdown viewport is not parsed twice.
     ///
     /// Deliberately a probe, not a cache: it resumes from the nearest
     /// checkpoint and drops everything it computes. That keeps it out of the
@@ -1734,28 +1853,35 @@ impl TextMateEngine {
     /// folding a separate read-only probe into them would make the assertions
     /// that reason about cache behaviour meaningless.
     ///
-    /// Cost: zero for the overwhelming majority of buffers (`embedding` is
-    /// empty unless the syntax hosts regions — currently only Markdown and
-    /// Vue), otherwise one span-less parse from the resume anchor — normally
-    /// the checkpoint within `CHECKPOINT_INTERVAL` bytes before `range.start` —
-    /// through `range.end`, and never more than `MAX_PARSE_BYTES` of it.
+    /// Cost: zero for the overwhelming majority of buffers (neither
+    /// `embedding` nor `table_body_scope` is set unless the syntax hosts
+    /// these — currently only Markdown and Vue), otherwise one span-less
+    /// parse from the resume anchor — normally the checkpoint within
+    /// `CHECKPOINT_INTERVAL` bytes before `range.start` — through `range.end`
+    /// plus at most one line, and never more than `MAX_PARSE_BYTES` of it.
     ///
-    /// Returns **empty** — not "no regions" — whenever the state at
+    /// Returns **empty** — not "no structures" — whenever the state at
     /// `range.start` cannot be resolved within that budget: no usable anchor,
     /// or one too far back to walk from. That is the same cold-start trade-off
     /// the engine already documents for styling inside a huge region, and it is
     /// why callers must treat an absent answer as "unknown".
-    pub fn region_lines_in(
-        &mut self,
-        buffer: &Buffer,
-        range: Range<usize>,
-    ) -> Vec<(usize, RegionLine)> {
-        if self.embedding.is_empty() || range.start >= range.end {
-            return Vec::new();
+    pub fn structure_lines_in(&mut self, buffer: &Buffer, range: Range<usize>) -> StructureLines {
+        let table_scope = self.table_body_scope;
+        if (self.embedding.is_empty() && table_scope.is_none()) || range.start >= range.end {
+            return StructureLines::default();
         }
-        let parse_end = range.end.min(buffer.len());
+        // One line past `range.end`, so the table's last row inside the range
+        // can be recognized as last: that is the one fact about a table line
+        // which needs the line *after* it. Bounded, and only the tail of the
+        // walk — everything below still only emits for lines inside `range`.
+        let lookahead = if table_scope.is_some() {
+            TABLE_LOOKAHEAD_BYTES
+        } else {
+            0
+        };
+        let parse_end = range.end.saturating_add(lookahead).min(buffer.len());
         if range.start >= parse_end {
-            return Vec::new();
+            return StructureLines::default();
         }
 
         // Resume anchor. Two rules, both stricter than
@@ -1783,13 +1909,13 @@ impl TextMateEngine {
         let (mut current_offset, mut snapshot) = match nearest {
             Some((id, cp_pos, _)) => match self.checkpoint_states.get(&id) {
                 Some(snap) => (cp_pos, snap.clone()),
-                None => return Vec::new(), // orphaned checkpoint
+                None => return StructureLines::default(), // orphaned checkpoint
             },
             None if parse_end <= MAX_PARSE_BYTES => (
                 0,
                 ParseSnapshot::new(&self.syntax_set.syntaxes()[self.syntax_index]),
             ),
-            None => return Vec::new(), // large file, no anchor: unknown
+            None => return StructureLines::default(), // large file, no anchor: unknown
         };
 
         // Bound the walk itself, not just the anchor search. An edit high in a
@@ -1798,22 +1924,38 @@ impl TextMateEngine {
         // batch could drag a megabyte parse into the draw path. Better to
         // report "unknown" and render conservatively.
         if parse_end.saturating_sub(current_offset) > MAX_PARSE_BYTES {
-            return Vec::new();
+            return StructureLines::default();
         }
 
         let content = buffer.slice_bytes(current_offset..parse_end);
         let content_bytes = match std::str::from_utf8(&content) {
             Ok(s) => s.as_bytes(),
-            Err(_) => return Vec::new(),
+            Err(_) => return StructureLines::default(),
         };
 
-        let mut out = Vec::new();
+        let mut out = StructureLines::default();
+        // The table walk is one line behind the region walk: the *header* row
+        // is the line before the delimiter row, and the *last* row is the line
+        // before the table's body scope drops. Neither is knowable when that
+        // line is parsed, so both are settled retroactively — the header by
+        // holding on to the previous line's start, the last row by patching the
+        // entry already pushed. This is why the walk runs one line past
+        // `range.end`: without that line the final row inside the range could
+        // never be told apart from a row with more table below it.
+        let mut prev_line_start: Option<usize> = None;
+        // Start of the most recent line the walk saw *inside* a table, whether
+        // or not it fell in the caller's range. `mark_table_line_last` matches
+        // on it, so a table continuing past `range.end` never closes early.
+        let mut last_table_line_start: Option<usize> = None;
+        let mut prev_in_table = false;
+        let mut after_delimiter = false;
         let mut pos = 0;
         while pos < content_bytes.len() {
             let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
             let line_start = current_offset;
             if let Some(prepared) = prepared {
                 let was_in = self.active_region_spec(&snapshot.scopes);
+                let was_table = table_scope.is_some_and(|s| scopes_contain(&snapshot.scopes, s));
                 // Spans are discarded: only the scope-stack transition the
                 // parse leaves on `snapshot` matters here.
                 let parsed = self.parse_snapshot_line(
@@ -1836,13 +1978,55 @@ impl TextMateEngine {
                     (None, None) => None,
                 };
                 if let Some(role) = role {
-                    if line_start >= range.start {
-                        out.push((line_start, role));
+                    if line_start >= range.start && line_start < range.end {
+                        out.regions.push((line_start, role));
                     }
                 }
+
+                if let Some(scope) = table_scope {
+                    let now_table = scopes_contain(&snapshot.scopes, scope);
+                    match (was_table, now_table) {
+                        // The body scope opens on the delimiter row, so the
+                        // line above it is the header — emitted now, and still
+                        // in ascending order because it precedes this one.
+                        (false, true) => {
+                            if let Some(header_start) = prev_line_start {
+                                out.push_table(header_start, TableRole::Header, false, &range);
+                            }
+                            out.push_table(line_start, TableRole::Delimiter, false, &range);
+                            last_table_line_start = Some(line_start);
+                            after_delimiter = true;
+                        }
+                        (true, true) => {
+                            out.push_table(line_start, TableRole::Row, after_delimiter, &range);
+                            last_table_line_start = Some(line_start);
+                            after_delimiter = false;
+                        }
+                        // The table ended above this line, so the previous one
+                        // was its last. Only trust this when the line that
+                        // closed it is whole: a truncated tail could be a table
+                        // row that merely looks like the end.
+                        (true, false) => {
+                            if prepared.ends_with_newline || line_end == content_bytes.len() {
+                                out.mark_table_line_last(last_table_line_start);
+                            }
+                            after_delimiter = false;
+                        }
+                        (false, false) => after_delimiter = false,
+                    }
+                    prev_in_table = now_table;
+                }
             }
+            prev_line_start = Some(line_start);
             pos = line_end;
             current_offset += line_byte_len;
+        }
+        // A table that runs to the end of the buffer has no line below it to
+        // close it, and the walk above therefore never sees the transition. The
+        // buffer's own end is that closing edge — but only when the walk really
+        // reached it, not when it stopped at the lookahead bound.
+        if prev_in_table && current_offset >= buffer.len() {
+            out.mark_table_line_last(last_table_line_start);
         }
         out
     }
@@ -1998,6 +2182,16 @@ impl HighlightEngine {
         match self {
             Self::TextMate(h) => h.region_lines_in(buffer, range),
             Self::TreeSitter(_) | Self::None => Vec::new(),
+        }
+    }
+
+    /// Region *and* table roles for the line starts in `range`, from one
+    /// walk; see `TextMateEngine::structure_lines_in`. Empty for engines
+    /// with no notion of either.
+    pub fn structure_lines_in(&mut self, buffer: &Buffer, range: Range<usize>) -> StructureLines {
+        match self {
+            Self::TextMate(h) => h.structure_lines_in(buffer, range),
+            Self::TreeSitter(_) | Self::None => StructureLines::default(),
         }
     }
 
@@ -2448,6 +2642,111 @@ mod tests {
             ],
             "prose lines are omitted; both delimiters of the bare fence are \
              classified from the parse, not from their own text"
+        );
+    }
+
+    /// Table classification, from the same walk and the same grammar scopes.
+    ///
+    /// The header row is the interesting one: the body scope opens on the
+    /// *delimiter* row, so the header is identified as the line above it —
+    /// which is exactly the fact a consumer holding one `lines_changed` batch
+    /// cannot get for itself when that batch starts at the header.
+    #[test]
+    fn test_structure_lines_classify_markdown_tables() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        let content = "intro\n\n| K | V |\n|---|---|\n| a | b |\n| c | d |\n\nafter\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let at = |needle: &str| content.find(needle).unwrap();
+        let line = |role, first_row, last| TableLine {
+            role,
+            first_row,
+            last,
+        };
+
+        let tables = engine.structure_lines_in(&buffer, 0..buffer.len()).tables;
+        assert_eq!(
+            tables,
+            vec![
+                (at("| K | V |"), line(TableRole::Header, false, false)),
+                (at("|---|---|"), line(TableRole::Delimiter, false, false)),
+                (at("| a | b |"), line(TableRole::Row, true, false)),
+                (at("| c | d |"), line(TableRole::Row, false, true)),
+            ],
+            "prose is omitted; the header is the line above the delimiter, and \
+             the last row is the one above the line that closes the table"
+        );
+    }
+
+    /// A table running to the end of the buffer has no line below it, so the
+    /// transition that closes one never fires. The buffer's end is that edge.
+    #[test]
+    fn test_structure_lines_close_a_table_at_end_of_buffer() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        let content = "intro\n\n| K | V |\n|---|---|\n| a | b |\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+
+        let tables = engine.structure_lines_in(&buffer, 0..buffer.len()).tables;
+        assert_eq!(
+            tables.last().map(|(_, t)| (t.role, t.last)),
+            Some((TableRole::Row, true)),
+            "the final row of a table at end-of-buffer is its last"
+        );
+    }
+
+    /// Asked about a range that stops mid-table, the probe must not call the
+    /// range's final row the table's last: there is more table below it, and a
+    /// consumer would close the frame in the middle. It sees this only because
+    /// it walks one line past the range it was asked about.
+    #[test]
+    fn test_structure_lines_do_not_close_a_table_at_the_range_edge() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        let content = "| K | V |\n|---|---|\n| a | b |\n| c | d |\n| e | f |\n\nafter\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let cut = content.find("| e | f |").unwrap();
+
+        let tables = engine.structure_lines_in(&buffer, 0..cut).tables;
+        assert_eq!(
+            tables.last().map(|(p, t)| (*p, t.last)),
+            Some((content.find("| c | d |").unwrap(), false)),
+            "the last row *inside the range* is not the table's last row"
+        );
+        assert!(
+            tables.iter().all(|(p, _)| *p < cut),
+            "the lookahead line is classified but never reported"
+        );
+    }
+
+    /// Region and table classification come from one walk, and neither
+    /// disturbs the other: a fence and a table in the same document are each
+    /// reported on their own lines only.
+    #[test]
+    fn test_structure_lines_report_regions_and_tables_together() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        let content = "| K |\n|---|\n| a |\n\n```rust\nlet x = 1;\n```\n\nend\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+
+        let structure = engine.structure_lines_in(&buffer, 0..buffer.len());
+        assert_eq!(structure.tables.len(), 3, "header, delimiter, one row");
+        assert_eq!(structure.regions.len(), 3, "open, body, close");
+        let table_starts: Vec<usize> = structure.tables.iter().map(|(p, _)| *p).collect();
+        assert!(
+            structure
+                .regions
+                .iter()
+                .all(|(p, _)| !table_starts.contains(p)),
+            "no line is reported as both"
         );
     }
 
