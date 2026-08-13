@@ -1831,6 +1831,14 @@ type WidgetSpec = {
 	* selection stay node-based; rows per node just vary.
 	*/
 	cardBorders: boolean;
+	/**
+	* Columns of indent per depth level. `2` (the default) is the
+	* classic tree step. A panel only a couple of dozen columns wide
+	* that nests several levels deep can drop to `1` and spend those
+	* columns on node text instead — each level is still marked by
+	* the disclosure glyph (or the blank standing in for one).
+	*/
+	indentCols: number;
 	key?: string | null;
 } | {
 	"kind": "text";

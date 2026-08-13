@@ -1639,7 +1639,7 @@ let commentsPanel: WidgetPanel | null = null;
 function panelWidthOf(panel: 'files' | 'comments'): number {
     const known = state.panelWidths[panel];
     if (known && known > 0) return known;
-    return Math.max(12, Math.floor(state.viewportWidth * (panel === 'files' ? 0.16 : 0.15)));
+    return Math.max(12, Math.floor(state.viewportWidth * (panel === 'files' ? FILES_PANEL_RATIO : 0.15)));
 }
 
 /** `text` clipped to `width` columns, dropping characters from the left
@@ -1761,6 +1761,28 @@ function filesHeaderLabel(): string {
 
 const FILES_TREE_KEY = "files-tree";
 const FILES_FILTER_KEY = "files-filter";
+
+/** Share of the review's width the FILES sidebar opens at.
+ *
+ *  Read by both `REVIEW_LAYOUT` (the host's initial split) and
+ *  `panelWidthOf` (the plugin's own laying-out before the first
+ *  `viewport_changed` arrives) — they describe the same panel, so they
+ *  have to agree or the first paint is laid out to a width the panel
+ *  does not have. Once the user drags the divider the host's reported
+ *  width wins and this is no longer consulted.
+ *
+ *  Paths are long and the tree nests, so the old 0.16 left filenames
+ *  elided to a few characters on a typical terminal. */
+const FILES_PANEL_RATIO = 0.22;
+
+/** Columns of indent per tree level in the FILES sidebar.
+ *
+ *  One, not the host's default of two: this tree nests a directory chain
+ *  several levels deep in a panel only a couple of dozen columns wide, so
+ *  every column spent on indent comes straight off the filenames. One
+ *  column still reads as a level because each row also carries a
+ *  disclosure glyph (or the two spaces standing in for one). */
+const FILES_TREE_INDENT = 1;
 
 interface FilesTree {
     nodes: TreeNode[];
@@ -1887,19 +1909,17 @@ function buildFilesTree(): FilesTree {
         const key = `dir:${category} ${node.path}`;
         out.groupKeys.push(key);
         out.keys.push(key);
-        const stats = `  +${node.added} -${node.removed}`;
-        // The host indents 2 columns per depth level and draws a
-        // disclosure glyph; a segment is short, so this only bites on a
-        // deeply nested path in a narrow panel.
-        const room = Math.max(4, W - depth * 2 - 2 - stats.length);
+        // The host indents `FILES_TREE_INDENT` columns per depth level and
+        // draws a disclosure glyph; a segment is short, so this only bites
+        // on a deeply nested path in a narrow panel.
+        const room = Math.max(4, W - depth * FILES_TREE_INDENT - 2);
         out.nodes.push(treeNode(
-            { text: `${elideRight(node.name, room)}${stats}`, style: { fg: STYLE_SECTION_HEADER } },
+            { text: elideRight(node.name, room), style: { fg: STYLE_SECTION_HEADER } },
             { depth, hasChildren: true },
         ));
     };
 
     const pushFile = (file: FileEntry, depth: number): void => {
-        const counts = fileChangeCounts(file);
         const key = fileKey(file);
         const badge = commentCounts[file.path] ? ` *${commentCounts[file.path]}` : '';
         const nodeKey = `file:${key}`;
@@ -1915,8 +1935,8 @@ function buildFilesTree(): FilesTree {
         // file explorer this sidebar mirrors right-aligns status for the
         // same reason.
         const status = file.status ? ` ${file.status}` : '';
-        const stats = `  +${counts.added} -${counts.removed}${badge}${status}`;
-        const room = Math.max(4, W - depth * 2 - 2 - stats.length);
+        const stats = `${badge}${status}`;
+        const room = Math.max(4, W - depth * FILES_TREE_INDENT - 2 - stats.length);
         out.nodes.push(treeNode(
             {
                 text: `${elideRight(fileBaseOf(file.path), room)}${stats}`,
@@ -2023,6 +2043,7 @@ function buildFilesPanelSpec(): WidgetSpec {
             selectedIndex: selected,
             visibleRows: panelListRows('files'),
             expandedKeys: filesTree.groupKeys,
+            indentCols: FILES_TREE_INDENT,
             key: FILES_TREE_KEY,
         }));
     }
@@ -2276,7 +2297,7 @@ editor.on("widget_event", (data) => {
             const payload = (data.payload ?? {}) as Record<string, unknown>;
             if (typeof payload["value"] === "string") state.fileFilter = payload["value"];
             if (typeof payload["cursorByte"] === "number") filterCursor = payload["cursorByte"];
-            applyFileFilter();
+            scheduleFileFilter();
             return;
         }
         if (data.event_type === "activate" || data.event_type === "cancel") {
@@ -2756,6 +2777,43 @@ function jumpToComment(commentId: string): void {
     if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow);
 }
 
+/** Milliseconds of quiet before a resized side panel is repainted.
+ *
+ *  A divider drag delivers a `viewport_changed` per column crossed. The
+ *  host has already re-laid the panes out by then — this only defers the
+ *  panel's *content* rebuild, so the drag itself stays smooth and the
+ *  content catches up the moment the pointer settles. */
+const PANEL_RELAYOUT_DEBOUNCE_MS = 60;
+
+const panelRelayoutTimers: { files: number | null; comments: number | null } = {
+    files: null,
+    comments: null,
+};
+
+/** Repaint `panel` once its size stops changing. */
+function schedulePanelRelayout(panel: 'files' | 'comments'): void {
+    const pending = panelRelayoutTimers[panel];
+    if (pending !== null) editor.clearInterval(pending);
+    panelRelayoutTimers[panel] = editor.setTimeout(
+        PANEL_RELAYOUT_DEBOUNCE_MS,
+        panel === 'files' ? "review_relayout_files" : "review_relayout_comments",
+    );
+}
+
+function review_relayout_files(): void {
+    panelRelayoutTimers.files = null;
+    if (state.groupId === null) return;
+    renderFilesPanel();
+}
+registerHandler("review_relayout_files", review_relayout_files);
+
+function review_relayout_comments(): void {
+    panelRelayoutTimers.comments = null;
+    if (state.groupId === null) return;
+    renderCommentsPanel();
+}
+registerHandler("review_relayout_comments", review_relayout_comments);
+
 function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
     if (state.groupId === null) return;
     // Side panels: remember how wide the host actually made them, and
@@ -2767,8 +2825,14 @@ function on_review_viewport_changed(data: { split_id: number; buffer_id: number;
             && state.panelHeights[panel] === data.height) return;
         state.panelWidths[panel] = data.width;
         state.panelHeights[panel] = data.height;
-        if (panel === 'files') renderFilesPanel();
-        else renderCommentsPanel();
+        // Record the size synchronously — everything laid out against it
+        // (`panelWidthOf`, the header's `✕` column) must see the new width
+        // at once — but coalesce the repaint. Dragging the divider walks
+        // through every intervening width, and each one would otherwise
+        // rebuild the whole tree and ship it across the IPC boundary; the
+        // intermediate widths are never worth painting, only the one the
+        // user stops on.
+        schedulePanelRelayout(panel);
         return;
     }
     if (data.buffer_id !== state.panelBuffers["diff"]) return;
@@ -5169,6 +5233,50 @@ function review_filter_files() {
 }
 registerHandler("review_filter_files", review_filter_files);
 
+/** Milliseconds of quiet before a typed filter is actually applied.
+ *
+ *  Long enough that a burst of typing costs one rebuild instead of one
+ *  per character, short enough to feel immediate after the last key. */
+const FILTER_DEBOUNCE_MS = 90;
+
+let filterApplyTimer: number | null = null;
+
+/** Apply the current filter, coalescing bursts of typing into one pass.
+ *
+ *  `applyFileFilter` rebuilds the whole unified diff — the stream renders
+ *  only matching files, so the centre genuinely changes — and on a large
+ *  review that is far too much to do between keystrokes. The field itself
+ *  stays responsive regardless: the host owns its text and echoes each
+ *  character immediately, so debouncing only defers the tree and centre.
+ *
+ *  Every keystroke cancels the pending pass, so intermediate queries are
+ *  never rendered at all — the abandoned work is dropped rather than
+ *  raced. Only the final query is applied. */
+function scheduleFileFilter(): void {
+    if (filterApplyTimer !== null) editor.clearInterval(filterApplyTimer);
+    filterApplyTimer = editor.setTimeout(FILTER_DEBOUNCE_MS, "review_apply_file_filter");
+}
+
+/** Timer target for `scheduleFileFilter`. */
+function review_apply_file_filter(): void {
+    filterApplyTimer = null;
+    if (state.groupId === null) return;
+    applyFileFilter();
+}
+registerHandler("review_apply_file_filter", review_apply_file_filter);
+
+/** Run a debounced filter pass now, if one is pending.
+ *
+ *  Anything that depends on the filter having been applied — closing the
+ *  field, navigating off it — flushes first so it never observes a tree
+ *  built from a stale query. */
+function flushPendingFileFilter(): void {
+    if (filterApplyTimer === null) return;
+    editor.clearInterval(filterApplyTimer);
+    filterApplyTimer = null;
+    applyFileFilter();
+}
+
 /** Re-filter after an edit: the tree, the centre (the stream renders only
  *  matching files) and the status line. */
 function applyFileFilter(): void {
@@ -5189,6 +5297,13 @@ function applyFileFilter(): void {
 function closeFileFilter(revert: boolean): void {
     if (!filterEditing) return;
     if (revert && state.fileFilter !== filterBeforeEdit) {
+        // Drop any pass still owed to the abandoned query — it would rebuild
+        // to the query being reverted away from, and then land *after* this
+        // one.
+        if (filterApplyTimer !== null) {
+            editor.clearInterval(filterApplyTimer);
+            filterApplyTimer = null;
+        }
         state.fileFilter = filterBeforeEdit;
         filterCursor = filterBeforeEdit.length;
         applyFileFilter();
@@ -5198,6 +5313,10 @@ function closeFileFilter(revert: boolean): void {
         // abandoned text over a tree that already reverted.
         filesPanel?.setValue(FILES_FILTER_KEY, filterBeforeEdit, filterCursor);
     }
+    // Enter: the typed query stands, so anything still owed has to land
+    // before the field closes — otherwise the tree behind it is one
+    // keystroke stale until the timer happens to fire.
+    flushPendingFileFilter();
     leaveFilterMode();
     // Focus lands on the tree — you filtered to pick a file.
     if (filesPanel !== null) filesPanel.setFocusKey(FILES_TREE_KEY);
@@ -6248,7 +6367,7 @@ const REVIEW_LAYOUT = JSON.stringify({
     second: {
         type: "split",
         direction: "h",
-        ratio: 0.16,
+        ratio: FILES_PANEL_RATIO,
         first: { type: "scrollable", id: "files" },
         second: {
             type: "split",

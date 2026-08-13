@@ -528,6 +528,11 @@ export function tree(options: {
    * headers) render as plain single rows instead of being blank-padded
    * to the card height. */
   cardBorders?: boolean;
+  /** Columns of indent per depth level. `2` (default) is the classic
+   * tree step. Narrow panels that nest several levels deep can drop to
+   * `1` to spend those columns on the node text instead; the disclosure
+   * glyph (or the blank standing in for one) still marks each level. */
+  indentCols?: number;
   key?: string;
 }): WidgetSpec {
   return {
@@ -540,6 +545,7 @@ export function tree(options: {
     checkable: options.checkable ?? false,
     itemHeight: options.itemHeight ?? 1,
     cardBorders: options.cardBorders ?? false,
+    indentCols: options.indentCols ?? 2,
     key: options.key,
   };
 }
