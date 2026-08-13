@@ -89,6 +89,27 @@ export function raw(entries: TextPropertyEntry[], key?: string): WidgetSpec {
   return { kind: "raw", entries, key };
 }
 
+/** A `raw()` block as a scrollable **viewport** of `visibleRows` rows
+ * instead of every entry inline.
+ *
+ * Bottom-anchored: it shows the tail of `entries`, pads at the top when
+ * there are fewer of them than fit, and keeps following the newest row
+ * until the user scrolls away from it (scrolling back to the bottom
+ * re-arms following). The host owns the scroll offset, so the block also
+ * gets a scroll region — the wheel over it scrolls *it* rather than
+ * defaulting to the first list on the panel — and a scrollbar once the
+ * content overflows.
+ *
+ * `key` is required: the scroll offset is host-owned instance state
+ * keyed by it. Without one this degrades to a plain `raw()`. */
+export function scrollableRaw(
+  entries: TextPropertyEntry[],
+  key: string,
+  visibleRows: number,
+): WidgetSpec {
+  return { kind: "raw", entries, key, visibleRows: Math.max(1, Math.floor(visibleRows)) };
+}
+
 /** Build a `TextPropertyEntry` from a sequence of styled segments.
  *
  * The plugin describes row content structurally — each segment is a
@@ -600,6 +621,24 @@ export function text(
      * `WidgetSpec::Text.completions` (Rust) for the rendering
      * + keyboard semantics. */
     completions?: string[];
+    /** Float the completion popup ABOVE the field rather than below
+     * it. Nothing reflows either way — the popup floats — so this is
+     * only which side of the input it grows into. Set it when the
+     * field is the last row of its surface, where a downward popup
+     * renders past the panel edge and is clipped away. Default
+     * false. */
+    completionsAbove?: boolean;
+    /** Drop the completion popup's left and right border columns,
+     * keeping the horizontal rules. Candidates then start flush with
+     * the field's text instead of two columns in. For a popup as wide
+     * as its surface — a chat composer — the side columns land under
+     * the panel border or are clipped, so they cost a column and paint
+     * nothing. Default false: every other field keeps the full box. */
+    completionsBare?: boolean;
+    /** Render a single-line field without the `[` `]` around its
+     * value. For an input that *is* its surface's row rather than a
+     * cell in a form. Default false. */
+    bare?: boolean;
     /** Paint the caret as a REVERSED block cell (modal surfaces
      * without a hardware cursor). Default false. */
     blockCaret?: boolean;
@@ -637,6 +676,9 @@ export function text(
     maxVisibleChars: options.maxVisibleChars ?? 0,
     fullWidth: options.fullWidth ?? false,
     completions: options.completions ?? [],
+    completionsAbove: options.completionsAbove ?? false,
+    completionsBare: options.completionsBare ?? false,
+    bare: options.bare ?? false,
     blockCaret: options.blockCaret ?? false,
     selStart: options.selStart ?? -1,
     selEnd: options.selEnd ?? -1,
@@ -689,6 +731,16 @@ export function textInput(
     fieldWidth?: number;
     /** See `text({ fullWidth })`. */
     fullWidth?: boolean;
+    /** Seed candidates for the completion popup; live updates go
+     * through the `setCompletions(key, items)` mutation. */
+    completions?: string[];
+    /** See `text({ completionsAbove })` — float the popup above the
+     * field, for an input pinned to the bottom of its surface. */
+    completionsAbove?: boolean;
+    /** See `text({ completionsBare })` — popup without side borders. */
+    completionsBare?: boolean;
+    /** See `text({ bare })` — field without its `[` `]`. */
+    bare?: boolean;
     key?: string;
   },
 ): WidgetSpec {
@@ -702,6 +754,10 @@ export function textInput(
     fieldWidth: options?.fieldWidth,
     maxVisibleChars: options?.maxVisibleChars,
     fullWidth: options?.fullWidth,
+    completions: options?.completions,
+    completionsAbove: options?.completionsAbove,
+    completionsBare: options?.completionsBare,
+    bare: options?.bare,
     key: options?.key,
   });
 }
@@ -715,6 +771,48 @@ export function textInput(
  *
  * `windowId` of 0 (or any unknown id) renders the placeholder
  * blanks without dispatching the per-window paint. */
+/** Reserve a rectangle for one **buffer**, from any window.
+ *
+ * The narrow sibling of `windowEmbed`. An embed paints a whole
+ * session — split tree, tab bar, status chrome; a pane paints
+ * exactly one buffer, which is usually what a panel wants:
+ * "show me this agent's terminal", not "show me its whole
+ * workspace".
+ *
+ * One rectangle, one buffer, so every buffer kind works with no
+ * special case:
+ *
+ *  - **terminal** — its live PTY grid, resized to this pane. Set
+ *    `interactive` to type at it while the pane holds focus.
+ *  - **file / virtual** — the ordinary per-leaf render pipeline,
+ *    with view state the host keeps for this pane.
+ *  - **composite (side-by-side diff)** — one buffer that divides
+ *    its own rectangle, so nothing extra is needed here.
+ *
+ * A *buffer group* is not a buffer — it is a set of them plus a
+ * layout — so show a group as several panes composed with
+ * `row()` / `col()`.
+ *
+ * `bufferId` of 0 (or an unknown id) renders blank placeholder
+ * rows rather than failing. */
+export function pane(options: {
+  windowId: number;
+  bufferId: number;
+  rows: number;
+  /** Terminals only: forward keys to the PTY while focused. */
+  interactive?: boolean;
+  key?: string;
+}): WidgetSpec {
+  return {
+    kind: "pane",
+    windowId: options.windowId,
+    bufferId: options.bufferId,
+    rows: options.rows,
+    interactive: options.interactive ?? false,
+    key: options.key,
+  };
+}
+
 export function windowEmbed(options: {
   windowId: number;
   rows: number;
@@ -1168,6 +1266,14 @@ export class FloatingWidgetPanel {
     itemKeys: string[] = [],
   ): boolean {
     return this.mutate({ kind: "setItems", widgetKey, items, itemKeys });
+  }
+
+  /** Replace a keyed `Raw` widget's entries. See `WidgetPanel.setRawEntries`
+   * — same mutation, and the same reason to prefer it over re-mounting: a
+   * mount rebuilds every widget from the spec, including the text field the
+   * user is typing into. */
+  setRawEntries(widgetKey: string, entries: TextPropertyEntry[]): boolean {
+    return this.mutate({ kind: "setRawEntries", widgetKey, entries });
   }
 
   setExpandedKeys(widgetKey: string, keys: string[]): boolean {
