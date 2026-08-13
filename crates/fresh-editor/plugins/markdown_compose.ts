@@ -11,16 +11,70 @@ const editor = getEditor();
 
 
 interface MarkdownConfig {
-  composeWidth: number | null;
+  // Page width for compose mode, as a three-state value:
+  //   * `undefined` — the user has not chosen one for this session; resolve it
+  //     from the editor config (see `configuredPageWidth`). This is the
+  //     startup state, so compose defaults to a readable measure.
+  //   * `number`    — an explicit width in columns.
+  //   * `null`      — explicitly full viewport width ("None" in the
+  //                   Set Compose Width prompt).
+  // The `undefined`/`null` distinction is what lets a config-driven default
+  // exist without overriding a user who deliberately asked for full width.
+  composeWidth: number | null | undefined;
   maxWidth: number;
   hideLineNumbers: boolean;
 }
 
 const config: MarkdownConfig = {
-  composeWidth: null,
+  composeWidth: undefined,
   maxWidth: 100,
   hideLineNumbers: true,
 };
+
+// Fallback measure when the editor config can't be read at all. Matches the
+// editor's own `editor.page_width` default (see `default_page_width` in
+// config.rs) so the two never disagree.
+const FALLBACK_PAGE_WIDTH = 80;
+
+/** Shape of the bits of the resolved editor config this plugin reads. */
+interface PageWidthConfig {
+  editor?: { page_width?: number | null };
+  languages?: Record<string, { page_width?: number | null } | undefined>;
+}
+
+/**
+ * The compose width the *config* asks for, in columns, or `null` for the full
+ * viewport width.
+ *
+ * Mirrors the Rust resolution in `buffer_config_resolve::page_view`:
+ * `languages.markdown.page_width` wins over the global `editor.page_width`,
+ * and a language-level `0` means "unset at this level" (inherit the global)
+ * rather than "full width" — the same rule `Config::normalize_zero_sentinels`
+ * applies. A global `0`/`null` *does* mean full width, which is how the
+ * pre-default behaviour stays reachable.
+ */
+function configuredPageWidth(): number | null {
+  const cfg = editor.getConfig() as PageWidthConfig | null;
+  if (!cfg || typeof cfg !== "object") return FALLBACK_PAGE_WIDTH;
+
+  const lang = cfg.languages?.markdown?.page_width;
+  if (typeof lang === "number" && lang > 0) return lang;
+
+  const global = cfg.editor?.page_width;
+  if (typeof global === "number") return global > 0 ? global : null;
+  if (global === null) return null;
+
+  return FALLBACK_PAGE_WIDTH;
+}
+
+/**
+ * The compose width in effect right now: an explicit session choice if the
+ * user made one, else whatever the config resolves to.
+ */
+function activeComposeWidth(): number | null {
+  if (config.composeWidth !== undefined) return config.composeWidth;
+  return configuredPageWidth();
+}
 
 // When true, compose/preview mode is automatically enabled for all open and
 // newly opened markdown buffers.  Toggled by the "Toggle Compose/Preview
@@ -630,8 +684,10 @@ function enableMarkdownCompose(bufferId: number): void {
   // wrapping transform at the content width.
   editor.setLineWrap(bufferId, null, true);
 
-  // Set layout hints for centered margins
-  editor.setLayoutHints(bufferId, null, { composeWidth: config.composeWidth ?? undefined });
+  // Set layout hints for centered margins. With no explicit session choice
+  // this resolves to the configured page width (default 80), so compose opens
+  // as a readable measure rather than running the full pane width.
+  editor.setLayoutHints(bufferId, null, { composeWidth: activeComposeWidth() ?? undefined });
 
   // Trigger a refresh so lines_changed hooks fire for visible content
   editor.refreshLines(bufferId);
@@ -929,7 +985,7 @@ const MIN_COL_W = 3;
  * allocation, soft-wrap width) need to match.
  */
 function effectiveComposeWidth(viewportWidth: number): number {
-  const cw = config.composeWidth;
+  const cw = activeComposeWidth();
   if (cw == null) return viewportWidth;
   return Math.min(cw, viewportWidth);
 }
@@ -1819,7 +1875,8 @@ editor.on("buffer_activated", (data) => {
 
 // Set compose width command - starts interactive prompt
 function markdownSetComposeWidth() : void {
-  const currentValue = config.composeWidth === null ? "None" : String(config.composeWidth);
+  const active = activeComposeWidth();
+  const currentValue = active === null ? "None" : String(active);
   editor.startPromptWithInitial(editor.t("prompt.compose_width"), "markdown-compose-width", currentValue);
   editor.setPromptInputSync(true);
   editor.setPromptSuggestions([
