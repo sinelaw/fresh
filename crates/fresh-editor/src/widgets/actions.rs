@@ -429,6 +429,7 @@ mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            indent_cols: 2,
             key: Some("t".into()),
         };
         let new_nodes = vec![node("new1", 0, false), node("new2", 0, false)];
@@ -467,6 +468,7 @@ mod tests {
             checkable: true,
             item_height: 1,
             card_borders: false,
+            indent_cols: 2,
             key: Some("t".into()),
         };
         let ok = set_tree_checked_keys_in_spec(
@@ -506,6 +508,7 @@ mod tests {
             checkable: true,
             item_height: 1,
             card_borders: false,
+            indent_cols: 2,
             key: Some("t".into()),
         };
         let _ok = set_tree_checked_keys_in_spec(
@@ -534,6 +537,7 @@ mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            indent_cols: 2,
             key: Some("real".into()),
         };
         assert!(!set_tree_nodes_in_spec(&mut spec, "wrong", vec![], vec![]));

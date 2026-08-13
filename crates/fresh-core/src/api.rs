@@ -1826,6 +1826,10 @@ fn default_tree_visible_rows() -> u32 {
 /// node (the classic single-line tree). A larger value renders every
 /// node as a fixed-height card of that many rows (the node's primary
 /// `text` line plus its `extra_lines`, blank-padded to the height).
+fn default_tree_indent_cols() -> u32 {
+    2
+}
+
 fn default_tree_item_height() -> u32 {
     1
 }
@@ -2428,6 +2432,13 @@ pub enum WidgetSpec {
         /// selection stay node-based; rows per node just vary.
         #[serde(default)]
         card_borders: bool,
+        /// Columns of indent per depth level. `2` (the default) is the
+        /// classic tree step. A panel only a couple of dozen columns wide
+        /// that nests several levels deep can drop to `1` and spend those
+        /// columns on node text instead — each level is still marked by
+        /// the disclosure glyph (or the blank standing in for one).
+        #[serde(default = "default_tree_indent_cols")]
+        indent_cols: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

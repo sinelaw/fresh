@@ -872,6 +872,7 @@ fn render_collected(
             checkable,
             item_height,
             card_borders,
+            indent_cols,
             key: tree_key,
         } => render_widget_tree(
             nodes,
@@ -882,6 +883,7 @@ fn render_collected(
             *checkable,
             *item_height,
             *card_borders,
+            *indent_cols,
             tree_key.as_deref(),
             prev,
             next_state,
@@ -3188,6 +3190,7 @@ fn render_widget_tree(
     checkable: bool,
     item_height: u32,
     card_borders: bool,
+    indent_cols: u32,
     tree_key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
@@ -3390,6 +3393,7 @@ fn render_widget_tree(
             item_height,
             card_borders,
             panel_width,
+            indent_cols,
         );
         let mut entry = rendered.entry;
         let is_selected = abs_idx as i32 == effective_sel_abs;
@@ -5499,6 +5503,7 @@ pub fn render_tree_row(
     item_height: u32,
     card_borders: bool,
     panel_width: u32,
+    indent_cols: u32,
 ) -> RenderedTreeRow {
     // Bordered-card trees: card nodes render inside a rounded box; the
     // other nodes (folder headers) collapse to a plain single row
@@ -5511,7 +5516,7 @@ pub fn render_tree_row(
     } else {
         item_height
     };
-    let indent_cols = (node.depth as usize) * 2;
+    let indent_cols = (node.depth as usize) * (indent_cols as usize);
     let disclosure_glyph: &str = if node.has_children {
         if expanded {
             "▼"
@@ -7472,6 +7477,7 @@ mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            indent_cols: 2,
             key: Some("sessions".to_string()),
         };
         let out = render_spec_with_options(
@@ -8511,13 +8517,14 @@ mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            indent_cols: 2,
             key: key.map(|s| s.to_string()),
         }
     }
 
     #[test]
     fn tree_row_renders_disclosure_glyph_for_internal_collapsed() {
-        let r = render_tree_row(&tnode("file.txt", 0, true), false, false, 1, false, 80);
+        let r = render_tree_row(&tnode("file.txt", 0, true), false, false, 1, false, 80, 2);
         assert!(r.entry.text.starts_with('\u{25B6}'), "starts with ▶");
         assert!(r.entry.text.contains("file.txt"));
         assert!(r.disclosure_range.is_some());
@@ -8525,13 +8532,13 @@ mod tests {
 
     #[test]
     fn tree_row_renders_disclosure_glyph_for_internal_expanded() {
-        let r = render_tree_row(&tnode("file.txt", 0, true), true, false, 1, false, 80);
+        let r = render_tree_row(&tnode("file.txt", 0, true), true, false, 1, false, 80, 2);
         assert!(r.entry.text.starts_with('\u{25BC}'), "starts with ▼");
     }
 
     #[test]
     fn tree_row_leaf_uses_two_spaces_no_disclosure_hit() {
-        let r = render_tree_row(&tnode("match", 0, false), false, false, 1, false, 80);
+        let r = render_tree_row(&tnode("match", 0, false), false, false, 1, false, 80, 2);
         // No glyph, just spaces for alignment.
         assert!(r.entry.text.starts_with("  "));
         assert!(r.entry.text.contains("match"));
@@ -8540,7 +8547,7 @@ mod tests {
 
     #[test]
     fn tree_row_indents_by_depth_times_two() {
-        let r = render_tree_row(&tnode("nested", 2, false), false, false, 1, false, 80);
+        let r = render_tree_row(&tnode("nested", 2, false), false, false, 1, false, 80, 2);
         // depth=2 → 4 leading spaces, then 2 alignment spaces, then "nested".
         assert!(r.entry.text.starts_with("      nested"));
     }
@@ -8558,7 +8565,7 @@ mod tests {
             properties: Default::default(),
             unit: OffsetUnit::Byte,
         });
-        let r = render_tree_row(&node, false, false, 1, false, 80);
+        let r = render_tree_row(&node, false, false, 1, false, 80, 2);
         // depth=1 → 2 indent + 2 alignment = 4 prefix bytes (ASCII).
         // The plugin's [0..5] becomes [4..9].
         let plugin_overlay = r
@@ -8576,7 +8583,7 @@ mod tests {
         // Even with `checked: Some(_)`, no glyph if `checkable: false`.
         let mut node = tnode("file.rs", 0, false);
         node.checked = Some(true);
-        let r = render_tree_row(&node, false, false, 1, false, 80);
+        let r = render_tree_row(&node, false, false, 1, false, 80, 2);
         assert!(r.checkbox_range.is_none());
         assert!(!r.entry.text.contains("[v]"));
         assert!(!r.entry.text.contains("[ ]"));
@@ -8588,7 +8595,7 @@ mod tests {
         // Lets a checkable tree mix non-checkbox-bearing nodes
         // (e.g. a separator or header) with checkbox rows.
         let node = tnode("section", 0, false);
-        let r = render_tree_row(&node, false, true, 1, false, 80);
+        let r = render_tree_row(&node, false, true, 1, false, 80, 2);
         assert!(r.checkbox_range.is_none());
         assert!(!r.entry.text.contains("[v]"));
         assert!(!r.entry.text.contains("[ ]"));
@@ -8598,7 +8605,7 @@ mod tests {
     fn tree_row_renders_checked_glyph_after_disclosure() {
         let mut node = tnode("file.rs", 0, true);
         node.checked = Some(true);
-        let r = render_tree_row(&node, true, true, 1, false, 80);
+        let r = render_tree_row(&node, true, true, 1, false, 80, 2);
         assert!(r.checkbox_range.is_some(), "checkbox range emitted");
         let (cb_start, cb_end) = r.checkbox_range.unwrap();
         // Layout: ▼(3 bytes UTF-8) + " " + [v] + " " + body
@@ -8610,7 +8617,7 @@ mod tests {
     fn tree_row_renders_unchecked_glyph_for_leaf() {
         let mut node = tnode("match-row", 1, false);
         node.checked = Some(false);
-        let r = render_tree_row(&node, false, true, 1, false, 80);
+        let r = render_tree_row(&node, false, true, 1, false, 80, 2);
         let (cb_start, cb_end) = r
             .checkbox_range
             .expect("checkbox range for leaf with checked: Some");
@@ -8625,7 +8632,7 @@ mod tests {
         // verbatim (no UTF-8 boundary issues from the disclosure).
         let mut node = tnode("path/with/é", 0, true);
         node.checked = Some(true);
-        let r = render_tree_row(&node, false, true, 1, false, 80);
+        let r = render_tree_row(&node, false, true, 1, false, 80, 2);
         let (cb_start, cb_end) = r.checkbox_range.unwrap();
         assert!(r.entry.text.is_char_boundary(cb_start));
         assert!(r.entry.text.is_char_boundary(cb_end));
@@ -8857,6 +8864,7 @@ mod tests {
             checkable: false,
             item_height: 2,
             card_borders: true,
+            indent_cols: 2,
             key: Some("T".to_string()),
         };
         let out = render_spec(&spec, &HashMap::new(), "", width);
@@ -9193,6 +9201,7 @@ mod tests {
             checkable: false,
             item_height: 3,
             card_borders: true,
+            indent_cols: 2,
             key: Some("T".into()),
         };
         // A finite panel width: bordered cards draw `─` runs across the
