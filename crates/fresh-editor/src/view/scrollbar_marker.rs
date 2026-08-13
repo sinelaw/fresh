@@ -511,26 +511,43 @@ fn build_cells(
     let total = basis.total().max(1);
     let h = track_height as u64;
 
-    // Core marks are laid down first, so a plugin marker of *equal* priority
-    // painted after them wins the cell — the same order of precedence the
-    // gutter applies between the blue unsaved bar and a plugin indicator.
+    // A plugin marker of *equal* priority beats a core mark — the same order
+    // of precedence the gutter applies between the blue unsaved bar and a
+    // plugin indicator. That is `SOURCE_PLUGIN > SOURCE_CORE` in the ranking
+    // key below, not an artifact of paint order, so the two sources can be
+    // walked in either order.
     // Core ranges project through `endpoints()` — the same pairs any caller
     // that pre-resolves coordinates seeded its map from. (Plugin markers keep
     // their documented exclusive-`end` projection: their ends are
     // line-relative, where the difference is sub-cell.)
     let core_marks = core.into_iter().flat_map(|c| {
         c.endpoints()
-            .map(move |(s, e)| (s, Some(e), &c.color, c.priority))
+            .map(move |(s, e)| (s, Some(e), &c.color, c.priority, SOURCE_CORE))
     });
     let plugin_marks = manager
         .resolved()
         .into_iter()
-        .map(|m| (m.start, m.end, m.color, m.priority));
+        .map(|m| (m.start, m.end, m.color, m.priority, SOURCE_PLUGIN));
+
+    // Which marker owns a contended cell is decided by a total order over the
+    // markers themselves — priority, then source, then position — never by the
+    // order they happen to be painted in. Paint order is not a stable
+    // property: `resolved()` walks namespaces in `BTreeMap` order and each
+    // namespace's markers in *insertion* order, and for a namespace fed
+    // viewport-by-viewport (markdown headings) insertion order is the user's
+    // scroll history. Ranking on paint order therefore made a cell's colour
+    // change as the reader scrolled, with nothing about the document having
+    // changed.
+    let mut best: Vec<Option<CellRank>> = vec![None; track_height];
 
     // `resolved()` returns owned colours while `core` lends them, so the two
-    // sources are walked as one sequence of (start, end, colour, priority)
-    // with the colour cloned once, at the cell it wins.
-    let mut paint = |start: usize, end: Option<usize>, color: &OverlayColorSpec, priority: i32| {
+    // sources are walked as one sequence of (start, end, colour, priority,
+    // source) with the colour cloned once, at the cell it wins.
+    let mut paint = |start: usize,
+                     end: Option<usize>,
+                     color: &OverlayColorSpec,
+                     priority: i32,
+                     source: u8| {
         let start_row = (row_of_byte(start).min(total.saturating_sub(1)) * h / total) as usize;
         let end_row = match end {
             Some(e) if e > start => {
@@ -544,9 +561,18 @@ fn build_cells(
         // say) would otherwise index a backwards range and panic — in the
         // render path, where a wrong mark is survivable and a crash is not.
         let last = end_row.max(start_row).min(track_height - 1);
-        for cell in cells[start_row.min(last)..=last].iter_mut() {
-            let better = match cell {
-                Some(existing) => priority >= existing.priority,
+        let candidate = CellRank {
+            priority,
+            source,
+            start,
+        };
+        let span = start_row.min(last)..=last;
+        for (cell, held) in cells[span.clone()]
+            .iter_mut()
+            .zip(best[span].iter_mut())
+        {
+            let better = match held {
+                Some(existing) => candidate.beats(existing),
                 None => true,
             };
             if better {
@@ -554,18 +580,47 @@ fn build_cells(
                     color: color.clone(),
                     priority,
                 });
+                *held = Some(candidate);
             }
         }
     };
 
-    for (start, end, color, priority) in core_marks {
-        paint(start, end, color, priority);
+    for (start, end, color, priority, source) in core_marks {
+        paint(start, end, color, priority, source);
     }
-    for (start, end, color, priority) in plugin_marks {
-        paint(start, end, &color, priority);
+    for (start, end, color, priority, source) in plugin_marks {
+        paint(start, end, &color, priority, source);
     }
 
     cells
+}
+
+/// Core marks rank below plugin marks at equal priority.
+const SOURCE_CORE: u8 = 0;
+const SOURCE_PLUGIN: u8 = 1;
+
+/// The ranking key that decides a contended cell, highest wins.
+///
+/// Every field is a property of the marker, so the winner is the same however
+/// the marker set was assembled — and, for a set that grows as the user
+/// explores the document, a cell keeps the colour it had once a
+/// higher-ranking marker for it exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CellRank {
+    priority: i32,
+    source: u8,
+    /// Earlier position wins an otherwise exact tie, so two markers of the
+    /// same priority and source resolve by document order rather than by
+    /// whichever was published last.
+    start: usize,
+}
+
+impl CellRank {
+    fn beats(&self, other: &CellRank) -> bool {
+        (self.priority, self.source) > (other.priority, other.source)
+            || ((self.priority, self.source) == (other.priority, other.source)
+                && self.start < other.start)
+    }
 }
 
 #[cfg(test)]
@@ -817,6 +872,59 @@ mod tests {
         mgr.set_markers("b", vec![point(505, 1, blue())]);
         let cells = project_bytes(&mgr, 1000, 10);
         assert_eq!(cells[5].as_ref().unwrap().color, red());
+    }
+
+    /// A contended cell must not depend on the order its markers were
+    /// published in. Markers for a namespace that publishes viewport by
+    /// viewport (markdown headings) arrive in the reader's scroll order, so
+    /// ranking on paint order made the cell change colour under them.
+    #[test]
+    fn shared_cell_ignores_publication_order() {
+        // Same two markers, same cell, opposite publication order.
+        let deep_first = {
+            let mut mgr = ScrollbarMarkerManager::new();
+            mgr.set_markers_in_range("md", 500, 510, vec![point(505, 1, blue())]);
+            mgr.set_markers_in_range("md", 495, 500, vec![point(497, 5, red())]);
+            project_bytes(&mgr, 1000, 10)
+        };
+        let shallow_first = {
+            let mut mgr = ScrollbarMarkerManager::new();
+            mgr.set_markers_in_range("md", 495, 500, vec![point(497, 5, red())]);
+            mgr.set_markers_in_range("md", 500, 510, vec![point(505, 1, blue())]);
+            project_bytes(&mgr, 1000, 10)
+        };
+
+        assert_eq!(
+            deep_first[4].as_ref().unwrap().color,
+            red(),
+            "the higher-priority marker owns the cell however it was published"
+        );
+        assert_eq!(
+            deep_first[4].as_ref().map(|c| &c.color),
+            shallow_first[4].as_ref().map(|c| &c.color),
+            "publication order must not change the winner"
+        );
+    }
+
+    /// With priority and source equal there is still a stable answer: the
+    /// marker earlier in the document.
+    #[test]
+    fn exact_tie_resolves_by_document_order() {
+        let earlier_last = {
+            let mut mgr = ScrollbarMarkerManager::new();
+            mgr.set_markers_in_range("md", 505, 510, vec![point(505, 3, blue())]);
+            mgr.set_markers_in_range("md", 500, 505, vec![point(501, 3, red())]);
+            project_bytes(&mgr, 1000, 10)
+        };
+        let earlier_first = {
+            let mut mgr = ScrollbarMarkerManager::new();
+            mgr.set_markers_in_range("md", 500, 505, vec![point(501, 3, red())]);
+            mgr.set_markers_in_range("md", 505, 510, vec![point(505, 3, blue())]);
+            project_bytes(&mgr, 1000, 10)
+        };
+
+        assert_eq!(earlier_last[5].as_ref().unwrap().color, red());
+        assert_eq!(earlier_first[5].as_ref().unwrap().color, red());
     }
 
     #[test]

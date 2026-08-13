@@ -477,6 +477,104 @@ function headingLevel(content: string): number {
   return m ? m[1].length : 0;
 }
 
+// Deepest heading level that earns a mark. The track oversamples hard — one
+// cell covers many lines in any real document — so marking every level packs
+// several headings into one cell and the shallowest of them is all that
+// survives. Marking only `#` by default keeps a cell's meaning stable.
+// `plugins.markdown_compose.settings.headingMarkerMaxLevel` overrides it; 0
+// turns the marks off.
+const DEFAULT_HEADING_MARKER_MAX_LEVEL = 1;
+
+function headingMarkerMaxLevel(): number {
+  const cfg = (editor.getPluginConfig() ?? {}) as { headingMarkerMaxLevel?: number };
+  const v = cfg.headingMarkerMaxLevel;
+  if (typeof v !== "number" || !isFinite(v)) return DEFAULT_HEADING_MARKER_MAX_LEVEL;
+  return Math.max(0, Math.min(6, Math.floor(v)));
+}
+
+/** Marks for the headings in `text`, whose first byte is at `baseByte`. */
+function headingMarkersIn(text: string, baseByte: number, maxLevel: number): ScrollbarMarker[] {
+  const markers: ScrollbarMarker[] = [];
+  let offset = baseByte;
+  for (const line of text.split("\n")) {
+    const level = headingLevel(line);
+    if (level > 0 && level <= maxLevel) {
+      markers.push({
+        position: offset,
+        color: headingMarkerColor(level),
+        priority: 10 - level,
+      });
+    }
+    offset += utf8Length(line) + 1; // +1 for the "\n" split consumed
+  }
+  return markers;
+}
+
+/** UTF-8 byte length; marker positions are byte offsets, JS indices are not. */
+function utf8Length(str: string): number {
+  let n = 0;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code <= 0x7f) n += 1;
+    else if (code <= 0x7ff) n += 2;
+    else if (code >= 0xd800 && code <= 0xdfff) { n += 4; i++; }
+    else n += 3;
+  }
+  return n;
+}
+
+// Byte cap for the one-shot scan, from the editor's own large-file setting.
+function prescanByteLimit(): number {
+  const cfg = editor.getConfig() as { editor?: { large_file_threshold_bytes?: number } } | null;
+  const v = cfg?.editor?.large_file_threshold_bytes;
+  return typeof v === "number" && v > 0 ? v : 1048576;
+}
+
+/**
+ * Mark every heading in the document, once, when compose mode turns on.
+ *
+ * Without this the track only ever shows the parts of the file that have been
+ * scrolled through, because `lines_changed` reports the viewport. Worse than
+ * the missing marks: a track cell covers many lines, so which heading wins a
+ * shared cell depended on how far the reader had scrolled, and cells changed
+ * colour under them. A complete set makes the winner a property of the
+ * document.
+ *
+ * The whole-namespace `setScrollbarMarkers` is correct here even though the
+ * per-batch pass uses the range-scoped form: this runs first and publishes
+ * everything, and each later batch replaces only its own byte span.
+ *
+ * Over-limit files keep the old lazy behaviour rather than losing marks. The
+ * size probe is the read itself — asking for `limit + 1` bytes costs a bounded
+ * copy and tells us whether the buffer exceeds the limit, so no separate
+ * length API is needed.
+ */
+async function prescanHeadingMarkers(bufferId: number): Promise<void> {
+  const maxLevel = headingMarkerMaxLevel();
+  if (maxLevel === 0) return;
+
+  const limit = prescanByteLimit();
+  let text: string;
+  try {
+    text = await editor.getBufferText(bufferId, 0, limit + 1);
+  } catch (e) {
+    editor.debug(`Heading pre-scan skipped for buffer ${bufferId}: ${e}`);
+    return;
+  }
+  if (utf8Length(text) > limit) {
+    editor.debug(`Heading pre-scan skipped for buffer ${bufferId}: over ${limit} bytes`);
+    return;
+  }
+  // The await gave the user time to toggle compose off (or close the buffer);
+  // publishing now would strand marks the disable path has already cleared.
+  if (!isComposingInAnySplit(bufferId)) return;
+
+  editor.setScrollbarMarkers(
+    bufferId, HEADING_MARKER_NS,
+    headingMarkersIn(text, 0, maxLevel),
+  );
+}
+
 // Per-render column widths, keyed by a row's byte_start. Rebuilt at the top of
 // every `lines_changed` pass (computeRowWidths) and read synchronously in the
 // same pass by the conceal and border code.
@@ -976,6 +1074,12 @@ function enableMarkdownCompose(bufferId: number): void {
 
   // Trigger a refresh so lines_changed hooks fire for visible content
   editor.refreshLines(bufferId);
+
+  // Mark every heading in the document, not just the ones scrolled past.
+  // Fire-and-forget: the per-batch pass below keeps the marks current either
+  // way, so a failed or skipped scan degrades to the old lazy behaviour.
+  void prescanHeadingMarkers(bufferId);
+
   editor.debug(`Markdown compose enabled for buffer ${bufferId}`);
 }
 
@@ -2399,16 +2503,18 @@ editor.on("lines_changed", (data) => {
   }
 
   // Publish this batch's heading marks. Range-scoped to the batch's byte span
-  // so headings outside it — already-visited parts of the document — keep
-  // their marks; see HEADING_MARKER_NS. Emitted even when the batch has no
-  // headings, so a line that stops being one loses its mark.
-  if (data.lines.length > 0) {
+  // so headings outside it — the rest of the document, marked by the pre-scan
+  // at compose time — keep their marks; see HEADING_MARKER_NS. Emitted even
+  // when the batch has no headings, so a line that stops being one loses its
+  // mark.
+  const maxLevel = headingMarkerMaxLevel();
+  if (data.lines.length > 0 && maxLevel > 0) {
     const batchStart = data.lines[0].byte_start;
     const batchEnd = data.lines[data.lines.length - 1].byte_end;
-    const headingMarkers = [];
+    const headingMarkers: ScrollbarMarker[] = [];
     for (const line of data.lines) {
       const level = headingLevel(line.content);
-      if (level === 0) continue;
+      if (level === 0 || level > maxLevel) continue;
       headingMarkers.push({
         // Byte offsets, not line numbers: they are exact regardless of file
         // size, and the editor anchors them so later edits shift the marks.
