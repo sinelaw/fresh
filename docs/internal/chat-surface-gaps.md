@@ -262,6 +262,22 @@ has the keyboard afterwards, so the chat is no longer where your keystrokes go.
 That is inherent in step 3 rather than a defect, but it is a real change in what
 Enter does to your focus.
 
+**What this exposed about detection.** Building the wake made an existing
+inconsistency visible: the picker offered agents the wake could not deliver to.
+A mailbox is evidence an agent *was* somewhere, not that one is there now or can
+be brought back — the `status` file outlives the process that wrote it, and a
+worktree found on disk has no persisted agent argv, so opening it produces a
+shell and no agent. Such a mailbox was listed anyway, so the picker showed an
+address, and messaging it restored nothing.
+
+Detection is now gated on the same predicate the wake uses — is there a
+workspace at this root the host is keeping, live or dormant — so what the picker
+offers and what sending can deliver are one answer rather than two that drift.
+The mailboxes that keep their listing are the ones with a real workspace behind
+them, including the genuinely ambiguous case (two mailboxes in one checkout,
+where neither can be attributed to that window's terminal but both are real).
+The ones that lose it are the leftovers.
+
 ### What already exists
 
 - **Step 1 and 3 are nearly one existing call.** `focusWorkspace(target)`

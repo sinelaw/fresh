@@ -4250,6 +4250,25 @@ function unclaimedSessionAt(root: string): AgentSession | undefined {
   return undefined;
 }
 
+/// The workspace at `root` that an agent there could actually be reached
+/// through — live now, or dormant and restorable.
+///
+/// The distinction that matters is `discovered`. A discovered row is a worktree
+/// found on disk: there is no persisted window behind it and therefore no agent
+/// argv to resume, so opening it yields a plain shell. A non-discovered row is
+/// a window the host is keeping, live or dormant, and materializing one brings
+/// its agent back with it.
+///
+/// This is the same predicate the wake path uses to decide whether waiting for
+/// an agent is worth anything, deliberately: what the picker offers and what
+/// sending can deliver should be one answer, not two that drift.
+function restorableWorkspaceAt(root: string): AgentSession | undefined {
+  for (const s of orchestratorSessions.values()) {
+    if (!s.discovered && !s.pending && s.root === root) return s;
+  }
+  return undefined;
+}
+
 /// Give every agent we can see a name to be addressed by.
 ///
 /// A workspace can be *known* to hold an agent — the host says what it runs
@@ -4275,6 +4294,14 @@ function nameVisibleAgents(): void {
 }
 
 function scanForUnattachedAgents(): void {
+  // Fold in the host's window list first. This scan now *drops* a mailbox when
+  // no workspace can reach it, so it has to be deciding against the real set of
+  // windows: run against a session map that has not caught up yet — early in
+  // startup, before any view has reconciled — and a restored agent is dropped
+  // for the tick it takes to reappear, which reads as an agent flickering out
+  // of the picker. One `listWindows` per poll, against a file read per agent
+  // already in this handler.
+  reconcileSessions();
   nameVisibleAgents();
   const attached = attachedMailboxes();
   const now = Date.now();
@@ -4314,6 +4341,17 @@ function scanForUnattachedAgents(): void {
         host.status = parsed;
         continue;
       }
+      // A mailbox is evidence an agent *was* here, not that one is here now or
+      // can be brought back. Without a window the host is keeping for this
+      // root, there is nothing to restore: the status file outlives the process
+      // that wrote it, and a worktree discovered on disk has no persisted agent
+      // argv, so opening it produces a shell and no agent. Listing such a
+      // mailbox offers an address that cannot be delivered to — the row says an
+      // agent is waiting on you, and messaging it restores nothing.
+      //
+      // Left out of `seen`, so an entry recorded while a workspace was open is
+      // dropped by the prune below once it closes.
+      if (!restorableWorkspaceAt(root)) continue;
       seen.add(key);
       unattachedAgents.set(key, { root, name, label: name, status: parsed });
     }
@@ -15243,17 +15281,6 @@ const WAKE_TERMINAL_MS = 8_000;
 const WAKE_AGENT_MS = 20_000;
 const WAKE_POLL_MS = 400;
 
-/// The session that owns `root`, ignoring discovered placeholders — after a
-/// restore the row is a different object (and for a discovered worktree a
-/// different *id*), so callers must re-resolve rather than hold a reference
-/// across the await.
-function liveSessionForRoot(root: string): AgentSession | undefined {
-  for (const s of orchestratorSessions.values()) {
-    if (s.root === root && !s.discovered && !s.pending) return s;
-  }
-  return undefined;
-}
-
 /// Any sign the agent in `s` is alive: its own `status` line (what the
 /// briefing tells every agent to write before anything else), or its terminal
 /// having printed something. Neither is authoritative — an agent that ignores
@@ -15289,9 +15316,14 @@ async function focusAgentTerminal(s: AgentSession): Promise<void> {
 /// message has already been written to the inbox and recorded in the
 /// transcript. A wake that fails must not retroactively lose a delivered
 /// message.
+///
+/// `restorableWorkspaceAt` is re-read after every await rather than held across
+/// one: a restore replaces the row (and for a discovered worktree changes its
+/// id), so a reference taken before the await can be the object nobody owns any
+/// more.
 async function wakeAgentWorkspace(root: string): Promise<WakeOutcome> {
   reconcileSessions();
-  let s = liveSessionForRoot(root);
+  let s = restorableWorkspaceAt(root);
 
   if (!s) {
     // Only a discovered on-disk row, or nothing at all. Opening the worktree
@@ -15319,11 +15351,11 @@ async function wakeAgentWorkspace(root: string): Promise<WakeOutcome> {
   // truth for "which terminal is this workspace's".
   const tDeadline = Date.now() + WAKE_TERMINAL_MS;
   while (Date.now() < tDeadline) {
-    s = liveSessionForRoot(root) ?? s;
+    s = restorableWorkspaceAt(root) ?? s;
     if (s.terminalId !== null) break;
     await editor.delay(WAKE_POLL_MS);
   }
-  s = liveSessionForRoot(root) ?? s;
+  s = restorableWorkspaceAt(root) ?? s;
   if (s.terminalId === null) return { kind: "timeout" };
 
   if (wasLive) {
@@ -15335,14 +15367,14 @@ async function wakeAgentWorkspace(root: string): Promise<WakeOutcome> {
   // is up; the agent in it is still initialising and has not read its inbox.
   const aDeadline = Date.now() + WAKE_AGENT_MS;
   while (Date.now() < aDeadline) {
-    s = liveSessionForRoot(root) ?? s;
+    s = restorableWorkspaceAt(root) ?? s;
     if (agentShowsLife(s)) {
       await focusAgentTerminal(s);
       return { kind: "restored" };
     }
     await editor.delay(WAKE_POLL_MS);
   }
-  s = liveSessionForRoot(root) ?? s;
+  s = restorableWorkspaceAt(root) ?? s;
   await focusAgentTerminal(s);
   return { kind: "timeout" };
 }
