@@ -1767,6 +1767,8 @@ mod wave_dismiss_tests {
             completions: Vec::new(),
             completions_visible_rows: 0,
             completions_above: false,
+            completions_bare: false,
+            bare: false,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,

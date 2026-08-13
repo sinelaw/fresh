@@ -281,6 +281,23 @@ pub struct OverlayRow {
     /// Rows to displace upward from `buffer_row`. `0` — the ordinary
     /// case — paints at the anchor itself.
     pub above_by: u32,
+    /// Display column, within the panel's inner area, where the row
+    /// starts painting. `0` for every overlay that spans the panel.
+    pub col_in_row: u32,
+    /// Whether enclosing containers must move this row inward to their
+    /// *content* origin.
+    ///
+    /// Overlay rows are not laid out — they paint at the panel's own
+    /// origin — so an overlay authored by a widget nested inside a
+    /// `LabeledSection` would land on top of the section's border. The
+    /// bordered completion popup handles that by being deliberately
+    /// section-sized and painting the section's `│ … │` chrome itself
+    /// (`inset: false`): it *replaces* those columns rather than
+    /// avoiding them. A row that paints no chrome of its own (the bare
+    /// popup) must instead be shifted past it, or it would erase the
+    /// border it happens to overlap on one side and stop short of it on
+    /// the other.
+    pub inset: bool,
     pub entry: TextPropertyEntry,
 }
 
@@ -952,6 +969,8 @@ fn render_collected(
             completions: _,
             completions_visible_rows,
             completions_above,
+            completions_bare,
+            bare,
             block_caret,
             sel_start,
             sel_end,
@@ -971,6 +990,10 @@ fn render_collected(
             *full_width,
             *completions_visible_rows,
             *completions_above,
+            TextChrome {
+                bare: *bare,
+                completions_bare: *completions_bare,
+            },
             *block_caret,
             (*sel_start, *sel_end),
             *label_width,
@@ -1363,6 +1386,8 @@ fn collect_col(
                 overlays.push(OverlayRow {
                     buffer_row: row_offset + i as u32,
                     above_by: 0,
+                    col_in_row: 0,
+                    inset: false,
                     entry: e,
                 });
             }
@@ -2326,6 +2351,12 @@ fn collect_labeled_section(
     // separator), anchor 2+ lands below the section.
     overlays.extend(child_out.overlays.into_iter().map(|mut o| {
         o.buffer_row += 1;
+        // Content-width rows move in past the border + padding; rows
+        // that draw the section's own chrome stay where they are (see
+        // `OverlayRow::inset`).
+        if o.inset {
+            o.col_in_row += LEFT_BORDER_PREFIX.chars().count() as u32;
+        }
         o
     }));
     // Same +1 shift for a Dropdown pop-over nested in a section: the top
@@ -2508,6 +2539,10 @@ fn collect_overlay(
 /// enclosing section. Multi-line fields and non-`full_width` fields use
 /// the plugin-supplied `field_width` verbatim (`render_text_area`
 /// already fills the panel width by default).
+///
+/// A `bare` field has no brackets, so it reserves 1 column (the
+/// cursor-park cell) instead of 3 — otherwise it would leave two dead
+/// columns at the right where the `]` used to be.
 #[allow(clippy::too_many_arguments)]
 fn effective_text_field_width(
     full_width: bool,
@@ -2516,6 +2551,7 @@ fn effective_text_field_width(
     panel_width: u32,
     field_width: u32,
     marker_gutter: bool,
+    bare: bool,
 ) -> u32 {
     if !full_width || multiline {
         return field_width;
@@ -2526,9 +2562,10 @@ fn effective_text_field_width(
         label.chars().count() as u32 + 1
     };
     let marker_reserve = if marker_gutter { 2 } else { 0 };
+    let chrome_reserve = if bare { 1 } else { 3 };
     panel_width
         .saturating_sub(label_overhead)
-        .saturating_sub(3)
+        .saturating_sub(chrome_reserve)
         .saturating_sub(marker_reserve)
         .max(1)
 }
@@ -2571,11 +2608,24 @@ fn emit_completion_overlays(
     prev_scroll: u32,
     marker_gutter: bool,
     above: bool,
+    bare: bool,
 ) -> u32 {
     if completions.is_empty() {
         return 0;
     }
-    let popup_total = (panel_width as usize).saturating_add(4); // re-add section chrome
+    // Bordered popups are sized to the *section's* outer width: the
+    // rows they paint carry their own `│ … │` chrome, which has to
+    // line up with the borders of the `LabeledSection` wrapping the
+    // field, and `panel_width` arrived here already shorn of those 4
+    // columns. A bare popup paints no chrome, so it is exactly as
+    // wide as the field it belongs to — and on a surface with no
+    // section around it (the dock's chat) the +4 was 4 columns of
+    // overhang that the panel clipped away.
+    let popup_total = if bare {
+        panel_width as usize
+    } else {
+        (panel_width as usize).saturating_add(4) // re-add section chrome
+    };
     let total = completions.len() as u32;
     let visible = visible_rows.max(1).min(total);
     let sel = selected_idx as u32;
@@ -2596,12 +2646,16 @@ fn emit_completion_overlays(
             OverlayRow {
                 buffer_row: 0,
                 above_by: dist,
+                col_in_row: 0,
+                inset: bare,
                 entry,
             }
         } else {
             OverlayRow {
                 buffer_row: dist,
                 above_by: 0,
+                col_in_row: 0,
+                inset: bare,
                 entry,
             }
         }
@@ -2613,7 +2667,11 @@ fn emit_completion_overlays(
 
     out.overlays.push(place(
         1,
-        render_completion_dim_separator_overlay(popup_total),
+        if bare {
+            render_completion_rule(popup_total, '┄', KEY_COMPLETION_DIM_FG)
+        } else {
+            render_completion_dim_separator_overlay(popup_total)
+        },
     ));
     for (visible_row, i) in (scroll as usize..end).enumerate() {
         let item = &completions[i];
@@ -2639,12 +2697,17 @@ fn emit_completion_overlays(
                 popup_total,
                 thumb,
                 marker_gutter,
+                bare,
             ),
         ));
     }
     out.overlays.push(place(
         drawn + 2,
-        if above {
+        if bare {
+            // No corners: a rule with `╰`/`╯` on its ends is the bottom
+            // of a box, and this popup has no sides for it to close.
+            render_completion_rule(popup_total, '─', KEY_COMPLETION_BORDER_FG)
+        } else if above {
             render_completion_top_border(popup_total)
         } else {
             render_completion_bottom_border(popup_total)
@@ -2961,6 +3024,19 @@ fn render_markdown_text_area(
     out
 }
 
+/// The two opt-in chrome removals a `Text` widget can ask for, carried
+/// together because they are the same decision seen at two rows: a field
+/// that is the whole input row rather than a cell in a form. Both default
+/// to `false`, which is every other text field in the product.
+#[derive(Debug, Clone, Copy, Default)]
+struct TextChrome {
+    /// Drop the `[` `]` around a single-line field (`WidgetSpec::Text::bare`).
+    bare: bool,
+    /// Drop the completion popup's side border columns
+    /// (`WidgetSpec::Text::completions_bare`).
+    completions_bare: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_widget_text(
     value: &str,
@@ -2974,6 +3050,7 @@ fn render_widget_text(
     full_width: bool,
     completions_visible_rows: u32,
     completions_above: bool,
+    chrome: TextChrome,
     block_caret: bool,
     spec_sel: (i32, i32),
     label_width: u32,
@@ -3119,6 +3196,7 @@ fn render_widget_text(
         panel_width,
         field_width,
         ctx.marker_gutter,
+        chrome.bare,
     );
     // Selection overlay is only meaningful for the focused
     // widget — passing `None` otherwise keeps the no-selection
@@ -3201,6 +3279,7 @@ fn render_widget_text(
             max_visible_chars,
             effective_field_width,
             full_width,
+            chrome.bare,
         );
         new_scroll = 0;
         let mut entry = rendered.entry;
@@ -3284,6 +3363,7 @@ fn render_widget_text(
         prev_completion_scroll,
         ctx.marker_gutter,
         completions_above,
+        chrome.completions_bare,
     );
     // Persist instance state for next render. `editor`
     // already carries the canonical cursor (row/col +
@@ -3907,6 +3987,32 @@ fn render_completion_top_border(total_cols: usize) -> TextPropertyEntry {
     render_completion_border(total_cols, '╭', '╮')
 }
 
+/// A cornerless full-width rule, `total_cols` of `ch` in `theme_key`.
+/// Both of a bare popup's horizontal rules are this shape: the dim `┄`
+/// that separates the candidates from the field and the solid `─` that
+/// closes the far end. Keeping them (§1: the popup is an overlay drawn
+/// over live content and needs *some* boundary) while dropping the side
+/// columns is the whole of the bare variant's chrome.
+fn render_completion_rule(total_cols: usize, ch: char, theme_key: &str) -> TextPropertyEntry {
+    let mut text = String::with_capacity(total_cols * 4 + 1);
+    for _ in 0..total_cols.max(1) {
+        text.push(ch);
+    }
+    text.push('\n');
+    TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: Some(OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(theme_key)),
+            ..Default::default()
+        }),
+        inline_overlays: Vec::new(),
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    }
+}
+
 fn render_completion_border(total_cols: usize, left: char, right: char) -> TextPropertyEntry {
     let mut text = String::with_capacity(total_cols * 4 + 2);
     text.push(left);
@@ -3939,6 +4045,11 @@ fn render_completion_border(total_cols: usize, left: char, right: char) -> TextP
 /// but wrapped with the popup's own `│ ... │` chrome since overlay rows
 /// paint at the panel width directly without going through a
 /// `LabeledSection`'s row wrapper.
+///
+/// `bare` skips the wrapping entirely: the body *is* the row, at the
+/// popup's full width, and it drops the two alignment columns with it
+/// (see `render_completion_item`'s `align_cols`) so the candidate sits
+/// flush under a bare field's first character.
 fn render_completion_item_overlay(
     item: &str,
     kind: Option<&str>,
@@ -3946,12 +4057,17 @@ fn render_completion_item_overlay(
     total_cols: usize,
     scrollbar: Option<char>,
     marker_gutter: bool,
+    bare: bool,
 ) -> TextPropertyEntry {
+    if bare {
+        return render_completion_item(item, kind, selected, total_cols, scrollbar, marker_gutter, 0);
+    }
     let inner = total_cols.saturating_sub(2).max(1);
     // Reuse the inline-row builder for the body — same layout
     // rules (2 leading chars, item text, pad-to-(inner-1),
     // scrollbar in the last column).
-    let body_entry = render_completion_item(item, kind, selected, inner, scrollbar, marker_gutter);
+    let body_entry =
+        render_completion_item(item, kind, selected, inner, scrollbar, marker_gutter, 2);
     // Build the wrapped text: `│` + body content + `│`. We
     // strip the body's trailing newline first so the borders
     // sit on the same line.
@@ -4041,17 +4157,21 @@ fn render_completion_item_overlay(
     }
 }
 
-/// One completion-candidate row. Renders as two leading spaces
-/// followed by the candidate text, padded / truncated by the
-/// wrapping `LabeledSection` to `total_cols`. The two leading
-/// spaces place the candidate's first character at the same
-/// column as the input value's first character: the input
-/// row's leading chrome is `│ [` (border + section padding +
-/// open bracket) — three columns — and the popup row's leading
-/// chrome is `│ ` plus the body's two leading spaces, also
-/// three columns. So the popup item's first char sits directly
-/// under the value's first char, matching the user's "below
-/// the input, aligned with what you typed" expectation.
+/// One completion-candidate row. Renders as `align_cols` leading
+/// spaces followed by the candidate text, padded / truncated by the
+/// wrapping `LabeledSection` to `total_cols`.
+///
+/// `align_cols` is 2 for the ordinary bordered popup, which places
+/// the candidate's first character at the same column as the input
+/// value's first character: the input row's leading chrome is `│ [`
+/// (border + section padding + open bracket) — three columns — and
+/// the popup row's leading chrome is `│ ` plus these two spaces, also
+/// three columns. So the popup item's first char sits directly under
+/// the value's first char, matching the user's "below the input,
+/// aligned with what you typed" expectation. It is 0 for a bare
+/// popup, whose row has no `│ ` and whose field has no `[`: there the
+/// two columns would push the candidates right of the text they are
+/// completing.
 ///
 /// `selected` rows paint with the standard popup-selection
 /// fg/bg theme keys + `extend_to_line_end` so the highlight
@@ -4073,6 +4193,7 @@ fn render_completion_item(
     total_cols: usize,
     scrollbar: Option<char>,
     marker_gutter: bool,
+    align_cols: usize,
 ) -> TextPropertyEntry {
     // Build the row up to `total_cols - 1` so the scrollbar (or
     // a trailing space when there isn't one) lands at exactly
@@ -4090,10 +4211,10 @@ fn render_completion_item(
     // Zero when the panel didn't opt into the gutter (every other
     // popup), so those render exactly as before.
     let lead = if marker_gutter { 2 } else { 0 };
-    // Budget = total_cols - (2 leading chars) - (gutter lead) - (1 scrollbar col).
-    // The two leading chars align the item with the bracketed
+    // Budget = total_cols - (align_cols) - (gutter lead) - (1 scrollbar col).
+    // The alignment columns line the item up with the bracketed
     // input value (see the function docstring).
-    let text_budget = total_cols.saturating_sub(2 + lead).saturating_sub(1);
+    let text_budget = total_cols.saturating_sub(align_cols + lead).saturating_sub(1);
     let item_chars: Vec<char> = item.chars().collect();
     let (visible_item, truncated): (String, bool) = if item_chars.len() <= text_budget {
         (item.to_string(), false)
@@ -4109,27 +4230,30 @@ fn render_completion_item(
     let _ = truncated;
     let scrollbar_ch = scrollbar.unwrap_or(' ');
     let is_history = kind == Some("history");
-    // For history rows we replace the second leading space (the
+    // For history rows we replace the last leading space (the
     // column that lines up with the bracketed input's `[`) with
     // a small `↶` marker so the row visibly reads as "from
-    // history" at a glance. Regular rows keep two leading
+    // history" at a glance. Regular rows keep plain leading
     // spaces. The marker is one display column wide so the
-    // item text starts in the same column on both kinds.
+    // item text starts in the same column on both kinds. A bare
+    // popup (`align_cols == 0`) has no such column and prints the
+    // candidate flush, history or not.
     let history_marker: char = '↶';
     let mut text = String::with_capacity(total_cols * 4 + 2);
     // Gutter lead (see `lead` above): keeps the candidate aligned under
     // the gutter-shifted input value. The history `↶` marker and the
     // selection highlight are positioned by byte offsets captured *after*
     // these spaces, so they ride along correctly.
-    for _ in 0..lead {
+    for _ in 0..lead + align_cols.saturating_sub(1) {
         text.push(' ');
     }
-    text.push(' ');
     let marker_start_byte = text.len();
-    if is_history {
-        text.push(history_marker);
-    } else {
-        text.push(' ');
+    if align_cols > 0 {
+        if is_history {
+            text.push(history_marker);
+        } else {
+            text.push(' ');
+        }
     }
     let marker_end_byte = text.len();
     let item_start_byte = text.len();
@@ -4138,7 +4262,7 @@ fn render_completion_item(
     // Pad with spaces between the candidate text and the
     // scrollbar column so all rows have the scrollbar glyph in
     // the same column regardless of candidate length.
-    let used_cols = 2 + lead + visible_item.chars().count();
+    let used_cols = align_cols + lead + visible_item.chars().count();
     let pad_cols = total_cols.saturating_sub(used_cols).saturating_sub(1);
     for _ in 0..pad_cols {
         text.push(' ');
@@ -6027,7 +6151,12 @@ pub struct RenderedTextInput {
 
 /// Render a `TextInput`.
 ///
-/// Layout: `Label: [<inner>]` (or `[<inner>]` with no label).
+/// Layout: `Label: [<inner>]` (or `[<inner>]` with no label). A
+/// `bare` field drops the brackets entirely — `Label: <inner>` — for
+/// an input that *is* its surface's row rather than a cell in a form
+/// (see `WidgetSpec::Text::bare`). Everything else is unchanged: the
+/// focus background still spans the field, and the cursor still parks
+/// on the trailing pad column.
 /// `<inner>` is exactly `field_width` chars wide when
 /// `field_width > 0` — short values pad with trailing spaces, long
 /// values head-truncate with `…` so the cursor (typically near the
@@ -6060,6 +6189,7 @@ pub fn render_text_input(
     max_visible_chars: u32,
     field_width: u32,
     full_width: bool,
+    bare: bool,
 ) -> RenderedTextInput {
     // Placeholder visibility: the value-empty state, regardless of
     // focus. The placeholder remains in the field until the user
@@ -6192,18 +6322,26 @@ pub fn render_text_input(
         (s, Some(raw_cursor_byte))
     };
 
-    // Compose the final text: optional label, `[`, inner, `]`.
+    // Compose the final text: optional label, `[`, inner, `]` — or,
+    // for a bare field, optional label and the inner alone. The
+    // focus-bg span is still measured from the outside of whatever
+    // chrome there is, so a bare field's highlight covers exactly its
+    // text and nothing to the left of it.
     let mut text = String::new();
     if !label.is_empty() {
         text.push_str(label);
         text.push(' ');
     }
     let bracket_open_byte = text.len();
-    text.push('[');
+    if !bare {
+        text.push('[');
+    }
     let inner_byte_start = text.len();
     text.push_str(&inner);
     let inner_byte_end = text.len();
-    text.push(']');
+    if !bare {
+        text.push(']');
+    }
     let bracket_close_byte = text.len();
 
     let mut overlays = Vec::new();
@@ -7061,6 +7199,8 @@ mod tests {
             completions: Vec::new(),
             completions_visible_rows: 0,
             completions_above: false,
+            completions_bare: false,
+            bare: false,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
@@ -7104,6 +7244,8 @@ mod tests {
             completions: Vec::new(),
             completions_visible_rows: 0,
             completions_above: false,
+            completions_bare: false,
+            bare: false,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
@@ -7795,6 +7937,8 @@ mod tests {
                     completions: Vec::new(),
                     completions_visible_rows: 0,
                     completions_above: false,
+                    completions_bare: false,
+                    bare: false,
                     read_only: false,
                     markdown: false,
                     key: Some("ti".into()),
@@ -8412,20 +8556,48 @@ mod tests {
 
     #[test]
     fn text_input_renders_value_in_brackets() {
-        let entry = render_text_input("hello", -1, None, false, "", None, 0, 0, false).entry;
+        let entry = render_text_input("hello", -1, None, false, "", None, 0, 0, false, false).entry;
         assert_eq!(entry.text, "[hello]");
         assert!(entry.inline_overlays.is_empty());
     }
 
     #[test]
+    fn text_input_bare_drops_the_brackets_and_keeps_the_focus_band() {
+        // §2: an input that *is* its surface's row renders as just its
+        // text. The focus background still spans the field, so a focused
+        // bare input is visibly the thing being typed into.
+        let entry = render_text_input("hello", -1, None, false, "", None, 0, 0, false, true).entry;
+        assert_eq!(entry.text, "hello");
+        let focused =
+            render_text_input("hello", -1, None, true, "", None, 0, 0, false, true).entry;
+        // Trailing pad cell for the caret to park on, no brackets.
+        assert_eq!(focused.text, "hello ");
+        assert!(focused
+            .inline_overlays
+            .iter()
+            .any(|o| o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some(KEY_INPUT_BG)));
+    }
+
+    #[test]
+    fn bare_field_width_reserves_one_column_not_three() {
+        // With no brackets there are two fewer columns of chrome to
+        // reserve, so a full-width bare field fills the row the two
+        // bracket columns used to take.
+        let bordered = effective_text_field_width(true, false, "", 20, 0, false, false);
+        let bare = effective_text_field_width(true, false, "", 20, 0, false, true);
+        assert_eq!(bordered, 17);
+        assert_eq!(bare, 19);
+    }
+
+    #[test]
     fn text_input_with_label_prefixes_with_label_space() {
-        let entry = render_text_input("foo", -1, None, false, "Search:", None, 0, 0, false).entry;
+        let entry = render_text_input("foo", -1, None, false, "Search:", None, 0, 0, false, false).entry;
         assert_eq!(entry.text, "Search: [foo]");
     }
 
     #[test]
     fn text_input_focused_adds_input_bg_overlay() {
-        let entry = render_text_input("x", -1, None, true, "", None, 0, 0, false).entry;
+        let entry = render_text_input("x", -1, None, true, "", None, 0, 0, false, false).entry;
         // Focused → input-bg overlay (no cursor since cursor_byte < 0).
         assert_eq!(entry.inline_overlays.len(), 1);
         let bg = entry.inline_overlays[0].style.bg.as_ref().unwrap();
@@ -8437,7 +8609,7 @@ mod tests {
         // Focused + selection range → input-bg overlay AND a
         // selection-bg overlay scoped to the selected bytes.
         let entry =
-            render_text_input("hello world", 5, Some((0, 5)), true, "", None, 0, 0, false).entry;
+            render_text_input("hello world", 5, Some((0, 5)), true, "", None, 0, 0, false, false).entry;
         // First char is at byte 1 (after `[`); selection over
         // bytes 0..5 of value → entry bytes 1..6.
         let sel = entry
@@ -8457,7 +8629,7 @@ mod tests {
         // Selection only paints when focused — an inactive widget
         // shows no highlight.
         let entry =
-            render_text_input("hello", -1, Some((0, 5)), false, "", None, 0, 0, false).entry;
+            render_text_input("hello", -1, Some((0, 5)), false, "", None, 0, 0, false, false).entry;
         let has_sel_overlay = entry.inline_overlays.iter().any(|o| {
             o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some("ui.text_input_selection_bg")
         });
@@ -8500,7 +8672,7 @@ mod tests {
         // *within entry.text*. text = "[abc ]" (focused → trailing
         // pad space). 'a' at byte 1, 'b' at 2, 'c' at 3 — so a
         // cursor at value-byte 1 lands at entry-byte 2.
-        let r = render_text_input("abc", 1, None, true, "", None, 0, 0, false);
+        let r = render_text_input("abc", 1, None, true, "", None, 0, 0, false, false);
         assert_eq!(r.cursor_byte_in_entry, Some(2));
     }
 
@@ -8511,7 +8683,7 @@ mod tests {
         // overlaps the closing bracket. text = "[ab ]" → cursor
         // at value-byte 2 lands at entry-byte 3 (the space), not
         // at byte 4 (the `]`).
-        let r = render_text_input("ab", 2, None, true, "", None, 0, 0, false);
+        let r = render_text_input("ab", 2, None, true, "", None, 0, 0, false, false);
         assert_eq!(r.entry.text, "[ab ]");
         assert_eq!(r.cursor_byte_in_entry, Some(3));
         assert_ne!(r.cursor_byte_in_entry, Some(4), "must not overlap ]");
@@ -8520,7 +8692,7 @@ mod tests {
     #[test]
     fn text_input_unfocused_empty_shows_placeholder_in_muted() {
         let entry =
-            render_text_input("", -1, None, false, "", Some("type here"), 0, 0, false).entry;
+            render_text_input("", -1, None, false, "", Some("type here"), 0, 0, false, false).entry;
         assert_eq!(entry.text, "[type here]");
         // Placeholder gets a muted-fg italic overlay.
         let placeholder_overlay = entry
@@ -8538,7 +8710,7 @@ mod tests {
         // New behaviour: placeholder remains visible while focused
         // until the user types something. Cursor parks at byte 0
         // of the placeholder so the first keystroke replaces it.
-        let r = render_text_input("", -1, None, true, "", Some("type here"), 0, 0, false);
+        let r = render_text_input("", -1, None, true, "", Some("type here"), 0, 0, false, false);
         assert_eq!(r.entry.text, "[type here]");
         assert_eq!(r.cursor_byte_in_entry, Some(1));
     }
@@ -8547,7 +8719,7 @@ mod tests {
     fn text_input_field_width_pads_short_value_unfocused() {
         // field_width=10, unfocused, not full_width → inner is 10
         // chars (no extra cursor-park pad).
-        let r = render_text_input("hi", 2, None, false, "", None, 0, 10, false);
+        let r = render_text_input("hi", 2, None, false, "", None, 0, 10, false, false);
         assert_eq!(r.entry.text, "[hi        ]");
     }
 
@@ -8556,7 +8728,7 @@ mod tests {
         // field_width=10, focused, value fills exactly 10 → inner
         // is 11 chars (10 + 1 cursor-park space) so the cursor at
         // end-of-value never lands on `]`.
-        let r = render_text_input("0123456789", 10, None, true, "", None, 0, 10, false);
+        let r = render_text_input("0123456789", 10, None, true, "", None, 0, 10, false, false);
         assert_eq!(r.entry.text, "[0123456789 ]");
         // Cursor at byte 10 of value → byte 10 of inner → byte 11
         // of entry.text (after `[`). That's the cursor-park space,
@@ -8570,7 +8742,7 @@ mod tests {
         // full_width=true makes the inner reserve the cursor-park
         // space whether or not the input is focused, so the field
         // doesn't "jump" wider on focus.
-        let r = render_text_input("hi", -1, None, false, "", None, 0, 10, true);
+        let r = render_text_input("hi", -1, None, false, "", None, 0, 10, true, false);
         assert_eq!(r.entry.text, "[hi         ]"); // 10 + 1 trailing pad
     }
 
@@ -8588,6 +8760,7 @@ mod tests {
             0,
             10,
             false,
+            false,
         );
         assert!(r.entry.text.contains("…lmnopqrst"));
     }
@@ -8596,7 +8769,7 @@ mod tests {
     fn text_input_field_width_clamps_cursor_in_dropped_prefix() {
         // Long value, field_width=5, focused, cursor at byte 0 (in
         // dropped prefix) → clamped to right after the `…`.
-        let r = render_text_input("abcdefghij", 0, None, true, "", None, 0, 5, false);
+        let r = render_text_input("abcdefghij", 0, None, true, "", None, 0, 5, false, false);
         // Inner = `…fghij ` (1 ellipsis + 4 tail chars + 1 pad).
         // Cursor at "right after `…`" = byte 3 of inner (3 = `…`'s
         // UTF-8 byte length). entry.text has `[` before, so
@@ -8607,7 +8780,7 @@ mod tests {
     #[test]
     fn text_input_truncates_long_value_keeping_tail_visible() {
         let value: String = "0123456789abcdefghij".to_string();
-        let entry = render_text_input(&value, -1, None, false, "", None, 6, 0, false).entry;
+        let entry = render_text_input(&value, -1, None, false, "", None, 6, 0, false, false).entry;
         // Tail-truncated to "…fghij" (max=6, take=5 chars).
         assert_eq!(entry.text, "[…fghij]");
     }
@@ -9493,6 +9666,8 @@ mod tests {
             completions: Vec::new(),
             completions_visible_rows: 0,
             completions_above: false,
+            completions_bare: false,
+            bare: false,
             read_only: false,
             markdown: false,
             key: key.map(|s| s.into()),
@@ -9582,6 +9757,8 @@ mod tests {
             completions: Vec::new(),
             completions_visible_rows: 0,
             completions_above: false,
+            completions_bare: false,
+            bare: false,
             read_only: false,
             markdown: false,
             key: Some("ta".into()),
@@ -9718,6 +9895,8 @@ mod tests {
             completions: Vec::new(),
             completions_visible_rows: 0,
             completions_above: false,
+            completions_bare: false,
+            bare: false,
             read_only: false,
             markdown: false,
             key: key.map(|s| s.into()),
@@ -9867,6 +10046,8 @@ mod tests {
             completions: Vec::new(),
             completions_visible_rows: 0,
             completions_above: false,
+            completions_bare: false,
+            bare: false,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
@@ -9895,6 +10076,158 @@ mod tests {
     }
 
     #[test]
+    fn bare_completion_popup_has_no_side_borders_and_is_inset() {
+        // §1: the rows carry no `│` at either end, both rules survive,
+        // and the candidate starts flush with the field's text (no two
+        // alignment columns, since there is no `[` to align under).
+        // `inset` is what lets an enclosing section shift the rows past
+        // its own border instead of being painted over.
+        let mut prev = HashMap::new();
+        prev.insert(
+            "chat".to_string(),
+            WidgetInstanceState::Text {
+                editor: crate::primitives::text_edit::TextEdit::single_line_with_text(""),
+                scroll: 0,
+                completions: vec![
+                    fresh_core::api::CompletionItem::from("alpha"),
+                    fresh_core::api::CompletionItem::from("beta"),
+                ],
+                completion_selected_index: 0,
+                completion_scroll_offset: 0,
+                completion_navigated: false,
+                user_scrolled: false,
+            },
+        );
+        let spec = WidgetSpec::Text {
+            value: String::new(),
+            cursor_byte: -1,
+            focused: true,
+            label: String::new(),
+            placeholder: None,
+            rows: 1,
+            field_width: 0,
+            max_visible_chars: 0,
+            full_width: true,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            completions_above: true,
+            completions_bare: true,
+            bare: true,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            read_only: false,
+            markdown: false,
+            key: Some("chat".into()),
+        };
+        let out = render_spec(&spec, &prev, "chat", 20);
+        assert_eq!(out.overlays.len(), 4, "separator + 2 candidates + rule");
+        for o in &out.overlays {
+            let text = o.entry.text.trim_end_matches('\n');
+            assert!(o.inset, "bare popup rows are content-width");
+            assert!(
+                !text.contains('│'),
+                "no side borders in a bare popup: {text:?}"
+            );
+            assert_eq!(
+                crate::primitives::display_width::str_width(text),
+                20,
+                "rows span the field's own width: {text:?}"
+            );
+        }
+        // Adjacent to the field: the dim rule. Far end: the solid one.
+        let adjacent = out.overlays.iter().find(|o| o.above_by == 1).expect("dim rule");
+        assert!(adjacent.entry.text.starts_with('┄'));
+        let far = out.overlays.iter().max_by_key(|o| o.above_by).expect("rule");
+        assert!(far.entry.text.starts_with('─'));
+        // Candidate text starts at column 0, under the bare field's value.
+        let candidate = out
+            .overlays
+            .iter()
+            .find(|o| o.entry.text.starts_with("alpha"))
+            .expect("candidate row flush left");
+        assert!(candidate.entry.text.starts_with("alpha"));
+    }
+
+    #[test]
+    fn windowed_raw_sticks_to_the_tail_and_emits_a_scroll_region() {
+        // §5 / §6: a keyed Raw with `visible_rows` is a viewport — it
+        // shows the newest rows, publishes geometry the wheel can
+        // hit-test and the scrollbar can draw from, and remembers a
+        // user-owned offset instead of snapping back to the end.
+        let entries: Vec<TextPropertyEntry> = (0..10)
+            .map(|i| TextPropertyEntry::text(format!("line {i}")))
+            .collect();
+        let spec = WidgetSpec::Raw {
+            entries,
+            visible_rows: 4,
+            key: Some("log".into()),
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 20);
+        assert_eq!(out.entries.len(), 4);
+        assert!(out.entries[0].text.starts_with("line 6"), "tail is shown");
+        let region = out
+            .scroll_regions
+            .iter()
+            .find(|r| r.list_key == "log")
+            .expect("windowed Raw publishes a scroll region");
+        assert_eq!((region.total, region.visible, region.scroll), (10, 4, 6));
+
+        // A user-owned offset is respected rather than pulled back.
+        let mut prev = HashMap::new();
+        prev.insert(
+            "log".to_string(),
+            WidgetInstanceState::Raw {
+                scroll_offset: 2,
+                user_scrolled: true,
+            },
+        );
+        let out = render_spec(&spec, &prev, "", 20);
+        assert!(out.entries[0].text.starts_with("line 2"));
+    }
+
+    #[test]
+    fn short_windowed_raw_pads_at_the_top() {
+        // Fewer rows than the window: the last one still sits on the
+        // window's bottom row, so the composer under a transcript does
+        // not move as the conversation grows.
+        let spec = WidgetSpec::Raw {
+            entries: vec![TextPropertyEntry::text("only")],
+            visible_rows: 3,
+            key: Some("log".into()),
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 20);
+        assert_eq!(out.entries.len(), 3);
+        assert!(out.entries[2].text.starts_with("only"));
+    }
+
+    #[test]
+    fn keyless_or_unwindowed_raw_renders_every_row_as_before() {
+        // Every Raw that predates the viewport keeps its shape: all
+        // entries inline, no region, no scrollbar.
+        let entries: Vec<TextPropertyEntry> = (0..5)
+            .map(|i| TextPropertyEntry::text(format!("line {i}")))
+            .collect();
+        for spec in [
+            WidgetSpec::Raw {
+                entries: entries.clone(),
+                visible_rows: 0,
+                key: Some("log".into()),
+            },
+            WidgetSpec::Raw {
+                entries: entries.clone(),
+                visible_rows: 3,
+                key: None,
+            },
+        ] {
+            let out = render_spec(&spec, &HashMap::new(), "", 20);
+            assert_eq!(out.entries.len(), 5);
+            assert!(out.scroll_regions.is_empty());
+        }
+    }
+
+    #[test]
     fn markdown_text_caret_follows_focus_and_paints_block_caret() {
         let spec = WidgetSpec::Text {
             value: "one\ntwo".into(),
@@ -9909,6 +10242,8 @@ mod tests {
             completions: Vec::new(),
             completions_visible_rows: 0,
             completions_above: false,
+            completions_bare: false,
+            bare: false,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,

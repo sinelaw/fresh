@@ -607,6 +607,17 @@ export function text(
      * renders past the panel edge and is clipped away. Default
      * false. */
     completionsAbove?: boolean;
+    /** Drop the completion popup's left and right border columns,
+     * keeping the horizontal rules. Candidates then start flush with
+     * the field's text instead of two columns in. For a popup as wide
+     * as its surface — a chat composer — the side columns land under
+     * the panel border or are clipped, so they cost a column and paint
+     * nothing. Default false: every other field keeps the full box. */
+    completionsBare?: boolean;
+    /** Render a single-line field without the `[` `]` around its
+     * value. For an input that *is* its surface's row rather than a
+     * cell in a form. Default false. */
+    bare?: boolean;
     /** Paint the caret as a REVERSED block cell (modal surfaces
      * without a hardware cursor). Default false. */
     blockCaret?: boolean;
@@ -645,6 +656,8 @@ export function text(
     fullWidth: options.fullWidth ?? false,
     completions: options.completions ?? [],
     completionsAbove: options.completionsAbove ?? false,
+    completionsBare: options.completionsBare ?? false,
+    bare: options.bare ?? false,
     blockCaret: options.blockCaret ?? false,
     selStart: options.selStart ?? -1,
     selEnd: options.selEnd ?? -1,
@@ -703,6 +716,10 @@ export function textInput(
     /** See `text({ completionsAbove })` — float the popup above the
      * field, for an input pinned to the bottom of its surface. */
     completionsAbove?: boolean;
+    /** See `text({ completionsBare })` — popup without side borders. */
+    completionsBare?: boolean;
+    /** See `text({ bare })` — field without its `[` `]`. */
+    bare?: boolean;
     key?: string;
   },
 ): WidgetSpec {
@@ -718,6 +735,8 @@ export function textInput(
     fullWidth: options?.fullWidth,
     completions: options?.completions,
     completionsAbove: options?.completionsAbove,
+    completionsBare: options?.completionsBare,
+    bare: options?.bare,
     key: options?.key,
   });
 }

@@ -2060,6 +2060,43 @@ type WidgetSpec = {
 	*/
 	completionsAbove: boolean;
 	/**
+	* Drop the completion popup's left and right border columns,
+	* keeping only the horizontal rules (the dim `┄` separator
+	* adjacent to the field and the solid rule closing the far
+	* end). The candidate rows also lose the two leading columns
+	* that exist to line a candidate up under a bracketed value —
+	* with no `│ ` and no `[` there is nothing to line up with,
+	* and the popup instead starts flush with the field's text.
+	*
+	* For a popup that floats over a surface it is *wider* than —
+	* a chat composer whose field spans the whole panel — the
+	* side columns paint nothing the user sees: the right edge
+	* lands under the panel's own border or is clipped away, and
+	* a left edge without a right one is a stray rule rather than
+	* a frame. Every other field keeps the full box, which is
+	* what a popup narrower than its surface needs.
+	*
+	* Opt-in, so the shared popup shape is unchanged for
+	* Settings, the dock's search box, and every other caller.
+	* Defaults to `false`.
+	*/
+	completionsBare?: boolean;
+	/**
+	* Render a single-line field WITHOUT the `[` `]` that
+	* normally frame its value: just the (optional) label and the
+	* text. The focus background still paints across the field,
+	* so a focused bare input is still visibly the thing you are
+	* typing into.
+	*
+	* For a composer that *is* the surface's input row — the
+	* chat's message line — the brackets restate what the row
+	* already says and make the value read as a token in a form
+	* rather than the start of a sentence. Ignored for multi-line
+	* (`rows > 1`) fields, which have no brackets to begin with.
+	* Defaults to `false`, so every other text field keeps them.
+	*/
+	bare?: boolean;
+	/**
 	* Paint the caret as a REVERSED block cell inside the row
 	* (in addition to publishing the hardware-cursor position).
 	* Modal form surfaces (e.g. Settings) use this — a hardware

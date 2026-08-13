@@ -178,6 +178,8 @@ pub fn setting_control_to_widget_aligned(
                 completions: Vec::new(),
                 completions_visible_rows: 0,
                 completions_above: false,
+                completions_bare: false,
+                bare: false,
                 block_caret: true,
                 sel_start: sel.0,
                 sel_end: sel.1,

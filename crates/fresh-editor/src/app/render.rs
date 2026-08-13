@@ -5214,10 +5214,17 @@ impl Editor {
             let overlay_cols = crate::primitives::display_width::str_width(
                 o.entry.text.trim_end_matches('\n'),
             ) as u16;
+            // Overlay rows that a container inset (a bare completion
+            // popup inside a `LabeledSection`) start past the panel's
+            // left edge, so the cleared span and the paint origin both
+            // move with them — otherwise the row would blank the
+            // section border it was inset to avoid.
+            let overlay_x = o.col_in_row.min(u32::from(inner.width)) as u16;
+            let avail = inner.width.saturating_sub(overlay_x);
             let row_rect = ratatui::layout::Rect {
-                x: inner.x,
+                x: inner.x.saturating_add(overlay_x),
                 y: row_y,
-                width: overlay_cols.min(inner.width),
+                width: overlay_cols.min(avail),
                 height: 1,
             };
             frame.render_widget(Clear, row_rect);
@@ -5232,9 +5239,9 @@ impl Editor {
             paint_text_property_entry(
                 frame,
                 &o.entry,
-                inner.x,
+                inner.x.saturating_add(overlay_x),
                 row_y,
-                inner.width,
+                avail,
                 &theme,
                 recorder,
             );

@@ -2475,6 +2475,8 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         completions: Vec::new(),
         completions_visible_rows: 0,
         completions_above: false,
+        completions_bare: false,
+        bare: false,
         block_caret: true,
         sel_start,
         sel_end,
