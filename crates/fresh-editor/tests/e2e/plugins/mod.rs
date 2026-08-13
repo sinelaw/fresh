@@ -65,6 +65,7 @@ pub mod plugin_keybinding_execution;
 pub mod plugins_dir_in_working_dir;
 pub mod review_diff_hunk_parity;
 pub mod review_diff_line_staging;
+pub mod review_diff_layout_bench;
 pub mod review_diff_ux_bugs;
 pub mod set_split_ratio_leaf;
 pub mod tab_actions;
