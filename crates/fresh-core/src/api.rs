@@ -3743,6 +3743,34 @@ pub enum PluginCommand {
         namespace: String,
     },
 
+    /// Narrow the file explorer to a set of paths for a namespace.
+    ///
+    /// Where decorations change how a row is *drawn*, a filter decides
+    /// whether it is drawn at all — letting a plugin offer "only files in git
+    /// status" or "only files with diagnostics" while the explorer stays
+    /// ignorant of what the filter means. Ancestors of the given paths stay
+    /// visible so the matches are reachable, and a given directory brings its
+    /// contents with it.
+    ///
+    /// Namespaces union: a path claimed by any namespace is shown. While any
+    /// filter is active it outranks the explorer's own ignore rules, so a
+    /// matched path appears even when it is gitignored or hidden.
+    SetFileExplorerFilter {
+        /// Namespace for grouping (e.g., "git-status")
+        namespace: String,
+        /// Paths to show. Relative paths resolve against the workspace root;
+        /// paths outside it are dropped. An empty list contributes nothing
+        /// and leaves the explorer unfiltered.
+        paths: Vec<String>,
+    },
+
+    /// Clear the file explorer filter for a namespace. Once no namespace is
+    /// filtering, the explorer returns to its normal view.
+    ClearFileExplorerFilter {
+        /// Namespace to clear (e.g., "git-status")
+        namespace: String,
+    },
+
     /// Set file explorer slot overrides for a namespace.
     ///
     /// This is additive: any slot field omitted by the plugin falls back to

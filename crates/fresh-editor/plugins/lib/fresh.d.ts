@@ -3709,6 +3709,16 @@ interface EditorAPI {
 	*/
 	clearFileExplorerDecorations(namespace: string): boolean;
 	/**
+	* Narrow the file explorer to `paths` for a namespace, hiding everything
+	* else. Ancestors of the given paths stay visible so the matches remain
+	* reachable, and naming a directory brings its contents with it.
+	*/
+	setFileExplorerFilter(namespace: string, paths: string[]): boolean;
+	/**
+	* Clear the file explorer filter for a namespace.
+	*/
+	clearFileExplorerFilter(namespace: string): boolean;
+	/**
 	* Set file explorer slot overrides for a namespace
 	*/
 	setFileExplorerSlots(namespace: string, slots: Record<string, unknown>[]): boolean;

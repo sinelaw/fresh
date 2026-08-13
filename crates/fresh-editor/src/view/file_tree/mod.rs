@@ -6,6 +6,7 @@
 
 mod cache;
 pub mod decorations;
+pub mod filter;
 pub mod ignore;
 pub mod node;
 pub mod search;
@@ -17,6 +18,7 @@ pub use decorations::{
     decoration_symbol, resolve_explorer_status, ExplorerRowStatus, FileExplorerDecoration,
     FileExplorerDecorationCache, ResolvedExplorerStatus,
 };
+pub use filter::ExplorerFilter;
 pub use ignore::{IgnorePatterns, IgnoreStatus};
 pub use node::{NodeId, NodeState, TreeNode};
 pub use search::FileExplorerSearch;

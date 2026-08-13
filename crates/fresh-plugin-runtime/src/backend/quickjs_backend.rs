@@ -668,6 +668,11 @@ pub struct PluginTrackedState {
     pub virtual_text_ids: Vec<(BufferId, String)>,
     /// File explorer decoration namespaces
     pub file_explorer_namespaces: Vec<String>,
+    /// File explorer *filter* namespaces. Tracked separately from the
+    /// decoration namespaces because a stranded filter is worse than a
+    /// stranded badge: it hides files, and an unloaded plugin leaves nobody
+    /// able to restore them.
+    pub file_explorer_filter_namespaces: Vec<String>,
     /// Context names set by the plugin
     pub contexts_set: Vec<String>,
     // --- Phase 3: Resource cleanup ---
@@ -4314,6 +4319,39 @@ impl JsEditorApi {
         let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
         self.command_sender
             .send(PluginCommand::ClearFileExplorerDecorations {
+                namespace: scoped_namespace,
+            })
+            .is_ok()
+    }
+
+    /// Narrow the file explorer to `paths` for a namespace, hiding everything
+    /// else. Ancestors of the given paths stay visible so the matches remain
+    /// reachable, and naming a directory brings its contents with it.
+    pub fn set_file_explorer_filter(&self, namespace: String, paths: Vec<String>) -> bool {
+        let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
+
+        // Tracked like the decoration namespaces so unloading a plugin cannot
+        // leave the explorer filtered with nothing left to un-filter it.
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .file_explorer_filter_namespaces
+            .push(scoped_namespace.clone());
+
+        self.command_sender
+            .send(PluginCommand::SetFileExplorerFilter {
+                namespace: scoped_namespace,
+                paths,
+            })
+            .is_ok()
+    }
+
+    /// Clear the file explorer filter for a namespace.
+    pub fn clear_file_explorer_filter(&self, namespace: String) -> bool {
+        let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
+        self.command_sender
+            .send(PluginCommand::ClearFileExplorerFilter {
                 namespace: scoped_namespace,
             })
             .is_ok()
@@ -8797,6 +8835,21 @@ impl QuickJsBackend {
                     let _ = self
                         .command_sender
                         .send(PluginCommand::ClearFileExplorerSlots {
+                            namespace: ns.clone(),
+                        });
+                }
+            }
+
+            // Clear file explorer filter namespaces. Unlike decorations, a
+            // leftover filter hides files, so an unloaded plugin must not be
+            // able to leave the explorer narrowed with no way back.
+            let mut seen_filter_ns: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for ns in &tracked.file_explorer_filter_namespaces {
+                if seen_filter_ns.insert(ns.clone()) {
+                    let _ = self
+                        .command_sender
+                        .send(PluginCommand::ClearFileExplorerFilter {
                             namespace: ns.clone(),
                         });
                 }

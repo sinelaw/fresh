@@ -1456,6 +1456,8 @@ mod tests {
             "setLayoutHints",
             "setFileExplorerDecorations",
             "clearFileExplorerDecorations",
+            "setFileExplorerFilter",
+            "clearFileExplorerFilter",
             "setFileExplorerSlots",
             "clearFileExplorerSlots",
             "addVirtualText",

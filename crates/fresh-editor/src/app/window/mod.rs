@@ -712,6 +712,13 @@ pub struct Window {
     /// `file_explorer_decorations` changes.
     pub file_explorer_decoration_cache: crate::view::file_tree::FileExplorerDecorationCache,
 
+    /// Visibility filters supplied by plugins, keyed by namespace, holding
+    /// normalized absolute paths. Lives on the window rather than on the
+    /// `FileTreeView` because the view is rebuilt whenever the explorer is
+    /// reopened or the root changes — like the decorations above, a filter
+    /// has to outlive that and be re-applied to the new view.
+    pub file_explorer_filters: HashMap<String, Vec<std::path::PathBuf>>,
+
     /// Slot overrides supplied by plugins for the file explorer keyed by
     /// namespace. These are additive overrides: unspecified fields continue to
     /// fall back to compatibility providers.
@@ -2292,6 +2299,7 @@ impl Window {
             file_explorer_decorations: HashMap::new(),
             file_explorer_decoration_cache:
                 crate::view::file_tree::FileExplorerDecorationCache::default(),
+            file_explorer_filters: HashMap::new(),
             file_explorer_slot_overrides: HashMap::new(),
             file_explorer_slot_override_cache:
                 crate::view::file_tree::FileExplorerSlotOverrideCache::default(),

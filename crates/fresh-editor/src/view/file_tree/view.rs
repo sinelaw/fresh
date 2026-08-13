@@ -1,3 +1,4 @@
+use super::filter::ExplorerFilter;
 use super::ignore::IgnorePatterns;
 use super::node::NodeId;
 use super::search::FileExplorerSearch;
@@ -35,6 +36,10 @@ pub struct FileTreeView {
     /// Render single-child directory chains as a single row
     /// (`foo/bar/baz`). Mirrors VSCode's `explorer.compactFolders`.
     compact_directories: bool,
+    /// Plugin-supplied visibility filters, keyed by namespace, and the
+    /// union of them precomputed for lookups. See [`super::filter`].
+    plugin_filters: HashMap<String, Vec<PathBuf>>,
+    plugin_filter: ExplorerFilter,
 }
 
 /// Sort mode for file tree entries
@@ -63,7 +68,47 @@ impl FileTreeView {
             viewport_height: 10, // Default, will be updated during rendering
             search: FileExplorerSearch::new(),
             compact_directories: true,
+            plugin_filters: HashMap::new(),
+            plugin_filter: ExplorerFilter::default(),
         }
+    }
+
+    /// Narrow the explorer to `paths` (plus the ancestors that make them
+    /// reachable) on behalf of `namespace`. Replaces whatever that namespace
+    /// asked for previously; other namespaces are untouched and union with
+    /// this one.
+    ///
+    /// This is how a plugin offers a filtered view — "only files in git
+    /// status", "only files with diagnostics" — without the explorer needing
+    /// to know what the filter means.
+    pub fn set_plugin_filter(&mut self, namespace: impl Into<String>, paths: Vec<PathBuf>) {
+        self.plugin_filters.insert(namespace.into(), paths);
+        self.rebuild_plugin_filter();
+    }
+
+    /// Replace every namespace at once. Used when the view is rebuilt and the
+    /// window re-applies the filters it has been holding — a fresh
+    /// [`FileTreeView`] starts unfiltered, so without this a plugin's filter
+    /// would silently vanish when the explorer is reopened.
+    pub fn set_plugin_filters(&mut self, filters: HashMap<String, Vec<PathBuf>>) {
+        self.plugin_filters = filters;
+        self.rebuild_plugin_filter();
+    }
+
+    /// Drop `namespace`'s filter. With no namespaces left the explorer
+    /// returns to its normal ignore-rule-driven view.
+    pub fn clear_plugin_filter(&mut self, namespace: &str) {
+        self.plugin_filters.remove(namespace);
+        self.rebuild_plugin_filter();
+    }
+
+    /// Whether any namespace is currently narrowing the explorer.
+    pub fn has_plugin_filter(&self) -> bool {
+        !self.plugin_filter.is_empty()
+    }
+
+    fn rebuild_plugin_filter(&mut self) {
+        self.plugin_filter = ExplorerFilter::rebuild(&self.plugin_filters);
     }
 
     /// Toggle/set the compact-directory rendering mode.
@@ -840,15 +885,25 @@ impl FileTreeView {
         self.ignore_patterns.toggle_show_gitignored();
     }
 
-    /// Check if a node should be visible (not filtered by ignore patterns)
+    /// Check if a node should be visible (not filtered by ignore patterns,
+    /// nor excluded by a plugin-supplied filter).
     pub fn is_node_visible(&self, node_id: NodeId) -> bool {
-        if let Some(node) = self.tree.get_node(node_id) {
-            !self
-                .ignore_patterns
-                .is_ignored(&node.entry.path, node.is_dir())
-        } else {
-            false
+        let Some(node) = self.tree.get_node(node_id) else {
+            return false;
+        };
+
+        // A plugin filter is authoritative while it is active: "show only
+        // these" means exactly these, so a matched path stays visible even
+        // where an ignore rule would hide it. A changed file inside a
+        // gitignored directory is still a changed file, and hiding it would
+        // make the filtered view quietly incomplete.
+        if !self.plugin_filter.is_empty() {
+            return self.plugin_filter.allows(&node.entry.path);
         }
+
+        !self
+            .ignore_patterns
+            .is_ignored(&node.entry.path, node.is_dir())
     }
 
     /// Install a gitignore for `dir_path` from already-read bytes. Caller
@@ -1119,6 +1174,187 @@ mod tests {
         assert!(view.get_selected().is_some());
         assert_eq!(view.get_scroll_offset(), 0);
         assert_eq!(view.get_sort_mode(), SortMode::Type);
+    }
+
+    /// Names of every row the explorer would draw, for filter assertions.
+    /// Compact-directory folding is turned off by the caller so each node
+    /// gets its own row and the set is exactly "what is visible".
+    fn visible_names(view: &FileTreeView) -> Vec<String> {
+        view.get_display_nodes()
+            .into_iter()
+            .filter_map(|(id, _)| view.tree.get_node(id))
+            .map(|node| node.entry.name.clone())
+            .collect()
+    }
+
+    /// A plugin-supplied filter narrows the explorer to the given paths plus
+    /// the ancestors needed to reach them — the "show only files in git
+    /// status" case, without the explorer knowing anything about git.
+    #[tokio::test]
+    async fn test_plugin_filter_shows_only_matching_paths_and_their_ancestors() {
+        let (temp_dir, mut view) = create_test_view().await;
+        view.set_compact_directories(false);
+        let root = temp_dir.path().to_path_buf();
+
+        let root_id = view.tree.root_id();
+        view.tree.expand_node(root_id).await.unwrap();
+        let dir1_id = view.tree.get_node_by_path(&root.join("dir1")).unwrap().id;
+        view.tree.expand_node(dir1_id).await.unwrap();
+
+        // Unfiltered: everything is on screen.
+        let before = visible_names(&view);
+        for expected in ["dir1", "dir2", "file1.txt", "file2.txt", "file3.txt"] {
+            assert!(
+                before.contains(&expected.to_string()),
+                "unfiltered explorer must show {expected}, got {before:?}"
+            );
+        }
+
+        view.set_plugin_filter("git-explorer", vec![root.join("dir1/file1.txt")]);
+
+        let after = visible_names(&view);
+        assert!(
+            after.contains(&"file1.txt".to_string()),
+            "the filtered path must be visible, got {after:?}"
+        );
+        assert!(
+            after.contains(&"dir1".to_string()),
+            "an ancestor of a filtered path must stay visible or the file is \
+             unreachable, got {after:?}"
+        );
+        for hidden in ["file2.txt", "file3.txt", "dir2"] {
+            assert!(
+                !after.contains(&hidden.to_string()),
+                "{hidden} does not match the filter and must be hidden, got {after:?}"
+            );
+        }
+    }
+
+    /// Clearing the namespace restores the unfiltered tree, so a plugin
+    /// toggling its filter off leaves no trace.
+    #[tokio::test]
+    async fn test_clearing_plugin_filter_restores_every_entry() {
+        let (temp_dir, mut view) = create_test_view().await;
+        view.set_compact_directories(false);
+        let root = temp_dir.path().to_path_buf();
+
+        let root_id = view.tree.root_id();
+        view.tree.expand_node(root_id).await.unwrap();
+        let before = visible_names(&view);
+
+        view.set_plugin_filter("git-explorer", vec![root.join("file3.txt")]);
+        assert!(
+            !visible_names(&view).contains(&"dir2".to_string()),
+            "filter must be in effect before clearing"
+        );
+
+        view.clear_plugin_filter("git-explorer");
+        assert_eq!(
+            visible_names(&view),
+            before,
+            "clearing the only filter namespace must restore the original tree"
+        );
+    }
+
+    /// Filters from different plugins union rather than intersect: two
+    /// namespaces each contributing paths must not cancel each other out.
+    #[tokio::test]
+    async fn test_plugin_filters_from_separate_namespaces_union() {
+        let (temp_dir, mut view) = create_test_view().await;
+        view.set_compact_directories(false);
+        let root = temp_dir.path().to_path_buf();
+
+        let root_id = view.tree.root_id();
+        view.tree.expand_node(root_id).await.unwrap();
+
+        view.set_plugin_filter("git-explorer", vec![root.join("file3.txt")]);
+        view.set_plugin_filter("diagnostics", vec![root.join("dir2")]);
+
+        let names = visible_names(&view);
+        assert!(
+            names.contains(&"file3.txt".to_string()) && names.contains(&"dir2".to_string()),
+            "both namespaces' paths must be visible, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"dir1".to_string()),
+            "a path claimed by neither namespace must stay hidden, got {names:?}"
+        );
+    }
+
+    /// The window holds the filters and re-applies them whenever the explorer
+    /// view is rebuilt (reopen, root change), because a fresh `FileTreeView`
+    /// starts unfiltered. This covers the contract that re-application relies
+    /// on: handing the stored map to a brand-new view reproduces the filtered
+    /// state, and does so as a replacement rather than a merge.
+    #[tokio::test]
+    async fn test_set_plugin_filters_restores_state_on_a_rebuilt_view() {
+        let (temp_dir, mut original) = create_test_view().await;
+        original.set_compact_directories(false);
+        let root = temp_dir.path().to_path_buf();
+
+        let root_id = original.tree.root_id();
+        original.tree.expand_node(root_id).await.unwrap();
+        original.set_plugin_filter("git-explorer", vec![root.join("file3.txt")]);
+        let filtered = visible_names(&original);
+        assert!(!filtered.contains(&"dir1".to_string()));
+
+        // Rebuild the view the way the app does when the explorer reopens.
+        let manager = Arc::new(FsManager::new(Arc::new(StdFileSystem)));
+        let mut tree = FileTree::new(root.clone(), manager).await.unwrap();
+        let rebuilt_root = tree.root_id();
+        tree.expand_node(rebuilt_root).await.unwrap();
+        let mut rebuilt = FileTreeView::new(tree);
+        rebuilt.set_compact_directories(false);
+
+        assert!(
+            visible_names(&rebuilt).contains(&"dir1".to_string()),
+            "a freshly built view starts unfiltered — this is what makes \
+             re-application necessary"
+        );
+
+        let mut stored = HashMap::new();
+        stored.insert("git-explorer".to_string(), vec![root.join("file3.txt")]);
+        rebuilt.set_plugin_filters(stored);
+
+        assert_eq!(
+            visible_names(&rebuilt),
+            filtered,
+            "re-applying the stored filters must reproduce the filtered view"
+        );
+
+        // Replacement, not merge: handing over an empty map clears everything.
+        rebuilt.set_plugin_filters(HashMap::new());
+        assert!(
+            !rebuilt.has_plugin_filter(),
+            "an empty map must leave the view unfiltered"
+        );
+    }
+
+    /// While a filter is active it is authoritative: a matched path is shown
+    /// even where a gitignore rule would hide it. A changed file inside a
+    /// gitignored directory is still a changed file, and silently dropping it
+    /// would make the filtered view incomplete in a way the user cannot see.
+    #[tokio::test]
+    async fn test_plugin_filter_overrides_gitignore_for_matched_paths() {
+        let (temp_dir, mut view) = create_test_view().await;
+        view.set_compact_directories(false);
+        let root = temp_dir.path().to_path_buf();
+
+        let root_id = view.tree.root_id();
+        view.tree.expand_node(root_id).await.unwrap();
+        view.load_gitignore_from_bytes(&root, b"file3.txt\n", None);
+
+        assert!(
+            !visible_names(&view).contains(&"file3.txt".to_string()),
+            "precondition: the gitignore rule must hide file3.txt when unfiltered"
+        );
+
+        view.set_plugin_filter("git-explorer", vec![root.join("file3.txt")]);
+
+        assert!(
+            visible_names(&view).contains(&"file3.txt".to_string()),
+            "an explicitly filtered path must survive a gitignore rule"
+        );
     }
 
     #[tokio::test]

@@ -1705,6 +1705,9 @@ impl crate::app::window::Window {
         }
         view.set_compact_directories(defaults.compact_directories);
         self.file_explorer = Some(view);
+        // A fresh view starts unfiltered, so any plugin filter this window is
+        // holding has to be re-applied or it would vanish on reopen.
+        self.apply_file_explorer_filters();
         // The initial build is done; release the column reservation set in
         // `init_file_explorer`. Clear it *before* the expand-to-path sync below
         // so that sync can re-acquire it (it early-returns if it's still set).
@@ -1806,6 +1809,50 @@ impl crate::app::window::Window {
     pub fn handle_clear_file_explorer_decorations(&mut self, namespace: &str) {
         self.file_explorer_decorations.remove(namespace);
         self.rebuild_file_explorer_decoration_cache();
+    }
+
+    /// Narrow the explorer to `paths` on behalf of `namespace`, so a plugin
+    /// can offer a filtered view ("only files in git status", "only files
+    /// with diagnostics") without the explorer knowing what the filter means.
+    ///
+    /// Paths are normalized and confined to the workspace root on the same
+    /// terms as decorations: relative entries are joined to the root and
+    /// anything that escapes it is dropped rather than honoured.
+    pub fn handle_set_file_explorer_filter(&mut self, namespace: String, paths: Vec<PathBuf>) {
+        let root = self.root.clone();
+        let normalized: Vec<PathBuf> = paths
+            .into_iter()
+            .filter_map(|path| {
+                let path = if path.is_absolute() {
+                    path
+                } else {
+                    root.join(&path)
+                };
+                let path = crate::app::normalize_path(&path);
+                crate::app::explorer_path_under_root(&path, &root)
+                    .then(|| crate::app::normalize_explorer_plugin_path(&path, &root))
+            })
+            .collect();
+
+        self.file_explorer_filters.insert(namespace, normalized);
+        self.apply_file_explorer_filters();
+    }
+
+    /// Drop `namespace`'s filter. Once no namespace is filtering, the explorer
+    /// returns to its normal ignore-rule-driven view.
+    pub fn handle_clear_file_explorer_filter(&mut self, namespace: &str) {
+        self.file_explorer_filters.remove(namespace);
+        self.apply_file_explorer_filters();
+    }
+
+    /// Push the window's filters into the live view. Called after any filter
+    /// mutation and again whenever the view is rebuilt, since a fresh
+    /// `FileTreeView` starts unfiltered.
+    pub fn apply_file_explorer_filters(&mut self) {
+        let filters = self.file_explorer_filters.clone();
+        if let Some(explorer) = self.file_explorer.as_mut() {
+            explorer.set_plugin_filters(filters);
+        }
     }
 
     /// Install (or replace) a namespace of plugin-supplied file-explorer slot
