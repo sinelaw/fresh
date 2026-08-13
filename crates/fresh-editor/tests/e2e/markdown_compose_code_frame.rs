@@ -499,3 +499,109 @@ fn breaking_a_closing_fence_reframes_the_lines_below_it() {
         "and so does the delimiter that stopped closing.\nScreen:\n{screen}"
     );
 }
+
+/// A prose line of exactly `bytes` bytes, newline included.
+///
+/// The exact sizing is the point: the highlighter drops a parse checkpoint
+/// every `CHECKPOINT_INTERVAL` (256) bytes, at the first line start past that
+/// many bytes, and the test below needs one to land on a fence delimiter.
+fn sized_line(prefix: &str, bytes: usize) -> String {
+    let mut line = prefix.to_string();
+    while line.len() < bytes - 1 {
+        line.push_str(" filler");
+    }
+    line.truncate(bytes - 1);
+    line.push('\n');
+    line
+}
+
+/// Opening a file part-way down and scrolling up must not frame prose as code.
+///
+/// A viewport that starts mid-document reads the region structure by resuming
+/// from the nearest parse checkpoint above it rather than from the top of the
+/// file. A checkpoint stores the state *before* its own position; one that
+/// landed on a fence delimiter used to store the state from *after* that line,
+/// so resuming there re-parsed a closing ``` as an opening one and every prose
+/// line below the block reported as fence body — framed, rails and all, with
+/// its inline markup left literal. It cleared only once the view scrolled above
+/// the poisoned checkpoint, which is exactly the "scroll up far enough and it
+/// fixes itself" shape of the report.
+#[test]
+fn prose_below_a_block_is_not_framed_when_the_view_starts_mid_document() {
+    // 256 bytes of prose, then a 256-byte block: the second checkpoint lands
+    // on the block's closing delimiter.
+    let mut md = String::new();
+    for i in 0..4 {
+        md.push_str(&sized_line(&format!("Intro line {i}"), 64));
+    }
+    assert_eq!(md.len(), 256, "preamble must fill exactly one interval");
+    md.push_str("```bash\n");
+    for _ in 0..8 {
+        md.push_str(&format!("echo {}\n", "x".repeat(25)));
+    }
+    assert_eq!(
+        md.len(),
+        512,
+        "closing fence must start on the next interval"
+    );
+    md.push_str("```\n\n");
+    for i in 0..40 {
+        md.push_str(&sized_line(&format!("Prose {i} with a `code` span"), 64));
+        md.push('\n');
+    }
+    // Markup-free last line, so parking the cursor at the end of the buffer
+    // never reveals the raw markup of a line the assertions read.
+    md.push_str("TAIL MARKER\n");
+
+    let (mut harness, _tmp) = compose_harness(&md);
+    harness
+        .wait_until(|h| h.screen_to_string().contains('┌'))
+        .expect("the block should frame");
+
+    // Jump to the end: the prose below the block is now first drawn — and so
+    // first classified — with the viewport well past that checkpoint, the way
+    // it is when a file is opened at a line in the middle.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
+
+    // Walk back up a notch at a time, checking every intermediate view. The
+    // document's first line coming into view is the signal that the sweep has
+    // covered every position the viewport can start from.
+    let mut reached_top = false;
+    for _ in 0..120 {
+        let screen = harness.screen_to_string();
+        for row in screen.lines().filter(|l| l.contains("Prose ")) {
+            assert!(
+                !row.contains('│') && !row.contains('┌') && !row.contains('└'),
+                "prose below the code block must not be framed as code; row \
+                 was {row:?}.\nScreen:\n{screen}"
+            );
+            assert!(
+                !row.contains('`'),
+                "prose below the code block keeps its inline markup concealed \
+                 — literal backticks mean it was read as code; row was \
+                 {row:?}.\nScreen:\n{screen}"
+            );
+        }
+        reached_top = screen.contains("Intro line 0");
+        if reached_top {
+            break;
+        }
+        harness.mouse_scroll_up(10, 10).unwrap();
+        harness.wait_for_async_quiescence(4).unwrap();
+    }
+
+    assert!(
+        reached_top,
+        "the sweep must reach the top of the document, so the window where the \
+         stale checkpoint was the nearest anchor is covered"
+    );
+    let screen = harness.screen_to_string();
+    assert_eq!(
+        tops(&screen).len(),
+        1,
+        "back at the top, the one real block still frames.\nScreen:\n{screen}"
+    );
+}
