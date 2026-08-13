@@ -89,6 +89,27 @@ export function raw(entries: TextPropertyEntry[], key?: string): WidgetSpec {
   return { kind: "raw", entries, key };
 }
 
+/** A `raw()` block as a scrollable **viewport** of `visibleRows` rows
+ * instead of every entry inline.
+ *
+ * Bottom-anchored: it shows the tail of `entries`, pads at the top when
+ * there are fewer of them than fit, and keeps following the newest row
+ * until the user scrolls away from it (scrolling back to the bottom
+ * re-arms following). The host owns the scroll offset, so the block also
+ * gets a scroll region — the wheel over it scrolls *it* rather than
+ * defaulting to the first list on the panel — and a scrollbar once the
+ * content overflows.
+ *
+ * `key` is required: the scroll offset is host-owned instance state
+ * keyed by it. Without one this degrades to a plain `raw()`. */
+export function scrollableRaw(
+  entries: TextPropertyEntry[],
+  key: string,
+  visibleRows: number,
+): WidgetSpec {
+  return { kind: "raw", entries, key, visibleRows: Math.max(1, Math.floor(visibleRows)) };
+}
+
 /** Build a `TextPropertyEntry` from a sequence of styled segments.
  *
  * The plugin describes row content structurally — each segment is a

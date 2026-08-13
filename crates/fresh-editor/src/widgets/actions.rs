@@ -46,6 +46,16 @@ fn leaf_key_matches(spec: &WidgetSpec, target: &str) -> bool {
         | WidgetSpec::Dropdown { key: Some(k), .. }
         | WidgetSpec::Number { key: Some(k), .. }
         | WidgetSpec::DualList { key: Some(k), .. } => k == target,
+        // A *windowed* Raw block (`visible_rows > 0`) is a scrollable
+        // leaf with host-owned instance state, so wheel routing has to
+        // be able to resolve it by key like any List/Tree. A plain Raw
+        // still doesn't match: it owns nothing, and the callers that
+        // ask for a key expect "a widget with state behind it".
+        WidgetSpec::Raw {
+            key: Some(k),
+            visible_rows,
+            ..
+        } => *visible_rows > 0 && k == target,
         _ => false,
     }
 }
@@ -206,7 +216,7 @@ pub fn set_raw_entries_in_spec(
     if widget_key.is_empty() {
         return false;
     }
-    if let WidgetSpec::Raw { entries, key } = spec {
+    if let WidgetSpec::Raw { entries, key, .. } = spec {
         if key.as_deref() == Some(widget_key) {
             *entries = new_entries;
             return true;

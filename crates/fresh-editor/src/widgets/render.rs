@@ -637,7 +637,11 @@ fn predicts_block(spec: &WidgetSpec) -> bool {
         WidgetSpec::Text { rows, .. } => *rows > 1,
         WidgetSpec::WindowEmbed { rows, .. } => *rows > 1,
         WidgetSpec::Pane { rows, .. } => *rows > 1,
-        WidgetSpec::Raw { entries, .. } => entries.len() > 1,
+        WidgetSpec::Raw {
+            entries,
+            visible_rows,
+            ..
+        } => entries.len() > 1 || *visible_rows > 1,
         WidgetSpec::Row { children, .. } => children.iter().any(predicts_block),
         _ => false,
     }
@@ -1026,7 +1030,18 @@ fn render_collected(
             *rows,
             panel_width,
         ),
-        WidgetSpec::Raw { entries, .. } => collect_raw(entries),
+        WidgetSpec::Raw {
+            entries,
+            visible_rows,
+            key,
+        } => collect_raw(
+            entries,
+            *visible_rows,
+            key.as_deref(),
+            prev,
+            next_state,
+            panel_width,
+        ),
         WidgetSpec::Overlay { child, .. } => {
             collect_overlay(child, prev, next_state, ctx, panel_width)
         }
@@ -2483,7 +2498,14 @@ fn collect_embed_rect(
     out
 }
 
-fn collect_raw(raw_entries: &[TextPropertyEntry]) -> CollectedOutput {
+fn collect_raw(
+    raw_entries: &[TextPropertyEntry],
+    visible_rows: u32,
+    key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+    next_state: &mut HashMap<String, WidgetInstanceState>,
+    panel_width: u32,
+) -> CollectedOutput {
     let mut out = CollectedOutput::default();
     // Raw is the migration escape hatch: the plugin's own
     // bytes flow through unchanged. The plugin still owns
@@ -2493,12 +2515,82 @@ fn collect_raw(raw_entries: &[TextPropertyEntry]) -> CollectedOutput {
     // entry ends with a newline so it occupies its own
     // buffer line — plugins that already include `\n` are
     // unaffected.
-    for raw_entry in raw_entries {
+    //
+    // A keyed block with `visible_rows > 0` is a *viewport* onto the
+    // entries instead: it emits exactly that many rows, keeps a
+    // host-owned scroll offset, and publishes a scroll region so the
+    // wheel and the scrollbar can find it. Everything else (every
+    // caller that predates this, and every keyless block) takes the
+    // path above unchanged.
+    let windowed_key = key.filter(|k| !k.is_empty() && visible_rows > 0);
+    let Some(k) = windowed_key else {
+        for raw_entry in raw_entries {
+            let mut e = raw_entry.clone();
+            e.normalize_widths();
+            ensure_trailing_newline(&mut e);
+            out.entries.push(e);
+        }
+        return out;
+    };
+
+    let visible = visible_rows.max(1);
+    let total = raw_entries.len() as u32;
+    let max_scroll = total.saturating_sub(visible);
+    let (prev_scroll, user_scrolled) = match prev.get(k) {
+        Some(WidgetInstanceState::Raw {
+            scroll_offset,
+            user_scrolled,
+        }) => (*scroll_offset, *user_scrolled),
+        _ => (0, false),
+    };
+    // Follow the tail unless the user took the viewport over. This is
+    // what the plugin-side "slice off the end and pad the top" gave for
+    // free, and what a viewport has to do deliberately: the newest row
+    // is the one the block is read for.
+    let scroll = if user_scrolled {
+        prev_scroll.min(max_scroll)
+    } else {
+        max_scroll
+    };
+    next_state.insert(
+        k.to_string(),
+        WidgetInstanceState::Raw {
+            scroll_offset: scroll,
+            user_scrolled,
+        },
+    );
+
+    // Short content pads at the TOP, so the last row of a block that
+    // does not fill its window still sits against the bottom edge —
+    // the composer below it stays put as the transcript grows.
+    let pad_rows = visible.saturating_sub(total);
+    for _ in 0..pad_rows {
+        out.entries.push(blank_list_row());
+    }
+    let start = scroll as usize;
+    let end = ((scroll + visible) as usize).min(raw_entries.len());
+    for raw_entry in &raw_entries[start.min(end)..end] {
         let mut e = raw_entry.clone();
         e.normalize_widths();
         ensure_trailing_newline(&mut e);
         out.entries.push(e);
     }
+
+    // Emitted whether or not the block overflows, exactly as a keyed
+    // List/Tree does: the wheel's hit test needs to find *something*
+    // under the pointer here, or it falls through to "the first
+    // scrollable widget on the panel" — which is how a wheel over a
+    // chat transcript ended up scrolling the workspace tree.
+    out.scroll_regions.push(ScrollRegion {
+        list_key: k.to_string(),
+        buffer_row: 0,
+        col_in_row: 0,
+        width_cols: panel_width,
+        height_rows: visible,
+        total: total as usize,
+        visible: visible as usize,
+        scroll: scroll as usize,
+    });
     out
 }
 
@@ -7327,6 +7419,7 @@ mod tests {
     fn raw_passes_through_unchanged() {
         let spec = WidgetSpec::Raw {
             entries: vec![TextPropertyEntry::text("hello")],
+            visible_rows: 0,
             key: None,
         };
         let (out, hits, _state) = render_no_focus(&spec, &HashMap::new());
@@ -8149,6 +8242,7 @@ mod tests {
             label: String::new(),
             child: Box::new(WidgetSpec::Raw {
                 entries: vec![TextPropertyEntry::text(body)],
+                visible_rows: 0,
                 key: None,
             }),
             width_pct: None,
@@ -8226,6 +8320,7 @@ mod tests {
             label: String::new(),
             child: Box::new(WidgetSpec::Raw {
                 entries: vec![TextPropertyEntry::text(body)],
+                visible_rows: 0,
                 key: None,
             }),
             width_pct: None,
@@ -8795,6 +8890,7 @@ mod tests {
                         TextPropertyEntry::text("line1"),
                         TextPropertyEntry::text("line2"),
                     ],
+                    visible_rows: 0,
                     key: None,
                 },
                 WidgetSpec::Toggle {
@@ -10306,6 +10402,7 @@ mod tests {
             label: "".into(),
             child: Box::new(WidgetSpec::Raw {
                 entries: vec![wide, narrow],
+                visible_rows: 0,
                 key: None,
             }),
             width_pct: None,

@@ -2212,6 +2212,29 @@ type WidgetSpec = {
 } | {
 	"kind": "raw";
 	entries: Array<TextPropertyEntry>;
+	/**
+	* Turn the block into a scrollable **viewport** of this many
+	* rows instead of emitting every entry inline. `0` (the
+	* default) is the historical shape: all entries, no window,
+	* no scrolling.
+	* 
+	* A windowed block is **bottom-anchored**: it shows the tail
+	* of `entries` and pads at the top when there are fewer than
+	* `visible_rows` of them, because the thing a growing block
+	* (a transcript, a log) is read for is its newest row. It
+	* follows that tail until the user scrolls away from it, and
+	* resumes following when they scroll back to the bottom —
+	* the same rule the multi-line `Text` wheel path uses.
+	* 
+	* It also earns what only real scrollable widgets have: a
+	* scroll region, so the wheel that lands on it scrolls *it*
+	* rather than defaulting to the first `List`/`Tree` on the
+	* panel, and a scrollbar when the content overflows. Both
+	* need a `key` — the scroll offset is host-owned instance
+	* state, and a keyless block has nowhere to keep it (it
+	* falls back to the unwindowed shape).
+	*/
+	visibleRows?: number;
 	key?: string | null;
 } | {
 	"kind": "overlay";

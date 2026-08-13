@@ -1224,6 +1224,13 @@ impl Editor {
                         completion_navigated: Some(*completion_navigated),
                         ..Default::default()
                     },
+                    // A windowed Raw block: only its viewport offset is
+                    // state a frontend needs — the rows themselves ride
+                    // along in the spec.
+                    W::Raw { scroll_offset, .. } => WidgetInstanceView {
+                        scroll_offset: Some(*scroll_offset),
+                        ..Default::default()
+                    },
                     W::Number { value } => WidgetInstanceView {
                         number_value: Some(*value),
                         ..Default::default()

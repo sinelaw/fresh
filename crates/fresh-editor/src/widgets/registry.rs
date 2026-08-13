@@ -253,6 +253,21 @@ pub enum WidgetInstanceState {
         /// wheel-scrolled dock back to the selected card.
         user_scrolled: bool,
     },
+    /// `Raw` instance state for a **windowed** block (`visible_rows >
+    /// 0`): the first visible row, plus whether the user has taken
+    /// the viewport over from the follow-the-tail default.
+    ///
+    /// A windowed Raw is bottom-anchored — it exists for blocks that
+    /// grow (a chat transcript, a log), where the newest row is the
+    /// one you came to read. So the renderer pins the viewport to the
+    /// end until `user_scrolled` is set, and the wheel handler clears
+    /// the flag again the moment the offset returns to the bottom, so
+    /// scrolling back down re-arms following instead of leaving the
+    /// view stranded one message behind forever.
+    Raw {
+        scroll_offset: u32,
+        user_scrolled: bool,
+    },
     /// `Number` instance state: the host-owned current value. Becomes
     /// authoritative after first render — the spec's `value` is a
     /// seed only, same correctness reasoning as `Text`/`List` (the
@@ -455,6 +470,17 @@ impl WidgetRegistry {
                 scroll_offset: so,
                 user_scrolled,
                 ..
+            } => {
+                *so = scroll_offset;
+                *user_scrolled = true;
+            }
+            // A windowed Raw block has no selection to leave behind, but
+            // it does have a tail it otherwise sticks to — dragging its
+            // thumb has to count as taking the viewport over, or the next
+            // render would yank it straight back to the bottom.
+            WidgetInstanceState::Raw {
+                scroll_offset: so,
+                user_scrolled,
             } => {
                 *so = scroll_offset;
                 *user_scrolled = true;

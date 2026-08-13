@@ -401,6 +401,7 @@ pub fn setting_control_to_widget_aligned(
             entries: vec![TextPropertyEntry::text(format!(
                 "{field_key}: <{type_name} - edit in config.toml>"
             ))],
+            visible_rows: 0,
             key: Some(field_key.to_string()),
         },
     }
@@ -496,6 +497,7 @@ fn text_list_add_row(s: &crate::view::controls::TextListState, focused: bool) ->
         }
         WidgetSpec::Raw {
             entries: vec![entry],
+            visible_rows: 0,
             key: None,
         }
     } else if add_focused {
@@ -677,6 +679,7 @@ fn json_line_row(
     }
     WidgetSpec::Raw {
         entries: vec![entry],
+        visible_rows: 0,
         key: None,
     }
 }
@@ -698,6 +701,7 @@ fn truncate_chars(s: &str, max: usize) -> String {
 fn raw_entry_row(entry: TextPropertyEntry) -> WidgetSpec {
     WidgetSpec::Raw {
         entries: vec![entry],
+        visible_rows: 0,
         key: None,
     }
 }
@@ -706,6 +710,7 @@ fn raw_entry_row(entry: TextPropertyEntry) -> WidgetSpec {
 fn raw_row(text: String) -> WidgetSpec {
     WidgetSpec::Raw {
         entries: vec![TextPropertyEntry::text(text)],
+        visible_rows: 0,
         key: None,
     }
 }
@@ -751,6 +756,7 @@ fn header_row(left: &str, right: &str) -> WidgetSpec {
             seg(left, Some("ui.menu_disabled_fg")),
             seg(right, Some("ui.menu_disabled_fg")),
         ])],
+        visible_rows: 0,
         key: None,
     }
 }
@@ -837,6 +843,7 @@ fn section_header(section: &str) -> WidgetSpec {
     });
     WidgetSpec::Raw {
         entries: vec![entry],
+        visible_rows: 0,
         key: None,
     }
 }
