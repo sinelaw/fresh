@@ -1971,6 +1971,43 @@ impl Editor {
         }
     }
 
+    /// Handle SetFoldIndicators command
+    ///
+    /// Per-(split, buffer) like `SetLineNumbers`, and for the same reason:
+    /// compose mode is itself per-split, so a source-mode split showing the
+    /// same buffer must keep its own gutter.
+    ///
+    /// Writes `fold_indicators_plugin_override`, never the user's
+    /// `fold_indicators_override` — see `BufferViewState` for why those are
+    /// two fields. `None` withdraws the plugin's opinion.
+    pub(super) fn handle_set_fold_indicators(
+        &mut self,
+        buffer_id: BufferId,
+        enabled: Option<bool>,
+    ) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
+            if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
+                buf_state.fold_indicators_plugin_override = enabled;
+            } else {
+                // Buffer not yet in this split — fall back to setting on active
+                view_state.fold_indicators_plugin_override = enabled;
+            }
+        }
+    }
+
     /// Handle SetIndentationGuide command
     ///
     /// Records a per-buffer override for indentation-guide visibility. Unlike

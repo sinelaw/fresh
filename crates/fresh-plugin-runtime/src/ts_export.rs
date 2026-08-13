@@ -1503,6 +1503,7 @@ mod tests {
             "setLineIndicator",
             "clearLineIndicators",
             "setLineNumbers",
+            "setFoldIndicators",
             "setIndentationGuide",
             "setViewMode",
             "setViewState",

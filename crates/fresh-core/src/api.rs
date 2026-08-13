@@ -3360,6 +3360,18 @@ pub enum PluginCommand {
     /// Enable/disable line numbers for a buffer
     SetLineNumbers { buffer_id: BufferId, enabled: bool },
 
+    /// Set the plugin's fold-indicator default for a buffer's view state.
+    ///
+    /// `None` withdraws the plugin's opinion, restoring whatever the user's
+    /// own setting resolves to. Stored apart from the user's toggle and never
+    /// persisted, so a mode that hides the gutter arrows (markdown compose)
+    /// can neither overwrite a deliberate choice nor outlive itself in the
+    /// saved workspace.
+    SetFoldIndicators {
+        buffer_id: BufferId,
+        enabled: Option<bool>,
+    },
+
     /// Enable/disable indentation guides for a buffer, overriding the global
     /// `editor.indentation_guide` default. Used by tool views (e.g. the Git Log
     /// commit-detail diff) that show non-editable content where the guides are

@@ -197,6 +197,19 @@ pub struct BufferViewState {
     /// arrows in this split without touching existing folds. Persisted in the
     /// per-file workspace state.
     pub fold_indicators_override: Option<bool>,
+    /// Plugin-supplied fold-indicator default for this (split, buffer), set
+    /// via `setFoldIndicators`. `None` = no plugin opinion. Markdown compose
+    /// uses it to drop the gutter arrows from a document preview.
+    ///
+    /// Deliberately separate from `fold_indicators_override` and deliberately
+    /// **not** persisted: it is a mode's transient opinion, not a preference.
+    /// Keeping the two apart means compose can never overwrite a choice the
+    /// user made, can never leak a forced value into the saved workspace, and
+    /// needs no save/restore dance to put things back when it exits — the
+    /// user's setting is still sitting there untouched. It loses to that
+    /// setting in `fold_indicators_visible`, so the toggle action keeps
+    /// working while composing.
+    pub fold_indicators_plugin_override: Option<bool>,
 
     /// Plugin-managed state (arbitrary key-value pairs).
     /// Plugins can store per-buffer-per-split state here via the `setViewState`/`getViewState` API.
@@ -254,6 +267,7 @@ impl BufferViewState {
             highlight_current_line_override: None,
             indentation_guide_user_override: None,
             fold_indicators_override: None,
+            fold_indicators_plugin_override: None,
             plugin_state: std::collections::HashMap::new(),
             folds: FoldManager::new(),
         }
@@ -272,10 +286,16 @@ impl BufferViewState {
     /// global value there would silently undo "Toggle X (Current Buffer)" the
     /// next time that buffer was activated. Fields with no override
     /// (`None`, the case for every freshly created view state) are unaffected.
-    /// Whether the gutter should draw fold arrows in this split. Defaults to
-    /// on; only the per-buffer toggle turns them off.
+    /// Whether the gutter should draw fold arrows in this split.
+    ///
+    /// The user's own toggle wins outright; a plugin (markdown compose)
+    /// supplies the default when they have not expressed one; failing both,
+    /// they show. That ordering is what lets "Toggle Folding Indicators"
+    /// still do something while a mode is hiding them.
     pub fn fold_indicators_visible(&self) -> bool {
-        self.fold_indicators_override.unwrap_or(true)
+        self.fold_indicators_override
+            .or(self.fold_indicators_plugin_override)
+            .unwrap_or(true)
     }
 
     pub fn apply_config_defaults(&mut self, defaults: ViewConfigDefaults) {
@@ -330,6 +350,9 @@ impl Clone for BufferViewState {
             highlight_current_line_override: self.highlight_current_line_override,
             indentation_guide_user_override: self.indentation_guide_user_override,
             fold_indicators_override: self.fold_indicators_override,
+            // Carried like `view_mode`: a split cloned from a composing one
+            // is composing too, and should hide its arrows for the same reason.
+            fold_indicators_plugin_override: self.fold_indicators_plugin_override,
             plugin_state: self.plugin_state.clone(),
             // Fold markers are per-view; clones start with no folded ranges.
             folds: FoldManager::new(),
@@ -1953,6 +1976,42 @@ impl SplitManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two fold-indicator overrides are a precedence, not a single flag:
+    /// a plugin supplies the default, the user's own toggle overrules it, and
+    /// with neither set the arrows show. Getting this backwards would either
+    /// let compose mode silently discard a deliberate setting, or leave
+    /// "Toggle Folding Indicators" doing nothing while composing.
+    #[test]
+    fn test_fold_indicator_precedence() {
+        let mut vs = BufferViewState::new(80, 24);
+        assert!(vs.fold_indicators_visible(), "default is on");
+
+        vs.fold_indicators_plugin_override = Some(false);
+        assert!(
+            !vs.fold_indicators_visible(),
+            "a plugin can hide them when the user has no opinion",
+        );
+
+        vs.fold_indicators_override = Some(true);
+        assert!(
+            vs.fold_indicators_visible(),
+            "the user's own choice overrules the plugin's",
+        );
+
+        vs.fold_indicators_plugin_override = None;
+        assert!(
+            vs.fold_indicators_visible(),
+            "withdrawing the plugin's opinion leaves the user's choice standing",
+        );
+
+        vs.fold_indicators_override = Some(false);
+        vs.fold_indicators_plugin_override = Some(true);
+        assert!(
+            !vs.fold_indicators_visible(),
+            "a user who hid them keeps them hidden whatever the plugin says",
+        );
+    }
 
     #[test]
     fn test_create_split_manager() {
