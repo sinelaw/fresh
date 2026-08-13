@@ -34,8 +34,11 @@ layout and a centered eighty-column layout are plainly different renderings.
 
 /// Build a project dir containing the real `markdown_compose` plugin and a
 /// markdown file, then open it in a harness at `width` x `height`.
-fn compose_harness(config: Config, width: u16, height: u16) -> (EditorTestHarness, tempfile::TempDir)
-{
+fn compose_harness(
+    config: Config,
+    width: u16,
+    height: u16,
+) -> (EditorTestHarness, tempfile::TempDir) {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project");
     std::fs::create_dir(&project_root).unwrap();
@@ -49,7 +52,8 @@ fn compose_harness(config: Config, width: u16, height: u16) -> (EditorTestHarnes
     std::fs::write(&md_path, MD_CONTENT).unwrap();
 
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(width, height, config, project_root).unwrap();
+        EditorTestHarness::with_config_and_working_dir(width, height, config, project_root)
+            .unwrap();
     harness.open_file(&md_path).unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("measure.md");
@@ -126,7 +130,8 @@ fn test_compose_full_width_still_reachable_via_config() {
 
     let indent = heading_indent(&harness);
     assert_eq!(
-        indent, 0,
+        indent,
+        0,
         "with editor.page_width cleared, compose must use the full pane width \
          and render flush left; heading started at column {indent}.\nScreen:\n{}",
         harness.screen_to_string(),

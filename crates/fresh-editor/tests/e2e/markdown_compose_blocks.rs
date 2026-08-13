@@ -38,9 +38,13 @@ fn composed(content: &str, width: u16, height: u16) -> (EditorTestHarness, tempf
     let md_path = project_root.join("blocks.md");
     std::fs::write(&md_path, content).unwrap();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(width, height, Default::default(), project_root)
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        width,
+        height,
+        Default::default(),
+        project_root,
+    )
+    .unwrap();
     harness.open_file(&md_path).unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("blocks.md");
@@ -392,9 +396,8 @@ fn test_nested_list_items_get_a_deeper_indent() {
 
     let indent_of = |needle: &str| {
         let line = line_with(&harness, needle);
-        line.find('•').unwrap_or_else(|| {
-            panic!("no bullet on the line for '{needle}': {line:?}")
-        })
+        line.find('•')
+            .unwrap_or_else(|| panic!("no bullet on the line for '{needle}': {line:?}"))
     };
 
     let top = indent_of("second item");
