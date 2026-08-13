@@ -134,6 +134,64 @@ fn fenced_block_renders_as_a_labelled_frame() {
     );
 }
 
+/// The box is closed on all four sides: the body line carries a `│` rail at
+/// each edge, in the same columns as the corners of the borders above and
+/// below it. Getting the width right is the whole difficulty — a rail computed
+/// against a different budget than its border is off on every line of the
+/// block, and one computed against the full measure wraps onto its own row.
+#[test]
+fn body_rails_line_up_with_the_border_corners() {
+    let (mut harness, _tmp) =
+        compose_harness("# Doc\n\n```rust\nfn answer() -> u32 { 42 }\n```\n\nTail.\n");
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains('└'))
+        .expect("compose mode should frame the fenced block");
+    park_cursor_at_top(&mut harness);
+
+    let screen = harness.screen_to_string();
+    let edges = |needle: char| -> Option<(usize, usize)> {
+        let line = screen.lines().find(|l| l.contains(needle))?;
+        let cols: Vec<usize> = line
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| "┌┐└┘│─".contains(*c))
+            .map(|(i, _)| i)
+            .collect();
+        Some((*cols.first()?, *cols.last()?))
+    };
+
+    let top = edges('┌').expect("top border on screen");
+    let bottom = edges('└').expect("bottom border on screen");
+    let body = screen
+        .lines()
+        .find(|l| l.contains("fn answer"))
+        .expect("body line on screen");
+    let rails: Vec<usize> = body
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c == '│')
+        .map(|(i, _)| i)
+        .collect();
+
+    assert_eq!(
+        rails.len(),
+        2,
+        "the body line should carry exactly two rails, one per edge; body \
+         line was {body:?}"
+    );
+    assert_eq!(
+        (rails[0], rails[1]),
+        top,
+        "the rails must sit in the same columns as the top border's corners.\n\
+         Screen:\n{screen}"
+    );
+    assert_eq!(
+        top, bottom,
+        "top and bottom borders must span the same columns.\nScreen:\n{screen}"
+    );
+}
+
 /// A fence with no info string is framed at both ends.
 ///
 /// This is the case a plugin cannot decide for itself: a bare ``` is an opener

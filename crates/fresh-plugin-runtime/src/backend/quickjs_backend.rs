@@ -4544,6 +4544,28 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Clear *inline* virtual texts whose id starts with `idPrefix` and whose
+    /// anchor byte falls in `[start, end)`. The inline analogue of
+    /// `clearVirtualLinesInRange`, so a per-line pass can rebuild one line's
+    /// inline decorations without dropping the rest of the set.
+    pub fn clear_virtual_texts_in_range(
+        &self,
+        buffer_id: u32,
+        id_prefix: String,
+        start: u32,
+        end: u32,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearVirtualTextsInRange {
+                buffer_id: BufferId(buffer_id as usize),
+                id_prefix,
+                start: start as usize,
+                end: end as usize,
+                epoch: self.hook_epoch_for(buffer_id),
+            })
+            .is_ok()
+    }
+
     /// Add a virtual line (full line above/below a position)
     ///
     /// The `options` object accepts:
