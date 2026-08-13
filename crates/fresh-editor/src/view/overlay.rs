@@ -379,24 +379,46 @@ impl OverlayManager {
         }
     }
 
-    /// Remove all overlays in a namespace
+    /// Remove all overlays in a namespace.
+    ///
+    /// Removal is stable, which is what keeps this cheap. `swap_remove`
+    /// scrambles the priority ordering, and restoring it meant sorting every
+    /// overlay in the buffer and rebuilding the whole marker index — work
+    /// proportional to overlays this namespace has nothing to do with. That
+    /// is paid on a hot path: a plugin that repaints a one-row highlight
+    /// (the review diff's cursor line) clears and re-adds its namespace on
+    /// every cursor move, so an unrelated 20 000-overlay diff made each
+    /// arrow key cost milliseconds and holding one down crawl.
+    ///
+    /// Retaining in place preserves priority order, so no sort is needed,
+    /// and only indices at or after the first removal shift — everything
+    /// before it keeps its slot and needs no re-indexing.
     pub fn clear_namespace(&mut self, namespace: &OverlayNamespace, marker_list: &mut MarkerList) {
-        let mut indices: Vec<usize> = self
+        let Some(first) = self
             .overlays
             .iter()
-            .enumerate()
-            .filter_map(|(i, o)| (o.namespace.as_ref() == Some(namespace)).then_some(i))
-            .collect();
-        if indices.is_empty() {
+            .position(|o| o.namespace.as_ref() == Some(namespace))
+        else {
             return;
+        };
+        let mut removed: Vec<(MarkerId, MarkerId)> = Vec::new();
+        self.overlays.retain(|o| {
+            let hit = o.namespace.as_ref() == Some(namespace);
+            if hit {
+                removed.push((o.start_marker, o.end_marker));
+            }
+            !hit
+        });
+        for (start_marker, end_marker) in removed {
+            self.marker_to_idx.remove(&start_marker);
+            self.marker_to_idx.remove(&end_marker);
+            marker_list.delete(start_marker);
+            marker_list.delete(end_marker);
         }
-        indices.sort_unstable_by(|a, b| b.cmp(a));
-        for idx in indices {
-            self.swap_remove_at(idx, marker_list);
+        for (i, o) in self.overlays.iter().enumerate().skip(first) {
+            self.marker_to_idx.insert(o.start_marker, i);
+            self.marker_to_idx.insert(o.end_marker, i);
         }
-        // Restore priority order after swap_removes.
-        self.overlays.sort_by_key(|o| o.priority);
-        self.rebuild_marker_index();
     }
 
     /// Replace overlays in a namespace that overlap a range with new overlays.
@@ -864,6 +886,86 @@ impl Overlay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Clearing a namespace must not disturb overlays outside it, and must
+    /// leave the marker index consistent for the ones that remain.
+    ///
+    /// The previous implementation `swap_remove`d, which scrambled priority
+    /// order, then repaired it by sorting every overlay and rebuilding the
+    /// entire marker index. That made a one-overlay clear cost time
+    /// proportional to the whole buffer — 2.9ms per call at 20 000 overlays,
+    /// paid on every cursor move by any plugin that repaints a highlight.
+    /// Order and index integrity are what the sort/rebuild were there for,
+    /// so this pins them directly.
+    #[test]
+    fn test_clear_namespace_preserves_order_and_index() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(10_000);
+        let mut mgr = OverlayManager::new();
+        let bulk = OverlayNamespace("bulk".to_string());
+        let scratch = OverlayNamespace("scratch".to_string());
+
+        // Interleave two namespaces across a range of priorities so a
+        // scrambling removal would be visible in the survivors' order.
+        for i in 0..50usize {
+            mgr.add(
+                Overlay::with_namespace(
+                    &mut marker_list,
+                    (i * 10)..(i * 10 + 4),
+                    OverlayFace::Background { color: Color::Red },
+                    bulk.clone(),
+                )
+                .with_priority_value(i as Priority),
+            );
+            mgr.add(
+                Overlay::with_namespace(
+                    &mut marker_list,
+                    (i * 10 + 5)..(i * 10 + 8),
+                    OverlayFace::Background { color: Color::Blue },
+                    scratch.clone(),
+                )
+                .with_priority_value(i as Priority),
+            );
+        }
+
+        mgr.clear_namespace(&scratch, &mut marker_list);
+
+        assert_eq!(mgr.overlays.len(), 50, "only the bulk namespace survives");
+        assert!(
+            mgr.overlays
+                .iter()
+                .all(|o| o.namespace.as_ref() == Some(&bulk)),
+            "no scratch overlay may survive"
+        );
+        assert!(
+            mgr.overlays
+                .windows(2)
+                .all(|w| w[0].priority <= w[1].priority),
+            "survivors stay in priority order"
+        );
+        // Every surviving overlay must be findable at its recorded index.
+        for (i, o) in mgr.overlays.iter().enumerate() {
+            assert_eq!(
+                mgr.marker_to_idx.get(&o.start_marker),
+                Some(&i),
+                "start marker index stale for overlay {i}"
+            );
+            assert_eq!(
+                mgr.marker_to_idx.get(&o.end_marker),
+                Some(&i),
+                "end marker index stale for overlay {i}"
+            );
+        }
+        // The index must not still reference the removed overlays.
+        assert_eq!(
+            mgr.marker_to_idx.len(),
+            100,
+            "index holds exactly two markers per surviving overlay"
+        );
+        // Clearing an absent namespace is a no-op.
+        mgr.clear_namespace(&scratch, &mut marker_list);
+        assert_eq!(mgr.overlays.len(), 50);
+    }
 
     /// An overlay taller than the viewport still renders.
     ///
