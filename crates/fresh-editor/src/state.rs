@@ -706,8 +706,10 @@ impl EditorState {
         let soft_breaks = if self.soft_breaks.is_empty() {
             Vec::new()
         } else {
+            // `theme: None` — the index measures and never draws, so a
+            // continuation prefix contributes its width here but no colour.
             self.soft_breaks
-                .query_viewport(0, end, &self.marker_list, &no_cursors)
+                .query_viewport_rendered(0, end, &self.marker_list, &no_cursors, None)
         };
 
         let conceals = if self.conceals.is_empty() {

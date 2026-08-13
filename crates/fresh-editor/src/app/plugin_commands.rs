@@ -799,7 +799,11 @@ impl Editor {
         indent: u16,
         epoch: Option<u64>,
         activation: Option<fresh_core::api::MarkerActivation>,
+        prefix: Option<fresh_core::api::SoftBreakPrefix>,
     ) {
+        use fresh_core::api::OverlayColorSpec;
+        use ratatui::style::{Color, Modifier, Style};
+
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -822,12 +826,44 @@ impl Editor {
                     scope_end,
                 })
             });
-            state.soft_breaks.add_with_activation(
+            // Concrete colours become the fallback style; theme keys are kept
+            // separate so they re-resolve every frame and follow live theme
+            // changes — same split as plugin virtual text (see
+            // `handle_add_virtual_text` above).
+            let prefix = prefix.map(|p| {
+                let mut style = Style::default();
+                let mut fg_theme_key = None;
+                let mut bg_theme_key = None;
+                match p.fg {
+                    Some(OverlayColorSpec::Rgb(r, g, b)) => style = style.fg(Color::Rgb(r, g, b)),
+                    Some(OverlayColorSpec::ThemeKey(k)) => fg_theme_key = Some(k),
+                    None => {}
+                }
+                match p.bg {
+                    Some(OverlayColorSpec::Rgb(r, g, b)) => style = style.bg(Color::Rgb(r, g, b)),
+                    Some(OverlayColorSpec::ThemeKey(k)) => bg_theme_key = Some(k),
+                    None => {}
+                }
+                if p.bold {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                if p.italic {
+                    style = style.add_modifier(Modifier::ITALIC);
+                }
+                crate::view::soft_break::SoftBreakPrefix {
+                    text: p.text,
+                    style,
+                    fg_theme_key,
+                    bg_theme_key,
+                }
+            });
+            state.soft_breaks.add_full(
                 &mut state.marker_list,
                 namespace,
                 position,
                 indent,
                 activation,
+                prefix,
             );
             #[cfg(feature = "plugins")]
             {

@@ -1087,6 +1087,42 @@ impl JsEditorApi {
             scope_end: end as usize,
         })
     }
+
+    /// Build `addSoftBreak`'s optional continuation-row prefix from its JS
+    /// object. A missing or empty `text` yields `None` — an empty prefix is
+    /// indistinguishable from no prefix, and storing one would make the
+    /// renderer emit a zero-width token per wrapped row for nothing.
+    fn parse_soft_break_prefix(
+        obj: rquickjs::Object<'_>,
+    ) -> Option<fresh_core::api::SoftBreakPrefix> {
+        use fresh_core::api::OverlayColorSpec;
+
+        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+            if let Ok(theme_key) = obj.get::<_, String>(key) {
+                if !theme_key.is_empty() {
+                    return Some(OverlayColorSpec::ThemeKey(theme_key));
+                }
+            }
+            if let Ok(arr) = obj.get::<_, Vec<u8>>(key) {
+                if arr.len() >= 3 {
+                    return Some(OverlayColorSpec::Rgb(arr[0], arr[1], arr[2]));
+                }
+            }
+            None
+        }
+
+        let text: String = obj.get("text").ok()?;
+        if text.is_empty() {
+            return None;
+        }
+        Some(fresh_core::api::SoftBreakPrefix {
+            text,
+            fg: parse_color_spec("fg", &obj),
+            bg: parse_color_spec("bg", &obj),
+            bold: obj.get("bold").unwrap_or(false),
+            italic: obj.get("italic").unwrap_or(false),
+        })
+    }
 }
 
 #[plugin_api_impl]
@@ -4182,15 +4218,23 @@ impl JsEditorApi {
     ///
     /// `activation` optionally makes the break cursor-dependent — same
     /// semantics as `addConceal`'s activation parameters.
-    pub fn add_soft_break(
+    ///
+    /// `prefix` optionally draws a glyph run at the head of the continuation
+    /// row, shaped `{ text, fg?, bg?, bold?, italic? }` with the same colour
+    /// spec `addOverlay` takes (a theme key string or an `[r, g, b]` array).
+    /// It is drawn *inside* the `indent` columns rather than in addition to
+    /// them, so a wrapped block quote can keep its `▌` down every row without
+    /// shifting the text. `indent` grows to fit a prefix wider than it.
+    pub fn add_soft_break<'js>(
         &self,
         buffer_id: u32,
         namespace: String,
         position: u32,
         indent: u32,
-        activation: rquickjs::function::Opt<String>,
-        scope_start: rquickjs::function::Opt<u32>,
-        scope_end: rquickjs::function::Opt<u32>,
+        activation: rquickjs::function::Opt<Option<String>>,
+        scope_start: rquickjs::function::Opt<Option<u32>>,
+        scope_end: rquickjs::function::Opt<Option<u32>>,
+        prefix: rquickjs::function::Opt<Option<rquickjs::Object<'js>>>,
     ) -> bool {
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
@@ -4207,7 +4251,16 @@ impl JsEditorApi {
                 position: position as usize,
                 indent: indent as u16,
                 epoch: self.hook_epoch_for(buffer_id),
-                activation: Self::parse_activation(activation.0, scope_start.0, scope_end.0),
+                // `Opt<Option<T>>` rather than `Opt<T>`: `Opt` alone only
+                // covers a *missing* argument, so a caller that wants a later
+                // parameter (a `prefix` with no activation, say) and passes
+                // `undefined` for these would hit a conversion error.
+                activation: Self::parse_activation(
+                    activation.0.flatten(),
+                    scope_start.0.flatten(),
+                    scope_end.0.flatten(),
+                ),
+                prefix: prefix.0.flatten().and_then(Self::parse_soft_break_prefix),
             })
             .is_ok()
     }

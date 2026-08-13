@@ -652,9 +652,10 @@ impl Editor {
                 indent,
                 epoch,
                 activation,
+                prefix,
             } => {
                 self.handle_add_soft_break(
-                    buffer_id, namespace, position, indent, epoch, activation,
+                    buffer_id, namespace, position, indent, epoch, activation, prefix,
                 );
             }
             PluginCommand::ClearSoftBreakNamespace {
