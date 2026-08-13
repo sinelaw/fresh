@@ -9,6 +9,11 @@ use std::fs;
 /// After running "Edit Theme" command, this waits for the theme selection prompt
 /// and types "dark" to explicitly select the dark builtin theme.
 fn open_theme_editor(harness: &mut EditorTestHarness) {
+    open_theme_editor_named(harness, "dark");
+}
+
+/// Same as [`open_theme_editor`], but selects the named builtin theme.
+fn open_theme_editor_named(harness: &mut EditorTestHarness, theme_name: &str) {
     // Open command palette
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -30,9 +35,9 @@ fn open_theme_editor(harness: &mut EditorTestHarness) {
         .wait_until(|h| h.screen_to_string().contains("Select theme to edit"))
         .unwrap();
 
-    // Type "dark" to select the dark builtin theme explicitly
+    // Type the theme name to select that builtin theme explicitly
     // (Plugin prompts now use suggestion values when selected, so we type to be explicit)
-    harness.type_text("dark").unwrap();
+    harness.type_text(theme_name).unwrap();
     harness.render().unwrap();
 
     // Select it
@@ -4300,4 +4305,95 @@ fn test_theme_editor_terminal_builtin_renders_field_rows() {
                 harness.screen_to_string()
             )
         });
+}
+
+/// Reproduction for issue #2888: with `editor.use_terminal_bg = true` and a
+/// light theme, the Theme Editor renders as the patchwork in the issue's
+/// screenshots — its dark field text falls onto the terminal's own (dark)
+/// background while the swatches, dividers and panel fills keep the light
+/// theme's background.
+///
+/// `use_terminal_bg` swaps `theme.editor_bg` for `Color::Reset` on buffer
+/// surfaces (`orchestration/render_buffer.rs`), and the Theme Editor's panels
+/// are plugin virtual buffers, so they are hit too — but only for cells the
+/// plugin did not paint explicitly, and the foreground is never swapped along
+/// with the background.
+#[test]
+fn test_issue_2888_light_theme_with_terminal_bg_mixes_backgrounds() {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let mut config = fresh::config::Config::default();
+    config.theme = "light".into();
+    config.editor.use_terminal_bg = true;
+    config.editor.animations = false;
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(140, 40, config, project_root).unwrap();
+    harness.render().unwrap();
+
+    let light_bg = harness.editor().theme().editor_bg;
+    assert_eq!(
+        light_bg,
+        Color::Rgb(255, 255, 255),
+        "light theme editor_bg should be white"
+    );
+
+    open_theme_editor_named(&mut harness, "light");
+
+    // The header text row: plugin-painted foreground, but the cell background
+    // falls through to the terminal default instead of the theme's white.
+    let header_pos = harness
+        .find_text_on_screen("Theme Editor:")
+        .expect("'Theme Editor:' header should be visible");
+    let header_style = harness
+        .get_cell_style(header_pos.0, header_pos.1)
+        .expect("header cell should have a style");
+
+    // Collect the distinct backgrounds present across the theme-editor panels
+    // so the "patchwork" is measured rather than asserted one cell at a time.
+    let mut has_reset = false;
+    let mut has_theme_bg = false;
+    {
+        let buf = harness.buffer();
+        for y in 2..(buf.area.height - 2) {
+            for x in 0..buf.area.width {
+                match buf[(x, y)].bg {
+                    Color::Reset => has_reset = true,
+                    c if c == light_bg => has_theme_bg = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // EXPECTED-FAIL-AFTER-FIX: both of these are true at once today, which is
+    // exactly the mixed light/dark rendering the issue reports.
+    assert!(
+        has_reset,
+        "expected some theme-editor cells to fall through to the terminal background. \
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+    assert!(
+        has_theme_bg,
+        "expected some theme-editor cells to keep the light theme background. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    assert_eq!(
+        header_style.bg,
+        Some(Color::Reset),
+        "the header row's background falls through to the terminal default while other \
+         cells stay white — the patchwork from the issue. Screen:\n{}",
+        harness.screen_to_string()
+    );
 }
