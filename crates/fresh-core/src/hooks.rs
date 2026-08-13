@@ -206,6 +206,22 @@ pub enum HookArgs {
         /// (see `coordMap`-backed decoration commands). Surfaced to JS as
         /// `data.epoch`.
         epoch: u64,
+        /// Whether any split is showing this buffer in compose/preview mode,
+        /// read from the live view states while this batch was being built.
+        ///
+        /// A decoration plugin must gate on *this*, never on the same flag
+        /// read back from `getBufferInfo()`. The editor marks every line in
+        /// this batch as seen the moment it hands the batch over, so the batch
+        /// is the only offer those lines ever get; `getBufferInfo()`, however,
+        /// is served from `state_snapshot`, which is refreshed at editor-thread
+        /// checkpoints and so can still describe the buffer as it was *before*
+        /// the commands that turned compose on. A plugin gating on the snapshot
+        /// drops its own first paint whenever it happens to read inside that
+        /// window, and the document then stays literal until an edit or a
+        /// scroll produces another batch (issue #2968). This field is derived
+        /// from the same live state, in the same frame, as `lines`, so it
+        /// cannot disagree with them.
+        is_composing_in_any_split: bool,
     },
 
     /// Prompt input changed (user typed/edited)
