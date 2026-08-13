@@ -150,6 +150,20 @@ pub struct Overlay {
     /// End marker, also right gravity: text typed at the end extends it.
     pub end_marker: MarkerId,
 
+    /// Spatial index only: one marker covering the overlay's whole extent,
+    /// so the marker tree's interval-overlap query can return this overlay
+    /// for a viewport it *spans* — the case two endpoint markers cannot
+    /// answer, because both sit outside such a window.
+    ///
+    /// Never read for positions; `start_marker`/`end_marker` stay
+    /// authoritative. It is created with right gravity while a fixed-end
+    /// overlay's real end has left gravity, so the span can sit a byte wide
+    /// of the true range at an edit boundary. That is deliberate and safe in
+    /// one direction only: the span is a superset, so it can over-offer a
+    /// candidate (harmless — `query_viewport` re-checks every candidate
+    /// against the real markers) but never hide one.
+    pub span_marker: MarkerId,
+
     /// Visual appearance of the overlay
     pub face: OverlayFace,
 
@@ -185,12 +199,14 @@ impl Overlay {
     pub fn new(marker_list: &mut MarkerList, range: Range<usize>, face: OverlayFace) -> Self {
         let start_marker = marker_list.create(range.start); // left affinity
         let end_marker = marker_list.create(range.end); // right affinity
+        let span_marker = marker_list.create_span(range.start, range.end);
 
         Self {
             handle: OverlayHandle::new(),
             namespace: None,
             start_marker,
             end_marker,
+            span_marker,
             face,
             priority: 0,
             message: None,
@@ -227,12 +243,14 @@ impl Overlay {
     ) -> Self {
         let start_marker = marker_list.create(range.start); // left affinity
         let end_marker = marker_list.create_left_gravity(range.end);
+        let span_marker = marker_list.create_span(range.start, range.end);
 
         Self {
             handle: OverlayHandle::new(),
             namespace: Some(namespace),
             start_marker,
             end_marker,
+            span_marker,
             face,
             priority: 0,
             message: None,
@@ -340,6 +358,7 @@ impl OverlayManager {
         for (i, o) in self.overlays.iter().enumerate().skip(pos) {
             self.marker_to_idx.insert(o.start_marker, i);
             self.marker_to_idx.insert(o.end_marker, i);
+            self.marker_to_idx.insert(o.span_marker, i);
         }
         handle
     }
@@ -366,13 +385,16 @@ impl OverlayManager {
             let overlay = self.overlays.remove(pos);
             self.marker_to_idx.remove(&overlay.start_marker);
             self.marker_to_idx.remove(&overlay.end_marker);
+            self.marker_to_idx.remove(&overlay.span_marker);
             // Vec::remove shifts every subsequent entry down by one — repair.
             for (i, o) in self.overlays.iter().enumerate().skip(pos) {
                 self.marker_to_idx.insert(o.start_marker, i);
                 self.marker_to_idx.insert(o.end_marker, i);
+                self.marker_to_idx.insert(o.span_marker, i);
             }
             marker_list.delete(overlay.start_marker);
             marker_list.delete(overlay.end_marker);
+            marker_list.delete(overlay.span_marker);
             true
         } else {
             false
@@ -401,23 +423,26 @@ impl OverlayManager {
         else {
             return;
         };
-        let mut removed: Vec<(MarkerId, MarkerId)> = Vec::new();
+        let mut removed: Vec<(MarkerId, MarkerId, MarkerId)> = Vec::new();
         self.overlays.retain(|o| {
             let hit = o.namespace.as_ref() == Some(namespace);
             if hit {
-                removed.push((o.start_marker, o.end_marker));
+                removed.push((o.start_marker, o.end_marker, o.span_marker));
             }
             !hit
         });
-        for (start_marker, end_marker) in removed {
+        for (start_marker, end_marker, span_marker) in removed {
             self.marker_to_idx.remove(&start_marker);
             self.marker_to_idx.remove(&end_marker);
+            self.marker_to_idx.remove(&span_marker);
             marker_list.delete(start_marker);
             marker_list.delete(end_marker);
+            marker_list.delete(span_marker);
         }
         for (i, o) in self.overlays.iter().enumerate().skip(first) {
             self.marker_to_idx.insert(o.start_marker, i);
             self.marker_to_idx.insert(o.end_marker, i);
+            self.marker_to_idx.insert(o.span_marker, i);
         }
     }
 
@@ -594,11 +619,14 @@ impl OverlayManager {
         let removed = self.overlays.swap_remove(idx);
         self.marker_to_idx.remove(&removed.start_marker);
         self.marker_to_idx.remove(&removed.end_marker);
+        self.marker_to_idx.remove(&removed.span_marker);
         marker_list.delete(removed.start_marker);
         marker_list.delete(removed.end_marker);
+        marker_list.delete(removed.span_marker);
         if let Some(moved) = self.overlays.get(idx) {
             self.marker_to_idx.insert(moved.start_marker, idx);
             self.marker_to_idx.insert(moved.end_marker, idx);
+            self.marker_to_idx.insert(moved.span_marker, idx);
         }
     }
 
@@ -609,6 +637,7 @@ impl OverlayManager {
         for (i, o) in self.overlays.iter().enumerate() {
             self.marker_to_idx.insert(o.start_marker, i);
             self.marker_to_idx.insert(o.end_marker, i);
+            self.marker_to_idx.insert(o.span_marker, i);
         }
     }
 
@@ -645,57 +674,49 @@ impl OverlayManager {
         end: usize,
         marker_list: &MarkerList,
     ) -> Vec<(&Overlay, Range<usize>)> {
-        use std::collections::HashMap;
+        // Ask the marker tree which overlays touch the window at all. Every
+        // overlay indexes its whole extent as one span marker, so this is an
+        // ordinary interval-overlap query and it answers for all three
+        // shapes: starting inside, ending inside, and spanning the window
+        // with both endpoints outside. That last one is why this cannot be
+        // driven from the endpoint markers alone, and why this used to walk
+        // every overlay in the buffer instead — on a large diff that was
+        // ~22 000 overlays scanned to find the ~270 on screen, once per
+        // frame, and it is what made arrow keys, filter typing and divider
+        // drags all queue behind the redraw.
+        let hits = marker_list.query_range(start, end);
 
-        // Query the marker interval tree once for all markers in viewport
-        // This is O(log N + k) where k = markers in viewport
-        let visible_markers = marker_list.query_range(start, end);
-
-        // Build a quick lookup map: marker_id -> position
-        let marker_positions: HashMap<_, _> = visible_markers
-            .into_iter()
-            .map(|(id, start, _end)| (id, start))
-            .collect();
-
-        // Find overlays whose resolved range overlaps the viewport. Markers
-        // may be inside it, partially outside (a multi-line overlay scrolled
-        // half out of view), or entirely outside on both sides (an overlay
-        // taller than the window). The marker query is an index that makes the
-        // common case cheap, not the visibility test.
-        self.overlays
+        // A candidate can arrive up to three times (start, end and span
+        // markers all land in the window for a short overlay), so fold to
+        // distinct overlay indices before resolving anything.
+        let mut candidates: Vec<usize> = hits
             .iter()
-            .filter_map(|overlay| {
-                let start_in_vp = marker_positions.get(&overlay.start_marker).copied();
-                let end_in_vp = marker_positions.get(&overlay.end_marker).copied();
+            .filter_map(|(id, _, _)| self.marker_to_idx.get(id).copied())
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
 
-                // Resolve both endpoints, whether or not their markers landed
-                // in the viewport query. Requiring at least one marker inside
-                // dropped an overlay that *spans* the viewport — start above
-                // the top, end below the bottom — even though it covers every
-                // visible line. That is the common shape for anything taller
-                // than the window: a code-tour step range, a long diagnostic,
-                // a large diff hunk. The overlap test below decides visibility.
-                let start_pos =
-                    start_in_vp.or_else(|| marker_list.get_position(overlay.start_marker))?;
-                let end_pos = end_in_vp.or_else(|| marker_list.get_position(overlay.end_marker))?;
-
+        // The span marker is only an index — deliberately a superset, so it
+        // can offer a candidate that does not really overlap. The real
+        // markers decide, exactly as before.
+        candidates
+            .into_iter()
+            .filter_map(|idx| {
+                let overlay = self.overlays.get(idx)?;
+                let start_pos = marker_list.get_position(overlay.start_marker)?;
+                let end_pos = marker_list.get_position(overlay.end_marker)?;
                 let range = start_pos..end_pos;
 
-                // Only include if actually overlaps viewport.
-                // For zero-width ranges (e.g. diagnostics at a single position),
-                // check that the point is within [start, end] (inclusive).
-                // For non-zero ranges, check standard overlap: start < end && end > start.
+                // Zero-width ranges (a diagnostic at a single position) are
+                // inclusive at both ends; everything else is a standard
+                // half-open overlap test.
                 let included = if range.start == range.end {
                     range.start >= start && range.start <= end
                 } else {
                     range.start < end && range.end > start
                 };
 
-                if included {
-                    Some((overlay, range))
-                } else {
-                    None
-                }
+                included.then_some((overlay, range))
             })
             .collect()
     }
@@ -730,10 +751,14 @@ impl OverlayManager {
     /// Panics on any divergence. Used by property tests.
     #[cfg(test)]
     fn check_invariants(&self) {
+        // Three markers per overlay: the two authoritative endpoints plus
+        // the span that indexes its extent for `query_viewport`. All three
+        // must map to the overlay's slot, or a viewport query resolves the
+        // wrong overlay — or silently drops one.
         assert_eq!(
             self.marker_to_idx.len(),
-            self.overlays.len() * 2,
-            "marker_to_idx size != 2 * overlays.len()"
+            self.overlays.len() * 3,
+            "marker_to_idx size != 3 * overlays.len()"
         );
         for (i, o) in self.overlays.iter().enumerate() {
             assert_eq!(
@@ -748,6 +773,13 @@ impl OverlayManager {
                 Some(i),
                 "end_marker {:?} of overlay {} mismapped",
                 o.end_marker,
+                i,
+            );
+            assert_eq!(
+                self.marker_to_idx.get(&o.span_marker).copied(),
+                Some(i),
+                "span_marker {:?} of overlay {} mismapped",
+                o.span_marker,
                 i,
             );
         }
@@ -956,15 +988,76 @@ mod tests {
                 "end marker index stale for overlay {i}"
             );
         }
-        // The index must not still reference the removed overlays.
+        // The index must not still reference the removed overlays — three
+        // markers each (start, end, span), for the 50 that survive.
         assert_eq!(
             mgr.marker_to_idx.len(),
-            100,
-            "index holds exactly two markers per surviving overlay"
+            150,
+            "index holds exactly three markers per surviving overlay"
         );
+        for (i, o) in mgr.overlays.iter().enumerate() {
+            assert_eq!(
+                mgr.marker_to_idx.get(&o.span_marker),
+                Some(&i),
+                "span marker index stale for overlay {i}"
+            );
+        }
         // Clearing an absent namespace is a no-op.
         mgr.clear_namespace(&scratch, &mut marker_list);
         assert_eq!(mgr.overlays.len(), 50);
+    }
+
+    /// `query_viewport` is driven by the marker tree, so it must return every
+    /// overlay touching the window regardless of how the window sits inside
+    /// it — and must not depend on how much else the buffer carries.
+    ///
+    /// The spanning shape is the one that forced the old full scan: both
+    /// endpoints lie outside the window, so no query over endpoint markers
+    /// can find it. The span marker is what makes it answerable.
+    #[test]
+    fn test_query_viewport_finds_every_overlap_shape() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100_000);
+        let mut mgr = OverlayManager::new();
+        let face = || OverlayFace::Background { color: Color::Red };
+
+        let starts_inside = mgr.add(Overlay::new(&mut marker_list, 4_950..5_010, face()));
+        let ends_inside = mgr.add(Overlay::new(&mut marker_list, 4_990..5_050, face()));
+        let wholly_inside = mgr.add(Overlay::new(&mut marker_list, 5_001..5_002, face()));
+        let spans = mgr.add(Overlay::new(&mut marker_list, 1_000..9_000, face()));
+        let before = mgr.add(Overlay::new(&mut marker_list, 10..20, face()));
+        let after = mgr.add(Overlay::new(&mut marker_list, 90_000..90_010, face()));
+
+        // Bury them in unrelated overlays: the answer must not change.
+        for i in 0..5_000 {
+            let at = 20_000 + i * 10;
+            mgr.add(Overlay::new(&mut marker_list, at..at + 4, face()));
+        }
+
+        let found: Vec<_> = mgr
+            .query_viewport(5_000, 5_005, &marker_list)
+            .into_iter()
+            .map(|(o, _)| o.handle.clone())
+            .collect();
+
+        for (label, handle) in [
+            ("starts inside", &starts_inside),
+            ("ends inside", &ends_inside),
+            ("wholly inside", &wholly_inside),
+            ("spans the window", &spans),
+        ] {
+            assert!(
+                found.contains(handle),
+                "{label} overlay missing from viewport query"
+            );
+        }
+        for (label, handle) in [("before", &before), ("after", &after)] {
+            assert!(
+                !found.contains(handle),
+                "{label} overlay must not be returned"
+            );
+        }
+        assert_eq!(found.len(), 4, "no unrelated overlay should be returned");
     }
 
     /// An overlay taller than the viewport still renders.
