@@ -24,6 +24,7 @@
 
 use crate::model::buffer::{Buffer, LineEnding};
 use crate::view::line_wrap_cache::CacheViewMode;
+use crate::view::soft_break::SoftBreakRender;
 use crate::view::ui::split_rendering::base_tokens::build_line_tokens_from;
 use crate::view::wrap_machine::{RowCarry, RowInfo, WrapMachine, WrapOutput, WrapRule};
 use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
@@ -76,8 +77,11 @@ pub fn fold_signature(folds: &[std::ops::Range<usize>]) -> u64 {
 /// activation belongs to the renderer's window, where it is cheap and local.
 #[derive(Debug, Clone, Default)]
 pub struct IndexDecorations {
-    /// Sorted `(byte, indent)`.
-    pub soft_breaks: Vec<(usize, u16)>,
+    /// Sorted by position. Carries each break's continuation prefix as well
+    /// as its indent so the index builds the *same* token stream the
+    /// renderer does; the prefix's style is unresolved here (the index
+    /// measures and never draws).
+    pub soft_breaks: Vec<SoftBreakRender>,
     /// Sorted by start; `None` replacement means "hide", `Some` means "replace".
     pub conceals: Vec<(std::ops::Range<usize>, Option<String>)>,
     /// Inline hints, styleless — the index measures and never draws.
@@ -160,8 +164,8 @@ impl IndexDecorations {
                 p
             }
         };
-        for (p, _) in &mut self.soft_breaks {
-            *p = shift(*p);
+        for b in &mut self.soft_breaks {
+            b.position = shift(b.position);
         }
         for p in &mut self.virtual_lines {
             *p = shift(*p);
@@ -191,9 +195,9 @@ impl IndexDecorations {
         diff_sorted(
             &self.soft_breaks,
             &new.soft_breaks,
-            |a| a.0,
+            |a| a.position,
             |a, b| a == b,
-            &mut |e: &(usize, u16)| ranges.push(e.0..e.0 + 1),
+            &mut |e: &SoftBreakRender| ranges.push(e.position..e.position + 1),
         );
         diff_sorted(
             &self.conceals,
@@ -273,15 +277,15 @@ impl IndexDecorations {
         line_start: usize,
         line_end: usize,
     ) -> (
-        Vec<(usize, u16)>,
+        Vec<SoftBreakRender>,
         Vec<(std::ops::Range<usize>, Option<&str>)>,
         Vec<crate::view::ui::split_rendering::transforms::InlineHint>,
     ) {
         let breaks = self
             .soft_breaks
             .iter()
-            .filter(|(p, _)| *p >= line_start && *p < line_end)
-            .copied()
+            .filter(|b| b.position >= line_start && b.position < line_end)
+            .cloned()
             .collect();
         let conceals = self
             .conceals
@@ -1649,7 +1653,7 @@ mod tests {
         let l31 = buffer.line_start_offset(31).unwrap();
         let l32 = buffer.line_start_offset(32).unwrap();
         let decorations = IndexDecorations {
-            soft_breaks: vec![(l30 + 10, 2)],
+            soft_breaks: vec![SoftBreakRender::plain(l30 + 10, 2)],
             conceals: vec![(l31 + 2..l31 + 8, Some("*".to_string()))],
             virtual_lines: vec![l32],
             ..Default::default()
@@ -1695,7 +1699,7 @@ mod tests {
         let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
         let l20 = buffer.line_start_offset(20).unwrap();
         let decorated = IndexDecorations {
-            soft_breaks: vec![(l20 + 8, 0)],
+            soft_breaks: vec![SoftBreakRender::plain(l20 + 8, 0)],
             ..Default::default()
         };
         let mut index = built_with(&mut buffer, 20, &decorated);
@@ -1911,8 +1915,8 @@ mod tests {
         let line_count = buffer.line_count().unwrap() as u64;
         let before = index.stats();
 
-        let breaks: Vec<(usize, u16)> = (0..40)
-            .map(|l| (buffer.line_start_offset(l).unwrap() + 3, 0))
+        let breaks: Vec<SoftBreakRender> = (0..40)
+            .map(|l| SoftBreakRender::plain(buffer.line_start_offset(l).unwrap() + 3, 0))
             .collect();
         let decorations = IndexDecorations {
             soft_breaks: breaks,

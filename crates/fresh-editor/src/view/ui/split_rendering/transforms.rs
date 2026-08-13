@@ -9,7 +9,9 @@
 //! None of these depend on any shared render-time "mega struct".
 
 use super::style::{create_wrapped_virtual_lines, token_style_from_ratatui};
+use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
+use crate::view::soft_break::SoftBreakRender;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::ViewLine;
 use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
@@ -81,11 +83,11 @@ pub(crate) fn apply_grid_wrapping_transform(
 
 /// Apply soft breaks to a token stream.
 ///
-/// Walks tokens with a sorted break list `[(position, indent)]`. A break at a
-/// position:
-/// - on a Space token: replaces it with Newline + indent Spaces
-/// - anywhere else: inserts Newline + indent Spaces before that byte, splitting
-///   the Text token it lands inside if it is not already at a token boundary
+/// Walks tokens with a sorted break list. A break at a position:
+/// - on a Space token: replaces it with Newline + the continuation indent
+/// - anywhere else: inserts Newline + the continuation indent before that byte,
+///   splitting the Text token it lands inside if it is not already at a token
+///   boundary
 ///
 /// That last case is what lets a caller break a run with no space in it — a
 /// bare URL, a long path — at a chosen column. The characters of a Text token
@@ -96,10 +98,17 @@ pub(crate) fn apply_grid_wrapping_transform(
 /// ranges landing inside a token; each piece keeps the token's style, so
 /// highlighting survives the break.
 ///
+/// The continuation indent is `indent` columns wide. A break carrying a
+/// [`SoftBreakRender::prefix`] draws that glyph run at the head of those
+/// columns and pads the rest with Spaces; without one the whole indent is
+/// Spaces, as it always was. The prefix never widens the row — the manager
+/// grew `indent` to fit it at insert time — so the columns a measurement-only
+/// caller computes from `indent` alone still match what gets drawn.
+///
 /// Tokens without source_offset (injected/virtual) pass through unchanged.
 pub(crate) fn apply_soft_breaks(
     tokens: Vec<ViewTokenWire>,
-    soft_breaks: &[(usize, u16)],
+    soft_breaks: &[SoftBreakRender],
 ) -> Vec<ViewTokenWire> {
     if soft_breaks.is_empty() {
         return tokens;
@@ -108,14 +117,24 @@ pub(crate) fn apply_soft_breaks(
     let mut output = Vec::with_capacity(tokens.len() + soft_breaks.len() * 2);
     let mut break_idx = 0;
 
-    // Newline + `indent` spaces, the row break itself.
-    fn push_break(output: &mut Vec<ViewTokenWire>, indent: u16) {
+    // Newline + the break's continuation indent: a prefix at its head when the
+    // break carries one, spaces for the rest of the columns.
+    fn push_break(output: &mut Vec<ViewTokenWire>, brk: &SoftBreakRender) {
         output.push(ViewTokenWire {
             source_offset: None,
             kind: ViewTokenWireKind::Newline,
             style: None,
         });
-        for _ in 0..indent {
+        let mut spaces = brk.indent as usize;
+        if let Some((text, style)) = &brk.prefix {
+            spaces = spaces.saturating_sub(str_width(text));
+            output.push(ViewTokenWire {
+                source_offset: None,
+                kind: ViewTokenWireKind::Text(text.clone()),
+                style: style.map(token_style_from_ratatui),
+            });
+        }
+        for _ in 0..spaces {
             output.push(ViewTokenWire {
                 source_offset: None,
                 kind: ViewTokenWireKind::Space,
@@ -133,25 +152,25 @@ pub(crate) fn apply_soft_breaks(
             }
         };
 
-        while break_idx < soft_breaks.len() && soft_breaks[break_idx].0 < offset {
+        while break_idx < soft_breaks.len() && soft_breaks[break_idx].position < offset {
             break_idx += 1;
         }
 
         // A Text token can span several break positions; walk its characters
         // and cut at each. The common case (no break inside) falls through the
         // loop and re-emits the token whole.
-        if let ViewTokenWireKind::Text(s) = &token.kind {
-            let token_end = offset + s.len();
+        if let ViewTokenWireKind::Text(str_tok) = &token.kind {
+            let token_end = offset + str_tok.len();
             if soft_breaks[break_idx..]
                 .first()
-                .is_some_and(|(pos, _)| *pos < token_end)
+                .is_some_and(|b| b.position < token_end)
             {
                 let mut seg = String::new();
                 let mut seg_start = offset;
                 let mut byte_idx = 0usize;
-                for ch in s.chars() {
+                for ch in str_tok.chars() {
                     let pos = offset + byte_idx;
-                    if break_idx < soft_breaks.len() && soft_breaks[break_idx].0 == pos {
+                    if break_idx < soft_breaks.len() && soft_breaks[break_idx].position == pos {
                         if !seg.is_empty() {
                             output.push(ViewTokenWire {
                                 source_offset: Some(seg_start),
@@ -159,7 +178,7 @@ pub(crate) fn apply_soft_breaks(
                                 style: token.style.clone(),
                             });
                         }
-                        push_break(&mut output, soft_breaks[break_idx].1);
+                        push_break(&mut output, &soft_breaks[break_idx]);
                         seg_start = pos;
                         break_idx += 1;
                     }
@@ -177,15 +196,15 @@ pub(crate) fn apply_soft_breaks(
             }
         }
 
-        if break_idx < soft_breaks.len() && soft_breaks[break_idx].0 == offset {
-            let indent = soft_breaks[break_idx].1;
+        if break_idx < soft_breaks.len() && soft_breaks[break_idx].position == offset {
+            let brk = &soft_breaks[break_idx];
             break_idx += 1;
 
             match &token.kind {
                 // The space *is* the break: it is consumed by the row end.
-                ViewTokenWireKind::Space => push_break(&mut output, indent),
+                ViewTokenWireKind::Space => push_break(&mut output, brk),
                 _ => {
-                    push_break(&mut output, indent);
+                    push_break(&mut output, brk);
                     output.push(token);
                 }
             }
@@ -684,4 +703,96 @@ pub fn splice_inline_virtual_text(
     }
 
     out
+}
+
+#[cfg(test)]
+mod soft_break_tests {
+    use super::*;
+
+    /// One `Text` token per source byte, the shape `build_base_tokens`
+    /// produces for a plain ASCII line.
+    fn chars(text: &str) -> Vec<ViewTokenWire> {
+        text.char_indices()
+            .map(|(i, c)| ViewTokenWire {
+                source_offset: Some(i),
+                kind: if c == ' ' {
+                    ViewTokenWireKind::Space
+                } else {
+                    ViewTokenWireKind::Text(c.to_string())
+                },
+                style: None,
+            })
+            .collect()
+    }
+
+    /// The columns emitted between the injected Newline and the next source
+    /// token — the continuation row's indent, as text.
+    fn continuation_indent(tokens: &[ViewTokenWire]) -> String {
+        let newline = tokens
+            .iter()
+            .position(|t| matches!(t.kind, ViewTokenWireKind::Newline))
+            .expect("no soft break was injected");
+        tokens[newline + 1..]
+            .iter()
+            .take_while(|t| t.source_offset.is_none())
+            .map(|t| match &t.kind {
+                ViewTokenWireKind::Text(s) => s.clone(),
+                ViewTokenWireKind::Space => " ".to_string(),
+                _ => String::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_plain_break_indents_with_spaces() {
+        let out = apply_soft_breaks(chars("one two"), &[SoftBreakRender::plain(3, 4)]);
+        assert_eq!(continuation_indent(&out), "    ");
+    }
+
+    /// The prefix is drawn *inside* the indent, not in addition to it: the
+    /// continuation row is still `indent` columns wide, which is what keeps
+    /// the quoted text in the column the first row put it in.
+    #[test]
+    fn a_prefix_is_drawn_inside_the_indent() {
+        let brk = SoftBreakRender {
+            position: 3,
+            indent: 4,
+            prefix: Some(("▌".to_string(), None)),
+        };
+        let out = apply_soft_breaks(chars("one two"), &[brk]);
+        assert_eq!(continuation_indent(&out), "▌   ");
+    }
+
+    /// A prefix exactly filling the indent leaves no padding behind it.
+    #[test]
+    fn a_prefix_filling_the_indent_emits_no_padding() {
+        let brk = SoftBreakRender {
+            position: 3,
+            indent: 2,
+            prefix: Some(("▌ ".to_string(), None)),
+        };
+        let out = apply_soft_breaks(chars("one two"), &[brk]);
+        assert_eq!(continuation_indent(&out), "▌ ");
+    }
+
+    /// A break landing on a non-Space token keeps that token, unlike the
+    /// Space case where the break consumes it.
+    #[test]
+    fn a_break_on_a_non_space_token_keeps_the_token() {
+        let brk = SoftBreakRender {
+            position: 4,
+            indent: 2,
+            prefix: Some(("▌ ".to_string(), None)),
+        };
+        let out = apply_soft_breaks(chars("one two"), &[brk]);
+        assert_eq!(continuation_indent(&out), "▌ ");
+        let tail: String = out
+            .iter()
+            .filter_map(|t| match (&t.kind, t.source_offset) {
+                (ViewTokenWireKind::Text(s), Some(_)) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tail, "onetwo", "no source character may be dropped");
+    }
 }

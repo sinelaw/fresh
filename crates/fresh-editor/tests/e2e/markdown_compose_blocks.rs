@@ -327,6 +327,134 @@ fn test_nested_quote_renders_two_bars() {
 }
 
 // ---------------------------------------------------------------------------
+// Wrapped block quotes
+// ---------------------------------------------------------------------------
+
+/// One quote line, no newlines in it, long enough that compose mode has to
+/// soft-wrap it several times. `ALPHAWORD` / `OMEGAWORD` bracket the text so
+/// the first and last visual rows can be found without matching each other.
+const WRAPPED_QUOTE_MD: &str = "\
+Opening paragraph with **emphasis** so the cursor has a home on line 1.
+
+> ALPHAWORD begins a single quoted line with no newlines in it that is deliberately long \
+enough that compose mode has to soft-wrap it across several visual rows, which is exactly \
+where the bar used to stop being drawn, and it runs on for a good while yet so the wrap \
+happens at any measure before it finally reaches OMEGAWORD.
+
+Trailing paragraph.
+";
+
+/// Rows of the wrapped quote, top to bottom: from the one holding `ALPHAWORD`
+/// through the one holding `OMEGAWORD`. Panics unless the quote actually
+/// wrapped — a fixture that fits on one row would make these tests pass
+/// vacuously.
+fn wrapped_quote_rows(harness: &EditorTestHarness) -> Vec<String> {
+    let screen = harness.screen_to_string();
+    let rows: Vec<&str> = screen.lines().collect();
+    let find = |needle: &str| {
+        rows.iter()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("'{needle}' not on screen.\nScreen:\n{screen}"))
+    };
+    let first = find("ALPHAWORD");
+    let last = find("OMEGAWORD");
+    assert!(
+        last > first,
+        "the quote must soft-wrap for this test to mean anything, but ALPHAWORD and \
+         OMEGAWORD landed on the same row.\nScreen:\n{screen}",
+    );
+    rows[first..=last].iter().map(|l| l.to_string()).collect()
+}
+
+/// Every visual row of a soft-wrapped quote carries the bar, so the block
+/// reads as one bordered aside. Only the first row used to have one: the bar
+/// comes from concealing the `>` marker, which exists on the source row alone,
+/// and the continuation rows were indented but bare.
+#[test]
+fn test_wrapped_quote_keeps_its_bar_on_every_row() {
+    let (harness, _tmp) = composed(WRAPPED_QUOTE_MD, 100, 30);
+    let rows = wrapped_quote_rows(&harness);
+
+    let bar_column = glyph_column(&rows[0], '▌');
+    for row in &rows {
+        assert_eq!(
+            glyph_column(row, '▌'),
+            bar_column,
+            "every row of a wrapped quote should carry the bar in the same column, \
+             but {row:?} does not match the first row's column {bar_column}.\n\
+             Rows:\n{rows:#?}",
+        );
+    }
+}
+
+/// The bar sits in the continuation indent rather than in front of it, so the
+/// quoted text keeps one column on every row. A prefix added *on top of* the
+/// indent would push the continuation rows one cell right of the first.
+#[test]
+fn test_wrapped_quote_text_stays_in_one_column() {
+    let (harness, _tmp) = composed(WRAPPED_QUOTE_MD, 100, 30);
+    let rows = wrapped_quote_rows(&harness);
+
+    let text_column = |row: &str| {
+        let bar = glyph_column(row, '▌');
+        row.chars()
+            .enumerate()
+            .skip(bar + 1)
+            .find(|(_, c)| !c.is_whitespace())
+            .map(|(i, _)| i)
+            .unwrap_or_else(|| panic!("no text after the bar on {row:?}"))
+    };
+
+    let first = text_column(&rows[0]);
+    for row in &rows {
+        assert_eq!(
+            text_column(row),
+            first,
+            "quoted text should start in the same column on every wrapped row, \
+             but {row:?} starts at {} not {first}.\nRows:\n{rows:#?}",
+            text_column(row),
+        );
+    }
+}
+
+/// Putting the cursor on the quote reveals the `>` on its source row, as it
+/// does for all markup — but the continuation rows keep their bar. Their
+/// leading columns are entirely virtual: there is no source markup there to
+/// reveal, and dropping the bar would break the block's edge exactly when the
+/// user is working inside it.
+#[test]
+fn test_wrapped_quote_keeps_its_bar_while_the_cursor_is_on_it() {
+    let (mut harness, _tmp) = composed(WRAPPED_QUOTE_MD, 100, 30);
+
+    // Line 3 of the fixture is the quote.
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("3").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("> ALPHAWORD"))
+        .unwrap();
+    harness.wait_for_async_quiescence(8).unwrap();
+
+    let rows = wrapped_quote_rows(&harness);
+    assert!(
+        rows[0].contains("> ALPHAWORD"),
+        "the cursor's own row should reveal its `>` for editing, got {:?}",
+        rows[0],
+    );
+    for row in &rows[1..] {
+        assert!(
+            row.contains('▌'),
+            "a continuation row should keep its bar while the cursor is on the \
+             quote, got {row:?}.\nRows:\n{rows:#?}",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Lists (issue item "lists")
 // ---------------------------------------------------------------------------
 

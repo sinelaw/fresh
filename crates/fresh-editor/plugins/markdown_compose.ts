@@ -1426,6 +1426,36 @@ const QUOTE_BAR = "▌";
 const quoteBarStyle = { fg: "syntax.type" };
 const quoteTextStyle = { fg: "syntax.comment", italic: true };
 
+/** The leading `>` marker run of a block quote line, or null if there is none.
+ *
+ * `runStart`/`runEnd` are character offsets into `lineContent`; `rendered` is
+ * how the run's columns look once compose mode has concealed it — every `>`
+ * replaced by the bar glyph, every other character (the leading indent, the
+ * spaces between and after markers) left as a space. Width is preserved
+ * one-for-one, so the quoted text keeps its source column.
+ *
+ * Shared by the conceal pass, which draws the run in place on the source row,
+ * and the soft-break pass, which repeats it as the continuation rows' indent.
+ * Both must agree on where the run ends: that column is where the quoted text
+ * starts, and therefore where every wrapped row has to line up.
+ */
+function quoteMarkerRun(
+  lineContent: string,
+): { runStart: number; runEnd: number; rendered: string } | null {
+  // Spaces and tabs only, never `\s`: `lineContent` can carry its trailing
+  // newline, and `[>\s]*` would swallow it into the run — putting a phantom
+  // column into `rendered` and pushing `runEnd` past the end of the row.
+  const match = lineContent.match(/^([ \t]*)(>[> \t]*)/);
+  if (!match) return null;
+  const runStart = match[1].length;
+  const runEnd = runStart + match[2].length;
+  let rendered = "";
+  for (let i = 0; i < runEnd; i++) {
+    rendered += lineContent[i] === '>' ? QUOTE_BAR : " ";
+  }
+  return { runStart, runEnd, rendered };
+}
+
 function headingTextStyle(level: number): Record<string, unknown> {
   const idx = Math.min(Math.max(level, 1), HEADING_TEXT_STYLES.length) - 1;
   return HEADING_TEXT_STYLES[idx];
@@ -1824,10 +1854,9 @@ function processLineConceals(
   //
   // Falls through to inline-span processing, so emphasis and links inside a
   // quote still render.
-  const quoteRun = lineContent.match(/^(\s*)(>[>\s]*)/);
+  const quoteRun = quoteMarkerRun(lineContent);
   if (quoteRun) {
-    const runStart = quoteRun[1].length;
-    const runEnd = runStart + quoteRun[2].length;
+    const { runStart, runEnd } = quoteRun;
     for (let i = runStart; i < runEnd; i++) {
       if (lineContent[i] !== '>') continue;
       const markerByte = charToByte(lineContent, i, byteStart);
@@ -2088,8 +2117,28 @@ function processLineSoftBreaks(
   // width, not the source's. Otherwise a wrapped nested item's continuation
   // rows sit left of its text and its last row can overrun the measure.
   const listInfo = listItemInfo(lineContent, width);
+
+  // A block quote's bar is drawn by concealing its `>` markers, which only
+  // exist on the source row — so a quote long enough to wrap used to lose the
+  // bar on every continuation row and the block's left edge broke apart.
+  // Repeat the concealed marker run as the continuation rows' indent instead:
+  // the run's own columns, `>` rendered as the bar and everything else blank.
+  // It replaces the indent rather than adding to it (the editor charges the
+  // prefix against `indent`), so the quoted text stays in its source column.
+  //
+  // Deliberately not cursor-gated, unlike the conceals: the head of a
+  // continuation row is entirely virtual — there is no source markup there to
+  // reveal for editing — so hiding the bar while the cursor sits on the quote
+  // would only break the block's edge exactly when the user is working in it.
+  const quoteRun = block.type === 'blockquote' ? quoteMarkerRun(lineContent) : null;
+  const quotePrefix = quoteRun
+    ? { text: quoteRun.rendered, ...quoteBarStyle }
+    : null;
+
   const hangingIndent = listInfo
     ? listInfo.renderedIndent + listInfo.markerLen
+    : quoteRun
+    ? editor.stringWidth(quoteRun.rendered)
     : block.hangingIndent;
 
   // Compute per-character visual width so concealed markup (emphasis
@@ -2149,7 +2198,14 @@ function processLineSoftBreaks(
       if (column + 1 + nextWordLen > wrapBudget && nextWordLen > 0) {
         // Add a soft break at this space's buffer position
         const breakBytePos = byteStart + editor.utf8ByteLength(lineContent.slice(0, i));
-        editor.addSoftBreak(bufferId, "md-wrap", breakBytePos, hangingIndent);
+        if (quotePrefix) {
+          editor.addSoftBreak(
+            bufferId, "md-wrap", breakBytePos, hangingIndent,
+            undefined, undefined, undefined, quotePrefix,
+          );
+        } else {
+          editor.addSoftBreak(bufferId, "md-wrap", breakBytePos, hangingIndent);
+        }
         column = hangingIndent;
         i++;
         continue;

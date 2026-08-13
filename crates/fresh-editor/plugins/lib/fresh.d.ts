@@ -3709,8 +3709,15 @@ interface EditorAPI {
 	* 
 	* `activation` optionally makes the break cursor-dependent — same
 	* semantics as `addConceal`'s activation parameters.
+	* 
+	* `prefix` optionally draws a glyph run at the head of the continuation
+	* row, shaped `{ text, fg?, bg?, bold?, italic? }` with the same colour
+	* spec `addOverlay` takes (a theme key string or an `[r, g, b]` array).
+	* It is drawn *inside* the `indent` columns rather than in addition to
+	* them, so a wrapped block quote can keep its `▌` down every row without
+	* shifting the text. `indent` grows to fit a prefix wider than it.
 	*/
-	addSoftBreak(bufferId: number, namespace: string, position: number, indent: number, activation?: string, scopeStart?: number, scopeEnd?: number): boolean;
+	addSoftBreak(bufferId: number, namespace: string, position: number, indent: number, activation?: string | null, scopeStart?: number | null, scopeEnd?: number | null, prefix?: Record<string, unknown> | null): boolean;
 	/**
 	* Clear all soft breaks in a namespace
 	*/

@@ -539,10 +539,17 @@ pub fn compute_line_layout(
 
     // Step 2: soft breaks (Compose mode only; same gating as the renderer).
     if is_compose && !state.soft_breaks.is_empty() {
-        let sb =
-            state
-                .soft_breaks
-                .query_viewport(line_start, line_end, &state.marker_list, cursors);
+        // `theme: None` — this output feeds scroll math and coordinate
+        // queries, never the screen, so a continuation prefix's colour is
+        // irrelevant here. Its *width* is not, and that comes through
+        // regardless (same split as `resolve_inline_hints` below).
+        let sb = state.soft_breaks.query_viewport_rendered(
+            line_start,
+            line_end,
+            &state.marker_list,
+            cursors,
+            None,
+        );
         if !sb.is_empty() {
             tokens = apply_soft_breaks(tokens, &sb);
         }

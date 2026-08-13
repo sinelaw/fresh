@@ -252,11 +252,12 @@ pub(super) fn build_view_data(
             .next_back()
             .unwrap_or(viewport.top_byte())
             + 1;
-        let soft_breaks = state.soft_breaks.query_viewport(
+        let soft_breaks = state.soft_breaks.query_viewport_rendered(
             viewport.top_byte(),
             viewport_end,
             &state.marker_list,
             cursor_positions,
+            Some(theme),
         );
         if !soft_breaks.is_empty() {
             tokens = apply_soft_breaks(tokens, &soft_breaks);

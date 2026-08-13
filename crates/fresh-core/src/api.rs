@@ -924,6 +924,32 @@ pub enum OverlayColorSpec {
     ThemeKey(String),
 }
 
+/// A glyph run drawn at the head of a soft break's continuation row.
+///
+/// The break's `indent` stays the authoritative column count for the
+/// continuation: the prefix is drawn *inside* those columns and the
+/// remainder renders as spaces. That keeps every width consumer (scroll
+/// math, the wrap index, the row-count cache) reading a single number,
+/// while the renderer gets something to draw there — a `▌` continuing a
+/// wrapped block quote's bar, say, instead of a blank gap.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct SoftBreakPrefix {
+    /// Text to draw at the start of the continuation row.
+    pub text: String,
+    /// Foreground colour, theme key or RGB. `None` = the row's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fg: Option<OverlayColorSpec>,
+    /// Background colour, theme key or RGB. `None` = the row's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bg: Option<OverlayColorSpec>,
+    #[serde(default)]
+    pub bold: bool,
+    #[serde(default)]
+    pub italic: bool,
+}
+
 /// Modifier-only overlay applied to a byte range within a virtual line's
 /// text. Used by plugins (live-diff) to bold + underline removed words on
 /// a deletion virtual line without varying the line's overall fg/bg.
@@ -3639,7 +3665,8 @@ pub enum PluginCommand {
         namespace: OverlayNamespace,
         /// Byte offset where the break should be injected
         position: usize,
-        /// Number of hanging indent spaces after the break
+        /// Total width of the continuation row's indent, in columns. Also
+        /// bounds `prefix`, which is drawn inside it.
         indent: u16,
         /// Hook epoch `position` was computed against (auto-stamped); the editor
         /// remaps it forward before injecting the break, so a stale wrap point
@@ -3649,6 +3676,10 @@ pub enum PluginCommand {
         /// Optional cursor-dependent activation rule. `None` = always active.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         activation: Option<MarkerActivation>,
+        /// Optional glyph run drawn at the head of the continuation row,
+        /// inside `indent`. `None` = the indent renders blank.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prefix: Option<SoftBreakPrefix>,
     },
 
     /// Clear all soft breaks in a namespace
