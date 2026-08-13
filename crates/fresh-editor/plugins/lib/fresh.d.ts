@@ -5146,6 +5146,26 @@ interface HookEventMap {
 			* point of this field is that a bare ``` opens or closes depending on
 			* every fence above it, so there is nothing to fall back on. */
 			region?: "open" | "body" | "close";
+			/** Where this line sits in a table the buffer's grammar recognizes.
+			* `role` is the line's kind (`"header"` is the column-name row,
+			* `"delimiter"` the `|---|---|` row, `"row"` a data row); `first_row`
+			* marks the data row directly below the delimiter; `last` marks the
+			* table's final line.
+			*
+			* Companion to `region`, and recoverable where that is not: "is this a
+			* table row" *is* derivable from a line's own text, so a consumer may
+			* fall back to its own rule when this is absent. What it cannot derive
+			* is where the table starts and ends — that needs the neighbouring
+			* lines, and an edit-sized batch does not contain them.
+			*
+			* `last` is false rather than unknown when the engine could not see the
+			* line below the table, so a consumer drawing a closing edge from it
+			* draws none instead of one in the wrong place. */
+			table?: {
+				role: "header" | "delimiter" | "row";
+				first_row: boolean;
+				last: boolean;
+			};
 		}[];
 		/** Buffer version these byte ranges were captured at. Pass back to
 		* coordinate-mapping APIs to repair stale offsets from this batch. */
