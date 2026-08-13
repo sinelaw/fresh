@@ -173,6 +173,8 @@ pub mod mark_mode_actions;
 pub mod markdown_compose;
 #[cfg(feature = "plugins")]
 pub mod markdown_compose_blocks;
+#[cfg(feature = "plugins")]
+pub mod markdown_compose_code_frame;
 pub mod markdown_compose_diagnostics;
 #[cfg(feature = "plugins")]
 pub mod markdown_compose_first_scroll_relayout;

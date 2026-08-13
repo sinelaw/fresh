@@ -138,7 +138,121 @@ type LineInfoLike = {
   byte_start: number;
   byte_end: number;
   content: string;
+  region?: RegionLine;
 };
+
+// =============================================================================
+// Fenced code blocks: framed from the editor's own region classification
+// =============================================================================
+//
+// A code block gets the same treatment a table does — its delimiters concealed
+// into a box-drawing frame, its body left to the syntax highlighter (embedded
+// fence highlighting has worked since issue #2689, so the body already renders
+// in the fence's own language).
+//
+// The one thing that is NOT like a table: "is this line a table row" is decided
+// from that line alone, but "is this line inside a fence" is not. A bare ```
+// opens or closes depending on every fence above it, `lines_changed` batches
+// carry only the lines an edit or scroll touched, and the plugin cannot read
+// the buffer above its batch synchronously (`getBufferText` is a Promise, and
+// the decoration pass has to emit its clear+add in one command batch).
+//
+// Deriving it plugin-side is therefore not possible correctly: any batch-local
+// rule frames a block whose opening fence happens to be visible and gives up on
+// one that isn't, so the frame appears and disappears with scroll position.
+// Nor can it be memoised — the table width memo is safe *because* it carries
+// only numbers, where staleness costs a column width for one frame; a memo of
+// fence extents would carry structure, and staleness there means framing the
+// wrong lines.
+//
+// So the editor answers it. `line.region` on the `lines_changed` payload is the
+// classification the highlighting engine already makes per line while parsing
+// (`open` / `body` / `close`, absent outside a region) — the same source of
+// truth that colours the block's contents, so the frame can never disagree with
+// the highlighting. It arrives with the batch, alongside coordinates the plugin
+// already trusts, so there is nothing to store and nothing to go stale.
+//
+// `region` is absent both for ordinary lines and when the editor could not
+// resolve the state (a >1MiB buffer whose viewport has no parse checkpoint
+// before it yet). Absence therefore means *unknown*, and an unknown fence line
+// is left rendering literally — the same conservative choice the table frame
+// makes when a neighbouring row is off-screen.
+type RegionLine = "open" | "body" | "close";
+
+/** Whether a line is inside a fenced code block (delimiters included). */
+function isCodeRegion(region: RegionLine | undefined): boolean {
+  return region !== undefined;
+}
+
+/** Whether a line reads as a fence delimiter from its own text alone.
+ *
+ * Only ever used to decide whether an *edit* may have restructured the
+ * document (see `fenceEditArmed`) — never to decide how a line renders, which
+ * is what `region` is for. It has to be textual precisely because it must also
+ * fire for a line that has just STOPPED being a delimiter. */
+function looksLikeFence(content: string): boolean {
+  return /^\s*(?:`{3,}|~{3,})/.test(content);
+}
+
+// Region membership is the one per-line property an edit can change for lines
+// it does not touch: appending a word to a closing ``` (CommonMark forbids an
+// info string on a closer) turns every line below it into code. The editor
+// re-fires `lines_changed` only for the edited line when the edit doesn't
+// change the line count — a structural edit already forces a whole-viewport
+// refresh in `event_apply` — so those lines below would keep the frame they
+// were last rendered with, disagreeing with the highlighting, which does
+// re-converge.
+//
+// Two narrow triggers force the one extra whole-viewport pass that repairs it,
+// between them covering both directions:
+//
+//   * the edit put a fence character into, or took one out of, the buffer —
+//     the only way to create or destroy a delimiter outright
+//     (`touchesFenceChars`, checked on the edit itself because the *deleted*
+//     text is not visible in any later batch);
+//   * the edited line is still delimiter-shaped afterwards — the ``` that just
+//     stopped closing because a word was appended to it (`fenceEditArmed`,
+//     checked on the batch, since only there is the line's new text known).
+//
+// Deliberately NOT "the edited line is inside a block": that is true of every
+// keystroke while typing code, and would put a whole-viewport refresh behind
+// each one. Typing that restructures a block always types a backtick.
+//
+// The armed flag is disarmed by the batch that acts on it, so the refresh's own
+// whole-viewport batch cannot re-arm it.
+const fenceEditArmed = new Set<number>();
+
+/** Whether an edit's text could create or destroy a fence delimiter. */
+function touchesFenceChars(text: string): boolean {
+  return /[`~]/.test(text);
+}
+
+/** The info string of an opening fence — its language — or "" when bare.
+ *
+ * CommonMark's first word of the info string; the engine resolves the same
+ * token to a grammar (`resolve_embedded_syntax`), so the label names exactly
+ * the language the body is being highlighted as. */
+function fenceInfoString(content: string): string {
+  const m = content.match(/^\s*(?:`{3,}|~{3,})\s*(\S+)/);
+  return m ? m[1] : "";
+}
+
+/** A horizontal code-block frame line of the given corner style, filling the
+ * page measure. Two columns short of the measure for the same reason the
+ * thematic-break rule is (see `wrapBudget`): the renderer reserves an
+ * end-of-line column, and a border that reached it would wrap. */
+function buildCodeFrameLine(measure: number, label: string, left: string, right: string): string {
+  const inner = Math.max(1, measure - 2 - displayWidth(left) - displayWidth(right));
+  if (label) {
+    const tag = `─ ${label} `;
+    const tagW = displayWidth(tag);
+    if (tagW < inner) return left + tag + "─".repeat(inner - tagW) + right;
+  }
+  return left + "─".repeat(inner) + right;
+}
+
+// fg matches the table frame's so the two kinds of block read as one system.
+const codeFrameStyle = { fg: "editor.fg" };
 
 // Table borders are emitted PER LINE, exactly like conceals: for each table row
 // in a `lines_changed` batch we clear the virtual lines anchored at that row and
@@ -1197,6 +1311,7 @@ function processLineConceals(
   byteStart: number,
   byteEnd: number,
   measure: number,
+  region: RegionLine | undefined,
   lineNumber?: number,
 ): void {
   // Clear existing conceals and overlays for this line first.
@@ -1217,10 +1332,32 @@ function processLineConceals(
   const lineScopeInclEnd = byteEnd + 1;
   const lineScopeStrictEnd = byteEnd;
 
-  // Skip lines inside code fences (we'd need multi-line context for this;
-  // for now, detect fence lines and code content lines)
   const trimmed = lineContent.trim();
-  if (trimmed.startsWith('```')) return; // fence line itself
+
+  // --- Fenced code blocks ---
+  // The delimiters become the block's frame; the body is left entirely alone,
+  // so the embedded-language highlighting shows through untouched and none of
+  // the inline markdown rules below fire inside code (a `*` in a glob, a `-`
+  // starting a shell line, a `#` comment are not emphasis, a bullet, or a
+  // heading). See the RegionLine notes above for why this is the editor's
+  // answer and not a local guess.
+  if (region === "body") return;
+  if (region === "open" || region === "close") {
+    const frameEnd = lineContentEndByte(lineContent, byteStart);
+    const frame = region === "open"
+      ? buildCodeFrameLine(measure, fenceInfoString(lineContent), "┌", "┐")
+      : buildCodeFrameLine(measure, "", "└", "┘");
+    editor.addConceal(
+      bufferId, "md-syntax", byteStart, frameEnd, frame,
+      "unless-cursor-in", byteStart, lineScopeInclEnd,
+    );
+    editor.addOverlay(bufferId, "md-emphasis", byteStart, frameEnd, codeFrameStyle);
+    return;
+  }
+  // A fence-looking line the editor could not classify: leave it literal
+  // rather than guess a corner. Same conservative choice the table frame
+  // makes for a row whose neighbour is off-screen.
+  if (looksLikeFence(lineContent)) return;
 
   // --- Thematic breaks: `---` / `***` / `___` → one full-measure rule ---
   // Rendered as a single conceal replacement rather than per-character
@@ -1669,10 +1806,17 @@ function processLineSoftBreaks(
   lineContent: string,
   byteStart: number,
   byteEnd: number,
+  region: RegionLine | undefined,
   lineNumber?: number,
 ): void {
   // Clear existing soft breaks for this line range
   editor.clearSoftBreaksInRange(bufferId, byteStart, byteEnd);
+
+  // Code is never re-wrapped: its line breaks are significant, and a body line
+  // is not a markdown block at all. `parseMarkdownBlocks` cannot tell — it sees
+  // one line with no fence context — so it would read an indented code line as
+  // a paragraph and wrap it at the measure.
+  if (isCodeRegion(region)) return;
 
   const viewport = editor.getViewport();
   if (!viewport) return;
@@ -1830,15 +1974,18 @@ function processLineSoftBreaks(
 
 /** Group consecutive table rows in a `lines_changed` batch (adjacency by
  * line_number). Each group is one table's currently-visible run; column widths
- * are uniform within a group. */
+ * are uniform within a group. Lines inside a fenced code block are not table
+ * rows however many pipes they contain, so they both fail to join a group and
+ * break one — matching how a code block separates two tables in the source. */
 function groupTableRows(lines: LineInfoLike[]): LineInfoLike[][] {
   const groups: LineInfoLike[][] = [];
   let cur: LineInfoLike[] = [];
   let lastLn = -2;
   for (const line of lines) {
-    if (isTableRowContent(line.content) && line.line_number === lastLn + 1) {
+    const isRow = !isCodeRegion(line.region) && isTableRowContent(line.content);
+    if (isRow && line.line_number === lastLn + 1) {
       cur.push(line);
-    } else if (isTableRowContent(line.content)) {
+    } else if (isRow) {
       if (cur.length) groups.push(cur);
       cur = [line];
     } else {
@@ -2002,8 +2149,8 @@ editor.on("lines_changed", (data) => {
       line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
     );
 
-    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, measure, line.line_number);
-    processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, line.line_number);
+    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, measure, line.region, line.line_number);
+    processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, line.region, line.line_number);
 
     // Blank row after each list item, so items read as discrete entries.
     //
@@ -2020,14 +2167,19 @@ editor.on("lines_changed", (data) => {
     // Anchoring below every item is line-local, so clear-and-rebuild is always
     // a complete decision. The cost is one blank row after a list's final item
     // as well as between items, which reads as ordinary block separation.
-    if (isListItemContent(line.content)) {
+    //
+    // Inside a fence none of this applies: `- foo` in a shell block is not a
+    // list item and `| a | b |` in a code sample is not a table row, so both
+    // the spacer and the frame are skipped (the clears above already ran, so a
+    // line that becomes code loses whichever it had).
+    if (!isCodeRegion(line.region) && isListItemContent(line.content)) {
       editor.addVirtualLine(
         data.buffer_id, line.byte_start, "",
         listSpacingOptions, false, LIST_SPACING_NS, 0,
       );
     }
 
-    if (isTableRowContent(line.content)) {
+    if (!isCodeRegion(line.region) && isTableRowContent(line.content)) {
       const widths = currentRowWidths.get(line.byte_start) ?? [];
       const prev = byLineNum.get(line.line_number - 1);
       const next = byLineNum.get(line.line_number + 1);
@@ -2076,7 +2228,14 @@ editor.on("lines_changed", (data) => {
     );
   }
 
-  if (tableWidthsGrew) {
+  // One whole-viewport re-fire when an edit left a delimiter-shaped line
+  // behind: every line below it may have crossed into or out of a block, and
+  // those lines are not in this batch (see `fenceEditArmed`). Disarmed first,
+  // so the refresh's own batch — which contains the same line — cannot re-arm.
+  const fenceEdit = fenceEditArmed.delete(data.buffer_id)
+    && data.lines.some((l) => looksLikeFence(l.content));
+
+  if (tableWidthsGrew || fenceEdit) {
     editor.refreshLines(data.buffer_id);
   }
 });
@@ -2097,10 +2256,18 @@ function resetEditedTableWidths(bufferId: number, affStart: number, affEnd: numb
 editor.on("after_insert", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_end);
+  // Typed backticks can open or close a block; anything else can only stop an
+  // already-delimiter-shaped line from being one, which the batch will see.
+  if (touchesFenceChars(data.text)) editor.refreshLines(data.buffer_id);
+  else fenceEditArmed.add(data.buffer_id);
 });
 editor.on("after_delete", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_start);
+  // Deleted backticks are checked here, not in the batch: the text that is gone
+  // appears in no later `lines_changed` payload.
+  if (touchesFenceChars(data.deleted_text)) editor.refreshLines(data.buffer_id);
+  else fenceEditArmed.add(data.buffer_id);
 });
 // cursor_moved: no handler. Cursor-dependent reveal/conceal and table-row
 // un/re-wrap are baked into the markers as activation scopes (emitted in the
