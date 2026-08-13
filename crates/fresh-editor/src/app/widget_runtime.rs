@@ -913,30 +913,6 @@ impl Editor {
         }
     }
 
-    /// Hand vertical scrolling to the widget panel when its spec owns it.
-    ///
-    /// A list that starts at column 0 spans the panel and windows itself to
-    /// `visibleRows`, drawing its own scrollbar from `total`/`visible`. The
-    /// split would otherwise stack a second bar in its reserved column
-    /// beside that one — two tracks for one list, and the split's thumb
-    /// describes the buffer (always exactly one screenful) rather than the
-    /// list. A panel with no such region — a `Raw` body longer than the
-    /// panel, say — keeps the buffer scrollbar it relies on.
-    pub(super) fn sync_widget_panel_scrollable(
-        &mut self,
-        buffer_id: BufferId,
-        scroll_regions: &[crate::widgets::ScrollRegion],
-    ) {
-        let widget_owns_scroll = scroll_regions.iter().any(|r| r.col_in_row == 0);
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.buffers.get_mut(&buffer_id))
-        {
-            state.scrollable = !widget_owns_scroll;
-        }
-    }
-
     /// Mark every view of `buffer_id` as non-horizontally-scrollable.
     ///
     /// Called on each widget-panel repaint rather than once at mount:
@@ -1096,7 +1072,6 @@ impl Editor {
             }
             return;
         }
-        self.sync_widget_panel_scrollable(buffer_id, &scroll_regions);
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
             tracing::error!("rerender_widget_panel({}) failed: {}", panel_key, e);
         }
