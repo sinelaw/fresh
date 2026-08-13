@@ -211,11 +211,132 @@ dock's bottom edge) is correct only while the two coincide.
 Whoever takes §3 or §4 should decide this first, because fixing either one
 against the guessed width bakes the guess in deeper.
 
+## 8. Sending should drive the agent's terminal, not just drop a file
+
+> _Unlike §1–§7 this is not a defect — it is a **change of mechanism**, and it
+> reverses a decision recorded in agent-control-plane.md §8.1. It is written
+> down here with its consequences because the consequences are the hard part,
+> not the four steps._
+
+**Wanted.** Pressing Enter on a message to `@agent` should:
+
+1. **Restore the agent's workspace** if it is not loaded — e.g. the workspace
+   was discovered on disk after a restart and has never been activated.
+2. **Wait for the agent inside it to come back up**, not just the window.
+3. **Focus the right buffer/tab** — the terminal the agent actually runs in.
+4. **Send the whole message as a bracketed paste** into that terminal,
+   followed by an Enter keypress.
+
+**Today.** None of it. The message is written to the peer's `inbox/` as a file
+and the agent picks it up whenever it next polls — which, for an agent parked
+at a prompt, may be never (see "Not in this pass", below, which this section
+supersedes if it lands).
+
+### What already exists
+
+- **Step 1 and 3 are nearly one existing call.** `focusWorkspace(target)`
+  already attaches a session at the worktree when the row is a dormant
+  discovered one, and already copes with the placeholder negative `windowId`
+  such rows carry. It was written for exactly this "row that has never been
+  activated" case.
+- **Step 3's addressing** is already exposed: each session reports a
+  `terminalId` alongside its `windowId`, and the API docs already pair them for
+  this purpose — terminals are owned per-window, so both ids are needed.
+- **Step 4's write primitive** exists: `sendTerminalInput(terminalId, text,
+  windowId)` writes bytes straight to the pty. A separate key path
+  (`send_terminal_key`) already picks app-cursor versus normal sequences, which
+  is the correct primitive for the trailing Enter — better than appending `\r`
+  to the payload, which would be wrong in application-cursor mode.
+
+### What does not exist, in increasing order of difficulty
+
+**Bracketed paste markers are never emitted, and we cannot tell whether the
+agent wants them.** Nothing in the codebase wraps outgoing pty writes in
+`ESC [ 200 ~` … `ESC [ 201 ~`. The constants exist but are used only for
+Fresh's *own* outer terminal, not for embedded children. More importantly,
+embedded terminals are emulated with `alacritty_terminal`, and while its
+`TermMode` carries a `BRACKETED_PASTE` bit, Fresh exposes only `APP_CURSOR`
+from it. So the mode the child has actually requested is one accessor away but
+currently unreadable.
+
+This matters because the markers are not free: an agent whose TUI has *not*
+enabled bracketed paste will receive `[200~` and `[201~` as literal characters
+and type them into its prompt. Wrapping unconditionally trades one bug for
+another. Expose the mode bit first, then wrap only when the child has asked
+for it.
+
+Bracketed paste is nonetheless the right request, and the reason is multi-line
+messages: without it, the first newline in a message is submitted as Enter by
+the receiving TUI, which sends a fragment and treats the remainder as a fresh
+input. That is precisely the failure the wrapping prevents.
+
+**"The agent is restored" has no signal.** Step 2 is the hard one, because it
+is two conditions and only the first is observable:
+
+- the *window and pty* are back — Fresh knows this, it did it;
+- the *agent process inside* is up and sitting at a prompt able to accept
+  input — Fresh does not know this at all.
+
+A coding agent relaunched via its resume command spends seconds initialising,
+often behind a splash or a spinner, and bytes written to the pty before its
+reader is in a read loop are silently lost, or land mid-redraw and get painted
+over. There is no general way to ask a TUI "are you ready".
+
+The usable proxies, none complete:
+
+- The **agent's own startup handshake**. The briefing already instructs every
+  launched agent to write `status idle ready` and say hello before anything
+  else, precisely so that an agent that has not spoken is distinguishable from
+  one that failed to start. That is the closest thing to a readiness signal
+  the system has — but it only holds for agents that follow the briefing.
+- **`lastOutputAt`** — the workspace's most recent terminal output. Useful as
+  a quiet-for-N-ms heuristic, and already exposed for this class of question.
+- A **timeout with a visible fallback**. Whatever gate is chosen, it must
+  expire, and expiry must be user-visible rather than a message that quietly
+  went nowhere.
+
+### The two decisions this needs before it is coded
+
+**1. Does the mailbox file still get written?** If injection is added on top of
+the existing write, an agent that both reads the pasted text *and* later polls
+its inbox acts on the same instruction twice. Three coherent answers — pick
+one deliberately:
+
+- injection *replaces* the file (loses the audit trail and the record that
+  `inbox --take` and `inbox/done/` provide);
+- the file is still written but pre-acknowledged into `done/`, so it is history
+  rather than a pending instruction;
+- both remain, and the injected text names the inbox entry so the agent can
+  recognise them as one thing.
+
+The middle option preserves the record without creating a second delivery, and
+is the recommendation.
+
+**2. What happens when the agent is busy — and this one is a safety
+question.** Injection is unconditional keystrokes into whatever the TUI is
+currently showing. If the agent is mid-turn, the paste lands in its input
+buffer and is submitted at an arbitrary moment. Far worse, if the agent is
+sitting at a **permission prompt** — "Allow edit to src/main.rs? (y/n)" — then
+a pasted sentence followed by Enter answers *that* prompt, and may accept a
+default the user never saw. The `waiting` state, the one a user is most likely
+to be replying to, is exactly the state where a blind Enter is most dangerous.
+
+So injection must be gated on agent state rather than fired whenever a message
+is sent, and the `waiting` case needs an explicit decision about whether the
+paste is held, or the user is shown what they are about to answer. This cannot
+be deferred to "later hardening" — it is the difference between a convenience
+and a mechanism that silently approves tool calls on the user's behalf.
+
+**Also worth noting:** the four steps are per-vendor in practice. `claude`,
+`codex`, `aider` and `opencode` differ in input handling, alt-screen use, and
+what they do with a paste that arrives while busy. Whatever lands should be
+verified against more than one.
+
 ## Not in this pass
 
 One further gap, recorded here because it was established while tracing the
-send path and belongs with the rest, but which is **not** part of the numbered
-items above and should not be bundled into them:
+send path. It is **not** part of the numbered items above and should not be
+bundled into them — though §8, if it lands, is the thing that would close it:
 
 **Delivery is reported, receipt is not.** Pressing Enter writes one file into
 the target agent's `inbox/` and reports `delivered`. Nothing is injected into
