@@ -139,7 +139,36 @@ type LineInfoLike = {
   byte_end: number;
   content: string;
   region?: RegionLine;
+  table?: TableLine;
 };
+
+// Where a line sits in a table, as the highlighting engine classifies it from
+// the Markdown grammar's own `meta.table` scope while parsing.
+//
+// This is the same trick `region` is (see below), one step generalized, and it
+// exists for the half of the table frame that has always been guesswork.
+// "Is this line a table row" is decided from the line alone — that part was
+// never the problem. What is NOT line-local is which *edge* of the frame a row
+// carries: the `┌─┬─┐` goes above the header and the `└─┴─┘` below the last
+// row, and both of those are facts about the line's *neighbours*. A
+// `lines_changed` batch holds only the lines a scroll or an edit touched, so
+// when the neighbour was off-screen the plugin had to guess, and guessed
+// conservatively: a table scrolled past its top drew a `├─┼─┤` where its `┌─┬─┐`
+// belonged, and kept it even after scrolling back, because by then the line
+// above was no longer in a batch either.
+//
+// The engine has the answer for free — it already tracks where the table's
+// scope opens and closes while parsing — so it now says so per line, alongside
+// coordinates the plugin already trusts. Nothing is stored, so nothing goes
+// stale.
+//
+// Unlike `region`, absence here is *recoverable*: the batch-local rules below
+// still work, just conservatively. So absence falls back to them rather than
+// dropping the frame — which matters, because the grammar scopes fewer things
+// as tables than this plugin renders as tables (a table inside a blockquote,
+// for one), and a buffer too large to resolve would otherwise lose every frame.
+type TableRole = "header" | "delimiter" | "row";
+type TableLine = { role: TableRole; first_row: boolean; last: boolean };
 
 // =============================================================================
 // Fenced code blocks: framed from the editor's own region classification
@@ -2560,23 +2589,40 @@ editor.on("lines_changed", (data) => {
 
     if (!isCodeRegion(line.region) && isTableRowContent(line.content)) {
       const widths = currentRowWidths.get(line.byte_start) ?? [];
-      const prev = byLineNum.get(line.line_number - 1);
-      const next = byLineNum.get(line.line_number + 1);
-      // First/last is local. A row is first if it's the buffer's line 0 or its
-      // previous line is present in this batch and is NOT a table row; last if
-      // its next line is present and not a table row. When a neighbour is
-      // off-screen (absent from the batch) we conservatively treat the row as
-      // mid-table, so a tall table scrolled past its top/bottom never draws a
-      // spurious frame edge — it redraws when that neighbour re-enters a batch.
-      const isFirst = line.line_number === 0 || (prev !== undefined && !isTableRowContent(prev.content));
-      // Last if the next line is present and not a table row, OR this row is the
-      // final line of the buffer (no next line exists at all — distinct from a
-      // next line merely off-screen, which we treat as mid-table).
-      const isLast =
-        (next !== undefined && !isTableRowContent(next.content)) ||
-        (next === undefined && line.byte_end >= bufEnd);
-      const isSep = isSepRowContent(line.content);
-      const prevIsSep = prev !== undefined && isSepRowContent(prev.content);
+      let isFirst: boolean, isSep: boolean, prevIsSep: boolean, isLast: boolean;
+      if (line.table) {
+        // The engine placed this row in its table (see `TableLine`). Every
+        // edge is then a property of the line itself, so the frame is the same
+        // whether the batch is a whole viewport or the one line an edit
+        // touched — which is the entire point.
+        isFirst = line.table.role === "header";
+        isSep = line.table.role === "delimiter";
+        // The delimiter row already renders as `├─┼─┤` from its own pipes, so
+        // the first data row must not draw a second one above itself.
+        prevIsSep = line.table.first_row;
+        isLast = line.table.last;
+      } else {
+        // No answer from the engine — the grammar doesn't scope this as a
+        // table (it is inside a blockquote, say, or interrupts a paragraph),
+        // or the buffer is too large to resolve the state. Fall back to the
+        // batch-local rules: a row is first if it's the buffer's line 0 or its
+        // previous line is present in this batch and is NOT a table row; last
+        // if its next line is present and not a table row. When a neighbour is
+        // off-screen we conservatively treat the row as mid-table, so a tall
+        // table scrolled past its top/bottom never draws a spurious frame edge
+        // — it redraws when that neighbour re-enters a batch.
+        const prev = byLineNum.get(line.line_number - 1);
+        const next = byLineNum.get(line.line_number + 1);
+        isFirst = line.line_number === 0 || (prev !== undefined && !isTableRowContent(prev.content));
+        // Last if the next line is present and not a table row, OR this row is
+        // the final line of the buffer (no next line exists at all — distinct
+        // from a next line merely off-screen, which we treat as mid-table).
+        isLast =
+          (next !== undefined && !isTableRowContent(next.content)) ||
+          (next === undefined && line.byte_end >= bufEnd);
+        isSep = isSepRowContent(line.content);
+        prevIsSep = prev !== undefined && isSepRowContent(prev.content);
+      }
       emitRowBorders(data.buffer_id, line.byte_start, widths, isFirst, isSep, prevIsSep, isLast);
     }
   }
