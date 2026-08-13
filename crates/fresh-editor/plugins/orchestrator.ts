@@ -14926,6 +14926,18 @@ function pushChatCandidates(force = false): void {
     chatPushed = null;
     return;
   }
+  // A blurred dock is the inert background — the keyboard is in the editor, or
+  // a modal is up over the top of it. A popup left open there is not just
+  // pointless, it is harmful: the popup owns Escape, so the New Workspace
+  // dialog could not be dismissed while the chat behind it still had a
+  // candidate list up.
+  if (dockBlurred) {
+    if (chatPushed !== null) {
+      chatPushed = null;
+      f.panel.setCompletions(f.key, []);
+    }
+    return;
+  }
   // An address with a message half-written is one you have committed to: the
   // popup owns Enter while it is up, so leaving it open there would put Enter
   // back on the candidate list instead of on Send.
