@@ -858,6 +858,14 @@ impl Editor {
         entries: &[fresh_core::text_property::TextPropertyEntry],
         focus_cursor: Option<crate::widgets::FocusCursor>,
     ) {
+        // A widget panel is laid out to the panel's exact width and clipped
+        // there, so its view has nothing to scroll sideways to. Pin it
+        // before anything else: the focus cursor below can sit at the end
+        // of a row that reaches the right edge, and cursor-following would
+        // otherwise drag the whole panel — header included — left by a
+        // column or two.
+        self.pin_widget_panel_horizontal_scroll(buffer_id);
+
         // If the plugin has taken explicit control of this buffer's cursor
         // (via `setBufferShowCursors`), the widget runtime must not touch
         // its visibility or position — the plugin owns it. This lets a
@@ -901,6 +909,33 @@ impl Editor {
                     let cursor = vs.cursors.primary_mut();
                     cursor.position = byte;
                 }
+            }
+        }
+    }
+
+    /// Mark every view of `buffer_id` as non-horizontally-scrollable.
+    ///
+    /// Called on each widget-panel repaint rather than once at mount:
+    /// a panel that is hidden and shown again gets a fresh
+    /// `SplitViewState`, and the flag has to land on that one too.
+    fn pin_widget_panel_horizontal_scroll(&mut self, buffer_id: BufferId) {
+        for vs in self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .values_mut()
+        {
+            if vs.buffer_state(buffer_id).is_none() {
+                continue;
+            }
+            if vs.active_buffer == buffer_id {
+                vs.viewport.horizontal_scroll_enabled = false;
+                vs.viewport.left_column = 0;
+            }
+            if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
+                bs.viewport.horizontal_scroll_enabled = false;
+                bs.viewport.left_column = 0;
             }
         }
     }

@@ -2084,20 +2084,51 @@ fn open_review_diff(harness: &mut EditorTestHarness) -> String {
     harness.screen_to_string()
 }
 
-/// Reveal the FILES sidebar (`F`) and return the resulting screen. Both
+/// True while a side panel — not the diff — holds keyboard focus. Each
+/// panel header carries a `▸` when it owns the keys.
+fn review_panel_has_focus(screen: &str) -> bool {
+    screen.contains("▸FILES") || screen.contains("▸COMMENTS")
+}
+
+/// Tab until the diff holds the keys again. `F` / `C` focus the panel they
+/// reveal, and the Tab order is FILES → diff → COMMENTS, so the number of
+/// steps back to the diff depends on which panels are already open.
+fn focus_review_diff(harness: &mut EditorTestHarness) {
+    for _ in 0..3 {
+        if !review_panel_has_focus(&harness.screen_to_string()) {
+            return;
+        }
+        let before = harness.screen_to_string();
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string() != before)
+            .unwrap();
+    }
+    assert!(
+        !review_panel_has_focus(&harness.screen_to_string()),
+        "focus never came back to the diff:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Reveal the FILES sidebar (`F`) and hand focus back to the diff. Both
 /// side panels start hidden so the diff owns the full width; tests that
-/// exercise the sidebar have to ask for it first.
+/// exercise the sidebar have to ask for it first, and `F` focuses what it
+/// reveals — so this returns the caller to the state it would otherwise
+/// assume, with the panel visible and the diff holding the keys.
 fn show_files_panel(harness: &mut EditorTestHarness) -> String {
     harness
         .send_key(KeyCode::Char('F'), KeyModifiers::SHIFT)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("FILES"))
+        .wait_until(|h| h.screen_to_string().contains("▸FILES"))
         .unwrap();
+    focus_review_diff(harness);
     harness.screen_to_string()
 }
 
-/// Reveal the COMMENTS rail (`C`) and return the resulting screen.
+/// Reveal the COMMENTS rail (`C`) and hand focus back to the diff, for the
+/// same reason as `show_files_panel`.
 fn show_comments_panel(harness: &mut EditorTestHarness) -> String {
     harness
         .send_key(KeyCode::Char('C'), KeyModifiers::SHIFT)
@@ -2105,6 +2136,7 @@ fn show_comments_panel(harness: &mut EditorTestHarness) -> String {
     harness
         .wait_until(|h| h.screen_to_string().contains("COMMENTS"))
         .unwrap();
+    focus_review_diff(harness);
     harness.screen_to_string()
 }
 

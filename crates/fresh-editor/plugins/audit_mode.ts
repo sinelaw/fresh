@@ -5109,9 +5109,11 @@ function review_filter_text_input(args: { text: string }): void {
     if (!filterEditing || filesPanel === null || !args?.text) return;
     filesPanel.command(textInputChar(args.text));
 }
-// The host dispatches unbound printable keys in an `allowTextInput`
-// mode as the `mode_text_input` action; the `filterEditing` guard keeps
-// this a no-op everywhere else (other plugins register it too).
+// The host dispatches unbound printable keys in an `allowTextInput` mode
+// as the `mode_text_input` action, qualified by the mode name so it
+// reaches the plugin that defined the mode — here, only while
+// `REVIEW_FILTER_MODE` is active. The `filterEditing` guard covers the
+// unqualified legacy dispatch, which other plugins also answer to.
 registerHandler("mode_text_input", review_filter_text_input);
 
 /** Editing keys (Backspace, arrows, …) and the tree-walking keys, both

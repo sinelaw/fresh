@@ -501,7 +501,7 @@ pub enum ModeKeyDisposition {
     /// The key extends a pending chord — push it and wait.
     ChordPending,
     /// A text-input mode captures this character
-    /// (`mode_text_input:<ch>` plugin action).
+    /// (`mode_text_input@<mode>:<ch>` plugin action).
     TextInput(char),
     /// Clipboard / select-all chord forwarded despite the text-input
     /// mode block — it belongs to the focused widget Text input.
