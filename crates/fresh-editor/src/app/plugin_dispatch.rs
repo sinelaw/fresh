@@ -760,6 +760,9 @@ impl Editor {
             PluginCommand::SetLineNumbers { buffer_id, enabled } => {
                 self.handle_set_line_numbers(buffer_id, enabled);
             }
+            PluginCommand::SetFoldIndicators { buffer_id, enabled } => {
+                self.handle_set_fold_indicators(buffer_id, enabled);
+            }
             PluginCommand::SetIndentationGuide { buffer_id, enabled } => {
                 self.handle_set_indentation_guide(buffer_id, enabled);
             }

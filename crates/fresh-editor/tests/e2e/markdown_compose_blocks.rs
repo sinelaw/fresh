@@ -327,6 +327,54 @@ fn test_nested_quote_renders_two_bars() {
 }
 
 // ---------------------------------------------------------------------------
+// Fold indicators
+// ---------------------------------------------------------------------------
+
+/// Compose mode drops the gutter's fold arrows, and gets them back on exit.
+///
+/// They are a code-editor affordance: compose already hides line numbers, and
+/// a document preview has no use for a fold control — they only broke up the
+/// clean left edge. Nested list items give the indent-based fold detector
+/// something to mark, which is what makes the second half of this test a real
+/// check rather than an assertion about an empty gutter.
+#[test]
+fn test_fold_indicators_are_hidden_while_composing() {
+    let (mut harness, _tmp) = composed(LIST_MD, 100, 30);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains('▾') && !screen.contains('▸'),
+        "compose mode should draw no fold indicators.\nScreen:\n{screen}",
+    );
+
+    // Toggle compose back off.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Source markers coming back is the "compose is off" signal.
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("**"))
+        .unwrap();
+    harness.wait_for_async_quiescence(8).unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('▾'),
+        "the fold indicator should come back when compose is turned off — \
+         compose withdraws its opinion rather than owning the setting.\n\
+         Screen:\n{screen}",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Wrapped block quotes
 // ---------------------------------------------------------------------------
 

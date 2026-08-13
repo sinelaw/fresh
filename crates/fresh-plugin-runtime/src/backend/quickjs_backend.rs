@@ -5622,6 +5622,24 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Show or hide the gutter's fold indicators (`▾` / `▸`) for a buffer in
+    /// the active split, the way `setLineNumbers` does for line numbers.
+    ///
+    /// Pass `null` to withdraw the plugin's opinion and fall back to the
+    /// user's own setting. The plugin's value is stored separately from that
+    /// setting and is never persisted, so it can neither overwrite a
+    /// deliberate choice — "Toggle Folding Indicators (Current Buffer)" still
+    /// wins while this is set — nor leak into the saved session. A mode that
+    /// hides them should still clear its value on the way out.
+    pub fn set_fold_indicators(&self, buffer_id: u32, enabled: Option<bool>) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetFoldIndicators {
+                buffer_id: BufferId(buffer_id as usize),
+                enabled,
+            })
+            .is_ok()
+    }
+
     /// Enable or disable indentation guides for a buffer, overriding the global
     /// `editor.indentation_guide` setting. Tool views that render non-editable
     /// content (e.g. the Git Log commit-detail diff) disable them.

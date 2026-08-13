@@ -1073,6 +1073,13 @@ function enableMarkdownCompose(bufferId: number): void {
   // Hide line numbers in compose mode
   editor.setLineNumbers(bufferId, false);
 
+  // Same for the gutter's fold arrows: they are a code-editor affordance, and
+  // a document preview with no line numbers has no use for them — they only
+  // break up the clean left edge. Compose passes an opinion, not a setting:
+  // the editor keeps it apart from the user's own "Toggle Folding Indicators"
+  // choice, which still wins here and is what comes back on the way out.
+  editor.setFoldIndicators(bufferId, false);
+
   // Enable native line wrapping so that long lines without whitespace
   // (which the plugin can't soft-break) are force-wrapped by the Rust
   // wrapping transform at the content width.
@@ -1117,6 +1124,11 @@ function disableMarkdownCompose(bufferId: number): void {
 
     // Re-enable line numbers
     editor.setLineNumbers(bufferId, true);
+
+    // Withdraw the fold-indicator opinion rather than forcing them back on:
+    // `null` restores whatever the user's own setting resolves to, which for
+    // someone who had deliberately turned the arrows off is still off.
+    editor.setFoldIndicators(bufferId, null);
 
     // Clear layout hints, emphasis overlays, conceals, and soft breaks
     editor.setLayoutHints(bufferId, null, {});
