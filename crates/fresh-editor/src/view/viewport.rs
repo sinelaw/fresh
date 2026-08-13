@@ -58,6 +58,16 @@ pub struct Viewport {
     /// When true, horizontal scrolling is disabled
     pub line_wrap_enabled: bool,
 
+    /// Whether the view may scroll sideways to follow the cursor.
+    ///
+    /// False for a buffer rendered by a mounted widget panel: the widget
+    /// runtime already lays its rows out to the panel's exact width and
+    /// clips them, and the "cursor" there is a focus marker rather than a
+    /// text caret. Letting it drag the view sideways shifts the whole
+    /// panel — header included — by however far past the edge the focused
+    /// row happens to end.
+    pub horizontal_scroll_enabled: bool,
+
     /// Terminal-grid wrap mode (fresh#2649): with `line_wrap_enabled`,
     /// rows break at exact column boundaries every `wrap_column` columns
     /// (no word-boundary preference, no gutter, no hanging indent),
@@ -177,6 +187,7 @@ impl Viewport {
             row_pass_owns_placement: false,
             horizontal_scroll_offset: 5,
             line_wrap_enabled: false,
+            horizontal_scroll_enabled: true,
             grid_wrap: false,
             wrap_indent: true,
             wrap_column: None,
@@ -1523,7 +1534,8 @@ impl Viewport {
         gutter_width: usize,
     ) {
         // Skip if line wrapping is enabled (all columns visible via wrapping)
-        if self.line_wrap_enabled {
+        // or if this view never scrolls sideways (a widget panel).
+        if self.line_wrap_enabled || !self.horizontal_scroll_enabled {
             self.left_column = 0;
             return;
         }
@@ -2344,6 +2356,12 @@ impl Viewport {
         line_length: usize,
         buffer: &mut Buffer,
     ) {
+        // A view that never scrolls sideways (a widget panel) stays pinned
+        // at column 0 whatever the cursor does.
+        if !self.horizontal_scroll_enabled {
+            self.left_column = 0;
+            return;
+        }
         // `self.width` is the content width; split layout has already removed
         // any vertical scrollbar column.
         let gutter_width = self.gutter_width(buffer);

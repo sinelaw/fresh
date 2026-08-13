@@ -434,19 +434,20 @@ impl Editor {
                 Some(Ok(()))
             }
             ModeKeyDisposition::TextInput(ch) => {
-                // A panel mounted on this buffer with a focused Text
-                // widget takes the character directly — the host owns the
-                // field, so the plugin gets the edit back as a `change`
-                // event and never has to re-implement typing. Only when
-                // there is no such field does this fall back to the
-                // `mode_text_input` plugin action, which is registered
-                // under one global name and so can only ever reach a
-                // single plugin.
-                if let Some(panel_id) = focused_widget_panel {
-                    self.handle_widget_text_char(&panel_id, &ch.to_string());
-                    return Some(Ok(()));
-                }
-                let action_name = format!("mode_text_input:{}", ch);
+                // Qualify the dispatch with the mode that claimed the key
+                // so it reaches the plugin that *defined* that mode.
+                // `mode_text_input` alone is one global name, so several
+                // text-input modes would otherwise fight over it and the
+                // last plugin to call `defineMode` would swallow everyone
+                // else's typing. Deliberately still an async plugin
+                // action: a mode's other bindings (Space, Backspace, …)
+                // edit the same field through the same queue, and taking
+                // a host-side shortcut here would let plain characters
+                // overtake them and scramble the typed text.
+                let action_name = match view.effective_mode.as_deref() {
+                    Some(mode) => format!("mode_text_input@{}:{}", mode, ch),
+                    None => format!("mode_text_input:{}", ch),
+                };
                 Some(self.handle_action(Action::PluginAction(action_name)))
             }
             ModeKeyDisposition::Forward(action) => Some(self.handle_action(action)),

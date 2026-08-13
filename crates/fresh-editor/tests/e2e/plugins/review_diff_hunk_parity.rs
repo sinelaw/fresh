@@ -92,18 +92,46 @@ fn open_review_diff(harness: &mut EditorTestHarness) -> String {
     harness.screen_to_string()
 }
 
+/// True while a side panel — not the diff — holds keyboard focus.
+fn review_panel_has_focus(screen: &str) -> bool {
+    screen.contains("▸FILES") || screen.contains("▸COMMENTS")
+}
+
+/// Tab until the diff holds the keys again. `F` / `C` focus the panel they
+/// reveal, and the Tab order is FILES → diff → COMMENTS, so the number of
+/// steps back to the diff depends on which panels are already open.
+fn focus_review_diff(harness: &mut EditorTestHarness) {
+    for _ in 0..3 {
+        if !review_panel_has_focus(&harness.screen_to_string()) {
+            return;
+        }
+        let before = harness.screen_to_string();
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string() != before)
+            .unwrap();
+    }
+    assert!(
+        !review_panel_has_focus(&harness.screen_to_string()),
+        "focus never came back to the diff:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Reveal the FILES sidebar (`F`); it starts hidden so the diff owns the
-/// full width.
+/// full width. `F` focuses what it reveals, so hand the keys back to the
+/// diff — callers here drive the diff, not the sidebar.
 fn show_files_panel(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('F'), KeyModifiers::SHIFT)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("FILES"))
+        .wait_until(|h| h.screen_to_string().contains("▸FILES"))
         .unwrap();
+    focus_review_diff(harness);
 }
 
-/// Reveal the COMMENTS rail (`C`).
+/// Reveal the COMMENTS rail (`C`), likewise leaving focus on the diff.
 fn show_comments_panel(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('C'), KeyModifiers::SHIFT)
@@ -111,6 +139,7 @@ fn show_comments_panel(harness: &mut EditorTestHarness) {
     harness
         .wait_until(|h| h.screen_to_string().contains("COMMENTS"))
         .unwrap();
+    focus_review_diff(harness);
 }
 
 /// §5.2 — the review sidebar lists the changed file under a section header

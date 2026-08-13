@@ -4379,6 +4379,23 @@ fn blog_showcase_fresh_0_4_0_review_diff() {
     h.wait_until(|h| h.screen_to_string().contains("COMMENTS"))
         .unwrap();
     snap(&mut h, &mut s, Some("C"), 220);
+    // Each panel takes focus as it appears; Tab back to the diff so the
+    // walk below moves the diff cursor and not a panel's selection. The
+    // Tab order is FILES → diff → COMMENTS, so how many steps that takes
+    // depends on which panels are open.
+    let panel_focused = |h: &EditorTestHarness| {
+        let screen = h.screen_to_string();
+        screen.contains("▸FILES") || screen.contains("▸COMMENTS")
+    };
+    for _ in 0..3 {
+        if !panel_focused(&h) {
+            break;
+        }
+        let before = h.screen_to_string();
+        h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| h.screen_to_string() != before).unwrap();
+    }
+    assert!(!panel_focused(&h), "focus never came back to the diff");
     hold(&mut h, &mut s, 6, 140);
 
     // [2] switches the center panel to a side-by-side OLD/NEW view.

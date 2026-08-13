@@ -4950,17 +4950,23 @@ impl JsEditorApi {
         }
 
         // If allow_text_input is set, register a wildcard handler for text input
-        // so the plugin can receive arbitrary character input
+        // so the plugin can receive arbitrary character input.
+        //
+        // Register it twice: once under the mode-qualified name, which is
+        // what the host dispatches, and once under the bare name as a
+        // fallback. The bare name is a single global slot — every
+        // text-input mode overwrites it — so without the qualified entry
+        // the plugin that happened to call `defineMode` last would receive
+        // the characters typed into *every* other plugin's text field.
         let allow_text = allow_text_input.0.unwrap_or(false);
         if allow_text {
+            let handler = PluginHandler {
+                plugin_name: self.plugin_name.clone(),
+                handler_name: "mode_text_input".to_string(),
+            };
             let mut registered = self.registered_actions.borrow_mut();
-            registered.insert(
-                "mode_text_input".to_string(),
-                PluginHandler {
-                    plugin_name: self.plugin_name.clone(),
-                    handler_name: "mode_text_input".to_string(),
-                },
-            );
+            registered.insert(format!("mode_text_input@{}", name), handler.clone());
+            registered.insert("mode_text_input".to_string(), handler);
         }
 
         self.command_sender
@@ -9077,18 +9083,43 @@ impl QuickJsBackend {
         args_json: Option<&str>,
         request_id: Option<u64>,
     ) -> Result<()> {
-        // Handle mode_text_input:<char> — route to the plugin that registered
-        // "mode_text_input" and pass the character as an argument.
-        let (lookup_name, text_input_char) =
-            if let Some(ch) = action_name.strip_prefix("mode_text_input:") {
-                ("mode_text_input", Some(ch.to_string()))
-            } else {
-                (action_name, None)
-            };
+        // Handle text input from a mode that was defined with
+        // `allowTextInput`. The host dispatches the mode-qualified form
+        // `mode_text_input@<mode>:<char>`; resolve it to the plugin that
+        // defined *that* mode, and fall back to the bare `mode_text_input`
+        // registration for the unqualified form (and for a mode defined
+        // before this qualification existed). The character is everything
+        // after the first `:`, so a typed `:` survives intact.
+        let qualified = action_name
+            .strip_prefix("mode_text_input@")
+            .and_then(|rest| rest.split_once(':'));
+        let (lookup_name, fallback_name, text_input_char) = match qualified {
+            Some((mode, ch)) => (
+                format!("mode_text_input@{}", mode),
+                Some("mode_text_input"),
+                Some(ch.to_string()),
+            ),
+            None => match action_name.strip_prefix("mode_text_input:") {
+                Some(ch) => ("mode_text_input".to_string(), None, Some(ch.to_string())),
+                None => (action_name.to_string(), None, None),
+            },
+        };
 
-        let pair = self.registered_actions.borrow().get(lookup_name).cloned();
+        let pair = {
+            let registered = self.registered_actions.borrow();
+            registered
+                .get(&lookup_name)
+                .or_else(|| fallback_name.and_then(|n| registered.get(n)))
+                .cloned()
+        };
         let (plugin_name, function_name) = match pair {
             Some(handler) => (handler.plugin_name, handler.handler_name),
+            // No registration: fall back to a global function of the same
+            // name in the main context. For text input that is the bare
+            // handler name — the qualified lookup key is not a function.
+            None if text_input_char.is_some() => {
+                ("main".to_string(), "mode_text_input".to_string())
+            }
             None => ("main".to_string(), lookup_name.to_string()),
         };
 
