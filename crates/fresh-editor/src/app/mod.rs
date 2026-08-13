@@ -836,8 +836,7 @@ pub struct Editor {
     /// `materialize_window` when the real maps take over. An empty vec is
     /// a real answer — "looked, no agent" — so a shell-only workspace is
     /// read once rather than on every refresh.
-    pub(crate) dormant_agent_argv:
-        std::collections::HashMap<fresh_core::WindowId, Vec<String>>,
+    pub(crate) dormant_agent_argv: std::collections::HashMap<fresh_core::WindowId, Vec<String>>,
 
     /// Whether workspace files (`workspaces/*.json`) may be written at all;
     /// `false` under `--no-restore`. Quit-time saves and mid-session

@@ -350,9 +350,7 @@ pub fn widget_panel_key(
             // mouth. A focused field owns the space bar; claiming it dock-wide
             // meant the chat's composer silently dropped every space, so a
             // message arrived as one run-together word.
-            KeyCode::Char(' ') if !view.focused_widget_is_text => {
-                return DockEvent("dock_space")
-            }
+            KeyCode::Char(' ') if !view.focused_widget_is_text => return DockEvent("dock_space"),
             _ => {}
         }
     }

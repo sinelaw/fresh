@@ -5211,9 +5211,9 @@ impl Editor {
             // for as long as a completion popup is open. Every overlay that
             // predates this is a full-width `labeledSection`, so its cleared
             // span is unchanged.
-            let overlay_cols = crate::primitives::display_width::str_width(
-                o.entry.text.trim_end_matches('\n'),
-            ) as u16;
+            let overlay_cols =
+                crate::primitives::display_width::str_width(o.entry.text.trim_end_matches('\n'))
+                    as u16;
             // Overlay rows that a container inset (a bare completion
             // popup inside a `LabeledSection`) start past the panel's
             // left edge, so the cleared span and the paint origin both

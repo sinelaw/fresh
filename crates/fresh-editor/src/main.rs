@@ -3683,29 +3683,33 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
         // verbs inherit "which Fresh instance, which workspace" for free —
         // which is the whole reason an agent should not be reaching for the
         // filesystem to do this.
-        Some("agent") => match &rest[1..] {
-            [.., "--help"] | [.., "-h"] | [] => {
-                eprintln!(
+        Some("agent") => {
+            match &rest[1..] {
+                [.., "--help"] | [.., "-h"] | [] => {
+                    eprintln!(
                     "usage: fresh --cmd agent status <working|waiting|idle|done|blocked> [summary]"
                 );
-                eprintln!("       fresh --cmd agent say <message>     say something in the user's chat");
-                eprintln!("       fresh --cmd agent inbox [--take]    read what the user asked for");
-                Ok(())
-            }
-            ["status", state, summary @ ..] => agent_status_command(session, state, summary),
-            ["say", words @ ..] => agent_say_command(session, words),
-            ["inbox", flags @ ..] => {
-                agent_inbox_command(session, flags.contains(&"--take"))
-            }
-            _ => {
-                eprintln!(
+                    eprintln!("       fresh --cmd agent say <message>     say something in the user's chat");
+                    eprintln!(
+                        "       fresh --cmd agent inbox [--take]    read what the user asked for"
+                    );
+                    Ok(())
+                }
+                ["status", state, summary @ ..] => agent_status_command(session, state, summary),
+                ["say", words @ ..] => agent_say_command(session, words),
+                ["inbox", flags @ ..] => agent_inbox_command(session, flags.contains(&"--take")),
+                _ => {
+                    eprintln!(
                     "usage: fresh --cmd agent status <working|waiting|idle|done|blocked> [summary]"
                 );
-                eprintln!("       fresh --cmd agent say <message>     say something in the user's chat");
-                eprintln!("       fresh --cmd agent inbox [--take]    read what the user asked for");
-                std::process::exit(2);
+                    eprintln!("       fresh --cmd agent say <message>     say something in the user's chat");
+                    eprintln!(
+                        "       fresh --cmd agent inbox [--take]    read what the user asked for"
+                    );
+                    std::process::exit(2);
+                }
             }
-        },
+        }
         Some("command") => match &rest[1..] {
             // Before the verb arms, or `run --help` runs a command named
             // `--help` and reports that no such command is registered.
@@ -3986,7 +3990,6 @@ See also: fresh --cmd help plugin   — the runtime contract, and a worked
     out
 }
 
-
 /// One line per member of a `type XxxApi = { … }` block: the signature, and
 /// the first sentence of its doc comment.
 ///
@@ -4002,7 +4005,9 @@ fn api_block_summary(text: &str, type_name: &str) -> Vec<String> {
         let t = line.trim();
         if !inside {
             let head = t.trim_start_matches("export ").trim();
-            if head.starts_with(&format!("type {type_name} ")) || head.starts_with(&format!("type {type_name}=")) {
+            if head.starts_with(&format!("type {type_name} "))
+                || head.starts_with(&format!("type {type_name}="))
+            {
                 inside = true;
             }
             continue;
@@ -4078,7 +4083,10 @@ fn editor_member_summary(names: &[&str]) -> Vec<String> {
     let entries = parse_dts_entries(EMBEDDED_FRESH_DTS, "fresh.d.ts");
     let mut out = Vec::new();
     for want in names {
-        if let Some(e) = entries.iter().find(|e| &e.name == want && e.signature.contains('(')) {
+        if let Some(e) = entries
+            .iter()
+            .find(|e| &e.name == want && e.signature.contains('('))
+        {
             let summary = e
                 .doc
                 .join(" ")
@@ -4088,7 +4096,12 @@ fn editor_member_summary(names: &[&str]) -> Vec<String> {
                 .trim()
                 .trim_end_matches('.')
                 .to_string();
-            let sig = e.signature.split(" {").next().unwrap_or(&e.signature).trim_end();
+            let sig = e
+                .signature
+                .split(" {")
+                .next()
+                .unwrap_or(&e.signature)
+                .trim_end();
             out.push(if summary.is_empty() {
                 format!("  {sig}")
             } else {
@@ -5168,8 +5181,25 @@ fn owning_plugin_api(member: &str, files: &[(String, String)]) -> Option<String>
 /// carry no information worth printing.
 fn referenced_type_names(signature: &str) -> Vec<String> {
     const BORING: &[&str] = &[
-        "string", "number", "boolean", "void", "null", "undefined", "any", "unknown", "never",
-        "Promise", "Array", "Record", "Partial", "Map", "Set", "true", "false", "type", "readonly",
+        "string",
+        "number",
+        "boolean",
+        "void",
+        "null",
+        "undefined",
+        "any",
+        "unknown",
+        "never",
+        "Promise",
+        "Array",
+        "Record",
+        "Partial",
+        "Map",
+        "Set",
+        "true",
+        "false",
+        "type",
+        "readonly",
     ];
     let mut out: Vec<String> = Vec::new();
     let mut word = String::new();

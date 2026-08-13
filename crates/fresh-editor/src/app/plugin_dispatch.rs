@@ -467,7 +467,10 @@ impl Editor {
                     // materialized; the persisted snapshot is the only place
                     // its agent is recorded until then.
                     agent_command: if self.materialize_pending.contains(&s.id) {
-                        self.dormant_agent_argv.get(&s.id).cloned().unwrap_or_default()
+                        self.dormant_agent_argv
+                            .get(&s.id)
+                            .cloned()
+                            .unwrap_or_default()
                     } else {
                         agent_argv_for_window(s)
                     },

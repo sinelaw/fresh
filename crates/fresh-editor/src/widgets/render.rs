@@ -4152,7 +4152,15 @@ fn render_completion_item_overlay(
     bare: bool,
 ) -> TextPropertyEntry {
     if bare {
-        return render_completion_item(item, kind, selected, total_cols, scrollbar, marker_gutter, 0);
+        return render_completion_item(
+            item,
+            kind,
+            selected,
+            total_cols,
+            scrollbar,
+            marker_gutter,
+            0,
+        );
     }
     let inner = total_cols.saturating_sub(2).max(1);
     // Reuse the inline-row builder for the body — same layout
@@ -4306,7 +4314,9 @@ fn render_completion_item(
     // Budget = total_cols - (align_cols) - (gutter lead) - (1 scrollbar col).
     // The alignment columns line the item up with the bracketed
     // input value (see the function docstring).
-    let text_budget = total_cols.saturating_sub(align_cols + lead).saturating_sub(1);
+    let text_budget = total_cols
+        .saturating_sub(align_cols + lead)
+        .saturating_sub(1);
     let item_chars: Vec<char> = item.chars().collect();
     let (visible_item, truncated): (String, bool) = if item_chars.len() <= text_budget {
         (item.to_string(), false)
@@ -8663,14 +8673,15 @@ mod tests {
         // bare input is visibly the thing being typed into.
         let entry = render_text_input("hello", -1, None, false, "", None, 0, 0, false, true).entry;
         assert_eq!(entry.text, "hello");
-        let focused =
-            render_text_input("hello", -1, None, true, "", None, 0, 0, false, true).entry;
+        let focused = render_text_input("hello", -1, None, true, "", None, 0, 0, false, true).entry;
         // Trailing pad cell for the caret to park on, no brackets.
         assert_eq!(focused.text, "hello ");
-        assert!(focused
-            .inline_overlays
-            .iter()
-            .any(|o| o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some(KEY_INPUT_BG)));
+        assert!(focused.inline_overlays.iter().any(|o| o
+            .style
+            .bg
+            .as_ref()
+            .and_then(|c| c.as_theme_key())
+            == Some(KEY_INPUT_BG)));
     }
 
     #[test]
@@ -8686,7 +8697,8 @@ mod tests {
 
     #[test]
     fn text_input_with_label_prefixes_with_label_space() {
-        let entry = render_text_input("foo", -1, None, false, "Search:", None, 0, 0, false, false).entry;
+        let entry =
+            render_text_input("foo", -1, None, false, "Search:", None, 0, 0, false, false).entry;
         assert_eq!(entry.text, "Search: [foo]");
     }
 
@@ -8703,8 +8715,19 @@ mod tests {
     fn text_input_focused_with_selection_adds_selection_bg_overlay() {
         // Focused + selection range → input-bg overlay AND a
         // selection-bg overlay scoped to the selected bytes.
-        let entry =
-            render_text_input("hello world", 5, Some((0, 5)), true, "", None, 0, 0, false, false).entry;
+        let entry = render_text_input(
+            "hello world",
+            5,
+            Some((0, 5)),
+            true,
+            "",
+            None,
+            0,
+            0,
+            false,
+            false,
+        )
+        .entry;
         // First char is at byte 1 (after `[`); selection over
         // bytes 0..5 of value → entry bytes 1..6.
         let sel = entry
@@ -8723,8 +8746,19 @@ mod tests {
     fn text_input_unfocused_skips_selection_overlay() {
         // Selection only paints when focused — an inactive widget
         // shows no highlight.
-        let entry =
-            render_text_input("hello", -1, Some((0, 5)), false, "", None, 0, 0, false, false).entry;
+        let entry = render_text_input(
+            "hello",
+            -1,
+            Some((0, 5)),
+            false,
+            "",
+            None,
+            0,
+            0,
+            false,
+            false,
+        )
+        .entry;
         let has_sel_overlay = entry.inline_overlays.iter().any(|o| {
             o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some("ui.text_input_selection_bg")
         });
@@ -8786,8 +8820,19 @@ mod tests {
 
     #[test]
     fn text_input_unfocused_empty_shows_placeholder_in_muted() {
-        let entry =
-            render_text_input("", -1, None, false, "", Some("type here"), 0, 0, false, false).entry;
+        let entry = render_text_input(
+            "",
+            -1,
+            None,
+            false,
+            "",
+            Some("type here"),
+            0,
+            0,
+            false,
+            false,
+        )
+        .entry;
         assert_eq!(entry.text, "[type here]");
         // Placeholder gets a muted-fg italic overlay.
         let placeholder_overlay = entry
@@ -8805,7 +8850,18 @@ mod tests {
         // New behaviour: placeholder remains visible while focused
         // until the user types something. Cursor parks at byte 0
         // of the placeholder so the first keystroke replaces it.
-        let r = render_text_input("", -1, None, true, "", Some("type here"), 0, 0, false, false);
+        let r = render_text_input(
+            "",
+            -1,
+            None,
+            true,
+            "",
+            Some("type here"),
+            0,
+            0,
+            false,
+            false,
+        );
         assert_eq!(r.entry.text, "[type here]");
         assert_eq!(r.cursor_byte_in_entry, Some(1));
     }
@@ -10233,9 +10289,17 @@ mod tests {
             );
         }
         // Adjacent to the field: the dim rule. Far end: the solid one.
-        let adjacent = out.overlays.iter().find(|o| o.above_by == 1).expect("dim rule");
+        let adjacent = out
+            .overlays
+            .iter()
+            .find(|o| o.above_by == 1)
+            .expect("dim rule");
         assert!(adjacent.entry.text.starts_with('┄'));
-        let far = out.overlays.iter().max_by_key(|o| o.above_by).expect("rule");
+        let far = out
+            .overlays
+            .iter()
+            .max_by_key(|o| o.above_by)
+            .expect("rule");
         assert!(far.entry.text.starts_with('─'));
         // Candidate text starts at column 0, under the bare field's value.
         let candidate = out
