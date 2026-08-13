@@ -4518,23 +4518,30 @@ impl Editor {
                     // clamped inside the split.
                     //
                     // A list that starts at column 0 owns the panel's whole
-                    // width, so its bar belongs against the right edge. Its
+                    // width, so its bar belongs at the right-hand edge. Its
                     // laid-out `width_cols` is deliberately a couple of
                     // columns short (`widget_panel_width` reserves them for
                     // exactly this bar), and drawing at that inboard edge
                     // put the bar *inside* the rows — blanking a character
-                    // cell mid-text and leaving the reserved columns empty
-                    // beside the split's own scrollbar.
+                    // cell mid-text and leaving the reserved columns empty.
+                    //
+                    // Where "the edge" is depends on the split: with the
+                    // buffer scrollbar on, the split keeps a column of its
+                    // own just past the content rect, so paint into that one
+                    // and the two coincide. Two tracks side by side is what
+                    // the reserved columns looked like before.
                     let region_right = content_rect
                         .x
                         .saturating_add(gutter)
                         .saturating_add(region.col_in_row as u16)
                         .saturating_add(region.width_cols.saturating_sub(1) as u16);
                     let panel_right = content_rect.x + content_rect.width.saturating_sub(1);
-                    let sb_x = if region.col_in_row == 0 {
-                        panel_right
-                    } else {
+                    let sb_x = if region.col_in_row != 0 {
                         region_right.min(panel_right)
+                    } else if self.config.editor.show_vertical_scrollbar {
+                        content_rect.x + content_rect.width
+                    } else {
+                        panel_right
                     };
                     jobs.push((
                         ratatui::layout::Rect {
