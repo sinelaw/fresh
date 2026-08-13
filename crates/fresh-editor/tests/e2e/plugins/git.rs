@@ -1010,6 +1010,42 @@ fn trigger_git_log(harness: &mut EditorTestHarness) {
     harness.wait_for_screen_contains("switch pane").unwrap();
 }
 
+/// Just the log pane: everything left of the vertical split divider.
+///
+/// The detail pane on the right renders `git show` output, which repeats
+/// the commit's own subject line, so a whole-screen match for a commit
+/// subject finds it there as readily as in the list.
+fn log_pane_of(harness: &EditorTestHarness) -> String {
+    harness
+        .screen_to_string()
+        .lines()
+        .map(|l| l.split('│').next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Wait until the log pane is *usable*: chrome up **and** commit rows
+/// rendered, `subject` being one the log is known to contain.
+///
+/// The toolbar and the commit list are two widget panels, mounted by two
+/// separate host calls with the plugin building the row entries in
+/// between, so a frame can be painted with the toolbar up and the list
+/// still empty — measurably so: on a 200-commit log the list lands two to
+/// three ticks after the toolbar, and the gap only shrinks (it does not
+/// close) as the log gets shorter. `trigger_git_log` waits for the toolbar
+/// ("Tab switch pane"), which therefore says nothing about the rows, and
+/// waiting for it a second time is satisfied the instant it is checked.
+/// Anything that reads a row — or sends a key meant to move among them —
+/// has to wait for a row.
+fn wait_for_git_log_rows(harness: &mut EditorTestHarness, subject: &str) {
+    let subject = subject.to_string();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string().contains("switch pane") && log_pane_of(h).contains(&subject)
+        })
+        .unwrap();
+}
+
 /// Test git log opens and shows commits
 #[test]
 fn test_git_log_shows_commits() {
@@ -1032,13 +1068,8 @@ fn test_git_log_shows_commits() {
     // Trigger git log
     trigger_git_log(&mut harness);
 
-    // Wait for git log to load (sticky toolbar + at least one commit subject)
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("switch pane") && screen.contains("Initial commit")
-        })
-        .unwrap();
+    // Wait for git log to load: sticky toolbar *and* the commit rows.
+    wait_for_git_log_rows(&mut harness, "Initial commit");
 
     let screen = harness.screen_to_string();
     println!("Git log screen:\n{screen}");
@@ -1134,10 +1165,10 @@ fn test_git_log_show_commit_detail() {
     // Trigger git log
     trigger_git_log(&mut harness);
 
-    // Wait for git log to load
-    harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
-        .unwrap();
+    // Wait for git log to load. The rows have to be up before the keys
+    // below: sent at an empty log buffer they move no cursor and open no
+    // commit, and the waits that follow would hang rather than fail.
+    wait_for_git_log_rows(&mut harness, "Initial commit");
 
     // Move cursor to a commit line (down from header)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -1273,10 +1304,10 @@ fn test_git_log_diff_coloring() {
     // Trigger git log
     trigger_git_log(&mut harness);
 
-    // Wait for git log to load
-    harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
-        .unwrap();
+    // Wait for git log to load. The rows have to be up before the keys
+    // below: sent at an empty log buffer they move no cursor and open no
+    // commit, and the waits that follow would hang rather than fail.
+    wait_for_git_log_rows(&mut harness, "Initial commit");
 
     // Move to the commit and show detail
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -1498,16 +1529,12 @@ fn test_git_log_keyboard_scroll_follows_selection() {
     .unwrap();
 
     trigger_git_log(&mut harness);
-    harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
-        .unwrap();
 
-    // HEAD (scrollcommit-30) is selected and its row sits at the top of
-    // the pane — visible before any scrolling.
-    assert!(
-        harness.screen_to_string().contains("scrollcommit-30"),
-        "newest commit's row should be visible at the top on open"
-    );
+    // HEAD (scrollcommit-30) is selected on open and its row sits at the
+    // top of the pane, so waiting for that row *is* the precondition the
+    // walk below needs — and it is a precondition to wait for rather than
+    // to assert on: see `wait_for_git_log_rows`.
+    wait_for_git_log_rows(&mut harness, "scrollcommit-30");
 
     // Walk the selection all the way to the oldest commit.
     for _ in 0..(total - 1) {
@@ -1523,17 +1550,12 @@ fn test_git_log_keyboard_scroll_follows_selection() {
         })
         .unwrap();
 
-    // Inspect only the log pane — the column left of the vertical split
-    // divider. The detail pane on the right shows the *previously opened*
-    // commit's diff (its `git show` is async and lags the synchronous
-    // selection), so a whole-screen match would spuriously find the
-    // newest commit's subject there.
+    // Inspect only the log pane: the detail pane on the right shows the
+    // *previously opened* commit's diff (its `git show` is async and lags
+    // the synchronous selection), so a whole-screen match would spuriously
+    // find the newest commit's subject there.
     let screen = harness.screen_to_string();
-    let log_pane: String = screen
-        .lines()
-        .map(|l| l.split('│').next().unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let log_pane = log_pane_of(&harness);
 
     // The discriminating check: the newest commit's row must have
     // scrolled off the top. If the viewport never followed the selection
@@ -1651,9 +1673,8 @@ fn test_git_log_cursor_line_matches_selected_commit() {
     .unwrap();
 
     trigger_git_log(&mut harness);
-    harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
-        .unwrap();
+    // The rows have to be up before the cursor keys below.
+    wait_for_git_log_rows(&mut harness, "linecommit-08");
 
     // HEAD starts on row 1. Move the cursor down three rows.
     for _ in 0..3 {
