@@ -721,6 +721,23 @@ type WindowInfo = {
 	*/
 	shared_worktree?: boolean;
 	/**
+	* Argv of the agent this window is running, or will run when it is
+	* restored: the agent-resume argv (`claude --resume <id>`) when the
+	* window has one, else the terminal's launch command.
+	*
+	* Present for a window whose terminals have not been spawned yet — a
+	* workspace restored from disk after a restart carries its launch and
+	* resume argv from the moment it is rebuilt, long before anything runs
+	* in it. That is the point: without this, "does this workspace have an
+	* agent" could only be answered by looking at a running process, so
+	* every workspace looked empty after a reboot until the user activated
+	* it one at a time.
+	*
+	* Empty for a plain shell, and for a window with no recorded terminal
+	* command at all.
+	*/
+	agent_command?: Array<string>;
+	/**
 	* Remote backend identity when this session's backend is not
 	* host-local (SSH / Kubernetes). Carried for live remote windows
 	* *and* for dormant (not-yet-connected / disconnected) sessions, so
@@ -729,6 +746,111 @@ type WindowInfo = {
 	* (devcontainer), whose facet the owning plugin supplies itself.
 	*/
 	remote?: RemoteBackendInfo | null;
+};
+type TerminalScreenInfo = {
+	/**
+	* The rows returned, top to bottom. Already tailed and trimmed per the
+	* request, so `text.len()` is what came back, not the grid height.
+	*/
+	text: Array<string>;
+	/**
+	* Full grid height, before any tailing — so a caller can tell whether it
+	* is looking at the whole screen or the end of it.
+	*/
+	rows: number;
+	/**
+	* Full grid width.
+	*/
+	cols: number;
+	/**
+	* Cursor position as `(column, row)`, 0-indexed within the *full* grid
+	* — column first, matching the terminal's own `cursor_position()`.
+	* Stated explicitly because the type is a bare pair of numbers, so this
+	* comment is the only thing that says which is which.
+	*/
+	cursor: [number, number];
+	/**
+	* Whether the program is on the alternate screen — i.e. a full-screen
+	* TUI (which every coding agent worth watching is). Callers need this to
+	* know how to read what they got: on the alt screen there is no
+	* meaningful scrollback behind the grid, and the visible rectangle is
+	* the whole truth.
+	*/
+	altScreen: boolean;
+	/**
+	* The terminal's current title (foreground process / OSC title), the
+	* same string the tab shows.
+	*/
+	title: string;
+};
+type EnvironmentDescription = {
+	/**
+	* The window the user is looking at right now. A value to read, not a
+	* default to inherit — every other call still names its target.
+	*/
+	activeWindowId: number;
+	/**
+	* Every open window, in id order.
+	*/
+	windows: Array<WindowDescription>;
+};
+type WindowDescription = {
+	/**
+	* Per-process handle. Valid for this run only.
+	*/
+	windowId: number;
+	/**
+	* Durable identity, which survives restarts. Record this one.
+	*/
+	stableId: string;
+	/**
+	* User-visible label.
+	*/
+	label: string;
+	/**
+	* Absolute root directory.
+	*/
+	root: string;
+	/**
+	* Whether this is the window the user is currently looking at.
+	*/
+	active: boolean;
+	/**
+	* Every terminal in this window.
+	*/
+	terminals: Array<TerminalDescription>;
+};
+type TerminalDescription = {
+	/**
+	* Address this terminal with `(windowId, terminalId)`.
+	*/
+	terminalId: number;
+	/**
+	* The buffer this terminal is shown through. Reported because it
+	* is what a `Pane` widget addresses — a pane names a *buffer*,
+	* and a terminal id alone cannot be drawn.
+	*/
+	bufferId: number;
+	/**
+	* Current title — the same string the terminal's tab shows, which for an
+	* agent is usually its process name.
+	*/
+	title: string;
+	/**
+	* Whether the child is on the alternate screen, i.e. a full-screen TUI.
+	*/
+	altScreen: boolean;
+	/**
+	* Grid size, so a caller can size a tail read without a round trip.
+	*/
+	rows: number;
+	cols: number;
+	/**
+	* The child's process id, when there is a live child. `None` means the
+	* terminal exists but its process has exited — which is exactly the
+	* state a "did my agent die" check is looking for.
+	*/
+	pid: number | null;
 };
 type RemoteBackendInfo = {
 	/**
@@ -1889,9 +2011,9 @@ type WidgetSpec = {
 	*/
 	fullWidth: boolean;
 	/**
-	* Optional completion candidates. When non-empty AND
-	* `label` is non-empty (the chrome trigger), the
-	* renderer paints a popup directly under the input,
+	* Optional completion candidates. When non-empty the
+	* renderer paints a popup directly under the input
+	* (or above it — see `completions_above`),
 	* inside a unified box: the input's normal `╰─...─╯`
 	* bottom border becomes a dimmed `┄` separator, the
 	* labeled section's side borders extend down through
@@ -1923,6 +2045,57 @@ type WidgetSpec = {
 	* more to scroll. `0` (default) falls back to `5`.
 	*/
 	completionsVisibleRows: number;
+	/**
+	* Float the completion popup ABOVE the field instead of below
+	* it. The rows still float — nothing reflows either way — so
+	* this is purely which side of the input the box grows into.
+	*
+	* Set it when the field is the last row of its surface (a chat
+	* composer pinned to the bottom, a filter on the final line of
+	* a dock section): a downward popup there renders past the
+	* panel's edge and is clipped away entirely. Mirrored
+	* faithfully — the dim `┄` separator stays adjacent to the
+	* field and the solid border closes the far end, so the popup
+	* and the input still read as one box.
+	*/
+	completionsAbove: boolean;
+	/**
+	* Drop the completion popup's left and right border columns,
+	* keeping only the horizontal rules (the dim `┄` separator
+	* adjacent to the field and the solid rule closing the far
+	* end). The candidate rows also lose the two leading columns
+	* that exist to line a candidate up under a bracketed value —
+	* with no `│ ` and no `[` there is nothing to line up with,
+	* and the popup instead starts flush with the field's text.
+	*
+	* For a popup that floats over a surface it is *wider* than —
+	* a chat composer whose field spans the whole panel — the
+	* side columns paint nothing the user sees: the right edge
+	* lands under the panel's own border or is clipped away, and
+	* a left edge without a right one is a stray rule rather than
+	* a frame. Every other field keeps the full box, which is
+	* what a popup narrower than its surface needs.
+	*
+	* Opt-in, so the shared popup shape is unchanged for
+	* Settings, the dock's search box, and every other caller.
+	* Defaults to `false`.
+	*/
+	completionsBare?: boolean;
+	/**
+	* Render a single-line field WITHOUT the `[` `]` that
+	* normally frame its value: just the (optional) label and the
+	* text. The focus background still paints across the field,
+	* so a focused bare input is still visibly the thing you are
+	* typing into.
+	*
+	* For a composer that *is* the surface's input row — the
+	* chat's message line — the brackets restate what the row
+	* already says and make the value read as a token in a form
+	* rather than the start of a sentence. Ignored for multi-line
+	* (`rows > 1`) fields, which have no brackets to begin with.
+	* Defaults to `false`, so every other text field keeps them.
+	*/
+	bare?: boolean;
 	/**
 	* Paint the caret as a REVERSED block cell inside the row
 	* (in addition to publishing the hardware-cursor position).
@@ -1994,6 +2167,33 @@ type WidgetSpec = {
 	widthPct?: number | null;
 	key?: string | null;
 } | {
+	"kind": "pane";
+	/**
+	* Window owning `buffer_id`. Terminals and plugin-owned
+	* virtual buffers live on a specific window, so a pane is
+	* addressed by the pair rather than by buffer alone.
+	*/
+	windowId: number;
+	/**
+	* The buffer to draw. `0` (or an unknown id) renders blank
+	* placeholder rows rather than failing.
+	*/
+	bufferId: number;
+	/**
+	* Height in rows. Width is whatever the parent allocates.
+	*/
+	rows: number;
+	/**
+	* When true and the buffer is a terminal, keystrokes go to
+	* its PTY while this pane holds focus. Ignored for other
+	* buffer kinds: a terminal's input has one unambiguous
+	* meaning (bytes to the child), whereas typing into a file
+	* means *editing*, which brings undo, LSP and save with it —
+	* a decision no panel should make implicitly.
+	*/
+	interactive: boolean;
+	key?: string | null;
+} | {
 	"kind": "windowEmbed";
 	/**
 	* Numeric editor-window id, matching `WindowId(N).0`.
@@ -2012,6 +2212,29 @@ type WidgetSpec = {
 } | {
 	"kind": "raw";
 	entries: Array<TextPropertyEntry>;
+	/**
+	* Turn the block into a scrollable **viewport** of this many
+	* rows instead of emitting every entry inline. `0` (the
+	* default) is the historical shape: all entries, no window,
+	* no scrolling.
+	* 
+	* A windowed block is **bottom-anchored**: it shows the tail
+	* of `entries` and pads at the top when there are fewer than
+	* `visible_rows` of them, because the thing a growing block
+	* (a transcript, a log) is read for is its newest row. It
+	* follows that tail until the user scrolls away from it, and
+	* resumes following when they scroll back to the bottom —
+	* the same rule the multi-line `Text` wheel path uses.
+	* 
+	* It also earns what only real scrollable widgets have: a
+	* scroll region, so the wheel that lands on it scrolls *it*
+	* rather than defaulting to the first `List`/`Tree` on the
+	* panel, and a scrollbar when the content overflows. Both
+	* need a `key` — the scroll offset is host-owned instance
+	* state, and a keyless block has nowhere to keep it (it
+	* falls back to the unwindowed shape).
+	*/
+	visibleRows?: number;
 	key?: string | null;
 } | {
 	"kind": "overlay";
@@ -2846,6 +3069,21 @@ interface EditorAPI {
 	* Get viewport info for active buffer
 	*/
 	getViewport(): ViewportInfo | null;
+	/**
+	* Inner content width, in columns, of the panel docked to the
+	* left edge — the width the host actually rendered it at, not the
+	* width its plugin asked for. `0` when nothing is docked.
+	* 
+	* The two differ whenever the host clamps the request against the
+	* terminal, or the user has dragged the dock to a width of their
+	* own (which is persisted and overrides the request). A plugin
+	* that sizes its rows against the width it requested therefore
+	* wraps text, truncates labels and budgets rows against a number
+	* the host disagrees with — and since the flexible region absorbs
+	* the error, the mistake lands at the far end of the panel, which
+	* is where the user notices it.
+	*/
+	getDockWidth(): number;
 	/**
 	* Total terminal dimensions in cells. Unlike `getViewport()`
 	* (which reports the active split, shrunk by any vertical
@@ -4417,6 +4655,26 @@ interface EditorAPI {
 	*/
 	floatingPanelControl(panelId: number, op: string, arg: number): boolean;
 	/**
+	* Broadcast an event to every plugin subscribed to `name`, as
+	* `editor.on(name, handler)`.
+	* 
+	* The counterpart of `on` for events the host does not produce. A
+	* subscriber cannot tell a plugin-emitted event from a host one, and
+	* that is the point: a watcher subscribes to `agent_state_change`
+	* — which only Orchestrator can know — exactly as it subscribes to
+	* `window_created`, which the host emits.
+	* 
+	* The emitting plugin receives its own event too. Filter on the
+	* payload's `from` field when that matters.
+	* 
+	* ```js
+	* editor.emitEvent("agent_state_change", {
+	* workspaceId: 12, state: "waiting", summary: "approve edit to e2e.rs",
+	* });
+	* ```
+	*/
+	emitEvent(name: string, payload: unknown): boolean;
+	/**
 	* Spawn a process (async, returns request_id)
 	* 
 	* **No shell is involved.** `command` is executed directly, so quoting,
@@ -4771,9 +5029,47 @@ interface EditorAPI {
 	*/
 	setWindowPreparing(id: number, message: string, label: string | null, failed: boolean, done: boolean): boolean;
 	/**
-	* Send input data to a terminal
+	* Send input data to a terminal.
+	* 
+	* `windowId` names the window that owns `terminalId`. Terminals are
+	* owned per-window, so without it this reaches only the active
+	* window's terminals — and "active" is whatever it happens to be when
+	* the command is serviced, not when you sent it. Omit it only for a
+	* terminal in your own window, and prefer passing it always.
 	*/
-	sendTerminalInput(terminalId: number, data: string): boolean;
+	sendTerminalInput(terminalId: number, data: string, windowId?: number): boolean;
+	/**
+	* Describe every open window and the terminals in it.
+	* 
+	* The cross-window counterpart to `describeWorkspace()`, which reports
+	* only the window you are pointed at. This is the one call that answers
+	* "what is going on everywhere" — before it, that took a call per window
+	* and still could not reach another window's terminals at all.
+	* 
+	* Structural facts only. Whether a terminal holds an agent, and whether
+	* that agent is working or waiting on you, comes from the Orchestrator's
+	* own listing, which joins on `terminalId`.
+	*/
+	describeEnvironment(): Promise<EnvironmentDescription>;
+	/**
+	* Read a terminal's live screen as plain text rows.
+	* 
+	* Both ids are required: terminals are owned per-window, so a terminal
+	* id alone does not identify one. Resolves to `{ text, rows, cols,
+	* cursor, altScreen, title }`, and rejects when the window or the
+	* terminal within it is unknown.
+	* 
+	* `lines` returns at most that many rows counted from the **bottom** —
+	* the tail, which for a full-screen agent is the prompt and input area
+	* and therefore the part that says whether it is waiting for you.
+	* `trim` (default `true`) strips trailing blanks, since a grid is a
+	* fixed rectangle and the padding is pure cost to read.
+	* 
+	* This is the cheap, reason-over-it view. To *show* a human another
+	* workspace's terminal, render the window itself rather than pasting
+	* this into a buffer.
+	*/
+	readTerminal(windowId: number, terminalId: number, lines?: number, trim?: boolean): Promise<TerminalScreenInfo>;
 	/**
 	* Close a terminal
 	*/

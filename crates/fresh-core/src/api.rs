@@ -417,6 +417,118 @@ fn default_window_id() -> WindowId {
     WindowId(1)
 }
 
+/// One terminal, as reported by `editor.describeEnvironment()`.
+///
+/// Structural facts only — what exists and how to address it. Whether the
+/// thing running in it is an agent, and whether that agent is busy or waiting,
+/// is the Orchestrator's business: it already tracks that per session and can
+/// join on `terminalId`. Duplicating it here would give two sources of truth
+/// for the same question.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalDescription {
+    /// Address this terminal with `(windowId, terminalId)`.
+    #[ts(type = "number")]
+    pub terminal_id: TerminalId,
+    /// The buffer this terminal is shown through. Reported because it
+    /// is what a `Pane` widget addresses — a pane names a *buffer*,
+    /// and a terminal id alone cannot be drawn.
+    #[ts(type = "number")]
+    pub buffer_id: BufferId,
+    /// Current title — the same string the terminal's tab shows, which for an
+    /// agent is usually its process name.
+    pub title: String,
+    /// Whether the child is on the alternate screen, i.e. a full-screen TUI.
+    pub alt_screen: bool,
+    /// Grid size, so a caller can size a tail read without a round trip.
+    pub rows: usize,
+    pub cols: usize,
+    /// The child's process id, when there is a live child. `None` means the
+    /// terminal exists but its process has exited — which is exactly the
+    /// state a "did my agent die" check is looking for.
+    pub pid: Option<u32>,
+}
+
+/// One window, as reported by `editor.describeEnvironment()`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowDescription {
+    /// Per-process handle. Valid for this run only.
+    #[ts(type = "number")]
+    pub window_id: WindowId,
+    /// Durable identity, which survives restarts. Record this one.
+    pub stable_id: String,
+    /// User-visible label.
+    pub label: String,
+    /// Absolute root directory.
+    #[ts(type = "string")]
+    pub root: PathBuf,
+    /// Whether this is the window the user is currently looking at.
+    pub active: bool,
+    /// Every terminal in this window.
+    pub terminals: Vec<TerminalDescription>,
+}
+
+/// The whole editor, as answered by `editor.describeEnvironment()`.
+///
+/// The cross-window counterpart to `describeWorkspace()`, which reports only
+/// the window a script is pointed at. Answering "what is going on everywhere"
+/// previously took one call per window and still could not reach another
+/// window's terminals at all.
+///
+/// Deliberately *not* included: per-pane geometry. `describeWorkspace()`
+/// already gives that for a window a caller cares about, and folding every
+/// window's split tree in here would make the common "who needs me" poll pay
+/// for layout detail it never reads.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentDescription {
+    /// The window the user is looking at right now. A value to read, not a
+    /// default to inherit — every other call still names its target.
+    #[ts(type = "number")]
+    pub active_window_id: WindowId,
+    /// Every open window, in id order.
+    pub windows: Vec<WindowDescription>,
+}
+
+/// A terminal's live screen, as answered by `editor.readTerminal()`.
+///
+/// The text is the PTY grid rendered to plain rows — no escape sequences, no
+/// styling. That is deliberate: this exists so a caller can *reason* about
+/// what a terminal says, and colour is cost without meaning for that. A human
+/// looking at another workspace's terminal should get the real thing rendered
+/// natively (the window-preview path), not this.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalScreenInfo {
+    /// The rows returned, top to bottom. Already tailed and trimmed per the
+    /// request, so `text.len()` is what came back, not the grid height.
+    pub text: Vec<String>,
+    /// Full grid height, before any tailing — so a caller can tell whether it
+    /// is looking at the whole screen or the end of it.
+    pub rows: usize,
+    /// Full grid width.
+    pub cols: usize,
+    /// Cursor position as `(column, row)`, 0-indexed within the *full* grid
+    /// — column first, matching the terminal's own `cursor_position()`.
+    /// Stated explicitly because the type is a bare pair of numbers, so this
+    /// comment is the only thing that says which is which.
+    pub cursor: (u16, u16),
+    /// Whether the program is on the alternate screen — i.e. a full-screen
+    /// TUI (which every coding agent worth watching is). Callers need this to
+    /// know how to read what they got: on the alt screen there is no
+    /// meaningful scrollback behind the grid, and the visible rectangle is
+    /// the whole truth.
+    pub alt_screen: bool,
+    /// The terminal's current title (foreground process / OSC title), the
+    /// same string the tab shows.
+    pub title: String,
+}
+
 /// Information about an editor session (plugin-visible). Returned
 /// by `editor.listWindows()` and carried in the snapshot. Mirrors
 /// the editor-side `Session` struct — see
@@ -462,6 +574,22 @@ pub struct WindowInfo {
     #[ts(type = "boolean")]
     #[serde(skip_serializing_if = "is_false_field", default)]
     pub shared_worktree: bool,
+    /// Argv of the agent this window is running, or will run when it is
+    /// restored: the agent-resume argv (`claude --resume <id>`) when the
+    /// window has one, else the terminal's launch command.
+    ///
+    /// Present for a window whose terminals have not been spawned yet — a
+    /// workspace restored from disk after a restart carries its launch and
+    /// resume argv from the moment it is rebuilt, long before anything runs
+    /// in it. That is the point: without this, "does this workspace have an
+    /// agent" could only be answered by looking at a running process, so
+    /// every workspace looked empty after a reboot until the user activated
+    /// it one at a time.
+    ///
+    /// Empty for a plain shell, and for a window with no recorded terminal
+    /// command at all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_command: Vec<String>,
     /// Remote backend identity when this session's backend is not
     /// host-local (SSH / Kubernetes). Carried for live remote windows
     /// *and* for dormant (not-yet-connected / disconnected) sessions, so
@@ -474,6 +602,10 @@ pub struct WindowInfo {
 
 fn is_false_field(b: &bool) -> bool {
     !b
+}
+
+fn is_zero_field(n: &u32) -> bool {
+    *n == 0
 }
 
 /// Backend identity of a non-local session, as surfaced to plugins on
@@ -1646,6 +1778,21 @@ pub struct EditorStateSnapshot {
     #[serde(default)]
     pub terminal_height: u16,
 
+    /// Inner content width, in columns, of the panel currently docked
+    /// to the left edge — the width the host actually *rendered* it
+    /// at, after the terminal-relative clamp and any width the user
+    /// dragged it to. `0` when no panel is docked.
+    ///
+    /// A docking plugin asks the host for a width and the host is free
+    /// not to give it: the request is clamped, and a persisted drag
+    /// overrides it outright. Anything the plugin then derives from
+    /// its *requested* width — word wrap, truncation, whether a
+    /// toolbar row wraps, and so the row budget of everything below it
+    /// — is right only while the two happen to agree. Plugins read
+    /// this via `editor.getDockWidth()`.
+    #[serde(default)]
+    pub dock_content_width: u16,
+
     /// Whether search highlights are currently active in the active buffer.
     /// True when a search has been confirmed and its match overlays are visible.
     /// Cleared when the search is cancelled or a new search is started.
@@ -1720,6 +1867,7 @@ impl EditorStateSnapshot {
             active_session_plugin_states: HashMap::new(),
             terminal_width: 0,
             terminal_height: 0,
+            dock_content_width: 0,
             has_active_search: false,
             macros: Vec::new(),
         }
@@ -2521,9 +2669,9 @@ pub enum WidgetSpec {
         /// `LabeledSection` or a flexible row.
         #[serde(default)]
         full_width: bool,
-        /// Optional completion candidates. When non-empty AND
-        /// `label` is non-empty (the chrome trigger), the
-        /// renderer paints a popup directly under the input,
+        /// Optional completion candidates. When non-empty the
+        /// renderer paints a popup directly under the input
+        /// (or above it — see `completions_above`),
         /// inside a unified box: the input's normal `╰─...─╯`
         /// bottom border becomes a dimmed `┄` separator, the
         /// labeled section's side borders extend down through
@@ -2559,6 +2707,54 @@ pub enum WidgetSpec {
         /// more to scroll. `0` (default) falls back to `5`.
         #[serde(default)]
         completions_visible_rows: u32,
+        /// Float the completion popup ABOVE the field instead of below
+        /// it. The rows still float — nothing reflows either way — so
+        /// this is purely which side of the input the box grows into.
+        ///
+        /// Set it when the field is the last row of its surface (a chat
+        /// composer pinned to the bottom, a filter on the final line of
+        /// a dock section): a downward popup there renders past the
+        /// panel's edge and is clipped away entirely. Mirrored
+        /// faithfully — the dim `┄` separator stays adjacent to the
+        /// field and the solid border closes the far end, so the popup
+        /// and the input still read as one box.
+        #[serde(default)]
+        completions_above: bool,
+        /// Drop the completion popup's left and right border columns,
+        /// keeping only the horizontal rules (the dim `┄` separator
+        /// adjacent to the field and the solid rule closing the far
+        /// end). The candidate rows also lose the two leading columns
+        /// that exist to line a candidate up under a bracketed value —
+        /// with no `│ ` and no `[` there is nothing to line up with,
+        /// and the popup instead starts flush with the field's text.
+        ///
+        /// For a popup that floats over a surface it is *wider* than —
+        /// a chat composer whose field spans the whole panel — the
+        /// side columns paint nothing the user sees: the right edge
+        /// lands under the panel's own border or is clipped away, and
+        /// a left edge without a right one is a stray rule rather than
+        /// a frame. Every other field keeps the full box, which is
+        /// what a popup narrower than its surface needs.
+        ///
+        /// Opt-in, so the shared popup shape is unchanged for
+        /// Settings, the dock's search box, and every other caller.
+        /// Defaults to `false`.
+        #[serde(default, skip_serializing_if = "is_false_field")]
+        completions_bare: bool,
+        /// Render a single-line field WITHOUT the `[` `]` that
+        /// normally frame its value: just the (optional) label and the
+        /// text. The focus background still paints across the field,
+        /// so a focused bare input is still visibly the thing you are
+        /// typing into.
+        ///
+        /// For a composer that *is* the surface's input row — the
+        /// chat's message line — the brackets restate what the row
+        /// already says and make the value read as a token in a form
+        /// rather than the start of a sentence. Ignored for multi-line
+        /// (`rows > 1`) fields, which have no brackets to begin with.
+        /// Defaults to `false`, so every other text field keeps them.
+        #[serde(default, skip_serializing_if = "is_false_field")]
+        bare: bool,
         /// Paint the caret as a REVERSED block cell inside the row
         /// (in addition to publishing the hardware-cursor position).
         /// Modal form surfaces (e.g. Settings) use this — a hardware
@@ -2647,6 +2843,49 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+    /// Reserve a rectangle for one **buffer**, from any window.
+    ///
+    /// The narrow sibling of [`WidgetSpec::WindowEmbed`]. Where an
+    /// embed paints a whole session — split tree, tab bar, status
+    /// chrome — a pane paints exactly one buffer, which is what a
+    /// panel usually wants: "show me this agent's terminal", not
+    /// "show me its entire workspace".
+    ///
+    /// The contract is deliberately one rectangle, one buffer, so
+    /// every buffer kind is covered without a special case. A
+    /// composite (side-by-side diff) buffer is a single buffer that
+    /// divides its own rectangle, so it needs nothing extra here. A
+    /// *buffer group* is not a buffer — it is a set of them plus a
+    /// layout — so a group is shown as several `Pane`s composed with
+    /// `Row`/`Col`, not as one pane.
+    ///
+    /// The pane's view state (scroll, cursor, folds) is owned by the
+    /// panel, **not** registered in the window's `split_view_states`.
+    /// That map is iterated by ~20 cross-cutting paths — workspace
+    /// save, viewport hooks, buffer-close cascades — and a transient
+    /// render surface must not appear to any of them. This is the
+    /// same isolation `OverlayPreviewState` already keeps.
+    Pane {
+        /// Window owning `buffer_id`. Terminals and plugin-owned
+        /// virtual buffers live on a specific window, so a pane is
+        /// addressed by the pair rather than by buffer alone.
+        window_id: u32,
+        /// The buffer to draw. `0` (or an unknown id) renders blank
+        /// placeholder rows rather than failing.
+        buffer_id: u32,
+        /// Height in rows. Width is whatever the parent allocates.
+        rows: u32,
+        /// When true and the buffer is a terminal, keystrokes go to
+        /// its PTY while this pane holds focus. Ignored for other
+        /// buffer kinds: a terminal's input has one unambiguous
+        /// meaning (bytes to the child), whereas typing into a file
+        /// means *editing*, which brings undo, LSP and save with it —
+        /// a decision no panel should make implicitly.
+        #[serde(default)]
+        interactive: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
     /// Reserve a rectangle in the widget layout for the host to
     /// natively paint the editor `Window` identified by
     /// `window_id`. The widget itself renders only blank lines
@@ -2660,6 +2899,8 @@ pub enum WidgetSpec {
     /// Row's horizontal-zip path). Used by Orchestrator's open
     /// dialog so the preview pane shows a live render of the
     /// highlighted session.
+    ///
+    /// See [`WidgetSpec::Pane`] for the one-buffer counterpart.
     WindowEmbed {
         /// Numeric editor-window id, matching `WindowId(N).0`.
         /// `0` (or any unknown id) renders empty placeholder
@@ -2681,6 +2922,28 @@ pub enum WidgetSpec {
     /// widget panel.
     Raw {
         entries: Vec<crate::text_property::TextPropertyEntry>,
+        /// Turn the block into a scrollable **viewport** of this many
+        /// rows instead of emitting every entry inline. `0` (the
+        /// default) is the historical shape: all entries, no window,
+        /// no scrolling.
+        ///
+        /// A windowed block is **bottom-anchored**: it shows the tail
+        /// of `entries` and pads at the top when there are fewer than
+        /// `visible_rows` of them, because the thing a growing block
+        /// (a transcript, a log) is read for is its newest row. It
+        /// follows that tail until the user scrolls away from it, and
+        /// resumes following when they scroll back to the bottom —
+        /// the same rule the multi-line `Text` wheel path uses.
+        ///
+        /// It also earns what only real scrollable widgets have: a
+        /// scroll region, so the wheel that lands on it scrolls *it*
+        /// rather than defaulting to the first `List`/`Tree` on the
+        /// panel, and a scrollbar when the content overflows. Both
+        /// need a `key` — the scroll offset is host-owned instance
+        /// state, and a keyless block has nowhere to keep it (it
+        /// falls back to the unwindowed shape).
+        #[serde(default, skip_serializing_if = "is_zero_field")]
+        visible_rows: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -3001,6 +3264,27 @@ pub enum PluginCommand {
 
     /// Set status message
     SetStatus { message: String },
+
+    /// Broadcast an event to every plugin subscribed to `name`.
+    ///
+    /// The counterpart of `editor.on(name, handler)` for events the host
+    /// does not itself produce. A subscriber cannot tell — and should not
+    /// care — whether an event came from the host or from a peer plugin;
+    /// that symmetry is what lets a watcher subscribe to
+    /// `agent_state_change` (emitted by Orchestrator, which is the only
+    /// thing that knows an agent's state) the same way it subscribes to
+    /// `window_created` (emitted by the host).
+    EmitEvent {
+        /// Plugin that emitted it, filled in by the runtime.
+        plugin: String,
+        /// Event name. Arbitrary: the host cannot know which names are
+        /// meaningful, and gating on a permitted list would mean editing
+        /// the host every time a plugin had something new to say.
+        name: String,
+        /// Event payload, delivered verbatim.
+        #[ts(type = "unknown")]
+        payload: serde_json::Value,
+    },
 
     /// Apply a theme by name
     ApplyTheme { theme_name: String },
@@ -4847,6 +5131,14 @@ pub enum PluginCommand {
     SendTerminalInput {
         /// The terminal ID (from TerminalResult)
         terminal_id: TerminalId,
+        /// Which window owns `terminal_id`. Terminals are owned per-window,
+        /// so this is what makes the call addressable: `None` resolves
+        /// against the active window (the historical behaviour, kept for
+        /// existing callers) and can therefore reach only one window, and
+        /// only whichever one happens to be active when the command is
+        /// serviced rather than when it was sent.
+        #[serde(default)]
+        window_id: Option<WindowId>,
         /// Data to write to the terminal PTY (UTF-8 string, may include escape sequences)
         data: String,
     },
@@ -4855,6 +5147,48 @@ pub enum PluginCommand {
     CloseTerminal {
         /// The terminal ID to close
         terminal_id: TerminalId,
+    },
+
+    /// Describe every open window and its terminals (async).
+    ///
+    /// Cross-window by definition, so it cannot be served from the
+    /// active-window snapshot the way `describeWorkspace` is.
+    DescribeEnvironment {
+        /// Callback ID for async response
+        request_id: u64,
+    },
+
+    /// Read a terminal's live screen grid as text (async).
+    ///
+    /// Window-qualified on purpose: terminals are owned per-window, so
+    /// without `window_id` this could only ever read the active window's —
+    /// which is exactly the limitation that makes cross-workspace
+    /// observation impossible. There is no ambient fallback here; a caller
+    /// names the window it means.
+    ///
+    /// This reads the **live grid**, not the on-disk scrollback capture.
+    /// The agents this exists for run as full-screen TUIs, where the capture
+    /// is a poor record of what the user sees and the grid is the honest one.
+    ReadTerminal {
+        /// Window owning the terminal.
+        window_id: WindowId,
+        /// Terminal to read within that window.
+        terminal_id: TerminalId,
+        /// Return at most this many rows, counted from the **bottom** of the
+        /// grid. `None` returns the whole grid. A tail is what callers
+        /// almost always want: for a TUI agent the bottom rows carry the
+        /// prompt and input area, which is the region that answers "is it
+        /// waiting for me".
+        #[serde(default)]
+        lines: Option<usize>,
+        /// Drop trailing whitespace on each row and skip blank rows at the
+        /// end of the grid. A terminal grid is a fixed rectangle, so
+        /// verbatim rows are mostly padding — which for an LLM caller is
+        /// pure token cost.
+        #[serde(default)]
+        trim: bool,
+        /// Request ID for async response
+        request_id: u64,
     },
 
     /// Send `signal` to every process group tracked by the
