@@ -549,8 +549,15 @@ pub fn splice_inline_virtual_text(
     };
 
     let mut out: Vec<ViewTokenWire> = Vec::with_capacity(tokens.len());
+    // Whether nothing of this line's own source has been emitted yet. Only
+    // used to recognise a newline that *is* the whole line — an empty line —
+    // whose hints have no neighbouring text to be separated from.
+    let mut at_line_start = true;
     for token in tokens {
         let src = token.source_offset;
+        let is_newline = matches!(token.kind, ViewTokenWireKind::Newline);
+        let line_start_cell = at_line_start;
+        at_line_start = is_newline;
         match (&token.kind, src) {
             (ViewTokenWireKind::Text(s), Some(token_start)) => {
                 // Split the (possibly coalesced) Text token at each hint
@@ -599,14 +606,22 @@ pub fn splice_inline_virtual_text(
             (kind, Some(anchor)) => {
                 // Atomic source cell (Newline / Space / BinaryByte): hints
                 // anchor around the whole cell. A `BeforeChar` hint on a
-                // newline is an end-of-line hint and gets a leading space.
+                // newline is an end-of-line hint and gets a leading space to
+                // hold it off the text it trails.
+                //
+                // Unless the newline *is* the line: on an empty line there is
+                // no text on either side, so the padding separates the hint
+                // from nothing and merely indents it. Decorations that draw a
+                // column — markdown compose's code-block side rails — then sit
+                // one column inside their own frame on exactly the blank rows.
                 let anchor_is_newline = matches!(kind, ViewTokenWireKind::Newline);
+                let empty_line = anchor_is_newline && line_start_cell;
                 if let Some(hints) = before.get(&anchor) {
                     for (text, style) in hints {
-                        let padded = if anchor_is_newline {
-                            format!(" {text} ")
-                        } else {
-                            format!("{text} ")
+                        let padded = match (anchor_is_newline, empty_line) {
+                            (_, true) => text.clone(),
+                            (true, false) => format!(" {text} "),
+                            (false, _) => format!("{text} "),
                         };
                         out.push(virt(padded, style.clone()));
                     }

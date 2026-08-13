@@ -100,10 +100,12 @@ fn park_cursor_at_top(harness: &mut EditorTestHarness) {
     harness.wait_for_async_quiescence(4).unwrap();
 }
 
-/// The headline case: a fenced block renders as a box labelled with its
-/// language, and the ``` delimiters are gone.
+/// The headline case: a fenced block renders as a box, and the ``` delimiters
+/// are gone. The border carries no language tag — the code inside is already
+/// highlighted with that language's grammar, so the tag said nothing the block
+/// did not.
 #[test]
-fn fenced_block_renders_as_a_labelled_frame() {
+fn fenced_block_renders_as_a_frame() {
     let (mut harness, _tmp) =
         compose_harness("# Doc\n\nIntro.\n\n```rust\nfn answer() -> u32 { 42 }\n```\n\nTail.\n");
 
@@ -113,9 +115,14 @@ fn fenced_block_renders_as_a_labelled_frame() {
     park_cursor_at_top(&mut harness);
 
     let screen = harness.screen_to_string();
+    let top_row = screen
+        .lines()
+        .find(|l| l.contains('┌'))
+        .expect("top border on screen");
     assert!(
-        screen.contains("─ rust ─"),
-        "the frame should carry the fence's info string.\nScreen:\n{screen}"
+        !top_row.chars().any(char::is_alphanumeric),
+        "the border carries no text at all — the fence's info string is not \
+         repeated in it; top row was {top_row:?}"
     );
     assert_eq!(tops(&screen).len(), 1, "one top border.\nScreen:\n{screen}");
     assert_eq!(
@@ -190,6 +197,75 @@ fn body_rails_line_up_with_the_border_corners() {
         top, bottom,
         "top and bottom borders must span the same columns.\nScreen:\n{screen}"
     );
+}
+
+/// Columns of the first and last box-drawing glyph on the row containing
+/// `needle`, or on the row that *is* `needle` when it names a border.
+fn frame_edges(screen: &str, row: &str) -> Option<(usize, usize)> {
+    let line = screen.lines().find(|l| l.contains(row))?;
+    let cols: Vec<usize> = line
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| "┌┐└┘│─".contains(*c))
+        .map(|(i, _)| i)
+        .collect();
+    Some((*cols.first()?, *cols.last()?))
+}
+
+/// Every row of a block sits in the same columns — including the two the frame
+/// cannot draw the ordinary way.
+///
+/// A *blank* line has no character to anchor a rail to, so its rails hang off
+/// the newline cell; that is the one cell the renderer used to pad on both
+/// sides, which left blank rows visibly pinched one column inside their own
+/// frame. A line too wide for the frame is broken here rather than left to the
+/// renderer, which would fold it to column zero — outside the frame, with no
+/// rails on the continuation.
+#[test]
+fn blank_and_wrapped_rows_keep_the_frame_columns() {
+    let long = "    let v = compute(alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota);";
+    let md = format!("# Doc\n\n```rust\nfn f() {{\n\n{long}\n}}\n```\n\nTail.\n");
+    let (mut harness, _tmp) = compose_harness(&md);
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains('└'))
+        .expect("the block should frame");
+    park_cursor_at_top(&mut harness);
+
+    let screen = harness.screen_to_string();
+    let top = frame_edges(&screen, "┌").expect("top border on screen");
+
+    // The wrapped line's tail lands on a row of its own; both of its rows, and
+    // the blank row, must match the border's columns.
+    assert!(
+        screen.contains("iota"),
+        "the whole long line should still be on screen.\nScreen:\n{screen}"
+    );
+    let rows: Vec<&str> = screen
+        .lines()
+        .skip_while(|l| !l.contains('┌'))
+        .take_while(|l| !l.contains('└'))
+        .filter(|l| l.contains('│'))
+        .collect();
+    assert!(
+        rows.len() >= 5,
+        "expected the brace, blank, both rows of the wrapped line and the \
+         closing brace; saw {rows:?}"
+    );
+    for row in &rows {
+        let cols: Vec<usize> = row
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| *c == '│')
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            (cols.first().copied(), cols.last().copied()),
+            (Some(top.0), Some(top.1)),
+            "every body row must be railed in the border's own columns; \
+             row {row:?} was not.\nScreen:\n{screen}"
+        );
+    }
 }
 
 /// A fence with no info string is framed at both ends.
@@ -355,12 +431,12 @@ fn breaking_a_closing_fence_reframes_the_lines_below_it() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("─ js ─"),
-        "the surviving frame is the js block's.\nScreen:\n{screen}"
+        screen.contains("```sh"),
+        "the sh fence is inside the js block now, so it renders literally as \
+         code rather than opening a frame of its own.\nScreen:\n{screen}"
     );
     assert!(
-        !screen.contains("─ sh ─"),
-        "the sh fence is inside the js block now, so it is not a frame.\n\
-         Screen:\n{screen}"
+        screen.contains("``` x"),
+        "and so does the delimiter that stopped closing.\nScreen:\n{screen}"
     );
 }
