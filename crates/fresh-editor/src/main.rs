@@ -4507,9 +4507,9 @@ and its terminals with their ids.
 
 WHAT THE USER SEES
 
-  Orchestrator: Home    a chat carrying everything every agent has said, the
-                        agent list sorted by who needs them, and the selected
-                        agent's live terminal
+  Orchestrator: Open    the workspace dock, with the agent list sorted by who
+                        needs them and a chat carrying everything every agent
+                        has said — and a line to answer them on
 
 Your status is the reason column on your row; your outbox is your half of the
 chat. Keeping both current is what puts you in front of the user at the right
