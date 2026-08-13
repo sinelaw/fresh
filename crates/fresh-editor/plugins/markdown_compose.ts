@@ -1060,6 +1060,14 @@ const HEADING_TEXT_STYLES: Array<Record<string, unknown>> = [
   { fg: "syntax.constant", italic: true },             // ######
 ];
 
+// Block-quote rendering. The bar is a left half-block: it fills the full cell
+// height, so consecutive quote lines join into an unbroken vertical rule the
+// way a rendered blockquote's border does. Theme keys resolve at render time,
+// like the emphasis overlays.
+const QUOTE_BAR = "▌";
+const quoteBarStyle = { fg: "syntax.type" };
+const quoteTextStyle = { fg: "syntax.comment", italic: true };
+
 function headingTextStyle(level: number): Record<string, unknown> {
   const idx = Math.min(Math.max(level, 1), HEADING_TEXT_STYLES.length) - 1;
   return HEADING_TEXT_STYLES[idx];
@@ -1421,6 +1429,46 @@ function processLineConceals(
       "unless-cursor-in", byteStart, lineScopeInclEnd,
     );
     return;
+  }
+
+  // --- Block quotes: `>` markers become a left bar ---
+  // Each `>` is concealed into a bar glyph in place, one character for one
+  // character, so the quote's text keeps its source column and the bars of
+  // consecutive quote lines stack into a continuous rule down the block. A
+  // nested quote (`> >`) therefore renders as two bars, which is the nesting
+  // depth made visible for free.
+  //
+  // Per-character rather than one conceal over the whole marker run because
+  // width must be preserved exactly: the run can contain spaces between the
+  // markers, and collapsing them would shift the quoted text left of where the
+  // soft-break hanging indent (leadingIndent + 2) puts its continuation rows.
+  //
+  // Falls through to inline-span processing, so emphasis and links inside a
+  // quote still render.
+  const quoteRun = lineContent.match(/^(\s*)(>[>\s]*)/);
+  if (quoteRun) {
+    const runStart = quoteRun[1].length;
+    const runEnd = runStart + quoteRun[2].length;
+    for (let i = runStart; i < runEnd; i++) {
+      if (lineContent[i] !== '>') continue;
+      const markerByte = charToByte(lineContent, i, byteStart);
+      const markerByteEnd = charToByte(lineContent, i + 1, byteStart);
+      editor.addConceal(
+        bufferId, "md-syntax", markerByte, markerByteEnd, QUOTE_BAR,
+        "unless-cursor-in", byteStart, lineScopeInclEnd,
+      );
+      editor.addOverlay(
+        bufferId, "md-emphasis", markerByte, markerByteEnd, quoteBarStyle,
+      );
+    }
+    // Quoted text reads as an aside, not as body copy.
+    const quotedStart = charToByte(lineContent, runEnd, byteStart);
+    const quotedEnd = lineContentEndByte(lineContent, byteStart);
+    if (quotedEnd > quotedStart) {
+      editor.addOverlay(
+        bufferId, "md-emphasis", quotedStart, quotedEnd, quoteTextStyle,
+      );
+    }
   }
 
   // --- ATX headings: conceal the `#` run, style the text by level ---
