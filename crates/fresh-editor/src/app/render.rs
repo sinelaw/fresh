@@ -4516,12 +4516,26 @@ impl Editor {
                     }
                     // Scrollbar column = right edge of the list's region,
                     // clamped inside the split.
-                    let sb_x = content_rect
+                    //
+                    // A list that starts at column 0 owns the panel's whole
+                    // width, so its bar belongs against the right edge. Its
+                    // laid-out `width_cols` is deliberately a couple of
+                    // columns short (`widget_panel_width` reserves them for
+                    // exactly this bar), and drawing at that inboard edge
+                    // put the bar *inside* the rows — blanking a character
+                    // cell mid-text and leaving the reserved columns empty
+                    // beside the split's own scrollbar.
+                    let region_right = content_rect
                         .x
                         .saturating_add(gutter)
                         .saturating_add(region.col_in_row as u16)
-                        .saturating_add(region.width_cols.saturating_sub(1) as u16)
-                        .min(content_rect.x + content_rect.width.saturating_sub(1));
+                        .saturating_add(region.width_cols.saturating_sub(1) as u16);
+                    let panel_right = content_rect.x + content_rect.width.saturating_sub(1);
+                    let sb_x = if region.col_in_row == 0 {
+                        panel_right
+                    } else {
+                        region_right.min(panel_right)
+                    };
                     jobs.push((
                         ratatui::layout::Rect {
                             x: sb_x,

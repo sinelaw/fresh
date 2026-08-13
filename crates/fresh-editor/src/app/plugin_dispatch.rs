@@ -5123,6 +5123,7 @@ impl Editor {
         let panel_width = self.widget_panel_width(buffer_id);
         let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
+        self.sync_widget_panel_scrollable(buffer_id, &out.scroll_regions);
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,

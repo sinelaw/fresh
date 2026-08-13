@@ -1814,6 +1814,36 @@ function insertIntoDirTree(root: DirNode, file: FileEntry): void {
     node.files.push(file);
 }
 
+/**
+ * Collapse runs of directories that only ever contain one another into a
+ * single row, the way the file explorer does: `crates/fresh-editor/src/app`
+ * is one row rather than four, because none of the intermediate levels has
+ * a file or a second child of its own to show. A level earns its own row as
+ * soon as it holds a file or branches.
+ *
+ * Counts need no fixing up — every level of a chain totals the same
+ * subtree — and the surviving node keeps the deepest `path`, so its key and
+ * its expand state stay stable as long as the chain does.
+ */
+function compressDirChains(node: DirNode): void {
+    for (const [key, child] of [...node.children]) {
+        let merged = child;
+        while (merged.files.length === 0 && merged.children.size === 1) {
+            const only = [...merged.children.values()][0];
+            merged = {
+                name: `${merged.name}/${only.name}`,
+                path: only.path,
+                children: only.children,
+                files: only.files,
+                added: only.added,
+                removed: only.removed,
+            };
+        }
+        if (merged !== child) node.children.set(key, merged);
+        compressDirChains(merged);
+    }
+}
+
 function buildFilesTree(): FilesTree {
     const out: FilesTree = {
         nodes: [], keys: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
@@ -1835,6 +1865,7 @@ function buildFilesTree(): FilesTree {
         }
         for (const f of g.files) insertIntoDirTree(entry.root, f);
     }
+    for (const r of roots) compressDirChains(r.root);
     // With one category (the usual worktree review: everything unstaged)
     // a category row would be a header over the whole tree and one wasted
     // indent level in a panel that has ~24 columns to work with.
@@ -5089,7 +5120,13 @@ function closeFileFilter(revert: boolean): void {
     if (!filterEditing) return;
     if (revert && state.fileFilter !== filterBeforeEdit) {
         state.fileFilter = filterBeforeEdit;
+        filterCursor = filterBeforeEdit.length;
         applyFileFilter();
+        // The host owns the field's text, and a plain re-render carries the
+        // widget's own value forward — so the restored query has to be
+        // pushed back explicitly, or Esc leaves the box reading the
+        // abandoned text over a tree that already reverted.
+        filesPanel?.setValue(FILES_FILTER_KEY, filterBeforeEdit, filterCursor);
     }
     leaveFilterMode();
     // Focus lands on the tree — you filtered to pick a file.

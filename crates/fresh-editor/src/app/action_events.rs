@@ -201,6 +201,18 @@ impl crate::app::window::Window {
         Some(events)
     }
 
+    /// Whether `split_id` currently soft-wraps. Falls back to the global
+    /// `editor.line_wrap` for a split with no view state yet, so a cursor
+    /// motion arriving before the first render behaves as configured.
+    fn split_line_wrap(&self, split_id: LeafId) -> bool {
+        self.buffers
+            .splits()
+            .map(|(_, vs)| vs)
+            .and_then(|vs| vs.get(&split_id))
+            .map(|vs| vs.viewport.line_wrap_enabled)
+            .unwrap_or_else(|| self.config().editor.line_wrap)
+    }
+
     /// Handle visual line movement actions using the cached layout
     /// Returns Some(events) if the action was handled, None if it should fall through
     fn handle_visual_line_movement(
@@ -238,16 +250,22 @@ impl crate::app::window::Window {
             // When line wrapping is off, Home/End should move to the physical line
             // start/end, not the visual (horizontally-scrolled) row boundary.
             // Fall through to the standard handler which uses line_iterator.
-            Action::MoveLineEnd if self.config().editor.line_wrap => {
+            //
+            // Ask the split the cursor is actually in, not the global config:
+            // a plugin panel can turn wrap off for itself (`setLineWrap`, and
+            // every buffer-group panel does), and reading the global default
+            // there sent Home walking a wrap boundary that the unwrapped view
+            // never draws — one press landed mid-line instead of at column 1.
+            Action::MoveLineEnd if self.split_line_wrap(split_id) => {
                 VisualAction::LineEnd { is_select: false }
             }
-            Action::SelectLineEnd if self.config().editor.line_wrap => {
+            Action::SelectLineEnd if self.split_line_wrap(split_id) => {
                 VisualAction::LineEnd { is_select: true }
             }
-            Action::MoveLineStart if self.config().editor.line_wrap => {
+            Action::MoveLineStart if self.split_line_wrap(split_id) => {
                 VisualAction::LineStart { is_select: false }
             }
-            Action::SelectLineStart if self.config().editor.line_wrap => {
+            Action::SelectLineStart if self.split_line_wrap(split_id) => {
                 VisualAction::LineStart { is_select: true }
             }
             _ => return None, // Not a visual line action
