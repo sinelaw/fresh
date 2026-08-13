@@ -1073,12 +1073,13 @@ const HEADING_TEXT_STYLES: Array<Record<string, unknown>> = [
 // List rendering
 // =============================================================================
 //
-// Three things, all per-line and stateless except the inter-item spacing:
+// Three things, each decided from a single source line so the whole pass stays
+// per-line and stateless:
 //   * the `-`/`*`/`+` bullet becomes a real bullet glyph (1 char for 1 char,
 //     so nothing shifts),
 //   * a nested item's leading indent is widened, so nesting depth is legible
 //     at a glance rather than by counting two-space steps,
-//   * consecutive items get a blank row between them (see LIST_SPACING_NS).
+//   * each item gets a blank row after it (see LIST_SPACING_NS).
 //
 // The indent widening is the one piece that has to be known by *both* decoration
 // passes: the conceal pass renders it, and the soft-break pass has to charge the
