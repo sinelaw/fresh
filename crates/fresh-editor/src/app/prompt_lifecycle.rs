@@ -165,6 +165,52 @@ impl Editor {
         self.update_quick_open_suggestions(prefix);
     }
 
+    /// Buffer-group tabs, as `#` switcher entries.
+    ///
+    /// A group's own buffers are `hidden_from_tabs` — the group is the tab,
+    /// not any one panel — so listing buffers alone leaves a group like the
+    /// review-diff panels unreachable from the switcher once focus moves to
+    /// another tab. Emitting the group itself is what closes that gap; the
+    /// entry carries the group's leaf id so selecting it activates the tab
+    /// rather than trying to make a hidden panel buffer active.
+    fn quick_open_group_tabs(&self) -> Vec<BufferInfo> {
+        use crate::view::split::{SplitNode, TabTarget};
+        let Some(window) = self.windows.get(&self.active_window) else {
+            return Vec::new();
+        };
+        let Some((_, view_states)) = window.buffers.splits() else {
+            return Vec::new();
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for vs in view_states.values() {
+            for target in &vs.open_buffers {
+                let TabTarget::Group(leaf) = target else {
+                    continue;
+                };
+                if !seen.insert(*leaf) {
+                    continue;
+                }
+                let Some(SplitNode::Grouped { name, .. }) = window.grouped_subtrees.get(leaf)
+                else {
+                    continue;
+                };
+                out.push(BufferInfo {
+                    // Groups have no buffer of their own; `id` only orders
+                    // ties in the switcher, and the leaf id is stable and
+                    // unique among groups.
+                    id: leaf.0 .0,
+                    path: String::new(),
+                    name: name.clone(),
+                    modified: false,
+                    is_virtual: true,
+                    group_leaf: Some(leaf.0 .0),
+                });
+            }
+        }
+        out
+    }
+
     /// Build a QuickOpenContext from current editor state
     pub(super) fn build_quick_open_context(&self) -> QuickOpenContext {
         let metadata = &self.active_window().buffer_metadata;
@@ -190,6 +236,7 @@ impl Editor {
                             name,
                             modified: state.buffer.is_modified(),
                             is_virtual: false,
+                            group_leaf: None,
                         })
                     }
                     // No file path: only virtual buffers (plugin panels like
@@ -204,10 +251,12 @@ impl Editor {
                             name: meta.display_name.clone(),
                             modified: state.buffer.is_modified(),
                             is_virtual: true,
+                            group_leaf: None,
                         })
                     }
                 }
             })
+            .chain(self.quick_open_group_tabs())
             .collect();
 
         let has_lsp_config = {

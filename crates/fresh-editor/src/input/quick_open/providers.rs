@@ -111,6 +111,10 @@ impl QuickOpenProvider for CommandProvider {
 // Buffer Provider (prefix: "#")
 // ============================================================================
 
+/// Marks a suggestion value as a buffer-group leaf id rather than a buffer
+/// id. The two are separate id spaces and would otherwise collide.
+const GROUP_VALUE_PREFIX: &str = "group:";
+
 /// Provider for switching between open buffers
 pub struct BufferProvider;
 
@@ -152,9 +156,15 @@ impl QuickOpenProvider for BufferProvider {
                     buf.name.clone()
                 };
 
+                // A group entry is selected by its leaf id, not a buffer
+                // id, so the two namespaces are kept apart in the value.
+                let value = match buf.group_leaf {
+                    Some(leaf) => format!("{GROUP_VALUE_PREFIX}{leaf}"),
+                    None => buf.id.to_string(),
+                };
                 let suggestion = Suggestion::new(display_name)
                     .with_description(buf.path.clone())
-                    .with_value(buf.id.to_string());
+                    .with_value(value);
                 Some((suggestion, m.score, buf.id))
             })
             .collect();
@@ -170,11 +180,19 @@ impl QuickOpenProvider for BufferProvider {
         _query: &str,
         _context: &QuickOpenContext,
     ) -> QuickOpenResult {
-        suggestion
-            .and_then(|s| s.value.as_deref())
-            .and_then(|v| v.parse::<usize>().ok())
-            .map(QuickOpenResult::ShowBuffer)
-            .unwrap_or(QuickOpenResult::None)
+        let Some(value) = suggestion.and_then(|s| s.value.as_deref()) else {
+            return QuickOpenResult::None;
+        };
+        match value.strip_prefix(GROUP_VALUE_PREFIX) {
+            Some(leaf) => leaf
+                .parse::<usize>()
+                .map(QuickOpenResult::ShowBufferGroup)
+                .unwrap_or(QuickOpenResult::None),
+            None => value
+                .parse::<usize>()
+                .map(QuickOpenResult::ShowBuffer)
+                .unwrap_or(QuickOpenResult::None),
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -1022,6 +1040,7 @@ mod tests {
                     name: "main.rs".to_string(),
                     modified: false,
                     is_virtual: false,
+                    group_leaf: None,
                 },
                 BufferInfo {
                     id: 2,
@@ -1029,6 +1048,7 @@ mod tests {
                     name: "lib.rs".to_string(),
                     modified: true,
                     is_virtual: false,
+                    group_leaf: None,
                 },
             ],
             active_buffer_id: 1,
@@ -1088,6 +1108,7 @@ mod tests {
             name: "*blame:lib.rs*".to_string(),
             modified: false,
             is_virtual: true,
+            group_leaf: None,
         });
         // A pathless, non-virtual buffer (e.g. unnamed scratch) must NOT appear.
         context.open_buffers.push(BufferInfo {
@@ -1096,6 +1117,7 @@ mod tests {
             name: "scratch".to_string(),
             modified: false,
             is_virtual: false,
+            group_leaf: None,
         });
 
         // Empty query lists everything that is eligible.
@@ -1115,6 +1137,42 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         assert!(filtered[0].text.contains("*blame:lib.rs*"));
         assert_eq!(filtered[0].value.as_deref(), Some("3"));
+    }
+
+    /// A buffer-group tab (the review-diff panels, say) is listed by its
+    /// group name and selects to `ShowBufferGroup` — its member buffers are
+    /// hidden from tabs, so the group is the only route back to it. The two
+    /// id spaces must not be confused: a group leaf and a buffer can share a
+    /// numeric id and still resolve to different results.
+    #[test]
+    fn test_buffer_provider_lists_and_selects_group_tabs() {
+        let provider = BufferProvider::new();
+        let mut context = make_test_context("/tmp");
+        context.open_buffers.push(BufferInfo {
+            id: 1,
+            path: String::new(),
+            name: "*Review Diff*".to_string(),
+            modified: false,
+            is_virtual: true,
+            group_leaf: Some(1),
+        });
+
+        let filtered = provider.suggestions("Review", &context);
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].text.contains("*Review Diff*"));
+
+        match provider.on_select(Some(&filtered[0]), "Review", &context) {
+            QuickOpenResult::ShowBufferGroup(leaf) => assert_eq!(leaf, 1),
+            other => panic!("expected ShowBufferGroup, got {other:?}"),
+        }
+
+        // A plain buffer with the same numeric id still resolves to a buffer.
+        let main = provider.suggestions("main", &context);
+        assert_eq!(main.len(), 1);
+        match provider.on_select(Some(&main[0]), "main", &context) {
+            QuickOpenResult::ShowBuffer(id) => assert_eq!(id, 1),
+            other => panic!("expected ShowBuffer, got {other:?}"),
+        }
     }
 
     #[test]

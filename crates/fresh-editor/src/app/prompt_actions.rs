@@ -1711,6 +1711,29 @@ impl Editor {
                 }
                 PromptResult::Done
             }
+            QuickOpenResult::ShowBufferGroup(group_leaf) => {
+                let group_leaf =
+                    crate::model::event::LeafId(crate::model::event::SplitId(group_leaf));
+                // The group tab lives in exactly one split; find it so the
+                // activation targets the same split a click on the tab would.
+                let split_id = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(_, vs)| vs)
+                    .and_then(|view_states| {
+                        view_states.iter().find_map(|(split_id, vs)| {
+                            vs.open_buffers
+                                .iter()
+                                .any(|t| *t == crate::view::split::TabTarget::Group(group_leaf))
+                                .then_some(*split_id)
+                        })
+                    });
+                if let Some(split_id) = split_id {
+                    self.activate_group_tab(split_id, group_leaf);
+                }
+                PromptResult::Done
+            }
             QuickOpenResult::GotoLine(target) => {
                 // Large file opened in byte-offset mode: there is no line
                 // index yet, so a `:N` target can't be resolved to a byte

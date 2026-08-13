@@ -397,6 +397,16 @@ const STYLE_LINE_NUM_FG: OverlayColorSpec = "editor.line_number_fg";
 // gutter (extremely rare in review-diff context).
 const LINE_NUM_W = 4;
 
+/** Disclosure triangles for collapsible headers (sections, files,
+ *  hunks). The buffer text always carries `GLYPH_EXPANDED`; `applyFolds`
+ *  overlays `GLYPH_COLLAPSED` as a replacement conceal while the body is
+ *  folded, so collapsing never rewrites the buffer. Both are one column
+ *  and the same length in bytes — `TRIANGLE_BYTES` — which is what lets
+ *  the conceal target a fixed range after the header's leading space. */
+const GLYPH_EXPANDED = '▾';
+const GLYPH_COLLAPSED = '▸';
+const TRIANGLE_BYTES = getByteLength(GLYPH_EXPANDED);
+
 /** Format the per-row "OLD  NEW " prefix (with trailing space). Either
  *  side passes `undefined` for blank — removed lines blank the new
  *  column, added lines blank the old column. */
@@ -1110,16 +1120,16 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Unstaged";
             else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
             const sectionCount = state.files.filter(f => f.category === file.category && fileMatchesFilter(f)).length;
-            // Always render expanded triangle (▾). Collapse state is
+            // Always render the expanded triangle. Collapse state is
             // shown by overlaying a `▸` replacement-conceal on the
-            // triangle byte range — the buffer text never changes, so
-            // toggling collapse never has to rebuild.
+            // triangle byte range (see `applyFolds`) — the buffer text
+            // never changes, so toggling collapse never has to rebuild.
             // Range labels (e.g. `main..HEAD`) carry case already — don't
             // mangle them with the section uppercase; worktree category
             // names are lowercase words and need the uppercase.
             const displayLabel = state.mode === 'range' ? label : label.toUpperCase();
             lines.push({
-                text: ` ▾ ${displayLabel}  (${sectionCount})`,
+                text: ` ${GLYPH_EXPANDED} ${displayLabel}  (${sectionCount})`,
                 type: 'section-header',
                 file: file.category, // store category in 'file' field for reuse
                 filePath: file.category,
@@ -1132,12 +1142,12 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             });
         }
 
-        // File header — always emit the expanded triangle; conceal
-        // overlays handle the collapsed view.
+        // File header — always emit the expanded triangle; the
+        // conceal in `applyFolds` shows the collapsed view.
         const counts = fileChangeCounts(file);
         const key = fileKey(file);
         const filename = file.origPath ? `${file.origPath} → ${file.path}` : file.path;
-        const headerText = ` ▾ ${filename}   +${counts.added} / -${counts.removed}`;
+        const headerText = ` ${GLYPH_EXPANDED} ${filename}   +${counts.added} / -${counts.removed}`;
         lines.push({
             text: headerText,
             type: 'file-header',
@@ -1184,12 +1194,12 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
         }
 
         for (const hunk of fileHunks) {
-        // Hunk header — always emit expanded triangle; collapse
-        // overlays a `▸` replacement-conceal.
+        // Hunk header — always emit the expanded triangle; collapse
+        // overlays a `▸` replacement-conceal (see `applyFolds`).
         const headerInner = hunk.contextHeader
             ? `@@ ${hunk.contextHeader} @@`
             : `@@ -${hunk.oldRange.start} +${hunk.range.start} @@`;
-        const header = ` ▾ ${headerInner}`;
+        const header = ` ${GLYPH_EXPANDED} ${headerInner}`;
 
         lines.push({
             text: header,
@@ -1896,11 +1906,20 @@ function buildFilesTree(): FilesTree {
         out.fileByNodeKey[nodeKey] = key;
         out.indexByFileKey[key] = out.nodes.length;
         out.keys.push(nodeKey);
-        const stats = `  +${counts.added} -${counts.removed}${badge}`;
-        const room = Math.max(4, W - depth * 2 - 4 - stats.length);
+        // The status letter rides on the right with the counts, not in
+        // front of the name. The host already aligns a leaf's text with
+        // its sibling directories' *names* (a leaf gets two spaces where
+        // the disclosure glyph would be), so a leading `M ` pushed every
+        // filename two columns past its siblings — and a file following a
+        // collapsed directory then read as that directory's contents. The
+        // file explorer this sidebar mirrors right-aligns status for the
+        // same reason.
+        const status = file.status ? ` ${file.status}` : '';
+        const stats = `  +${counts.added} -${counts.removed}${badge}${status}`;
+        const room = Math.max(4, W - depth * 2 - 2 - stats.length);
         out.nodes.push(treeNode(
             {
-                text: `${file.status || ' '} ${elideRight(fileBaseOf(file.path), room)}${stats}`,
+                text: `${elideRight(fileBaseOf(file.path), room)}${stats}`,
                 properties: { type: "file", fileKey: key, filePath: file.path },
             },
             { depth },
@@ -2339,35 +2358,67 @@ function updateMagitDisplay(): void {
     refreshStickyHeader(0);
 }
 
+/** Conceal namespace owning the collapsed-header triangles, so
+ *  `applyFolds` can drop the whole set in one host call. */
+const NS_COLLAPSE_TRIANGLE = "review-collapse-triangle";
+
+/** Byte range of the `▾` in a header row, given its 1-indexed row.
+ *  Every collapsible header is emitted as `" ▾ …"`, so the glyph is the
+ *  `TRIANGLE_BYTES` bytes after the leading space. Returns null when the
+ *  row index has no recorded offset (stale state between rebuilds). */
+function headerTriangleRange(row1: number | undefined): { start: number; end: number } | null {
+    if (row1 === undefined) return null;
+    const start = state.diffLineByteOffsets[row1 - 1];
+    if (start === undefined) return null;
+    return { start: start + 1, end: start + 1 + TRIANGLE_BYTES };
+}
+
 /**
  * Apply collapse state via the host's folding infrastructure. Folds
  * are designed exactly for "header line stays visible, body lines
  * skipped by the renderer". A fold range covers `[bodyStart, bodyEnd)`
  * — the line containing `bodyStart - 1` (the header) stays visible,
- * everything inside the range gets elided. The host renders its own
- * "..." indicator on the collapsed header line, which is sufficient
- * visual feedback (no need for a triangle swap).
+ * everything inside the range gets elided.
  *
- * Toggling collapse on a 5000-line diff is now O(collapsed_set_size)
- * `addFold` calls. `clearFolds` drops the entire set in one host call
- * so re-applying after a state change is also cheap.
+ * The header keeps its `▾` in the buffer text and a replacement conceal
+ * turns it into `▸` while collapsed, so the triangle agrees with the
+ * fold instead of pointing open over a closed body — the sidebar's
+ * directory rows rotate theirs, and a row that says "expanded" while
+ * showing nothing is a contradiction the host's `…` marker doesn't
+ * resolve. Conceals are rendering-only: the buffer text never changes,
+ * so this keeps collapse a rebuild-free operation.
+ *
+ * Toggling collapse on a 5000-line diff is O(collapsed_set_size)
+ * `addFold` + `addConceal` calls. `clearFolds` /
+ * `clearConcealNamespace` each drop the whole set in one host call so
+ * re-applying after a state change is also cheap.
  */
 function applyFolds(): void {
     if (state.groupId === null) return;
     const diffId = state.panelBuffers["diff"];
     if (diffId === undefined) return;
     editor.clearFolds(diffId);
+    editor.clearConcealNamespace(diffId, NS_COLLAPSE_TRIANGLE);
+    const collapseTriangle = (row1: number | undefined): void => {
+        const range = headerTriangleRange(row1);
+        if (range) {
+            editor.addConceal(diffId, NS_COLLAPSE_TRIANGLE, range.start, range.end, GLYPH_COLLAPSED);
+        }
+    };
     for (const cat of state.collapsedSections) {
         const body = state.sectionBodyRange[cat];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
+        collapseTriangle(state.sectionHeaderRows[cat]);
     }
     for (const key of state.collapsedFiles) {
         const body = state.fileBodyRange[key];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
+        collapseTriangle(state.fileHeaderRows[key]);
     }
     for (const id of state.collapsedHunks) {
         const body = state.hunkBodyRange[id];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
+        collapseTriangle(state.hunkRowByHunkId[id]);
     }
 }
 
@@ -2382,7 +2433,10 @@ function refreshStickyHeader(topVisibleRow: number): void {
     const stickyId = state.panelBuffers["sticky"];
     if (stickyId === undefined) return;
 
-    const W = state.viewportWidth;
+    // The sticky row spans the diff pane, so it is clipped to the diff
+    // pane's width — not the review's overall viewport, which is the
+    // focused split's and may be a side panel.
+    const W = diffPanelWidth();
     let text: string;
     let style: Partial<OverlayOptions> = { fg: STYLE_HEADER, bold: true };
 
@@ -2721,6 +2775,10 @@ function on_review_viewport_changed(data: { split_id: number; buffer_id: number;
     // Inline comment boxes are laid out to this width (see
     // `diffPanelWidth`); the next center rebuild picks up a change.
     state.panelWidths["diff"] = data.width;
+    // Height too, so `refreshViewportDimensions` has an authoritative
+    // size for the diff pane and never has to trust whichever split
+    // happens to hold focus.
+    state.panelHeights["diff"] = data.height;
     // Prefer top_line when the host provides it. Virtual buffers may not
     // have line metadata, in which case top_line is null — fall back to
     // converting top_byte using our own row-byte index.
@@ -3878,7 +3936,19 @@ function restoreCursorAfterRebuild() {
  * unlike the terminal-level resize event which reports full terminal size.
  */
 function refreshViewportDimensions(): boolean {
-    const viewport = editor.getViewport();
+    // `getViewport()` reports the *focused* split only. With a side panel
+    // focused — which is exactly where `r` leaves you after picking a file
+    // — that is the sidebar's geometry, and recording it as the review's
+    // viewport shrinks everything laid out against `viewportWidth` (the
+    // sticky header was being sliced to the sidebar's width). The host
+    // reports each panel's real rect through `on_review_viewport_changed`,
+    // so prefer the diff pane's own recorded size and fall back to the
+    // focused split only before the group has been laid out once.
+    const width = state.panelWidths["diff"];
+    const height = state.panelHeights["diff"];
+    const viewport = width && height && width > 0 && height > 0
+        ? { width, height }
+        : editor.getViewport();
     if (viewport) {
         const changed = viewport.width !== state.viewportWidth || viewport.height !== state.viewportHeight;
         state.viewportWidth = viewport.width;
