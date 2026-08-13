@@ -94,21 +94,93 @@ fn markdown_compose_marks_headings_on_the_scrollbar() {
     );
 }
 
-/// Marks accumulate as the document is explored: scrolling to parts of the
-/// file the plugin had not yet seen adds their headings without dropping the
-/// marks for sections already visited.
+/// The track describes the whole document from the moment compose mode is on
+/// — the headline fix for issue #2990.
+///
+/// Marks used to be published viewport by viewport out of `lines_changed`, so
+/// the track only showed the parts already scrolled through. A structure map
+/// that needs the reader to explore the document before it describes it is not
+/// a structure map.
+#[test]
+fn every_heading_is_marked_without_scrolling() {
+    // 30 sections of 20 lines: the opening viewport holds barely one of them.
+    let (mut harness, _tmp) = compose_harness(&document_with_headings(30, 20));
+
+    // The pre-scan reads the buffer over the async plugin bridge, so the full
+    // set lands a few ticks after the toggle returns.
+    harness
+        .wait_until(|h| marker_rows(h).len() >= 10)
+        .expect("compose mode should mark headings across the whole document");
+
+    let rows = marker_rows(&harness);
+    let (first, last) = harness.content_area_rows();
+    let (first, last) = (first as u16, last as u16);
+    let track = (last - first + 1) as f32;
+
+    // Coverage reaches content that has never been on screen: the last
+    // section's heading is at the end of the file, so its mark belongs near
+    // the bottom of the track.
+    let deepest = (*rows.last().unwrap() - first) as f32 / track;
+    assert!(
+        deepest > 0.8,
+        "deepest mark should sit near the end of the track, was at \
+         {deepest:.2} of it; rows {rows:?}"
+    );
+}
+
+/// Only top-level headings are marked by default: a track cell covers many
+/// lines, so marking every level packs several headings into one cell where
+/// only the shallowest survives anyway.
+#[test]
+fn only_top_level_headings_are_marked_by_default() {
+    let mut md = String::from("# The one top level heading\n\n");
+    for s in 0..30 {
+        md.push_str(&format!("## Sub {s}\n\n### Deeper {s}\n\n"));
+        for l in 0..20 {
+            md.push_str(&format!("Body line {l} of section {s}.\n"));
+        }
+    }
+
+    let (mut harness, _tmp) = compose_harness(&md);
+
+    harness
+        .wait_until(|h| !marker_rows(h).is_empty())
+        .expect("the `#` heading should be marked");
+    // Give any deeper-level marks the same chance to appear before asserting
+    // that they don't.
+    let mut settle = usize::MAX;
+    harness
+        .wait_until_stable(|h| {
+            let n = marker_rows(h).len();
+            let stable = n == settle;
+            settle = n;
+            stable
+        })
+        .unwrap();
+
+    let (first, _) = harness.content_area_rows();
+    assert_eq!(
+        marker_rows(&harness),
+        vec![first as u16],
+        "only the single `#` heading should be marked, at the top of the track"
+    );
+}
+
+/// Exploring the document does not disturb the marks: scrolling neither drops
+/// the headings outside the viewport nor adds to a set that is already
+/// complete.
 ///
 /// This is the property that `setScrollbarMarkersInRange` exists for — a
 /// whole-namespace replace on every `lines_changed` batch would leave only the
 /// headings near the viewport marked.
 #[test]
-fn heading_marks_accumulate_as_the_document_is_explored() {
+fn heading_marks_survive_exploring_the_document() {
     let (mut harness, _tmp) = compose_harness(&document_with_headings(20, 14));
 
     harness
         .wait_until(|h| !marker_rows(h).is_empty())
         .expect("initial heading marks");
-    let initial = marker_rows(&harness).len();
+    let initial = marker_rows(&harness);
 
     // Page down through the document so later sections enter the viewport,
     // letting the plugin's marks settle after each page.
@@ -127,16 +199,13 @@ fn heading_marks_accumulate_as_the_document_is_explored() {
             .unwrap();
     }
 
-    // The plugin republishes only the region it just saw, so headings from
-    // sections already scrolled past keep their marks and the total grows.
-    // With a whole-namespace replace this count stays flat — only the
-    // headings near the viewport would survive each batch.
+    // Each batch republishes only its own byte span, so the marks for the
+    // sections scrolled past are left alone. With a whole-namespace replace
+    // per batch, only the headings near the viewport would survive.
     let after = marker_rows(&harness);
-    assert!(
-        after.len() > initial,
-        "marks should accumulate while scrolling: started with {initial}, \
-         ended with {} ({after:?})",
-        after.len()
+    assert_eq!(
+        after, initial,
+        "the marked rows should be identical before and after scrolling"
     );
 }
 
