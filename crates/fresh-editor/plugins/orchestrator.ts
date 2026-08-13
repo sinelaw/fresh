@@ -5729,11 +5729,17 @@ const DOCK_CHAT_CHROME_ROWS = 4;
 /// short to hold both it and a usable list, because a list is what the dock is
 /// for.
 function dockChatRows(innerH: number): number {
+  // Too short to hold a chat at all — and that has to be decided before the
+  // collapsed case, not after. A dock this size cannot show the section
+  // expanded, so spending two of its rows on a header that opens into
+  // nothing is the worst of both: the list loses the space and the chat is
+  // still unreachable (`toggleDockChatFocus` refuses when this returns 0, so
+  // the header was a button that did nothing).
+  if (innerH < 24) return 0;
   // Collapsed is the rule plus the header — two rows, which is what
   // `dockChatBlock` emits. Claiming one pushed the header off the dock's
   // bottom edge, so the accordion looked like it had removed itself.
   if (dockChatIsCollapsed()) return 2;
-  if (innerH < 24) return 0;
   // The section's own chrome is 4 rows: the rule that separates it from the
   // list, the header, the rule above the input, and the input. The floor
   // leaves four rows of transcript under that.
