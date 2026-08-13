@@ -820,6 +820,24 @@ pub struct Editor {
     /// `materialize_window`.
     pub(crate) materialize_pending: std::collections::HashSet<fresh_core::WindowId>,
 
+    /// Agent argv read off the *persisted* snapshot of a window still in
+    /// `materialize_pending`, so the dock can say "this workspace has a
+    /// claude in it" before anything has been restored into it.
+    ///
+    /// A live window answers that question from its terminal maps, which
+    /// materialization fills in — but those maps are empty until then, so
+    /// every dormant workspace looked agentless until the user visited it,
+    /// which is exactly backwards: the reason to look at the list is to
+    /// decide *which* one to visit.
+    ///
+    /// Memoized rather than read per enumeration: the snapshot refresh runs
+    /// on every keystroke, and this costs a workspace-file parse. One entry
+    /// per window, filled on first enumeration and dropped by
+    /// `materialize_window` when the real maps take over. An empty vec is
+    /// a real answer — "looked, no agent" — so a shell-only workspace is
+    /// read once rather than on every refresh.
+    pub(crate) dormant_agent_argv: std::collections::HashMap<fresh_core::WindowId, Vec<String>>,
+
     /// Whether workspace files (`workspaces/*.json`) may be written at all;
     /// `false` under `--no-restore`. Quit-time saves and mid-session
     /// checkpoints must be suppressed together — a checkpoint that ignored
@@ -1177,6 +1195,34 @@ pub struct Editor {
     /// "Rich Control Room rendering".
     pub(crate) preview_window_id: Option<fresh_core::WindowId>,
 
+    /// View state for `WidgetSpec::Pane` widgets — scroll, cursor and
+    /// folds for a buffer being shown inside a panel, keyed by the
+    /// `(window, buffer)` pair the pane names.
+    ///
+    /// Kept here rather than in the owning window's `split_view_states`
+    /// on purpose, and the reason is load-bearing: that map is iterated
+    /// by ~20 cross-cutting paths — workspace save, viewport hooks,
+    /// settings broadcasts, buffer-close cascades — and a pane is a
+    /// transient render surface, not a pane the user owns. None of
+    /// those paths should ever see one. `OverlayPreviewState` keeps the
+    /// same isolation for the same reason.
+    ///
+    /// Keyed by target rather than by widget, so two panes showing the
+    /// same buffer scroll together — which is what you want when a
+    /// panel shows one buffer in two places, and harmless otherwise.
+    pub(crate) pane_view_states:
+        std::collections::HashMap<(u64, BufferId), crate::view::split::SplitViewState>,
+
+    /// The same, for a `Pane` pointed at a **composite** buffer.
+    ///
+    /// A composite scrolls as one aligned row list across all its
+    /// source columns, so its view state is a `CompositeViewState`
+    /// rather than a `SplitViewState` — a separate type, hence a
+    /// separate map. Same keying and the same teardown as
+    /// `pane_view_states`.
+    pub(crate) pane_composite_view_states:
+        std::collections::HashMap<(u64, BufferId), crate::view::composite_view::CompositeViewState>,
+
     // terminal_buffers / terminal_backing_files / terminal_log_files
     // moved onto `Window` (Step 0d).
     // `ephemeral_terminals` moved onto `Window` — TerminalManager and
@@ -1420,6 +1466,16 @@ pub(crate) struct FloatingWidgetState {
     /// scoped to each rect — giving us a live render of the
     /// referenced editor window inside the floating overlay.
     pub embeds: Vec<crate::widgets::EmbedRect>,
+    /// Where the interactive panes actually landed on screen, in
+    /// absolute cells, recorded by the paint pass.
+    ///
+    /// `embeds` is panel-relative and says nothing about clipping, so
+    /// it cannot answer "did this click land in the terminal?". The
+    /// paint pass already computes the clipped screen rect to draw
+    /// into; keeping it is what lets a click focus the pane it landed
+    /// in. Only keyed interactive panes are recorded — nothing else is
+    /// a click target.
+    pub pane_hits: Vec<(String, ratatui::layout::Rect)>,
     /// Rows produced by `WidgetSpec::Overlay` children. Painted
     /// AFTER `entries` and `embeds`, on top of whatever's at
     /// each `buffer_row`. Used for dropdown completions /
@@ -2080,6 +2136,7 @@ mod tests {
             entries: Vec::new(),
             focus_cursor: None,
             embeds: Vec::new(),
+            pane_hits: Vec::new(),
             overlays: Vec::new(),
             scroll_regions: Vec::new(),
             scrollbar_tracks: Vec::new(),

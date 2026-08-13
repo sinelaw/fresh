@@ -2628,6 +2628,158 @@ impl Window {
 }
 
 impl Editor {
+    /// Write bytes to a terminal's PTY, naming the window that owns it.
+    ///
+    /// `window_id` is what makes this addressable. Terminals live on the
+    /// window that spawned them, so resolving against the active window can
+    /// only ever reach one window's terminals — and only whichever window is
+    /// active at the moment the write happens, not when it was decided. A
+    /// caller that names its window gets the terminal it meant, whatever the
+    /// user has focused since.
+    pub fn send_terminal_input_to(
+        &mut self,
+        window_id: fresh_core::WindowId,
+        terminal_id: crate::services::terminal::TerminalId,
+        data: &str,
+    ) -> bool {
+        let Some(window) = self.windows.get(&window_id) else {
+            tracing::warn!(
+                "send_terminal_input_to: unknown window {:?} (terminal {:?})",
+                window_id,
+                terminal_id
+            );
+            return false;
+        };
+        let Some(handle) = window.terminal_manager.get(terminal_id) else {
+            tracing::warn!(
+                "send_terminal_input_to: window {:?} has no terminal {:?}",
+                window_id,
+                terminal_id
+            );
+            return false;
+        };
+        handle.write(data.as_bytes());
+        true
+    }
+
+    /// Every open window and the terminals in it.
+    ///
+    /// Split from the dispatch arm so it is callable — and assertable —
+    /// without going through the plugin runtime.
+    pub fn describe_environment(&self) -> fresh_core::api::EnvironmentDescription {
+        let active = self.active_window_id();
+        let mut windows: Vec<fresh_core::WindowId> = self.windows.keys().copied().collect();
+        // Id order, so a caller polling this repeatedly sees a stable list
+        // rather than HashMap iteration order churning between calls.
+        windows.sort_by_key(|w| w.0);
+
+        let described: Vec<fresh_core::api::WindowDescription> = windows
+            .into_iter()
+            .filter_map(|window_id| {
+                let window = self.windows.get(&window_id)?;
+                // Two splits can show one terminal, so the buffer map holds
+                // duplicates; report each terminal once.
+                let mut ids: Vec<_> = window
+                    .terminal_buffers
+                    .iter()
+                    .map(|(&buffer_id, tb)| (tb.terminal_id, buffer_id))
+                    .collect();
+                ids.sort_by_key(|(t, _)| t.0);
+                ids.dedup_by_key(|(t, _)| t.0);
+
+                let mut terminals: Vec<fresh_core::api::TerminalDescription> = ids
+                    .into_iter()
+                    .filter_map(|(terminal_id, buffer_id)| {
+                        let handle = window.terminal_manager.get(terminal_id)?;
+                        let state = handle.state.lock().ok()?;
+                        let (cols, rows) = state.size();
+                        Some(fresh_core::api::TerminalDescription {
+                            terminal_id,
+                            buffer_id,
+                            title: state.title().to_string(),
+                            alt_screen: state.is_alternate_screen(),
+                            rows: rows as usize,
+                            cols: cols as usize,
+                            pid: handle.pid(),
+                        })
+                    })
+                    .collect();
+                terminals.sort_by_key(|t| t.terminal_id.0);
+
+                Some(fresh_core::api::WindowDescription {
+                    window_id,
+                    stable_id: window.stable_id.clone(),
+                    label: window.label.clone(),
+                    root: window.root.clone(),
+                    active: window_id == active,
+                    terminals,
+                })
+            })
+            .collect();
+
+        fresh_core::api::EnvironmentDescription {
+            active_window_id: active,
+            windows: described,
+        }
+    }
+
+    /// Gather one terminal's screen, or say why it could not be reached.
+    ///
+    /// Split out from the dispatch arm so the "unknown window" and "unknown
+    /// terminal" cases produce messages a caller can act on — the two are
+    /// different mistakes, and collapsing them into one error costs the
+    /// caller a round of guessing.
+    pub fn terminal_screen(
+        &self,
+        window_id: fresh_core::WindowId,
+        terminal_id: crate::services::terminal::TerminalId,
+        lines: Option<usize>,
+        trim: bool,
+    ) -> Result<fresh_core::api::TerminalScreenInfo, String> {
+        let window = self
+            .windows
+            .get(&window_id)
+            .ok_or_else(|| format!("unknown window {}", window_id.0))?;
+        let handle = window
+            .terminal_manager
+            .get(terminal_id)
+            .ok_or_else(|| format!("window {} has no terminal {}", window_id.0, terminal_id.0))?;
+        let state = handle
+            .state
+            .lock()
+            .map_err(|_| "terminal state lock poisoned".to_string())?;
+
+        let (cols, rows) = state.size();
+        let mut text: Vec<String> = (0..rows)
+            .map(|row| state.get_line(row).iter().map(|cell| cell.c).collect())
+            .collect();
+
+        if trim {
+            for line in text.iter_mut() {
+                let end = line.trim_end().len();
+                line.truncate(end);
+            }
+            // Blank rows below the last content are the unused part of the
+            // grid, not output. Keep interior blanks — those are real.
+            while text.last().is_some_and(|l| l.is_empty()) {
+                text.pop();
+            }
+        }
+        if let Some(n) = lines {
+            let skip = text.len().saturating_sub(n);
+            text.drain(..skip);
+        }
+
+        Ok(fresh_core::api::TerminalScreenInfo {
+            text,
+            rows: rows as usize,
+            cols: cols as usize,
+            cursor: state.cursor_position(),
+            alt_screen: state.is_alternate_screen(),
+            title: state.title().to_string(),
+        })
+    }
+
     /// Whether the focused split is a live terminal (input goes to a PTY).
     /// Derived from the per-split scrollback source of truth; primarily used by
     /// tests and status rendering.

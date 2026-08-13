@@ -32,6 +32,13 @@ struct CloseReplacement {
 impl Editor {
     /// Close the given buffer
     pub fn close_buffer(&mut self, id: BufferId) -> anyhow::Result<()> {
+        // A pane showing this buffer has view state keyed by it. That map sits
+        // outside `split_view_states` on purpose (see its declaration), so no
+        // existing cascade clears it — do it here, or the state outlives the
+        // buffer it describes and a later buffer reusing the id inherits a
+        // stale scroll position.
+        self.pane_view_states.retain(|(_, b), _| *b != id);
+        self.pane_composite_view_states.retain(|(_, b), _| *b != id);
         // Check for unsaved changes
         if let Some(state) = self
             .windows

@@ -1383,6 +1383,14 @@ impl crate::app::Editor {
     ///
     /// Returns `true` on success, `false` on rejection.
     pub fn close_window(&mut self, id: WindowId) -> bool {
+        // Drop any pane view state that named this window. `pane_view_states`
+        // is deliberately outside `split_view_states` — see its declaration —
+        // which also means none of the usual close cascades reach it, so it
+        // has to be swept here or a long-lived editor accumulates one entry
+        // per (window, buffer) a panel ever displayed.
+        self.pane_view_states.retain(|(w, _), _| *w != id.0);
+        self.pane_composite_view_states
+            .retain(|(w, _), _| *w != id.0);
         // A dormant remote session usually has no `Window` and no live
         // connection — closing it just drops its descriptor so it leaves the
         // dock. (Without a window it can never be active, and isn't the

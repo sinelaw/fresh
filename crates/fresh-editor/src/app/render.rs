@@ -2624,6 +2624,218 @@ impl Editor {
     /// back after. `pending_hardware_cursor` and
     /// `cell_theme_map` use scratch locals so the active editor
     /// area's hit-testing isn't clobbered by the preview pass.
+    /// Paint one buffer — from any window — into `inner`.
+    ///
+    /// The `Pane` widget's paint half. Two shapes, because terminals
+    /// are not text:
+    ///
+    /// A **terminal** is its live PTY grid. The grid is sized to this
+    /// rectangle first, which is the same rule the split path applies
+    /// (`resize_visible_terminals`) and is what makes the pane readable: a
+    /// TUI drawing at the owning window's width into a narrower pane would
+    /// lose the right edge of every box, and cropping columns takes the edge
+    /// off every box a full-screen agent draws.
+    ///
+    /// Known gap: nothing hands the size *back*. The owning window resizes
+    /// its terminals from `resize_visible_terminals`, which runs for the
+    /// window being rendered — so a workspace nobody is looking at keeps the
+    /// pane's dimensions until it is next visited, at which point it
+    /// corrects itself. Measured, not assumed: a 129x41 agent shown in a
+    /// 115x12 pane still reported 115x12 after the panel closed. Bounded
+    /// (visiting fixes it) and so left alone for now rather than given a
+    /// restore path that would need its own bookkeeping.
+    ///
+    /// **Everything else** — file, virtual, composite — goes through
+    /// `render_phantom_leaf`, the same per-leaf pipeline a real split
+    /// uses, with view state this panel owns. A composite (side-by-side
+    /// diff) buffer needs no special case: it is one buffer that
+    /// divides its own rectangle.
+    fn render_pane_into_rect(
+        &mut self,
+        frame: &mut ratatui::Frame,
+        inner: ratatui::layout::Rect,
+        window_id: fresh_core::WindowId,
+        buffer_id: BufferId,
+        // Whether this pane is the current input target, and so owns the
+        // caret. Only ever true for a focused interactive pane.
+        show_cursor: bool,
+        theme: &crate::view::theme::Theme,
+    ) {
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+        let Some(window) = self.windows.get(&window_id) else {
+            return;
+        };
+
+        // --- terminal: size the PTY to this rect, then paint its grid
+        if let Some(terminal_id) = window.get_terminal_id(buffer_id) {
+            if let Some(win) = self.windows.get_mut(&window_id) {
+                win.resize_terminal(buffer_id, inner.width, inner.height);
+            }
+            let Some(window) = self.windows.get(&window_id) else {
+                return;
+            };
+            let Some(handle) = window.terminal_manager.get(terminal_id) else {
+                return;
+            };
+            let Ok(state) = handle.state.lock() else {
+                return;
+            };
+            let (_, rows) = state.size();
+            let content: Vec<Vec<crate::services::terminal::TerminalCell>> =
+                (0..rows).map(|row| state.get_line(row)).collect();
+            let cursor_pos = state.cursor_position();
+            drop(state);
+            frame.render_widget(ratatui::widgets::Clear, inner);
+            crate::app::terminal::render::render_terminal_content(
+                &content,
+                cursor_pos,
+                // The caret follows input: exactly the pane keys are being
+                // routed to draws one, so two views of a PTY never both show
+                // a cursor.
+                show_cursor,
+                inner,
+                frame.buffer_mut(),
+                theme.terminal_fg,
+                theme.terminal_bg,
+                None,
+            );
+            return;
+        }
+
+        // --- composite (side-by-side diff): its own renderer
+        //
+        // A composite holds no text of its own — its content is the
+        // source buffers it names, laid into columns — so the per-leaf
+        // pipeline below paints it as one empty leaf. The split path
+        // branches here for the same reason.
+        let key = (window_id.0, buffer_id);
+        if window.composite_buffers.contains_key(&buffer_id) {
+            let use_terminal_bg = self.ansi_background.is_some();
+            let pane_count = window
+                .composite_buffers
+                .get(&buffer_id)
+                .map(|c| c.pane_count())
+                .unwrap_or(0);
+            self.pane_composite_view_states
+                .entry(key)
+                .or_insert_with(|| {
+                    crate::view::composite_view::CompositeViewState::new(buffer_id, pane_count)
+                });
+            let Some(view_state) = self.pane_composite_view_states.get_mut(&key) else {
+                return;
+            };
+            let Some(window) = self.windows.get_mut(&window_id) else {
+                return;
+            };
+            // Split the window borrow: the composite is read while its
+            // sources are rendered from the same map.
+            let Some(composite) = window.composite_buffers.get(&buffer_id) else {
+                return;
+            };
+            let composite = composite.clone();
+            crate::view::ui::SplitRenderer::render_phantom_composite(
+                frame.buffer_mut(),
+                inner,
+                &composite,
+                window.buffers.as_map_mut(),
+                theme,
+                view_state,
+                use_terminal_bg,
+                /* show_tilde */ false,
+            );
+            return;
+        }
+
+        // --- any other buffer kind: the ordinary per-leaf pipeline
+        if !self.pane_view_states.contains_key(&key) {
+            let mut view_state = crate::view::split::SplitViewState::with_buffer(
+                self.terminal_width,
+                self.terminal_height,
+                buffer_id,
+            );
+            view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: self.config.editor.line_numbers,
+                highlight_current_line: self.config.editor.highlight_current_line,
+                line_wrap: window.resolve_line_wrap_for_buffer(buffer_id),
+                wrap_indent: self.config.editor.wrap_indent,
+                wrap_column: window.resolve_wrap_column_for_buffer(buffer_id),
+                rulers: self.config.editor.rulers.clone(),
+                scroll_offset: self.config.editor.scroll_offset,
+            });
+            self.pane_view_states.insert(key, view_state);
+        }
+
+        // Snapshot the appearance inputs before taking the `&mut
+        // self.windows` borrow below — they read only
+        // `self.config`/`self.theme`/`self.ansi_background`, which Rust
+        // splits from `self.windows` as distinct fields.
+        let session_mode = self.session_mode || !self.software_cursor_only;
+        let show_tilde = false;
+        let highlight_current_column = self.config.editor.highlight_current_column;
+        let screen_width = frame.area().width;
+        let style = crate::view::ui::RenderStyle {
+            theme,
+            ansi_background: self.ansi_background.as_ref(),
+            cfg: crate::view::ui::EditorRenderConfig::new(
+                &self.config.editor,
+                self.background_fade,
+                self.software_cursor_only,
+            ),
+        };
+
+        // The view state is on `self`, the buffer on the target window,
+        // so take the two borrows apart before the render call.
+        let Some(view_state) = self.pane_view_states.get_mut(&key) else {
+            return;
+        };
+        view_state.viewport.resize(inner.width, inner.height);
+        let buf_state = view_state.active_state_mut();
+        let cursors = buf_state.cursors.clone();
+        let view_mode = buf_state.view_mode.clone();
+        let compose_width = buf_state.compose_width;
+        let compose_column_guides = buf_state.compose_column_guides.clone();
+        let rulers = buf_state.rulers.clone();
+        let show_line_numbers = buf_state.show_line_numbers;
+        let highlight_current_line = buf_state.highlight_current_line;
+        let viewport_ref = &mut buf_state.viewport;
+        let folds_ref = &mut buf_state.folds;
+
+        let Some(window) = self.windows.get_mut(&window_id) else {
+            return;
+        };
+        let buffers = &mut window.buffers;
+        let event_logs = &mut window.event_logs;
+        let cell_theme_map = &mut window.chrome_layout.cell_theme_map;
+        let Some(state) = buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let event_log = event_logs.get_mut(&buffer_id);
+        let _ = crate::view::ui::SplitRenderer::render_phantom_leaf(
+            frame.buffer_mut(),
+            state,
+            &cursors,
+            viewport_ref,
+            folds_ref,
+            event_log,
+            inner,
+            style,
+            view_mode,
+            compose_width,
+            compose_column_guides,
+            buffer_id,
+            session_mode,
+            &rulers,
+            show_line_numbers,
+            highlight_current_line,
+            show_tilde,
+            highlight_current_column,
+            cell_theme_map,
+            screen_width,
+        );
+    }
+
     fn render_session_preview_into_rect(
         &mut self,
         frame: &mut ratatui::Frame,
@@ -4546,6 +4758,7 @@ impl Editor {
             title,
             closable,
             dropdown_popup,
+            panel_focus_key,
         ) = match self.panel(slot) {
             Some(fwp) => (
                 fwp.width_pct,
@@ -4562,6 +4775,10 @@ impl Editor {
                 fwp.title.clone(),
                 fwp.closable,
                 fwp.dropdown_popup.clone(),
+                self.widget_registry
+                    .focus_key(&fwp.panel_key)
+                    .unwrap_or_default()
+                    .to_string(),
             ),
             None => return,
         };
@@ -4770,6 +4987,9 @@ impl Editor {
         // reuse the existing per-window paint path — it reads
         // that field to decide which session to draw.
         let saved_preview = self.preview_window_id;
+        // Rebuilt every frame: a pane that moved, shrank or went away must not
+        // leave a stale click target behind.
+        let mut pane_hits: Vec<(String, ratatui::layout::Rect)> = Vec::new();
         for emb in &embeds {
             if emb.window_id == 0 {
                 continue;
@@ -4792,10 +5012,49 @@ impl Editor {
                 width: w,
                 height: h,
             };
-            self.preview_window_id = Some(fresh_core::WindowId(emb.window_id as u64));
-            self.render_session_preview_into_rect(frame, rect, &theme);
+            match emb.buffer_id {
+                // `Pane`: one buffer, from any window.
+                Some(buffer_id) if buffer_id != 0 => {
+                    // The caret belongs to the pane that keys are going to.
+                    // An interactive pane holding panel focus *is* the input
+                    // target, so drawing no cursor there leaves the user
+                    // typing at an agent with nothing showing where.
+                    let has_caret = panel_focused
+                        && emb.interactive
+                        && emb.key.as_deref().is_some_and(|k| k == panel_focus_key);
+                    // Every keyed pane is clickable, interactive or not.
+                    // Gating this on `interactive` is circular: a panel that
+                    // only makes its pane an input target once the pane holds
+                    // focus — which is the right way to keep a live terminal
+                    // from eating what you type elsewhere — can then never be
+                    // clicked into, because the click needs a hit the pane
+                    // does not have until after the click. `interactive`
+                    // governs where keys go; it is not a statement about
+                    // whether the rectangle is there.
+                    if let Some(k) = emb.key.as_deref() {
+                        pane_hits.push((k.to_string(), rect));
+                    }
+                    self.render_pane_into_rect(
+                        frame,
+                        rect,
+                        fresh_core::WindowId(emb.window_id as u64),
+                        BufferId(buffer_id as usize),
+                        has_caret,
+                        &theme,
+                    );
+                }
+                Some(_) => {}
+                // `WindowEmbed`: the whole session.
+                None => {
+                    self.preview_window_id = Some(fresh_core::WindowId(emb.window_id as u64));
+                    self.render_session_preview_into_rect(frame, rect, &theme);
+                }
+            }
         }
         self.preview_window_id = saved_preview;
+        if let Some(fwp) = self.panel_mut(slot) {
+            fwp.pane_hits = pane_hits;
+        }
 
         // Dock "seamless tab (missing wall)": erase the right-edge divider
         // across the active session card's rows and scoop it away with
@@ -4935,14 +5194,37 @@ impl Editor {
         let panel_bg_style = ratatui::style::Style::default().bg(panel_bg);
         let overlay_sw = self.active_chrome().last_frame.width;
         for o in &overlays {
-            let row_y = inner.y.saturating_add(o.buffer_row as u16);
+            // `None` = the row's upward displacement (a completions popup
+            // opened above its field) carries it off the panel's top, the
+            // mirror of the bottom-edge drop below.
+            let Some(orow) = o.row() else {
+                continue;
+            };
+            let row_y = inner.y.saturating_add(orow as u16);
             if row_y >= inner.y.saturating_add(inner.height) {
                 continue;
             }
+            // Clear only as far as the overlay's own text reaches, not the
+            // whole row. Beyond it the overlay is not there, and blanking
+            // that span erases whatever shares the row — which for a
+            // two-column panel is the entire other column, seven rows of it,
+            // for as long as a completion popup is open. Every overlay that
+            // predates this is a full-width `labeledSection`, so its cleared
+            // span is unchanged.
+            let overlay_cols =
+                crate::primitives::display_width::str_width(o.entry.text.trim_end_matches('\n'))
+                    as u16;
+            // Overlay rows that a container inset (a bare completion
+            // popup inside a `LabeledSection`) start past the panel's
+            // left edge, so the cleared span and the paint origin both
+            // move with them — otherwise the row would blank the
+            // section border it was inset to avoid.
+            let overlay_x = o.col_in_row.min(u32::from(inner.width)) as u16;
+            let avail = inner.width.saturating_sub(overlay_x);
             let row_rect = ratatui::layout::Rect {
-                x: inner.x,
+                x: inner.x.saturating_add(overlay_x),
                 y: row_y,
-                width: inner.width,
+                width: overlay_cols.min(avail),
                 height: 1,
             };
             frame.render_widget(Clear, row_rect);
@@ -4957,9 +5239,9 @@ impl Editor {
             paint_text_property_entry(
                 frame,
                 &o.entry,
-                inner.x,
+                inner.x.saturating_add(overlay_x),
                 row_y,
-                inner.width,
+                avail,
                 &theme,
                 recorder,
             );
