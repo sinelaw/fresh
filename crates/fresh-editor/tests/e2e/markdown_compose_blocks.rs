@@ -407,6 +407,62 @@ fn test_nested_list_items_get_a_deeper_indent() {
     );
 }
 
+/// Turning compose off must take the inter-item spacer rows with it. They are
+/// virtual lines, so unlike conceals they do not disappear on their own when
+/// the mode ends — the namespace has to be cleared explicitly, exactly as the
+/// table border frame does.
+#[test]
+fn test_list_spacers_are_removed_when_compose_is_disabled() {
+    let (mut harness, _tmp) = composed(LIST_MD, 100, 30);
+
+    // Sanity: spacing is present while composing.
+    let composed_screen = harness.screen_to_string();
+    let composed_rows: Vec<&str> = composed_screen.lines().collect();
+    let first = composed_rows
+        .iter()
+        .position(|l| l.contains("first item"))
+        .expect("list not rendered");
+    assert!(
+        composed_rows[first + 1].trim().is_empty(),
+        "expected a spacer row while composing",
+    );
+
+    // Toggle compose back off.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Source markers coming back is the "compose is off" signal.
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("**"))
+        .unwrap();
+    harness.wait_for_async_quiescence(8).unwrap();
+
+    let screen = harness.screen_to_string();
+    let rows: Vec<&str> = screen.lines().collect();
+    let first = rows
+        .iter()
+        .position(|l| l.contains("first item"))
+        .expect("list not on screen after disabling compose");
+    let second = rows
+        .iter()
+        .position(|l| l.contains("second item"))
+        .expect("second item not on screen after disabling compose");
+    assert_eq!(
+        second - first,
+        1,
+        "spacer rows must not survive compose being turned off; 'first item' \
+         at row {first}, 'second item' at row {second}.\nScreen:\n{screen}",
+    );
+}
+
 /// A `#` that isn't a heading (no space, so CommonMark reads it as text) must
 /// be left alone — otherwise `#hashtag` would silently lose its marker.
 #[test]
