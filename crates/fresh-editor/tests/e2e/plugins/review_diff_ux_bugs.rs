@@ -9,7 +9,7 @@ use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::config::Config;
+use fresh::config::{Config, PluginConfig};
 use std::fs;
 
 // ---------------------------------------------------------------------------
@@ -2014,5 +2014,173 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
         original,
         "Issue #2117: discarding the hunk should restore the committed \
          content (removing the unterminated added line). Got: {after:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Oversized changesets: the unified stream lays out what it can afford
+// ---------------------------------------------------------------------------
+
+/// Config that shrinks the review stream's layout budget to a single diff
+/// line, so a two-file review exercises the same path a 100-commit range
+/// hits in the real world without the test having to build one.
+fn config_with_tiny_review_budget() -> Config {
+    let mut config = Config::default();
+    config.plugins.insert(
+        "audit_mode".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "maxExpandedDiffLines": 1 }),
+        },
+    );
+    config
+}
+
+/// Open Review Range on `HEAD~..HEAD` and wait for the stream to render.
+fn open_review_range_head(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Range").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // The range picker opens prefilled with "HEAD" — clear it and type ours.
+    harness.wait_for_prompt().unwrap();
+    for _ in 0..8 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("HEAD~..HEAD").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("HEAD~..HEAD") && !s.contains("Generating Review")
+        })
+        .unwrap();
+}
+
+/// A changeset too big to lay out at once (the reported case: a range like
+/// `HEAD~100..HEAD`) used to open on a list of file headers and *no diff at
+/// all* — the stream rendered exactly one file, and the one it picked came
+/// from the sidebar's dir-grouped order rather than the diff's, so it was
+/// rarely the file at the top of the stream the cursor was parked on.
+///
+/// The stream now spends a line budget from the top of the diff down, and
+/// says so on the headers it didn't get to: the first file's hunks are on
+/// screen from the start, and the rest are marked as not loaded rather than
+/// looking like files with no changes.
+#[test]
+fn test_oversized_range_review_renders_diff_and_marks_unloaded_files() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // Two files whose diff order (`src/a/deep.rs` then `src/zeta.rs`, sorted
+    // by path) is *not* the sidebar's order, which groups by directory and
+    // puts plain `src/` above `src/a/`. The stream must anchor on its own
+    // first file, not the sidebar's.
+    repo.create_file("src/a/deep.rs", "fn deep() {}\n");
+    repo.create_file("src/zeta.rs", "fn zeta() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file("src/a/deep.rs", "fn deep() {\n    // DEEP_MARKER\n}\n");
+    repo.create_file("src/zeta.rs", "fn zeta() {\n    // ZETA_MARKER\n}\n");
+    repo.git_add_all();
+    repo.git_commit("second commit");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        config_with_tiny_review_budget(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    open_review_range_head(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("DEEP_MARKER"),
+        "the stream must open on real diff content, not a wall of headers. \
+         Screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("not loaded"),
+        "a file left out of the layout must say so on its header. \
+         Screen:\n{screen}"
+    );
+
+    // `n` walks hunks across file boundaries, loading the file it lands in.
+    let mut crossed = false;
+    for _ in 0..6 {
+        harness
+            .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+            .unwrap();
+        for _ in 0..5 {
+            harness.tick_and_render().unwrap();
+        }
+        if harness.screen_to_string().contains("ZETA_MARKER") {
+            crossed = true;
+            break;
+        }
+    }
+    let screen = harness.screen_to_string();
+    assert!(
+        crossed,
+        "`n` should cross into the file the budget left out and load it. \
+         Screen:\n{screen}"
+    );
+}
+
+/// The budget must not touch an ordinary review: every file of a small
+/// changeset is laid out, and nothing is marked as unloaded.
+#[test]
+fn test_normal_review_lays_out_every_file() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    fs::write(
+        repo.path.join("src/main.rs"),
+        "fn main() {\n    println!(\"MAIN_MARKER\");\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.path.join("src/utils.rs"),
+        "pub fn format_output(msg: &str) -> String {\n    // UTILS_MARKER\n    msg.to_string()\n}\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert!(
+        !screen.contains("not loaded"),
+        "a small review must be laid out in full. Screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("MAIN_MARKER") && screen.contains("UTILS_MARKER"),
+        "both changed files' hunks belong in the stream. Screen:\n{screen}"
     );
 }
