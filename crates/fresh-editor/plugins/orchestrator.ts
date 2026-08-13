@@ -30,6 +30,7 @@ import {
   list,
   raw,
   row,
+  scrollableRaw,
   wrappingRow,
   overlay,
   spacer,
@@ -5751,13 +5752,24 @@ function dockChatBlock(rows: number): WidgetSpec[] {
   return [
     divider({ style: { fg: "ui.menu_disabled_fg" } }),
     header,
-    raw(padTop(chatLines(cols), logRows), "dock_chat_log"),
+    // A viewport onto the whole transcript, not a slice of its tail: the
+    // host windows it, keeps the scroll offset, sticks to the newest
+    // message until you scroll up, and — because it is now a real
+    // scrollable region — routes a wheel that lands on it here instead of
+    // to the workspace tree, with a scrollbar once there is more history
+    // than fits.
+    scrollableRaw(chatLines(cols), "dock_chat_log", logRows),
     divider({ style: { fg: "ui.menu_disabled_fg" } }),
     textInput(chatComposerValue(), {
-      // A label only while picking, where it names the question ("to") and is
-      // what switches the host's popup chrome on. Once an agent is chosen the
-      // address is the first word of the field itself.
-      label: picking ? "to" : "",
+      // No label and no brackets. The section header already says what this
+      // row is and who it is addressed to, and the field is the only input on
+      // it — a `to` prefix restates the header, and framing the value in
+      // `[ ]` makes the address read as a token in a form rather than the
+      // start of the sentence you are writing. (The popup does not need the
+      // label: the host emits it for any focused field with candidates.)
+      label: "",
+      bare: true,
+      completionsBare: true,
       placeholder: chatPlaceholder(picking),
       focused: dockFocus === "chat",
       fullWidth: true,
@@ -5780,10 +5792,9 @@ function refreshDockChatInPlace(): void {
   const cols = dockChatCols();
   const rows = dockChatRows(screenRows());
   if (rows <= 0) return;
-  openPanel.setRawEntries(
-    "dock_chat_log",
-    padTop(chatLines(cols), Math.max(1, rows - DOCK_CHAT_CHROME_ROWS)),
-  );
+  // Whole transcript: the host owns the window onto it (and the scroll
+  // offset within it), so pushing a slice would fight it.
+  openPanel.setRawEntries("dock_chat_log", chatLines(cols));
 }
 
 // Screen rows the dock tree's *visible* content occupies, mirroring the
@@ -14833,7 +14844,18 @@ function agentRowName(s: AgentSession): string {
 // The chat pane
 // -----------------------------------------------------------------------------
 
-/// How the transcript is drawn: sender on the left, message after a `▸`.
+/// How the transcript is drawn: the author on its own row, then the message
+/// flush left under it, wrapped to the whole width of the chat.
+///
+/// The author used to sit in a twelve-column gutter with a `▸` continuation
+/// marker after it, and the message wrapped against what was left. That is a
+/// dozen columns off every line of every message, in the narrowest column of
+/// the layout — the dock's chat is a fraction of an already narrow panel — so
+/// a one-line message came out as "run / the whole suite / please". Spending
+/// one row per message to buy those columns back on all of them is the right
+/// trade for anything longer than a sentence, and it is the conventional
+/// shape for a transcript besides: it reads as a conversation rather than as
+/// a table.
 ///
 /// Wrapped by hand rather than left to the renderer, because a `list` row is
 /// one line and a message from an agent is routinely three. Unwrapped, the
@@ -14842,42 +14864,35 @@ function agentRowName(s: AgentSession): string {
 function chatLines(width: number): TextPropertyEntry[] {
   loadChat();
   const out: TextPropertyEntry[] = [];
-  const nameW = 12;
-  const body = Math.max(16, width - nameW - 3);
+  const body = Math.max(8, width);
   for (const m of chatLog) {
     const mine = m.from === "user";
     const system = m.from === CHAT_SYSTEM;
-    const who = (mine ? "you" : m.from).slice(0, nameW);
-    // The user's own lines are right-aligned in the name column, which is the
-    // cheapest way to make "what I said" and "what was said to me" separable
-    // at a glance without colour carrying the whole distinction.
-    const label = mine ? who.padStart(nameW) : who.padEnd(nameW);
+    const who = mine ? "you" : m.from;
     const nameStyle = system
-      ? { fg: "diagnostic.warning_fg" }
-      : { fg: mine ? "ui.help_key_fg" : "ui.menu_selected_fg" };
+      ? { fg: "diagnostic.warning_fg", bold: true }
+      : { fg: mine ? "ui.help_key_fg" : "ui.menu_selected_fg", bold: true };
     const bodyStyle = system
       ? { fg: "diagnostic.warning_fg", italic: true }
       : (mine ? undefined : { fg: "ui.menu_fg" });
-    // Your own lines carry who they went to. The name column can only say
+    // Your own lines carry who they went to. The author row can only say
     // "you", so without this a transcript of a morning spent answering four
     // agents is four indistinguishable blocks of your own prose — and the one
-    // thing you go back to check is which of them you told what. Part of the
-    // text rather than a second column, so it wraps with the sentence and
-    // costs nothing on the lines that are only an agent talking.
-    const shown = mine && m.to ? `@${m.to} ${m.text}` : m.text;
-    const wrapped = wrapPlain(shown, body);
-    for (let i = 0; i < wrapped.length; i++) {
-      out.push(styledRow([
-        { text: (i === 0 ? label : " ".repeat(nameW)) + " ▸ ", style: nameStyle },
-        { text: wrapped[i], style: bodyStyle },
-      ]));
+    // thing you go back to check is which of them you told what. It rides on
+    // the author row rather than the message, so it costs the body nothing.
+    const author = mine && m.to ? `${who} → @${m.to}` : who;
+    out.push(styledRow([{ text: capText(author, body), style: nameStyle }]));
+    for (const line of wrapPlain(m.text, body)) {
+      out.push(styledRow([{ text: line, style: bodyStyle }]));
     }
   }
   if (out.length === 0) {
-    out.push(styledRow([{
-      text: "  nothing said yet — agents appear here when they report",
-      style: { fg: "ui.menu_disabled_fg", italic: true },
-    }]));
+    // Wrapped like a message, and flush left like one: the empty state is
+    // longer than a narrow dock is wide, and it has no author row to hang an
+    // indent off.
+    for (const line of wrapPlain("nothing said yet — agents appear here when they report", body)) {
+      out.push(styledRow([{ text: line, style: { fg: "ui.menu_disabled_fg", italic: true } }]));
+    }
   }
   return out;
 }
@@ -15264,13 +15279,16 @@ function buildHomeSpec(): WidgetSpec {
   // starts.
   const picking = chatTarget === null;
   const chatChildren: WidgetSpec[] = [
-    // Padded to a fixed height and sliced from the end: the newest message is
-    // the one you came to read, so the transcript is pinned to the bottom.
-    raw(padTop(chatLines(chatCols), chatBodyRows), "home_chat_log"),
+    // A viewport onto the whole transcript. The host pins it to the newest
+    // message, scrolls it under the wheel, and paints a scrollbar when
+    // there is more history than fits — see the dock's copy.
+    scrollableRaw(chatLines(chatCols), "home_chat_log", chatBodyRows),
     textInput(chatComposerValue(), {
-      // See the dock's copy: the address is in the field, and a label only
-      // while picking.
-      label: picking ? "to" : "",
+      // See the dock's copy: no label, no brackets — the section header
+      // already says whose line this is.
+      label: "",
+      bare: true,
+      completionsBare: true,
       placeholder: chatPlaceholder(picking),
       focused: homeFocus === "chat",
       fullWidth: true,
@@ -15414,19 +15432,6 @@ function chatPlaceholder(picking: boolean): string {
     : "which agent?";
 }
 
-/// Take the last `rows` entries, padding at the top when there are fewer.
-///
-/// Both halves matter: without the slice a long transcript pushes the input
-/// line off the bottom of the panel, and without the pad a short one lets the
-/// section shrink to fit — so the panel changes height as agents talk, which
-/// is the same complaint as a pane that collapses while a terminal starts.
-function padTop(lines: TextPropertyEntry[], rows: number): TextPropertyEntry[] {
-  if (lines.length >= rows) return lines.slice(-rows);
-  const pad: TextPropertyEntry[] = [];
-  for (let i = lines.length; i < rows; i++) pad.push(styledRow([{ text: " " }]));
-  return [...pad, ...lines];
-}
-
 let homePanel: FloatingWidgetPanel | null = null;
 let homeLastSpec: string | null = null;
 
@@ -15445,10 +15450,7 @@ function chatLogRowsNow(): number {
 /// refreshed as *mutations*, which touch only the widgets they name.
 function refreshHomeInPlace(): void {
   if (!homePanel) return;
-  homePanel.setRawEntries(
-    "home_chat_log",
-    padTop(chatLines(chatColsNow()), chatLogRowsNow()),
-  );
+  homePanel.setRawEntries("home_chat_log", chatLines(chatColsNow()));
   pushChatCandidates();
   const rows = fleetRows();
   if (rows.length > 0) {
