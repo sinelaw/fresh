@@ -479,18 +479,8 @@ function headingLevel(content: string): number {
 
 // Deepest heading level that earns a mark. The track oversamples hard — one
 // cell covers many lines in any real document — so marking every level packs
-// several headings into one cell and the shallowest of them is all that
-// survives. Marking only `#` by default keeps a cell's meaning stable.
-// `plugins.markdown_compose.settings.headingMarkerMaxLevel` overrides it; 0
-// turns the marks off.
-const DEFAULT_HEADING_MARKER_MAX_LEVEL = 1;
-
-function headingMarkerMaxLevel(): number {
-  const cfg = (editor.getPluginConfig() ?? {}) as { headingMarkerMaxLevel?: number };
-  const v = cfg.headingMarkerMaxLevel;
-  if (typeof v !== "number" || !isFinite(v)) return DEFAULT_HEADING_MARKER_MAX_LEVEL;
-  return Math.max(0, Math.min(6, Math.floor(v)));
-}
+// several headings into one cell where only the shallowest survives anyway.
+const HEADING_MARKER_MAX_LEVEL = 1;
 
 /**
  * The headings in `text`, skipping fenced code blocks.
@@ -503,25 +493,27 @@ function headingMarkerMaxLevel(): number {
  * isn't available. Both answer the same question from the same rule; only
  * the input differs.
  */
-function scanHeadings(text: string, maxLevel: number): ScrollbarMarker[] {
+function scanHeadings(text: string): ScrollbarMarker[] {
   const markers: ScrollbarMarker[] = [];
   let offset = 0;
-  let fenceStart = -1;
+  let inFence = false;
   let fenceChar = "";
 
   for (const line of text.split("\n")) {
     const lineBytes = utf8Length(line);
-    const fence = line.trim().match(/^(`{3,}|~{3,})/);
-    if (fence) {
-      if (fenceStart < 0) {
-        fenceStart = offset;
-        fenceChar = fence[1][0];
-      } else if (fence[1][0] === fenceChar) {
-        fenceStart = -1;
+    if (looksLikeFence(line)) {
+      // A closer has to match its opener's character, so a ``` inside a ~~~
+      // block is content, not a delimiter.
+      const char = line.trimStart()[0];
+      if (!inFence) {
+        inFence = true;
+        fenceChar = char;
+      } else if (char === fenceChar) {
+        inFence = false;
       }
-    } else if (fenceStart < 0) {
+    } else if (!inFence) {
       const level = headingLevel(line);
-      if (level > 0 && level <= maxLevel) {
+      if (level > 0 && level <= HEADING_MARKER_MAX_LEVEL) {
         markers.push({
           position: offset,
           color: headingMarkerColor(level),
@@ -575,9 +567,6 @@ function prescanByteLimit(): number {
  * length API is needed.
  */
 async function prescanHeadingMarkers(bufferId: number): Promise<void> {
-  const maxLevel = headingMarkerMaxLevel();
-  if (maxLevel === 0) return;
-
   const limit = prescanByteLimit();
   let text: string;
   try {
@@ -594,34 +583,7 @@ async function prescanHeadingMarkers(bufferId: number): Promise<void> {
   // publishing now would strand marks the disable path has already cleared.
   if (!isComposingInAnySplit(bufferId)) return;
 
-  editor.setScrollbarMarkers(
-    bufferId, HEADING_MARKER_NS,
-    scanHeadings(text, maxLevel),
-  );
-}
-
-// How long to wait after the last keystroke before rescanning. The scan is a
-// bounded read plus a linear walk, but it is whole-document work and there is
-// no reason to do it per keystroke.
-const HEADING_RESCAN_DEBOUNCE_MS = 300;
-const headingRescanTokens = new Map<number, number>();
-
-/**
- * Rescan after an edit, once the typing stops.
- *
- * Marker anchors shift with edits on their own, so the marks stay glued to
- * their headings without this. What an edit can change and anchors cannot
- * express is *structure*: a line that stopped being a heading, one that
- * became one, or — the reason this exists — a newly opened or closed code
- * fence, which changes whether the `#` lines inside it are headings at all.
- */
-async function scheduleHeadingRescan(bufferId: number): Promise<void> {
-  const token = (headingRescanTokens.get(bufferId) ?? 0) + 1;
-  headingRescanTokens.set(bufferId, token);
-  await editor.delay(HEADING_RESCAN_DEBOUNCE_MS);
-  if (headingRescanTokens.get(bufferId) !== token) return; // superseded
-  if (!isComposingInAnySplit(bufferId)) return;
-  await prescanHeadingMarkers(bufferId);
+  editor.setScrollbarMarkers(bufferId, HEADING_MARKER_NS, scanHeadings(text));
 }
 
 // Per-render column widths, keyed by a row's byte_start. Rebuilt at the top of
@@ -1162,9 +1124,6 @@ function disableMarkdownCompose(bufferId: number): void {
     editor.clearConcealNamespace(bufferId, "md-syntax");
     editor.clearSoftBreakNamespace(bufferId, "md-wrap");
     editor.clearScrollbarMarkers(bufferId, HEADING_MARKER_NS);
-    // Make any rescan still inside its debounce window a no-op, rather than
-    // a republish landing after the clear.
-    headingRescanTokens.delete(bufferId);
 
     editor.refreshLines(bufferId);
     editor.debug(`Markdown compose disabled for buffer ${bufferId}`);
@@ -2559,14 +2518,13 @@ editor.on("lines_changed", (data) => {
   // at compose time — keep their marks; see HEADING_MARKER_NS. Emitted even
   // when the batch has no headings, so a line that stops being one loses its
   // mark.
-  const maxLevel = headingMarkerMaxLevel();
-  if (data.lines.length > 0 && maxLevel > 0) {
+  if (data.lines.length > 0) {
     const batchStart = data.lines[0].byte_start;
     const batchEnd = data.lines[data.lines.length - 1].byte_end;
     const headingMarkers: ScrollbarMarker[] = [];
     for (const line of data.lines) {
       const level = headingLevel(line.content);
-      if (level === 0 || level > maxLevel) continue;
+      if (level === 0 || level > HEADING_MARKER_MAX_LEVEL) continue;
       // `# ...` inside a fenced block is a comment in the block's language,
       // not a heading. The batch cannot decide that from its own lines, so it
       // takes the editor's classification — the same source the frame uses,
@@ -2618,18 +2576,22 @@ editor.on("after_insert", (data) => {
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_end);
   // Typed backticks can open or close a block; anything else can only stop an
   // already-delimiter-shaped line from being one, which the batch will see.
-  if (touchesFenceChars(data.text)) editor.refreshLines(data.buffer_id);
-  else fenceEditArmed.add(data.buffer_id);
-  void scheduleHeadingRescan(data.buffer_id);
+  if (touchesFenceChars(data.text)) {
+    editor.refreshLines(data.buffer_id);
+    // A fence flip changes whether the `#` lines under it are headings, for
+    // the whole document — including the parts this batch cannot see.
+    void prescanHeadingMarkers(data.buffer_id);
+  } else fenceEditArmed.add(data.buffer_id);
 });
 editor.on("after_delete", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_start);
   // Deleted backticks are checked here, not in the batch: the text that is gone
   // appears in no later `lines_changed` payload.
-  if (touchesFenceChars(data.deleted_text)) editor.refreshLines(data.buffer_id);
-  else fenceEditArmed.add(data.buffer_id);
-  void scheduleHeadingRescan(data.buffer_id);
+  if (touchesFenceChars(data.deleted_text)) {
+    editor.refreshLines(data.buffer_id);
+    void prescanHeadingMarkers(data.buffer_id);
+  } else fenceEditArmed.add(data.buffer_id);
 });
 // cursor_moved: no handler. Cursor-dependent reveal/conceal and table-row
 // un/re-wrap are baked into the markers as activation scopes (emitted in the
@@ -2638,9 +2600,7 @@ editor.on("after_delete", (data) => {
 // re-fires lines_changed, never bumps the conceal/soft-break versions, and
 // never invalidates the line-wrap cache or visual-row index.
 editor.on("buffer_closed", (data) => {
-  // View state is cleaned up automatically when the buffer is removed from
-  // keyed_states; the plugin's own per-buffer scan state is not.
-  headingRescanTokens.delete(data.buffer_id);
+  // View state is cleaned up automatically when the buffer is removed from keyed_states
 });
 editor.on("viewport_changed", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
