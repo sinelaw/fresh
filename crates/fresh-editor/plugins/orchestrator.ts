@@ -13955,7 +13955,11 @@ editor.on("widget_event", (e) => {
         pushChatCandidates();
         return;
       }
-      chatComposerEdit(value);
+      // Typing the message is what settles the address, so the list that was
+      // left up on focus goes away on the first character rather than a poll
+      // tick later — while it is up it owns Enter, and Enter has to mean send
+      // the moment there is something to send.
+      if (chatComposerEdit(value)) pushChatCandidates();
       return;
     }
     // The host's Alt+C — the dock has no editor mode, so the key arrives as
@@ -14912,9 +14916,30 @@ function chatField(): { panel: FloatingWidgetPanel; key: string } | null {
 /// focus on.
 function pushChatCandidates(force = false): void {
   const f = chatField();
-  if (!f || chatTarget !== null) {
+  if (!f) {
     chatPushed = null;
     return;
+  }
+  // An address with a message half-written is one you have committed to: the
+  // popup owns Enter while it is up, so leaving it open there would put Enter
+  // back on the candidate list instead of on Send.
+  //
+  // With nothing written yet, it has not been committed to — the name in the
+  // box is the last one used, not a choice made for *this* message — so the
+  // list stays up and changing your mind costs no keystrokes. Typing the
+  // first character of the message is what settles it.
+  if (chatTarget !== null) {
+    if (chatDraft !== "") {
+      if (chatPushed !== null) {
+        chatPushed = null;
+        f.panel.setCompletions(f.key, []);
+      }
+      return;
+    }
+    // Only on an explicit focus, never on the poll: re-offering the list every
+    // tick would reopen it the instant you picked from it, and you would have
+    // to dismiss the thing you just answered.
+    if (!force) return;
   }
   const cands = chatCandidates();
   const stamp = f.key + "\u0000" + cands.join("\u0000");
