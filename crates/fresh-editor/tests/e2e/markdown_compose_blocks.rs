@@ -221,6 +221,87 @@ fn test_divider_does_not_swallow_following_line() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Block quotes (issue item 2: "quote blocks")
+// ---------------------------------------------------------------------------
+
+const QUOTE_MD: &str = "\
+Opening paragraph with **emphasis** so the cursor has a home on line 1.
+
+> First quoted line.
+> Second quoted line.
+
+Between the quotes.
+
+> Outer quoted line.
+> > Inner quoted line.
+
+Trailing paragraph.
+";
+
+/// `>` markers are replaced by a left bar, and consecutive quote lines each
+/// get one so the block reads as a single bordered aside.
+#[test]
+fn test_block_quotes_render_a_left_bar() {
+    let (harness, _tmp) = composed(QUOTE_MD, 100, 30);
+    let screen = harness.screen_to_string();
+
+    for quoted in ["First quoted line.", "Second quoted line."] {
+        let line = line_with(&harness, quoted);
+        assert!(
+            !line.contains('>'),
+            "quote marker should be concealed on {line:?}",
+        );
+        assert!(
+            line.contains('▌'),
+            "quote line should render a left bar, got {line:?}",
+        );
+    }
+
+    assert!(
+        !screen.contains("> "),
+        "no literal `> ` markers should remain.\nScreen:\n{screen}",
+    );
+}
+
+/// Quoted text is styled as an aside rather than as body copy. The default
+/// theme paints `syntax.comment` the same colour as body text, so this asserts
+/// the italic the overlay also carries.
+#[test]
+fn test_quoted_text_is_styled() {
+    let (harness, _tmp) = composed(QUOTE_MD, 100, 30);
+
+    let (col, row) = harness
+        .find_text_on_screen("First quoted line.")
+        .expect("quoted text not on screen");
+    let style = harness
+        .get_cell_style(col, row)
+        .expect("no style on quoted text");
+    assert!(
+        style.add_modifier.contains(Modifier::ITALIC),
+        "quoted text should render italic",
+    );
+}
+
+/// Nesting depth stays visible: `> >` renders two bars, not one.
+#[test]
+fn test_nested_quote_renders_two_bars() {
+    let (harness, _tmp) = composed(QUOTE_MD, 100, 30);
+
+    let outer = line_with(&harness, "Outer quoted line.");
+    let inner = line_with(&harness, "Inner quoted line.");
+    assert_eq!(
+        outer.chars().filter(|c| *c == '▌').count(),
+        1,
+        "a single-depth quote should draw one bar, got {outer:?}",
+    );
+    assert_eq!(
+        inner.chars().filter(|c| *c == '▌').count(),
+        2,
+        "a doubly-nested quote should draw two bars, got {inner:?}",
+    );
+}
+
 /// A `#` that isn't a heading (no space, so CommonMark reads it as text) must
 /// be left alone — otherwise `#hashtag` would silently lose its marker.
 #[test]
