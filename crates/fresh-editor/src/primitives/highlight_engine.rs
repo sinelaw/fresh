@@ -1347,11 +1347,22 @@ impl TextMateEngine {
             current_offset += line_byte_len;
             bytes_since_checkpoint += line_byte_len;
 
-            // Check convergence at checkpoint markers
+            // Check convergence at checkpoint markers. `snapshot` is now the
+            // state *after* this line, which is the state *before* the next
+            // one — so it is the right state for a checkpoint at any position
+            // up to and including this line's end, and the wrong one for a
+            // checkpoint sitting on this line's start. That checkpoint was
+            // already settled by the previous line's pass with the state that
+            // belongs to it (see `full_parse` for the same rule); walk past it
+            // rather than comparing — or storing — a state one line late.
+            let line_start = current_offset - line_byte_len;
             while marker_idx < markers_ahead.len() && markers_ahead[marker_idx].1 <= current_offset
             {
-                let (marker_id, _) = markers_ahead[marker_idx];
+                let (marker_id, marker_pos) = markers_ahead[marker_idx];
                 marker_idx += 1;
+                if marker_pos <= line_start {
+                    continue;
+                }
                 if let Some(stored) = self.checkpoint_states.get(&marker_id) {
                     if *stored == snapshot {
                         self.stats.convergences += 1;
@@ -1695,13 +1706,32 @@ impl TextMateEngine {
                 safe_snapshot = snapshot.clone();
             }
 
-            // Update checkpoint states as we pass them. Done after the
-            // line is parsed (state now reflects end-of-line) so a
-            // checkpoint placed at the line's start position carries
-            // the state at that position, ready to feed the next line.
+            // Update checkpoint states as we pass them. A checkpoint at
+            // position `p` stores the state *before* `p` — that is the
+            // contract every resume path relies on
+            // (`find_parse_resume_point`, `try_partial_update`,
+            // `structure_lines_in` all parse the line at `p` starting from
+            // it), so the state to store is the one that reflects
+            // everything up to but not including `p`.
+            //
+            // The range is therefore half-open at the *low* end
+            // (`query_range` is inclusive both ways): a checkpoint sitting on
+            // this line's start must keep the state it was given at the end of
+            // the previous line, not the state that includes this line. Giving
+            // it the end-of-line state shifts it one line late, and resuming
+            // from it re-parses the line with the state that follows it — for
+            // Markdown that inverts fence parity at a delimiter line, so every
+            // prose line below a code block reads as fence body until the next
+            // delimiter (issue: prose framed as code after scrolling into a
+            // file mid-document).
             let markers_here: Vec<(MarkerId, usize)> = self
                 .checkpoint_markers
-                .query_range(current_offset.saturating_sub(line_byte_len), current_offset)
+                .query_range(
+                    current_offset
+                        .saturating_sub(line_byte_len)
+                        .saturating_add(1),
+                    current_offset,
+                )
                 .into_iter()
                 .map(|(id, start, _)| (id, start))
                 .collect();
@@ -2833,6 +2863,82 @@ mod tests {
             !roles.is_empty() && roles.iter().all(|(_, r)| *r == RegionLine::Body),
             "with the fence no longer closed, the lines below must read as \
              region body, not as the pre-edit prose; got {roles:?}"
+        );
+    }
+
+    /// A checkpoint stores the state *before* its position — every resume path
+    /// (`find_parse_resume_point`, `try_partial_update`, `structure_lines_in`)
+    /// parses the line at that position starting from it. `full_parse` used to
+    /// overwrite a checkpoint sitting on a line start with the state *after*
+    /// that line, so resuming from it re-parsed the line under the state that
+    /// follows it.
+    ///
+    /// On a Markdown fence delimiter that inverts parity: the closing ```
+    /// re-read from "outside" *opens* a region, and every prose line below the
+    /// code block reads as fence body. Compose mode then frames that prose as
+    /// code — visible when a file is opened mid-document, because the viewport
+    /// starts below the poisoned checkpoint and only recovers once it scrolls
+    /// above it.
+    #[test]
+    fn test_checkpoint_state_belongs_to_its_own_position() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        // Sized so the closing fence starts at exactly CHECKPOINT_INTERVAL:
+        // the opening line is 8 bytes and each code line 31, so eight of them
+        // put the walk at 256 and the checkpoint lands on the delimiter — the
+        // one line where a state one line late changes what the parse means.
+        let mut content = String::from("```bash\n");
+        for _ in 0..8 {
+            content.push_str(&format!("echo {}\n", "x".repeat(25)));
+        }
+        assert_eq!(content.len(), CHECKPOINT_INTERVAL);
+        let close_fence = content.len();
+        content.push_str("```\n\n");
+        let prose_start = content.len();
+        for i in 0..12 {
+            content.push_str(&format!("prose line {i} with a `code` span in it\n"));
+        }
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+
+        // The cold probe walks from byte 0, so it is the ground truth.
+        let cold = engine.region_lines_in(&buffer, 0..buffer.len());
+        assert_eq!(
+            cold.last().map(|(byte, role)| (*byte, *role)),
+            Some((close_fence, RegionLine::Close)),
+            "precondition: the fence closes and nothing below it is a region"
+        );
+
+        // The highlight pass that runs on the same frame lays down checkpoints
+        // — one of them on the closing delimiter, by the sizing above.
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        // Every viewport the file can be opened at must read the document the
+        // same way, whichever checkpoint it resumes from.
+        for (line_start, _) in content.match_indices('\n').map(|(i, _)| (i + 1, ())) {
+            if line_start >= buffer.len() {
+                break;
+            }
+            let expected: Vec<_> = cold
+                .iter()
+                .filter(|(byte, _)| *byte >= line_start)
+                .copied()
+                .collect();
+            assert_eq!(
+                engine.region_lines_in(&buffer, line_start..buffer.len()),
+                expected,
+                "probe from byte {line_start} disagrees with the cold walk"
+            );
+        }
+
+        // The symptom itself: prose below the block is not code.
+        assert!(
+            engine
+                .region_lines_in(&buffer, prose_start..buffer.len())
+                .is_empty(),
+            "prose after the closed fence must not read as fence body"
         );
     }
 
