@@ -147,6 +147,80 @@ fn test_headings_are_styled_by_level() {
     assert_ne!(beta.fg, gamma.fg, "h2 and h3 must be coloured differently");
 }
 
+// ---------------------------------------------------------------------------
+// Thematic breaks (issue item 2: "dividers")
+// ---------------------------------------------------------------------------
+
+const DIVIDER_MD: &str = "\
+Opening paragraph with **emphasis** so the cursor has a home on line 1.
+
+Above the first rule.
+
+---
+
+Between the rules.
+
+***
+
+Below the second rule.
+";
+
+/// `---` and `***` render as one horizontal rule spanning the measure, not as
+/// literal dashes/asterisks.
+#[test]
+fn test_dividers_render_as_horizontal_rules() {
+    let (harness, _tmp) = composed(DIVIDER_MD, 100, 30);
+    let screen = harness.screen_to_string();
+
+    let rules: Vec<&str> = screen
+        .lines()
+        .filter(|l| l.trim_start().starts_with('─'))
+        .collect();
+    assert_eq!(
+        rules.len(),
+        2,
+        "both `---` and `***` should render as a box-drawing rule.\nScreen:\n{screen}",
+    );
+
+    for rule in &rules {
+        let dashes = rule.chars().filter(|c| *c == '─').count();
+        assert!(
+            dashes > 20,
+            "a thematic break should span the measure, not the three source \
+             characters; got {dashes} rule characters in {rule:?}",
+        );
+    }
+
+    assert!(
+        !screen.contains("---"),
+        "literal `---` must not remain on screen.\nScreen:\n{screen}",
+    );
+    assert!(
+        !screen.contains("***"),
+        "literal `***` must not remain on screen.\nScreen:\n{screen}",
+    );
+}
+
+/// A rule must not swallow the blank line after it. The whole-line conceal has
+/// to stop before the newline; when it covered the terminator the rule and the
+/// following line rendered as one row, pulling the rest of the document up.
+#[test]
+fn test_divider_does_not_swallow_following_line() {
+    let (harness, _tmp) = composed(DIVIDER_MD, 100, 30);
+    let screen = harness.screen_to_string();
+
+    let rule_row = screen
+        .lines()
+        .position(|l| l.trim_start().starts_with('─'))
+        .expect("no rule on screen");
+    let next = screen.lines().nth(rule_row + 1).unwrap_or("");
+    assert!(
+        next.trim().is_empty(),
+        "the blank source line after `---` must still occupy its own row; \
+         found {next:?} directly under the rule.\nScreen:\n{screen}",
+    );
+}
+
 /// A `#` that isn't a heading (no space, so CommonMark reads it as text) must
 /// be left alone — otherwise `#hashtag` would silently lose its marker.
 #[test]

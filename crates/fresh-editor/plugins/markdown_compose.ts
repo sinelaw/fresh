@@ -1072,6 +1072,21 @@ function headingTextStyle(level: number): Record<string, unknown> {
  * line's left edge. Requires at least one space and some non-space text after
  * the hashes, so a bare `#` or a `#hashtag` is left alone — matching how
  * CommonMark reads them. */
+/** Byte offset of the end of a line's *content*, excluding any trailing
+ * newline.
+ *
+ * `lines_changed` line content can carry its terminator, and a conceal whose
+ * range covers the newline swallows the line break — the concealed line and
+ * the one after it render as a single row. Whole-line conceals must therefore
+ * stop here rather than at the reported `byte_end`. Same trailing-CR/LF trim
+ * the table wrapping path does for its segment ranges. */
+function lineContentEndByte(lineContent: string, byteStart: number): number {
+  let len = lineContent.length;
+  if (len > 0 && lineContent[len - 1] === '\n') len--;
+  if (len > 0 && lineContent[len - 1] === '\r') len--;
+  return charToByte(lineContent, len, byteStart);
+}
+
 function atxHeading(content: string): [number, number, number] | null {
   const m = content.match(/^(\s*)(#{1,6})([ \t]+)(?=\S)/);
   if (!m) return null;
@@ -1121,6 +1136,29 @@ function processLineConceals(
   // for now, detect fence lines and code content lines)
   const trimmed = lineContent.trim();
   if (trimmed.startsWith('```')) return; // fence line itself
+
+  // --- Thematic breaks: `---` / `***` / `___` → one full-measure rule ---
+  // Rendered as a single conceal replacement rather than per-character
+  // substitution so the rule spans the page measure regardless of how many
+  // dashes the source used. Two columns short of the measure for the same
+  // reason the wrap budget is (see `wrapBudget`): the renderer reserves an
+  // end-of-line column, and a rule that reaches it would wrap onto a second
+  // visual row. Matches the `hr` pattern in `parseMarkdownBlocks`.
+  if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+    const hrViewport = editor.getViewport();
+    const hrWidth = Math.max(
+      1, effectiveComposeWidth(hrViewport ? hrViewport.width : 80) - 2,
+    );
+    const hrEnd = lineContentEndByte(lineContent, byteStart);
+    editor.addConceal(
+      bufferId, "md-syntax", byteStart, hrEnd, "─".repeat(hrWidth),
+      "unless-cursor-in", byteStart, lineScopeInclEnd,
+    );
+    editor.addOverlay(
+      bufferId, "md-emphasis", byteStart, hrEnd, { fg: "ui.split_separator_fg" },
+    );
+    return;
+  }
 
   // --- Table row handling ---
   // Table conceals apply even when the cursor is on the line (pipes stay
