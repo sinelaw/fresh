@@ -228,6 +228,12 @@ function widthsForRow(byte: number): number[] | undefined {
   return w && w.length ? w : undefined;
 }
 
+/** Whether a source line is a list item, for the inter-item spacing pass.
+ * Indent widening doesn't matter here, so the measure is irrelevant. */
+function isListItemContent(content: string): boolean {
+  return listItemInfo(content, 0) !== null;
+}
+
 function isTableRowContent(content: string): boolean {
   const t = content.trim();
   return t.startsWith("|") || t.endsWith("|");
@@ -701,6 +707,9 @@ function disableMarkdownCompose(bufferId: number): void {
     // can't linger as orphaned virtual lines after compose is toggled off, and
     // drop the per-table width memos.
     editor.clearVirtualTextNamespace(bufferId, TABLE_BORDER_NS);
+    // Same for the inter-list-item spacer rows, so they can't linger as
+    // orphaned virtual lines after compose is toggled off.
+    editor.clearVirtualTextNamespace(bufferId, LIST_SPACING_NS);
     const memos = (editor.queryMarkers(bufferId, 0, 0x7fffffff) as Array<{ id: string }>) || [];
     for (const m of memos) {
       if (m.id.startsWith(TABLE_WIDTH_NS_PREFIX)) editor.deleteMarker(bufferId, m.id);
@@ -1059,6 +1068,72 @@ const HEADING_TEXT_STYLES: Array<Record<string, unknown>> = [
   { fg: "syntax.constant", bold: true, italic: true }, // #####
   { fg: "syntax.constant", italic: true },             // ######
 ];
+
+// =============================================================================
+// List rendering
+// =============================================================================
+//
+// Three things, all per-line and stateless except the inter-item spacing:
+//   * the `-`/`*`/`+` bullet becomes a real bullet glyph (1 char for 1 char,
+//     so nothing shifts),
+//   * a nested item's leading indent is widened, so nesting depth is legible
+//     at a glance rather than by counting two-space steps,
+//   * consecutive items get a blank row between them (see LIST_SPACING_NS).
+//
+// The indent widening is the one piece that has to be known by *both* decoration
+// passes: the conceal pass renders it, and the soft-break pass has to charge the
+// wider indent against the wrap budget and use it as the hanging indent, or a
+// wrapped nested item's continuation rows would not line up under its text and
+// could run past the measure. `listItemInfo` is the single source of truth both
+// call.
+const LIST_BULLET = "•";
+
+// Nested indents are scaled rather than stepped by a fixed amount because the
+// source's own step is unknown — 2- and 4-space nesting are both common, and
+// scaling preserves relative depth either way. Capped at a quarter of the
+// measure so a deeply nested list can't push its text off the page.
+const LIST_INDENT_SCALE = 2;
+
+interface ListLineInfo {
+  sourceIndent: number;  // chars of leading whitespace
+  renderedIndent: number; // columns it renders as
+  bullet: string | null;  // the `-`/`*`/`+` char, or null for an ordered item
+  markerLen: number;      // chars of marker + the whitespace after it
+}
+
+function expandListIndent(sourceIndent: number, measure: number): number {
+  if (sourceIndent === 0) return 0;
+  const cap = Math.max(sourceIndent, Math.floor(measure / 4));
+  return Math.min(sourceIndent * LIST_INDENT_SCALE, cap);
+}
+
+/** List-item structure for a source line, or null when it isn't one.
+ *
+ * Requires whitespace and then non-space content after the marker, so a line
+ * that merely starts with `*` (e.g. `*emphasis*`) is not treated as a bullet.
+ * Ordered markers follow `parseMarkdownBlocks`' `\d+.` form. Thematic breaks
+ * never reach here — they are handled and returned earlier in the pass. */
+function listItemInfo(content: string, measure: number): ListLineInfo | null {
+  const m = content.match(/^(\s*)([-*+]|\d+\.)([ \t]+)(?=\S)/);
+  if (!m) return null;
+  const sourceIndent = m[1].length;
+  return {
+    sourceIndent,
+    renderedIndent: expandListIndent(sourceIndent, measure),
+    bullet: /^[-*+]$/.test(m[2]) ? m[2] : null,
+    markerLen: m[2].length + m[3].length,
+  };
+}
+
+// Blank rows between consecutive list items. Emitted per line in their own
+// namespace and cleared range-scoped for *every* line in a batch — exactly the
+// discipline the table border frame uses, and for the same reason: a line that
+// stops being a list item has to lose its spacer, and a spacer that rides a few
+// bytes ahead under the async `lines_changed` lag must still be caught by the
+// clear.
+const LIST_SPACING_NS = "md-ls";
+const listSpacingOptions = { bg: "editor.bg" };
+const listBulletStyle = { fg: "syntax.keyword" };
 
 // Block-quote rendering. The bar is a left half-block: it fills the full cell
 // height, so consecutive quote lines join into an unbroken vertical rule the
@@ -1491,6 +1566,37 @@ function processLineConceals(
     );
   }
 
+  // --- List items: bullet glyph + widened nesting indent ---
+  // Falls through to inline-span processing so emphasis inside an item works.
+  const listViewport = editor.getViewport();
+  const listInfo = listItemInfo(
+    lineContent, effectiveComposeWidth(listViewport ? listViewport.width : 80),
+  );
+  if (listInfo) {
+    if (listInfo.renderedIndent > listInfo.sourceIndent) {
+      // Widen the indent by concealing the source whitespace and replacing it
+      // with a longer run. processLineSoftBreaks charges the same widened
+      // indent against the wrap budget, so the two passes agree.
+      const indentEndByte = charToByte(lineContent, listInfo.sourceIndent, byteStart);
+      editor.addConceal(
+        bufferId, "md-syntax", byteStart, indentEndByte,
+        " ".repeat(listInfo.renderedIndent),
+        "unless-cursor-in", byteStart, lineScopeInclEnd,
+      );
+    }
+    if (listInfo.bullet !== null) {
+      const bulletByte = charToByte(lineContent, listInfo.sourceIndent, byteStart);
+      const bulletByteEnd = charToByte(lineContent, listInfo.sourceIndent + 1, byteStart);
+      editor.addConceal(
+        bufferId, "md-syntax", bulletByte, bulletByteEnd, LIST_BULLET,
+        "unless-cursor-in", byteStart, lineScopeInclEnd,
+      );
+      editor.addOverlay(
+        bufferId, "md-emphasis", bulletByte, bulletByteEnd, listBulletStyle,
+      );
+    }
+  }
+
   // --- Inline spans: code, emphasis, links, entities ---
   const spans = findInlineSpans(lineContent);
   for (const span of spans) {
@@ -1648,12 +1754,26 @@ function processLineSoftBreaks(
 
   if (noWrap) return;
 
-  const hangingIndent = block.hangingIndent;
+  // A nested list item renders at a widened indent (see listItemInfo), so both
+  // the wrap budget and the continuation indent have to use the *rendered*
+  // width, not the source's. Otherwise a wrapped nested item's continuation
+  // rows sit left of its text and its last row can overrun the measure.
+  const listInfo = listItemInfo(lineContent, width);
+  const hangingIndent = listInfo
+    ? listInfo.renderedIndent + listInfo.markerLen
+    : block.hangingIndent;
 
   // Compute per-character visual width so concealed markup (emphasis
   // markers, link syntax, entities) doesn't count towards line width.
   const spans = findInlineSpans(lineContent);
   const charW = new Array<number>(lineContent.length).fill(1);
+
+  // Charge the widened indent to its first character and zero the rest, the
+  // same shape the entity replacements below use.
+  if (listInfo && listInfo.sourceIndent > 0) {
+    for (let c = 0; c < listInfo.sourceIndent && c < charW.length; c++) charW[c] = 0;
+    charW[0] = listInfo.renderedIndent;
+  }
   for (const span of spans) {
     for (const range of span.concealRanges) {
       for (let c = range.start; c < range.end && c < lineContent.length; c++) {
@@ -1873,9 +1993,29 @@ editor.on("lines_changed", (data) => {
     // table row, e.g. its pipes were deleted, and stale frames left a few bytes
     // off by the async lag).
     clearRowBorders(data.buffer_id, line.byte_start, line.byte_end);
+    // Same range-scoped clear-then-rebuild as the borders, so a line that stops
+    // being a list item loses its spacer.
+    editor.clearVirtualLinesInRange(
+      data.buffer_id, LIST_SPACING_NS,
+      line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
+    );
 
     processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, line.line_number);
     processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, line.line_number);
+
+    // Blank row between consecutive list items. Only when the previous line is
+    // itself an item — the first item of a list keeps the spacing the document
+    // already has above it, and items already separated by a blank source line
+    // don't get a second gap.
+    if (isListItemContent(line.content)) {
+      const prevLine = byLineNum.get(line.line_number - 1);
+      if (prevLine !== undefined && isListItemContent(prevLine.content)) {
+        editor.addVirtualLine(
+          data.buffer_id, line.byte_start, "",
+          listSpacingOptions, true, LIST_SPACING_NS, 0,
+        );
+      }
+    }
 
     if (isTableRowContent(line.content)) {
       const widths = currentRowWidths.get(line.byte_start) ?? [];

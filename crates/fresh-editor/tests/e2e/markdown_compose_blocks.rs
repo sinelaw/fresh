@@ -302,6 +302,111 @@ fn test_nested_quote_renders_two_bars() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Lists (issue item "lists")
+// ---------------------------------------------------------------------------
+
+const LIST_MD: &str = "\
+Opening paragraph with **emphasis** so the cursor has a home on line 1.
+
+- first item
+- second item
+  - nested item
+  - another nested item
+- third item
+
+1. ordered one
+2. ordered two
+";
+
+/// `-` bullets render as a bullet glyph.
+#[test]
+fn test_list_bullets_render_as_bullet_glyph() {
+    let (harness, _tmp) = composed(LIST_MD, 100, 30);
+
+    for item in ["first item", "second item", "third item", "nested item"] {
+        let line = line_with(&harness, item);
+        assert!(
+            line.contains('•'),
+            "list item '{item}' should render a bullet glyph, got {line:?}",
+        );
+        assert!(
+            !line.contains('-'),
+            "list item '{item}' should not keep its `-` marker, got {line:?}",
+        );
+    }
+}
+
+/// Ordered items keep their numbering — only unordered bullets are replaced.
+#[test]
+fn test_ordered_list_markers_are_preserved() {
+    let (harness, _tmp) = composed(LIST_MD, 100, 30);
+
+    let one = line_with(&harness, "ordered one");
+    assert!(
+        one.contains("1."),
+        "an ordered item must keep its number, got {one:?}",
+    );
+    assert!(
+        !one.contains('•'),
+        "an ordered item must not gain a bullet glyph, got {one:?}",
+    );
+}
+
+/// Consecutive items are separated by a blank row, so a list reads as
+/// discrete entries rather than a solid block of text.
+#[test]
+fn test_consecutive_list_items_are_vertically_spaced() {
+    let (harness, _tmp) = composed(LIST_MD, 100, 30);
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+
+    let row_of = |needle: &str| {
+        lines
+            .iter()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("'{needle}' not on screen.\nScreen:\n{screen}"))
+    };
+
+    let first = row_of("first item");
+    let second = row_of("second item");
+    assert_eq!(
+        second - first,
+        2,
+        "consecutive list items should have a blank row between them; \
+         'first item' at row {first}, 'second item' at row {second}.\n\
+         Screen:\n{screen}",
+    );
+    assert!(
+        lines[first + 1].trim().is_empty(),
+        "the row between two list items should be blank, got {:?}",
+        lines[first + 1],
+    );
+}
+
+/// A nested item is indented deeper than its two-space source indent, so
+/// nesting depth is readable without counting spaces.
+#[test]
+fn test_nested_list_items_get_a_deeper_indent() {
+    let (harness, _tmp) = composed(LIST_MD, 100, 30);
+
+    let indent_of = |needle: &str| {
+        let line = line_with(&harness, needle);
+        line.find('•').unwrap_or_else(|| {
+            panic!("no bullet on the line for '{needle}': {line:?}")
+        })
+    };
+
+    let top = indent_of("second item");
+    let nested = indent_of("nested item");
+    assert!(
+        nested > top + 2,
+        "a nested item's bullet should sit deeper than its two-space source \
+         indent would put it: top-level bullet at column {top}, nested at \
+         {nested}",
+    );
+}
+
 /// A `#` that isn't a heading (no space, so CommonMark reads it as text) must
 /// be left alone — otherwise `#hashtag` would silently lose its marker.
 #[test]
