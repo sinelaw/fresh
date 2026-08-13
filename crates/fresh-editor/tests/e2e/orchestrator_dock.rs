@@ -2891,16 +2891,19 @@ fn dock_hint_bar_pinned_to_bottom_with_sparse_tree() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Both hint rows render, pinned to the dock's bottom edge (the dock
-    // column spans the full 32-row frame): "F2 menu" on the last row,
-    // "↑↓ switch →← fold" directly above it — not directly under the
-    // single session card near the top. Waiting on the final pinned
-    // state directly (rather than settling and asserting) rides out any
-    // interleaved async re-renders (git probes, discovery sweeps).
+    // Both hint rows render, pinned to the bottom of the tree's region —
+    // "F2 menu" on the last row above the chat, "↑↓ switch →← fold"
+    // directly above it — not directly under the single session card near
+    // the top. The chat section owns the dock's final two rows (its rule
+    // and header; it is collapsed by default), so the hints land two rows
+    // short of the 32-row frame rather than on its last row. Waiting on
+    // the final pinned state directly (rather than settling and asserting)
+    // rides out any interleaved async re-renders (git probes, discovery
+    // sweeps).
     h.wait_until(|h| {
         let s = h.screen_to_string();
         let row_with = |needle: &str| s.lines().position(|l| l.contains(needle));
-        row_with("F2 menu") == Some(31) && row_with("fold") == Some(30)
+        row_with("F2 menu") == Some(29) && row_with("fold") == Some(28)
     })
     .unwrap();
 }
@@ -2925,22 +2928,24 @@ fn dock_hint_bar_not_padded_when_tree_overflows() {
     open_dock(&mut h);
 
     // The hints are on screen (not clipped away by bogus padding) and on
-    // the dock's bottom row exactly: row-granular tree rendering fills
-    // every budgeted row when overflowing (partial cards clip at the
-    // edge), so no padding is inserted and the hints land flush at the
-    // bottom.
+    // the last row above the chat exactly: row-granular tree rendering
+    // fills every budgeted row when overflowing (partial cards clip at
+    // the edge), so no padding is inserted and the hints land flush
+    // against the chat section, which owns the dock's final two rows.
     h.wait_until(|h| {
         h.screen_to_string()
             .lines()
             .position(|l| l.contains("F2 menu"))
-            == Some(31)
+            == Some(29)
     })
     .unwrap();
 }
 
 /// Collapsing a folder shrinks the tree by the folded cards; the hint
-/// bar must stay pinned to the dock bottom (the padding re-balances on
-/// the fold) instead of jumping up with the shorter tree.
+/// bar must stay pinned to the bottom of the tree's region (the padding
+/// re-balances on the fold) instead of jumping up with the shorter tree.
+/// "Bottom" is two rows short of the frame: the collapsed chat section
+/// owns the dock's final two rows.
 #[test]
 fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     let (_tmp, root) = setup_project("alphaproj");
@@ -2970,12 +2975,12 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     .unwrap();
 
     // Pre-collapse steady state: the card is visible (git probe landed
-    // its "clean" line) AND the hint bar is pinned to the dock bottom.
+    // its "clean" line) AND the hint bar is pinned above the chat.
     // A single semantic wait rides out interleaved probe re-renders.
     let hint_row = |s: &str| s.lines().position(|l| l.contains("F2 menu"));
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("clean") && hint_row(&s) == Some(31)
+        s.contains("clean") && hint_row(&s) == Some(29)
     })
     .unwrap();
 
@@ -2987,7 +2992,7 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     h.mouse_click(0, folder_row).unwrap();
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        !s.contains("clean") && hint_row(&s) == Some(31)
+        !s.contains("clean") && hint_row(&s) == Some(29)
     })
     .unwrap();
 }
