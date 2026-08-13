@@ -1,185 +1,235 @@
-# Delivering to an agent without typing at it — the hook route
+# Reaching a running agent — what each vendor actually supports
 
-> _**PLANNED — nothing here is implemented.** An assessment of whether the
-> mailbox's delivery half can move onto the coding agents' own lifecycle hooks.
-> The mailbox as it ships today is described in
-> [agent-control-plane.md](agent-control-plane.md) §8.1; the problem this
-> solves is recorded as §8 and "Not in this pass" in
-> [chat-surface-gaps.md](chat-surface-gaps.md)._
+> _**PLANNED — nothing here is implemented.** What it takes to hand a message to
+> an agent that is already running, per vendor, and what Fresh would have to
+> change at launch to make it possible. Supersedes an earlier draft of this file
+> that surveyed only hook systems and got several details wrong; the
+> corrections are listed at the end. The mailbox as it ships today is in
+> [agent-control-plane.md](agent-control-plane.md) §8.1._
 
-## The problem, restated
+## The requirement
 
-The mailbox is **delivery, not receipt**. Sending writes one file into the
-peer's `inbox/` and reports success. The agent acts on it only when it next
-runs `fresh --cmd agent inbox --take`, which its briefing tells it to do at the
-start of each turn. So:
+Three properties, and the third is a veto:
 
-- mid-turn, the message waits for the turn boundary — fine;
-- **parked at a prompt with nothing to do, the agent runs no turn loop at all**,
-  never polls, and the message sits unread while the UI has said "delivered".
+- **(a) Wake** — if the agent is idle, the message starts a turn.
+- **(b) Queue** — if the agent is mid-turn, the message waits and is picked up
+  at the next turn boundary, exactly once.
+- **(c) Cannot approve** — if the agent is blocked at a permission prompt,
+  delivering a message must not answer it.
 
-That second case is not an edge: `waiting` is precisely the state a user is
-most likely replying to.
+(c) is why typing into the agent's terminal was rejected: a paste plus Enter
+answers whatever modal is on screen, which can approve a tool call nobody read.
+Any mechanism that can do that is disqualified regardless of convenience.
 
-The obvious fix — type the message into the agent's terminal — is written up as
-§8 of the gaps doc and carries two hazards that are the reason it is only
-half-built: it can double-deliver (the agent reads the paste *and* later polls
-the file), and a paste plus Enter into an agent sitting at a permission prompt
-**answers that prompt**, potentially approving a tool call nobody read.
+Today's mailbox satisfies (b) and (c) and fails (a) — a file lands in `inbox/`,
+and an agent with no turn loop never polls it.
 
-Hooks avoid both. The agent's own runtime tells us when it is at a turn
-boundary and lets us hand it text there — no keystrokes, no prompt to
-accidentally answer, and a delivery point the agent itself defines.
+## Verdict
 
-## What each agent actually offers
+| Agent | Mechanism | (a) wake | (b) queue | (c) safe | Evidence |
+|---|---|---|---|---|---|
+| **OpenCode** | `POST /session/:id/prompt_async` | **yes** | **yes** | **yes** | **run against 1.18.18, including the permission case** |
+| **Claude Code** | cross-session messaging socket | yes | yes | yes | vendor docs; **message frame undocumented** |
+| **Codex** | `Stop` hook, `decision:"block"` | **no** | n/a | yes | source (`openai/codex` @ `6fc6b9d`) |
 
-Verified against current vendor documentation (August 2026).
+**There is no uniform answer, and Codex is the hole.** Two of the three can be
+reached while idle. Codex cannot: its `Stop` hook fires on the *transition* into
+idle, and once the agent is idle Codex runs nothing at all, so there is no code
+of ours left executing to notice a message. Everything else here is detail; that
+is the finding.
 
-### Claude Code — a direct fit
+## OpenCode — verified, and the strongest of the three
 
-| Event | Fires | Can inject | Can hold the agent |
-|---|---|---|---|
-| `Stop` | when the agent finishes responding | `additionalContext` | **yes** — exit 2 "prevents Claude from stopping and continues the conversation" |
-| `UserPromptSubmit` | before a typed prompt is processed | `additionalContext` | yes (blocks the prompt) |
-| `SessionStart` | session begins or resumes | `systemMessage` (user-facing) | yes |
-| `SessionEnd` | session terminates | — | — |
-| `Notification` | Claude Code raises a notification | — (`terminalSequence` only) | no |
-| `TeammateIdle` | a team teammate is about to go idle | — | **yes** — exit 2 keeps it working |
-| `PostToolUse` / `PostToolBatch` | after a tool call / a parallel batch | `additionalContext` | batch: yes |
+`POST /session/:sessionID/prompt_async` returns `204` immediately, starting the
+session if needed.
 
-`Stop` is the one that matters. It fires at exactly the moment the current
-design fails — the agent has finished and is about to go quiet — and it can
-both hand over text and decline to let the agent stop. That is the whole
-delivery mechanism in one event.
+The safety question was settled empirically rather than by reading: a stub
+provider was driven to a genuine pending `bash` permission, and `prompt_async`
+was posted into that session. The permission stayed pending and unanswered, the
+message was persisted, and it was processed as a real turn only after the human
+approved. It queues; it does not answer the modal.
 
-`Notification` is the natural place to *write* a status line, since it fires
-when the agent wants the user. It cannot inject, which is fine: status is
-outbound.
+The mechanism is sound rather than lucky. Permission replies resolve a `Deferred`
+held in a map keyed by permission id, written only by `Permission.reply` — which
+is reachable only from the two permission endpoints. There is no code path from
+a prompt to a permission reply. Meanwhile `Runner.ensureRunning` returns the
+existing run when one is live (so no second loop spawns), and the running loop
+re-reads messages each iteration and exits only when the last assistant message
+answers the last user message — so a newly inserted user message keeps it going.
 
-### Codex — same shape, one field different
+**Two things Fresh must change at launch:**
 
-Codex ships a Claude-style hook engine (`hooks.json`, or inline `[hooks]` in
-`config.toml` beside an active config layer).
+1. **Assign the port.** A plain `opencode` in a pane opens **no TCP port at
+   all** — the TUI talks to its own server over an in-process worker transport
+   at a fake `http://opencode.internal`. There is no port file, no lock file, no
+   instance registry, and no port or session id in the child's environment. The
+   docs' "randomly assigns a port" is misleading. Fresh must launch
+   `opencode --port <N> --hostname 127.0.0.1`, allocating `N` per pane.
+2. **Assign the session id.** `POST /session` first, then launch with
+   `--session <id>`, so Fresh owns the pane → `(port, sessionID)` mapping with no
+   discovery step. (`GET /session?directory=<worktree>` also works as a
+   fallback.)
 
-| Event | Can inject | Can hold the turn |
-|---|---|---|
-| `Stop` | **no** | yes — `decision: "block"` with `reason` |
-| `UserPromptSubmit` | `additionalContext` | yes — `decision: "block"` |
-| `SessionStart` | `additionalContext` | yes |
-| `PostToolUse` | `additionalContext` | yes |
-| `PreToolUse` | `additionalContext` | yes (`permissionDecision`) |
+**Never post to a side-car `opencode serve`.** Sessions live in one shared
+SQLite database, but the event bus is an in-process `EventEmitter` and the
+runner's busy-lock is per-process. Posting to a separate server process would
+run the turn *there* — the pane's TUI would neither show it nor react, and
+nothing would stop two loops running against one session. Post to the pane's own
+port.
 
-Codex's `Stop` cannot inject `additionalContext`, but `decision: "block"` takes
-a `reason`, and the reason is what the model is handed to continue on. So the
-message travels in `reason` instead. Same mechanism, different field.
+Set `OPENCODE_SERVER_PASSWORD`; without it the server is unauthenticated and
+says so.
 
-Codex also has `notify`, an external program invoked on supported events —
-currently only `agent-turn-complete`. That is a *side channel*, not an
-injection point: useful as a nudge to make Fresh re-probe, not as delivery.
+**One race to guard.** If `prompt_async` lands between the loop's exit and the
+runner's transition to `Idle`, the work can be discarded and the message
+stranded. The window looks small but is real. Mitigation: after the `204`,
+confirm via `GET /session/status` that the session went `busy`, and re-post if it
+did not. Note also that `prompt_async` reports failures by publishing a
+`session.error` bus event, **not** by HTTP status — a supervisor watching only
+the status code will miss them.
 
-Project-local hooks load only when the project's `.codex/` layer is trusted;
-user-level hooks are independent of project trust. That matters for where we
-write config.
+**Reading state:** `GET /event` (SSE) carries `session.status`, `permission.asked`
+and `permission.replied`. Status has only three values — `idle`, `busy`,
+`retry` — so **there is no "awaiting permission" status**; a blocked session
+reports plain `busy`, and you correlate with `permission.asked` or poll
+`GET /permission`. Prefer `session.status` over `session.idle`, which is
+deprecated.
 
-### OpenCode — hooks are the wrong tool, its server is the right one
+## Claude Code — purpose-built, with one hole in the middle
 
-OpenCode has a TypeScript plugin system with a rich event list —
-`session.idle` (the assistant finished a turn), `chat.message`,
-`tool.execute.before` / `.after`, `permission.asked`, and more.
+Cross-session messaging (~v2.1.224+, **macOS and Linux only**) binds a
+Unix-domain inbox socket per session, exported as `CLAUDE_CODE_MESSAGING_SOCKET`
+with a per-session `CLAUDE_CODE_MESSAGING_TOKEN`. The documented semantics are
+exactly the three properties: queued between tool calls mid-turn, a **new turn
+started when idle**, and it "can't approve anything — a message from another
+session never counts as your consent". Rate-limiting, repeat-dropping and queue
+caps are built in.
 
-But plugin hooks **cannot inject messages into the model's conversation**.
-That is an open upstream request (anomalyco/opencode#17412), with only a
-proof-of-concept that persists synthetic user messages. Building delivery on it
-today would mean depending on an unmerged patch.
+**The hole:** the docs give the auth frame (`{"type":"auth","token":"…"}`) and
+never specify the message frame. That must be established empirically before
+anyone designs around it.
 
-OpenCode instead exposes an **HTTP server**, which is a better fit than hooks:
+Launch each agent with `--settings` taking **inline JSON**, which sets
+`crossSessionInbound: "accept"` (the default holds messages for approval when
+the receiving session bypasses permission prompts — likely Fresh's agents) and
+adds any hooks. Hook entries **merge** across settings scopes rather than
+replacing, and identical handlers dedupe, so this touches none of the user's
+files and leaves nothing to clean up.
 
-- `POST /session/:id/message` — send a message and wait for the response
-- `POST /session/:id/prompt_async` — send without waiting (204)
-- `POST /tui/append-prompt` — append text to the TUI prompt
-- `POST /tui/submit-prompt` — submit the current prompt
+**Hooks remain useful for receipt, not delivery.** A `Stop` hook that drains the
+inbox is genuine proof of receipt, which the current mailbox lacks. Two traps:
 
-`prompt_async` is the delivery call. Started with `opencode serve`
-(`--port`, default 4096); the TUI assigns a random port, discoverable via the
-OpenAPI document at `/doc`.
+- Guard on **"inbox empty"**, not on `stop_hook_active`. The canonical
+  early-exit-on-`stop_hook_active` pattern from the vendor's own guide is wrong
+  for a queue — after the first continuation the flag stays true, so the second
+  queued message is silently dropped. It is the right guard for a *predicate*
+  hook, the wrong one for a *queue*.
+- Coalesce all pending messages into one injection per turn: there is a hard cap
+  of 8 consecutive blocks (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`).
 
-Note this is genuinely different from §8's terminal injection even though
-`append-prompt` + `submit-prompt` look similar: it goes through the app's own
-API, so it lands in the prompt rather than in whatever modal happens to be on
-screen. It cannot answer a permission dialog.
+`asyncRewake` claims to wake an idle session on exit 2 and would be the
+hooks-only fallback, but it appears twice in the reference, never in the
+changelog, and is unverified. Prototype before designing around it.
 
-## The shape this suggests
+**Reading state:** `PermissionRequest` fires the moment the agent asks — use it
+rather than `Notification`, whose `permission_prompt` and `idle_prompt` types are
+gated behind a ~6-second "user seems away" timer that each keystroke defers.
+Note that in sessions that cannot show a prompt, if no hook returns a decision
+the tool call is **denied** — so for background agents this event is not purely
+observational.
 
-**Keep the mailbox as the store; make hooks the delivery trigger.** The
-directory pair stays exactly as it is — it is the record, the audit trail, and
-the fallback for any agent we cannot configure. What changes is that the agent
-no longer has to *remember* to poll.
+## Codex — no way in while idle
 
-At launch Fresh already controls the agent's argv, its environment, and its
-working directory, so it can also write the hook configuration. Per vendor:
+`Stop` can hold the agent: `decision:"block"` with a non-empty `reason` (or exit
+2 with stderr) turns the reason into a real **user-role** message wrapped in
+`<hook_prompt>` tags and continues the turn loop. It cannot inject
+`additionalContext` — the generated output schema has `additionalProperties:
+false` and no such field.
 
-- **Claude Code** — a `Stop` hook that runs `fresh --cmd agent inbox --take`
-  and, if anything came back, returns it as `additionalContext` and exits 2 so
-  the agent continues instead of going quiet. `Notification` and `Stop` also
-  write the `status` line, so status stops depending on the agent choosing to.
-- **Codex** — the same `Stop` hook, with the messages in
-  `decision: "block"` + `reason`.
-- **OpenCode** — no hook; Fresh calls `POST /session/:id/prompt_async` when it
-  writes to the inbox, and the plugin's `session.idle` event is a secondary
-  nudge.
-- **Anything else** — unchanged. The briefing still tells it to poll, and the
-  file is still there.
+But `Stop` fires only when a turn ends. An agent that has been idle for ten
+minutes runs nothing, so nothing can notice a new message. The options are all
+compromises:
 
-This makes `--take` the single delivery path on every route: the hook calls the
-same verb the agent would have called, so the file moves to `done/` exactly
-once whoever triggers it. That is what disposes of §8's double-delivery
-question without needing a decision about it.
+- **Park in the hook.** The hook command itself blocks waiting for a message, up
+  to `timeout` (default 600s). The agent is then parked in a hook rather than
+  idle. It costs a held turn and re-arms only at the next turn end.
+- **Drain and exit.** Honest but does not solve the problem: late messages wait
+  for whatever starts the next turn.
+- **Own the loop instead.** Drive `codex exec` against a resumable thread and
+  render the transcript in the pane, rather than hosting the interactive TUI.
+  This dissolves the problem but gives up the vendor's own UI and its
+  interactive permission prompts.
 
-## What it fixes, and what it does not
+**There is no loop protection whatsoever.** `stop_hook_active` is present in the
+payload but is purely informational — the core turn loop never reads it, and
+there is no depth cap or circuit breaker anywhere. Unlike Claude Code's 8-block
+cap, an unguarded blocking hook loops forever. The flag also resets on every new
+user turn, so bailing on it allows exactly one injection per turn.
 
-Fixes:
+**The worktree trap.** Fresh runs every agent in a linked git worktree, and in a
+linked worktree Codex **redirects hook discovery to the main checkout's
+`.codex/` and deletes the worktree's own `hooks` table**. Dropping
+`.codex/hooks.json` into the worktree — the obvious implementation — silently
+does nothing.
 
-- An agent parked with nothing to do is handed the message at its own turn
-  boundary rather than never.
-- No keystrokes, so nothing can answer a permission prompt — §8's safety
-  problem does not exist on this route.
-- No double delivery, because delivery and acknowledgement are the same call.
-- Status stops being a convention an agent can ignore, at least for the two
-  vendors with a `Notification`-shaped event.
+**Use `CODEX_HOME` per agent.** A private Codex home per pane carries its own
+`hooks.json`, config and trust state, is isolated from the user's `~/.codex`, and
+sidesteps the redirect because it is a User layer rather than a Project one.
+Hooks are gated twice — project trust *and* a per-hook trust hash — and the
+startup review prompt **blocks startup**, which is fatal in an unattended pane;
+`--dangerously-bypass-hook-trust` is the reliable path there.
 
-Does not fix:
+`notify` is a usable outbound nudge: fire-and-forget, fully detached, cannot
+influence the agent, single event `agent-turn-complete`, and it fires only when
+the `Stop` hook did *not* block — so it signals genuine idle. The crate is named
+`legacy_notify`, so treat it as deprecated in direction.
 
-- **An agent blocked mid-turn on a permission prompt.** `Stop` has not fired —
-  the turn is not over — so the message still waits. No worse than today, and
-  Claude Code's `Notification` fires there but cannot inject.
-- **Agents with no hook system.** They keep polling.
+**Drift warning:** the Codex changelog carries no hooks entries at all, so this
+subsystem ships changes without release-note warning. The generated JSON schemas
+are the wire contract and are diffable — pin a version and diff them on upgrade.
 
-## Open questions before building
+## What this means for Fresh
 
-1. **Loop safety.** A `Stop` hook that blocks feeds the agent more work, which
-   ends in another `Stop`. Claude Code passes a flag indicating the stop hook
-   already fired; the hook must return cleanly when the inbox is empty, and we
-   should confirm the exact semantics rather than assume symmetry with Codex.
-2. **Whose config file?** Hooks live in user- or project-level config that the
-   user may also be editing. Writing Fresh's hook into a file we do not own
-   needs a merge strategy and a way to not clobber, or a Fresh-owned config
-   layer passed at launch.
-3. **Output caps.** Claude Code caps hook output at 10,000 characters. Long
-   messages, or a backlog of several, need truncation with a pointer to the
-   files.
-4. **Codex trust.** Project-local `.codex/` hooks only load in a trusted
-   project, so a fresh worktree may silently not have them. User-level config
-   avoids that but is machine-wide.
-5. **OpenCode port discovery.** The TUI picks a random port. Fresh would need
-   to find it per workspace, or launch `opencode serve` itself on a known one.
-6. **Version drift.** All three of these are moving quickly. Whatever is built
-   should degrade to the current polling behaviour when a hook does not fire,
-   rather than assuming it did.
+Three adapters, not one mechanism. The smallest interface they fit behind is a
+single call — *deliver this text to this agent* — returning **woke**, **queued**,
+or **unavailable**, with the mailbox file written first in every case so the
+record and the fallback survive.
 
-## Recommendation
+Each vendor forces a launch-time change, and that is the real cost of this work:
 
-Worth doing, and it supersedes §8 rather than complementing it. The Claude Code
-and Codex routes are the same mechanism with one field renamed, so they are
-close to one adapter; OpenCode is a different call but a simpler one. The
-mailbox does not change shape, which means this can land incrementally, one
-vendor at a time, with polling as the floor.
+| Vendor | What Fresh must do at launch |
+|---|---|
+| OpenCode | create the session, pass `--session <id> --port <N> --hostname 127.0.0.1`, set `OPENCODE_SERVER_PASSWORD` |
+| Claude Code | `--settings` inline JSON (`crossSessionInbound: "accept"` + hooks); capture the socket path and token |
+| Codex | per-agent `CODEX_HOME`; hooks there, not in the worktree; bypass hook trust for unattended panes |
+
+Keep the mailbox as the store. It is the record, the audit trail, and the only
+thing that works for an agent we cannot configure. What changes is that delivery
+stops depending on the agent choosing to poll.
+
+**Order of work, by confidence:** OpenCode first — it is verified end to end,
+including the case that disqualifies everything else. Claude Code second, gated
+on establishing the socket frame. Codex last, and it needs a decision rather than
+an implementation: park in a hook, or stop hosting its TUI.
+
+## Corrections to the earlier draft
+
+That draft was written from a single summarizing pass over vendor documentation.
+Each of these was wrong:
+
+- Claude Code's `SessionStart` was recorded as user-facing `systemMessage` only.
+  It can inject model-visible `additionalContext`.
+- `Notification` was proposed as the status signal. Its timing gates make it
+  unreliable; `PermissionRequest` and `Stop` are the right signals.
+- The 10,000-character cap was described as needing truncation. Oversized output
+  is spilled to a file and replaced with a preview and path.
+- "Whose config file" was left open. `--settings` accepts inline JSON, and hooks
+  merge across scopes, so nothing shared is touched.
+- Codex loop safety was left as "confirm rather than assume". The answer is that
+  there is none.
+- OpenCode's hooks were described as unable to inject at all, citing an open
+  upstream request. Issue #17412 is **closed as not planned** and its
+  proof-of-concept PR was closed unmerged — but injection is possible today by
+  mutating `output.output` in `tool.execute.after`, and a plugin can simply call
+  `client.session.promptAsync(...)` itself. The server route is still the better
+  one.
