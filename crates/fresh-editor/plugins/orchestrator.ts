@@ -30,15 +30,19 @@ import {
   list,
   raw,
   row,
+  scrollableRaw,
   wrappingRow,
   overlay,
   spacer,
   styledRow,
   text,
+  textInput,
   textInputChar,
+  textInputKey,
   toggle,
   tree,
   treeNode,
+  pane,
   windowEmbed,
   type WidgetSpec,
 } from "./lib/widgets.ts";
@@ -59,7 +63,17 @@ const editor = getEditor();
 // signal can honestly support. We don't poll the process, so "working"
 // means "printing", not "alive" — an agent that goes quiet to think
 // reads as idle until it prints again.
-type AgentState = "working" | "idle";
+// Three live states, not two.
+//
+// "working" and "idle" are both derived from whether the PTY printed
+// recently, which cannot tell an agent parked on a permission prompt from one
+// that finished twenty minutes ago — they print nothing either way. That is
+// the single question a user with six agents running actually has, so it gets
+// its own state: "waiting" means the agent is blocked on *you*.
+//
+// Waiting is recognised from the terminal's own screen, per agent kind (see
+// `AgentEntry.waiting`), not guessed from timing.
+type AgentState = "working" | "idle" | "waiting";
 
 // One row in the completion popup. `kind: "history"` items
 // render with a leading `↶` marker + italic styling so the user
@@ -148,6 +162,41 @@ interface AgentSession {
   // working-tree diffstat) for the pill's second line — useful even
   // before there's a PR. Same lifecycle as `pr`.
   git?: GitProbe;
+  // Last read of this session's terminal tail: what it most recently said,
+  // and whether that says it is waiting on the user. `undefined` until first
+  // probed. See `probeTail`.
+  tail?: TailProbe;
+  // What the agent itself last reported, from its `status` outbox.
+  // `undefined` for an agent that writes no status — which is every agent
+  // that has not adopted the convention, so this must never be assumed
+  // present. See `probeStatus` and the mailbox block above.
+  status?: StatusReport;
+  // The window the pane draws this row's terminal from, when that is not
+  // this row's own `id`. Set only for an agent we launched into a workspace
+  // that already had one: it has a real terminal, but it is not the
+  // workspace, so it cannot take the workspace's id without colliding with
+  // it. `undefined` for every ordinary row, where the two are the same.
+  terminalWindowId?: number;
+  // Argv of the agent this workspace runs, or will run when it is restored —
+  // the host's `WindowInfo.agent_command`. Joined to a string because that is
+  // what the agent registry matches against.
+  //
+  // This is what makes a workspace restored from disk legible before anything
+  // has been started in it. After a restart nothing is running, no mailbox has
+  // been written, and the terminal has no title yet — but the workspace file
+  // remembers `claude --resume <id>`, so the row can say so.
+  agentCommand?: string;
+  // This session's agent's mailbox name — its address, and the thing you
+  // type after `@` in Home's chat. Assigned at launch (`uniqueAgentName`)
+  // and persisted with the workspace, so it survives a restart. `undefined`
+  // for a workspace with no agent of ours: a discovered worktree, a pending
+  // placeholder, or a window the user opened and never ran an agent in.
+  agentName?: string;
+  // Buffer the session's terminal is shown through, resolved from
+  // `describeEnvironment`. A `pane` widget addresses a *buffer*, so this is
+  // what the Fleet's live pane needs — a terminal id alone cannot be drawn.
+  // `undefined` until resolved, or for a session with no terminal.
+  terminalBufferId?: number;
   // Wall-clock ms when this session last became the active window. Used
   // to suppress the terminal's activation redraw from registering as
   // agent activity (so selecting a session doesn't flash it `working`).
@@ -506,6 +555,10 @@ interface NewSessionForm {
   // button) we re-open the picker so the user lands back where
   // they were instead of being dropped into the bare editor.
   fromPicker: boolean;
+  // Opened from Home, so closing it returns there. Without this, dismissing
+  // the dialog dropped the user on a bare editor — they pressed a key *in*
+  // Home and were answered by having Home taken away.
+  fromHome: boolean;
   // Token incremented every time the user changes the Project
   // Path field. Async probes (is-git, session-name, default-
   // branch) capture the token at launch and bail on result if
@@ -836,11 +889,56 @@ function dockDefaultWidth(): number {
 function dockContentCols(dockWidth: number): number {
   return Math.max(8, dockWidth - 2);
 }
+
+// The columns the dock's content is ACTUALLY drawn in.
+//
+// `dockDefaultWidth()` is what we ask the host for, and the host is free
+// not to give it: the request is clamped against the terminal, and a
+// width the user dragged the dock to is persisted and overrides it
+// outright. Everything we derive from the width — word wrap, truncation,
+// whether the toolbar's search field wraps below its button, and so the
+// row budget the tree is sized against — is only correct while the two
+// agree. When they diverge the host draws a toolbar row we did not
+// budget for, the tree (the flexible region) is sized one row too tall,
+// and because the tree sits above everything else the error lands at the
+// dock's bottom edge and evicts the chat's composer off it.
+//
+// So ask the host what it drew. `getDockWidth()` reports the rendered
+// inner width, and 0 when nothing is docked (during a mount, before the
+// panel exists) — fall back to the request there, which is the best
+// guess available and is what the host is about to be given anyway.
+function dockCols(): number {
+  const real = editor.getDockWidth();
+  return real > 0 ? Math.max(8, real) : dockContentCols(dockDefaultWidth());
+}
 // Which dock zone has keyboard focus: the session list (default) or the
 // filter input. Tracked from the host's `focus` widget_event. The host
 // (dispatch_floating_widget_key) reads the panel focus directly to route
 // Enter/Esc/Space//'; this mirror is informational for the plugin.
-let dockFocus: "list" | "filter" = "list";
+let dockFocus: "list" | "filter" | "chat" = "list";
+
+// The dock's chat section, collapsed or not. Persisted: it is a layout
+// preference, and having it spring back open every restart would make the
+// button feel like it did not work.
+const DOCK_CHAT_COLLAPSED_KEY = "orchestrator.dock_chat_collapsed";
+let dockChatCollapsed: boolean | null = null;
+
+function dockChatIsCollapsed(): boolean {
+  if (dockChatCollapsed === null) {
+    // Collapsed until asked for. A new section that takes 40% of the dock the
+    // first time you open it decides for the user what the dock is mostly
+    // for; the header is one row, says what it is, and opens with a click or
+    // Alt+C.
+    const stored = editor.getGlobalState(DOCK_CHAT_COLLAPSED_KEY);
+    dockChatCollapsed = stored === undefined || stored === null ? true : stored === true;
+  }
+  return dockChatCollapsed;
+}
+
+function setDockChatCollapsed(v: boolean): void {
+  dockChatCollapsed = v;
+  editor.setGlobalState(DOCK_CHAT_COLLAPSED_KEY, v as unknown as object);
+}
 // Set just before the dock blurs *because the user picked a workspace*
 // (a row click, Enter on the list, or attaching a discovered worktree
 // with `dive`). The `blur` handler clears the search filter so a stale
@@ -1266,6 +1364,49 @@ function saveNames(): void {
   editor.setGlobalState(WORKSPACE_NAMES_KEY, (dockNames ?? {}) as unknown as object);
 }
 
+// Mailbox names, keyed the same way workspace renames are: stable id when the
+// window has one, else the root. Persisted rather than recomputed because the
+// name addresses a directory an agent is already writing to — deriving it
+// afresh after a restart would rename the mailbox out from under a running
+// agent, and `@`-messages would go to a directory nobody reads.
+const AGENT_NAMES_KEY = "orchestrator.agent_names";
+let agentNameStore: Record<string, string> | null = null;
+
+function loadAgentNames(): Record<string, string> {
+  if (agentNameStore) return agentNameStore;
+  const raw = editor.getGlobalState(AGENT_NAMES_KEY);
+  const out: Record<string, string> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "string" && v.length > 0) out[k] = v;
+    }
+  }
+  agentNameStore = out;
+  return out;
+}
+
+function agentNameKeys(s: AgentSession): string[] {
+  const keys: string[] = [];
+  if (s.stableId) keys.push(stableIdKey(s.stableId));
+  if (s.root) keys.push(normRoot(s.root));
+  return keys;
+}
+
+function storedAgentName(s: AgentSession): string | undefined {
+  const store = loadAgentNames();
+  for (const k of agentNameKeys(s)) {
+    if (store[k]) return store[k];
+  }
+  return undefined;
+}
+
+function rememberAgentName(s: AgentSession, name: string): void {
+  const store = loadAgentNames();
+  for (const k of agentNameKeys(s)) store[k] = name;
+  editor.setGlobalState(AGENT_NAMES_KEY, store as unknown as object);
+  s.agentName = name;
+}
+
 // The manual name pinned to a workspace, if any: its own stable-id entry
 // first, else the legacy / windowless per-root entry.
 function customNameFor(stableId: string | undefined, root: string): string | undefined {
@@ -1597,7 +1738,11 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
 // workspace name) and the project tag beside the name were dropped for
 // the same reason: they spent a card's scarce width on what the row
 // already said.
-const DOCK_CARD_HEIGHT = 2;
+// Three content rows: name, branch/project, and what the agent is doing or
+// wants. Uniform — a height that changed with content would make the whole
+// dock jump every time an agent started or finished saying something, which
+// is worse than a blank row on a quiet card.
+const DOCK_CARD_HEIGHT = 3;
 
 // A card row split into a left group and a right group flush against
 // the card's right border. Tree card rows are plain text entries (no
@@ -1634,7 +1779,7 @@ function entriesWidth(entries: Entry[]): number {
 // dock can be dragged), used only to cap the branch so it doesn't shove
 // the right-hand group off the row. The host does the exact alignment.
 function cardInnerColsEstimate(): number {
-  return Math.max(12, dockContentCols(dockDefaultWidth()) - 2);
+  return Math.max(12, dockCols() - 2);
 }
 
 // Card line 1 (the tree node's primary text): state glyph, optional
@@ -1687,6 +1832,40 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
 // left — its branch when that says something the name doesn't, else the
 // project it belongs to — and its PR badge (or the on-disk tag) flush
 // right.
+/// The card's third line: what this agent is doing, or what it wants.
+///
+/// Empty for a workspace with nothing to say, so a card only grows when there
+/// is something worth the row. A waiting agent's question outranks its last
+/// line and takes the error colour — on a dock of six cards, that colour is
+/// the thing you are scanning for.
+///
+/// Prefers the agent's own `status` summary over anything scraped from its
+/// screen, for the reasons in §8.1: the screen is often a spinner, a progress
+/// bar, or half a redraw.
+function sessionCardReasonRow(s: AgentSession): TextPropertyEntry[] {
+  const st = sessionState(s);
+  const reported = s.status?.summary ?? "";
+  const waiting = st === "waiting" ? (reported || s.tail?.waitingOn || "") : "";
+  const text = waiting || reported || s.tail?.lastLine || "";
+  if (!text) return [];
+  const agent = s.terminalTitle ? (agentEntryForCmd(s.terminalTitle)?.label ?? "") : "";
+  const prefix = agent ? agent + " " : "";
+  const cap = Math.max(10, cardInnerColsEstimate() - 2 - prefix.length);
+  return [
+    styledRow([
+      ...(prefix
+        ? [{ text: prefix, style: { fg: "ui.menu_disabled_fg" } }]
+        : []),
+      {
+        text: capText(text, cap),
+        style: waiting
+          ? { fg: "diagnostic.error_fg" }
+          : { fg: "ui.menu_disabled_fg", italic: st === "idle" },
+      },
+    ]),
+  ];
+}
+
 function sessionCardExtraLines(id: number): TextPropertyEntry[] {
   const s = orchestratorSessions.get(id);
   if (!s) return [];
@@ -1722,7 +1901,10 @@ function sessionCardExtraLines(id: number): TextPropertyEntry[] {
   // opened as its own project, whose label *is* the folder). The row
   // stays empty rather than echoing the line above it.
   if (text === s.label) {
-    return [cardSplitRow(right.length > 0 ? [] : [{ text: " " }], right)];
+    return [
+      cardSplitRow(right.length > 0 ? [] : [{ text: " " }], right),
+      ...sessionCardReasonRow(s),
+    ];
   }
   // Cap the branch/project so the badge keeps its columns: the host
   // truncates the row's *end*, which is the badge. Budget = the card's
@@ -1738,6 +1920,7 @@ function sessionCardExtraLines(id: number): TextPropertyEntry[] {
       ],
       right,
     ),
+    ...sessionCardReasonRow(s),
   ];
 }
 
@@ -1874,6 +2057,7 @@ function reconcileSessions(): void {
       orchestratorSessions.set(s.id, {
         id: s.id,
         stableId: s.stable_id || undefined,
+        agentCommand: (s.agent_command ?? []).join(" ") || undefined,
         label: customNameFor(s.stable_id || undefined, s.root) ?? s.label,
         hostLabel: s.label,
         root: s.root,
@@ -1893,6 +2077,7 @@ function reconcileSessions(): void {
       // manual rename or terminal auto-name overrides it). The stable id
       // is adopted first — the manual-name lookup is keyed by it.
       existing.stableId = s.stable_id || undefined;
+      existing.agentCommand = (s.agent_command ?? []).join(" ") || undefined;
       existing.hostLabel = s.label;
       applyResolvedLabel(existing);
       existing.root = s.root;
@@ -1939,6 +2124,17 @@ function reconcileSessions(): void {
   }
   for (const [id, s] of orchestratorSessions) {
     if (s.discovered && liveRoots.has(s.root)) orchestratorSessions.delete(id);
+  }
+  // Re-adopt mailbox names after a restart. The window is new but the
+  // directory an agent is writing to is not, so the name has to come back
+  // from the store rather than be minted again — a fresh name would point
+  // this session's status read, and every `@`-message to it, at an empty
+  // directory while the agent kept writing to the old one.
+  for (const s of orchestratorSessions.values()) {
+    if (!s.agentName && !s.discovered && !s.pending) {
+      const remembered = storedAgentName(s);
+      if (remembered) s.agentName = remembered;
+    }
   }
 }
 
@@ -2059,6 +2255,33 @@ const IDLE_AFTER_MS = 5000;
 // stored `state` field is just a cache of this for persistence/sorting.
 // No output ever (or no terminal) ⇒ idle: we have no evidence of work.
 function sessionState(s: AgentSession): AgentState {
+  // What the agent says about itself outranks everything inferred about it.
+  //
+  // Screen matching is a guess about someone else's TUI: it cannot tell "the
+  // word Approve appeared in a diff the agent is showing me" from "I am
+  // asking you to approve", and it breaks whenever a vendor redraws a prompt.
+  // A line the agent wrote is direct testimony. `done` and `blocked` have no
+  // glyph of their own yet, so they read as idle and waiting respectively —
+  // both are "not working", and a blocked agent is one you need to look at.
+  if (s.status) {
+    switch (s.status.state) {
+      case "waiting":
+      case "blocked":
+        return "waiting";
+      case "working":
+        return "working";
+      case "idle":
+      case "done":
+        return "idle";
+    }
+  }
+  // A question on screen outranks every timing signal below, including OSC.
+  //
+  // It has to: a TUI agent redraws its spinner while it waits, so by output
+  // timing a blocked agent looks busy indefinitely — the exact failure this
+  // state exists to fix. And unlike timing, this is direct evidence: the
+  // question is *there*, in the grid, right now.
+  if (s.tail?.waitingOn) return "waiting";
   // An explicit OSC activity signal (shell integration / progress) is
   // authoritative over the output-timing heuristic: a command running keeps
   // the workspace "working" even while it prints nothing, and a finished
@@ -2109,6 +2332,10 @@ interface StatusSymbol {
 }
 
 const STATE_SYMBOL: Record<AgentState, StatusSymbol> = {
+  // Blocked on the user. The only state worth interrupting yourself for, so
+  // it gets the one glyph that reads as an alarm and the error colour — it
+  // must win the eye against a column of `*` and `·`. ASCII, like the others.
+  waiting: { glyph: "!", fg: "diagnostic.error_fg" },
   // In progress — amber/warning, an asterisk reads as "busy/spinner".
   working: { glyph: "*", fg: "diagnostic.warning_fg" },
   // Quiet / waiting — a small dim dot. Deliberately understated: idle is
@@ -3656,6 +3883,14 @@ function refreshOpenDialog(): void {
   } else if (openDialog.selectedIndex < 0) {
     openDialog.selectedIndex = 0;
   }
+  // Hold the panel still while the chat holds the caret, and bring its
+  // moving parts up to date by mutation instead — see
+  // `refreshDockChatInPlace`. Everything else on the dock can wait the few
+  // seconds it takes to type a sentence; a swallowed keystroke cannot.
+  if (dockMode && dockFocus === "chat") {
+    refreshDockChatInPlace();
+    return;
+  }
   openPanel.update(dockMode ? buildDockSpec() : buildOpenSpec());
   // The list/tree widget's `selectedIndex` in the spec is initial-only;
   // pin it via mutation so re-renders don't snap back to 0. In the dock
@@ -3720,6 +3955,809 @@ const gitProbesInFlight = new Set<number>();
 // next poll (~5s), comfortably inside the 15s freshness TTL, so nothing goes
 // stale — the bursts just get spread across a few ticks.
 const MAX_CONCURRENT_GIT_PROBES = 6;
+
+// =============================================================================
+// Terminal tail probe — what the agent is saying, and whether it wants you
+//
+// `readTerminal(windowId, terminalId, …)` reads a terminal's live grid from
+// any window, which is what makes this possible at all: before it, a session's
+// output was reachable only while its workspace was the active one.
+//
+// Cheap by construction — an in-process grid read, no subprocess, unlike the
+// git and PR probes — so it runs at a short TTL. It is still TTL'd rather than
+// per-render: a busy agent re-renders the dock constantly, and a read per
+// render would scale with frame rate instead of with time.
+// =============================================================================
+
+// =============================================================================
+// The mailbox — a pair of directories per agent
+//
+//   <dataDir>/orchestrator/agents/<workspaceId>/
+//     inbox/        instructions in  — one file per instruction
+//     inbox/done/   the agent moves a file here once it has acted
+//     status        one line out     — the agent rewrites it as it works
+//
+// Both halves depend on nothing but "agents read and write files", which is
+// true of every agent that exists, is indistinguishable from a human editing
+// a file, and survives any vendor CLI change. The agent participates because
+// its own briefing told it to — nothing is injected into its terminal.
+//
+// See docs/internal/agent-control-plane.md §8.1.
+// =============================================================================
+
+/// The states an agent may report. Deliberately the same vocabulary the dock
+/// already shows, plus `done`/`blocked` for things a screen cannot say.
+type ReportedState = "working" | "waiting" | "idle" | "done" | "blocked";
+
+const REPORTED_STATES: ReportedState[] = ["working", "waiting", "idle", "done", "blocked"];
+
+/// A parsed `status` line.
+interface StatusReport {
+  state: ReportedState;
+  summary: string;
+  /// File mtime proxy: when this plugin last read a changed line. Used only
+  /// to avoid re-reading an unchanged file.
+  readAt: number;
+  raw: string;
+}
+
+/// Where an agent reports: one directory per **agent**, inside the checkout it
+/// is working in.
+///
+///     <root>/.fresh/agents/<name>/
+///         status        one line — "<state> <summary>" — rewritten in place
+///         inbox/        one file per instruction for it; inbox/done/ when acted on
+///         outbox/       one file per thing it wants to say; outbox/read/ once shown
+///
+/// Per agent, not per worktree. Two agents routinely share a checkout — a
+/// build watcher and a refactorer, or simply two `claude`s in two terminals —
+/// and one mailbox per root would have them overwriting each other's status
+/// and racing for each other's instructions. The directory name is also the
+/// agent's **address**: it is what you type after `@` in Home's chat, so it
+/// has to name an agent rather than a directory on disk for the chat to be
+/// able to say anything at all.
+///
+/// In the checkout rather than in our data dir, because that is a path both
+/// sides can compute without coordinating. An agent someone started by hand
+/// knows its working directory and nothing about this plugin's layout, so a
+/// data-dir location would be discoverable only by agents we launched — which
+/// is exactly the constraint the mailbox exists to remove.
+///
+/// The repository stays clean: `ensureAgentMailbox` writes `.fresh/.gitignore`
+/// containing `*`, which excludes the directory's contents *and* the ignore
+/// file itself. A control plane whose cost is a permanently dirty working tree
+/// would not be worth using, and an agent that runs `git status` to decide
+/// what it changed must not see our bookkeeping.
+function freshDirForRoot(root: string): string {
+  return editor.pathJoin(root, ".fresh");
+}
+
+function agentsDirForRoot(root: string): string {
+  return editor.pathJoin(freshDirForRoot(root), "agents");
+}
+
+function agentDir(root: string, name: string): string {
+  return editor.pathJoin(agentsDirForRoot(root), name);
+}
+
+function agentStatusPath(root: string, name: string): string {
+  return editor.pathJoin(agentDir(root, name), "status");
+}
+
+function agentInboxDir(root: string, name: string): string {
+  return editor.pathJoin(agentDir(root, name), "inbox");
+}
+
+function agentOutboxDir(root: string, name: string): string {
+  return editor.pathJoin(agentDir(root, name), "outbox");
+}
+
+/// Create one agent's mailbox. Cheap and idempotent.
+function ensureAgentMailbox(root: string, name: string): void {
+  if (!root || !name) return;
+  try {
+    const inbox = agentInboxDir(root, name);
+    const outbox = agentOutboxDir(root, name);
+    editor.createDir(editor.localPath(editor.pathJoin(inbox, "done")));
+    editor.createDir(editor.localPath(editor.pathJoin(outbox, "read")));
+    const ignore = editor.pathJoin(freshDirForRoot(root), ".gitignore");
+    if (!editor.fileExists(editor.localPath(ignore))) {
+      editor.writeFile(editor.localPath(ignore), "*\n");
+    }
+  } catch (_e) {
+    // A mailbox we could not create means the agent falls back to screen
+    // inference, which is the pre-mailbox behaviour — not an error worth
+    // interrupting a launch for.
+  }
+}
+
+/// Whether a mailbox has anything in it.
+///
+/// The directory is created at launch, before the agent has said a word, so
+/// its existence proves nothing. A `status` file is the first thing an agent
+/// writes, and until it exists there is a directory and no evidence of an
+/// agent — a name in the picker addressing nobody, and a row claiming an
+/// agent that has never spoken. Directories left behind by agents that are
+/// gone are the same thing from the other end.
+function mailboxHasStatus(root: string, name: string): boolean {
+  try {
+    return editor.fileExists(editor.localPath(agentStatusPath(root, name)));
+  } catch (_e) {
+    return false;
+  }
+}
+
+/// Every agent name that has a mailbox under `root`.
+function listAgentNames(root: string): string[] {
+  if (!root) return [];
+  try {
+    const dir = editor.localPath(agentsDirForRoot(root));
+    if (!editor.fileExists(dir)) return [];
+    return editor.readDir(dir).filter((e) => e.is_dir).map((e) => e.name);
+  } catch (_e) {
+    return [];
+  }
+}
+
+/// A mailbox name for a new agent, unique within its checkout.
+///
+/// Uniqueness is per root because that is the scope the directory lives in,
+/// and because two agents in the same checkout are the case this whole rework
+/// is for. `-2`, `-3` rather than a random suffix: the name is something the
+/// user types after `@`, so it has to be guessable and short.
+function uniqueAgentName(root: string, base: string): string {
+  const clean = (base || "agent").toLowerCase().replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "").slice(0, 24) || "agent";
+  const taken = new Set(listAgentNames(root));
+  for (const s of orchestratorSessions.values()) {
+    if (s.root === root && s.agentName) taken.add(s.agentName);
+  }
+  if (!taken.has(clean)) return clean;
+  for (let n = 2; n < 1000; n++) {
+    const candidate = `${clean}-${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return clean;
+}
+
+/// Environment an agent needs to find its own mailbox.
+///
+/// Passed at spawn rather than discovered, because an agent should not have to
+/// know this plugin's directory layout to answer "where do I write my status".
+function mailboxEnv(root: string, name: string): Record<string, string> {
+  return {
+    // Its own address, so it can sign what it writes and recognise mail
+    // addressed to it.
+    FRESH_AGENT_NAME: name,
+    FRESH_AGENT_STATUS: agentStatusPath(root, name),
+    FRESH_AGENT_INBOX: agentInboxDir(root, name),
+    FRESH_AGENT_OUTBOX: agentOutboxDir(root, name),
+    // Not per-agent: one log for the whole environment, so an agent can
+    // watch what everyone else is doing without being told about them.
+    FRESH_FLEET_EVENTS: eventLogPath(),
+  };
+}
+
+/// Parse a `status` line.
+///
+/// `<state> <summary>`, or a one-line JSON object for agents that prefer
+/// structure. Anything unrecognised is treated as a summary with no state —
+/// a garbled line should still show the user what the agent tried to say.
+function parseStatus(raw: string, now: number): StatusReport | null {
+  if (typeof raw !== "string") return null;
+  const line = raw.split("\n").find((l) => l.trim().length > 0);
+  if (!line) return null;
+  const text = line.trim();
+  if (text.startsWith("{")) {
+    try {
+      const o = JSON.parse(text) as { state?: string; summary?: string };
+      const st = REPORTED_STATES.find((s) => s === o.state);
+      if (st) return { state: st, summary: String(o.summary ?? ""), readAt: now, raw: text };
+    } catch (_e) {
+      // fall through to the bare form
+    }
+  }
+  const sp = text.indexOf(" ");
+  const head = (sp < 0 ? text : text.slice(0, sp)).toLowerCase();
+  const st = REPORTED_STATES.find((s) => s === head);
+  if (!st) return { state: "working", summary: text, readAt: now, raw: text };
+  return { state: st, summary: sp < 0 ? "" : text.slice(sp + 1).trim(), readAt: now, raw: text };
+}
+
+
+/// Agents that reported in from somewhere we did not launch them.
+///
+/// The point of putting the mailbox in the checkout: an agent is whatever
+/// wrote a status file, not whatever this plugin happens to have started. A
+/// `claude` someone ran by hand in a worktree, an agent in another
+/// multiplexer, one left over from a previous session, a second agent in a
+/// workspace that already has one — all of them become visible by looking
+/// where a status file would be.
+///
+/// Keyed by root *and name*, and skipping the names our own live sessions
+/// already claim: a session we launched is already a row, with a terminal we
+/// can show, and listing it twice would be worse than not finding it at all.
+interface UnattachedAgent {
+  root: string;
+  name: string;
+  label: string;
+  status: StatusReport;
+}
+
+/// `root\0name` → agent. The pair is the identity; neither half alone is.
+const unattachedAgents = new Map<string, UnattachedAgent>();
+
+/// Terminals we started an agent in, by mailbox identity.
+///
+/// A workspace has one session record and therefore one `terminalBufferId`,
+/// but a workspace can hold several agents — which is the case per-agent
+/// mailboxes exist for. The first binds to the session and shows in its row; a
+/// second would otherwise come back through discovery as a row with no
+/// terminal, its own terminal sitting one tab away. Remembering the buffer we
+/// created is enough to give its row the same live pane every other row has.
+///
+/// Not persisted: a buffer id means nothing outside this process, and after a
+/// restart the agent is found the way any foreign one is.
+const launchedAgentBuffers = new Map<string, { windowId: number; bufferId: number }>();
+
+/// Mailboxes we created by starting an agent in this process.
+///
+/// Distinguishes "a directory with nothing in it" from "an agent that is
+/// visibly running and has not written its first status yet". Not persisted:
+/// after a restart the only evidence we have is what the mailbox contains,
+/// which is the same evidence we have for anyone else's agent.
+const launchedAgents = new Set<string>();
+
+function agentKey(root: string, name: string): string {
+  return root + "\u0000" + name;
+}
+
+/// Roots worth looking in.
+///
+/// Every root we know about from any source — live sessions and the
+/// worktrees discovered on disk — because those are the places an agent
+/// plausibly runs, and scanning them is a `fileExists` each. Deliberately not
+/// a filesystem walk: "find every status file on this machine" is a different
+/// and much more expensive question, and answering it would surface agents
+/// working on things the user is not.
+function mailboxSearchRoots(): string[] {
+  const roots = new Set<string>();
+  for (const s of orchestratorSessions.values()) {
+    if (s.root) roots.add(s.root);
+  }
+  const cwd = editor.getCwd();
+  if (cwd) roots.add(cwd);
+  return [...roots];
+}
+
+/// Mailboxes a live session already owns, so a report from one of them is not
+/// "unattached" — it is that session's own status.
+function attachedMailboxes(): Set<string> {
+  const live = new Set<string>();
+  for (const s of orchestratorSessions.values()) {
+    if (!s.discovered && !s.pending && s.root && s.agentName) {
+      live.add(agentKey(s.root, s.agentName));
+    }
+  }
+  return live;
+}
+
+/// A live workspace at `root` that has no agent name yet, if there is one.
+function unclaimedSessionAt(root: string): AgentSession | undefined {
+  for (const s of orchestratorSessions.values()) {
+    if (!s.discovered && !s.pending && s.root === root && !s.agentName) return s;
+  }
+  return undefined;
+}
+
+/// The workspace at `root` that an agent there could actually be reached
+/// through — live now, or dormant and restorable.
+///
+/// The distinction that matters is `discovered`. A discovered row is a worktree
+/// found on disk: there is no persisted window behind it and therefore no agent
+/// argv to resume, so opening it yields a plain shell. A non-discovered row is
+/// a window the host is keeping, live or dormant, and materializing one brings
+/// its agent back with it.
+///
+/// This is the same predicate the wake path uses to decide whether waiting for
+/// an agent is worth anything, deliberately: what the picker offers and what
+/// sending can deliver should be one answer, not two that drift.
+function restorableWorkspaceAt(root: string): AgentSession | undefined {
+  for (const s of orchestratorSessions.values()) {
+    if (!s.discovered && !s.pending && s.root === root) return s;
+  }
+  return undefined;
+}
+
+/// Give every agent we can see a name to be addressed by.
+///
+/// A workspace can be *known* to hold an agent — the host says what it runs
+/// or will run — while having no mailbox at all: nobody launched it through
+/// us, or the launch was in a previous run and the name went with it. Such a
+/// row appears in the list and, without this, appears nowhere in the picker.
+///
+/// Naming it here rather than at render time because this runs on the poll,
+/// which is already where the session model is reconciled — a render that
+/// mints directories as a side effect of being drawn would be a surprise.
+function nameVisibleAgents(): void {
+  for (const s of orchestratorSessions.values()) {
+    if (s.discovered || s.pending || !s.root || s.agentName) continue;
+    if (!hasKnownAgent(s)) continue;
+    // Named after the agent it runs — `claude`, `codex` — which is what the
+    // user would reach for, and made unique within the checkout so two of
+    // them never share a mailbox.
+    const base = agentKindFor(s)?.label ?? workspaceDisplayName(s);
+    const name = uniqueAgentName(s.root, base);
+    ensureAgentMailbox(s.root, name);
+    rememberAgentName(s, name);
+  }
+}
+
+function scanForUnattachedAgents(): void {
+  // Fold in the host's window list first. This scan now *drops* a mailbox when
+  // no workspace can reach it, so it has to be deciding against the real set of
+  // windows: run against a session map that has not caught up yet — early in
+  // startup, before any view has reconciled — and a restored agent is dropped
+  // for the tick it takes to reappear, which reads as an agent flickering out
+  // of the picker. One `listWindows` per poll, against a file read per agent
+  // already in this handler.
+  reconcileSessions();
+  nameVisibleAgents();
+  const attached = attachedMailboxes();
+  const now = Date.now();
+  const seen = new Set<string>();
+  for (const root of mailboxSearchRoots()) {
+    // Directories with nothing in them are not agents, and must not become
+    // rows, names in the picker, or a reason to refuse adoption below.
+    const names = listAgentNames(root).filter((n) => mailboxHasStatus(root, n));
+    for (const name of names) {
+      const key = agentKey(root, name);
+      if (attached.has(key)) continue;
+      let raw: string | null | undefined = null;
+      try {
+        const path = agentStatusPath(root, name);
+        if (!editor.fileExists(editor.localPath(path))) continue;
+        raw = editor.readFile(editor.localPath(path));
+      } catch (_e) {
+        continue;
+      }
+      if (typeof raw !== "string") continue;
+      const parsed = parseStatus(raw, now);
+      if (!parsed) continue;
+      // A *single* mailbox in a checkout we have a window for, where that
+      // window has not claimed one yet: this is that workspace's agent —
+      // someone started it by hand in a workspace we happen to have open.
+      // Adopt it onto the existing row rather than adding a second one, or
+      // the same agent shows up twice, once with its own words and once with
+      // a guess from its screen.
+      //
+      // Only when it is the only one, though. With two mailboxes in a root we
+      // cannot tell which of them (if either) is the agent in that window's
+      // terminal, and guessing hands one of them a terminal belonging to the
+      // other — so both stay their own rows and the workspace keeps its own.
+      const host = names.length === 1 ? unclaimedSessionAt(root) : undefined;
+      if (host) {
+        rememberAgentName(host, name);
+        host.status = parsed;
+        continue;
+      }
+      // A mailbox is evidence an agent *was* here, not that one is here now or
+      // can be brought back. Without a window the host is keeping for this
+      // root, there is nothing to restore: the status file outlives the process
+      // that wrote it, and a worktree discovered on disk has no persisted agent
+      // argv, so opening it produces a shell and no agent. Listing such a
+      // mailbox offers an address that cannot be delivered to — the row says an
+      // agent is waiting on you, and messaging it restores nothing.
+      //
+      // Left out of `seen`, so an entry recorded while a workspace was open is
+      // dropped by the prune below once it closes.
+      if (!restorableWorkspaceAt(root)) continue;
+      seen.add(key);
+      unattachedAgents.set(key, { root, name, label: name, status: parsed });
+    }
+  }
+  // Drop the ones that stopped reporting: a stale row claiming an agent is
+  // waiting on you, for a worktree nobody is in, is worse than no row.
+  for (const key of [...unattachedAgents.keys()]) {
+    if (!seen.has(key)) unattachedAgents.delete(key);
+  }
+}
+
+// =============================================================================
+// The chat transcript
+//
+// `status` says what an agent is doing right now, in one line it overwrites.
+// That is the right shape for a list and the wrong shape for a conversation:
+// "I'm done pushing the 3 PRs" is a thing said once, at a moment, that must
+// still be there when the user looks up two minutes later. So the outbox is a
+// *directory* beside the status file — one file per message — and draining it
+// into an append-only transcript is what turns a set of agents into something
+// you can talk to.
+//
+// Deliberately not an LLM: the transcript is the messages themselves, in the
+// order they were written, with `@name` as the addressing syntax. Nothing
+// summarises, nothing decides who should hear what. A control plane that
+// paraphrased its agents would be a worse control plane.
+// =============================================================================
+
+interface ChatMessage {
+  /// Wall-clock ms when we recorded it.
+  at: number;
+  /// `"user"`, `"fresh"`, or the mailbox name of the agent that wrote it.
+  ///
+  /// `"fresh"` is the control plane speaking for itself — a message that
+  /// could not be delivered, an agent that has no terminal to type at. Those
+  /// used to go to the editor's status line, which is the wrong place for
+  /// them by construction: Home covers the screen, so the one line that
+  /// reports what just happened was behind the panel that caused it. A
+  /// failure to send belongs in the transcript of the conversation it failed
+  /// in, next to the message it was about.
+  from: string;
+  /// The agent a user message was addressed to, if any.
+  to?: string;
+  text: string;
+}
+
+const CHAT_SYSTEM = "fresh";
+
+/// Say something to the user, in the place they are looking.
+function chatSay(text: string): void {
+  appendChat({ at: Date.now(), from: CHAT_SYSTEM, text });
+  renderHome(true);
+  refreshDockChatInPlace();
+}
+
+/// Keep the tail rather than the whole history: this is a conversation you
+/// scroll a screen of, and an unbounded file read on every open would make
+/// opening Home get slower the longer the environment has been alive.
+const CHAT_MAX_LINES = 400;
+
+const chatLog: ChatMessage[] = [];
+
+function chatLogPath(): string {
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", "chat.jsonl");
+}
+
+let chatLoaded = false;
+
+/// Read the transcript back from disk, once per plugin load.
+///
+/// Persisted because the conversation outlives the panel: an agent that
+/// answered while Home was closed said it to you, and losing that on close
+/// would make the chat useless for exactly the case it exists for — being
+/// away from the keyboard while agents work.
+function loadChat(): void {
+  if (chatLoaded) return;
+  chatLoaded = true;
+  let raw: string | null | undefined = null;
+  try {
+    raw = editor.readFile(editor.localPath(chatLogPath()));
+  } catch (_e) {
+    return;
+  }
+  if (typeof raw !== "string") return;
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const m = JSON.parse(line) as ChatMessage;
+      if (typeof m?.text === "string" && typeof m?.from === "string") chatLog.push(m);
+    } catch (_e) {
+      // A half-written last line is normal for an append-only log; skip it.
+    }
+  }
+  if (chatLog.length > CHAT_MAX_LINES) chatLog.splice(0, chatLog.length - CHAT_MAX_LINES);
+}
+
+function saveChat(): void {
+  try {
+    const tail = chatLog.slice(-CHAT_MAX_LINES);
+    editor.writeFile(
+      editor.localPath(chatLogPath()),
+      tail.map((m) => JSON.stringify(m)).join("\n") + "\n",
+    );
+  } catch (_e) {
+    // A transcript we cannot persist is still usable in this session.
+  }
+}
+
+function appendChat(m: ChatMessage): void {
+  loadChat();
+  // The control plane never says the same thing twice in a row. Its messages
+  // are answers to a key that did not work, so a user pressing that key four
+  // times got four identical paragraphs — a transcript that is mostly Fresh
+  // repeating itself, crowding out what the agents said.
+  const last = chatLog[chatLog.length - 1];
+  if (m.from === CHAT_SYSTEM && last?.from === CHAT_SYSTEM && last.text === m.text) return;
+  chatLog.push(m);
+  if (chatLog.length > CHAT_MAX_LINES) chatLog.splice(0, chatLog.length - CHAT_MAX_LINES);
+  saveChat();
+}
+
+/// Every agent that has a mailbox worth addressing: the ones we launched in
+/// this session, plus every mailbox that has actually reported.
+///
+/// An empty mailbox is excluded — see `mailboxHasStatus`. The exception is an
+/// agent we started ourselves and are still watching: it has a terminal on
+/// screen, so it plainly exists, and refusing to let the user message it
+/// until it happened to write a status would be worse than trusting what we
+/// did a moment ago.
+function knownAgentMailboxes(): Array<{ root: string; name: string }> {
+  const out: Array<{ root: string; name: string }> = [];
+  const seen = new Set<string>();
+  for (const s of orchestratorSessions.values()) {
+    if (s.discovered || s.pending || !s.root || !s.agentName) continue;
+    // Anything the list calls an agent can be addressed. Requiring a status
+    // file here was the reason a restored `claude` was a row you could see
+    // and not a name you could pick: it had not spoken yet, and an agent you
+    // cannot message until it speaks is useless in exactly the moment you
+    // want it — right after a restart, before it has done anything.
+    if (!hasKnownAgent(s)) continue;
+    const key = agentKey(s.root, s.agentName);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ root: s.root, name: s.agentName });
+  }
+  for (const u of unattachedAgents.values()) {
+    const key = agentKey(u.root, u.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ root: u.root, name: u.name });
+  }
+  return out;
+}
+
+/// Move every message an agent has written into the transcript.
+///
+/// Files move to `outbox/read/` rather than being deleted, so an agent can see
+/// that its message was picked up and the user can go read the originals. The
+/// move is also what makes this idempotent: a file is only ever appended once,
+/// however often the drain runs.
+///
+/// Returns `true` if anything arrived, so a caller can decide whether to
+/// repaint without diffing the transcript.
+function drainOutboxes(): boolean {
+  let any = false;
+  for (const { root, name } of knownAgentMailboxes()) {
+    const dir = agentOutboxDir(root, name);
+    let entries: DirEntry[];
+    try {
+      const local = editor.localPath(dir);
+      if (!editor.fileExists(local)) continue;
+      entries = editor.readDir(local);
+    } catch (_e) {
+      continue;
+    }
+    // By name, which is how an agent is told to stamp them — so several
+    // messages written between two drains keep the order they were said in.
+    const files = entries.filter((e) => e.is_file).map((e) => e.name).sort();
+    for (const file of files) {
+      const path = editor.pathJoin(dir, file);
+      let text: string | null | undefined = null;
+      try {
+        text = editor.readFile(editor.localPath(path));
+      } catch (_e) {
+        continue;
+      }
+      if (typeof text !== "string") continue;
+      const body = stripFrontMatter(text).trim();
+      try {
+        editor.renamePath(
+          editor.localPath(path),
+          editor.localPath(editor.pathJoin(dir, "read", file)),
+        );
+      } catch (_e) {
+        // Could not move it: drop the message rather than replay it forever.
+        // A duplicate every 1.5s would drown the transcript it belongs to.
+        try {
+          editor.removePath(editor.localPath(path));
+        } catch (_e2) { /* nothing left to try */ }
+      }
+      if (!body) continue;
+      appendChat({ at: Date.now(), from: name, text: body });
+      any = true;
+    }
+  }
+  return any;
+}
+
+/// Drop a `---`-delimited YAML header, if the agent wrote one.
+///
+/// Agents copy the shape of the inbox files we write them, headers and all.
+/// Showing `from: … intent: …` in a chat bubble would bury the sentence the
+/// message is actually about.
+function stripFrontMatter(text: string): string {
+  if (!text.startsWith("---")) return text;
+  const end = text.indexOf("\n---", 3);
+  if (end < 0) return text;
+  const after = text.indexOf("\n", end + 1);
+  return after < 0 ? "" : text.slice(after + 1);
+}
+
+const STATUS_TTL_MS = 1_000;
+
+/// Last state broadcast per session, so `agent_state_change` fires on
+/// transitions rather than on every tick.
+const lastBroadcastState = new Map<number, string>();
+
+/// Broadcast a session's state to any subscriber, if it changed.
+///
+/// This is the event half of §6.3: the Orchestrator is the only thing that
+/// knows an agent's state, so it is the only thing that can say so. A watcher
+/// subscribes with `editor.on("agent_state_change", …)` exactly as it would
+/// for a host event.
+function broadcastState(s: AgentSession): void {
+  const st = sessionState(s);
+  const summary = s.status?.summary ?? s.tail?.waitingOn ?? s.tail?.lastLine ?? "";
+  const key = st + "\u0000" + summary;
+  if (lastBroadcastState.get(s.id) === key) return;
+  lastBroadcastState.set(s.id, key);
+  const payload = {
+    workspaceId: s.id,
+    name: workspaceDisplayName(s),
+    state: st,
+    summary,
+    // Where the claim came from, so a consumer can weigh it: the agent said
+    // so, or we inferred it from the screen.
+    source: s.status ? "agent" : "inferred",
+    branch: s.branch ?? s.git?.info?.branch ?? "",
+  };
+  editor.emitEvent("agent_state_change", payload);
+  // Same event to the log, for the agents that read a file rather than
+  // subscribe. A plugin gets `editor.on`; an agent gets `tail -f`.
+  appendEvent("agent_state_change", payload);
+}
+
+/// Read a session's `status` file, if it wrote one.
+///
+/// Cheaper than `probeTail` by a wide margin — one small file read against a
+/// grid read plus a regex sweep over 40 rows — so it runs on the shorter TTL.
+function probeStatus(s: AgentSession): void {
+  if (s.discovered || s.pending) return;
+  const now = Date.now();
+  if (s.status && now - s.status.readAt < STATUS_TTL_MS) return;
+  if (!s.root || !s.agentName) return;
+  let raw: string | null = null;
+  try {
+    raw = editor.readFile(editor.localPath(agentStatusPath(s.root, s.agentName)));
+  } catch (_e) {
+    raw = null;
+  }
+  // No file is the normal case for an agent that has not adopted the
+  // convention: leave `status` undefined so screen inference stays in charge.
+  // `readFile` is typed `string | null` but answers `undefined` for a missing
+  // path, so a `=== null` test lets the miss through and the parse throws on
+  // every tick of the watch.
+  if (typeof raw !== "string") return;
+  const parsed = parseStatus(raw, now);
+  if (parsed) s.status = parsed;
+}
+
+const TAIL_PROBE_TTL_MS = 2_000;
+// How many rows of the grid's bottom to pull. Enough to catch a multi-line
+// prompt (an approval dialog with its options underneath) without dragging in
+// a screenful of diff.
+const TAIL_LINES = 12;
+
+interface TailProbe {
+  fetchedAt: number;
+  // Last non-empty row — what the card and the fleet show.
+  lastLine: string;
+  // The row that matched the agent's waiting pattern, if any. Non-empty is
+  // exactly the condition for the `waiting` state, and it doubles as the
+  // reason shown to the user ("Approve edit to …?" rather than a bare `!`).
+  waitingOn: string;
+}
+
+/// Watch every live agent's `status` file and broadcast state changes.
+///
+/// Runs for the life of the plugin, not just while a view is open, because an
+/// event stream that only exists when someone is looking is not an event
+/// stream. This is affordable *because* of the outbox: one small file read per
+/// agent per tick, against the grid read plus 40-row regex sweep that screen
+/// inference would cost. An agent that writes no status contributes nothing
+/// here — its state still changes, but only a view that probes the tail will
+/// notice, exactly as before.
+const STATUS_WATCH_MS = 1_500;
+
+registerHandler("orchestrator_status_watch", function () {
+  for (const s of orchestratorSessions.values()) {
+    if (s.discovered || s.pending) continue;
+    probeStatus(s);
+    broadcastState(s);
+  }
+  scanForUnattachedAgents();
+});
+
+const tailProbesInFlight = new Set<number>();
+
+/// Read a session's terminal tail and derive `lastLine` / `waitingOn`.
+///
+/// Failure is silent and non-destructive: a terminal that has gone away, or a
+/// window torn down mid-probe, keeps whatever the last good read said rather
+/// than blanking the row. A blanked row reads as "this agent has nothing to
+/// say", which is a different and wrong claim.
+async function probeTail(s: AgentSession): Promise<void> {
+  if (s.discovered || s.pending) return;
+  if (tailProbesInFlight.has(s.id)) return;
+  const now = Date.now();
+  if (s.tail && now - s.tail.fetchedAt < TAIL_PROBE_TTL_MS) return;
+  tailProbesInFlight.add(s.id);
+  try {
+    // Resolve the session's terminal from the environment, not from
+    // `s.terminalId`.
+    //
+    // The orchestrator only records `terminalId` for workspaces *it* created,
+    // so the launch workspace — and any window reconciled from the host's
+    // list — has none. Gating on it left exactly those sessions with no
+    // terminal to read and no buffer for the Fleet's live pane, which then
+    // silently fell back to embedding the whole session, tab bar and all.
+    // `describeEnvironment` sees every terminal regardless of who made it.
+    if (s.terminalBufferId === undefined || s.terminalId === null) {
+      try {
+        const env = await editor.describeEnvironment();
+        const win = env.windows.find((w) => w.windowId === s.id);
+        // Prefer the terminal the orchestrator knows about; otherwise the
+        // window's first, which is the one a plain "Open Terminal" made.
+        const t = win?.terminals.find((t) => t.terminalId === s.terminalId)
+          ?? win?.terminals[0];
+        if (t) {
+          s.terminalBufferId = t.bufferId;
+          if (s.terminalId === null) s.terminalId = t.terminalId;
+        }
+      } catch (_e) { /* retried on the next probe */ }
+    }
+    if (s.terminalId === null) return;
+    const screen = await editor.readTerminal(s.id, s.terminalId, TAIL_LINES, true);
+    const rows = screen.text.filter((l) => l.trim().length > 0);
+    const lastLine = rows.length ? rows[rows.length - 1].trim() : "";
+    s.tail = {
+      fetchedAt: Date.now(),
+      lastLine,
+      // The screen's own title, not `s.terminalTitle`: the latter is only
+      // tracked for terminals the Orchestrator started, so a workspace whose
+      // agent was launched any other way would never be recognised as
+      // waiting — the same partial bookkeeping that hid its buffer above.
+      waitingOn: matchWaiting(rows, screen.title || s.terminalTitle || ""),
+    };
+  } catch (_e) {
+    // Keep the previous reading; just don't re-probe immediately.
+    if (s.tail) s.tail.fetchedAt = Date.now();
+  } finally {
+    tailProbesInFlight.delete(s.id);
+  }
+}
+
+/// The line that shows this agent is waiting on the user, or "" if none.
+///
+/// `title` is the terminal's own foreground-process title, which is what
+/// resolves the registry entry whose pattern is matched.
+///
+/// Driven by the agent registry rather than by one global heuristic: each
+/// vendor's TUI asks its questions differently, and a pattern that fits one
+/// will mis-fire on another. An agent with no pattern (or a bare terminal)
+/// simply never enters the `waiting` state — it degrades to the working/idle
+/// behaviour that shipped before, which is the right failure direction.
+function matchWaiting(rows: string[], title: string): string {
+  const entry = title ? agentEntryForCmd(title) : null;
+  const pattern = entry?.waiting;
+  if (!pattern) return "";
+  // Search from the bottom: the live question is the most recent one, and an
+  // identical question answered earlier may still be on screen above it.
+  //
+  // A prompt is usually several matching rows — the question, then its
+  // options ("1. Yes", "2. No…"). Prefer the question: an option tells the
+  // user nothing they could act on, and "❯ 1. Yes" as the reason a workspace
+  // is blocked is actively confusing. A trailing `?` is what distinguishes
+  // them; fall back to the lowest match when nothing asks outright.
+  let fallback = "";
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const line = rows[i].trim();
+    if (!pattern.test(line)) continue;
+    if (line.endsWith("?")) return line;
+    if (!fallback) fallback = line;
+  }
+  return fallback;
+}
 
 // Resolve (and cache) a session's branch. Live sessions don't carry
 // `branch` up front, so ask git in the worktree once.
@@ -3949,11 +4987,26 @@ function startProbePolling(): void {
       const s = orchestratorSessions.get(id);
       if (!s) continue;
       void probePr(s);
+      // Cheap enough to run unbounded alongside the others: an in-process
+      // grid read, no subprocess. It self-throttles on its own (shorter) TTL.
+      probeStatus(s);
+      void probeTail(s);
     }
     // Git probes drain at bounded concurrency (see `drainGitProbes`) rather
     // than all firing on this tick — each completion refills the freed slot,
     // so throughput is preserved without the same-tick spawn burst.
     drainGitProbes();
+    // Collect what agents have said, so the dock's chat stays live without
+    // Home being open. Home is a thing you go to; the dock is a thing that is
+    // there, and a message that only arrived while a panel was up would miss
+    // the whole point of putting the chat where you are already looking.
+    if (dockMode) {
+      scanForUnattachedAgents();
+      if (drainOutboxes()) {
+        if (dockFocus === "chat") refreshDockChatInPlace();
+        else refreshOpenDialog();
+      }
+    }
     void editor.delay(PROBE_POLL_INTERVAL_MS).then(tick);
   };
   tick();
@@ -4449,15 +5502,23 @@ function buildDockSpec(): WidgetSpec {
   // The "New Task…" button and the search field share one row, wrapping
   // the search below the button when the dock is too narrow to hold both.
   // The button renders as "[ <label> ]" (label + 4 cols); size the search
-  // field to fill the rest of a default-width dock, floored so it stays
-  // usable — and so the two overflow (and wrap) on a narrow/dragged dock.
-  // The host wraps against the *actual* rendered width, so this estimate
-  // only needs to be close for the default-dock case.
+  // field to fill the rest of the dock, floored so it stays usable — and
+  // so the two overflow (and wrap) on a narrow/dragged dock.
+  //
+  // Whether they wrap has to be predicted here, because the row budget the
+  // tree is sized against depends on it. The prediction is now exact
+  // rather than close: `dockCols()` is the width the host says it drew at,
+  // and the arithmetic is the host's own — a wrapping Row starts a new
+  // line as soon as the accumulated pieces exceed the width, the button is
+  // `label + 4`, the spacer is 1, and a text field is its field width plus
+  // its two brackets, plus one more column of cursor park when it holds
+  // the caret.
   const newBtnCols = newLabel.length + 4;
-  const dockCols = dockContentCols(dockDefaultWidth());
+  const cols = dockCols();
   const SEARCH_MIN_FIELD = 10;
-  const searchField = Math.max(SEARCH_MIN_FIELD, dockCols - newBtnCols - 4);
-  const toolbarWraps = newBtnCols + 1 + searchField + 2 > dockCols;
+  const searchField = Math.max(SEARCH_MIN_FIELD, cols - newBtnCols - 4);
+  const searchCols = searchField + 2 + (dockFocus === "filter" ? 1 : 0);
+  const toolbarWraps = newBtnCols + 1 + searchCols > cols;
   const worktreeLabel = editor.t("dock.all_worktrees");
   const trivialLabel = editor.t("dock.show_empty");
   const projWord = openDialog.projectFilter === null
@@ -4467,7 +5528,11 @@ function buildDockSpec(): WidgetSpec {
   // The hints belong to the dock only while it has keyboard focus
   // (req: hide them when the editor owns the keyboard). A blurred dock
   // gives the row back to the tree.
-  const showHints = !dockBlurred;
+  // The chat is part of the dock, so a caret in it is still the dock having
+  // the keyboard. Without this the hints vanish the moment you focus the
+  // chat, the chrome shrinks by two rows, and every row below reflows — which
+  // reads as the section falling apart under you.
+  const showHints = !dockBlurred || dockFocus === "chat";
   const menuOpen = openDialog.projectMenuOpen || openDialog.dockMenu !== null;
   // While a dropdown owns the keyboard, the hints describe the dropdown
   // (choose/select/cancel), not the session tree. The tree's own hints
@@ -4540,11 +5605,20 @@ function buildDockSpec(): WidgetSpec {
   // New+search toolbar (1 row, or 2 when the search wraps below the
   // button on a narrow dock), filter header, divider — plus the expanded
   // filter body rows when open. The tree soaks up the rest.
-  const screen = editor.getScreenSize();
-  const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
+  const innerH = screenRows();
   const toolbarRows = toolbarWraps ? 2 : 1;
-  const chromeRows = 3 + toolbarRows + filterBody.length + bottomRows;
-  const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
+  // The chat takes its rows off the top of the tree's budget, so adding it
+  // shortens the list rather than pushing anything off the dock's bottom.
+  const chatRows = dockChatRows(innerH);
+  const chromeRows = 3 + toolbarRows + filterBody.length + bottomRows + chatRows;
+  // The tree is the flexible region: it gets what the chrome leaves, and
+  // one row is the floor. `MIN_LIST_ROWS` used to be that floor, which made
+  // the tree *inflexible* on a short dock — chrome plus six rows can exceed
+  // the dock's height, and since the tree sits above everything else the
+  // overflow leaves at the bottom edge, taking the chat's composer with it.
+  // A tree of two rows is a worse list than a tree of six; a composer you
+  // cannot see is not a chat at all.
+  const listRows = Math.max(1, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
   // Rows of chrome above the tree (everything in chromeRows except the
   // bottom hint row) — where the first tree row lands on screen.
@@ -4611,7 +5685,154 @@ function buildDockSpec(): WidgetSpec {
     }),
     ...bottomPad,
     ...bottom,
+    ...dockChatBlock(chatRows),
   );
+}
+
+// =============================================================================
+// The dock's chat
+//
+// The same conversation Home shows, in the surface that is already open. Home
+// is a thing you go to; the dock is a thing that is *there*, so an agent that
+// says something while you are working should land where you are already
+// looking rather than behind a panel you have to summon.
+//
+// One implementation, two surfaces: the transcript, the picker, the send path
+// and the drain are the ones Home uses, so a message read here is read there
+// and the address you pick in one is the address in the other.
+// =============================================================================
+
+/// The terminal's height, remembered.
+///
+/// `getScreenSize()` answers usefully during a render and can answer with
+/// nothing outside one — and the dock's layout is computed from it in key
+/// handlers too, which is where a bogus height turned into a real bug: the
+/// whole dock collapsed to a dozen rows the moment you pressed Alt+C, because
+/// the row budget was computed against a height of 8 and everything below the
+/// tree fell off. Holding the last plausible value costs one variable and
+/// makes the layout independent of *when* it is computed.
+let lastScreenRows = 0;
+
+function screenRows(): number {
+  const h = editor.getScreenSize().height;
+  if (h >= 10) lastScreenRows = h;
+  return lastScreenRows >= 10 ? lastScreenRows : 30;
+}
+
+/// Rows the chat section spends on itself: the rule that separates it from
+/// the list, the header, the rule above the input, and the input line.
+const DOCK_CHAT_CHROME_ROWS = 4;
+
+/// Total rows the chat section occupies, chrome included.
+///
+/// Collapsed it is exactly its header, which is what makes the accordion an
+/// accordion rather than a hide. Expanded it takes a share of the dock, with a
+/// floor so it is never a sliver — and it disappears entirely on a dock too
+/// short to hold both it and a usable list, because a list is what the dock is
+/// for.
+function dockChatRows(innerH: number): number {
+  // Collapsed is the rule plus the header — two rows, which is what
+  // `dockChatBlock` emits. Claiming one pushed the header off the dock's
+  // bottom edge, so the accordion looked like it had removed itself.
+  if (dockChatIsCollapsed()) return 2;
+  if (innerH < 24) return 0;
+  // The section's own chrome is 4 rows: the rule that separates it from the
+  // list, the header, the rule above the input, and the input. The floor
+  // leaves four rows of transcript under that.
+  return Math.max(8, Math.floor(innerH * 0.4));
+}
+
+/// Columns the chat's text may use inside the dock.
+///
+/// The width the host actually drew the dock at, less one column for the
+/// transcript's scrollbar to live in. Measuring against the width we
+/// *asked* for is what §7 of the gaps doc is about: a dragged dock wraps
+/// the transcript to a width the panel does not have, so every line either
+/// breaks early or is clipped at the right edge.
+function dockChatCols(): number {
+  return Math.max(16, dockCols() - 1);
+}
+
+/// The chat section: a header you can collapse from, the transcript, a rule,
+/// the picker's candidates when it is open, and the line you type on.
+function dockChatBlock(rows: number): WidgetSpec[] {
+  if (rows <= 0) return [];
+  const collapsed = dockChatIsCollapsed();
+  const picking = chatTarget === null;
+  const label = collapsed
+    ? "chat"
+    : picking
+    ? "chat · pick an agent"
+    : `chat · → @${chatTarget}`;
+  // The header is the section's border and its control at once: the label on
+  // the left, the accordion button on the right. `x` closes it, and flips to
+  // `□` — the maximize glyph — when it is closed, so the button always says
+  // what it will do rather than what state you are in.
+  // The dock's own title bar's shape: a raw styled row for the label, a flex
+  // spacer sized by the host against the dock's real width, and the button
+  // pinned to the right edge. A `text` widget would have been a bracketed
+  // *input* — the header would have looked like somewhere to type.
+  const base = { fg: "ui.menu_fg", bg: "ui.menu_bg" };
+  const header = row(
+    raw([styledRow([{ text: label, style: { ...base, bold: true } }], { style: base })]),
+    flexSpacer(),
+    button(collapsed ? "□" : "x", {
+      key: "chat-collapse",
+      focusable: false,
+      bare: true,
+      hoverStyle: { fg: "ui.tab_close_hover_fg" },
+    }),
+  );
+  if (collapsed) return [divider({ style: { fg: "ui.menu_disabled_fg" } }), header];
+
+  const cols = dockChatCols();
+  const logRows = Math.max(1, rows - DOCK_CHAT_CHROME_ROWS);
+  return [
+    divider({ style: { fg: "ui.menu_disabled_fg" } }),
+    header,
+    // A viewport onto the whole transcript, not a slice of its tail: the
+    // host windows it, keeps the scroll offset, sticks to the newest
+    // message until you scroll up, and — because it is now a real
+    // scrollable region — routes a wheel that lands on it here instead of
+    // to the workspace tree, with a scrollbar once there is more history
+    // than fits.
+    scrollableRaw(chatLines(cols), "dock_chat_log", logRows),
+    divider({ style: { fg: "ui.menu_disabled_fg" } }),
+    textInput(chatComposerValue(), {
+      // No label and no brackets. The section header already says what this
+      // row is and who it is addressed to, and the field is the only input on
+      // it — a `to` prefix restates the header, and framing the value in
+      // `[ ]` makes the address read as a token in a form rather than the
+      // start of the sentence you are writing. (The popup does not need the
+      // label: the host emits it for any focused field with candidates.)
+      label: "",
+      bare: true,
+      completionsBare: true,
+      placeholder: chatPlaceholder(picking),
+      focused: dockFocus === "chat",
+      fullWidth: true,
+      // The dock's chat is the bottom of the dock, so the candidates go up
+      // over the transcript — see the Home copy.
+      completionsAbove: true,
+      key: "dock_chat",
+    }),
+  ];
+}
+
+/// Redraw the chat's moving parts without rebuilding the dock.
+///
+/// Same reason as Home: a re-mount rebuilds the text field from our copy, and
+/// one landing between a keystroke and its `change` event puts back a value a
+/// character old. The dock polls, so this is not hypothetical — it would eat a
+/// character every poll while you typed.
+function refreshDockChatInPlace(): void {
+  if (!openPanel || !dockMode || dockChatIsCollapsed()) return;
+  const cols = dockChatCols();
+  const rows = dockChatRows(screenRows());
+  if (rows <= 0) return;
+  // Whole transcript: the host owns the window onto it (and the scroll
+  // offset within it), so pushing a slice would fight it.
+  openPanel.setRawEntries("dock_chat_log", chatLines(cols));
 }
 
 // Screen rows the dock tree's *visible* content occupies, mirroring the
@@ -6392,10 +7613,108 @@ editor.defineMode(
     // (Alt+E is unavailable: it's the Edit menu's mnemonic, which the
     // menu bar claims before the picker's mode keymap sees it.)
     ["M-i", "orchestrator_toggle_trivial"],
+    // Alt+C puts the caret in the chat and takes it back out — the mnemonic,
+    // and the one that always works. Tab reaches it too, through the host's
+    // ordinary focus cycle, but Tab depends on where you already are.
+    ["M-c", "orchestrator_dock_chat_focus"],
+    // The arrows steer the picker while the chat holds the caret, and the
+    // session tree the rest of the time. Same rule as Enter: claimed here,
+    // forwarded back when it is not ours.
+    ["Up", "orchestrator_dock_up"],
+    ["Down", "orchestrator_dock_down"],
+    // Enter has to mean two things: send, when the caret is in the chat; and
+    // whatever the tree does, everywhere else. Claiming it here and forwarding
+    // the key back to the panel in the second case keeps the tree's own
+    // behaviour — dive, or fold a folder — rather than reimplementing it.
+    ["Enter", "orchestrator_dock_enter"],
+    // Same rule as Enter and the arrows: ours while the caret is in the chat,
+    // handed straight back otherwise so the dock's own focus cycle — and the
+    // centered picker's bulk-action bar, which has no chat to claim it — is
+    // unchanged for everything else.
+    ["Tab", "orchestrator_dock_tab"],
   ],
   true,
   true,
 );
+
+registerHandler("orchestrator_dock_tab", function () {
+  if (!openPanel) return;
+  // Tab is claimed for the whole mode keymap, so every case this handler does
+  // not want has to hand it back — the same rule as Enter and the arrows.
+  // Returning instead swallows it, and a key that silently does nothing is
+  // worse than one that goes to the wrong place: the *centered* picker has no
+  // chat and drives its bulk-action bar with Tab, so `Archive → Delete` stopped
+  // moving and Enter opened the confirm panel for whichever action focus had
+  // never left.
+  if (!dockMode || dockChatIsCollapsed()) {
+    openPanel.command(widgetKey("Tab"));
+    return;
+  }
+  if (dockFocus !== "chat") {
+    // Into the chat, and deliberately not handed back. Forwarding it when the
+    // dock believed the caret was elsewhere is what kept moving focus *out* of
+    // the field you were typing in — the belief was wrong exactly when it
+    // mattered, because arriving through the host's own focus cycle never
+    // announced itself. The tree steers with the arrows and does not need Tab.
+    dockFocus = "chat";
+    openPanel.update(buildDockSpec());
+    openPanel.setFocusKey("dock_chat");
+    pushChatCandidates(true);
+    return;
+  }
+  // Already in the chat: the completion popup owns Tab from here, and the
+  // host answers it before any of this runs. Nothing to do.
+});
+
+/// Move the caret between the dock's chat and its list.
+///
+/// Reachable two ways, and both matter: the `dock_chat_focus` widget_event
+/// the host routes Alt+C to, and this handler for the picker's own mode. The
+/// dock has no editor mode — it floats over the active buffer's — so a mode
+/// binding alone never fired there, and the host read Alt+C as an unclaimed
+/// Alt chord and blurred the dock instead.
+function toggleDockChatFocus(): void {
+  if (!openPanel || !dockMode) return;
+  // Expand on the way in: asking for the chat is asking to see it, and a key
+  // that silently did nothing because the section was folded would read as a
+  // broken binding.
+  if (dockFocus !== "chat" && dockChatIsCollapsed()) {
+    setDockChatCollapsed(false);
+    openPanel.update(buildDockSpec());
+  }
+  if (dockChatRows(screenRows()) <= 0) {
+    return;
+  }
+  dockFocus = dockFocus === "chat" ? "list" : "chat";
+  // Rebuild before moving the caret: the spec carries which section is
+  // focused, and the host renders the stored spec — so a focus key set
+  // against a spec that still says otherwise leaves the two disagreeing.
+  openPanel.update(buildDockSpec());
+  openPanel.setFocusKey(dockFocus === "chat" ? "dock_chat" : "sessions");
+  if (dockFocus === "chat") pushChatCandidates(true);
+}
+registerHandler("orchestrator_dock_chat_focus", toggleDockChatFocus);
+
+function dockArrow(delta: number): void {
+  // The chat's own arrows are the completion popup's, and the host moves that
+  // selection itself while the field holds the caret — so there is one
+  // forward for both cases and no plugin-side highlight to keep in step.
+  if (openPanel) openPanel.command(widgetKey(delta < 0 ? "Up" : "Down"));
+}
+
+registerHandler("orchestrator_dock_up", function () { dockArrow(-1); });
+registerHandler("orchestrator_dock_down", function () { dockArrow(1); });
+
+registerHandler("orchestrator_dock_enter", function () {
+  if (dockMode && dockFocus === "chat") {
+    // Picking: Enter belongs to the completion popup, which the host drives.
+    if (chatTarget === null) return;
+    void sendChat();
+    return;
+  }
+  // Not ours: hand the key back so the tree answers it as it always has.
+  if (openPanel) openPanel.command(widgetKey("Enter"));
+});
 
 // The dock's Enter / Esc / Space / "/" are handled at the host's
 // floating-panel layer (see dispatch_floating_widget_key), not via an
@@ -6859,6 +8178,22 @@ interface AgentEntry {
   // enables "Teach Fresh CLI". Absent ⇒ the agent has no autonomous shell to
   // drive the editor (aider), so the checkbox stays hidden for it.
   systemPrompt?: AgentSystemPrompt;
+  // How this agent's TUI looks when it is blocked on the user — matched
+  // against rows of the terminal's live grid (see `matchWaiting`), newest
+  // first. A hit puts the session in the `waiting` state, and the matched
+  // line becomes the reason shown beside it.
+  //
+  // Per-agent rather than one shared heuristic: each vendor asks differently,
+  // and a pattern tuned for one mis-fires on another. A false `!` is worse
+  // than none, because the whole value of the state is that it is worth
+  // interrupting yourself for. Absent ⇒ this agent never reports `waiting`,
+  // which is the right default for a bare terminal or an agent nobody has
+  // characterised yet.
+  //
+  // These match what someone else's UI draws, so they will need revisiting
+  // when it changes. Anchor them on the words a prompt must contain, never on
+  // box-drawing or layout.
+  waiting?: RegExp;
 }
 // The four launcher-priority agents come first (claude, codex, opencode), then
 // the long-standing aider entry. Order here drives the preset-row order.
@@ -6880,6 +8215,9 @@ const AGENT_REGISTRY: AgentEntry[] = [
     auto: ["--permission-mode", "auto"],
     prompt: { style: "positional" },
     systemPrompt: { via: "flag", flag: "--append-system-prompt" },
+    // Claude Code asks with a numbered option list ("❯ 1. Yes"), and
+    // phrases the question as "Do you want …?" / "Would you like …?".
+    waiting: /(Do you want|Would you like|❯\s*1\.\s|\[y\/n\])/i,
   },
   {
     // OpenAI Codex CLI: resume is a *subcommand*, not a flag — `codex resume
@@ -6904,6 +8242,8 @@ const AGENT_REGISTRY: AgentEntry[] = [
     auto: ["--sandbox", "workspace-write", "--ask-for-approval", "never"],
     prompt: { style: "positional" },
     systemPrompt: { via: "file", path: "AGENTS.md" },
+    // Codex asks before running a command or applying a patch.
+    waiting: /(Allow command|Apply patch\?|Approve|\[y\/n\])/i,
   },
   {
     // opencode (SST): `--continue` resumes the latest session in the cwd.
@@ -6915,6 +8255,7 @@ const AGENT_REGISTRY: AgentEntry[] = [
     spec: { continue: { resumeArgs: ["--continue"] } },
     prompt: { style: "flag", flag: "--prompt" },
     systemPrompt: { via: "file", path: "AGENTS.md" },
+    waiting: /(Do you want|Approve|\[y\/n\])/i,
   },
   {
     // aider keeps its conversation in the repo and reloads it with
@@ -6927,6 +8268,8 @@ const AGENT_REGISTRY: AgentEntry[] = [
     spec: { continue: { resumeArgs: ["--restore-chat-history"] } },
     auto: ["--yes-always"],
     prompt: { style: "flag", flag: "-m" },
+    // aider confirms with a readline y/n prompt rather than a TUI dialog.
+    waiting: /\(Y\)es\/\(N\)o|\[y\/n\]|Add .* to the chat\?/i,
   },
 ];
 
@@ -6948,12 +8291,62 @@ const FRESH_CLI_SYSTEM_PROMPT = [
   "You are running inside a Fresh editor workspace and can drive it \u2014 arrange panes, open files, show output, start other agents \u2014 by submitting TypeScript to the editor's plugin runtime.",
   "Always invoke the CLI through $FRESH_BIN: it is the exact binary running this workspace.",
   "",
+  "If you read one thing, read `\"$FRESH_BIN\" --skills` — everything below plus how",
+  "to find any call you need, on one page.",
+  "",
   "Run a script (the body is an async function: top-level `await` works, `return value` is the answer and prints as JSON, a throw exits non-zero):",
   "    \"$FRESH_BIN\" --cmd script run <<'EOF'",
   "    return editor.describeWorkspace();",
   "    EOF",
   "",
   "The loop: orient with describeWorkspace(), find the call with `script api <query>`, then act and verify in one script.",
+  "",
+  "YOUR MAILBOX — three commands, and they are how anyone else knows what you",
+  "are doing and how they reach you:",
+  "",
+  "    \"$FRESH_BIN\" --cmd agent status <state> <summary>   what you are doing now",
+  "    \"$FRESH_BIN\" --cmd agent say <message>              say it in the user's chat",
+  "    \"$FRESH_BIN\" --cmd agent inbox --take               what they have asked for",
+  "",
+  "FIRST, BEFORE ANYTHING ELSE: say hello, so the user's chat shows you arriving",
+  "and knows what to call you. Do this on startup even with nothing to report —",
+  "an agent that says nothing is indistinguishable from one that failed to start,",
+  "and the user cannot message an agent they have not seen:",
+  "",
+  "    \"$FRESH_BIN\" --cmd agent status idle ready",
+  "    \"$FRESH_BIN\" --cmd agent say \"$FRESH_AGENT_NAME here. What do you need?\"",
+  "",
+  "Then write your status often — on starting a task, on finishing one, and",
+  "above all the moment you are blocked and need the user. State is one of",
+  "working / waiting / idle / done / blocked:",
+  "",
+  "    \"$FRESH_BIN\" --cmd agent status working running the e2e suite",
+  "    \"$FRESH_BIN\" --cmd agent status waiting approve my edit to tests/e2e.rs",
+  "    \"$FRESH_BIN\" --cmd agent status done 3 files changed, suite green",
+  "",
+  "This is the only reliable way the user sees that you need them: the agent list",
+  "falls back to guessing from your terminal output, which is often a spinner or a",
+  "half-drawn frame. A line you write is what it shows instead.",
+  "",
+  "The status is a state, not a conversation — it is one line and you overwrite",
+  "it. When you have something to SAY, say it. It appears in the user's chat",
+  "attributed to you, and their reply comes back through your inbox:",
+  "",
+  "    \"$FRESH_BIN\" --cmd agent say \"pushed the 3 PRs; want me to start the fourth?\"",
+  "",
+  "Read your inbox at the start of each turn. `--take` acknowledges what it",
+  "returns, so an instruction is never handed to you twice:",
+  "",
+  "    \"$FRESH_BIN\" --cmd agent inbox --take",
+  "",
+  "These reach the editor through the same authorized channel as `script run`,",
+  "so they find the right Fresh instance and the right workspace on their own —",
+  "you do not need to know where any of this is stored. $FRESH_AGENT_NAME is your",
+  "name; everyone else addresses you as @$FRESH_AGENT_NAME.",
+  "",
+  "To coordinate the other agents \u2014 see what they are doing, tell one to do",
+  "something, watch for changes \u2014 read `\"$FRESH_BIN\" --cmd help agents`. It",
+  "covers orch.fleet(), orch.delegate() and the $FRESH_FLEET_EVENTS log.",
   "",
   "RECIPES \u2014 copy and adapt:",
   "",
@@ -7004,6 +8397,7 @@ const FRESH_CLI_SYSTEM_PROMPT = [
   "`direction` names the divider: \"vertical\" = side by side, \"horizontal\" = stacked. `place` is \"before\" (left/top) or \"after\" (right/bottom, the default).",
   "Mutations are queued, so a read in the same script sees the state from before them \u2014 await the mutation (those that answer resolve once applied) or `await editor.flush()`.",
   "Finding anything else: `\"$FRESH_BIN\" --cmd script api <query>` searches the whole API by name and docs; `--cmd script check <file>` flags unknown editor.* names without running; `--cmd script types` prints the .d.ts paths.",
+  "Before building any panel or persistent UI, read `\"$FRESH_BIN\" --cmd help plugin` — it is the runtime contract plus a worked auto-refreshing clickable panel, and it names the specific guard each failure mode needs. Writing one without it usually costs several rounds of debugging.",
   "Launches answer with {\"workspaceId\",\"windowId\",\"root\"} \u2014 record workspaceId, it survives editor restarts; windowId does not.",
   "FRESH_WINDOW_ID is your window. After an `await` the focused pane may be someone else's, so prefer calls taking an explicit id.",
   "You are changing a workspace a human is watching: prefer reversible moves, do not close or overwrite panes you were not asked to touch, and read back what you changed before reporting success.",
@@ -8221,7 +9615,9 @@ function renderForm(): void {
   formPanel.update(buildFormSpec());
 }
 
-function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): void {
+function openForm(
+  options?: { fromPicker?: boolean; fromHome?: boolean; target?: RunAgentTarget },
+): void {
   const lastCmd =
     (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
@@ -8269,6 +9665,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     defaultBranch: "",
     defaultBranchIsHeadFallback: false,
     fromPicker: !!options?.fromPicker,
+    fromHome: !!options?.fromHome,
     probeToken: 0,
     historyCursor: { project_path: -1, name: -1, cmd: -1, branch: -1 },
     historyDraft: { project_path: "", name: "", cmd: "", branch: "" },
@@ -8742,6 +10139,7 @@ function restoreDockAfterForm(): boolean {
 // just hand focus back to it instead.
 function cancelForm(): void {
   const wasFromPicker = !!form?.fromPicker;
+  const wasFromHome = !!form?.fromHome;
   // Cancelling while a remote connect is in flight: tell the host to abort it.
   // The pending `attachRemoteAgent` promise rejects with "cancelled" (its catch
   // is a no-op once `form` is null below) and the connect's late result is
@@ -8751,6 +10149,10 @@ function cancelForm(): void {
     editor.cancelRemoteAgent();
   }
   closeForm();
+  if (wasFromHome) {
+    openHome();
+    return;
+  }
   if (restoreDockAfterForm()) return;
   if (wasFromPicker) {
     openControlRoom();
@@ -9547,6 +10949,24 @@ async function runLocalCreate(id: number): Promise<void> {
   // keyboard out of whatever the user moved on to.
   const restoreTo = editor.activeWindow();
   setPendingMessage(id, editor.t("dock.pending_starting"));
+  // A mailbox only when an agent is actually being started. "Agent: terminal"
+  // launches a shell, and minting a name for it would claim an agent exists
+  // where none does — which is how an empty workspace ended up listed as an
+  // agent, selected, and showing a live pane that said "starting…" about a
+  // shell that had already started and was never an agent.
+  //
+  // The name is minted from the workspace's name because that is what the
+  // user will reach for when picking an agent in Home's chat, and made unique
+  // within the checkout, because a second agent here must not inherit the
+  // first one's mailbox. Created before the spawn, so the agent's first turn
+  // finds the directories its briefing names.
+  const agentName = launchArgv.length > 0
+    ? uniqueAgentName(root, sessionName)
+    : undefined;
+  if (agentName) {
+    ensureAgentMailbox(root, agentName);
+    launchedAgents.add(agentKey(root, agentName));
+  }
   try {
     const result = await editor.createWindowWithTerminal({
       root,
@@ -9564,6 +10984,10 @@ async function runLocalCreate(id: number): Promise<void> {
       // whether or not the agent was taught about it. `teach` only gates the
       // prompt.
       allowScript: FRESH_CLI_ALLOW_SCRIPT,
+      // Where this agent reports its status and reads its instructions. Passed
+      // rather than discovered: an agent should not have to know this plugin's
+      // directory layout to answer "where do I write my status".
+      env: agentName ? mailboxEnv(root, agentName) : undefined,
     });
     const winId = result.windowId;
     // Dismissed during the (awaited) spawn: the window was born and dove in,
@@ -9612,7 +11036,13 @@ async function runLocalCreate(id: number): Promise<void> {
       state: "running",
       createdAt: Date.now(),
       branch: reportedBranch || undefined,
+      agentName,
     });
+    // Pin the name to the durable identity now that there is one: the mailbox
+    // was created before the window existed, so until this point the name is
+    // only in a local variable and would be lost across a restart.
+    const born = orchestratorSessions.get(winId);
+    if (born && agentName) rememberAgentName(born, agentName);
     // The workspace exists and is running: hand a waiting caller its ids. The
     // durable `stableId` is minted with the window, so it is already final —
     // this is the only moment it can be reported from.
@@ -9812,8 +11242,10 @@ async function submitForm(visit: boolean): Promise<void> {
       teachFreshCli: !!agent?.systemPrompt && form.teachFreshCli,
     };
     const cmd = form.cmd.value;
+    const backHome = form.fromHome;
     closeForm();
-    restoreDockAfterForm();
+    if (backHome) openHome();
+    else restoreDockAfterForm();
     void launchAgentInCurrentWorkspace(cmd, opts);
     return;
   }
@@ -9967,8 +11399,40 @@ async function launchAgentInCurrentWorkspace(
     systemPrompt: teach?.via === "flag" ? FRESH_CLI_SYSTEM_PROMPT : undefined,
   });
   if (trimmedCmd) editor.setGlobalState("orchestrator.last_cmd", trimmedCmd);
+  // The window already exists and may already have an agent in it. Mint a
+  // *fresh* name rather than reusing the session's, so the two do not share a
+  // status file — the whole reason mailboxes are per-agent.
+  //
+  // Reconcile first. Without it the host's window may not be in the plugin's
+  // map yet, `here` is undefined, and the name is never pinned to the session
+  // — so the agent about to be launched comes back through discovery as a row
+  // with no terminal, and the workspace it is actually running in sits beside
+  // it saying nothing. Observed by hand, with the agent's own terminal one tab
+  // away from a pane claiming there was none.
+  reconcileSessions();
+  const here = orchestratorSessions.get(editor.activeWindow());
+  // The command's own name, which is what a user recognises — `claude`,
+  // `codex`. An interpreter is not: `bash fakeagent` would name the agent
+  // `bash`, which says nothing about which agent it is, so the workspace's
+  // name is the better answer there.
+  const cmdName = launch.length > 0 ? (editor.pathBasename(launch[0]) || "") : "";
+  const generic = ["bash", "sh", "zsh", "fish", "env", "sudo", "nohup", "python", "python3", "node"];
+  const agentBase = cmdName && !generic.includes(cmdName)
+    ? cmdName
+    : (here ? workspaceDisplayName(here) : "agent");
+  // Same rule as a new workspace: no command means a shell, and a shell is
+  // not an agent. First agent in this window adopts the session's identity,
+  // so the row you already see gains a status; a second one gets its own name
+  // and its own row, found through its own mailbox.
+  const agentName = launch.length > 0 ? uniqueAgentName(cwd, agentBase) : undefined;
+  if (agentName) {
+    ensureAgentMailbox(cwd, agentName);
+    launchedAgents.add(agentKey(cwd, agentName));
+    if (here && !here.agentName) rememberAgentName(here, agentName);
+  }
+  const launchWindow = editor.activeWindow();
   try {
-    await editor.createTerminal({
+    const created = await editor.createTerminal({
       cwd,
       command: launch.length > 0 ? launch : undefined,
       resume,
@@ -9978,8 +11442,17 @@ async function launchAgentInCurrentWorkspace(
       // dialogue, where the token is always present and only the prompt is
       // gated by "Teach Fresh CLI".
       allowScript: FRESH_CLI_ALLOW_SCRIPT,
+      env: agentName ? mailboxEnv(cwd, agentName) : undefined,
       focus: true,
     });
+    // So a second agent in this workspace still has a live pane in Home. The
+    // session's own `terminalBufferId` names only the first one.
+    if (created?.bufferId !== undefined && agentName) {
+      launchedAgentBuffers.set(agentKey(cwd, agentName), {
+        windowId: launchWindow,
+        bufferId: created.bufferId,
+      });
+    }
   } catch (e) {
     editor.setStatus(
       editor.t("status.prefix", { msg: e instanceof Error ? e.message : String(e) }),
@@ -10120,8 +11593,39 @@ export type WorkspaceSummary = {
   projectPath: string;
   /** Checked-out branch, when known. */
   branch?: string;
-  /** Whether the agent in this workspace is producing output right now. */
-  agentState: "working" | "idle";
+  /** What this workspace's agent is doing.
+   *
+   *  `"waiting"` is the one worth acting on: the agent is blocked on the
+   *  user, recognised from a question on its own screen rather than from
+   *  timing. `waitingOn` carries the question. An agent kind with no
+   *  registered prompt pattern never reports it, so absence of `"waiting"`
+   *  is not proof that nothing is blocked. */
+  agentState: "working" | "idle" | "waiting";
+  /** The line showing why this agent is blocked, when `agentState` is
+   *  `"waiting"`; empty otherwise. */
+  waitingOn: string;
+  /** The last non-empty line this workspace's terminal printed, or `""`
+   *  before the first read. What the agent most recently said. */
+  lastLine: string;
+  /** The terminal the launcher started this workspace's agent in, or `null`
+   *  for a row with no live terminal (`discovered` / `pending`, or a
+   *  workspace whose agent has been closed).
+   *
+   *  Pair it with `windowId` to reach the terminal itself:
+   *  `editor.readTerminal(windowId, terminalId, 40)` tails what the agent is
+   *  saying, and `editor.sendTerminalInput(terminalId, text, windowId)`
+   *  writes to it. Terminals are owned per-window, so neither call is
+   *  addressable without both ids — which is why this is reported rather
+   *  than left internal. */
+  terminalId: number | null;
+  /** Wall-clock ms of this workspace's most recent terminal output, or
+   *  `null` if it has never produced any.
+   *
+   *  This is the raw signal `agentState` is bucketed from, exposed because
+   *  the bucket loses what a caller often wants: *how long* a workspace has
+   *  been quiet. "Idle for four seconds" and "idle since this morning" are
+   *  the same `agentState` and very different situations. */
+  lastOutputAt: number | null;
   /** Terminal tab title — in practice the agent's command line, since the
    *  launcher titles the tab with it. Empty when the pane has no title. */
   title: string;
@@ -10236,6 +11740,48 @@ export type OrchestratorApi = {
    *  matches. */
   focusWorkspace(target: string | number): Promise<boolean>;
 
+  /** Deliver an instruction to another agent by writing it into that agent's
+   *  inbox (`$FRESH_AGENT_INBOX`), the mailbox transport.
+   *
+   *  Reports **delivery, not completion**. The peer acts because its own
+   *  briefing told it to check the inbox; nothing is injected into its
+   *  terminal, and an instruction it never acts on stays visible as a file
+   *  that never moved to `done/`.
+   *
+   *  Resolves `{delivered: false, reason}` rather than throwing when the
+   *  target does not exist or the instruction is empty — a caller addressing
+   *  a workspace that has since closed should branch, not crash. */
+  delegate(options: {
+    target: string | number;
+    instruction: string;
+    from?: string;
+    intent?: string;
+  }): Promise<{ delivered: boolean; path?: string; reason?: string }>;
+
+  /** Who is doing what, most urgent first — the one call a control agent
+   *  needs to answer "what's going on".
+   *
+   *  `summary` is the agent's own words when it wrote a `status` line
+   *  (`source: "agent"`) and a guess from its screen otherwise
+   *  (`source: "inferred"`). Prefer the former: the latter can be a spinner,
+   *  a blank, or half a redraw. */
+  fleet(): Array<{
+    workspaceId: number;
+    name: string;
+    state: "working" | "waiting" | "idle";
+    summary: string;
+    source: "agent" | "inferred";
+    needsYou: boolean;
+    agent: string;
+    branch: string;
+    root: string;
+  }>;
+
+  /** Path of the JSONL event log. Every state change and delegation is
+   *  appended, so `tail -f` is how an agent notices things rather than
+   *  polling for them. */
+  eventLogPath(): string;
+
   // ── organising the dock ────────────────────────────────────────────────
   // The headless twins of the dock's row context menu and its "New Task… ▾"
   // / "Move…" dropdowns. `target` is a `workspaceId` or a `windowId`, the
@@ -10323,6 +11869,39 @@ export type OrchestratorApi = {
   setDockView(view: "card" | "compact"): void;
   /** Set any of the dock's filter controls. See `DockFilterOptions`. */
   setDockFilter(options?: DockFilterOptions): void;
+  /** Report what this agent is doing — what `fresh --cmd agent status`
+   *  calls. `window` is the calling window (`FRESH_WINDOW_ID` inside a
+   *  submitted script); `name` is the agent's mailbox name when it knows it
+   *  (`$FRESH_AGENT_NAME`), and is minted from the workspace when it does
+   *  not — which is how an agent nobody launched becomes visible. */
+  agentStatus(options: {
+    window: number;
+    name?: string;
+    state?: string;
+    summary?: string;
+  }): { ok: boolean; agent?: string; reason?: string };
+  /** Say something in the user's chat, attributed to this agent — what
+   *  `fresh --cmd agent say` calls. Same resolution rules as
+   *  `agentStatus`. */
+  agentSay(options: {
+    window: number;
+    name?: string;
+    text?: string;
+  }): { ok: boolean; agent?: string; reason?: string };
+  /** Read this agent's inbox — what `fresh --cmd agent inbox` calls. With
+   *  `take`, each message returned is acknowledged (moved to `done/`) in the
+   *  same call, so a crash between reading and acting cannot lose or replay
+   *  one. */
+  agentInbox(options: {
+    window: number;
+    name?: string;
+    take?: boolean;
+  }): {
+    ok: boolean;
+    agent?: string;
+    messages: Array<{ from: string; text: string }>;
+    reason?: string;
+  };
 };
 
 declare global {
@@ -10494,7 +12073,13 @@ function listWorkspaces(): WorkspaceSummary[] {
       root: session.root,
       projectPath: session.projectPath,
       branch: session.branch ?? git?.branch,
-      agentState: session.state,
+      // Recomputed, not the cached `state` field: that is only a persistence
+      // hint, and it predates the `waiting` state entirely.
+      agentState: sessionState(session),
+      waitingOn: session.tail?.waitingOn ?? "",
+      lastLine: session.tail?.lastLine ?? "",
+      terminalId: session.terminalId,
+      lastOutputAt: session.lastOutputAt,
       title: session.terminalTitle ?? "",
       git: git
         ? {
@@ -10853,6 +12438,349 @@ function apiSetDockFilter(
   if (options.worktrees === true) void refreshDiscoveredWorktrees();
 }
 
+/// Deliver an instruction to another agent by writing it into that agent's
+/// inbox — the mailbox transport of docs/internal/agent-control-plane.md §8.1.
+///
+/// Reports **delivery, not completion**. The peer acts on the file because its
+/// own briefing told it to; nothing is injected into its terminal and nothing
+/// forces it to look. An instruction that is never acted on stays visible as a
+/// file that never moved to `done/`, which is a better failure than a silent
+/// one.
+async function apiDelegate(options: {
+  /// Who to tell. An agent's mailbox name (`@refactor-1`), a `workspaceId`
+  /// or a `windowId` — the same pair `focusWorkspace` accepts.
+  target: string | number;
+  /// What you want done, in prose. The peer reads this as a human would.
+  instruction: string;
+  /// Who is asking, for the file's header. Defaults to `"user"`.
+  from?: string;
+  /// One-line imperative summary, for the header and the audit trail.
+  intent?: string;
+}): Promise<{ delivered: boolean; path?: string; reason?: string }> {
+  const text = String(options.instruction ?? "").trim();
+  if (!text) return { delivered: false, reason: "empty instruction" };
+  const addr = resolveAgentAddress(options.target);
+  if (!addr) {
+    return { delivered: false, reason: "no agent matches that target" };
+  }
+  ensureAgentMailbox(addr.root, addr.name);
+  // Name the file so it sorts by time and cannot collide with a concurrent
+  // delegation to the same peer.
+  const now = new Date();
+  const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\..*$/, "");
+  const nonce = Math.random().toString(36).slice(2, 6);
+  const path = editor.pathJoin(
+    agentInboxDir(addr.root, addr.name),
+    `${stamp}-${nonce}.md`,
+  );
+  const header = [
+    "---",
+    `from: ${options.from ?? "user"}`,
+    `to: ${addr.name}`,
+    `intent: ${options.intent ?? text.split("\n")[0].slice(0, 80)}`,
+    "---",
+    "",
+  ].join("\n");
+  const ok = editor.writeFile(editor.localPath(path), header + text + "\n");
+  if (!ok) return { delivered: false, reason: "could not write to the inbox" };
+  // Say so out loud: a delegation is an action taken on the user's behalf in a
+  // workspace they may not be looking at.
+  const ev = {
+    workspaceId: addr.session ? addr.session.id : -1,
+    agent: addr.name,
+    name: addr.session ? workspaceDisplayName(addr.session) : addr.name,
+    from: options.from ?? "user",
+    intent: options.intent ?? "",
+    path,
+  };
+  editor.emitEvent("agent_delegated", ev);
+  appendEvent("agent_delegated", ev);
+  return { delivered: true, path };
+}
+
+// =============================================================================
+// What an agent calls — the mailbox, without the filesystem
+//
+// Agents used to be told a directory layout: write `$FRESH_AGENT_STATUS`, drop
+// files in `$FRESH_AGENT_OUTBOX`, move things to `inbox/done/`. That works and
+// it is still what happens underneath, but it makes every agent responsible
+// for a convention it has to be taught and can get subtly wrong — a status
+// written to the wrong path is indistinguishable from an agent that never
+// wrote one, and a message left in `outbox/` unmoved is delivered forever.
+//
+// These three verbs are the interface instead. They arrive through the script
+// channel, which is already authorized and bound to the calling window, so the
+// agent needs to know nothing except what it wants to say — not where its
+// mailbox is, and not which of several running Fresh instances it belongs to.
+// An agent that has never been told anything can call them and be adopted on
+// the spot.
+// =============================================================================
+
+/// Resolve the agent behind a CLI call.
+///
+/// `name` when the caller knows it (we handed it `$FRESH_AGENT_NAME` at
+/// launch); otherwise the window's own agent; otherwise a new one, minted and
+/// remembered here. That last case is the point: an agent nobody launched
+/// through Fresh becomes visible by *saying something*, with no convention to
+/// follow and no directory to create.
+function resolveCallingAgent(
+  windowId: number,
+  name?: string,
+): { root: string; name: string } | null {
+  reconcileSessions();
+  const wanted = String(name ?? "").trim();
+  if (wanted) {
+    const addr = resolveAgentAddress(wanted);
+    if (addr) return { root: addr.root, name: addr.name };
+  }
+  const s = orchestratorSessions.get(windowId);
+  if (!s || !s.root) return null;
+  if (s.agentName) return { root: s.root, name: s.agentName };
+  const minted = wanted || uniqueAgentName(s.root, workspaceDisplayName(s));
+  ensureAgentMailbox(s.root, minted);
+  launchedAgents.add(agentKey(s.root, minted));
+  rememberAgentName(s, minted);
+  return { root: s.root, name: minted };
+}
+
+/// `fresh --cmd agent status <state> <summary>`.
+function apiAgentStatus(options: {
+  window: number;
+  name?: string;
+  state?: string;
+  summary?: string;
+}): { ok: boolean; agent?: string; reason?: string } {
+  const who = resolveCallingAgent(options.window, options.name);
+  if (!who) return { ok: false, reason: "no workspace for this window" };
+  const state = REPORTED_STATES.find((x) => x === String(options.state ?? "").toLowerCase());
+  if (!state) {
+    return {
+      ok: false,
+      reason: `state must be one of ${REPORTED_STATES.join(" / ")}`,
+    };
+  }
+  const summary = String(options.summary ?? "").replace(/\s+/g, " ").trim();
+  ensureAgentMailbox(who.root, who.name);
+  const ok = editor.writeFile(
+    editor.localPath(agentStatusPath(who.root, who.name)),
+    `${state} ${summary}\n`,
+  );
+  return ok
+    ? { ok: true, agent: who.name }
+    : { ok: false, reason: "could not write the status" };
+}
+
+/// `fresh --cmd agent say <text>` — a message into the user's chat.
+function apiAgentSay(options: {
+  window: number;
+  name?: string;
+  text?: string;
+}): { ok: boolean; agent?: string; reason?: string } {
+  const who = resolveCallingAgent(options.window, options.name);
+  if (!who) return { ok: false, reason: "no workspace for this window" };
+  const text = String(options.text ?? "").trim();
+  if (!text) return { ok: false, reason: "nothing to say" };
+  ensureAgentMailbox(who.root, who.name);
+  // Straight into the transcript rather than through the outbox and back:
+  // the drain exists to notice files an agent wrote behind our back, and this
+  // is not behind our back. A round trip through the disk would also mean the
+  // message appeared a tick late, which is visible when an agent says
+  // something and immediately blocks on the answer.
+  appendChat({ at: Date.now(), from: who.name, text });
+  renderHome(true);
+  refreshDockChatInPlace();
+  return { ok: true, agent: who.name };
+}
+
+/// `fresh --cmd agent inbox [--take]` — what the user has asked for.
+function apiAgentInbox(options: {
+  window: number;
+  name?: string;
+  take?: boolean;
+}): { ok: boolean; agent?: string; messages: Array<{ from: string; text: string }>; reason?: string } {
+  const who = resolveCallingAgent(options.window, options.name);
+  if (!who) return { ok: false, messages: [], reason: "no workspace for this window" };
+  const dir = agentInboxDir(who.root, who.name);
+  let files: string[] = [];
+  try {
+    const local = editor.localPath(dir);
+    if (editor.fileExists(local)) {
+      files = editor.readDir(local).filter((e) => e.is_file).map((e) => e.name).sort();
+    }
+  } catch (_e) {
+    return { ok: false, messages: [], reason: "could not read the inbox" };
+  }
+  const messages: Array<{ from: string; text: string }> = [];
+  for (const file of files) {
+    const path = editor.pathJoin(dir, file);
+    let raw: string | null | undefined = null;
+    try {
+      raw = editor.readFile(editor.localPath(path));
+    } catch (_e) {
+      continue;
+    }
+    if (typeof raw !== "string") continue;
+    const from = /^from:\s*(.+)$/m.exec(raw)?.[1]?.trim() ?? "user";
+    messages.push({ from, text: stripFrontMatter(raw).trim() });
+    // Acknowledging is the caller's choice, so an agent can look without
+    // committing to act. `--take` is the loop-friendly form: read and
+    // acknowledge in one call, with no window in which a crash loses the
+    // instruction or replays it.
+    if (options.take) {
+      try {
+        editor.renamePath(
+          editor.localPath(path),
+          editor.localPath(editor.pathJoin(dir, "done", file)),
+        );
+      } catch (_e) { /* leave it for the next call */ }
+    }
+  }
+  return { ok: true, agent: who.name, messages };
+}
+
+/// Where a target's mailbox is, whatever form the target was given in.
+///
+/// The chat addresses agents by name, the plugin API by workspace id, and a
+/// script may pass a bare root. All three have to land on one directory, and
+/// the name is the only form that survives two agents sharing a checkout — so
+/// a name match is tried first and the rest resolve *to* a name.
+function resolveAgentAddress(
+  target: string | number,
+): { root: string; name: string; session?: AgentSession } | null {
+  const raw = String(target ?? "").trim().replace(/^@/, "");
+  // A `workspace/agent` address, which is what the chat's picker deals in.
+  // First, because it is the only form that cannot be ambiguous.
+  const addressed = raw ? mailboxForAddress(raw) : null;
+  if (addressed) {
+    const session = [...orchestratorSessions.values()].find(
+      (s) => s.root === addressed.root && s.agentName === addressed.name,
+    );
+    return { ...addressed, session };
+  }
+  if (raw) {
+    for (const s of orchestratorSessions.values()) {
+      if (s.agentName === raw && s.root) return { root: s.root, name: raw, session: s };
+    }
+    for (const u of unattachedAgents.values()) {
+      if (u.name === raw) return { root: u.root, name: raw };
+    }
+  }
+  const s = resolveWorkspace(target);
+  if (s?.root) {
+    return { root: s.root, name: s.agentName ?? uniqueAgentName(s.root, s.hostLabel), session: s };
+  }
+  // A bare root: address the only agent reporting from it, which is the
+  // unambiguous case and the one a script that knows a path is in.
+  const here = [...unattachedAgents.values()].filter((u) => u.root === raw);
+  if (here.length === 1) return { root: here[0].root, name: here[0].name };
+  return null;
+}
+
+
+// =============================================================================
+// What the master agent uses
+//
+// A control agent needs three verbs and nothing else: what is everyone doing,
+// tell that one to do this, and wake me when something changes. `fleet()`,
+// `delegate()` and the event log are exactly those, and all three are cheap
+// enough to use in a loop.
+// =============================================================================
+
+/// The event log every agent can tail.
+///
+/// Appended by this plugin rather than by a script the user has to install:
+/// the Orchestrator is already the emitter, so writing the line here is free,
+/// and the alternative made "notice when something changes" a setup step
+/// instead of a fact about the environment.
+function eventLogPath(): string {
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", "events.jsonl");
+}
+
+// Bounded because there is no append primitive: the log is read, extended and
+// rewritten, so an unbounded file would make every event cost the whole
+// history. The last few hundred lines are what a tail is for anyway.
+const EVENT_LOG_MAX_LINES = 500;
+
+function appendEvent(kind: string, payload: Record<string, unknown>): void {
+  try {
+    const path = eventLogPath();
+    const line = JSON.stringify({ kind, at: new Date().toISOString(), ...payload });
+    const prev = editor.readFile(editor.localPath(path));
+    const lines = typeof prev === "string" && prev.length > 0 ? prev.split("\n") : [];
+    lines.push(line);
+    const kept = lines.filter((l) => l.trim().length > 0).slice(-EVENT_LOG_MAX_LINES);
+    editor.writeFile(editor.localPath(path), kept.join("\n") + "\n");
+  } catch (_e) {
+    // A log we cannot write must never break the thing being logged.
+  }
+}
+
+/// One call that answers "who needs me", with the agents' own words where
+/// they gave them.
+///
+/// The shape a control agent actually wants: `describeEnvironment` reports
+/// terminals but not what anyone is doing, and `listWorkspaces` reports the
+/// dock's model but not state or summary. This joins them, so the common
+/// question is one call rather than a scatter-gather the agent has to invent.
+function apiFleet(): Array<{
+  workspaceId: number;
+  /// The agent's mailbox name — what `delegate` takes and what a user types
+  /// after `@`. Empty for a workspace with no agent of ours in it.
+  agentName: string;
+  name: string;
+  project: string;
+  state: AgentState;
+  summary: string;
+  source: "agent" | "inferred";
+  needsYou: boolean;
+  agent: string;
+  branch: string;
+  root: string;
+}> {
+  scanForUnattachedAgents();
+  const rows = fleetByUrgency(fleetLive());
+  for (const s of rows) probeStatus(s);
+  const attachedOut = rows.map((s) => {
+    const st = sessionState(s);
+    return {
+      workspaceId: s.id,
+      agentName: s.agentName ?? "",
+      name: workspaceDisplayName(s),
+      project: rowProject(s),
+      state: st,
+      summary: s.status?.summary ?? s.tail?.waitingOn ?? s.tail?.lastLine ?? "",
+      source: s.status ? "agent" : "inferred",
+      needsYou: st === "waiting",
+      agent: s.terminalTitle ? (agentEntryForCmd(s.terminalTitle)?.label ?? "") : "",
+      branch: s.branch ?? s.git?.info?.branch ?? "",
+      root: s.root,
+    };
+  });
+  // Agents that reported from a root we have no window for. They have no
+  // workspaceId — there is no workspace — so `delegate` addresses them by
+  // `agentName`, and a caller can tell them apart by that.
+  const loose = [...unattachedAgents.values()].map((u) => ({
+    workspaceId: -1,
+    agentName: u.name,
+    name: u.label,
+    project: editor.pathBasename(u.root) || "",
+    state: (u.status.state === "waiting" || u.status.state === "blocked"
+      ? "waiting"
+      : u.status.state === "working"
+      ? "working"
+      : "idle") as AgentState,
+    summary: u.status.summary,
+    source: "agent" as const,
+    needsYou: u.status.state === "waiting" || u.status.state === "blocked",
+    agent: "",
+    branch: "",
+    root: u.root,
+  }));
+  // Waiting first, same rule as the attached rows.
+  loose.sort((a, b) => Number(b.needsYou) - Number(a.needsYou));
+  return [...attachedOut, ...loose];
+}
+
 editor.exportPluginApi("orchestrator", {
   runAgent,
   newWorkspace,
@@ -10871,6 +12799,12 @@ editor.exportPluginApi("orchestrator", {
   unarchiveWorkspace: apiUnarchiveWorkspace,
   setDockView: apiSetDockView,
   setDockFilter: apiSetDockFilter,
+  delegate: apiDelegate,
+  agentStatus: apiAgentStatus,
+  agentSay: apiAgentSay,
+  agentInbox: apiAgentInbox,
+  fleet: apiFleet,
+  eventLogPath,
 });
 
 // Form key bindings — each delegates to smart-key dispatch on the
@@ -11121,7 +13055,9 @@ function completionVisibleForFocused(): boolean {
 // path (printable chars route to `mode_text_input` ahead of the
 // custom mode keymap), so we intercept here instead.
 function orchestrator_mode_text_input(args: { text: string }): void {
-  if (!form || !formPanel || !args?.text) return;
+  if (!args?.text) return;
+
+  if (!form || !formPanel) return;
   formPanel.command(textInputChar(args.text));
 }
 registerHandler("mode_text_input", orchestrator_mode_text_input);
@@ -11581,6 +13517,7 @@ editor.on("widget_event", (e) => {
       // mirror our own state and (if reached from the picker)
       // bounce back to the picker so Esc is "back", not "out".
       const wasFromPicker = !!form?.fromPicker;
+      const wasFromHome = !!form?.fromHome;
       // Esc while connecting aborts the in-flight remote attach, same as the
       // Cancel button: reject the promise and discard the late result host-side.
       if (form?.submitting) {
@@ -11590,6 +13527,10 @@ editor.on("widget_event", (e) => {
       form = null;
       formPanel = null;
       editor.setEditorMode(null);
+      if (wasFromHome) {
+        openHome();
+        return;
+      }
       if (restoreDockAfterForm()) return;
       if (wasFromPicker) {
         openControlRoom();
@@ -11990,6 +13931,84 @@ editor.on("widget_event", (e) => {
       if (dockMode) closeOpenDialog();
       return;
     }
+    // The chat's accordion button.
+    if (e.event_type === "activate" && e.widget_key === "chat-collapse") {
+      setDockChatCollapsed(!dockChatIsCollapsed());
+      // Leaving the caret in a section that is no longer there would strand
+      // every keystroke.
+      if (dockChatIsCollapsed() && dockFocus === "chat") dockFocus = "list";
+      if (openPanel) openPanel.update(buildDockSpec());
+      if (dockFocus === "list") openPanel?.setFocusKey("sessions");
+      return;
+    }
+    // Typing in the dock's chat. The host routes printable characters into
+    // the focused control, so this event is where the text actually arrives.
+    if (e.event_type === "change" && e.widget_key === "dock_chat") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      if (typeof payload.value !== "string") return;
+      // Typing into it is proof the caret is in it. Focus was only recorded
+      // from Alt+C and from an explicit `focus` event, so reaching the field
+      // any other way — the host's own Tab cycle, most obviously — left the
+      // dock believing the caret was still in the list: Tab kept cycling
+      // focus instead of completing, the candidate list was never redrawn,
+      // and the poll rebuilt the whole dock under every keystroke.
+      if (dockFocus !== "chat") {
+        dockFocus = "chat";
+        if (openPanel) openPanel.setFocusKey("dock_chat");
+      }
+      const value = payload.value;
+      if (chatTarget === null) {
+        // A picker, not a text box: you are choosing from a list, so a
+        // keystroke that matches nothing is refused rather than accepted into
+        // a value that can never be valid. Typing freely into a field whose
+        // only legal contents are eight known names is an invitation to type
+        // a ninth and find out at the end that it was never going to work.
+        if (value && chatFilterMatches(value).length === 0) {
+          openPanel?.setValue("dock_chat", chatFilter, chatFilter.length);
+          return;
+        }
+        chatFilter = value;
+        pushChatCandidates();
+        return;
+      }
+      chatComposerEdit(value);
+      return;
+    }
+    // The host's Alt+C — the dock has no editor mode, so the key arrives as
+    // an event rather than through the picker's keymap.
+    if (e.event_type === "dock_chat_focus") {
+      toggleDockChatFocus();
+      return;
+    }
+    // Enter on a focused text field that is not the filter. Same reason as
+    // Alt+C: there is no mode to bind it in, and the host's own default for a
+    // single-line field is to activate the session tree.
+    if (e.event_type === "dock_text_enter") {
+      if (dockFocus === "chat" && chatTarget !== null) void sendChat();
+      return;
+    }
+    // Clicking the chat line is how the mouse aims the keyboard at it.
+    if (e.event_type === "focus" && e.widget_key === "dock_chat") {
+      if (dockFocus !== "chat") {
+        dockFocus = "chat";
+        // A click into the chat is the same transition Alt+C makes, and needs
+        // the same rebuild — the hints and the row budget depend on it.
+        if (openPanel) openPanel.update(buildDockSpec());
+        openPanel?.setFocusKey("dock_chat");
+        pushChatCandidates(true);
+      }
+      return;
+    }
+    // The picker's answer, from Tab, Enter or a click on a candidate alike.
+    if (e.event_type === "completion_accept" && e.widget_key === "dock_chat") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      if (typeof payload.value === "string") acceptChatTarget(payload.value);
+      return;
+    }
+    if (e.event_type === "focus" && e.widget_key === "sessions") {
+      if (dockFocus === "chat") dockFocus = "list";
+      return;
+    }
     // Toggle the collapsible Filters section.
     if (e.event_type === "activate" && e.widget_key === "filters-toggle") {
       openDialog.filtersExpanded = !openDialog.filtersExpanded;
@@ -12190,6 +14209,13 @@ function killSelected(): void {
 // Lifecycle hook handlers
 // =============================================================================
 
+// The status watch is the event stream's producer, so it starts with the
+// plugin rather than with any view. `setInterval` over a self-scheduling loop
+// on purpose: the host drives it, a throw in one tick does not stop the next,
+// and it is cancelled on reload — the three things a hand-rolled loop has to
+// get right and usually does not (see `help plugin`).
+editor.setInterval(STATUS_WATCH_MS, "orchestrator_status_watch");
+
 editor.on("window_created", () => {
   // The orchestrator's own new-session flow uses
   // `createWindowWithTerminal` (atomic — populates the window
@@ -12380,6 +14406,1662 @@ editor.on("terminal_exit", (payload) => {
 // Commands
 // =============================================================================
 
+// =============================================================================
+// The fleet model — every agent at once, and what it wants
+//
+// The dock answers "which workspaces exist"; the fleet answers "which of them
+// needs me". Those are different questions and the dock is the wrong shape for
+// the second: it is a narrow column optimised for switching, so the reason an
+// agent is blocked never fits.
+//
+// This block is the *model*: which agents there are, how to order them by
+// urgency, and how to draw one as a row. The view that uses it is Home, below.
+// There was briefly a second view — a "Fleet" panel that was the list plus one
+// live terminal — but Home is that view with a chat pane beside it, so the
+// Fleet was a strictly worse copy and is gone. The row builders stay, because
+// what they answer is still the question worth answering.
+//
+// Deliberately not an LLM in a loop: the panel re-renders from the same probe
+// data the dock uses, so keeping it current costs nothing per tick.
+// =============================================================================
+
+// The selected workspace, by id rather than by row index.
+//
+// Rows sort by urgency, so the order changes underneath the user: answering an
+// agent makes it "working" and moves it to the top, which with an index-based
+// selection silently re-points at whatever slid into that slot. Observed:
+// selecting `raw`, typing, and having the keystroke land in a file buffer two
+// rows away. An id cannot drift.
+let fleetSelectedId: number | null = null;
+
+const FLEET_TICK_MS = 1_500;
+// Panel size, as a share of the terminal. Named rather than inlined at the
+// `mount` call because the row builder has to budget against the *panel's*
+// width, not the screen's — see `fleetRowWidth`.
+//
+// 90% each way, matching Settings: Home is the "what is my whole environment
+// doing" surface, so it gets the whole screen bar a margin, and matching the
+// one other full-screen panel means the two do not disagree about how much of
+// the terminal a panel is allowed to take.
+const HOME_WIDTH_PCT = 90;
+const HOME_HEIGHT_PCT = 90;
+
+/// Columns a fleet row may actually use.
+///
+/// The panel is a share of the screen, and inside it a `labeledSection` costs
+/// two border columns plus padding on each side. Budgeting rows against the
+/// raw screen width overruns all of that: the row text is drawn over the
+/// section's right border, so the rounded frame renders with no `╮`/`╯`
+/// corners and looks broken at exactly the wide sizes Home is for.
+function fleetRowWidth(): number {
+  // Home mounts fullscreen (see `openHome`), so its share is of the whole
+  // frame — no dock to subtract. Budget under the panel's inner width: a row
+  // wider than the section does not get clipped, the section grows to its
+  // widest child, runs past the panel, and its right border is drawn over the
+  // panel's own — leaving the rounded frame with no `╮`/`╯` corners.
+  const panel = Math.floor((editor.getScreenSize().width * HOME_WIDTH_PCT) / 100);
+  // Panel frame (2) + section frame (2) + a column of breathing room each
+  // side, and one more so a row that fills its budget still stops short of
+  // the section's right border rather than drawing over it.
+  return Math.max(36, panel - 7);
+}
+
+/// How many rows each of Home's three regions gets.
+///
+/// Every one of them has to fit *inside* the panel, and the panel is a share
+/// of the terminal — so fixed heights ask for more than exists on a short
+/// terminal and whatever is last falls off the bottom. Budget them together
+/// instead, and against the same total, so the two columns end level: a chat
+/// that stops eight rows above the list it sits beside reads as broken even
+/// though every row in it is correct.
+///
+/// The list takes what it needs up to a cap and the terminal takes the rest,
+/// because a view with a visible agent and a truncated list beats a full list
+/// with nothing to look at.
+function homeLayout(rowCount: number): { list: number; tail: number; chat: number } {
+  const panelH = Math.floor((editor.getScreenSize().height * HOME_HEIGHT_PCT) / 100);
+  // Panel frame (2) + hint bar (1) is what neither column gets.
+  const inner = Math.max(6, panelH - 3);
+  // Right column: two section frames (2 each).
+  const list = Math.max(1, Math.min(rowCount, Math.max(1, Math.floor(inner / 3)), 12));
+  const tail = Math.max(3, inner - 4 - list);
+  // Left column: one section frame (2), and the chat's own input line (1).
+  const chat = Math.max(3, inner - 3);
+  return { list, tail, chat };
+}
+
+/// The row order, frozen for the life of the open panel.
+///
+/// Sorting by urgency is right when the view *opens* — the thing that needs
+/// you should be the first thing you read. Re-sorting while it is open is
+/// not: an agent's state changes on its own, so rows slide up and down under
+/// the pointer, and the row you were reading is somewhere else by the time
+/// you reach for it. Answering an agent moved it from top to bottom, which is
+/// the worst moment to move anything.
+///
+/// So: order once at open, then hold it. The glyphs still update live, which
+/// is what actually tells you who needs you — the row just stays put.
+let fleetOrder: number[] | null = null;
+
+/// A reporting agent we do not own, shaped as a session so the row builders
+/// need no second code path.
+///
+/// Negative id, because every real id is a live window and something that
+/// tries to focus this must fail loudly rather than land somewhere arbitrary.
+/// It has no terminal, so the live pane shows nothing for it — which is
+/// honest: we can read what it says about itself and nothing else.
+function unattachedAsSession(u: UnattachedAgent): AgentSession {
+  // A terminal we started for this agent, if it was us. Its row then has a
+  // window to focus and a buffer to draw, exactly like a workspace's own row.
+  const launched = launchedAgentBuffers.get(agentKey(u.root, u.name));
+  return {
+    // Hashed over root *and* name: two agents in one checkout are the case
+    // this exists for, and a root-only hash would give them one row between
+    // them — the selection would flip between agents on every scan.
+    //
+    // Always the synthetic id, even when we know the window. Row identity is
+    // the id — selection, the frozen order and the row map are all keyed by
+    // it — so a second agent that borrowed its workspace's window id
+    // collapsed into the same row as the workspace itself, and both rows
+    // rendered whichever of the two was built last. The window it draws from
+    // travels separately.
+    id: -Math.abs(hashToId(agentKey(u.root, u.name))),
+    terminalWindowId: launched?.windowId,
+    terminalBufferId: launched?.bufferId,
+    label: u.label,
+    hostLabel: u.label,
+    root: u.root,
+    projectPath: u.root,
+    agentName: u.name,
+    status: u.status,
+    discovered: false,
+    pending: undefined,
+  } as unknown as AgentSession;
+}
+
+/// Stable small positive number from a string, so a reporting agent keeps
+/// the same row identity between scans (selection is by id).
+function hashToId(key: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % 1000000 + 1000;
+}
+
+/// Everything the list may show: every agent we know of, plus the workspaces
+/// that have none.
+///
+/// Agents come from two places and neither is privileged — one we launched is
+/// a live session carrying a mailbox name, and one that reported on its own is
+/// a mailbox we found, in a checkout that may or may not have a window. The
+/// question is "who needs me"; who started them is not part of it.
+///
+/// Agentless workspaces are still listed, because they are where you go to
+/// start one and because a window you have open should not vanish from the
+/// view that claims to show your environment. They sort last and draw dim —
+/// see `fleetByUrgency` and `fleetRowEntry`.
+function fleetLive(): AgentSession[] {
+  const live = [...orchestratorSessions.values()].filter((s) => !s.discovered && !s.pending);
+  return [...live, ...[...unattachedAgents.values()].map(unattachedAsSession)];
+}
+
+/// Whether we know of an agent in this row.
+///
+/// A mailbox name is the whole test: it is set when we launched an agent
+/// here, and adopted when one reported from here on its own. A workspace
+/// without one may well have a shell in it, but nothing has said it is an
+/// agent, and this view is a list of agents.
+function hasKnownAgent(s: AgentSession): boolean {
+  // The workspace *is* an agent's, whether or not it has said anything: the
+  // host tells us what it runs or will run, and that answers the question
+  // outright. This is the case a restart leaves behind — nothing running, no
+  // mailbox, no terminal title, and a workspace that will bring `claude` back
+  // the moment it is opened.
+  if (agentKindFor(s)) return true;
+  if (!s.agentName || !s.root) return false;
+  // Otherwise a mailbox with something in it. An empty one is a directory,
+  // not an agent — see `mailboxHasStatus`. One we started ourselves counts
+  // before its first status: its terminal is right there on screen.
+  return launchedAgents.has(agentKey(s.root, s.agentName)) ||
+    mailboxHasStatus(s.root, s.agentName);
+}
+
+/// The agent a row runs, or will run when its workspace comes up.
+///
+/// The terminal's own title first — what is running *now* — then what the
+/// workspace is recorded as launching. Both resolve through the registry, so
+/// "an agent" means one Fresh knows how to talk about rather than any command
+/// at all.
+function agentKindFor(s: AgentSession): AgentEntry | null {
+  const live = s.terminalTitle ? agentEntryForCmd(s.terminalTitle) : null;
+  if (live) return live;
+  return s.agentCommand ? agentEntryForCmd(s.agentCommand) : null;
+}
+
+/// Order by urgency: waiting first, then working, then quiet — and every
+/// workspace with no agent in it last, whatever its terminal is doing.
+///
+/// The bottom bucket is the point of the ordering as much as the top one. A
+/// list of agents that puts an agentless workspace above a blocked agent
+/// because its shell printed something is not a list of agents; it is a list
+/// of windows sorted by noise. Inside each bucket the dock's own stable order
+/// applies. Only consulted when the order is (re)frozen.
+function fleetByUrgency(rows: AgentSession[]): AgentSession[] {
+  const rank = (s: AgentSession): number => {
+    if (!hasKnownAgent(s)) return 3;
+    const st = sessionState(s);
+    if (st === "waiting") return 0;
+    if (st === "working") return 1;
+    return 2;
+  };
+  return [...rows].sort((a, b) => rank(a) - rank(b) || stableOrderKey(a) - stableOrderKey(b));
+}
+
+function freezeFleetOrder(): void {
+  fleetOrder = fleetByUrgency(fleetLive()).map((s) => s.id);
+}
+
+function fleetRows(): AgentSession[] {
+  const live = fleetLive();
+  if (fleetOrder === null) return fleetByUrgency(live);
+  const byId = new Map(live.map((s) => [s.id, s]));
+  // Frozen order first, dropping any that have gone…
+  const rows = fleetOrder.map((id) => byId.get(id)).filter((s): s is AgentSession => !!s);
+  // …then anything created since, appended in urgency order so a new agent
+  // is visible without disturbing where the existing rows sit.
+  const seen = new Set(rows.map((s) => s.id));
+  for (const s of fleetByUrgency(live)) {
+    if (!seen.has(s.id)) {
+      rows.push(s);
+      fleetOrder.push(s.id);
+    }
+  }
+  return rows;
+}
+
+/// Index of the selected row, resolved from its id. `-1` when the fleet is
+/// empty; falls back to the first row when the selection has gone away (its
+/// workspace closed), which is the only case where a positional answer is the
+/// honest one.
+function fleetSelectedIndex(rows: AgentSession[]): number {
+  if (rows.length === 0) return -1;
+  const idx = rows.findIndex((s) => s.id === fleetSelectedId);
+  if (idx >= 0) return idx;
+  fleetSelectedId = rows[0].id;
+  return 0;
+}
+
+/// A stand-in for the live pane that occupies exactly the same rows.
+///
+/// The pane is the tallest thing in the view, so anything shorter in its place
+/// collapses the panel — the window jumps to a smaller size the moment a
+/// workspace is still starting or has no terminal at all, and jumps back when
+/// it arrives. A view that changes size while you are reading it is worse than
+/// one with a few blank rows in it, so the placeholder pads to the pane's
+/// height rather than saying its piece in one line and stopping.
+/// The right words for an empty pane, which are not the same words.
+///
+/// "starting…" for a workspace whose terminal has not arrived is a promise
+/// that it will; saying it about an agent reporting from a checkout we do not
+/// own would be a lie, since no terminal is ever coming for that row.
+function paneplaceholderFor(selected: AgentSession | undefined, rows: number): WidgetSpec {
+  if (!selected) return paneplaceholder("no workspace selected", rows);
+  // No agent here at all. "starting…" was the answer for every empty pane,
+  // which made this case read as a workspace that was about to come alive and
+  // never did — you select it, wait, and nothing happens, because nothing was
+  // ever coming. Say what is true and what to do about it.
+  if (!hasKnownAgent(selected)) {
+    return paneplaceholder(
+      "no agent in this workspace — Alt+n starts one here",
+      rows,
+    );
+  }
+  if (selected.id < 0) {
+    return paneplaceholder(
+      "reporting from " + selected.root + " — no terminal here to show",
+      rows,
+    );
+  }
+  return paneplaceholder("starting…", rows);
+}
+
+function paneplaceholder(message: string, rows: number): WidgetSpec {
+  const lines: TextPropertyEntry[] = [
+    styledRow([{ text: "  " + message, style: { fg: "ui.menu_disabled_fg", italic: true } }]),
+  ];
+  for (let i = 1; i < Math.max(1, rows); i++) lines.push(styledRow([{ text: " " }]));
+  return raw(lines);
+}
+
+/// Move the selection by `delta` rows, by identity.
+///
+/// The list widget has its own arrow handling, but Home binds the keys
+/// itself so they are real keybindings a user can rebind — a smart-key
+/// default lives in the host and is not in any keymap. Moving by id rather
+/// than by index also survives the row set changing underneath.
+function fleetMove(delta: number): void {
+  const rows = fleetRows();
+  if (rows.length === 0) return;
+  const at = Math.max(0, fleetSelectedIndex(rows));
+  const next = Math.min(rows.length - 1, Math.max(0, at + delta));
+  if (rows[next].id === fleetSelectedId) return;
+  fleetSelectedId = rows[next].id;
+  renderHome(true);
+}
+
+// =============================================================================
+// Home — the chat, the fleet, and the selected agent's terminal
+//
+// One screen that answers the three questions you actually have about a
+// machine full of agents: who needs me, what did they say, and what do I want
+// them to do next.
+//
+//     ┌ chat ──────────────┐┌ 4 agents · 1 needs you ────────┐
+//     │ refactor-1 ▸ done  ││ ! api    fresh  approve the …  │
+//     │      you ▸ @refac… ││ * build  fresh  cargo test     │
+//     │ ─────────────────  │└────────────────────────────────┘
+//     │ > @refactor-1 next ││┌ live · api ───────────────────┐
+//     └────────────────────┘│ the selected agent's terminal  │
+//                           └────────────────────────────────┘
+//
+// The left column is **not an agent**. It was, briefly: a "master" workspace
+// whose terminal filled that half, which you talked to and which drove the
+// rest. That is a fine thing to be able to do — and you still can, by making
+// an agent and telling it things — but it is the wrong thing for this pane,
+// because it puts an LLM between you and a message you already know how to
+// write. The messages agents send are already in their outboxes; routing a
+// reply to an inbox is a file write. Both are deterministic, so this is
+// deterministic: a transcript, and a line to type in, with `@name` deciding
+// where it goes.
+//
+// The right column is the fleet list over the selected agent's live terminal,
+// because "who needs me" and "what is it saying" are one glance apart.
+//
+// See docs/internal/agent-control-plane.md §7.3.
+// =============================================================================
+
+/// Which region of Home owns the keyboard.
+///
+/// `chat` is the resting state: you open Home to read what happened and
+/// answer it, so the caret is already in the line where you would type.
+type HomeFocus = "chat" | "list" | "tail";
+let homeFocus: HomeFocus = "chat";
+
+/// What is typed into the chat line, mirrored from the widget's `change`
+/// events rather than kept only here — the host routes printable characters
+/// into the focused control itself, so the widget is where the text really
+/// lives and a parallel copy maintained by hand silently disagrees with what
+/// is on screen (observed: sending an empty message while the field showed a
+/// sentence).
+let chatDraft = "";
+
+function homeFocusKey(): string {
+  return homeFocus === "chat" ? "home_chat" : homeFocus === "tail" ? "home_tail" : "home_list";
+}
+
+/// The project a row belongs to: the basename of its canonical repo root.
+///
+/// Worktrees are the case this is for. Five rows reading `feature-a`,
+/// `feature-b`, `hotfix`… say nothing about which *codebase* each is in, and
+/// on a machine driving agents across several repos that is the first thing
+/// you need to know. `projectPath` is the canonical root the host resolved at
+/// create time, so the basename is the repository's name without a `git`
+/// call.
+function rowProject(s: AgentSession): string {
+  const p = s.projectPath || s.root;
+  if (!p) return "";
+  return editor.pathBasename(p) || "";
+}
+
+/// One fleet row: state glyph, name, project, agent, branch, and — the point
+/// of the whole view — what it is waiting on, or what it last said.
+function fleetRowEntry(s: AgentSession, width: number, selected = false): TextPropertyEntry {
+  const dim = "ui.menu_disabled_fg";
+  const st = sessionState(s);
+  // A workspace with no agent is context, not content: it draws dim
+  // throughout so the eye skips it, which is the other half of sorting it to
+  // the bottom. Its terminal's activity is deliberately not reflected — a
+  // shell running `ls` is not an agent working.
+  const idle = !hasKnownAgent(s);
+  const segs: Entry[] = idle
+    ? [{ text: "  ", style: { fg: dim } }]
+    : [stateGlyphEntry(s)];
+  // Not `workspaceDisplayName`: absent a manual rename that auto-tracks the
+  // terminal title, i.e. the agent's own command — which is already the next
+  // column, so the row would read "needs-you · claude   claude".
+  // Columns drop out as the terminal narrows, widest-first. Padding every
+  // column unconditionally costs 50 cells before the reason even starts,
+  // which is more than a narrow panel has — and a row wider than its section
+  // is not clipped, it draws over the section's right border. Order is by
+  // what the view is for: which agent, which codebase, then what it wants;
+  // the branch and the agent's command are context you can get by visiting.
+  const showProject = width >= 52;
+  const showAgent = width >= 74;
+  const showBranch = width >= 104;
+
+  const nameW = width >= 62 ? 18 : 12;
+  const name = agentRowName(s);
+  segs.push({
+    text: name.padEnd(nameW).slice(0, nameW) + " ",
+    style: idle ? { fg: dim } : undefined,
+  });
+
+  if (showProject) {
+    segs.push({ text: rowProject(s).padEnd(14).slice(0, 14) + " ", style: { fg: dim } });
+  }
+
+  if (showAgent) {
+    // What it runs, from the terminal if it is up and from the workspace's
+    // own record if it is not — so the column is filled for a restored
+    // workspace as well as a running one.
+    const agent = agentKindFor(s)?.label ?? "";
+    segs.push({ text: agent.padEnd(10).slice(0, 10) + " ", style: { fg: dim } });
+  }
+
+  if (showBranch) {
+    const branch = s.branch ?? s.git?.info?.branch ?? "";
+    segs.push({ text: branch.padEnd(16).slice(0, 16) + "  ", style: { fg: dim } });
+  }
+
+  // The reason column.
+  //
+  // The agent's own summary wins outright wherever it wrote one: "running
+  // cargo bench --bench io" is what it knows it is doing, where the last
+  // terminal line is whatever happened to be printed — often a progress bar, a
+  // blank, or half a redraw. Falling back to the screen *per field* rather
+  // than as a whole produced rows whose glyph and text disagreed: an agent
+  // reporting `working` beside a question its terminal had printed minutes
+  // earlier and already moved past.
+  //
+  // With no report, the screen is all there is, and there a waiting agent's
+  // question outranks its last line — if it is blocked, that is the only thing
+  // worth the space.
+  const reported = s.status?.summary ?? "";
+  // The advice, only on the row it applies to. Repeated down every agentless
+  // row it is wallpaper: five identical sentences saying the same thing about
+  // five different workspaces, crowding out the column that exists to say
+  // what is different about each.
+  const detail = idle
+    ? (selected ? "no agent here — Alt+n starts one" : "")
+    : (reported || s.tail?.waitingOn || s.tail?.lastLine || "");
+  const used = 2 + (nameW + 1) + (showProject ? 15 : 0) + (showAgent ? 11 : 0) +
+    (showBranch ? 18 : 0);
+  const room = Math.max(8, width - used);
+  const clipped = detail.length > room ? detail.slice(0, room - 1) + "…" : detail;
+  segs.push({
+    text: clipped,
+    style: !idle && st === "waiting"
+      ? { fg: "diagnostic.error_fg" }
+      : { fg: dim, italic: idle || st === "idle" },
+  });
+  return styledRow(segs as Parameters<typeof styledRow>[0]);
+}
+
+/// The column header, laid out against exactly the widths `fleetRowEntry`
+/// uses.
+///
+/// Without it the columns are a guessing game: `api  fresh  claude  fix/api`
+/// is four words with no stated meaning, and the one that matters — the
+/// reason — reads as an afterthought rather than as the point of the row.
+function fleetHeaderRow(width: number): TextPropertyEntry {
+  const dim = "ui.menu_disabled_fg";
+  const showProject = width >= 52;
+  const showAgent = width >= 74;
+  const showBranch = width >= 104;
+  const nameW = width >= 62 ? 18 : 12;
+  let text = "  " + "agent".padEnd(nameW) + " ";
+  if (showProject) text += "project".padEnd(14) + " ";
+  if (showAgent) text += "runs".padEnd(10) + " ";
+  if (showBranch) text += "branch".padEnd(16) + "  ";
+  text += "what it is doing";
+  return styledRow([{ text, style: { fg: dim, bold: true } }]);
+}
+
+/// What to call a row.
+///
+/// Its mailbox name when it has one, because that is what you type after `@`
+/// — a list that shows one name and a chat that answers to another makes the
+/// addressing syntax guesswork. Falls back to the workspace's host label for
+/// a window with no agent in it yet.
+function agentRowName(s: AgentSession): string {
+  return s.agentName ?? workspaceCustomName(s) ?? s.hostLabel;
+}
+
+// -----------------------------------------------------------------------------
+// The chat pane
+// -----------------------------------------------------------------------------
+
+/// How the transcript is drawn: the author on its own row, then the message
+/// flush left under it, wrapped to the whole width of the chat.
+///
+/// The author used to sit in a twelve-column gutter with a `▸` continuation
+/// marker after it, and the message wrapped against what was left. That is a
+/// dozen columns off every line of every message, in the narrowest column of
+/// the layout — the dock's chat is a fraction of an already narrow panel — so
+/// a one-line message came out as "run / the whole suite / please". Spending
+/// one row per message to buy those columns back on all of them is the right
+/// trade for anything longer than a sentence, and it is the conventional
+/// shape for a transcript besides: it reads as a conversation rather than as
+/// a table.
+///
+/// Wrapped by hand rather than left to the renderer, because a `list` row is
+/// one line and a message from an agent is routinely three. Unwrapped, the
+/// interesting half of every sentence is off the right edge of the pane —
+/// which is the one thing a chat may not do.
+function chatLines(width: number): TextPropertyEntry[] {
+  loadChat();
+  const out: TextPropertyEntry[] = [];
+  const body = Math.max(8, width);
+  for (const m of chatLog) {
+    const mine = m.from === "user";
+    const system = m.from === CHAT_SYSTEM;
+    const who = mine ? "you" : m.from;
+    const nameStyle = system
+      ? { fg: "diagnostic.warning_fg", bold: true }
+      : { fg: mine ? "ui.help_key_fg" : "ui.menu_selected_fg", bold: true };
+    const bodyStyle = system
+      ? { fg: "diagnostic.warning_fg", italic: true }
+      : (mine ? undefined : { fg: "ui.menu_fg" });
+    // Your own lines carry who they went to. The author row can only say
+    // "you", so without this a transcript of a morning spent answering four
+    // agents is four indistinguishable blocks of your own prose — and the one
+    // thing you go back to check is which of them you told what. It rides on
+    // the author row rather than the message, so it costs the body nothing.
+    const author = mine && m.to ? `${who} → @${m.to}` : who;
+    out.push(styledRow([{ text: capText(author, body), style: nameStyle }]));
+    for (const line of wrapPlain(m.text, body)) {
+      out.push(styledRow([{ text: line, style: bodyStyle }]));
+    }
+  }
+  if (out.length === 0) {
+    // Wrapped like a message, and flush left like one: the empty state is
+    // longer than a narrow dock is wide, and it has no author row to hang an
+    // indent off.
+    for (const line of wrapPlain("nothing said yet — agents appear here when they report", body)) {
+      out.push(styledRow([{ text: line, style: { fg: "ui.menu_disabled_fg", italic: true } }]));
+    }
+  }
+  return out;
+}
+
+/// Break `text` into lines of at most `width` columns, on word boundaries
+/// where one exists and mid-word where none does.
+function wrapPlain(text: string, width: number): string[] {
+  const out: string[] = [];
+  for (const para of text.split("\n")) {
+    let line = "";
+    for (const word of para.split(/\s+/).filter((w) => w.length > 0)) {
+      if (line.length === 0) {
+        line = word;
+      } else if (line.length + 1 + word.length <= width) {
+        line += " " + word;
+      } else {
+        out.push(line);
+        line = word;
+      }
+      while (line.length > width) {
+        out.push(line.slice(0, width));
+        line = line.slice(width);
+      }
+    }
+    out.push(line);
+  }
+  return out.length > 0 ? out : [""];
+}
+
+// -----------------------------------------------------------------------------
+// Addressing — you pick an agent, you do not spell one
+//
+// The chat line used to be free text where a leading `@name` chose the
+// recipient. That is a guessing game with a silent-ish failure at the end of
+// it: you type a sentence, press Enter, and find out the name was wrong — and
+// the message is only *recorded*, never delivered. Names are also minted by
+// us (`uniqueAgentName`), so "what is this one called" is a question the user
+// should not have to answer from memory.
+//
+// So the address is chosen, not typed. Typing goes into a filter, the matches
+// are listed under the line, and there is no message field at all until one is
+// picked. `@` re-opens the picker so switching agents mid-conversation is one
+// keystroke.
+// -----------------------------------------------------------------------------
+
+/// The agent the next message goes to. `null` = the picker is up.
+let chatTarget: string | null = null;
+/// What has been typed into the picker's filter.
+let chatFilter = "";
+
+/// Agent names matching the filter, best-first.
+///
+/// Prefix matches before substring ones: having typed `re`, `refactor-1`
+/// should be ahead of `core-review`, because a prefix is what you were doing
+/// when you typed it.
+function chatCandidates(): string[] {
+  return chatFilterMatches(chatFilter);
+}
+
+/// Every addressable agent, under the address the chat uses for it.
+///
+/// `workspace/agent`, not a bare agent name. A name is only unique inside its
+/// own checkout — `uniqueAgentName` makes it so per root, not per machine — so
+/// two workspaces routinely hold a `claude` each, and a picker offering two
+/// rows reading `claude` is one you cannot answer. The workspace half is the
+/// name the dock already shows for that workspace, so the address is two
+/// things you can both see on screen.
+///
+/// Ambiguity is resolved rather than tolerated: when two workspaces would
+/// contribute the same half — two checkouts of one repo, both called `fresh` —
+/// every colliding one grows a further trailing path segment until they
+/// differ. So `a/fresh/claude` and `b/fresh/claude`, and never two identical
+/// rows.
+function agentAddresses(): Array<{ root: string; name: string; label: string }> {
+  const boxes = knownAgentMailboxes();
+  // The workspace's own name, as the dock writes it. Not
+  // `workspaceDisplayName`, which folds in the terminal's title — an address
+  // should not change because the agent renamed its tab.
+  const named = new Map<string, string>();
+  for (const s of orchestratorSessions.values()) {
+    if (!s.root || named.has(s.root)) continue;
+    const n = workspaceCustomName(s) ?? s.hostLabel;
+    if (n) named.set(s.root, n);
+  }
+  const roots = [...new Set(boxes.map((b) => b.root))];
+  const seg = new Map<string, string>();
+  for (const r of roots) seg.set(r, named.get(r) ?? editor.pathBasename(r) ?? r);
+  // Widen the colliding segments one path level at a time. Bounded because a
+  // root has finitely many segments and two distinct roots differ within
+  // them; the cap is a guard against a pathological path, not a real limit.
+  for (let depth = 2; depth <= 8; depth++) {
+    const byLabel = new Map<string, string[]>();
+    for (const r of roots) {
+      const k = seg.get(r) as string;
+      byLabel.set(k, [...(byLabel.get(k) ?? []), r]);
+    }
+    const clashing = [...byLabel.values()].filter((rs) => rs.length > 1).flat();
+    if (clashing.length === 0) break;
+    for (const r of clashing) seg.set(r, pathTail(r, depth));
+  }
+  return boxes.map((b) => ({
+    root: b.root,
+    name: b.name,
+    label: `${seg.get(b.root)}/${b.name}`,
+  })).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/// The last `n` segments of `root`, as a path.
+function pathTail(root: string, n: number): string {
+  const parts = root.split("/").filter((p) => p.length > 0);
+  return parts.slice(Math.max(0, parts.length - n)).join("/");
+}
+
+/// The mailbox an address names, or `null`.
+function mailboxForAddress(label: string): { root: string; name: string } | null {
+  const want = label.trim().replace(/^@/, "");
+  const hit = agentAddresses().find((a) => a.label === want);
+  return hit ? { root: hit.root, name: hit.name } : null;
+}
+
+/// Addresses matching `filter`, best-first — prefix matches before substring
+/// ones, because a prefix is what you were doing when you typed it.
+///
+/// Matched against the agent half as well as the whole address: you know what
+/// the agent is called, and having to type the workspace first to reach it
+/// would make the qualifier a toll rather than a disambiguator.
+function chatFilterMatches(filter: string): string[] {
+  const f = filter.trim().toLowerCase();
+  const labels = agentAddresses().map((a) => a.label);
+  if (!f) return labels;
+  const agentOf = (l: string): string => l.slice(l.lastIndexOf("/") + 1).toLowerCase();
+  const starts = labels.filter((l) => l.toLowerCase().startsWith(f) || agentOf(l).startsWith(f));
+  const rest = labels.filter((l) => !starts.includes(l) && l.toLowerCase().includes(f));
+  return [...starts, ...rest];
+}
+
+/// The panel and widget key the chat line currently lives under, or `null`
+/// when no surface is showing it. Both surfaces hold the same picker under
+/// different keys, so everything that drives it asks here rather than
+/// branching on which one is up.
+function chatField(): { panel: FloatingWidgetPanel; key: string } | null {
+  if (homePanel) return { panel: homePanel, key: "home_chat" };
+  if (openPanel && dockMode && !dockChatIsCollapsed()) {
+    return { panel: openPanel, key: "dock_chat" };
+  }
+  return null;
+}
+
+/// Put the current candidates into the host's completion popup.
+///
+/// The popup is the host's, not ours: it floats above the field
+/// (`completionsAbove`), and while the field holds the caret the host's own
+/// text-input path answers Up/Down/Tab/Enter/Esc before any plugin mode
+/// binding is consulted. A hand-painted list under a plugin-owned highlight
+/// could not be driven at all from a focused dock field — Tab and Enter never
+/// reached us.
+///
+/// `setCompletions` is a mutation, so this never re-mounts: a mount rebuilds
+/// the text field from our copy, and one landing between a keystroke and its
+/// `change` event puts back a value one character old ("bash" arriving as
+/// "bsh").
+///
+/// The `Down` afterwards *enters* the popup without moving the selection —
+/// the host's first-arrow rule. It is what makes this a picker rather than a
+/// suggestion list: the top candidate is highlighted from the start, so Tab
+/// and Enter accept it instead of committing half-typed text and moving the
+/// focus on.
+function pushChatCandidates(force = false): void {
+  const f = chatField();
+  if (!f || chatTarget !== null) {
+    chatPushed = null;
+    return;
+  }
+  const cands = chatCandidates();
+  const stamp = f.key + "\u0000" + cands.join("\u0000");
+  // Skipping an unchanged push is not just an economy: it is what lets the
+  // poll call this every tick. `setCompletions` resets the host's selection
+  // to the top, so an unconditional re-push would drag the highlight back
+  // under the user's ↑/↓ once a second. A `force` is for the cases where the
+  // widget itself is new — a mount wipes instance state, so the popup that
+  // stamp describes is gone even though the candidates match.
+  if (!force && stamp === chatPushed) return;
+  chatPushed = stamp;
+  f.panel.setCompletions(f.key, cands);
+  f.panel.command(widgetKey("Down"));
+}
+
+/// The candidate list last handed to the host, and the field it went to.
+let chatPushed: string | null = null;
+
+/// Open the picker, keeping whatever is half-typed as the filter.
+function openChatPicker(filter = ""): void {
+  chatTarget = null;
+  chatFilter = filter;
+  renderChatSurface(true);
+  // Same reason as `acceptChatTarget`: on a surface that rebuilds with
+  // `update`, the `@` that reopened the picker is still sitting in the field
+  // unless it is written out.
+  setChatFieldValue(filter);
+  refocusChatField();
+  pushChatCandidates(true);
+}
+
+/// Address the chat at `name` and put the caret on the message line.
+///
+/// Called from `completion_accept` — the host fires it with the candidate
+/// that was highlighted, for Tab, Enter and a click alike, so the plugin
+/// never has to track which row that was.
+function acceptChatTarget(name: string): void {
+  chatTarget = name;
+  chatFilter = "";
+  // `chatDraft` is deliberately kept: reaching the picker from a half-written
+  // message (a Backspace into the address) must not cost the sentence.
+  const f = chatField();
+  // The popup belongs to the picker; the message line is a free text field.
+  f?.panel.setCompletions(f.key, []);
+  renderChatSurface(true);
+  // Explicitly, not via the rebuilt spec: the host owns the field's text and
+  // only a *mount* re-seeds it from the spec. The dock rebuilds with
+  // `update`, which keeps instance state — so without this the letters you
+  // typed to find the agent stay in the box ahead of the address.
+  setChatFieldValue(chatComposerValue());
+  refocusChatField();
+}
+
+/// Put `v` in the chat line and the caret at its end.
+function setChatFieldValue(v: string): void {
+  const f = chatField();
+  f?.panel.setValue(f.key, v, v.length);
+}
+
+/// What the chat line holds: the filter while picking, otherwise the address
+/// followed by the message.
+///
+/// The address is *in* the field rather than beside it as a label. It reads
+/// as the sentence it is — `@ws/agent run the suite` is what you would write
+/// to a person — and it puts the thing you are about to change within reach
+/// of the caret instead of behind a rebuild.
+///
+/// That is safe only because the address cannot be half-deleted into
+/// something wrong: any edit that breaks the `@name ` prefix is not treated
+/// as text at all, it reopens the picker (see `chatComposerEdit`). So the
+/// field holds either a valid address or no address.
+function chatComposerValue(): string {
+  return chatTarget === null ? chatFilter : `@${chatTarget} ${chatDraft}`;
+}
+
+/// Take a `change` on the composer and decide what it meant.
+///
+/// Returns `true` when the edit was ordinary message text (already recorded);
+/// `false` when it disturbed the address, in which case the picker has been
+/// reopened with whatever is left of the name as its filter and the message
+/// kept, so choosing again puts you back where you were with the sentence
+/// intact.
+function chatComposerEdit(value: string): boolean {
+  const prefix = `@${chatTarget} `;
+  if (value.startsWith(prefix)) {
+    chatDraft = value.slice(prefix.length);
+    return true;
+  }
+  // Everything else is an edit to the address — including deleting the space
+  // that ends it, which is exactly the Backspace you press when the caret is
+  // sitting right after the name and you want a different agent.
+  const rest = value.replace(/^@/, "");
+  const was = chatTarget ?? "";
+  let typed: string;
+  if (was && rest.startsWith(was)) {
+    // The name survived and the separator did not, so the message is now
+    // welded to it. Split on the name we know rather than on the first
+    // space, which is somewhere in the middle of the sentence and would take
+    // the message with it.
+    typed = was;
+    chatDraft = rest.slice(was.length).replace(/^ /, "");
+  } else {
+    const sp = rest.indexOf(" ");
+    typed = sp < 0 ? rest : rest.slice(0, sp);
+    chatDraft = sp < 0 ? "" : rest.slice(sp + 1);
+  }
+  // A name mangled past recognition would leave the picker with a filter
+  // nothing matches and no way to widen it, since a keystroke that matches
+  // nothing is refused. Fall back to the whole list.
+  openChatPicker(chatFilterMatches(typed).length > 0 ? typed : "");
+  return false;
+}
+
+/// Re-render whichever surface is showing the chat, from the ground up.
+function renderChatSurface(force = false): void {
+  if (homePanel) {
+    renderHome(force);
+    return;
+  }
+  if (openPanel && dockMode) openPanel.update(buildDockSpec());
+}
+
+/// Put the caret back on the chat line after a rebuild.
+function refocusChatField(): void {
+  const f = chatField();
+  f?.panel.setFocusKey(f.key);
+}
+
+// -----------------------------------------------------------------------------
+// Waking the agent you just messaged
+//
+// The mailbox is delivery, not receipt: the file lands in `inbox/` and the peer
+// acts when it next reads it. An agent whose workspace is not even loaded —
+// every workspace after a restart — has no turn in which to read anything, so
+// the message sits there and the chat has said "delivered" about a message
+// nobody will see.
+//
+// So sending also *wakes* the addressee: restore its workspace, wait for its
+// agent to come back, and put you in front of it. Nothing is typed at the
+// agent — see §8 of docs/internal/chat-surface-gaps.md for why injecting the
+// message as keystrokes is a separate decision with its own hazards (a paste
+// plus Enter into an agent parked at a permission prompt answers that prompt).
+// This restores and focuses; the mailbox file remains the only delivery.
+//
+// The host does the actual restoring, and already did before this existed:
+// windows come back from a restart *dormant*, and `setActiveWindow` →
+// `materialize_window` → `restore_window` is the lazy path that rebuilds one on
+// first dive, agent included (its resume argv is persisted with the workspace).
+// `focusWorkspace` is the plugin's door to that. What is added here is the
+// waiting, and knowing when not to wait at all.
+// -----------------------------------------------------------------------------
+
+/// What a wake attempt actually achieved. Reported rather than assumed,
+/// because "restored" and "opened a workspace that has no agent in it" look
+/// identical from the chat and mean very different things about whether anyone
+/// is going to answer.
+type WakeOutcome =
+  /// Already live — nothing to restore, focus moved.
+  | { kind: "live" }
+  /// Was dormant; its workspace was restored and its agent signalled.
+  | { kind: "restored" }
+  /// A worktree discovered on disk. There is no persisted window and so no
+  /// agent to resume: the workspace opens with a plain shell.
+  | { kind: "no_agent" }
+  /// Restored, but nothing ever signalled within the timeout.
+  | { kind: "timeout" }
+  /// No workspace here to restore.
+  | { kind: "unknown" };
+
+/// How long to wait for a materialized window to produce a terminal, and then
+/// for the agent inside it to show any sign of life. Generous, because these
+/// wait on a process launch and a TUI's first paint, and stingy waits would
+/// report "timeout" for an agent that was merely slow. Both bounded: an
+/// unbounded wait is a hung composer.
+const WAKE_TERMINAL_MS = 8_000;
+const WAKE_AGENT_MS = 20_000;
+const WAKE_POLL_MS = 400;
+
+/// Any sign the agent in `s` is alive: its own `status` line (what the
+/// briefing tells every agent to write before anything else), or its terminal
+/// having printed something. Neither is authoritative — an agent that ignores
+/// the briefing and prints nothing is indistinguishable from one still
+/// starting — which is why the caller times out rather than waits forever.
+function agentShowsLife(s: AgentSession): boolean {
+  return s.status !== undefined || s.lastOutputAt !== null;
+}
+
+/// Focus the pane the agent's terminal is drawn in, having made its workspace
+/// the active one.
+///
+/// The window's restored layout usually focuses it already — it is what was
+/// focused when the editor exited — so this is the "usually a no-op, wrong
+/// exactly when it matters" case: a workspace last left on a file, or split,
+/// would otherwise put you in front of the wrong pane.
+async function focusAgentTerminal(s: AgentSession): Promise<void> {
+  if (editor.activeWindow() !== s.id) editor.setActiveWindow(s.id);
+  if (s.terminalBufferId === undefined) return;
+  try {
+    const ws = await editor.describeWorkspace();
+    const pane = ws.panes.find((p) => p.bufferId === s.terminalBufferId);
+    if (pane && ws.activeSplitId !== pane.splitId) editor.focusSplit(pane.splitId);
+  } catch (_e) {
+    // The window is active either way, which is the part that matters. A
+    // failed pane lookup should not turn a successful wake into an error.
+  }
+}
+
+/// Restore the workspace behind `root`, wait for its agent, and focus it.
+///
+/// Never throws: every outcome is a `WakeOutcome`, because this runs after the
+/// message has already been written to the inbox and recorded in the
+/// transcript. A wake that fails must not retroactively lose a delivered
+/// message.
+///
+/// `restorableWorkspaceAt` is re-read after every await rather than held across
+/// one: a restore replaces the row (and for a discovered worktree changes its
+/// id), so a reference taken before the await can be the object nobody owns any
+/// more.
+async function wakeAgentWorkspace(root: string): Promise<WakeOutcome> {
+  reconcileSessions();
+  let s = restorableWorkspaceAt(root);
+
+  if (!s) {
+    // Only a discovered on-disk row, or nothing at all. Opening the worktree
+    // is worth doing — it is where the mailbox is — but there is no persisted
+    // window here, so no agent will be resumed and waiting for one would burn
+    // the whole timeout to reach a foregone conclusion.
+    const disc = [...orchestratorSessions.values()].find(
+      (x) => x.root === root && x.discovered,
+    );
+    if (!disc) return { kind: "unknown" };
+    await focusWorkspace(disc.id);
+    return { kind: "no_agent" };
+  }
+
+  const wasLive = s.terminalId !== null;
+  if (!wasLive) {
+    // Dormant: the window exists but its workspace has never been restored in
+    // this run. Activating it is what materializes it.
+    await focusWorkspace(s.id);
+  }
+
+  // Wait for a terminal to exist. `probeStatus`'s poll is what fills
+  // `terminalId`/`terminalBufferId` in from `describeEnvironment`, so this
+  // waits on that tick rather than doing the lookup itself — one source of
+  // truth for "which terminal is this workspace's".
+  const tDeadline = Date.now() + WAKE_TERMINAL_MS;
+  while (Date.now() < tDeadline) {
+    s = restorableWorkspaceAt(root) ?? s;
+    if (s.terminalId !== null) break;
+    await editor.delay(WAKE_POLL_MS);
+  }
+  s = restorableWorkspaceAt(root) ?? s;
+  if (s.terminalId === null) return { kind: "timeout" };
+
+  if (wasLive) {
+    await focusAgentTerminal(s);
+    return { kind: "live" };
+  }
+
+  // Then wait for the agent itself. A terminal exists from the moment the pty
+  // is up; the agent in it is still initialising and has not read its inbox.
+  const aDeadline = Date.now() + WAKE_AGENT_MS;
+  while (Date.now() < aDeadline) {
+    s = restorableWorkspaceAt(root) ?? s;
+    if (agentShowsLife(s)) {
+      await focusAgentTerminal(s);
+      return { kind: "restored" };
+    }
+    await editor.delay(WAKE_POLL_MS);
+  }
+  s = restorableWorkspaceAt(root) ?? s;
+  await focusAgentTerminal(s);
+  return { kind: "timeout" };
+}
+
+/// Send what is in the chat line to the agent that was picked.
+async function sendChat(): Promise<void> {
+  const to = chatTarget;
+  const text = chatDraft.trim();
+  // An empty line is not a message. Returning before touching anything means
+  // Enter on an empty field is inert rather than a repaint that clears a
+  // field which was already clear.
+  if (!text) return;
+  chatDraft = "";
+  // Clear the line before the delegate round-trip, so the field is empty the
+  // moment you press Enter rather than a second later. `setValue` rather than
+  // a rebuilt spec: the host owns the field's text and only a *mount*
+  // re-seeds it from the spec, so on the dock — which rebuilds with `update`
+  // — the sent message stayed in the box and was sent again on the next
+  // Enter.
+  renderChatSurface(true);
+  setChatFieldValue(chatComposerValue());
+  refocusChatField();
+  if (!to) {
+    // Unreachable through the keyboard — there is no message field without a
+    // target — but a defensive answer here beats a message sent nowhere.
+    openChatPicker();
+    return;
+  }
+  const res = await apiDelegate({
+    target: to,
+    instruction: text,
+    from: "user",
+    intent: text.split("\n")[0].slice(0, 60),
+  });
+  // Recorded either way. A message that could not be delivered is still
+  // something the user said, and a transcript that quietly drops it is how
+  // you end up waiting on an agent that was never told anything.
+  appendChat({ at: Date.now(), from: "user", to, text });
+  if (!res.delivered) {
+    chatSay(`Could not deliver that to @${to}: ${res.reason ?? "unknown"}.`);
+  }
+  renderChatSurface(true);
+  setChatFieldValue(chatComposerValue());
+  refocusChatField();
+  // Only now — after the message is on disk and in the transcript — go and wake
+  // the addressee. Order matters: the inbox file must exist *before* the agent
+  // boots, or its first read of the inbox happens before there is anything to
+  // read and the wake has raced the delivery it was supposed to help.
+  if (!res.delivered) return;
+  const addr = resolveAgentAddress(to);
+  if (!addr) return;
+  const woke = await wakeAgentWorkspace(addr.root);
+  // Say something only where the outcome changes what the user should expect.
+  // A successful wake needs no words: focus moved to the agent, which is the
+  // feedback. The two quiet failures do need them, because both leave a
+  // delivered message that nobody is going to read.
+  if (woke.kind === "no_agent") {
+    chatSay(
+      `Opened @${to}'s workspace, but there is no agent to restore in it — ` +
+        `Alt+n starts one. Your message is in its inbox.`,
+    );
+  } else if (woke.kind === "timeout") {
+    chatSay(
+      `Restored @${to}'s workspace, but its agent has not reported in yet. ` +
+        `Your message is in its inbox for when it does.`,
+    );
+  }
+  if (woke.kind === "no_agent" || woke.kind === "timeout") {
+    renderChatSurface(true);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// The spec
+// -----------------------------------------------------------------------------
+
+/// The chat's share of the width. The list needs enough room for a name, a
+/// project, and a reason; the chat needs enough for a sentence. 38/62 is where
+/// both stop being cramped on an 80-column terminal.
+const HOME_CHAT_PCT = 38;
+
+function buildHomeSpec(): WidgetSpec {
+  const rows = fleetRows();
+  const selectedIdx = fleetSelectedIndex(rows);
+  const selected = rows[selectedIdx];
+  const cols = fleetRowWidth();
+  const { list: listRows, tail: tailRows, chat: chatBodyRows } = homeLayout(rows.length);
+  // Counted over agents, not rows: the agentless workspaces at the bottom are
+  // there to be gone to, not to be tallied as part of the fleet.
+  const agents = rows.filter(hasKnownAgent);
+  const needing = agents.filter((s) => sessionState(s) === "waiting").length;
+  const agentWord = agents.length === 1 ? "agent" : "agents";
+  const header = agents.length === 0
+    ? "no agents · Alt+n starts one"
+    : needing > 0
+    ? `${agents.length} ${agentWord} · ${needing} ${needing === 1 ? "needs" : "need"} you`
+    : `${agents.length} ${agentWord} · none waiting`;
+
+  // Rows are budgeted against the column they land in, not the panel, or they
+  // run over the section border (see `fleetRowWidth`).
+  // Each column's section costs two border columns plus padding on each side,
+  // and a row that exactly fills its budget still has to stop short of the
+  // right border rather than draw over it. Budget under all of that: an
+  // over-wide row is not clipped — the section grows to its widest child and
+  // runs past the column, so the frame's own border lands a cell late.
+  const rightCols = Math.max(30, Math.floor((cols * (100 - HOME_CHAT_PCT)) / 100) - 7);
+  const chatCols = Math.max(24, Math.floor((cols * HOME_CHAT_PCT) / 100) - 7);
+
+  // The candidates float over the transcript instead of taking rows from it:
+  // the popup is an overlay, so the input line stays on the panel's last row
+  // and the transcript keeps its whole height whether the picker is up or
+  // not. A composer that moves the thing you are reading when you start
+  // typing is the same complaint as a pane that collapses while a terminal
+  // starts.
+  const picking = chatTarget === null;
+  const chatChildren: WidgetSpec[] = [
+    // A viewport onto the whole transcript. The host pins it to the newest
+    // message, scrolls it under the wheel, and paints a scrollbar when
+    // there is more history than fits — see the dock's copy.
+    scrollableRaw(chatLines(chatCols), "home_chat_log", chatBodyRows),
+    textInput(chatComposerValue(), {
+      // See the dock's copy: no label, no brackets — the section header
+      // already says whose line this is.
+      label: "",
+      bare: true,
+      completionsBare: true,
+      placeholder: chatPlaceholder(picking),
+      focused: homeFocus === "chat",
+      fullWidth: true,
+      // Upward, because this field is the panel's last row: a popup that
+      // grew downward would be drawn past the frame and clipped away.
+      completionsAbove: true,
+      key: "home_chat",
+    }),
+  ];
+
+  const chatSection = labeledSection({
+    label: homeFocus === "chat"
+      ? (chatTarget === null ? "▸ chat · pick an agent" : `▸ chat · → @${chatTarget}`)
+      : "chat",
+    widthPct: HOME_CHAT_PCT,
+    child: col(...chatChildren),
+  });
+
+  const listSection = labeledSection({
+    label: homeFocus === "list" ? `▸ ${header}` : header,
+    // An empty list is the one case where the view cannot do its job, so it
+    // spends the space saying how to fix that rather than stating the
+    // obvious. There is nothing to select, nothing to read, and nothing to
+    // address — the only useful next action is to make an agent.
+    child: rows.length === 0
+      ? raw([
+        styledRow([{
+          text: "  no agents yet",
+          style: { fg: "ui.menu_disabled_fg", italic: true },
+        }]),
+        styledRow([{ text: " " }]),
+        styledRow([{
+          text: "  Alt+n makes a workspace and starts one in it",
+          style: { fg: "ui.menu_disabled_fg" },
+        }]),
+      ])
+      : col(
+        raw([fleetHeaderRow(rightCols)]),
+        list({
+          items: rows.map((s, i) => fleetRowEntry(s, rightCols, i === selectedIdx)),
+          itemKeys: rows.map((s) => String(s.id)),
+          selectedIndex: selectedIdx,
+          visibleRows: Math.max(1, listRows - 1),
+          key: "home_list",
+        }),
+      ),
+  });
+
+  const tailSection = selected && selected.terminalBufferId !== undefined
+    ? labeledSection({
+      // Named the same way its row is: a pane headed `repo` beside a row
+      // reading `build-watch` looks like it is showing something else.
+      label: homeFocus === "tail"
+        ? `typing → ${agentRowName(selected)}`
+        : `live · ${agentRowName(selected)}`,
+      // The agent's terminal itself, not a copy of it. A `pane` rather than a
+      // `windowEmbed` because an embed paints the whole session — tab bar and
+      // all — when what this wants is one terminal, named explicitly.
+      child: pane({
+        windowId: selected.terminalWindowId ?? selected.id,
+        bufferId: selected.terminalBufferId,
+        rows: tailRows,
+        // Not an input target unless the keyboard is actually aimed here: an
+        // interactive pane takes any key the mode does not claim, so a live
+        // pane beside a focused chat line would eat the message you are
+        // typing about that very agent.
+        interactive: homeFocus === "tail",
+        key: "home_tail",
+      }),
+    })
+    : labeledSection({
+      label: selected ? `live · ${agentRowName(selected)}` : "live",
+      child: paneplaceholderFor(selected, tailRows),
+    });
+
+  return col(
+    // A bare `col` as the second row child: it is a block child with no
+    // `widthPct` of its own, so it takes whatever the chat's declared share
+    // leaves. Wrapping it in a section to give it an explicit share would
+    // draw a third border around a pair of bordered sections.
+    row(chatSection, col(listSection, tailSection)),
+    row(
+      flexSpacer(),
+      // Say what the keys do *here*. The three states want genuinely
+      // different sentences, and a hint bar that lists all of them at once is
+      // the same as one that lists none.
+      hintBar(homeFocus === "tail"
+        ? [
+          { keys: "Alt+`", label: "stop typing" },
+          { keys: "keys", label: "go to the agent" },
+        ]
+        : homeFocus === "chat" && chatTarget === null
+        ? [
+          { keys: "type", label: "filter" },
+          { keys: "↑↓", label: "pick" },
+          { keys: "Tab", label: "complete" },
+          { keys: "Enter", label: "choose" },
+          { keys: "Alt+c", label: "list" },
+          { keys: "Esc", label: "close" },
+        ]
+        : homeFocus === "chat"
+        ? [
+          { keys: "Enter", label: `send to @${chatTarget}` },
+          { keys: "@", label: "another agent" },
+          { keys: "Alt+c", label: "list" },
+          { keys: "Alt+`", label: "type at agent" },
+          { keys: "Esc", label: "close" },
+        ]
+        : [
+          { keys: "Tab", label: "chat" },
+          { keys: "↑↓", label: "select" },
+          { keys: "Alt+`", label: "type at agent" },
+          { keys: "Alt+n", label: "new agent" },
+          { keys: "Enter", label: "go to workspace" },
+          { keys: "Esc", label: "close" },
+        ]),
+      flexSpacer(),
+    ),
+  );
+}
+
+/// Columns the chat pane's text may use, recomputed the way `buildHomeSpec`
+/// does — the candidate list is redrawn between renders, so it cannot read
+/// the width the last render happened to use.
+function chatColsNow(): number {
+  return Math.max(24, Math.floor((fleetRowWidth() * HOME_CHAT_PCT) / 100) - 7);
+}
+
+/// What the empty chat line says when nothing has been typed into it.
+///
+/// Two different empty states, and conflating them is what made the old
+/// candidate block unreadable: "there is nothing to address" and "say
+/// something to the agent you picked" want different answers. The third —
+/// "nothing matches what you typed" — cannot happen: a keystroke that
+/// matches no agent is refused before it lands (see the `change` handlers),
+/// so the filter always names at least one candidate.
+function chatPlaceholder(picking: boolean): string {
+  if (!picking) return "what should it do?";
+  return knownAgentMailboxes().length === 0
+    ? "no agents yet — Alt+n starts one"
+    : "which agent?";
+}
+
+let homePanel: FloatingWidgetPanel | null = null;
+let homeLastSpec: string | null = null;
+
+/// How many transcript rows the chat pane has right now.
+function chatLogRowsNow(): number {
+  const { chat } = homeLayout(fleetRows().length);
+  return Math.max(2, chat);
+}
+
+/// Bring the view up to date without rebuilding it.
+///
+/// Every mount rebuilds the text field from the spec, so a mount landing
+/// between a keystroke and the `change` event it produces puts back a value
+/// one character old — "please run the suite" arriving as "plae rn h sie".
+/// While the keyboard is in the chat, the parts that go stale are therefore
+/// refreshed as *mutations*, which touch only the widgets they name.
+function refreshHomeInPlace(): void {
+  if (!homePanel) return;
+  homePanel.setRawEntries("home_chat_log", chatLines(chatColsNow()));
+  pushChatCandidates();
+  const rows = fleetRows();
+  if (rows.length > 0) {
+    const cols = Math.max(30, Math.floor((fleetRowWidth() * (100 - HOME_CHAT_PCT)) / 100) - 7);
+    const sel = fleetSelectedIndex(rows);
+    homePanel.setItems(
+      "home_list",
+      rows.map((s, i) => fleetRowEntry(s, cols, i === sel)),
+      rows.map((s) => String(s.id)),
+    );
+  }
+}
+
+function renderHome(force = false): void {
+  if (!homePanel) return;
+  // Hold the panel still while it holds the caret — see `refreshHomeInPlace`.
+  // A forced render is an explicit state change (a target chosen, a message
+  // sent, the focus moved), where rebuilding the field is the point.
+  if (!force && homeFocus === "chat") {
+    refreshHomeInPlace();
+    return;
+  }
+  const spec = buildHomeSpec();
+  const specKey = JSON.stringify(spec) + homeFocus + String(chatTarget);
+  if (!force && specKey === homeLastSpec) return;
+  homeLastSpec = specKey;
+  homePanel.mount(spec, { widthPct: HOME_WIDTH_PCT, heightPct: HOME_HEIGHT_PCT });
+  // Re-assert placement after every mount, not once at open: a mount resets
+  // the panel to the default centered placement, so a fullscreen set at open
+  // time is undone by the first tick and Home drops back into the strip beside
+  // the dock.
+  editor.floatingPanelControl(homePanel.id(), "fullscreen", 1);
+  homePanel.setFocusKey(homeFocusKey());
+  // A mount rebuilds the panel's instance state from nothing, and the
+  // completion popup lives there — so the candidates have to go back in, or
+  // the picker comes up as an ordinary text box.
+  pushChatCandidates(true);
+}
+
+/// Re-assert focus without repainting.
+///
+/// The ticker skips identical frames, but focus still has to be held every
+/// tick — otherwise a Home that is merely *quiet* drifts out of focus and
+/// stops responding to the keys it is steered with.
+function holdHomeFocus(): void {
+  if (homePanel) homePanel.setFocusKey(homeFocusKey());
+}
+
+let homeTicking = false;
+
+/// Keep Home current while it is open.
+///
+/// Its own ticker rather than the dock's: the dock's poll loop only runs while
+/// the dock is open. It stops itself when the panel closes, so a closed Home
+/// costs nothing.
+function startHomeTicking(): void {
+  if (homeTicking) return;
+  homeTicking = true;
+  const tick = (): void => {
+    if (!homePanel) {
+      homeTicking = false;
+      return;
+    }
+    // Re-derive the session list from the host's windows before rendering.
+    // Without this Home keeps listing workspaces that have since closed —
+    // `fleetRows()` reads the plugin's own map, which only the dock's paths
+    // refresh — so a row could outlive its window and selecting it would point
+    // at nothing.
+    reconcileSessions();
+    scanForUnattachedAgents();
+    for (const s of fleetRows()) {
+      // Status first: it is the cheaper read and the authoritative one, and
+      // when it answers the tail probe's result is only a fallback.
+      probeStatus(s);
+      void probeTail(s);
+    }
+    drainOutboxes();
+    renderHome();
+    holdHomeFocus();
+    void editor.delay(FLEET_TICK_MS).then(tick);
+  };
+  tick();
+}
+
+function openHome(): void {
+  if (homePanel) {
+    renderHome(true);
+    return;
+  }
+  reconcileSessions();
+  // Sweep for worktrees on disk, then for agents reporting from them. Done on
+  // open rather than on the tick: it spawns `git worktree list` per repo, and
+  // the set of checkouts on a machine changes on the order of minutes, not
+  // seconds.
+  void refreshDiscoveredWorktrees().then(scanForUnattachedAgents);
+  scanForUnattachedAgents();
+  loadChat();
+  drainOutboxes();
+  freezeFleetOrder();
+  homeFocus = "chat";
+  // Every open starts at "who is this for". Carrying a target across opens
+  // would mean the first thing you type after coming back goes somewhere you
+  // chose in a different sitting. Set directly rather than through
+  // `openChatPicker`, which would push the candidates at whichever surface is
+  // showing the chat *now* — the dock, which is about to be covered.
+  chatTarget = null;
+  chatFilter = "";
+  homePanel = new FloatingWidgetPanel();
+  homeLastSpec = null;
+  renderHome(true);
+  editor.floatingPanelControl(homePanel.id(), "focus", 0);
+  editor.setEditorMode(HOME_CHAT_MODE);
+  startHomeTicking();
+}
+
+function closeHome(): void {
+  if (!homePanel) return;
+  homePanel.unmount();
+  homePanel = null;
+  // The dock's copy of the chat inherits the picker, and its popup is a
+  // different widget's instance state — so the stamp from Home's field must
+  // not make the next push look redundant.
+  chatPushed = null;
+  // Next open re-sorts by urgency; the frozen order is per-viewing.
+  fleetOrder = null;
+  editor.setEditorMode(null);
+}
+
+/// The mode that matches where the keyboard currently is.
+///
+/// Three modes rather than one with flags, because the three need genuinely
+/// different keymaps: the chat must see printable characters, the terminal
+/// must see Enter and the arrows, and the list must see the arrows but not
+/// the letters. Modes are static, so "claim these keys only sometimes" is
+/// spelled as "switch to the mode that claims them".
+function homeModeForFocus(): string {
+  return homeFocus === "chat"
+    ? HOME_CHAT_MODE
+    : homeFocus === "tail"
+    ? HOME_TYPE_MODE
+    : HOME_MODE;
+}
+
+/// Toggle focus between the chat and the list.
+///
+/// Deliberately two stops, not three. The terminal is reachable only through
+/// `Alt+\``, because a focused terminal takes every key the mode does not
+/// claim: with the pane in the Tab cycle, one Tab too many turns the next
+/// sentence you type from a message *about* an agent into keystrokes sent
+/// *to* it — observed by hand, twice, while testing this very view. `Alt+\``
+/// is a deliberate gesture and says what it does in the hint bar; Tab is not
+/// and cannot.
+///
+/// From the terminal, Tab means what it means to the agent, so getting out is
+/// `Alt+\`` — which returns to the chat, since that is where you were going.
+function cycleHomeFocus(): void {
+  homeFocus = homeFocus === "chat" ? "list" : "chat";
+  editor.setEditorMode(homeModeForFocus());
+  renderHome(true);
+}
+
+registerHandler("orchestrator_home", openHome);
+registerHandler("orchestrator_home_close", function () { closeHome(); });
+registerHandler("orchestrator_home_cycle", cycleHomeFocus);
+registerHandler("orchestrator_home_type_toggle", function () {
+  // Being at the terminal *is* typing at it: there is no useful third state
+  // where the pane holds focus but swallows the keys, so the toggle is
+  // "go to the agent" / "come back", not a modifier on top of focus.
+  if (homeFocus === "tail") {
+    homeFocus = "chat";
+  } else {
+    const rows = fleetRows();
+    const sel = rows[fleetSelectedIndex(rows)];
+    // Refuse rather than silently swallow keys: a row with no terminal (an
+    // agent reporting from a checkout we have no window for) has nothing to
+    // type at.
+    if (sel?.terminalBufferId === undefined) {
+      chatSay(
+        sel && !sel.agentName
+          ? `${agentRowName(sel)} has no agent in it — Alt+n starts one.`
+          : "That agent has no terminal here to type at.",
+      );
+      return;
+    }
+    homeFocus = "tail";
+  }
+  editor.setEditorMode(homeModeForFocus());
+  renderHome(true);
+});
+/// In the picker the arrows steer the candidates; anywhere else they steer
+/// the agent list. Both are "move the selection in front of me".
+///
+/// Home *does* have an editor mode, and a mode binding outranks the host's
+/// own completion dispatch — so unlike the dock, where the host answers the
+/// arrows directly, these have to hand the key back to the panel for the
+/// popup to see it at all.
+function homeArrow(delta: number): void {
+  if (homeFocus === "chat" && chatTarget === null) {
+    homePanel?.command(widgetKey(delta < 0 ? "Up" : "Down"));
+    return;
+  }
+  fleetMove(delta);
+}
+registerHandler("orchestrator_home_prev", function () { homeArrow(-1); });
+registerHandler("orchestrator_home_next", function () { homeArrow(1); });
+registerHandler("orchestrator_home_open_selected", function () {
+  const rows = fleetRows();
+  const target = rows[fleetSelectedIndex(rows)];
+  closeHome();
+  // The window it lives in, which for a second agent in a workspace is that
+  // workspace rather than the row's own synthetic id.
+  const windowId = target?.terminalWindowId ?? target?.id;
+  if (windowId !== undefined) void focusWorkspace(windowId);
+});
+registerHandler("orchestrator_home_chat_complete", function () {
+  // Tab completes the address, and the popup is what knows to what: hand the
+  // key back to the panel so the host accepts its highlighted candidate and
+  // answers with `completion_accept`. Once an agent is chosen there is
+  // nothing to complete and Tab is inert, rather than throwing the caret out
+  // of the message you are half-way through.
+  if (chatTarget === null) homePanel?.command(widgetKey("Tab"));
+});
+registerHandler("orchestrator_home_send", function () {
+  // Enter means "choose" while the picker is up and "send" once it is not.
+  // One key for "commit what is in front of me" reads as one gesture, where
+  // a separate accept key would be a second thing to know. Choosing is the
+  // popup's job, so that half is forwarded rather than reimplemented.
+  if (chatTarget === null) homePanel?.command(widgetKey("Enter"));
+  else void sendChat();
+});
+/// Start an agent in the selected workspace.
+///
+/// "Run Agent…", not "New Workspace". The list already has the workspace in
+/// it — that is what you selected — so asking for a *new* one answers a
+/// question nobody asked, and the dialog would open on some other project
+/// root because it defaults to the active window rather than the row under
+/// the cursor.
+///
+/// The workspace is focused first, which is what pins the dialog to it: the
+/// form's "current workspace" target means the active window, so making the
+/// selection active is the whole of "pin it". Home closes because the form is
+/// its own full-screen panel — two stacked modals leave the keyboard in
+/// neither — and reopens when the form does, so the key you pressed *in* Home
+/// does not cost you Home.
+registerHandler("orchestrator_home_new", function () {
+  const rows = fleetRows();
+  const target = rows[fleetSelectedIndex(rows)];
+  const windowId = target?.terminalWindowId ?? target?.id;
+  closeHome();
+  // A row with no window (an agent reporting from a checkout we never opened)
+  // has nothing to launch into; the dialog opens on the active window, which
+  // is the honest fallback.
+  if (windowId !== undefined && windowId > 0) {
+    editor.setActiveWindow(windowId);
+  }
+  openForm({ target: "current", fromHome: true });
+});
+registerHandler("orchestrator_home_chat_backspace", function () {
+  // Always the host's own text control, which does the edit and answers with
+  // a `change` event — where the address prefix is checked and a Backspace
+  // that ate into it reopens the picker. Deciding here instead would mean
+  // guessing where the caret is, and editing our copy would leave the widget
+  // showing a character we think is gone.
+  if (homePanel) homePanel.command(textInputKey("Backspace"));
+});
+
+registerHandler("orchestrator_home_event", function (ev: Record<string, unknown>) {
+  if (!homePanel || ev.panel_id !== homePanel.id()) return;
+  const type = String(ev.event_type ?? "");
+  const payload = (ev.payload ?? {}) as Record<string, unknown>;
+  const widget = String(ev.widget_key ?? payload.key ?? "");
+  // The chat line's text lives in the widget, not here: the host routes
+  // printable characters straight into the focused text control, so this
+  // event is where typing actually shows up. A copy maintained by hand from
+  // key events instead would silently disagree with what is on screen.
+  if (type === "change" && widget === "home_chat") {
+    if (typeof payload.value !== "string") return;
+    const value = payload.value;
+    if (chatTarget === null) {
+      // See the dock's copy: the picker refuses a keystroke that matches no
+      // agent rather than accepting a value that cannot be chosen.
+      if (value && chatFilterMatches(value).length === 0) {
+        homePanel?.setValue("home_chat", chatFilter, chatFilter.length);
+        return;
+      }
+      chatFilter = value;
+      // Deliberately no re-render: the candidates go in by mutation.
+      // Re-mounting here would rebuild the field from our copy and lose
+      // whatever was typed between the keystroke and this event.
+      pushChatCandidates();
+      return;
+    }
+    // No re-render on the ordinary path: the field already shows this, and
+    // re-mounting would rebuild it from our copy — losing whatever was typed
+    // in between. An edit to the address is the exception, and reopens.
+    chatComposerEdit(value);
+    return;
+  }
+  // The picker's answer, from Tab, Enter or a click on a candidate alike.
+  if (type === "completion_accept" && widget === "home_chat") {
+    if (typeof payload.value === "string") acceptChatTarget(payload.value);
+    return;
+  }
+  if (type === "select" || type === "change") {
+    // A mouse click on a row still reports the list's own index. Translate it
+    // to an id at once: the index is only valid against the ordering that
+    // produced the event.
+    const idx = Number(payload.index ?? payload.selectedIndex ?? -1);
+    const rows = fleetRows();
+    if (idx >= 0 && idx < rows.length && rows[idx].id !== fleetSelectedId) {
+      fleetSelectedId = rows[idx].id;
+      renderHome(true);
+    }
+    return;
+  }
+  // Clicking a region focuses it, and that gesture is also the answer to
+  // "which of these did you mean" — so the focus region follows the click and
+  // the mode follows the region, or the next keystroke steers something the
+  // user is not looking at.
+  if (type === "focus" && (widget === "home_chat" || widget === "home_tail" || widget === "home_list")) {
+    const next: HomeFocus = widget === "home_chat"
+      ? "chat"
+      : widget === "home_tail"
+      ? "tail"
+      : "list";
+    if (next === homeFocus) return;
+    homeFocus = next;
+    editor.setEditorMode(homeModeForFocus());
+    renderHome(true);
+    return;
+  }
+  // A double-click on a row means the same as Enter.
+  if (type === "activate") {
+    void editor.runCommand("Orchestrator: Home Open Selected");
+    return;
+  }
+  if (type === "cancel" || type === "close") closeHome();
+});
+editor.on("widget_event", "orchestrator_home_event");
+
+const HOME_MODE = "orchestrator-home";
+const HOME_TYPE_MODE = "orchestrator-home-type";
+const HOME_CHAT_MODE = "orchestrator-home-chat";
+
+// Every Home key is a real binding, not a host smart-key default, so all of
+// them show up in the keybinding editor and can be overridden per user under
+// the `mode:orchestrator-home*` contexts. `defineMode` bindings are the
+// lowest-precedence tier, so a user's own binding always wins.
+//
+// Alt+` toggles typing rather than Tab: Tab is a key you genuinely want to
+// send to an agent (completion, field navigation in its own TUI), and a
+// toggle that eats it means the one view built for answering an agent cannot
+// send it. The toggle has to be something no terminal program expects.
+editor.defineMode(HOME_MODE, [
+  ["Up", "orchestrator_home_prev"],
+  ["Down", "orchestrator_home_next"],
+  ["Tab", "orchestrator_home_cycle"],
+  ["Enter", "orchestrator_home_open_selected"],
+  ["Escape", "orchestrator_home_close"],
+  ["M-`", "orchestrator_home_type_toggle"],
+  // Alt+n, not a bare `n`: a focused list eats printable characters for
+  // type-ahead before a mode binding sees them, so a plain letter would look
+  // bound and do nothing.
+  ["M-n", "orchestrator_home_new"],
+]);
+// The chat line. Enter sends, Backspace edits, Tab moves on, and every
+// printable character arrives through the global `mode_text_input` path —
+// which is what `allowTextInput` (the fifth argument) switches on. Without
+// it the characters fall through to whatever pane holds focus, which is a
+// live terminal: every letter of the message would be typed at the agent the
+// message is *about*.
+editor.defineMode(HOME_CHAT_MODE, [
+  ["Enter", "orchestrator_home_send"],
+  ["Backspace", "orchestrator_home_chat_backspace"],
+  ["Tab", "orchestrator_home_chat_complete"],
+  ["Escape", "orchestrator_home_close"],
+  ["Up", "orchestrator_home_prev"],
+  ["Down", "orchestrator_home_next"],
+  ["M-n", "orchestrator_home_new"],
+], false, true);
+// Typing mode claims only the way out, so Tab, Enter, Escape and every
+// printable character reach the focused terminal. Escape falls through on
+// purpose: while an agent is asking something, cancelling it is the most
+// likely thing to send.
+editor.defineMode(HOME_TYPE_MODE, [
+  ["M-`", "orchestrator_home_type_toggle"],
+]);
+
 registerHandler("orchestrator_open", openControlRoom);
 registerHandler("orchestrator_new", startNewSession);
 registerHandler("orchestrator_kill", killSelected);
@@ -12404,6 +16086,21 @@ editor.registerCommand(
   "orchestrator_new",
   null,
   { terminalBypass: true },
+);
+// Same bypass as the dock: "who needs me" is exactly the question you have
+// while the keyboard is inside an agent's terminal.
+editor.registerCommand(
+  "Orchestrator: Home",
+  "Every agent at once, what they said, and a line to answer them on",
+  "orchestrator_home",
+  null,
+  { terminalBypass: true },
+);
+editor.registerCommand(
+  "Orchestrator: Home Open Selected",
+  "Leave Home and go to the selected workspace",
+  "orchestrator_home_open_selected",
+  null,
 );
 editor.registerCommand(
   "%cmd.kill",
