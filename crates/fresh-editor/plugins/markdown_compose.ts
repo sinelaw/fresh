@@ -227,16 +227,6 @@ function touchesFenceChars(text: string): boolean {
   return /[`~]/.test(text);
 }
 
-/** The info string of an opening fence — its language — or "" when bare.
- *
- * CommonMark's first word of the info string; the engine resolves the same
- * token to a grammar (`resolve_embedded_syntax`), so the label names exactly
- * the language the body is being highlighted as. */
-function fenceInfoString(content: string): string {
-  const m = content.match(/^\s*(?:`{3,}|~{3,})\s*(\S+)/);
-  return m ? m[1] : "";
-}
-
 /** Total rendered width of a code block's frame, borders and side rails alike.
  *
  * One function so the four edges cannot disagree — a rail computed against a
@@ -254,16 +244,16 @@ function codeFrameWidth(measure: number): number {
   return Math.max(4, measure - 4);
 }
 
-/** A horizontal code-block frame line of the given corner style. */
-function buildCodeFrameLine(measure: number, label: string, left: string, right: string): string {
+/** A horizontal code-block frame line of the given corner style.
+ *
+ * Deliberately unlabelled. The fence's info string is not repeated in the
+ * border: the block's language is already legible from the code itself, which
+ * is highlighted with that language's grammar, so the tag was a caption on a
+ * picture that says the same thing. */
+function buildCodeFrameLine(measure: number, left: string, right: string): string {
   const inner = Math.max(
     1, codeFrameWidth(measure) - displayWidth(left) - displayWidth(right),
   );
-  if (label) {
-    const tag = `─ ${label} `;
-    const tagW = displayWidth(tag);
-    if (tagW < inner) return left + tag + "─".repeat(inner - tagW) + right;
-  }
   return left + "─".repeat(inner) + right;
 }
 
@@ -313,59 +303,109 @@ function clearCodeRails(bufferId: number, byteStart: number, byteEnd: number): v
   );
 }
 
-/** Draw the rails for one code-body line.
+/** Columns of code a framed row can hold: the frame less both rails. */
+function codeInnerWidth(measure: number): number {
+  return Math.max(1, codeFrameWidth(measure) - 2 * RAIL_RENDERED_COLUMNS);
+}
+
+/** How one code line is split across framed rows: the char offsets of the
+ * spaces that end each row, and the `[start, end)` char range of each row's
+ * text.
  *
- * A line long enough to reach the right rail's column gets no right rail: the
- * padding would be negative, and forcing one would push the row past the wrap
- * width and put the rail on a row of its own — worse than an open edge. Such a
- * line is also force-wrapped by the renderer, and its continuation rows are not
- * source lines, so they carry no rails either. The left rail is always drawn on
- * the line's first row, so the block's left side stays unbroken down the code
- * itself. */
+ * A code line too wide for the frame has to break *somewhere* — the buffer has
+ * line wrap on, so the renderer will otherwise fold it to column zero, outside
+ * the frame and with no rails. Choosing the break points here instead means
+ * every row is a row this pass knows the width of, so every row can be railed
+ * and padded to the frame.
+ *
+ * Breaks must land on Space characters. Space tokens carry their own
+ * `source_offset`; the characters inside a Text token all share the token's
+ * start, so a break asked for mid-token silently does nothing (the same
+ * constraint the table-row wrapping documents). A run with no space wide enough
+ * to break at therefore stays one over-long row — see `emitCodeRails`.
+ *
+ * Shared by the rail pass and the soft-break pass so the two cannot disagree
+ * about where the rows are, exactly as `widthsForRow` is shared for tables. */
+interface CodeRow { start: number; end: number }
+function codeRowLayout(text: string, measure: number): { breaks: number[]; rows: CodeRow[] } {
+  const inner = codeInnerWidth(measure);
+  const breaks: number[] = [];
+  const rows: CodeRow[] = [];
+  let rowStart = 0;
+  let lastSpace = -1;
+  let column = 0;
+
+  for (let i = 0; i < text.length; i++) {
+    const w = displayWidth(text[i]);
+    if (column + w > inner && lastSpace > rowStart) {
+      // Break at the last space that still leaves a non-empty row.
+      breaks.push(lastSpace);
+      rows.push({ start: rowStart, end: lastSpace });
+      rowStart = lastSpace + 1;
+      lastSpace = -1;
+      column = 0;
+      for (let j = rowStart; j <= i; j++) column += displayWidth(text[j]);
+      continue;
+    }
+    if (text[i] === " ") lastSpace = i;
+    column += w;
+  }
+  rows.push({ start: rowStart, end: text.length });
+  return { breaks, rows };
+}
+
+/** Draw the rails for one code-body line, one pair per framed row.
+ *
+ * Rows come from `codeRowLayout`, so a wrapped line is railed and padded on
+ * every row rather than only its first. A row still wider than the frame — a
+ * long unbroken token, which has no space to break at — gets its left rail and
+ * no right one: forcing a right rail there would push the row past the wrap
+ * width and put the rail on a line of its own, which is worse than an open
+ * edge. */
 function emitCodeRails(
   bufferId: number,
   lineContent: string,
   byteStart: number,
   measure: number,
 ): void {
-  const width = codeFrameWidth(measure);
   const contentEnd = lineContentEndByte(lineContent, byteStart);
   const text = lineContent.replace(/\r?\n$/, "");
-  const pad = width - 2 * RAIL_RENDERED_COLUMNS - displayWidth(text);
+  const inner = codeInnerWidth(measure);
 
   // An empty line has no character to hang two separate rails off, so both
-  // edges and the gap between them go in one piece at its line break.
-  //
-  // Its anchor is the newline cell, and that is the one case the renderer pads
-  // on *both* sides rather than one. The run is therefore the full frame width
-  // but its glyphs sit one column inside it — a blank row inside a block reads
-  // very slightly pinched. There is no way to reclaim that column from here:
-  // the leading space belongs to the renderer, and a plugin cannot emit
-  // negative padding. (Indented blank-looking lines are unaffected — their
-  // anchor is a Space cell, which takes the ordinary one-sided padding.)
+  // edges and the gap between them go in one piece at its line break. Anchored
+  // on the newline of a line with nothing else in it, which the renderer pads
+  // on neither side, so the glyphs land in the frame's own columns.
   if (contentEnd <= byteStart) {
-    const gap = Math.max(1, width - 2 - 2);
     editor.addVirtualTextStyled(
       bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:e`, byteStart,
-      RAIL_GLYPH + " ".repeat(gap) + RAIL_GLYPH, codeFrameStyle, true,
+      RAIL_GLYPH + " ".repeat(inner + 2) + RAIL_GLYPH, codeFrameStyle, true,
     );
     return;
   }
 
-  editor.addVirtualTextStyled(
-    bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:l`, byteStart,
-    RAIL_GLYPH, codeFrameStyle, true,
-  );
-  if (pad >= 0) {
-    // Anchor the closing rail *after the last character*, found by code point
-    // rather than by `contentEnd - 1`: a byte before the end lands inside a
-    // multi-byte glyph, and the line's last character is exactly where a
-    // multi-byte glyph is most likely to be.
-    const chars = Array.from(text);
-    const lastChar = chars[chars.length - 1];
-    const lastCharStart = charToByte(lineContent, text.length - lastChar.length, byteStart);
+  const { rows } = codeRowLayout(text, measure);
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    if (row.end <= row.start) continue;
+    const rowText = text.slice(row.start, row.end);
+
     editor.addVirtualTextStyled(
-      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:r`, lastCharStart,
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:l`,
+      charToByte(lineContent, row.start, byteStart),
+      RAIL_GLYPH, codeFrameStyle, true,
+    );
+
+    const pad = inner - displayWidth(rowText);
+    if (pad < 0) continue; // unbreakable over-long row: leave the edge open
+    // Anchor the closing rail *after the last character* of the row, found by
+    // code point rather than by `end - 1`: a byte before the end lands inside
+    // a multi-byte glyph, and the row's last character is exactly where a
+    // multi-byte glyph is most likely to be.
+    const lastChar = Array.from(rowText).pop() as string;
+    const lastCharStart = charToByte(lineContent, row.end - lastChar.length, byteStart);
+    editor.addVirtualTextStyled(
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, lastCharStart,
       " ".repeat(pad) + RAIL_GLYPH, codeFrameStyle, false,
     );
   }
@@ -1465,8 +1505,8 @@ function processLineConceals(
   if (region === "open" || region === "close") {
     const frameEnd = lineContentEndByte(lineContent, byteStart);
     const frame = region === "open"
-      ? buildCodeFrameLine(measure, fenceInfoString(lineContent), "┌", "┐")
-      : buildCodeFrameLine(measure, "", "└", "┘");
+      ? buildCodeFrameLine(measure, "┌", "┐")
+      : buildCodeFrameLine(measure, "└", "┘");
     editor.addConceal(
       bufferId, "md-syntax", byteStart, frameEnd, frame,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
@@ -1932,11 +1972,32 @@ function processLineSoftBreaks(
   // Clear existing soft breaks for this line range
   editor.clearSoftBreaksInRange(bufferId, byteStart, byteEnd);
 
-  // Code is never re-wrapped: its line breaks are significant, and a body line
-  // is not a markdown block at all. `parseMarkdownBlocks` cannot tell — it sees
-  // one line with no fence context — so it would read an indented code line as
-  // a paragraph and wrap it at the measure.
-  if (isCodeRegion(region)) return;
+  // Code is never re-flowed as prose: its line breaks are significant, and a
+  // body line is not a markdown block at all. `parseMarkdownBlocks` cannot tell
+  // — it sees one line with no fence context — so it would read an indented
+  // code line as a paragraph and wrap it at the measure.
+  //
+  // A code line too wide for the frame does still have to break, because the
+  // buffer has line wrap on and the renderer will otherwise fold it to column
+  // zero, outside the frame and unrailed. Breaking it here instead puts the
+  // fold where `emitCodeRails` expects a row to end, at the frame's inner
+  // width, and hangs the continuation under the code rather than under the
+  // rail. Same positions from the same helper, so the two passes agree.
+  if (isCodeRegion(region)) {
+    if (region !== "body") return;
+    const text = lineContent.replace(/\r?\n$/, "");
+    const viewport = editor.getViewport();
+    const measure = effectiveComposeWidth(viewport ? viewport.width : 80);
+    for (const charPos of codeRowLayout(text, measure).breaks) {
+      // Indent 0, not the rail's width: the continuation row's own left rail
+      // is virtual text spliced in ahead of the wrap, so it already supplies
+      // those columns. Asking for them again would indent the row twice.
+      editor.addSoftBreak(
+        bufferId, "md-wrap", charToByte(lineContent, charPos, byteStart), 0,
+      );
+    }
+    return;
+  }
 
   const viewport = editor.getViewport();
   if (!viewport) return;
