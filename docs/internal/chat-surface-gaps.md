@@ -10,9 +10,9 @@ The chat exists twice over one transcript model: as a column in **Home**, and
 as a collapsible section at the bottom of the **dock**. Both are built by the
 orchestrator plugin from the same `WidgetSpec` vocabulary, and both address an
 agent through a completion popup on a single-line text field. That sharing is
-what makes the items below worth writing down rather than fixing ad hoc — three
-of the four are host-side widget behaviour, so a plugin-local patch would fix
-one surface and leave the other alone. That failure mode is not hypothetical:
+what makes the items below worth writing down rather than fixing ad hoc — most
+of them are host-side widget behaviour rather than plugin layout, so a
+plugin-local patch would fix one surface and leave the other alone. That failure mode is not hypothetical:
 Enter-to-accept in the popup already took different paths on the two surfaces
 — Home forwards the key to the panel via a mode binding, the dock routes it
 through the input router — and a fix verified on one of them left the other
@@ -94,7 +94,7 @@ message and buys those columns back on all of them, which is the right trade for
 anything longer than a sentence. It is also the conventional shape for a
 transcript, so it reads as a conversation rather than a table.
 
-**Note.** The width this wraps against is measured wrong today — see §5.
+**Note.** The width this wraps against is measured wrong today — see §7.
 
 ## 4. A narrow dock pushes the composer off the bottom edge — layout bug
 
@@ -138,7 +138,68 @@ wrap (or the real content width) back to the plugin, or to pin the composer to
 the bottom edge structurally so it cannot be pushed off by a mis-sized sibling —
 which also disposes of (2).
 
-## 5. Cross-cutting: the plugin measures against the default width, not the real one
+## 5. The wheel scrolls the workspace list wherever the pointer is — bug
+
+**Today.** Turning the mouse wheel anywhere over the dock scrolls the workspace
+tree, including when the pointer is over the chat transcript.
+
+**Wanted.** The wheel moves the element under the pointer, and nothing else.
+Over the transcript it scrolls the transcript.
+
+**Why it happens.** The host's panel wheel routing is already position-aware
+and already correct: it looks up the pointer's row/column in the panel's
+emitted **scroll regions** and scrolls the widget it lands in. Regions are
+emitted for every keyed `List`/`Tree` whether or not it overflows, precisely so
+that a wheel over a short list is not rerouted to a scrollable sibling
+elsewhere on the panel.
+
+The transcript emits no such region, because it is not a list. It is a `raw()`
+block of pre-rendered rows. So the hit test finds nothing under the pointer,
+and the lookup falls through to a last-resort `find_scrollable_widget_key`,
+which returns the **first** `Tree`/`List` in declaration order — the workspace
+tree. The wheel is not being misrouted so much as defaulting, because as far as
+the host is concerned the pointer is over nothing scrollable at all.
+
+This means the bug is not in the routing and cannot be fixed there. Suppressing
+the fallback would only make the wheel dead over the chat instead of wrong.
+
+## 6. The transcript needs a scrollbar when it overflows
+
+**Today.** There is none, and there is nothing for one to attach to: the
+transcript is not a viewport onto a history, it is a slice. Each render
+recomputes the wrapped lines, pads them to the section's height, and keeps the
+**tail** — the newest message is the one you came to read, so the block is
+pinned to the bottom. Anything above the cut is not scrolled out of view, it
+was never emitted. There is no scroll offset, no total height, and so no
+scrollbar geometry to draw.
+
+**Wanted.** A scrollbar whenever the history exceeds the visible rows.
+
+**Why it is the same work as §5.** Both need the transcript to stop being a
+computed slice and become a real scrollable region: a scroll offset in the
+plugin's chat state, a full line count to clamp against, and a keyed widget the
+host emits a scroll region for. Once that exists, §5's hit test finds the
+transcript on its own and the wheel routes correctly with no change to the
+routing code, and the scrollbar has geometry to render.
+
+Two behaviours to preserve when it lands, both of which the slice gets for free
+today and a viewport will not:
+
+- **Stick to the bottom.** While the user has not scrolled up, new messages
+  must keep the view pinned to the newest — the same "follow the tail unless
+  the user took over" rule the multi-line Text wheel path already implements
+  with its `user_scrolled` flag.
+- **Don't fight the composer.** Scrolling the transcript must not move focus
+  out of the input or disturb the caret; the composer is the panel's last row
+  and the thing the user is typing into.
+
+Worth deciding at the same time: whether this becomes a general scrollable
+`raw()` region in the host, or whether the transcript is rebuilt on the
+existing `List` widget, which already has regions, scrolling, and a scrollbar.
+The second is less new host surface but forces the transcript's wrapped prose
+into list rows.
+
+## 7. Cross-cutting: the plugin measures against the default width, not the real one
 
 §3 and §4 are the same root cause seen from two angles. The chat's text width
 and the toolbar's wrap prediction are both derived from the dock's *default*
@@ -153,7 +214,7 @@ against the guessed width bakes the guess in deeper.
 ## Not in this pass
 
 One further gap, recorded here because it was established while tracing the
-send path and belongs with the rest, but which is **not** part of the four
+send path and belongs with the rest, but which is **not** part of the numbered
 items above and should not be bundled into them:
 
 **Delivery is reported, receipt is not.** Pressing Enter writes one file into
