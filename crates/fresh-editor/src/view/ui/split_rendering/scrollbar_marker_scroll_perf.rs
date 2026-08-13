@@ -37,16 +37,28 @@
 //! per-frame price grows the further down the document the reader gets, and
 //! the total is quadratic in document length.
 //!
-//! These tests are measurements, so they assert on *shape* (late frames versus
-//! early frames, first pass versus second pass) rather than on wall-clock
-//! numbers, which vary by machine and by build profile. For scale, a release
-//! build on the machine this was written on scrolled a 20 000-line document
-//! with 1 000 headings in ~100 ms of marker work spread over 500 frames — 23 µs
-//! on the first frames, 400 µs on the last. Small next to the rest of a compose
-//! frame today; the point is that it grows with the square of the document.
+//! # Why these count instead of timing
+//!
+//! These tests are measurements, but what they measure is *counted work*, not
+//! wall-clock: markers the publish sweeps, markers the projection re-walks,
+//! projections rebuilt. Both O(M) terms are visible as counts — the retain
+//! sweeps the namespace it starts from, and
+//! [`ScrollbarMarkerBuckets::stats`](crate::view::scrollbar_marker::ScrollbarMarkerBuckets::stats)
+//! reports every marker a rebuild walked — and a count is an exact function of
+//! the document and the scroll, so it says the same thing on any machine, in
+//! any build profile, and on a loaded runner. Timings do not: these assertions
+//! were written against `Instant::elapsed` first, and the headingless case
+//! failed under `cargo nextest` on nothing but scheduler noise (a first decile
+//! of 11 µs against a last decile of 96 µs, both far below the resolution at
+//! which a few microseconds of preemption mean anything).
+//!
+//! For scale, a release build on the machine this was written on scrolled a
+//! 20 000-line document with 1 000 headings in ~100 ms of marker work spread
+//! over 500 frames — 23 µs on the first frames, 400 µs on the last. Small next
+//! to the rest of a compose frame today; the point is that it grows with the
+//! square of the document.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use super::scrollbar::project_scrollbar_markers;
 use crate::state::EditorState;
@@ -97,9 +109,28 @@ fn heading_marker(start: usize) -> ResolvedMarker {
     }
 }
 
+/// The markers one frame of the scroll had to touch.
+#[derive(Debug, Clone, Copy, Default)]
+struct FrameWork {
+    /// Size of the namespace the publish's retain swept — the O(M) half of
+    /// `set_markers_in_range`. Zero on a frame that publishes nothing.
+    swept: u64,
+    /// Markers the projection re-walked, straight from
+    /// [`ProjectionStats`](crate::view::scrollbar_marker::ProjectionStats).
+    /// Zero on a frame the cached column served.
+    walked: u64,
+    /// 1 when the frame missed the projection cache, 0 when it hit.
+    rebuilds: u64,
+}
+
+impl FrameWork {
+    fn markers(&self) -> u64 {
+        self.swept + self.walked
+    }
+}
+
 /// One frame of a first-time downward scroll: publish the batch's headings the
 /// way the plugin does, then project the track the way the renderer does.
-/// Returns `(publish, project)` timings.
 fn scroll_frame(
     state: &mut EditorState,
     line_starts: &[usize],
@@ -107,11 +138,11 @@ fn scroll_frame(
     frame: usize,
     basis: MarkerBasis,
     publish: bool,
-) -> (Duration, Duration) {
+) -> FrameWork {
     let first = frame * VIEWPORT_LINES;
     let last = (first + VIEWPORT_LINES - 1).min(line_starts.len() - 1);
 
-    let mut publish_time = Duration::ZERO;
+    let mut swept = 0;
     if publish {
         let start_byte = line_starts[first];
         let end_byte = line_starts
@@ -123,44 +154,67 @@ fn scroll_frame(
             .map(|l| heading_marker(line_starts[l]))
             .collect();
 
-        let t = Instant::now();
+        // The retain walks the namespace as it stands before the batch lands,
+        // so that count *is* what this publish costs.
+        swept = state.scrollbar_markers.len() as u64;
         state.scrollbar_markers.set_markers_in_range(
             NS,
             start_byte,
             end_byte.max(start_byte + 1),
             markers,
         );
-        publish_time = t.elapsed();
     }
 
-    let t = Instant::now();
+    let before = state.scrollbar_marker_buckets.stats();
     let _ = project_scrollbar_markers(state, basis, TRACK_HEIGHT);
-    (publish_time, t.elapsed())
+    let after = state.scrollbar_marker_buckets.stats();
+
+    FrameWork {
+        swept,
+        walked: after.markers_walked - before.markers_walked,
+        rebuilds: after.rebuilds - before.rebuilds,
+    }
 }
 
 struct ScrollProfile {
-    per_frame: Vec<Duration>,
-    publish_total: Duration,
-    project_total: Duration,
+    per_frame: Vec<FrameWork>,
 }
 
 impl ScrollProfile {
-    fn total(&self) -> Duration {
-        self.publish_total + self.project_total
+    fn frames(&self) -> u64 {
+        self.per_frame.len() as u64
     }
 
-    /// Mean frame cost over the first / last tenth of the scroll.
-    fn first_decile(&self) -> Duration {
+    /// Every marker the pass swept or walked, over all frames.
+    fn total(&self) -> u64 {
+        self.per_frame.iter().map(FrameWork::markers).sum()
+    }
+
+    fn rebuilds(&self) -> u64 {
+        self.per_frame.iter().map(|f| f.rebuilds).sum()
+    }
+
+    /// Mean markers per frame over the first / last tenth of the scroll.
+    fn first_decile(&self) -> u64 {
         mean(&self.per_frame[..self.per_frame.len() / 10])
     }
 
-    fn last_decile(&self) -> Duration {
+    fn last_decile(&self) -> u64 {
         mean(&self.per_frame[self.per_frame.len() - self.per_frame.len() / 10..])
+    }
+
+    /// The single most expensive frame of the pass.
+    fn worst_frame(&self) -> u64 {
+        self.per_frame
+            .iter()
+            .map(FrameWork::markers)
+            .max()
+            .unwrap_or(0)
     }
 }
 
-fn mean(d: &[Duration]) -> Duration {
-    d.iter().sum::<Duration>() / d.len().max(1) as u32
+fn mean(frames: &[FrameWork]) -> u64 {
+    frames.iter().map(FrameWork::markers).sum::<u64>() / frames.len().max(1) as u64
 }
 
 fn scroll_document(
@@ -175,14 +229,16 @@ fn scroll_document(
     let frames = line_starts.len() / VIEWPORT_LINES;
     let mut profile = ScrollProfile {
         per_frame: Vec::with_capacity(frames),
-        publish_total: Duration::ZERO,
-        project_total: Duration::ZERO,
     };
     for frame in 0..frames {
-        let (p, q) = scroll_frame(state, line_starts, heading_every, frame, basis, publish);
-        profile.publish_total += p;
-        profile.project_total += q;
-        profile.per_frame.push(p + q);
+        profile.per_frame.push(scroll_frame(
+            state,
+            line_starts,
+            heading_every,
+            frame,
+            basis,
+            publish,
+        ));
     }
     profile
 }
@@ -198,20 +254,26 @@ fn first_scroll_frame_cost_grows_with_accumulated_markers() {
     let first_pass = scroll_document(&mut state, &line_starts, heading_every, true);
 
     eprintln!(
-        "first scroll: total {:?} (publish {:?}, project {:?}), \
-         first-decile frame {:?}, last-decile frame {:?}",
+        "first scroll: {} markers touched over {} frames, {} rebuilds, \
+         first-decile frame {}, last-decile frame {}",
         first_pass.total(),
-        first_pass.publish_total,
-        first_pass.project_total,
+        first_pass.frames(),
+        first_pass.rebuilds(),
         first_pass.first_decile(),
         first_pass.last_decile(),
     );
 
+    assert_eq!(
+        first_pass.rebuilds(),
+        first_pass.frames(),
+        "publishing on every frame moves the marker version, so no frame of a \
+         first pass can hit the cached column"
+    );
     assert!(
         first_pass.last_decile() > first_pass.first_decile() * 4,
-        "late frames should cost far more than early ones if the per-frame \
-         work is proportional to markers accumulated so far; \
-         first decile {:?}, last decile {:?}",
+        "late frames should touch far more markers than early ones if the \
+         per-frame work is proportional to markers accumulated so far; \
+         first decile {}, last decile {}",
         first_pass.first_decile(),
         first_pass.last_decile(),
     );
@@ -229,16 +291,22 @@ fn second_scroll_is_free_because_nothing_republishes() {
     let second_pass = scroll_document(&mut state, &line_starts, heading_every, false);
 
     eprintln!(
-        "first scroll {:?}, second scroll {:?}",
+        "first scroll {} markers touched, second scroll {}",
         first_pass.total(),
         second_pass.total()
     );
 
-    assert!(
-        second_pass.total() * 10 < first_pass.total(),
-        "a re-scroll should be at least an order of magnitude cheaper; \
-         first {:?}, second {:?}",
-        first_pass.total(),
+    assert_eq!(
+        second_pass.rebuilds(),
+        0,
+        "a re-scroll changes nothing in the projection key, so every frame \
+         must come off the cache"
+    );
+    assert_eq!(
+        second_pass.total(),
+        0,
+        "a re-scroll neither publishes nor re-projects, so it touches no \
+         markers at all; touched {}",
         second_pass.total()
     );
 }
@@ -255,21 +323,24 @@ fn a_document_without_headings_scrolls_flat() {
     let (mut state, line_starts) = markdown_state(20_000, usize::MAX);
 
     let flat = scroll_document(&mut state, &line_starts, usize::MAX, true);
+    let headings = state.scrollbar_markers.len() as u64;
 
     eprintln!(
-        "headingless scroll: total {:?}, first-decile frame {:?}, \
-         last-decile frame {:?}",
+        "headingless scroll: {} markers touched over {} frames for {headings} \
+         heading(s), {} rebuilds, worst frame {}",
         flat.total(),
-        flat.first_decile(),
-        flat.last_decile(),
+        flat.frames(),
+        flat.rebuilds(),
+        flat.worst_frame(),
     );
 
+    assert_eq!(flat.rebuilds(), flat.frames(), "still a miss every frame");
     assert!(
-        flat.last_decile() < flat.first_decile() * 4,
-        "with no markers accumulating, late frames should cost about what \
-         early ones do; first decile {:?}, last decile {:?}",
-        flat.first_decile(),
-        flat.last_decile(),
+        flat.worst_frame() <= 2 * headings,
+        "with no markers accumulating, every frame sweeps and walks the same \
+         lone heading however far down the document it is; worst frame {} for \
+         {headings} heading(s)",
+        flat.worst_frame(),
     );
 
     let heading_every = 20;
@@ -277,8 +348,9 @@ fn a_document_without_headings_scrolls_flat() {
     let with_headings = scroll_document(&mut state, &line_starts, heading_every, true);
     assert!(
         with_headings.total() > flat.total() * 5,
-        "the same scroll over the same number of lines costs far more once \
-         headings accumulate marks; headingless {:?}, with headings {:?}",
+        "the same scroll over the same number of lines touches far more \
+         markers once headings accumulate marks; headingless {}, with \
+         headings {}",
         flat.total(),
         with_headings.total(),
     );
@@ -298,11 +370,11 @@ fn first_scroll_cost_is_superlinear_in_document_length() {
     let small = cost(10_000);
     let large = cost(20_000);
 
-    eprintln!("10k lines {small:?}, 20k lines {large:?}");
+    eprintln!("10k lines {small} markers touched, 20k lines {large}");
 
     assert!(
         large > small * 2,
-        "twice the document should cost more than twice as much; \
-         10k {small:?}, 20k {large:?}"
+        "twice the document should touch more than twice as many markers; \
+         10k {small}, 20k {large}"
     );
 }
