@@ -237,12 +237,28 @@ function fenceInfoString(content: string): string {
   return m ? m[1] : "";
 }
 
-/** A horizontal code-block frame line of the given corner style, filling the
- * page measure. Two columns short of the measure for the same reason the
- * thematic-break rule is (see `wrapBudget`): the renderer reserves an
- * end-of-line column, and a border that reached it would wrap. */
+/** Total rendered width of a code block's frame, borders and side rails alike.
+ *
+ * One function so the four edges cannot disagree — a rail computed against a
+ * different budget than the border it has to meet is off by exactly the
+ * difference, on every line of the block.
+ *
+ * Four columns short of the measure, where the thematic-break rule needs only
+ * two. The extra pair is for the rails specifically: a body row is assembled
+ * as `│ ` + code + padding + ` │`, and that padding is a run of *spaces* —
+ * break opportunities to the word-wrap machine, which sees inline virtual text
+ * (`splice_inline_virtual_text` runs before wrapping in `wrap_index`). At the
+ * measure the closing rail is the word that no longer fits, and it wraps onto
+ * a row of its own. */
+function codeFrameWidth(measure: number): number {
+  return Math.max(4, measure - 4);
+}
+
+/** A horizontal code-block frame line of the given corner style. */
 function buildCodeFrameLine(measure: number, label: string, left: string, right: string): string {
-  const inner = Math.max(1, measure - 2 - displayWidth(left) - displayWidth(right));
+  const inner = Math.max(
+    1, codeFrameWidth(measure) - displayWidth(left) - displayWidth(right),
+  );
   if (label) {
     const tag = `─ ${label} `;
     const tagW = displayWidth(tag);
@@ -253,6 +269,107 @@ function buildCodeFrameLine(measure: number, label: string, left: string, right:
 
 // fg matches the table frame's so the two kinds of block read as one system.
 const codeFrameStyle = { fg: "editor.fg" };
+
+// =============================================================================
+// Code block side rails
+// =============================================================================
+//
+// The block's left and right edges, closing the box the delimiters cap. They
+// have to be *inline virtual text* rather than conceals: a conceal replaces
+// source bytes, and a rail adds columns that no byte pays for — concealing a
+// real character to make room would cost that character its syntax colour, on
+// every line, and blank lines inside a block have no character to spend.
+//
+// Rails are the one part of the block that touches its body lines, so they are
+// deliberately the *only* thing that does: the code itself is still never read
+// as markdown, and the highlighting still comes through untouched.
+//
+// Clearing follows the same per-line discipline as the borders, via the
+// id-prefix + byte-range form (`clearVirtualTextsInRange`). A byte-exact
+// removal by id would not do: under the async `lines_changed` lag a rail
+// placed on the previous pass rides a few bytes ahead of the event's
+// `byteStart`, so its id — derived from where it *was* — is not the id derived
+// from where the event says the line is now, and the stale rail would survive
+// alongside the new one. The range clear resolves anchors live, so it catches
+// the rail wherever it drifted to.
+const CODE_RAIL_ID_PREFIX = "mdcr:";
+
+// The rail glyphs carry no padding of their own: the renderer adds exactly one
+// space between inline virtual text and the source text it anchors to — after a
+// `before` hint, in front of an `after` hint, and on both sides of a `before`
+// hint anchored on a newline (`splice_inline_virtual_text`). That is the inlay
+// hint convention and it is not optional, so the widths below count it rather
+// than trying to avoid it: a left rail costs 2 columns, a right rail its
+// padding plus 2.
+const RAIL_GLYPH = "│";
+const RAIL_RENDERED_COLUMNS = 2;
+
+/** Remove this line's rails, clearing its whole content range for the same
+ * reason `clearRowBorders` does. Called for *every* line in a batch, so a line
+ * that stops being code loses its rails. */
+function clearCodeRails(bufferId: number, byteStart: number, byteEnd: number): void {
+  editor.clearVirtualTextsInRange(
+    bufferId, CODE_RAIL_ID_PREFIX, byteStart, Math.max(byteEnd, byteStart + 1),
+  );
+}
+
+/** Draw the rails for one code-body line.
+ *
+ * A line long enough to reach the right rail's column gets no right rail: the
+ * padding would be negative, and forcing one would push the row past the wrap
+ * width and put the rail on a row of its own — worse than an open edge. Such a
+ * line is also force-wrapped by the renderer, and its continuation rows are not
+ * source lines, so they carry no rails either. The left rail is always drawn on
+ * the line's first row, so the block's left side stays unbroken down the code
+ * itself. */
+function emitCodeRails(
+  bufferId: number,
+  lineContent: string,
+  byteStart: number,
+  measure: number,
+): void {
+  const width = codeFrameWidth(measure);
+  const contentEnd = lineContentEndByte(lineContent, byteStart);
+  const text = lineContent.replace(/\r?\n$/, "");
+  const pad = width - 2 * RAIL_RENDERED_COLUMNS - displayWidth(text);
+
+  // An empty line has no character to hang two separate rails off, so both
+  // edges and the gap between them go in one piece at its line break.
+  //
+  // Its anchor is the newline cell, and that is the one case the renderer pads
+  // on *both* sides rather than one. The run is therefore the full frame width
+  // but its glyphs sit one column inside it — a blank row inside a block reads
+  // very slightly pinched. There is no way to reclaim that column from here:
+  // the leading space belongs to the renderer, and a plugin cannot emit
+  // negative padding. (Indented blank-looking lines are unaffected — their
+  // anchor is a Space cell, which takes the ordinary one-sided padding.)
+  if (contentEnd <= byteStart) {
+    const gap = Math.max(1, width - 2 - 2);
+    editor.addVirtualTextStyled(
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:e`, byteStart,
+      RAIL_GLYPH + " ".repeat(gap) + RAIL_GLYPH, codeFrameStyle, true,
+    );
+    return;
+  }
+
+  editor.addVirtualTextStyled(
+    bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:l`, byteStart,
+    RAIL_GLYPH, codeFrameStyle, true,
+  );
+  if (pad >= 0) {
+    // Anchor the closing rail *after the last character*, found by code point
+    // rather than by `contentEnd - 1`: a byte before the end lands inside a
+    // multi-byte glyph, and the line's last character is exactly where a
+    // multi-byte glyph is most likely to be.
+    const chars = Array.from(text);
+    const lastChar = chars[chars.length - 1];
+    const lastCharStart = charToByte(lineContent, text.length - lastChar.length, byteStart);
+    editor.addVirtualTextStyled(
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:r`, lastCharStart,
+      " ".repeat(pad) + RAIL_GLYPH, codeFrameStyle, false,
+    );
+  }
+}
 
 // Table borders are emitted PER LINE, exactly like conceals: for each table row
 // in a `lines_changed` batch we clear the virtual lines anchored at that row and
@@ -824,6 +941,9 @@ function disableMarkdownCompose(bufferId: number): void {
     // Same for the inter-list-item spacer rows, so they can't linger as
     // orphaned virtual lines after compose is toggled off.
     editor.clearVirtualTextNamespace(bufferId, LIST_SPACING_NS);
+    // And the code blocks' side rails, which are inline virtual text rather
+    // than virtual lines and so are not covered by the namespace clears.
+    editor.removeVirtualTextsByPrefix(bufferId, CODE_RAIL_ID_PREFIX);
     const memos = (editor.queryMarkers(bufferId, 0, 0x7fffffff) as Array<{ id: string }>) || [];
     for (const m of memos) {
       if (m.id.startsWith(TABLE_WIDTH_NS_PREFIX)) editor.deleteMarker(bufferId, m.id);
@@ -2142,6 +2262,13 @@ editor.on("lines_changed", (data) => {
     // table row, e.g. its pipes were deleted, and stale frames left a few bytes
     // off by the async lag).
     clearRowBorders(data.buffer_id, line.byte_start, line.byte_end);
+    // Same clear-then-rebuild for the code block's side rails, so a line that
+    // stops being code loses them. Re-added below only for `body` lines — the
+    // delimiter rows draw their own corners as part of the border conceal.
+    clearCodeRails(data.buffer_id, line.byte_start, line.byte_end);
+    if (line.region === "body") {
+      emitCodeRails(data.buffer_id, line.content, line.byte_start, measure);
+    }
     // Same range-scoped clear-then-rebuild as the borders, so a line that stops
     // being a list item loses its spacer.
     editor.clearVirtualLinesInRange(

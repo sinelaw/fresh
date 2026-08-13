@@ -583,6 +583,36 @@ impl Editor {
         }
     }
 
+    /// Handle ClearVirtualTextsInRange — per-line *inline* virtual-text clear.
+    pub(super) fn handle_clear_virtual_texts_in_range(
+        &mut self,
+        buffer_id: BufferId,
+        id_prefix: String,
+        start: usize,
+        end: usize,
+        epoch: Option<u64>,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            // Same stale-range repair as the virtual-line clear above: the
+            // plugin computed `[start, end)` against the `lines_changed` epoch.
+            let (start, end) = match state.map_plugin_range(start, end, epoch) {
+                Some(r) => r,
+                None => return,
+            };
+            state.virtual_texts.clear_inline_in_range(
+                &mut state.marker_list,
+                &id_prefix,
+                start,
+                end,
+            );
+        }
+    }
+
     // ==================== Conceal Commands ====================
 
     /// Handle AddConceal command - add a conceal range that hides or replaces bytes

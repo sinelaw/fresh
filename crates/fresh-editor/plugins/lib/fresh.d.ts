@@ -3775,6 +3775,13 @@ interface EditorAPI {
 	*/
 	clearVirtualLinesInRange(bufferId: number, namespace: string, start: number, end: number): boolean;
 	/**
+	* Clear *inline* virtual texts whose id starts with `idPrefix` and whose
+	* anchor byte falls in `[start, end)`. The inline analogue of
+	* `clearVirtualLinesInRange`, so a per-line pass can rebuild one line's
+	* inline decorations without dropping the rest of the set.
+	*/
+	clearVirtualTextsInRange(bufferId: number, idPrefix: string, start: number, end: number): boolean;
+	/**
 	* Add a virtual line (full line above/below a position)
 	* 
 	* The `options` object accepts:

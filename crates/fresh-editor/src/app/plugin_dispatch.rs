@@ -573,6 +573,15 @@ impl Editor {
             } => {
                 self.handle_clear_virtual_lines_in_range(buffer_id, namespace, start, end, epoch);
             }
+            PluginCommand::ClearVirtualTextsInRange {
+                buffer_id,
+                id_prefix,
+                start,
+                end,
+                epoch,
+            } => {
+                self.handle_clear_virtual_texts_in_range(buffer_id, id_prefix, start, end, epoch);
+            }
 
             // ==================== Conceal Commands ====================
             PluginCommand::AddConceal {

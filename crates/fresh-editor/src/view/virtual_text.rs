@@ -740,6 +740,66 @@ impl VirtualTextManager {
         }
     }
 
+    /// Remove INLINE virtual texts (BeforeChar/AfterChar) whose string id
+    /// starts with `id_prefix` and whose anchor falls in `[start, end)`.
+    ///
+    /// The inline counterpart of [`clear_lines_in_range`], and it exists for
+    /// the same reason: a plugin rebuilding one line's decorations needs to
+    /// drop that line's — and only that line's — previous ones, in the same
+    /// command batch as the re-add, or the decoration strobes for a frame.
+    /// Neither of the existing inline removals can do that: `remove_by_id`
+    /// needs the exact id, which a plugin can only reconstruct from the
+    /// position the decoration was *last* placed at, and `remove_by_prefix`
+    /// takes the whole set, dropping the lines outside the current batch.
+    ///
+    /// Matching is by id prefix rather than namespace because the inline add
+    /// path stores no namespace (only virtual *lines* carry one); the string
+    /// id plugins already supply serves the same grouping purpose.
+    ///
+    /// Anchors are resolved live from the marker list, so a line that has
+    /// shifted since the decoration was placed is matched at its current
+    /// position — which is what makes the clear tolerant of the lag between a
+    /// `lines_changed` hook and the plugin's reply.
+    pub fn clear_inline_in_range(
+        &mut self,
+        marker_list: &mut MarkerList,
+        id_prefix: &str,
+        start: usize,
+        end: usize,
+    ) {
+        if start >= end {
+            return;
+        }
+        let to_remove: Vec<VirtualTextId> = self
+            .texts
+            .iter()
+            .filter_map(|(id, vtext)| {
+                if !vtext.position.is_inline() {
+                    return None;
+                }
+                if !vtext
+                    .string_id
+                    .as_ref()
+                    .is_some_and(|s| s.starts_with(id_prefix))
+                {
+                    return None;
+                }
+                let pos = marker_list.get_position(vtext.marker_id)?;
+                (pos >= start && pos < end).then_some(*id)
+            })
+            .collect();
+
+        let removed = !to_remove.is_empty();
+        for id in to_remove {
+            if let Some(vtext) = self.texts.remove(&id) {
+                marker_list.delete(vtext.marker_id);
+            }
+        }
+        if removed {
+            self.bump_version();
+        }
+    }
+
     /// Query only virtual LINES (LineAbove/LineBelow) in a byte range
     ///
     /// Used by the render pipeline to inject header/footer lines.

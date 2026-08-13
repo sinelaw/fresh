@@ -3523,6 +3523,23 @@ pub enum PluginCommand {
         epoch: Option<u64>,
     },
 
+    /// Remove *inline* virtual texts whose string id starts with `id_prefix`
+    /// and whose anchor byte falls in `[start, end)`. The inline analogue of
+    /// `ClearVirtualLinesInRange`, for the same reason: a per-line decoration
+    /// pass has to clear exactly the line it is rebuilding, in the same batch
+    /// as the re-add. Matching is by id prefix because the inline add path
+    /// stores no namespace. Anchors resolve live from the marker list.
+    ClearVirtualTextsInRange {
+        buffer_id: BufferId,
+        id_prefix: String,
+        start: usize,
+        end: usize,
+        /// Buffer version `start`/`end` were computed against (from the
+        /// `lines_changed` epoch); see `ClearVirtualLinesInRange`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
+    },
+
     /// Add a conceal range that hides or replaces a byte range during rendering.
     /// Used for Typora-style seamless markdown: hiding syntax markers like `**`, `[](url)`, etc.
     AddConceal {
