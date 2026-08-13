@@ -1034,6 +1034,50 @@ function wrapText(text: string, width: number): string[] {
   return lines.length > 0 ? lines : [text];
 }
 
+// =============================================================================
+// Heading text styling
+// =============================================================================
+//
+// Headings ride the same conceal + overlay pass as emphasis: the `#` run is
+// concealed (so the rendered line is just its text) and the text carries an
+// overlay chosen by level. Both are per-line and stateless, so headings need
+// none of the block bookkeeping tables need.
+//
+// This is deliberately separate from the scrollbar heading marks
+// (HEADING_MARKER_NS above), which answer a different question — "where are
+// the headings in the whole document" rather than "how does this line look".
+//
+// Theme keys resolve at render time, so heading colors follow theme changes
+// the way the emphasis overlays do. Levels descend in visual weight: the top
+// three are bold and colour-coded, deeper ones lighten to italic so a heading
+// still reads as structure without shouting.
+const HEADING_TEXT_STYLES: Array<Record<string, unknown>> = [
+  { fg: "syntax.keyword", bold: true },                // #
+  { fg: "syntax.function", bold: true },               // ##
+  { fg: "syntax.type", bold: true },                   // ###
+  { fg: "syntax.type", bold: true, italic: true },     // ####
+  { fg: "syntax.constant", bold: true, italic: true }, // #####
+  { fg: "syntax.constant", italic: true },             // ######
+];
+
+function headingTextStyle(level: number): Record<string, unknown> {
+  const idx = Math.min(Math.max(level, 1), HEADING_TEXT_STYLES.length) - 1;
+  return HEADING_TEXT_STYLES[idx];
+}
+
+/** `[indent, markerLen, level]` for an ATX heading line, else null.
+ *
+ * `markerLen` covers the `#` run *and* the spaces after it, so concealing
+ * `[indent, indent + markerLen)` leaves the heading text starting at the
+ * line's left edge. Requires at least one space and some non-space text after
+ * the hashes, so a bare `#` or a `#hashtag` is left alone — matching how
+ * CommonMark reads them. */
+function atxHeading(content: string): [number, number, number] | null {
+  const m = content.match(/^(\s*)(#{1,6})([ \t]+)(?=\S)/);
+  if (!m) return null;
+  return [m[1].length, m[2].length + m[3].length, m[2].length];
+}
+
 /**
  * Process a single line: add overlays (emphasis, link styling) and conceals
  * (hide markdown syntax markers).
@@ -1339,6 +1383,26 @@ function processLineConceals(
       "unless-cursor-in", byteStart, lineScopeInclEnd,
     );
     return;
+  }
+
+  // --- ATX headings: conceal the `#` run, style the text by level ---
+  // Falls through to inline-span processing below, so emphasis and links
+  // inside a heading still render. The conceal is cursor-revealable (the `#`
+  // markers come back while editing the line); the overlay is not, so the
+  // heading keeps its colour in both states and doesn't flicker weight as the
+  // cursor passes through it.
+  const heading = atxHeading(lineContent);
+  if (heading) {
+    const [indent, markerLen, level] = heading;
+    const markerByteStart = charToByte(lineContent, indent, byteStart);
+    const markerByteEnd = charToByte(lineContent, indent + markerLen, byteStart);
+    editor.addConceal(
+      bufferId, "md-syntax", markerByteStart, markerByteEnd, null,
+      "unless-cursor-in", byteStart, lineScopeInclEnd,
+    );
+    editor.addOverlay(
+      bufferId, "md-emphasis", markerByteEnd, byteEnd, headingTextStyle(level),
+    );
   }
 
   // --- Inline spans: code, emphasis, links, entities ---
