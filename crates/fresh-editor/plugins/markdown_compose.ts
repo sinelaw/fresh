@@ -1195,6 +1195,7 @@ function processLineConceals(
   lineContent: string,
   byteStart: number,
   byteEnd: number,
+  measure: number,
   lineNumber?: number,
 ): void {
   // Clear existing conceals and overlays for this line first.
@@ -1228,10 +1229,7 @@ function processLineConceals(
   // end-of-line column, and a rule that reaches it would wrap onto a second
   // visual row. Matches the `hr` pattern in `parseMarkdownBlocks`.
   if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
-    const hrViewport = editor.getViewport();
-    const hrWidth = Math.max(
-      1, effectiveComposeWidth(hrViewport ? hrViewport.width : 80) - 2,
-    );
+    const hrWidth = Math.max(1, measure - 2);
     const hrEnd = lineContentEndByte(lineContent, byteStart);
     editor.addConceal(
       bufferId, "md-syntax", byteStart, hrEnd, "─".repeat(hrWidth),
@@ -1568,10 +1566,7 @@ function processLineConceals(
 
   // --- List items: bullet glyph + widened nesting indent ---
   // Falls through to inline-span processing so emphasis inside an item works.
-  const listViewport = editor.getViewport();
-  const listInfo = listItemInfo(
-    lineContent, effectiveComposeWidth(listViewport ? listViewport.width : 80),
-  );
+  const listInfo = listItemInfo(lineContent, measure);
   if (listInfo) {
     if (listInfo.renderedIndent > listInfo.sourceIndent) {
       // Widen the indent by concealing the source whitespace and replacing it
@@ -1985,6 +1980,12 @@ editor.on("lines_changed", (data) => {
   // `isLast` can never be true at end-of-buffer and the bottom border is missing.
   const bufEnd = editor.getBufferLength(data.buffer_id);
 
+  // The page measure, read once for the batch rather than per line — the
+  // conceal pass needs it for the thematic-break rule and the list indent, and
+  // it can't change within a single render.
+  const batchViewport = editor.getViewport();
+  const measure = effectiveComposeWidth(batchViewport ? batchViewport.width : 80);
+
   // Per line: clear+rebuild conceals, soft-breaks, and the table border frame —
   // all anchored to this one line. No whole-table rebuild, no stored row model;
   // borders for lines not in this batch keep riding their auto-shift markers.
@@ -2000,7 +2001,7 @@ editor.on("lines_changed", (data) => {
       line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
     );
 
-    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, line.line_number);
+    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, measure, line.line_number);
     processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, line.line_number);
 
     // Blank row between consecutive list items. Only when the previous line is
