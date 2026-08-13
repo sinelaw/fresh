@@ -217,6 +217,14 @@ against the guessed width bakes the guess in deeper.
 > reverses a decision recorded in agent-control-plane.md §8.1. It is written
 > down here with its consequences because the consequences are the hard part,
 > not the four steps._
+>
+> _**Status: steps 1–3 ship; step 4 does not, deliberately.** Sending now
+> restores the addressee's workspace, waits for it, and focuses its terminal.
+> Nothing is typed at the agent — the mailbox file remains the only delivery,
+> which is what keeps both decisions in "The two decisions" below moot: there
+> is no second delivery to double up, and nothing that can answer a permission
+> prompt. Everything in this section about bracketed paste and about gating on
+> agent state applies to step 4 and is still unbuilt._
 
 **Wanted.** Pressing Enter on a message to `@agent` should:
 
@@ -227,10 +235,32 @@ against the guessed width bakes the guess in deeper.
 4. **Send the whole message as a bracketed paste** into that terminal,
    followed by an Enter keypress.
 
-**Today.** None of it. The message is written to the peer's `inbox/` as a file
-and the agent picks it up whenever it next polls — which, for an agent parked
-at a prompt, may be never (see "Not in this pass", below, which this section
-supersedes if it lands).
+**Before this.** None of it. The message was written to the peer's `inbox/` as a
+file and the agent picked it up whenever it next polled — which, for a workspace
+that was not even loaded, was never.
+
+**What steps 1–3 turned out to require.** Much less than expected, because the
+host already had the mechanism and the plugin only had to ask for it. Restoring
+is `focusWorkspace`, which reaches `setActiveWindow` → `materialize_window` →
+`restore_window`. What had to be written was the *waiting*, and — the part that
+is not obvious from the UI — knowing when not to wait:
+
+- A **dormant persisted window** has its agent's argv saved with the workspace,
+  so materializing it brings the agent back. This is the case worth waiting for.
+- A **worktree discovered on disk** has no persisted window and therefore
+  nothing to resume; opening it yields a plain shell. Waiting for an agent here
+  burns the entire timeout to reach a foregone conclusion, so the wake skips the
+  wait and says so in the chat instead.
+
+Two rows that look identical in the picker, and only one of them has anyone
+coming. Readiness itself is still the convention described below — the agent's
+own `status` line, or any terminal output — bounded by a timeout, because an
+agent that ignores the briefing is indistinguishable from one still starting.
+
+**Consequence to be aware of:** focusing the agent's terminal means the terminal
+has the keyboard afterwards, so the chat is no longer where your keystrokes go.
+That is inherent in step 3 rather than a defect, but it is a real change in what
+Enter does to your focus.
 
 ### What already exists
 

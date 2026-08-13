@@ -15193,6 +15193,160 @@ function refocusChatField(): void {
   f?.panel.setFocusKey(f.key);
 }
 
+// -----------------------------------------------------------------------------
+// Waking the agent you just messaged
+//
+// The mailbox is delivery, not receipt: the file lands in `inbox/` and the peer
+// acts when it next reads it. An agent whose workspace is not even loaded —
+// every workspace after a restart — has no turn in which to read anything, so
+// the message sits there and the chat has said "delivered" about a message
+// nobody will see.
+//
+// So sending also *wakes* the addressee: restore its workspace, wait for its
+// agent to come back, and put you in front of it. Nothing is typed at the
+// agent — see §8 of docs/internal/chat-surface-gaps.md for why injecting the
+// message as keystrokes is a separate decision with its own hazards (a paste
+// plus Enter into an agent parked at a permission prompt answers that prompt).
+// This restores and focuses; the mailbox file remains the only delivery.
+//
+// The host does the actual restoring, and already did before this existed:
+// windows come back from a restart *dormant*, and `setActiveWindow` →
+// `materialize_window` → `restore_window` is the lazy path that rebuilds one on
+// first dive, agent included (its resume argv is persisted with the workspace).
+// `focusWorkspace` is the plugin's door to that. What is added here is the
+// waiting, and knowing when not to wait at all.
+// -----------------------------------------------------------------------------
+
+/// What a wake attempt actually achieved. Reported rather than assumed,
+/// because "restored" and "opened a workspace that has no agent in it" look
+/// identical from the chat and mean very different things about whether anyone
+/// is going to answer.
+type WakeOutcome =
+  /// Already live — nothing to restore, focus moved.
+  | { kind: "live" }
+  /// Was dormant; its workspace was restored and its agent signalled.
+  | { kind: "restored" }
+  /// A worktree discovered on disk. There is no persisted window and so no
+  /// agent to resume: the workspace opens with a plain shell.
+  | { kind: "no_agent" }
+  /// Restored, but nothing ever signalled within the timeout.
+  | { kind: "timeout" }
+  /// No workspace here to restore.
+  | { kind: "unknown" };
+
+/// How long to wait for a materialized window to produce a terminal, and then
+/// for the agent inside it to show any sign of life. Generous, because these
+/// wait on a process launch and a TUI's first paint, and stingy waits would
+/// report "timeout" for an agent that was merely slow. Both bounded: an
+/// unbounded wait is a hung composer.
+const WAKE_TERMINAL_MS = 8_000;
+const WAKE_AGENT_MS = 20_000;
+const WAKE_POLL_MS = 400;
+
+/// The session that owns `root`, ignoring discovered placeholders — after a
+/// restore the row is a different object (and for a discovered worktree a
+/// different *id*), so callers must re-resolve rather than hold a reference
+/// across the await.
+function liveSessionForRoot(root: string): AgentSession | undefined {
+  for (const s of orchestratorSessions.values()) {
+    if (s.root === root && !s.discovered && !s.pending) return s;
+  }
+  return undefined;
+}
+
+/// Any sign the agent in `s` is alive: its own `status` line (what the
+/// briefing tells every agent to write before anything else), or its terminal
+/// having printed something. Neither is authoritative — an agent that ignores
+/// the briefing and prints nothing is indistinguishable from one still
+/// starting — which is why the caller times out rather than waits forever.
+function agentShowsLife(s: AgentSession): boolean {
+  return s.status !== undefined || s.lastOutputAt !== null;
+}
+
+/// Focus the pane the agent's terminal is drawn in, having made its workspace
+/// the active one.
+///
+/// The window's restored layout usually focuses it already — it is what was
+/// focused when the editor exited — so this is the "usually a no-op, wrong
+/// exactly when it matters" case: a workspace last left on a file, or split,
+/// would otherwise put you in front of the wrong pane.
+async function focusAgentTerminal(s: AgentSession): Promise<void> {
+  if (editor.activeWindow() !== s.id) editor.setActiveWindow(s.id);
+  if (s.terminalBufferId === undefined) return;
+  try {
+    const ws = await editor.describeWorkspace();
+    const pane = ws.panes.find((p) => p.bufferId === s.terminalBufferId);
+    if (pane && ws.activeSplitId !== pane.splitId) editor.focusSplit(pane.splitId);
+  } catch (_e) {
+    // The window is active either way, which is the part that matters. A
+    // failed pane lookup should not turn a successful wake into an error.
+  }
+}
+
+/// Restore the workspace behind `root`, wait for its agent, and focus it.
+///
+/// Never throws: every outcome is a `WakeOutcome`, because this runs after the
+/// message has already been written to the inbox and recorded in the
+/// transcript. A wake that fails must not retroactively lose a delivered
+/// message.
+async function wakeAgentWorkspace(root: string): Promise<WakeOutcome> {
+  reconcileSessions();
+  let s = liveSessionForRoot(root);
+
+  if (!s) {
+    // Only a discovered on-disk row, or nothing at all. Opening the worktree
+    // is worth doing — it is where the mailbox is — but there is no persisted
+    // window here, so no agent will be resumed and waiting for one would burn
+    // the whole timeout to reach a foregone conclusion.
+    const disc = [...orchestratorSessions.values()].find(
+      (x) => x.root === root && x.discovered,
+    );
+    if (!disc) return { kind: "unknown" };
+    await focusWorkspace(disc.id);
+    return { kind: "no_agent" };
+  }
+
+  const wasLive = s.terminalId !== null;
+  if (!wasLive) {
+    // Dormant: the window exists but its workspace has never been restored in
+    // this run. Activating it is what materializes it.
+    await focusWorkspace(s.id);
+  }
+
+  // Wait for a terminal to exist. `probeStatus`'s poll is what fills
+  // `terminalId`/`terminalBufferId` in from `describeEnvironment`, so this
+  // waits on that tick rather than doing the lookup itself — one source of
+  // truth for "which terminal is this workspace's".
+  const tDeadline = Date.now() + WAKE_TERMINAL_MS;
+  while (Date.now() < tDeadline) {
+    s = liveSessionForRoot(root) ?? s;
+    if (s.terminalId !== null) break;
+    await editor.delay(WAKE_POLL_MS);
+  }
+  s = liveSessionForRoot(root) ?? s;
+  if (s.terminalId === null) return { kind: "timeout" };
+
+  if (wasLive) {
+    await focusAgentTerminal(s);
+    return { kind: "live" };
+  }
+
+  // Then wait for the agent itself. A terminal exists from the moment the pty
+  // is up; the agent in it is still initialising and has not read its inbox.
+  const aDeadline = Date.now() + WAKE_AGENT_MS;
+  while (Date.now() < aDeadline) {
+    s = liveSessionForRoot(root) ?? s;
+    if (agentShowsLife(s)) {
+      await focusAgentTerminal(s);
+      return { kind: "restored" };
+    }
+    await editor.delay(WAKE_POLL_MS);
+  }
+  s = liveSessionForRoot(root) ?? s;
+  await focusAgentTerminal(s);
+  return { kind: "timeout" };
+}
+
 /// Send what is in the chat line to the agent that was picked.
 async function sendChat(): Promise<void> {
   const to = chatTarget;
@@ -15233,6 +15387,32 @@ async function sendChat(): Promise<void> {
   renderChatSurface(true);
   setChatFieldValue(chatComposerValue());
   refocusChatField();
+  // Only now — after the message is on disk and in the transcript — go and wake
+  // the addressee. Order matters: the inbox file must exist *before* the agent
+  // boots, or its first read of the inbox happens before there is anything to
+  // read and the wake has raced the delivery it was supposed to help.
+  if (!res.delivered) return;
+  const addr = resolveAgentAddress(to);
+  if (!addr) return;
+  const woke = await wakeAgentWorkspace(addr.root);
+  // Say something only where the outcome changes what the user should expect.
+  // A successful wake needs no words: focus moved to the agent, which is the
+  // feedback. The two quiet failures do need them, because both leave a
+  // delivered message that nobody is going to read.
+  if (woke.kind === "no_agent") {
+    chatSay(
+      `Opened @${to}'s workspace, but there is no agent to restore in it — ` +
+        `Alt+n starts one. Your message is in its inbox.`,
+    );
+  } else if (woke.kind === "timeout") {
+    chatSay(
+      `Restored @${to}'s workspace, but its agent has not reported in yet. ` +
+        `Your message is in its inbox for when it does.`,
+    );
+  }
+  if (woke.kind === "no_agent" || woke.kind === "timeout") {
+    renderChatSurface(true);
+  }
 }
 
 // -----------------------------------------------------------------------------
