@@ -2011,9 +2011,9 @@ type WidgetSpec = {
 	*/
 	fullWidth: boolean;
 	/**
-	* Optional completion candidates. When non-empty AND
-	* `label` is non-empty (the chrome trigger), the
-	* renderer paints a popup directly under the input,
+	* Optional completion candidates. When non-empty the
+	* renderer paints a popup directly under the input
+	* (or above it — see `completions_above`),
 	* inside a unified box: the input's normal `╰─...─╯`
 	* bottom border becomes a dimmed `┄` separator, the
 	* labeled section's side borders extend down through
