@@ -410,6 +410,68 @@ fn test_nested_list_items_get_a_deeper_indent() {
     );
 }
 
+/// Item spacing must survive editing inside the list.
+///
+/// Regression: the spacer was originally placed above an item whose
+/// *predecessor* was also an item. That needs two lines, but an edit-sized
+/// `lines_changed` batch carries only the lines the edit touched — so the
+/// spacer got cleared (this line is in the batch) and could not be re-derived
+/// (its neighbour isn't). Editing inside a list silently dropped its spacing
+/// and never recovered it, because `lines_changed` is edge-triggered and no
+/// later batch revisits those ranges. Deciding from the item's own line alone
+/// makes clear-and-rebuild a complete decision.
+#[test]
+fn test_list_spacing_survives_an_edit_inside_the_list() {
+    let (mut harness, _tmp) = composed(LIST_MD, 100, 30);
+
+    // Put the cursor at the end of "first item" (line 3 of LIST_MD) and open a
+    // new item below it.
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("3").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("- inserted item").unwrap();
+
+    // Move off the edited line so its markup is no longer cursor-revealed.
+    harness
+        .send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 3)
+        .unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("inserted item"))
+        .unwrap();
+    harness.wait_for_async_quiescence(8).unwrap();
+
+    let screen = harness.screen_to_string();
+    let rows: Vec<&str> = screen.lines().collect();
+    let row_of = |needle: &str| {
+        rows.iter()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("'{needle}' not on screen.\nScreen:\n{screen}"))
+    };
+
+    let first = row_of("first item");
+    let inserted = row_of("inserted item");
+    assert_eq!(
+        inserted - first,
+        2,
+        "the newly typed item should be separated from the one above it; \
+         'first item' at row {first}, 'inserted item' at row {inserted}.\n\
+         Screen:\n{screen}",
+    );
+    assert!(
+        rows[first + 1].trim().is_empty(),
+        "expected a blank spacer row between the items after the edit, got {:?}",
+        rows[first + 1],
+    );
+}
+
 /// Turning compose off must take the inter-item spacer rows with it. They are
 /// virtual lines, so unlike conceals they do not disappear on their own when
 /// the mode ends — the namespace has to be cleared explicitly, exactly as the
