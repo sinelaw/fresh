@@ -4590,9 +4590,16 @@ fn test_compose_mode_table_width_respects_file_explorer() {
     std::fs::write(&md_path, &md_content).unwrap();
 
     // Use a wide terminal so the unopened-sidebar path has plenty of room.
+    //
+    // Clear `editor.page_width` so the compose width follows the viewport.
+    // This test is about column widths being recomputed when the *content
+    // area* shrinks, and a fixed page measure (the default since #2967) is
+    // narrower than the pane both before and after the sidebar opens, so the
+    // table would never need to shrink and the regression would go unobserved.
+    let mut config = fresh::config::Config::default();
+    config.editor.page_width = None;
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
-            .unwrap();
+        EditorTestHarness::with_config_and_working_dir(120, 30, config, project_root).unwrap();
 
     harness.open_file(&md_path).unwrap();
     harness.render().unwrap();

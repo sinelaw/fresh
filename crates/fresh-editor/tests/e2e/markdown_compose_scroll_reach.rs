@@ -23,13 +23,18 @@
 //!    fixed in source mode, but here also routed through the plugin's
 //!    soft-break/conceal pipeline.
 //!
-//! Each scenario is run **twice** at every width: once with the
-//! plugin's default `composeWidth: null` (which makes the effective
-//! compose width follow the viewport) and once with `composeWidth: 80`
-//! (which clamps the content column to 80 and centers it inside wider
-//! terminals).  At narrow viewports these collapse to the same layout;
-//! at wider ones they exercise different code paths in the centering /
-//! gutter math.
+//! Each scenario is run **twice** at every width: once with
+//! `composeWidth: null` (which makes the effective compose width follow
+//! the viewport) and once with `composeWidth: 80` (which clamps the
+//! content column to 80 and centers it inside wider terminals).  At
+//! narrow viewports these collapse to the same layout; at wider ones
+//! they exercise different code paths in the centering / gutter math.
+//!
+//! Both values are patched into the plugin source explicitly. The
+//! viewport-following case used to rely on `null` being the plugin's
+//! own default, but an unset width now resolves from the editor config
+//! (issue #2967), so pinning it here keeps these tests measuring the
+//! layout math rather than whatever the default happens to be.
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
@@ -196,17 +201,25 @@ fn setup_compose_harness(
     copy_plugin(&plugins_dir, "markdown_compose");
     copy_plugin_lib(&plugins_dir);
 
-    if let Some(cw) = compose_width_override {
+    // Pin the compose width in the plugin source for both arms of the sweep.
+    // `None` means "follow the viewport", which is `composeWidth: null` — it is
+    // patched in rather than inherited, because the plugin's own default is now
+    // `undefined` (resolve from the editor config) rather than `null`.
+    {
         let plugin_path = plugins_dir.join("markdown_compose.ts");
         let content =
             std::fs::read_to_string(&plugin_path).map_err(|e| format!("read plugin: {e}"))?;
-        let needle = "composeWidth: null,";
+        let needle = "composeWidth: undefined,";
         if !content.contains(needle) {
             return Err(format!(
                 "plugin source no longer contains `{needle}` — patch failed"
             ));
         }
-        let patched = content.replacen(needle, &format!("composeWidth: {cw},"), 1);
+        let value = match compose_width_override {
+            Some(cw) => cw.to_string(),
+            None => "null".to_string(),
+        };
+        let patched = content.replacen(needle, &format!("composeWidth: {value},"), 1);
         std::fs::write(&plugin_path, patched).map_err(|e| format!("write plugin: {e}"))?;
     }
 

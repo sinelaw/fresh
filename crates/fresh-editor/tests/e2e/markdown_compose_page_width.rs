@@ -82,14 +82,20 @@ fn toggle_compose(harness: &mut EditorTestHarness) {
     harness.wait_for_async_quiescence(4).unwrap();
 }
 
-/// Column at which `HEADING` starts on screen.
+/// Left margin of the heading line, in columns.
+///
+/// Measured as the line's leading whitespace rather than as the offset of the
+/// heading text: the heading sits on line 1, where the cursor is, so its `#`
+/// marker is deliberately revealed and would otherwise be counted as two
+/// columns of "indent". Counted in chars, not bytes — `str::find` returns a
+/// byte offset, which inflates any line carrying a multi-byte glyph.
 fn heading_indent(harness: &EditorTestHarness) -> usize {
     let screen = harness.screen_to_string();
     let line = screen
         .lines()
         .find(|l| l.contains(HEADING))
         .unwrap_or_else(|| panic!("heading not on screen.\nScreen:\n{screen}"));
-    line.find(HEADING).unwrap()
+    line.chars().take_while(|c| *c == ' ').count()
 }
 
 /// With a default config, toggling compose must inset the text — the document

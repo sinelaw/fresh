@@ -79,6 +79,26 @@ fn line_with(harness: &EditorTestHarness, needle: &str) -> String {
         .to_string()
 }
 
+/// Character column of `glyph` on a screen line.
+///
+/// Chars, not bytes: `str::find` returns a byte offset, so a line carrying a
+/// multi-byte glyph before the one being measured (the gutter's `▾` fold arrow
+/// is three bytes) reports a column several past the truth, and comparing two
+/// such offsets across lines compares different units.
+fn glyph_column(line: &str, glyph: char) -> usize {
+    line.chars()
+        .position(|c| c == glyph)
+        .unwrap_or_else(|| panic!("no '{glyph}' on line {line:?}"))
+}
+
+/// Whether a screen row is visually empty in the content area.
+///
+/// The scrollbar track is drawn in the last column, so an otherwise blank row
+/// can still carry a `▌` marker glyph — `trim().is_empty()` is not enough.
+fn is_blank_row(line: &str) -> bool {
+    line.chars().all(|c| c == ' ' || c == '▌')
+}
+
 // ---------------------------------------------------------------------------
 // Headings (issue item 2, the highest-value one)
 // ---------------------------------------------------------------------------
@@ -219,7 +239,7 @@ fn test_divider_does_not_swallow_following_line() {
         .expect("no rule on screen");
     let next = screen.lines().nth(rule_row + 1).unwrap_or("");
     assert!(
-        next.trim().is_empty(),
+        is_blank_row(next),
         "the blank source line after `---` must still occupy its own row; \
          found {next:?} directly under the rule.\nScreen:\n{screen}",
     );
@@ -382,7 +402,7 @@ fn test_consecutive_list_items_are_vertically_spaced() {
          Screen:\n{screen}",
     );
     assert!(
-        lines[first + 1].trim().is_empty(),
+        is_blank_row(lines[first + 1]),
         "the row between two list items should be blank, got {:?}",
         lines[first + 1],
     );
@@ -394,11 +414,7 @@ fn test_consecutive_list_items_are_vertically_spaced() {
 fn test_nested_list_items_get_a_deeper_indent() {
     let (harness, _tmp) = composed(LIST_MD, 100, 30);
 
-    let indent_of = |needle: &str| {
-        let line = line_with(&harness, needle);
-        line.find('•')
-            .unwrap_or_else(|| panic!("no bullet on the line for '{needle}': {line:?}"))
-    };
+    let indent_of = |needle: &str| glyph_column(&line_with(&harness, needle), '•');
 
     let top = indent_of("second item");
     let nested = indent_of("nested item");
@@ -466,7 +482,7 @@ fn test_list_spacing_survives_an_edit_inside_the_list() {
          Screen:\n{screen}",
     );
     assert!(
-        rows[first + 1].trim().is_empty(),
+        is_blank_row(rows[first + 1]),
         "expected a blank spacer row between the items after the edit, got {:?}",
         rows[first + 1],
     );
@@ -488,7 +504,7 @@ fn test_list_spacers_are_removed_when_compose_is_disabled() {
         .position(|l| l.contains("first item"))
         .expect("list not rendered");
     assert!(
-        composed_rows[first + 1].trim().is_empty(),
+        is_blank_row(composed_rows[first + 1]),
         "expected a spacer row while composing",
     );
 
