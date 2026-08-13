@@ -492,21 +492,46 @@ function headingMarkerMaxLevel(): number {
   return Math.max(0, Math.min(6, Math.floor(v)));
 }
 
-/** Marks for the headings in `text`, whose first byte is at `baseByte`. */
-function headingMarkersIn(text: string, baseByte: number, maxLevel: number): ScrollbarMarker[] {
+/**
+ * The headings in `text`, skipping fenced code blocks.
+ *
+ * A `#` at the start of a line inside a fence is a comment in whatever
+ * language the block is written in — `# Binary package (recommended)` in a
+ * bash block is the common case — not a heading. This scan tracks fences
+ * itself because it works from raw text, where the editor's `region`
+ * classification (which the per-line pass uses for exactly this question)
+ * isn't available. Both answer the same question from the same rule; only
+ * the input differs.
+ */
+function scanHeadings(text: string, maxLevel: number): ScrollbarMarker[] {
   const markers: ScrollbarMarker[] = [];
-  let offset = baseByte;
+  let offset = 0;
+  let fenceStart = -1;
+  let fenceChar = "";
+
   for (const line of text.split("\n")) {
-    const level = headingLevel(line);
-    if (level > 0 && level <= maxLevel) {
-      markers.push({
-        position: offset,
-        color: headingMarkerColor(level),
-        priority: 10 - level,
-      });
+    const lineBytes = utf8Length(line);
+    const fence = line.trim().match(/^(`{3,}|~{3,})/);
+    if (fence) {
+      if (fenceStart < 0) {
+        fenceStart = offset;
+        fenceChar = fence[1][0];
+      } else if (fence[1][0] === fenceChar) {
+        fenceStart = -1;
+      }
+    } else if (fenceStart < 0) {
+      const level = headingLevel(line);
+      if (level > 0 && level <= maxLevel) {
+        markers.push({
+          position: offset,
+          color: headingMarkerColor(level),
+          priority: 10 - level,
+        });
+      }
     }
-    offset += utf8Length(line) + 1; // +1 for the "\n" split consumed
+    offset += lineBytes + 1; // +1 for the "\n" the split consumed
   }
+
   return markers;
 }
 
@@ -571,8 +596,32 @@ async function prescanHeadingMarkers(bufferId: number): Promise<void> {
 
   editor.setScrollbarMarkers(
     bufferId, HEADING_MARKER_NS,
-    headingMarkersIn(text, 0, maxLevel),
+    scanHeadings(text, maxLevel),
   );
+}
+
+// How long to wait after the last keystroke before rescanning. The scan is a
+// bounded read plus a linear walk, but it is whole-document work and there is
+// no reason to do it per keystroke.
+const HEADING_RESCAN_DEBOUNCE_MS = 300;
+const headingRescanTokens = new Map<number, number>();
+
+/**
+ * Rescan after an edit, once the typing stops.
+ *
+ * Marker anchors shift with edits on their own, so the marks stay glued to
+ * their headings without this. What an edit can change and anchors cannot
+ * express is *structure*: a line that stopped being a heading, one that
+ * became one, or — the reason this exists — a newly opened or closed code
+ * fence, which changes whether the `#` lines inside it are headings at all.
+ */
+async function scheduleHeadingRescan(bufferId: number): Promise<void> {
+  const token = (headingRescanTokens.get(bufferId) ?? 0) + 1;
+  headingRescanTokens.set(bufferId, token);
+  await editor.delay(HEADING_RESCAN_DEBOUNCE_MS);
+  if (headingRescanTokens.get(bufferId) !== token) return; // superseded
+  if (!isComposingInAnySplit(bufferId)) return;
+  await prescanHeadingMarkers(bufferId);
 }
 
 // Per-render column widths, keyed by a row's byte_start. Rebuilt at the top of
@@ -1113,6 +1162,9 @@ function disableMarkdownCompose(bufferId: number): void {
     editor.clearConcealNamespace(bufferId, "md-syntax");
     editor.clearSoftBreakNamespace(bufferId, "md-wrap");
     editor.clearScrollbarMarkers(bufferId, HEADING_MARKER_NS);
+    // Make any rescan still inside its debounce window a no-op, rather than
+    // a republish landing after the clear.
+    headingRescanTokens.delete(bufferId);
 
     editor.refreshLines(bufferId);
     editor.debug(`Markdown compose disabled for buffer ${bufferId}`);
@@ -2515,6 +2567,12 @@ editor.on("lines_changed", (data) => {
     for (const line of data.lines) {
       const level = headingLevel(line.content);
       if (level === 0 || level > maxLevel) continue;
+      // `# ...` inside a fenced block is a comment in the block's language,
+      // not a heading. The batch cannot decide that from its own lines, so it
+      // takes the editor's classification — the same source the frame uses,
+      // and current by construction, where a plugin-side memo of fence
+      // extents would be stale for exactly the edit that moved a fence.
+      if (isCodeRegion(line.region)) continue;
       headingMarkers.push({
         // Byte offsets, not line numbers: they are exact regardless of file
         // size, and the editor anchors them so later edits shift the marks.
@@ -2562,6 +2620,7 @@ editor.on("after_insert", (data) => {
   // already-delimiter-shaped line from being one, which the batch will see.
   if (touchesFenceChars(data.text)) editor.refreshLines(data.buffer_id);
   else fenceEditArmed.add(data.buffer_id);
+  void scheduleHeadingRescan(data.buffer_id);
 });
 editor.on("after_delete", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
@@ -2570,6 +2629,7 @@ editor.on("after_delete", (data) => {
   // appears in no later `lines_changed` payload.
   if (touchesFenceChars(data.deleted_text)) editor.refreshLines(data.buffer_id);
   else fenceEditArmed.add(data.buffer_id);
+  void scheduleHeadingRescan(data.buffer_id);
 });
 // cursor_moved: no handler. Cursor-dependent reveal/conceal and table-row
 // un/re-wrap are baked into the markers as activation scopes (emitted in the
@@ -2578,7 +2638,9 @@ editor.on("after_delete", (data) => {
 // re-fires lines_changed, never bumps the conceal/soft-break versions, and
 // never invalidates the line-wrap cache or visual-row index.
 editor.on("buffer_closed", (data) => {
-  // View state is cleaned up automatically when the buffer is removed from keyed_states
+  // View state is cleaned up automatically when the buffer is removed from
+  // keyed_states; the plugin's own per-buffer scan state is not.
+  headingRescanTokens.delete(data.buffer_id);
 });
 editor.on("viewport_changed", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;

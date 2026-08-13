@@ -94,6 +94,57 @@ fn markdown_compose_marks_headings_on_the_scrollbar() {
     );
 }
 
+/// A `#` at the start of a line inside a fenced code block is a comment in the
+/// block's language, not a heading, and must not be marked.
+///
+/// Shell blocks make this constant: `# Binary package (recommended)` above an
+/// install command is ordinary prose in a bash fence, and every such line used
+/// to put a mark on the track.
+#[test]
+fn comments_in_fenced_code_blocks_are_not_headings() {
+    let mut md = String::from("# Install\n\n");
+    md.push_str("**Using an AUR helper (such as `yay` or `paru`):**\n\n");
+    for s in 0..20 {
+        md.push_str("```bash\n");
+        md.push_str(&format!(
+            "# Binary package (recommended, faster install) {s}\n"
+        ));
+        md.push_str("yay -S fresh-editor-bin\n\n");
+        md.push_str("# Or build from source\n");
+        md.push_str("yay -S fresh-editor\n");
+        md.push_str("```\n\n");
+        for l in 0..15 {
+            md.push_str(&format!("Prose line {l} of section {s}.\n"));
+        }
+        md.push('\n');
+    }
+
+    let (mut harness, _tmp) = compose_harness(&md);
+
+    harness
+        .wait_until(|h| !marker_rows(h).is_empty())
+        .expect("the one real `# Install` heading should be marked");
+    // Let any marks for the 40 `#` comment lines have their chance to appear
+    // before asserting that they don't.
+    let mut settle = usize::MAX;
+    harness
+        .wait_until_stable(|h| {
+            let n = marker_rows(h).len();
+            let stable = n == settle;
+            settle = n;
+            stable
+        })
+        .unwrap();
+
+    let (first, _) = harness.content_area_rows();
+    assert_eq!(
+        marker_rows(&harness),
+        vec![first as u16],
+        "only the `# Install` heading is a heading; the 40 shell comments \
+         inside the bash fences are not"
+    );
+}
+
 /// The track describes the whole document from the moment compose mode is on
 /// — the headline fix for issue #2990.
 ///
