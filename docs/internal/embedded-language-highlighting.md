@@ -135,6 +135,54 @@ string color), so nothing regresses.
   same documented trade-off the engine already makes for all multi-line
   constructs (strings, block comments, HTML `<style>`).
 
+### Region membership as an exported fact
+
+The per-line classification in the table above is not only used to pick a
+parser — it is the editor's *only* authoritative answer to "is this line
+inside a fence", and `TextMateEngine::region_lines_in` exports it. The
+`lines_changed` plugin hook carries it per line as
+`region: "open" | "body" | "close"`, and compose mode's fenced-code framing
+is built on it.
+
+Why it has to come from here. Region membership is the one property of a
+Markdown line that cannot be derived from the line's own text: a bare
+` ``` ` opens or closes depending on every fence above it (only a fence
+*with* an info string is unambiguously an opener, per CommonMark). A
+decoration plugin sees one `lines_changed` batch — the lines an edit or a
+scroll touched — and cannot read the buffer above it synchronously, so any
+plugin-side rule frames a block whose opening fence happens to be visible
+and gives up on one that isn't: a frame that appears and disappears with
+scroll position. Nor can it be memoised plugin-side; a memo of fence
+extents carries *structure*, and stale structure means framing the wrong
+lines (contrast the compose table-width memo, which carries only numbers).
+
+Driving it off the same classification that picks the parser also means the
+frame can never disagree with the colouring inside it. A fence the grammar
+does not recognize as a region — a ` ```js ` abutting a table row with no
+blank line between, which the Markdown grammar does not open a region for —
+is left unhighlighted *and* unframed, rather than framing a block the
+highlighter does not believe in.
+
+`region_lines_in` is a probe, not a cache: it resumes from the nearest
+checkpoint and discards what it computes, so it stays out of the three
+incremental cache paths and cannot perturb highlighting. Two rules keep it
+from answering confidently-wrong, both stricter than the highlight paths'
+own resume logic, because a wrong region is a wrong *frame* rather than a
+wrong colour:
+
+- it never resumes from a fresh state mid-file (a fresh state reads as
+  "outside a region"), only from a real checkpoint or byte 0;
+- it never resumes from a checkpoint at or after `dirty_from`.
+  `notify_insert`/`notify_delete` shift checkpoint *positions* but leave
+  their stored states for `try_partial_update` to repair lazily, so a
+  checkpoint past an unrepaired edit can still hold pre-edit region state.
+
+When neither is available — a buffer past `MAX_PARSE_BYTES` whose viewport
+has no checkpoint before it yet — it reports nothing, and consumers must
+read that as *unknown*, not as "outside a region". That is the same
+cold-start trade-off this engine already makes for styling inside a huge
+region.
+
 ### Adding a new host
 
 Add one `EmbeddingSpecDef` entry per region kind (host syntax name, the

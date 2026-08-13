@@ -318,11 +318,15 @@ impl Editor {
                         let mut fresh_ranges: Vec<(usize, usize)> = Vec::new();
                         let mut line_number = state.buffer.get_line_number(top_byte);
                         let mut iter = state.buffer.line_iterator(top_byte, estimated_line_length);
+                        // End of the last line walked, so the embedded-region
+                        // probe below covers exactly the lines we iterated.
+                        let mut walked_end = top_byte;
 
                         for _ in 0..visible_count {
                             if let Some((line_start, line_content)) = iter.next_line() {
                                 let byte_end = line_start + line_content.len();
                                 let byte_range = (line_start, byte_end);
+                                walked_end = byte_end;
 
                                 if !seen_byte_ranges.contains(&byte_range) {
                                     new_lines.push(crate::services::plugins::hooks::LineInfo {
@@ -330,6 +334,7 @@ impl Editor {
                                         byte_start: line_start,
                                         byte_end,
                                         content: line_content,
+                                        region: None,
                                     });
                                     fresh_ranges.push(byte_range);
                                 }
@@ -341,6 +346,35 @@ impl Editor {
 
                         let count = new_lines.len();
                         if !new_lines.is_empty() {
+                            // Whether each reported line sits inside an
+                            // embedded-language region (a Markdown fence, a Vue
+                            // `<script>`) — the one property of such a line that
+                            // is not derivable from its own text, and that a
+                            // plugin cannot read out of the buffer above its
+                            // batch synchronously. Attached here, alongside the
+                            // live coordinates, so a consumer never has to store
+                            // region structure of its own.
+                            //
+                            // The probe costs nothing for syntaxes that host no
+                            // regions (the overwhelming majority), and is skipped
+                            // entirely when there is nothing to report.
+                            let regions = state
+                                .highlighter
+                                .region_lines_in(&state.buffer, top_byte..walked_end);
+                            if !regions.is_empty() {
+                                let mut next = 0usize;
+                                for line in new_lines.iter_mut() {
+                                    // Both sides ascend by line start, so one
+                                    // forward walk pairs them.
+                                    while next < regions.len() && regions[next].0 < line.byte_start
+                                    {
+                                        next += 1;
+                                    }
+                                    if regions.get(next).is_some_and(|r| r.0 == line.byte_start) {
+                                        line.region = Some(regions[next].1);
+                                    }
+                                }
+                            }
                             pm_guard.run_hook(
                                 "lines_changed",
                                 crate::services::plugins::hooks::HookArgs::LinesChanged {

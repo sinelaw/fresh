@@ -43,6 +43,7 @@ use crate::primitives::highlighter::{
     highlight_bg, highlight_color, HighlightCategory, HighlightSpan, Highlighter, Language,
 };
 use crate::view::theme::Theme;
+use fresh_core::hooks::RegionLine;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
@@ -1711,6 +1712,141 @@ impl TextMateEngine {
         None
     }
 
+    /// Classify every line start in `range` by its role in an
+    /// embedded-language region — `(line_start_byte, RegionLine)` pairs, in
+    /// increasing order. Lines outside any region are omitted.
+    ///
+    /// This exposes, read-only, the classification `parse_snapshot_line`
+    /// already makes per line (the `region scope before → after` table in
+    /// `docs/internal/embedded-language-highlighting.md`). It exists because
+    /// region membership is the one thing about a Markdown fence that is *not*
+    /// derivable from a line's own text — a bare ``` opens or closes depending
+    /// on every fence above it — and the `lines_changed` consumers that need it
+    /// (compose-mode code-block framing) run on the plugin thread, where the
+    /// buffer above the batch is not synchronously readable.
+    ///
+    /// Deliberately a probe, not a cache: it resumes from the nearest
+    /// checkpoint and drops everything it computes. That keeps it out of the
+    /// three incremental cache paths (`full_parse` / `extend_cache_forward` /
+    /// `try_partial_update`) entirely, so it cannot perturb highlighting, and
+    /// it needs no invalidation of its own. It creates no checkpoints and does
+    /// not touch `stats` — those measure the highlight cache's work, and
+    /// folding a separate read-only probe into them would make the assertions
+    /// that reason about cache behaviour meaningless.
+    ///
+    /// Cost: zero for the overwhelming majority of buffers (`embedding` is
+    /// empty unless the syntax hosts regions — currently only Markdown and
+    /// Vue), otherwise one span-less parse from the resume anchor — normally
+    /// the checkpoint within `CHECKPOINT_INTERVAL` bytes before `range.start` —
+    /// through `range.end`, and never more than `MAX_PARSE_BYTES` of it.
+    ///
+    /// Returns **empty** — not "no regions" — whenever the state at
+    /// `range.start` cannot be resolved within that budget: no usable anchor,
+    /// or one too far back to walk from. That is the same cold-start trade-off
+    /// the engine already documents for styling inside a huge region, and it is
+    /// why callers must treat an absent answer as "unknown".
+    pub fn region_lines_in(
+        &mut self,
+        buffer: &Buffer,
+        range: Range<usize>,
+    ) -> Vec<(usize, RegionLine)> {
+        if self.embedding.is_empty() || range.start >= range.end {
+            return Vec::new();
+        }
+        let parse_end = range.end.min(buffer.len());
+        if range.start >= parse_end {
+            return Vec::new();
+        }
+
+        // Resume anchor. Two rules, both stricter than
+        // `find_parse_resume_point`'s, because a wrong anchor here does not
+        // merely mis-colour a line — it reports the wrong region membership,
+        // and the caller frames the wrong lines:
+        //
+        //  * never start from a fresh state *mid-file*. A fresh state reads as
+        //    "outside a region", which is a confident wrong answer; only a real
+        //    checkpoint, or byte 0, can seed the walk.
+        //  * never resume from a checkpoint at or after `dirty_from`.
+        //    `notify_insert`/`notify_delete` shift checkpoint *positions* but
+        //    leave their stored states untouched — the repair happens lazily in
+        //    `try_partial_update` — so a checkpoint past an unrepaired edit can
+        //    still hold the region state from before it.
+        let dirty_limit = self.dirty_from.unwrap_or(usize::MAX);
+        let anchor_limit = range.start.min(dirty_limit.saturating_sub(1));
+        let search_start = anchor_limit.saturating_sub(MAX_PARSE_BYTES);
+        let nearest = self
+            .checkpoint_markers
+            .query_range(search_start, anchor_limit + 1)
+            .into_iter()
+            .filter(|(_, start, _)| *start <= anchor_limit)
+            .max_by_key(|(_, start, _)| *start);
+        let (mut current_offset, mut snapshot) = match nearest {
+            Some((id, cp_pos, _)) => match self.checkpoint_states.get(&id) {
+                Some(snap) => (cp_pos, snap.clone()),
+                None => return Vec::new(), // orphaned checkpoint
+            },
+            None if parse_end <= MAX_PARSE_BYTES => (
+                0,
+                ParseSnapshot::new(&self.syntax_set.syntaxes()[self.syntax_index]),
+            ),
+            None => return Vec::new(), // large file, no anchor: unknown
+        };
+
+        // Bound the walk itself, not just the anchor search. An edit high in a
+        // large buffer pulls `dirty_limit` — and with it the only trustworthy
+        // anchor — far above the viewport; without this, one `lines_changed`
+        // batch could drag a megabyte parse into the draw path. Better to
+        // report "unknown" and render conservatively.
+        if parse_end.saturating_sub(current_offset) > MAX_PARSE_BYTES {
+            return Vec::new();
+        }
+
+        let content = buffer.slice_bytes(current_offset..parse_end);
+        let content_bytes = match std::str::from_utf8(&content) {
+            Ok(s) => s.as_bytes(),
+            Err(_) => return Vec::new(),
+        };
+
+        let mut out = Vec::new();
+        let mut pos = 0;
+        while pos < content_bytes.len() {
+            let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
+            let line_start = current_offset;
+            if let Some(prepared) = prepared {
+                let was_in = self.active_region_spec(&snapshot.scopes);
+                // Spans are discarded: only the scope-stack transition the
+                // parse leaves on `snapshot` matters here.
+                let parsed = self.parse_snapshot_line(
+                    &mut snapshot,
+                    &prepared,
+                    current_offset,
+                    |_, _, _| {},
+                );
+                if !parsed {
+                    // A host parse error leaves region membership untouched
+                    // (see `parse_snapshot_line`); classifying from it would
+                    // be a guess, so stop rather than emit one.
+                    break;
+                }
+                let now_in = self.active_region_spec(&snapshot.scopes);
+                let role = match (was_in, now_in) {
+                    (None, Some(_)) => Some(RegionLine::Open),
+                    (Some(_), Some(_)) => Some(RegionLine::Body),
+                    (Some(_), None) => Some(RegionLine::Close),
+                    (None, None) => None,
+                };
+                if let Some(role) = role {
+                    if line_start >= range.start {
+                        out.push((line_start, role));
+                    }
+                }
+            }
+            pos = line_end;
+            current_offset += line_byte_len;
+        }
+        out
+    }
+
     /// Merge adjacent spans with same category
     fn merge_adjacent_spans(spans: &mut Vec<CachedSpan>) {
         if spans.len() < 2 {
@@ -1847,6 +1983,21 @@ impl HighlightEngine {
                 h.highlight_viewport(buffer, viewport_start, viewport_end, theme, context_bytes)
             }
             Self::None => Vec::new(),
+        }
+    }
+
+    /// Embedded-language region roles for the line starts in `range`; see
+    /// `TextMateEngine::region_lines_in`. Empty for engines that have no
+    /// notion of embedded regions — the tree-sitter backend has injections
+    /// disabled, so it hosts none.
+    pub fn region_lines_in(
+        &mut self,
+        buffer: &Buffer,
+        range: Range<usize>,
+    ) -> Vec<(usize, RegionLine)> {
+        match self {
+            Self::TextMate(h) => h.region_lines_in(buffer, range),
+            Self::TreeSitter(_) | Self::None => Vec::new(),
         }
     }
 
@@ -2268,6 +2419,132 @@ mod tests {
             Some(HighlightCategory::Keyword),
             "category lookups must agree with the returned spans"
         );
+    }
+
+    /// `region_lines_in` classifies each fence line the way the parse does:
+    /// delimiters as open/close, content as body, everything else omitted —
+    /// including for a *bare* fence, whose role is not derivable from the
+    /// line's own text.
+    #[test]
+    fn test_region_lines_classify_markdown_fences() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        let content = "# T\n\n```rust\nlet x = 1;\n```\n\nprose\n\n```\nbare\n```\n\nend\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let at = |needle: &str| content.find(needle).unwrap();
+
+        let roles = engine.region_lines_in(&buffer, 0..buffer.len());
+        assert_eq!(
+            roles,
+            vec![
+                (at("```rust"), RegionLine::Open),
+                (at("let x = 1;"), RegionLine::Body),
+                (at("```\n\nprose"), RegionLine::Close),
+                (at("```\nbare"), RegionLine::Open),
+                (at("bare"), RegionLine::Body),
+                (at("```\n\nend"), RegionLine::Close),
+            ],
+            "prose lines are omitted; both delimiters of the bare fence are \
+             classified from the parse, not from their own text"
+        );
+    }
+
+    /// The probe is what makes a *scrolled-into* fence resolvable: asked only
+    /// about lines deep inside a block, it still answers, because it resumes
+    /// from the parse state before them rather than from the range start.
+    /// A batch-local reading of those same lines has no way to know.
+    #[test]
+    fn test_region_lines_resolve_a_range_starting_inside_a_fence() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        let mut content = String::from("intro\n\n```rust\n");
+        for i in 0..200 {
+            content.push_str(&format!("let v{i} = {i};\n"));
+        }
+        content.push_str("```\n\ntail\n");
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+
+        // A window well past the opening fence — the shape of a scroll batch.
+        let start = content.find("let v150").unwrap();
+        let end = content.find("tail").unwrap();
+        let roles = engine.region_lines_in(&buffer, start..end);
+
+        assert_eq!(roles.first().map(|r| r.1), Some(RegionLine::Body));
+        assert_eq!(
+            roles
+                .iter()
+                .find(|(_, role)| *role == RegionLine::Close)
+                .map(|(byte, _)| *byte),
+            Some(content.rfind("```").unwrap()),
+            "the closing delimiter must be reported as a close even though the \
+             range never saw the opening fence"
+        );
+        assert!(
+            roles.iter().all(|(byte, _)| *byte >= start),
+            "nothing before the requested range is reported"
+        );
+    }
+
+    /// An edit that has not yet been repaired by a highlight pass must not be
+    /// answered from a checkpoint captured before it. Checkpoint *states* are
+    /// left stale by `notify_insert` (only their positions shift), so a probe
+    /// that trusted one would keep reporting the pre-edit region structure —
+    /// and the caller would frame lines that are no longer code.
+    #[test]
+    fn test_region_lines_ignore_checkpoints_stale_from_an_unrepaired_edit() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        // Long enough that checkpoints (every CHECKPOINT_INTERVAL bytes) land
+        // between the fence and the lines below it.
+        let mut content = String::from("```js\n");
+        for i in 0..40 {
+            content.push_str(&format!("const v{i} = {i};\n"));
+        }
+        content.push_str("```\n");
+        for i in 0..40 {
+            content.push_str(&format!("prose line {i}\n"));
+        }
+        let mut buffer = Buffer::from_str(&content, 0, test_fs());
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let close_at = content.find("```\nprose").unwrap();
+        let probe_from = content.find("prose line 20").unwrap();
+        assert!(
+            engine
+                .region_lines_in(&buffer, probe_from..buffer.len())
+                .is_empty(),
+            "prose after the closed fence is outside any region"
+        );
+
+        // Break the closing fence *in place* (no line-count change, so nothing
+        // forces a re-parse) — every line below is now fence body.
+        let insert_at = close_at + 3;
+        buffer.insert(insert_at, " x");
+        engine.notify_insert(insert_at, 2);
+
+        let roles = engine.region_lines_in(&buffer, probe_from + 2..buffer.len());
+        assert!(
+            !roles.is_empty() && roles.iter().all(|(_, r)| *r == RegionLine::Body),
+            "with the fence no longer closed, the lines below must read as \
+             region body, not as the pre-edit prose; got {roles:?}"
+        );
+    }
+
+    /// Buffers whose syntax hosts no embedded regions pay nothing.
+    #[test]
+    fn test_region_lines_empty_for_non_hosting_syntax() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("main.rs"), None, &registry);
+        let buffer = Buffer::from_str("fn main() {\n    let x = 1;\n}\n", 0, test_fs());
+        assert!(engine.region_lines_in(&buffer, 0..buffer.len()).is_empty());
     }
 
     /// Fences naming an unknown language keep the host's raw-code styling.
