@@ -701,6 +701,19 @@ interface HookEventMap {
     /** Buffer version these byte ranges were captured at. Pass back to
      * coordinate-mapping APIs to repair stale offsets from this batch. */
     epoch: number;
+    /** Whether any split shows this buffer in compose/preview mode, read from
+     * the live view states as this batch was built.
+     *
+     * Gate decoration work on this, not on
+     * `getBufferInfo(buffer_id).is_composing_in_any_split`. The editor marks
+     * these lines as seen the moment it sends the batch, so the batch is the
+     * only offer they get, while `getBufferInfo` reads a state snapshot
+     * refreshed on the editor thread's own schedule — early in a mode change
+     * it still reports the mode the buffer just left. Gating on the snapshot
+     * therefore drops the first decoration pass at random, leaving the
+     * document undecorated until an edit or a scroll produces another
+     * batch. */
+    is_composing_in_any_split: boolean;
   };
 
   // ── commands ─────────────────────────────────────────────────────────────

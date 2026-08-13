@@ -275,6 +275,27 @@ impl Editor {
                     .map(|vs| vs.viewport.top_byte())
                     .unwrap_or(0);
 
+                // Whether this buffer is being composed in any split, read from
+                // the live view states rather than from the plugin snapshot.
+                // Travels with the batch (see `HookArgs::LinesChanged`) because
+                // the lines below are marked seen as soon as they are handed
+                // over: a consumer that had to re-derive this from
+                // `getBufferInfo()` would be reading a mirror that is refreshed
+                // on the editor thread's own schedule, and would silently drop
+                // its only decoration pass whenever it read too early (#2968).
+                let composing_in_any_split = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
+                    .values()
+                    .any(|vs| {
+                        vs.buffer_state(buffer_id)
+                            .map(|bs| matches!(bs.view_mode, crate::state::ViewMode::PageView))
+                            .unwrap_or(false)
+                    });
+
                 let __active_id = self.active_window;
                 let __win = self
                     .windows
@@ -409,6 +430,7 @@ impl Editor {
                                     buffer_id,
                                     lines: new_lines,
                                     epoch: state.buffer.version(),
+                                    is_composing_in_any_split: composing_in_any_split,
                                 },
                             );
                             for range in fresh_ranges {
@@ -2265,7 +2287,19 @@ impl Editor {
             // a hold-back list for window switches; this needs neither).
             // Routed through the same budgeted, backlogged, measured drain as
             // the tick so global FIFO order is preserved.
-            let _ = self.process_plugin_commands();
+            let processed = self.process_plugin_commands();
+            // ...and re-synced the same way afterwards. A command such as
+            // `SetViewMode` changes state that plugins read back through
+            // `state_snapshot`, and this frame goes on to fire hooks off the
+            // post-command state; leaving the snapshot describing the
+            // pre-command editor makes every plugin that consults it decide
+            // against a state this frame has already left behind. The tick's
+            // drain has always done this (`process_async_messages`); the drain
+            // here is the same drain, so it owes the same refresh.
+            if processed {
+                let _s = tracing::info_span!("update_plugin_state_snapshot_post").entered();
+                self.update_plugin_state_snapshot();
+            }
         }
     }
 

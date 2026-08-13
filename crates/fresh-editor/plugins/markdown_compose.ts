@@ -2508,7 +2508,16 @@ function computeRowWidths(bufferId: number, lines: LineInfoLike[]): boolean {
 
 // Register hooks
 editor.on("lines_changed", (data) => {
-  if (!isComposingInAnySplit(data.buffer_id)) return;
+  // Gate on the batch's OWN compose flag, not on `getBufferInfo`. The two
+  // answer the same question, but only this one is guaranteed to be about the
+  // buffer these lines came from: `getBufferInfo` reads the editor's state
+  // snapshot, which is refreshed on the editor thread's schedule and can still
+  // say "source" for a buffer whose compose commands the same frame already
+  // applied. The lines in a batch are marked seen when the batch is sent, so a
+  // batch dropped on a stale read is not offered again — turning compose on
+  // left the document literal until an edit or a scroll happened to produce
+  // another batch (#2968). The payload cannot lag what it was built from.
+  if (!data.is_composing_in_any_split) return;
   // Cursor reveal/conceal decisions are NOT made here: every emitted
   // decoration carries an activation scope and the renderer evaluates it
   // per frame against each split's own cursors. This handler runs only
