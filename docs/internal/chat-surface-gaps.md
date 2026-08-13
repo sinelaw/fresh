@@ -218,6 +218,12 @@ against the guessed width bakes the guess in deeper.
 > down here with its consequences because the consequences are the hard part,
 > not the four steps._
 >
+> _**Superseded for step 4.** The agents' own lifecycle hooks deliver at a turn
+> boundary without keystrokes, which disposes of both blocking decisions below
+> rather than answering them — see
+> [agent-delivery-hooks.md](agent-delivery-hooks.md). Step 4 should not be built
+> as written._
+>
 > _**Status: steps 1–3 ship; step 4 does not, deliberately.** Sending now
 > restores the addressee's workspace, waits for it, and focuses its terminal.
 > Nothing is typed at the agent — the mailbox file remains the only delivery,
