@@ -543,47 +543,41 @@ fn build_cells(
     // `resolved()` returns owned colours while `core` lends them, so the two
     // sources are walked as one sequence of (start, end, colour, priority,
     // source) with the colour cloned once, at the cell it wins.
-    let mut paint = |start: usize,
-                     end: Option<usize>,
-                     color: &OverlayColorSpec,
-                     priority: i32,
-                     source: u8| {
-        let start_row = (row_of_byte(start).min(total.saturating_sub(1)) * h / total) as usize;
-        let end_row = match end {
-            Some(e) if e > start => {
-                (row_of_byte(e).min(total.saturating_sub(1)) * h / total) as usize
-            }
-            _ => start_row,
-        };
-
-        // `max(start_row)` is a guard, not arithmetic: a `row_of_byte` that
-        // answered non-monotonically (a missing entry in a pre-resolved map,
-        // say) would otherwise index a backwards range and panic — in the
-        // render path, where a wrong mark is survivable and a crash is not.
-        let last = end_row.max(start_row).min(track_height - 1);
-        let candidate = CellRank {
-            priority,
-            source,
-            start,
-        };
-        let span = start_row.min(last)..=last;
-        for (cell, held) in cells[span.clone()]
-            .iter_mut()
-            .zip(best[span].iter_mut())
-        {
-            let better = match held {
-                Some(existing) => candidate.beats(existing),
-                None => true,
+    let mut paint =
+        |start: usize, end: Option<usize>, color: &OverlayColorSpec, priority: i32, source: u8| {
+            let start_row = (row_of_byte(start).min(total.saturating_sub(1)) * h / total) as usize;
+            let end_row = match end {
+                Some(e) if e > start => {
+                    (row_of_byte(e).min(total.saturating_sub(1)) * h / total) as usize
+                }
+                _ => start_row,
             };
-            if better {
-                *cell = Some(MarkerCell {
-                    color: color.clone(),
-                    priority,
-                });
-                *held = Some(candidate);
+
+            // `max(start_row)` is a guard, not arithmetic: a `row_of_byte` that
+            // answered non-monotonically (a missing entry in a pre-resolved map,
+            // say) would otherwise index a backwards range and panic — in the
+            // render path, where a wrong mark is survivable and a crash is not.
+            let last = end_row.max(start_row).min(track_height - 1);
+            let candidate = CellRank {
+                priority,
+                source,
+                start,
+            };
+            let span = start_row.min(last)..=last;
+            for (cell, held) in cells[span.clone()].iter_mut().zip(best[span].iter_mut()) {
+                let better = match held {
+                    Some(existing) => candidate.beats(existing),
+                    None => true,
+                };
+                if better {
+                    *cell = Some(MarkerCell {
+                        color: color.clone(),
+                        priority,
+                    });
+                    *held = Some(candidate);
+                }
             }
-        }
-    };
+        };
 
     for (start, end, color, priority, source) in core_marks {
         paint(start, end, color, priority, source);
