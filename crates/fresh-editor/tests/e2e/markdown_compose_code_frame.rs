@@ -349,6 +349,65 @@ fn closing_fence_frames_after_scrolling_past_the_opener() {
     );
 }
 
+/// A run with no space in it — a bare URL, the shape every install snippet
+/// has — is cut mid-word rather than left to overflow.
+///
+/// This is the case a break-only-at-spaces rule cannot serve: there is no
+/// space to break at, so the row ran past the frame, lost its right rail, and
+/// was folded by the renderer to column zero with no rails at all on the
+/// remainder.
+#[test]
+fn an_unbreakable_run_is_cut_to_fit_the_frame() {
+    let url = "https://example.com/an/extremely/long/unbreakable/path/with/no/spaces/at/all/that/cannot/be/wrapped/anywhere";
+    let md = format!("# Doc\n\n```text\n{url}\n```\n\nTail.\n");
+    let (mut harness, _tmp) = compose_harness(&md);
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains('└'))
+        .expect("the block should frame");
+    park_cursor_at_top(&mut harness);
+
+    let screen = harness.screen_to_string();
+    let top = frame_edges(&screen, "┌").expect("top border on screen");
+    let rows: Vec<&str> = screen
+        .lines()
+        .skip_while(|l| !l.contains('┌'))
+        .take_while(|l| !l.contains('└'))
+        .filter(|l| l.contains('│'))
+        .collect();
+
+    assert!(
+        rows.len() >= 2,
+        "the url is wider than the frame, so it must occupy several rows; \
+         saw {rows:?}"
+    );
+    for row in &rows {
+        let cols: Vec<usize> = row
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| *c == '│')
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            (cols.first().copied(), cols.last().copied()),
+            (Some(top.0), Some(top.1)),
+            "every row of the cut url must be railed in the border's own \
+             columns; row {row:?} was not.\nScreen:\n{screen}"
+        );
+    }
+
+    // And no character of it was dropped in the cutting.
+    let joined: String = rows
+        .iter()
+        .flat_map(|r| r.chars().filter(|c| !c.is_whitespace() && *c != '│'))
+        .collect();
+    assert_eq!(
+        joined, url,
+        "the url must be split across rows without losing or duplicating \
+         anything.\nScreen:\n{screen}"
+    );
+}
+
 /// Markdown syntax inside a code block is code, not markdown. Before the region
 /// classification was available the per-line pass had no way to know, so a `#`
 /// comment became a heading, a `-` became a bullet, and a line of pipes was

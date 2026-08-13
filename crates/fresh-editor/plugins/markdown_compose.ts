@@ -308,9 +308,8 @@ function codeInnerWidth(measure: number): number {
   return Math.max(1, codeFrameWidth(measure) - 2 * RAIL_RENDERED_COLUMNS);
 }
 
-/** How one code line is split across framed rows: the char offsets of the
- * spaces that end each row, and the `[start, end)` char range of each row's
- * text.
+/** How one code line is split across framed rows: where each row breaks, and
+ * the `[start, end)` char range of each row's text.
  *
  * A code line too wide for the frame has to break *somewhere* — the buffer has
  * line wrap on, so the renderer will otherwise fold it to column zero, outside
@@ -318,11 +317,12 @@ function codeInnerWidth(measure: number): number {
  * every row is a row this pass knows the width of, so every row can be railed
  * and padded to the frame.
  *
- * Breaks must land on Space characters. Space tokens carry their own
- * `source_offset`; the characters inside a Text token all share the token's
- * start, so a break asked for mid-token silently does nothing (the same
- * constraint the table-row wrapping documents). A run with no space wide enough
- * to break at therefore stays one over-long row — see `emitCodeRails`.
+ * Breaks prefer the last space that leaves a non-empty row, and fall back to
+ * cutting mid-word at the frame's inner width when there is no such space — a
+ * bare URL is one token and one row of the frame is not wide enough for it.
+ * The two cases differ in whether the break character survives: a break *on* a
+ * space consumes it (the row ends there), while a mid-word break sits before a
+ * character that still has to be drawn.
  *
  * Shared by the rail pass and the soft-break pass so the two cannot disagree
  * about where the rows are, exactly as `widthsForRow` is shared for tables. */
@@ -337,11 +337,19 @@ function codeRowLayout(text: string, measure: number): { breaks: number[]; rows:
 
   for (let i = 0; i < text.length; i++) {
     const w = displayWidth(text[i]);
-    if (column + w > inner && lastSpace > rowStart) {
-      // Break at the last space that still leaves a non-empty row.
-      breaks.push(lastSpace);
-      rows.push({ start: rowStart, end: lastSpace });
-      rowStart = lastSpace + 1;
+    if (column + w > inner && i > rowStart) {
+      if (lastSpace > rowStart) {
+        // Word break: the space ends the row and is consumed by it.
+        breaks.push(lastSpace);
+        rows.push({ start: rowStart, end: lastSpace });
+        rowStart = lastSpace + 1;
+      } else {
+        // Nothing to break at — cut the word. The break sits *before* this
+        // character, which starts the next row rather than being consumed.
+        breaks.push(i);
+        rows.push({ start: rowStart, end: i });
+        rowStart = i;
+      }
       lastSpace = -1;
       column = 0;
       for (let j = rowStart; j <= i; j++) column += displayWidth(text[j]);

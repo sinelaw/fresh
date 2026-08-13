@@ -81,10 +81,20 @@ pub(crate) fn apply_grid_wrapping_transform(
 
 /// Apply soft breaks to a token stream.
 ///
-/// Walks tokens with a sorted break list `[(position, indent)]`. When a
-/// token's `source_offset` matches a break position:
-/// - For Space tokens: replace with Newline + indent Spaces
-/// - For other tokens: insert Newline + indent Spaces before the token
+/// Walks tokens with a sorted break list `[(position, indent)]`. A break at a
+/// position:
+/// - on a Space token: replaces it with Newline + indent Spaces
+/// - anywhere else: inserts Newline + indent Spaces before that byte, splitting
+///   the Text token it lands inside if it is not already at a token boundary
+///
+/// That last case is what lets a caller break a run with no space in it — a
+/// bare URL, a long path — at a chosen column. The characters of a Text token
+/// all share the token's start `source_offset`, so a mid-token break used to
+/// match nothing and silently do nothing, leaving the run to the renderer's own
+/// wrap, which folds it to column zero with none of the caller's framing or
+/// indentation. Splitting mirrors what `apply_conceal_ranges` already does for
+/// ranges landing inside a token; each piece keeps the token's style, so
+/// highlighting survives the break.
 ///
 /// Tokens without source_offset (injected/virtual) pass through unchanged.
 pub(crate) fn apply_soft_breaks(
@@ -97,6 +107,22 @@ pub(crate) fn apply_soft_breaks(
 
     let mut output = Vec::with_capacity(tokens.len() + soft_breaks.len() * 2);
     let mut break_idx = 0;
+
+    // Newline + `indent` spaces, the row break itself.
+    fn push_break(output: &mut Vec<ViewTokenWire>, indent: u16) {
+        output.push(ViewTokenWire {
+            source_offset: None,
+            kind: ViewTokenWireKind::Newline,
+            style: None,
+        });
+        for _ in 0..indent {
+            output.push(ViewTokenWire {
+                source_offset: None,
+                kind: ViewTokenWireKind::Space,
+                style: None,
+            });
+        }
+    }
 
     for token in tokens {
         let offset = match token.source_offset {
@@ -111,38 +137,55 @@ pub(crate) fn apply_soft_breaks(
             break_idx += 1;
         }
 
+        // A Text token can span several break positions; walk its characters
+        // and cut at each. The common case (no break inside) falls through the
+        // loop and re-emits the token whole.
+        if let ViewTokenWireKind::Text(s) = &token.kind {
+            let token_end = offset + s.len();
+            if soft_breaks[break_idx..]
+                .first()
+                .is_some_and(|(pos, _)| *pos < token_end)
+            {
+                let mut seg = String::new();
+                let mut seg_start = offset;
+                let mut byte_idx = 0usize;
+                for ch in s.chars() {
+                    let pos = offset + byte_idx;
+                    if break_idx < soft_breaks.len() && soft_breaks[break_idx].0 == pos {
+                        if !seg.is_empty() {
+                            output.push(ViewTokenWire {
+                                source_offset: Some(seg_start),
+                                kind: ViewTokenWireKind::Text(std::mem::take(&mut seg)),
+                                style: token.style.clone(),
+                            });
+                        }
+                        push_break(&mut output, soft_breaks[break_idx].1);
+                        seg_start = pos;
+                        break_idx += 1;
+                    }
+                    seg.push(ch);
+                    byte_idx += ch.len_utf8();
+                }
+                if !seg.is_empty() {
+                    output.push(ViewTokenWire {
+                        source_offset: Some(seg_start),
+                        kind: ViewTokenWireKind::Text(seg),
+                        style: token.style.clone(),
+                    });
+                }
+                continue;
+            }
+        }
+
         if break_idx < soft_breaks.len() && soft_breaks[break_idx].0 == offset {
             let indent = soft_breaks[break_idx].1;
             break_idx += 1;
 
             match &token.kind {
-                ViewTokenWireKind::Space => {
-                    output.push(ViewTokenWire {
-                        source_offset: None,
-                        kind: ViewTokenWireKind::Newline,
-                        style: None,
-                    });
-                    for _ in 0..indent {
-                        output.push(ViewTokenWire {
-                            source_offset: None,
-                            kind: ViewTokenWireKind::Space,
-                            style: None,
-                        });
-                    }
-                }
+                // The space *is* the break: it is consumed by the row end.
+                ViewTokenWireKind::Space => push_break(&mut output, indent),
                 _ => {
-                    output.push(ViewTokenWire {
-                        source_offset: None,
-                        kind: ViewTokenWireKind::Newline,
-                        style: None,
-                    });
-                    for _ in 0..indent {
-                        output.push(ViewTokenWire {
-                            source_offset: None,
-                            kind: ViewTokenWireKind::Space,
-                            style: None,
-                        });
-                    }
+                    push_break(&mut output, indent);
                     output.push(token);
                 }
             }
