@@ -350,6 +350,19 @@ impl Editor {
         snapshot.terminal_width = self.terminal_width;
         snapshot.terminal_height = self.terminal_height;
 
+        // The width the left dock is actually rendered at, which is not
+        // the width its plugin asked for: `dock_width` is clamped
+        // against the terminal, and a width the user dragged to
+        // overrides the request entirely. A plugin that lays its dock
+        // out against the requested width gets everything downstream of
+        // it wrong whenever the two diverge — see `getDockWidth()`.
+        snapshot.dock_content_width = match self.panel(crate::app::PanelSlot::Dock) {
+            Some(p) if matches!(p.placement, crate::app::PanelPlacement::LeftDock { .. }) => {
+                self.floating_panel_inner_width(crate::app::PanelSlot::Dock) as u16
+            }
+            _ => 0,
+        };
+
         // Authority label tracks `Editor::authority` (the active
         // authority). It can't be sourced from `Window::resources.authority`
         // because `set_boot_authority` replaces `self.authority` by value

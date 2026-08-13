@@ -1693,6 +1693,26 @@ impl JsEditorApi {
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
+    /// Inner content width, in columns, of the panel docked to the
+    /// left edge — the width the host actually rendered it at, not the
+    /// width its plugin asked for. `0` when nothing is docked.
+    ///
+    /// The two differ whenever the host clamps the request against the
+    /// terminal, or the user has dragged the dock to a width of their
+    /// own (which is persisted and overrides the request). A plugin
+    /// that sizes its rows against the width it requested therefore
+    /// wraps text, truncates labels and budgets rows against a number
+    /// the host disagrees with — and since the flexible region absorbs
+    /// the error, the mistake lands at the far end of the panel, which
+    /// is where the user notices it.
+    #[plugin_api(ts_return = "number")]
+    pub fn get_dock_width(&self) -> u32 {
+        self.state_snapshot
+            .read()
+            .map(|s| s.dock_content_width as u32)
+            .unwrap_or(0)
+    }
+
     /// Total terminal dimensions in cells. Unlike `getViewport()`
     /// (which reports the active split, shrunk by any vertical
     /// split layout), this reflects the full terminal — what a

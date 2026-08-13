@@ -888,6 +888,28 @@ function dockDefaultWidth(): number {
 function dockContentCols(dockWidth: number): number {
   return Math.max(8, dockWidth - 2);
 }
+
+// The columns the dock's content is ACTUALLY drawn in.
+//
+// `dockDefaultWidth()` is what we ask the host for, and the host is free
+// not to give it: the request is clamped against the terminal, and a
+// width the user dragged the dock to is persisted and overrides it
+// outright. Everything we derive from the width — word wrap, truncation,
+// whether the toolbar's search field wraps below its button, and so the
+// row budget the tree is sized against — is only correct while the two
+// agree. When they diverge the host draws a toolbar row we did not
+// budget for, the tree (the flexible region) is sized one row too tall,
+// and because the tree sits above everything else the error lands at the
+// dock's bottom edge and evicts the chat's composer off it.
+//
+// So ask the host what it drew. `getDockWidth()` reports the rendered
+// inner width, and 0 when nothing is docked (during a mount, before the
+// panel exists) — fall back to the request there, which is the best
+// guess available and is what the host is about to be given anyway.
+function dockCols(): number {
+  const real = editor.getDockWidth();
+  return real > 0 ? Math.max(8, real) : dockContentCols(dockDefaultWidth());
+}
 // Which dock zone has keyboard focus: the session list (default) or the
 // filter input. Tracked from the host's `focus` widget_event. The host
 // (dispatch_floating_widget_key) reads the panel focus directly to route
@@ -1756,7 +1778,7 @@ function entriesWidth(entries: Entry[]): number {
 // dock can be dragged), used only to cap the branch so it doesn't shove
 // the right-hand group off the row. The host does the exact alignment.
 function cardInnerColsEstimate(): number {
-  return Math.max(12, dockContentCols(dockDefaultWidth()) - 2);
+  return Math.max(12, dockCols() - 2);
 }
 
 // Card line 1 (the tree node's primary text): state glyph, optional
@@ -5441,15 +5463,23 @@ function buildDockSpec(): WidgetSpec {
   // The "New Task…" button and the search field share one row, wrapping
   // the search below the button when the dock is too narrow to hold both.
   // The button renders as "[ <label> ]" (label + 4 cols); size the search
-  // field to fill the rest of a default-width dock, floored so it stays
-  // usable — and so the two overflow (and wrap) on a narrow/dragged dock.
-  // The host wraps against the *actual* rendered width, so this estimate
-  // only needs to be close for the default-dock case.
+  // field to fill the rest of the dock, floored so it stays usable — and
+  // so the two overflow (and wrap) on a narrow/dragged dock.
+  //
+  // Whether they wrap has to be predicted here, because the row budget the
+  // tree is sized against depends on it. The prediction is now exact
+  // rather than close: `dockCols()` is the width the host says it drew at,
+  // and the arithmetic is the host's own — a wrapping Row starts a new
+  // line as soon as the accumulated pieces exceed the width, the button is
+  // `label + 4`, the spacer is 1, and a text field is its field width plus
+  // its two brackets, plus one more column of cursor park when it holds
+  // the caret.
   const newBtnCols = newLabel.length + 4;
-  const dockCols = dockContentCols(dockDefaultWidth());
+  const cols = dockCols();
   const SEARCH_MIN_FIELD = 10;
-  const searchField = Math.max(SEARCH_MIN_FIELD, dockCols - newBtnCols - 4);
-  const toolbarWraps = newBtnCols + 1 + searchField + 2 > dockCols;
+  const searchField = Math.max(SEARCH_MIN_FIELD, cols - newBtnCols - 4);
+  const searchCols = searchField + 2 + (dockFocus === "filter" ? 1 : 0);
+  const toolbarWraps = newBtnCols + 1 + searchCols > cols;
   const worktreeLabel = editor.t("dock.all_worktrees");
   const trivialLabel = editor.t("dock.show_empty");
   const projWord = openDialog.projectFilter === null
@@ -5542,7 +5572,14 @@ function buildDockSpec(): WidgetSpec {
   // shortens the list rather than pushing anything off the dock's bottom.
   const chatRows = dockChatRows(innerH);
   const chromeRows = 3 + toolbarRows + filterBody.length + bottomRows + chatRows;
-  const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
+  // The tree is the flexible region: it gets what the chrome leaves, and
+  // one row is the floor. `MIN_LIST_ROWS` used to be that floor, which made
+  // the tree *inflexible* on a short dock — chrome plus six rows can exceed
+  // the dock's height, and since the tree sits above everything else the
+  // overflow leaves at the bottom edge, taking the chat's composer with it.
+  // A tree of two rows is a worse list than a tree of six; a composer you
+  // cannot see is not a chat at all.
+  const listRows = Math.max(1, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
   // Rows of chrome above the tree (everything in chromeRows except the
   // bottom hint row) — where the first tree row lands on screen.
@@ -5667,8 +5704,14 @@ function dockChatRows(innerH: number): number {
 }
 
 /// Columns the chat's text may use inside the dock.
+///
+/// The width the host actually drew the dock at, less one column for the
+/// transcript's scrollbar to live in. Measuring against the width we
+/// *asked* for is what §7 of the gaps doc is about: a dragged dock wraps
+/// the transcript to a width the panel does not have, so every line either
+/// breaks early or is clipped at the right edge.
 function dockChatCols(): number {
-  return Math.max(20, dockContentCols(dockDefaultWidth()) - 2);
+  return Math.max(16, dockCols() - 1);
 }
 
 /// The chat section: a header you can collapse from, the transcript, a rule,

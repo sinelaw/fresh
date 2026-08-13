@@ -1778,6 +1778,21 @@ pub struct EditorStateSnapshot {
     #[serde(default)]
     pub terminal_height: u16,
 
+    /// Inner content width, in columns, of the panel currently docked
+    /// to the left edge — the width the host actually *rendered* it
+    /// at, after the terminal-relative clamp and any width the user
+    /// dragged it to. `0` when no panel is docked.
+    ///
+    /// A docking plugin asks the host for a width and the host is free
+    /// not to give it: the request is clamped, and a persisted drag
+    /// overrides it outright. Anything the plugin then derives from
+    /// its *requested* width — word wrap, truncation, whether a
+    /// toolbar row wraps, and so the row budget of everything below it
+    /// — is right only while the two happen to agree. Plugins read
+    /// this via `editor.getDockWidth()`.
+    #[serde(default)]
+    pub dock_content_width: u16,
+
     /// Whether search highlights are currently active in the active buffer.
     /// True when a search has been confirmed and its match overlays are visible.
     /// Cleared when the search is cancelled or a new search is started.
@@ -1852,6 +1867,7 @@ impl EditorStateSnapshot {
             active_session_plugin_states: HashMap::new(),
             terminal_width: 0,
             terminal_height: 0,
+            dock_content_width: 0,
             has_active_search: false,
             macros: Vec::new(),
         }
