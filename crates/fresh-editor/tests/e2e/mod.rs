@@ -171,6 +171,8 @@ pub mod lsp_unresponsive_capability_does_not_block;
 pub mod macros;
 pub mod mark_mode_actions;
 pub mod markdown_compose;
+#[cfg(feature = "plugins")]
+pub mod markdown_compose_blocks;
 pub mod markdown_compose_diagnostics;
 #[cfg(feature = "plugins")]
 pub mod markdown_compose_first_scroll_relayout;
