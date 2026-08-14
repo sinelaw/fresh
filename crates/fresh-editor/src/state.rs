@@ -1267,8 +1267,9 @@ impl EditorState {
     /// callers that need the handle back for later removal — e.g. the hover /
     /// rename symbol highlights. Returning the handle from the add itself is
     /// what `OverlayManager::add` already provides; callers must **not** try to
-    /// recover it via `overlays.all().last()`, which returns the
-    /// highest-priority overlay (priority-sorted), not the one just added.
+    /// recover it via `overlays.all().last()` — the set is unordered and a
+    /// removal swaps entries around, so the last one is not the one just
+    /// added.
     #[allow(clippy::too_many_arguments)]
     pub fn add_overlay(
         &mut self,

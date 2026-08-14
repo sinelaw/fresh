@@ -1160,18 +1160,20 @@ impl StatusBarRenderer {
                 })
             }
             StatusBarElement::Diagnostics => {
-                let diagnostics = ctx.state.overlays.all();
                 let mut error_count = 0usize;
                 let mut warning_count = 0usize;
                 let mut info_count = 0usize;
                 let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
-                for overlay in diagnostics {
-                    if overlay.namespace.as_ref() == Some(&diagnostic_ns) {
-                        match overlay.priority {
-                            100 => error_count += 1,
-                            50 => warning_count += 1,
-                            _ => info_count += 1,
-                        }
+                // Ask for the diagnostics namespace rather than filtering
+                // every overlay on the buffer: this runs on every frame, and
+                // a decorated buffer (a review diff carries an overlay per
+                // line) has tens of thousands of overlays that are not
+                // diagnostics.
+                for overlay in ctx.state.overlays.in_namespace(&diagnostic_ns) {
+                    match overlay.priority {
+                        100 => error_count += 1,
+                        50 => warning_count += 1,
+                        _ => info_count += 1,
                     }
                 }
                 if error_count + warning_count + info_count == 0 {

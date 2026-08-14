@@ -1,6 +1,6 @@
 use crate::model::marker::{MarkerId, MarkerList};
 use ratatui::style::{Color, Style};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 // Re-export types from fresh-core for shared type usage
@@ -341,6 +341,13 @@ pub struct OverlayManager {
     /// one producer clearing its own namespace every frame (bracket matching
     /// does, on each cursor move) must not invalidate another's cache.
     namespace_removal_epochs: HashMap<OverlayNamespace, u64>,
+    /// `namespace -> indices into overlays`. Clearing or replacing a
+    /// namespace reaches its own overlays directly instead of walking the
+    /// buffer's whole set to find them.
+    namespace_to_idx: HashMap<OverlayNamespace, HashSet<usize>>,
+    /// `handle -> index into overlays`, so removing the one overlay a caller
+    /// holds a handle for is a lookup rather than a search.
+    handle_to_idx: HashMap<OverlayHandle, usize>,
 }
 
 impl OverlayManager {
@@ -351,119 +358,131 @@ impl OverlayManager {
             marker_to_idx: HashMap::new(),
             removal_epoch: 0,
             namespace_removal_epochs: HashMap::new(),
+            namespace_to_idx: HashMap::new(),
+            handle_to_idx: HashMap::new(),
         }
     }
 
-    /// Add an overlay and return its handle for later removal
+    /// Add an overlay and return its handle for later removal. O(1): the
+    /// set is unordered, and every consumer that needs overlays in priority
+    /// order sorts the handful it actually draws (see `query_viewport`'s
+    /// callers). Keeping the whole vector priority-sorted instead cost an
+    /// insertion shift plus a re-index of everything after it, on every
+    /// add — which is once or twice per cursor move, against a buffer that
+    /// can hold an overlay per line.
     pub fn add(&mut self, overlay: Overlay) -> OverlayHandle {
         let handle = overlay.handle.clone();
-        // Binary-search the priority-ordered insertion point and shift in
-        // place. Avoids the O(n²·log n) sort-on-every-add the prior impl
-        // had — the docstring on `extend` warned about this.
-        let priority = overlay.priority;
-        let pos = self.overlays.partition_point(|o| o.priority <= priority);
-        self.overlays.insert(pos, overlay);
-        // Every entry from `pos` onward shifted by one — re-index that tail.
-        // Tail length is small when adds are append-shaped (the common case
-        // for plugins that emit per-line clear+rebuild).
-        for (i, o) in self.overlays.iter().enumerate().skip(pos) {
-            self.marker_to_idx.insert(o.start_marker, i);
-            self.marker_to_idx.insert(o.end_marker, i);
-            self.marker_to_idx.insert(o.span_marker, i);
-        }
+        let idx = self.overlays.len();
+        self.overlays.push(overlay);
+        self.index_entry(idx);
         handle
     }
 
-    /// Append many overlays at once, sorting a single time at the end.
-    ///
-    /// `add` re-sorts the whole vector on every insertion, which is O(n² log n)
-    /// when a caller has N overlays to add. Use this instead when rebuilding an
-    /// overlay set from scratch (e.g. `set_virtual_buffer_content`), where the
-    /// caller already owns the full list up front.
+    /// Append many overlays at once.
     pub fn extend<I: IntoIterator<Item = Overlay>>(&mut self, overlays: I) {
+        let first_new = self.overlays.len();
         self.overlays.extend(overlays);
-        self.overlays.sort_by_key(|o| o.priority);
-        self.rebuild_marker_index();
+        for idx in first_new..self.overlays.len() {
+            self.index_entry(idx);
+        }
     }
 
-    /// Remove an overlay by its handle
+    /// Record the entry at `idx` in every index. The entry must already be
+    /// in `overlays` at that position.
+    fn index_entry(&mut self, idx: usize) {
+        let overlay = &self.overlays[idx];
+        let (start, end, span) = (
+            overlay.start_marker,
+            overlay.end_marker,
+            overlay.span_marker,
+        );
+        let handle = overlay.handle.clone();
+        let namespace = overlay.namespace.clone();
+        self.marker_to_idx.insert(start, idx);
+        self.marker_to_idx.insert(end, idx);
+        self.marker_to_idx.insert(span, idx);
+        self.handle_to_idx.insert(handle, idx);
+        if let Some(ns) = namespace {
+            self.namespace_to_idx.entry(ns).or_default().insert(idx);
+        }
+    }
+
+    /// Drop the entry at `idx` from every index. Does not touch `overlays`.
+    fn unindex_entry(&mut self, idx: usize, overlay: &Overlay) {
+        self.marker_to_idx.remove(&overlay.start_marker);
+        self.marker_to_idx.remove(&overlay.end_marker);
+        self.marker_to_idx.remove(&overlay.span_marker);
+        self.handle_to_idx.remove(&overlay.handle);
+        if let Some(ns) = &overlay.namespace {
+            if let Some(slots) = self.namespace_to_idx.get_mut(ns) {
+                slots.remove(&idx);
+                if slots.is_empty() {
+                    self.namespace_to_idx.remove(ns);
+                }
+            }
+        }
+    }
+
+    /// Move the index entries of the overlay now sitting at `idx` (it was at
+    /// `from`, before a swap-remove pulled it down).
+    fn reindex_moved(&mut self, idx: usize, from: usize) {
+        let overlay = &self.overlays[idx];
+        let (start, end, span) = (
+            overlay.start_marker,
+            overlay.end_marker,
+            overlay.span_marker,
+        );
+        let handle = overlay.handle.clone();
+        let namespace = overlay.namespace.clone();
+        self.marker_to_idx.insert(start, idx);
+        self.marker_to_idx.insert(end, idx);
+        self.marker_to_idx.insert(span, idx);
+        self.handle_to_idx.insert(handle, idx);
+        if let Some(ns) = namespace {
+            if let Some(slots) = self.namespace_to_idx.get_mut(&ns) {
+                slots.remove(&from);
+                slots.insert(idx);
+            }
+        }
+    }
+
+    /// Remove an overlay by its handle. O(1): the handle index says where
+    /// it is instead of the vector being searched for it.
     pub fn remove_by_handle(
         &mut self,
         handle: &OverlayHandle,
         marker_list: &mut MarkerList,
     ) -> bool {
-        match self
-            .overlays
-            .iter()
-            .find(|o| &o.handle == handle)
-            .and_then(|o| o.namespace.clone())
-        {
+        let Some(idx) = self.handle_to_idx.get(handle).copied() else {
+            return false;
+        };
+        match self.overlays[idx].namespace.clone() {
             Some(ns) => self.bump_namespace_epoch(&ns),
             None => self.removal_epoch = self.removal_epoch.wrapping_add(1),
         }
-        if let Some(pos) = self.overlays.iter().position(|o| &o.handle == handle) {
-            let overlay = self.overlays.remove(pos);
-            self.marker_to_idx.remove(&overlay.start_marker);
-            self.marker_to_idx.remove(&overlay.end_marker);
-            self.marker_to_idx.remove(&overlay.span_marker);
-            // Vec::remove shifts every subsequent entry down by one — repair.
-            for (i, o) in self.overlays.iter().enumerate().skip(pos) {
-                self.marker_to_idx.insert(o.start_marker, i);
-                self.marker_to_idx.insert(o.end_marker, i);
-                self.marker_to_idx.insert(o.span_marker, i);
-            }
-            marker_list.delete(overlay.start_marker);
-            marker_list.delete(overlay.end_marker);
-            marker_list.delete(overlay.span_marker);
-            true
-        } else {
-            false
-        }
+        self.swap_remove_at(idx, marker_list);
+        true
     }
 
-    /// Remove all overlays in a namespace.
+    /// Remove all overlays in a namespace. O(k) in that namespace's own
+    /// overlays, whatever else the buffer carries.
     ///
-    /// Removal is stable, which is what keeps this cheap. `swap_remove`
-    /// scrambles the priority ordering, and restoring it meant sorting every
-    /// overlay in the buffer and rebuilding the whole marker index — work
-    /// proportional to overlays this namespace has nothing to do with. That
-    /// is paid on a hot path: a plugin that repaints a one-row highlight
-    /// (the review diff's cursor line) clears and re-adds its namespace on
-    /// every cursor move, so an unrelated 20 000-overlay diff made each
-    /// arrow key cost milliseconds and holding one down crawl.
-    ///
-    /// Retaining in place preserves priority order, so no sort is needed,
-    /// and only indices at or after the first removal shift — everything
-    /// before it keeps its slot and needs no re-indexing.
+    /// This is a hot path, not a housekeeping one: a plugin that repaints a
+    /// one-row highlight — the review diff's cursor line — clears and
+    /// re-adds its namespace on every cursor move. While this walked the
+    /// whole overlay set to find its two entries, an unrelated 20 000-line
+    /// diff in the same buffer made every arrow key pay for all of it.
     pub fn clear_namespace(&mut self, namespace: &OverlayNamespace, marker_list: &mut MarkerList) {
         self.bump_namespace_epoch(namespace);
-        let Some(first) = self
-            .overlays
-            .iter()
-            .position(|o| o.namespace.as_ref() == Some(namespace))
-        else {
+        let Some(slots) = self.namespace_to_idx.remove(namespace) else {
             return;
         };
-        let mut removed: Vec<(MarkerId, MarkerId, MarkerId)> = Vec::new();
-        self.overlays.retain(|o| {
-            let hit = o.namespace.as_ref() == Some(namespace);
-            if hit {
-                removed.push((o.start_marker, o.end_marker, o.span_marker));
-            }
-            !hit
-        });
-        for (start_marker, end_marker, span_marker) in removed {
-            self.marker_to_idx.remove(&start_marker);
-            self.marker_to_idx.remove(&end_marker);
-            self.marker_to_idx.remove(&span_marker);
-            marker_list.delete(start_marker);
-            marker_list.delete(end_marker);
-            marker_list.delete(span_marker);
-        }
-        for (i, o) in self.overlays.iter().enumerate().skip(first) {
-            self.marker_to_idx.insert(o.start_marker, i);
-            self.marker_to_idx.insert(o.end_marker, i);
-            self.marker_to_idx.insert(o.span_marker, i);
+        // Descending, so each swap-remove only ever pulls down an entry from
+        // beyond the ones still to be removed.
+        let mut slots: Vec<usize> = slots.into_iter().collect();
+        slots.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in slots {
+            self.swap_remove_at(idx, marker_list);
         }
     }
 
@@ -525,20 +544,19 @@ impl OverlayManager {
         }
 
         if !new_overlays.is_empty() {
+            let first_new = self.overlays.len();
             self.overlays.append(&mut new_overlays);
+            for idx in first_new..self.overlays.len() {
+                self.index_entry(idx);
+            }
         }
-        self.overlays.sort_by_key(|o| o.priority);
-        self.rebuild_marker_index();
     }
 
     /// Remove all overlays in a range and clean up their markers
     pub fn remove_in_range(&mut self, range: &Range<usize>, marker_list: &mut MarkerList) {
         self.removal_epoch = self.removal_epoch.wrapping_add(1);
-        // O(log N + k) for the lookup; restoring the priority-sorted
-        // invariant after `swap_remove` is O(N) (adaptive sort on a
-        // near-sorted vec) plus O(N) marker_to_idx rebuild. For typical
-        // markdown_compose workloads where overlays in a buffer share
-        // the same priority, the adaptive sort is a no-op pass.
+        // O(log N + k) throughout: the marker tree narrows the candidates
+        // and each removal patches only its own index entries.
         // Spanning overlays (start < range.start && end > range.end) are
         // not detected — same precondition as ConcealManager.
         if range.start >= range.end {
@@ -567,13 +585,12 @@ impl OverlayManager {
         if to_remove.is_empty() {
             return;
         }
+        // Descending, so a swap-remove never moves an entry still queued
+        // for removal.
         to_remove.sort_unstable_by(|a, b| b.cmp(a));
         for idx in to_remove {
             self.swap_remove_at(idx, marker_list);
         }
-        // Restore priority order broken by swap_removes.
-        self.overlays.sort_by_key(|o| o.priority);
-        self.rebuild_marker_index();
     }
 
     /// Like [`remove_in_range`], but only removes overlays belonging to
@@ -621,9 +638,6 @@ impl OverlayManager {
         for idx in to_remove {
             self.swap_remove_at(idx, marker_list);
         }
-        // Restore priority order broken by swap_removes.
-        self.overlays.sort_by_key(|o| o.priority);
-        self.rebuild_marker_index();
     }
 
     /// Clear all overlays and their markers
@@ -635,54 +649,87 @@ impl OverlayManager {
         }
         self.overlays.clear();
         self.marker_to_idx.clear();
+        self.handle_to_idx.clear();
+        self.namespace_to_idx.clear();
     }
 
-    /// Swap-remove the entry at `idx`, deleting its markers and patching
-    /// `marker_to_idx` for whatever entry got swapped in. Caller is
-    /// responsible for restoring sort order if needed.
+    /// Swap-remove the entry at `idx`, deleting its markers and re-pointing
+    /// every index at whatever entry got swapped in. The set is unordered,
+    /// so there is nothing left for the caller to restore.
     fn swap_remove_at(&mut self, idx: usize, marker_list: &mut MarkerList) {
         let removed = self.overlays.swap_remove(idx);
-        self.marker_to_idx.remove(&removed.start_marker);
-        self.marker_to_idx.remove(&removed.end_marker);
-        self.marker_to_idx.remove(&removed.span_marker);
+        self.unindex_entry(idx, &removed);
         marker_list.delete(removed.start_marker);
         marker_list.delete(removed.end_marker);
         marker_list.delete(removed.span_marker);
-        if let Some(moved) = self.overlays.get(idx) {
-            self.marker_to_idx.insert(moved.start_marker, idx);
-            self.marker_to_idx.insert(moved.end_marker, idx);
-            self.marker_to_idx.insert(moved.span_marker, idx);
+        // `swap_remove` pulled the last entry down into `idx` — unless the
+        // removed entry *was* last, in which case nothing moved.
+        let moved_from = self.overlays.len();
+        if idx < moved_from {
+            self.reindex_moved(idx, moved_from);
         }
     }
 
-    /// Rebuild `marker_to_idx` from the current `overlays` order.
-    /// Called after sorts that scramble indices.
-    fn rebuild_marker_index(&mut self) {
+    /// Rebuild every index from the current contents of `overlays`.
+    #[cfg(test)]
+    fn rebuild_indexes(&mut self) {
         self.marker_to_idx.clear();
-        for (i, o) in self.overlays.iter().enumerate() {
-            self.marker_to_idx.insert(o.start_marker, i);
-            self.marker_to_idx.insert(o.end_marker, i);
-            self.marker_to_idx.insert(o.span_marker, i);
+        self.handle_to_idx.clear();
+        self.namespace_to_idx.clear();
+        for idx in 0..self.overlays.len() {
+            self.index_entry(idx);
         }
     }
 
-    /// Get all overlays at a specific position, sorted by priority
+    /// Get all overlays at a specific position, sorted by priority.
     pub fn at_position(&self, position: usize, marker_list: &MarkerList) -> Vec<&Overlay> {
-        self.overlays
-            .iter()
-            .filter(|o| {
-                let range = o.range(marker_list);
-                range.contains(&position)
-            })
-            .collect()
+        let mut hits: Vec<&Overlay> = self
+            .candidates_in(position..position + 1, marker_list)
+            .filter(|o| o.range(marker_list).contains(&position))
+            .collect();
+        hits.sort_by_key(|o| o.priority);
+        hits
     }
 
-    /// Get all overlays that overlap with a range, sorted by priority
+    /// Get all overlays that overlap with a range, sorted by priority.
     pub fn in_range(&self, range: &Range<usize>, marker_list: &MarkerList) -> Vec<&Overlay> {
-        self.overlays
-            .iter()
+        let mut hits: Vec<&Overlay> = self
+            .candidates_in(range.clone(), marker_list)
             .filter(|o| o.overlaps(range, marker_list))
-            .collect()
+            .collect();
+        hits.sort_by_key(|o| o.priority);
+        hits
+    }
+
+    /// Overlays whose span marker touches `range`, as a superset to filter.
+    /// The marker tree answers this in O(log N + k) — the vector is never
+    /// walked, which is what keeps these off the buffer's total overlay
+    /// count.
+    fn candidates_in<'a>(
+        &'a self,
+        range: Range<usize>,
+        marker_list: &MarkerList,
+    ) -> impl Iterator<Item = &'a Overlay> + 'a {
+        let mut idxs: Vec<usize> = marker_list
+            .query_range(range.start, range.end)
+            .iter()
+            .filter_map(|(mid, _, _)| self.marker_to_idx.get(mid).copied())
+            .collect();
+        idxs.sort_unstable();
+        idxs.dedup();
+        idxs.into_iter().filter_map(move |idx| self.overlays.get(idx))
+    }
+
+    /// The overlays in one namespace. O(k), for callers that would otherwise
+    /// filter `all()` — a per-frame walk of everything to count a handful.
+    pub fn in_namespace<'a>(
+        &'a self,
+        namespace: &OverlayNamespace,
+    ) -> impl Iterator<Item = &'a Overlay> + 'a {
+        self.namespace_to_idx
+            .get(namespace)
+            .into_iter()
+            .flat_map(move |slots| slots.iter().filter_map(move |&idx| self.overlays.get(idx)))
     }
 
     /// Query overlays in a viewport range efficiently using the marker interval tree
@@ -789,13 +836,22 @@ impl OverlayManager {
         *counter = counter.wrapping_add(1);
     }
 
+    /// Every overlay on the buffer, in no particular order — insertion
+    /// shuffles under `swap_remove`, and nothing needs a global order (the
+    /// renderer sorts what it draws). Prefer [`in_namespace`] or
+    /// [`query_viewport`] where they fit: they answer from an index instead
+    /// of handing out the whole set to be filtered.
+    ///
+    /// [`in_namespace`]: Self::in_namespace
+    /// [`query_viewport`]: Self::query_viewport
     pub fn all(&self) -> &[Overlay] {
         &self.overlays
     }
 
-    /// Test-only: assert `marker_to_idx` is consistent with `overlays`,
-    /// and that priorities are non-decreasing along the vector.
-    /// Panics on any divergence. Used by property tests.
+    /// Test-only: assert every index agrees with `overlays`. Panics on any
+    /// divergence. Used by property tests — with the vector unordered and
+    /// removals swapping entries around, index consistency is the whole
+    /// safety property, so it is checked after each operation.
     #[cfg(test)]
     fn check_invariants(&self) {
         // Three markers per overlay: the two authoritative endpoints plus
@@ -830,20 +886,44 @@ impl OverlayManager {
                 i,
             );
         }
-        // Priority order — only enforceable when nothing is mid-cycle.
-        // Tests check this via `assert_priority_sorted` after points
-        // where the invariant is supposed to hold (e.g. after `add`).
-    }
-
-    /// Test-only: assert overlays are non-decreasing by priority.
-    #[cfg(test)]
-    fn assert_priority_sorted(&self) {
-        for w in self.overlays.windows(2) {
-            assert!(
-                w[0].priority <= w[1].priority,
-                "priority order broken: {} after {}",
-                w[1].priority,
-                w[0].priority,
+        // One handle per overlay, each pointing at its own slot: this is
+        // what `remove_by_handle` trusts instead of searching.
+        assert_eq!(
+            self.handle_to_idx.len(),
+            self.overlays.len(),
+            "handle_to_idx size != overlays.len()"
+        );
+        for (i, o) in self.overlays.iter().enumerate() {
+            assert_eq!(
+                self.handle_to_idx.get(&o.handle).copied(),
+                Some(i),
+                "handle {:?} of overlay {} mismapped",
+                o.handle,
+                i,
+            );
+        }
+        // The namespace index must name exactly the namespaced overlays and
+        // no stale slot: `clear_namespace` removes what it lists here
+        // without looking at anything else.
+        let mut expected: HashMap<&OverlayNamespace, HashSet<usize>> = HashMap::new();
+        for (i, o) in self.overlays.iter().enumerate() {
+            if let Some(ns) = &o.namespace {
+                expected.entry(ns).or_default().insert(i);
+            }
+        }
+        assert_eq!(
+            self.namespace_to_idx.len(),
+            expected.len(),
+            "namespace_to_idx tracks {} namespaces, expected {}",
+            self.namespace_to_idx.len(),
+            expected.len(),
+        );
+        for (ns, slots) in &expected {
+            assert_eq!(
+                self.namespace_to_idx.get(*ns),
+                Some(slots),
+                "namespace {ns:?} indexed as {:?}, expected {slots:?}",
+                self.namespace_to_idx.get(*ns),
             );
         }
     }
@@ -967,17 +1047,17 @@ mod tests {
     use super::*;
 
     /// Clearing a namespace must not disturb overlays outside it, and must
-    /// leave the marker index consistent for the ones that remain.
+    /// leave every index consistent for the ones that remain.
     ///
-    /// The previous implementation `swap_remove`d, which scrambled priority
-    /// order, then repaired it by sorting every overlay and rebuilding the
-    /// entire marker index. That made a one-overlay clear cost time
-    /// proportional to the whole buffer — 2.9ms per call at 20 000 overlays,
-    /// paid on every cursor move by any plugin that repaints a highlight.
-    /// Order and index integrity are what the sort/rebuild were there for,
-    /// so this pins them directly.
+    /// This used to walk the whole overlay set to find the namespace's
+    /// members, then sort and re-index everything afterwards to repair the
+    /// priority order `swap_remove` scrambled — so a one-overlay clear cost
+    /// time proportional to the buffer, on every cursor move, for any plugin
+    /// that repaints a highlight. The clear is now driven from the namespace
+    /// index and the set is unordered, so what has to hold is that the
+    /// survivors and the indexes still agree.
     #[test]
-    fn test_clear_namespace_preserves_order_and_index() {
+    fn test_clear_namespace_leaves_indexes_consistent() {
         let mut marker_list = MarkerList::new();
         marker_list.set_buffer_size(10_000);
         let mut mgr = OverlayManager::new();
@@ -1016,11 +1096,10 @@ mod tests {
                 .all(|o| o.namespace.as_ref() == Some(&bulk)),
             "no scratch overlay may survive"
         );
+        mgr.check_invariants();
         assert!(
-            mgr.overlays
-                .windows(2)
-                .all(|w| w[0].priority <= w[1].priority),
-            "survivors stay in priority order"
+            mgr.namespace_to_idx.get(&scratch).is_none(),
+            "the cleared namespace leaves no index entry behind"
         );
         // Every surviving overlay must be findable at its recorded index.
         for (i, o) in mgr.overlays.iter().enumerate() {
@@ -1575,7 +1654,6 @@ mod tests {
                             o.priority = priority;
                             manager.add(o);
                             manager.check_invariants();
-                            manager.assert_priority_sorted();
                         }
                         Op::RemoveInRange { start, end } => {
                             manager.remove_in_range(&(start..end), &mut marker_list);
@@ -1592,7 +1670,6 @@ mod tests {
                         Op::ClearNamespace { ns_idx } => {
                             manager.clear_namespace(&nsf(ns_idx), &mut marker_list);
                             manager.check_invariants();
-                            manager.assert_priority_sorted();
                         }
                         Op::ReplaceRange { start, end, ns_idx, new_overlays } => {
                             let new: Vec<Overlay> = new_overlays.into_iter().map(|(s, l, p)| {
@@ -1612,7 +1689,6 @@ mod tests {
                                 &mut marker_list,
                             );
                             manager.check_invariants();
-                            manager.assert_priority_sorted();
                         }
                     }
                 }

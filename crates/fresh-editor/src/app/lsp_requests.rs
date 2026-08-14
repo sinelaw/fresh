@@ -1133,9 +1133,9 @@ impl Editor {
             // Add an overlay to highlight the hovered symbol and remember its
             // handle so it can be removed when the hover is dismissed. The
             // handle comes straight from the add — recovering it via
-            // `overlays.all().last()` would grab the highest-priority overlay
-            // (an error diagnostic at priority 100) instead, so dismissing the
-            // hover would then remove the error's overlay (#2601).
+            // `overlays.all().last()` would grab whichever overlay happens to
+            // sit at the end of an unordered set (an error diagnostic, say),
+            // so dismissing the hover would then remove that one (#2601).
             let handle = self.add_overlay(
                 None,
                 start_byte..end_byte,
