@@ -11,25 +11,38 @@
 //!
 //! | laid out | frame | cursor Down | PageDown | open  | rebuild |
 //! |----------|-------|-------------|----------|-------|---------|
-//! | 20k      | 135ms | 672ms       | 748ms    | 2.2s  | 2.5s    |
-//! | 30k      | 234ms | 1071ms      | 1162ms   | 2.9s  | 3.9s    |
-//! | 100k     | 862ms | 3759ms      | 4109ms   | 9.7s  | 14.7s   |
+//! | 20k      | 24ms  | 176ms       | 218ms    | 1.5s  | 1.6s    |
+//! | 30k      | 45ms  | 324ms       | 421ms    | 2.1s  | 2.5s    |
+//! | 100k     | 210ms | 1682ms      | 1937ms   | 6.9s  | 9.8s    |
 //!
-//! Two things fall out of that:
+//! For contrast, an ordinary buffer — same line counts, none of the review's
+//! per-line overlays — is flat: ~1.9ms per frame at 20k lines and at 100k,
+//! `.txt` or `.rs` alike (`bench_plain_buffer_frame_cost`). Buffer size is
+//! not what costs; what the review decorates its rows with is.
 //!
 //! Every column is linear in the lines laid out, and nothing tracks the
 //! part of the diff left header-only — a 100k-line diff capped at 20k
 //! costs exactly what a 30k-line diff capped at 20k costs. The budget is
-//! what holds the cost flat as reviews get bigger.
+//! what holds cost flat as reviews get bigger.
 //!
 //! The cost that dominates is per *frame*, not the one-time load: a key
-//! press runs ~4.5 frames' worth of work at every size. So laying more out
-//! in the background — loading files async after the first paint — would
-//! not buy what it looks like it buys. It would hide the smaller term
-//! (open) and leave every subsequent keystroke paying the larger one. The
-//! fix that would let the budget go away is a frame that costs O(viewport)
-//! instead of O(buffer), which is a host-side renderer/overlay question,
-//! not a plugin one.
+//! press runs several frames' worth of work at every size. So laying more
+//! out in the background — loading files async after the first paint —
+//! would not buy what it looks like it buys. It would hide the smaller term
+//! (open) and leave every subsequent keystroke paying the larger one.
+//!
+//! These numbers are already after the first of those per-frame costs was
+//! found and removed (rainbow-bracket colorization was republishing itself
+//! across the whole buffer every frame; see `BracketHighlightOverlay`).
+//! That was worth 6x on an idle frame and 3.8x on a cursor move. What
+//! remains is still linear in the lines laid out, and the next thing to
+//! look at is the same shape one level down: `OverlayManager::clear_namespace`
+//! scans the whole overlay set and `add` re-indexes the tail after it, and
+//! both run on every cursor move (bracket matching, and the review plugin's
+//! own cursor-line overlay).
+//!
+//! Before that fix, for comparison: 142ms/frame and 670ms/key at 20k;
+//! 862ms/frame and 3759ms/key at 100k.
 
 use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
@@ -128,15 +141,23 @@ fn bench_case(label: &str, files: usize, lines_per_file: usize, budget: u64) {
     }
 
     // Idle repaint: no input at all, so this is pure render cost over a
-    // buffer of this size.
+    // buffer of this size. The wrap-index counters say whether those
+    // frames are re-laying-out the whole buffer or just the viewport.
+    let stats_before = harness.editor().active_state().wrap_indices.stats();
     let idle_start = Instant::now();
     for _ in 0..20 {
         harness.tick_and_render().unwrap();
     }
     let idle_ms = idle_start.elapsed().as_millis();
+    let stats_after = harness.editor().active_state().wrap_indices.stats();
+    let idle_rebuilds = stats_after.rebuilds - stats_before.rebuilds;
+    let idle_lines_built = stats_after.lines_built - stats_before.lines_built;
+    let idle_repairs = stats_after.decoration_repairs - stats_before.decoration_repairs;
+    let idle_lines_repaired = stats_after.lines_repaired - stats_before.lines_repaired;
 
     // Cursor move: same viewport, but the plugin re-does its per-cursor
     // work (cursor-line overlay, sticky header, status).
+    let stats_before = harness.editor().active_state().wrap_indices.stats();
     let down_start = Instant::now();
     for _ in 0..20 {
         harness
@@ -145,6 +166,11 @@ fn bench_case(label: &str, files: usize, lines_per_file: usize, budget: u64) {
         harness.tick_and_render().unwrap();
     }
     let down_ms = down_start.elapsed().as_millis();
+    let stats_after = harness.editor().active_state().wrap_indices.stats();
+    let down_rebuilds = stats_after.rebuilds - stats_before.rebuilds;
+    let down_lines_built = stats_after.lines_built - stats_before.lines_built;
+    let down_repairs = stats_after.decoration_repairs - stats_before.decoration_repairs;
+    let down_lines_repaired = stats_after.lines_repaired - stats_before.lines_repaired;
 
     // Scrolling: no rebuild, so this is the host's cost over a big buffer.
     let scroll_start = Instant::now();
@@ -163,6 +189,14 @@ fn bench_case(label: &str, files: usize, lines_per_file: usize, budget: u64) {
          open={open_ms}ms rebuild={rebuild_ms:?}ms idle20={idle_ms}ms down20={down_ms}ms \
          scroll20={scroll_ms}ms not_loaded_on_screen={not_loaded}",
         files * lines_per_file * 2
+    );
+    println!(
+        "BENCH {label} wrap-index over 20 idle frames: rebuilds={idle_rebuilds} \
+         lines_built={idle_lines_built} repairs={idle_repairs} lines_repaired={idle_lines_repaired}"
+    );
+    println!(
+        "BENCH {label} wrap-index over 20 cursor moves: rebuilds={down_rebuilds} \
+         lines_built={down_lines_built} repairs={down_repairs} lines_repaired={down_lines_repaired}"
     );
 }
 
@@ -188,4 +222,61 @@ fn bench_review_layout_100k_uncapped() {
 #[ignore = "benchmark: run explicitly with --nocapture"]
 fn bench_review_layout_100k_capped() {
     bench_case("100k/capped", 100, 500, 20000);
+}
+
+// ---------------------------------------------------------------------------
+// Where the per-frame cost lives
+// ---------------------------------------------------------------------------
+
+/// Control for the review benchmarks above: an ordinary text buffer of the
+/// same line counts, with none of the review's overlays, properties or
+/// plugin event handlers. If a frame over a plain buffer is flat in line
+/// count while the review's frame is linear, the cost is in what the
+/// review decorates its rows with, not in buffer size as such.
+#[test]
+#[ignore = "benchmark: run explicitly with --nocapture"]
+fn bench_plain_buffer_frame_cost() {
+    // `.txt` gets no grammar; `.rs` is parsed and carries highlight spans
+    // for the whole file (under `MAX_PARSE_BYTES`). Same line counts, so
+    // any difference between the two is the cost of the spans.
+    for (name, lines) in [
+        ("plain.txt", 20_000usize),
+        ("plain.txt", 100_000),
+        ("plain.rs", 20_000),
+        ("plain.rs", 100_000),
+    ] {
+        let mut harness = EditorTestHarness::new(120, 40).unwrap();
+        let text: String = (0..lines)
+            .map(|i| format!("fn f_{i}() {{ let x = {i}; }}\n"))
+            .collect();
+        harness.load_buffer_from_text_named(name, &text).unwrap();
+        harness.render().unwrap();
+
+        let idle = Instant::now();
+        for _ in 0..20 {
+            harness.tick_and_render().unwrap();
+        }
+        let idle_ms = idle.elapsed().as_millis();
+
+        let down = Instant::now();
+        for _ in 0..20 {
+            harness
+                .send_key(crossterm::event::KeyCode::Down, crossterm::event::KeyModifiers::NONE)
+                .unwrap();
+        }
+        let down_ms = down.elapsed().as_millis();
+
+        let page = Instant::now();
+        for _ in 0..20 {
+            harness
+                .send_key(crossterm::event::KeyCode::PageDown, crossterm::event::KeyModifiers::NONE)
+                .unwrap();
+        }
+        let page_ms = page.elapsed().as_millis();
+
+        println!(
+            "BENCH plain-buffer: file={name} lines={lines} idle20={idle_ms}ms \
+             down20={down_ms}ms page20={page_ms}ms"
+        );
+    }
 }

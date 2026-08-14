@@ -139,6 +139,31 @@ pub struct BracketHighlightOverlay {
     /// disabled pass clear them exactly once instead of re-clearing (and
     /// reporting "updated") on every frame.
     colorization_active: bool,
+    /// What the last colorization pass was computed from, and the byte range
+    /// it wrote into. A frame whose inputs match this does no work at all:
+    /// the overlays it would produce are already in place, and re-deriving
+    /// them costs the whole overlay set (see `update_colorization`).
+    colorization_cache: Option<ColorizationCache>,
+}
+
+/// Inputs a colorization pass depends on, plus the range it wrote.
+struct ColorizationCache {
+    /// Bytes scanned for brackets.
+    scan: Range<usize>,
+    /// Byte range the overlays were written into — the union of this pass's
+    /// scan range and the previous one's, which is what the next replace has
+    /// to cover to retract what scrolled out of view.
+    written: Range<usize>,
+    buffer_version: u64,
+    viewport: Range<usize>,
+    colors: [Color; 6],
+    skip_ranges: Vec<Range<usize>>,
+    /// The overlay set's removal counters when this pass ran — global, and
+    /// for the colorization namespace. Anything that could have removed
+    /// these overlays (a buffer switch, a plugin's `clearAllOverlays`, a
+    /// clear of this namespace) moves one of them, and the cached overlays
+    /// can no longer be assumed present.
+    removal_epochs: (u64, u64),
 }
 
 impl BracketHighlightOverlay {
@@ -149,6 +174,7 @@ impl BracketHighlightOverlay {
             match_color: Color::Rgb(255, 215, 0), // Gold
             last_cursor_pos: None,
             colorization_active: false,
+            colorization_cache: None,
         }
     }
 
@@ -442,6 +468,9 @@ impl BracketHighlightOverlay {
         let ns = bracket_colorization_namespace();
         overlays.clear_namespace(&ns, marker_list);
         self.colorization_active = false;
+        // The overlays this cache describes are gone, so the next enabled
+        // pass must rebuild rather than recognise its own inputs.
+        self.colorization_cache = None;
         true
     }
 
@@ -465,12 +494,30 @@ impl BracketHighlightOverlay {
             return self.clear_colorization(overlays, marker_list);
         }
 
+        let ns = bracket_colorization_namespace();
+
+        // Nothing this pass reads has moved since the last one, so the
+        // overlays it would produce are the ones already on the buffer.
+        // Without this a parked cursor re-derives them every frame, and the
+        // replace below is what makes that expensive on a heavily-decorated
+        // buffer (a review diff carries an overlay per line).
+        if let Some(cache) = &self.colorization_cache {
+            if cache.scan == (scan_start..scan_end)
+                && cache.buffer_version == buffer.version()
+                && cache.viewport == (viewport_start..viewport_end)
+                && cache.colors == self.rainbow_colors
+                && cache.skip_ranges == skip_ranges
+                && cache.removal_epochs == overlays.removal_epochs_for(&ns)
+            {
+                return false;
+            }
+        }
+
         let bytes = buffer.slice_bytes(scan_start..scan_end);
         if bytes.is_empty() {
             return self.clear_colorization(overlays, marker_list);
         }
 
-        let ns = bracket_colorization_namespace();
         let mut stack: Vec<char> = Vec::new();
         let mut new_overlays = Vec::new();
 
@@ -518,7 +565,35 @@ impl BracketHighlightOverlay {
         }
 
         self.colorization_active = !new_overlays.is_empty();
-        overlays.replace_range_in_namespace(&ns, &(0..buffer.len()), new_overlays, marker_list);
+        // Replace over the scanned bytes plus whatever the previous pass
+        // wrote — enough to retract the overlays that scrolled out of view,
+        // and nothing more. Passing `0..buffer.len()` here (as this used to)
+        // makes the replace's marker-tree query return *every* marker in the
+        // buffer, so the cost of one frame grew with the whole overlay set
+        // rather than with the viewport: ~230ms per frame on a 20k-line
+        // review diff, against ~3ms for the rest of the frame.
+        let written = match &self.colorization_cache {
+            // An edit moved every marker after it, so the overlays this
+            // namespace already owns are no longer where the cached range
+            // says they are — one of them can have been pushed clear of it.
+            // Retract across the buffer for that pass; edits are rare next
+            // to frames, and this is the range the pass always used before.
+            Some(cache) if cache.buffer_version != buffer.version() => 0..buffer.len(),
+            Some(cache) => cache.written.start.min(scan_start)..cache.written.end.max(scan_end),
+            None => scan_start..scan_end,
+        };
+        overlays.replace_range_in_namespace(&ns, &written, new_overlays, marker_list);
+        self.colorization_cache = Some(ColorizationCache {
+            scan: scan_start..scan_end,
+            // The next pass has to cover what this one wrote, but not what
+            // the one before it did — that has just been retracted.
+            written: scan_start..scan_end,
+            buffer_version: buffer.version(),
+            viewport: viewport_start..viewport_end,
+            colors: self.rainbow_colors,
+            skip_ranges: skip_ranges.to_vec(),
+            removal_epochs: overlays.removal_epochs_for(&ns),
+        });
         true
     }
 }
@@ -533,6 +608,89 @@ impl Default for BracketHighlightOverlay {
 mod tests {
     use super::*;
     use crate::model::buffer::Buffer;
+
+    /// Run one colorization pass over the whole buffer as the renderer
+    /// would, returning whether it did any work.
+    fn colorize_frame(
+        overlay: &mut BracketHighlightOverlay,
+        buffer: &Buffer,
+        overlays: &mut OverlayManager,
+        markers: &mut MarkerList,
+    ) -> bool {
+        overlay.update_colorization(buffer, overlays, markers, 0, buffer.len(), &[])
+    }
+
+    /// A frame that changed nothing the pass reads must do nothing. Without
+    /// this the pass re-derives its overlays every frame, and the replace
+    /// that publishes them scans the buffer's whole overlay set — which is
+    /// what made a large review diff cost ~230ms per frame instead of ~3ms.
+    #[test]
+    fn colorization_skips_a_frame_whose_inputs_have_not_moved() {
+        let buffer = Buffer::from_str_test("fn a() { b(); }\n");
+        let mut overlays = OverlayManager::new();
+        let mut markers = MarkerList::new();
+        let mut overlay = BracketHighlightOverlay::new();
+
+        assert!(
+            colorize_frame(&mut overlay, &buffer, &mut overlays, &mut markers),
+            "the first pass has overlays to publish"
+        );
+        let after_first = overlays.len();
+        assert!(after_first > 0, "brackets in view should be colorized");
+
+        assert!(
+            !colorize_frame(&mut overlay, &buffer, &mut overlays, &mut markers),
+            "an unchanged frame must not re-derive the colorization"
+        );
+        assert_eq!(
+            overlays.len(),
+            after_first,
+            "and must leave the overlays it published alone"
+        );
+    }
+
+    /// The cache is a claim about overlays still being on the buffer, so
+    /// anything that removes them has to break it — otherwise the brackets
+    /// stay uncolored until some unrelated input happens to move.
+    #[test]
+    fn colorization_rebuilds_after_the_overlays_are_cleared() {
+        let buffer = Buffer::from_str_test("fn a() { b(); }\n");
+        let mut overlays = OverlayManager::new();
+        let mut markers = MarkerList::new();
+        let mut overlay = BracketHighlightOverlay::new();
+
+        colorize_frame(&mut overlay, &buffer, &mut overlays, &mut markers);
+        let published = overlays.len();
+        assert!(published > 0);
+
+        // Something else wipes the buffer's overlays — a buffer switch, or a
+        // plugin calling `clearAllOverlays`.
+        overlays.clear(&mut markers);
+        assert_eq!(overlays.len(), 0);
+
+        assert!(
+            colorize_frame(&mut overlay, &buffer, &mut overlays, &mut markers),
+            "a cleared buffer must be re-colorized, not assumed current"
+        );
+        assert_eq!(overlays.len(), published);
+    }
+
+    /// An edit moves the buffer version, and the brackets with it.
+    #[test]
+    fn colorization_rebuilds_after_an_edit() {
+        let mut buffer = Buffer::from_str_test("fn a() { b(); }\n");
+        let mut overlays = OverlayManager::new();
+        let mut markers = MarkerList::new();
+        let mut overlay = BracketHighlightOverlay::new();
+
+        colorize_frame(&mut overlay, &buffer, &mut overlays, &mut markers);
+        buffer.insert(0, "{}\n");
+
+        assert!(
+            colorize_frame(&mut overlay, &buffer, &mut overlays, &mut markers),
+            "an edited buffer must be re-colorized"
+        );
+    }
 
     #[test]
     fn test_bracket_pair_detection() {
