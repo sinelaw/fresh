@@ -717,7 +717,8 @@ impl OverlayManager {
             .collect();
         idxs.sort_unstable();
         idxs.dedup();
-        idxs.into_iter().filter_map(move |idx| self.overlays.get(idx))
+        idxs.into_iter()
+            .filter_map(move |idx| self.overlays.get(idx))
     }
 
     /// The overlays in one namespace. O(k), for callers that would otherwise
