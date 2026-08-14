@@ -28,6 +28,11 @@ pub struct CollectedOverlay {
 pub struct TextPropertyManager {
     /// All properties, sorted by start position
     properties: Vec<TextProperty>,
+    /// Bumped by every mutation. Consumers that copy the whole set — the
+    /// plugin state snapshot does, once per tick per buffer — compare this
+    /// instead of copying again, which matters because a plugin-drawn
+    /// buffer can carry a property per line.
+    version: u64,
 }
 
 impl TextPropertyManager {
@@ -35,6 +40,7 @@ impl TextPropertyManager {
     pub fn new() -> Self {
         Self {
             properties: Vec::new(),
+            version: 0,
         }
     }
 
@@ -46,6 +52,7 @@ impl TextPropertyManager {
             .binary_search_by_key(&property.start, |p| p.start)
             .unwrap_or_else(|e| e);
         self.properties.insert(pos, property);
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Get all properties at a specific byte position
@@ -64,12 +71,14 @@ impl TextPropertyManager {
     /// Clear all properties
     pub fn clear(&mut self) {
         self.properties.clear();
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Remove all properties in a range
     pub fn remove_in_range(&mut self, range: &Range<usize>) {
         self.properties
             .retain(|p| !p.overlaps(range) && !range.contains(&p.start));
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Get all properties
@@ -92,6 +101,14 @@ impl TextPropertyManager {
         self.properties = properties;
         // Ensure sorted by start position
         self.properties.sort_by_key(|p| p.start);
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// A counter that moves on every mutation, and on nothing else. Lets a
+    /// consumer that holds a copy of `all()` tell whether it is stale
+    /// without comparing the properties themselves.
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     /// Merge properties from another source
