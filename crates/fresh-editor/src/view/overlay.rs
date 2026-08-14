@@ -391,19 +391,23 @@ impl OverlayManager {
     /// in `overlays` at that position.
     fn index_entry(&mut self, idx: usize) {
         let overlay = &self.overlays[idx];
-        let (start, end, span) = (
-            overlay.start_marker,
-            overlay.end_marker,
-            overlay.span_marker,
-        );
-        let handle = overlay.handle.clone();
-        let namespace = overlay.namespace.clone();
-        self.marker_to_idx.insert(start, idx);
-        self.marker_to_idx.insert(end, idx);
-        self.marker_to_idx.insert(span, idx);
-        self.handle_to_idx.insert(handle, idx);
-        if let Some(ns) = namespace {
-            self.namespace_to_idx.entry(ns).or_default().insert(idx);
+        self.marker_to_idx.insert(overlay.start_marker, idx);
+        self.marker_to_idx.insert(overlay.end_marker, idx);
+        self.marker_to_idx.insert(overlay.span_marker, idx);
+        self.handle_to_idx.insert(overlay.handle.clone(), idx);
+        // Own the namespace key only when it is new. This runs once per
+        // overlay on the bulk path (`extend` over a whole diff), where
+        // `entry(ns.clone())` would allocate a `String` per overlay to
+        // insert a key that is already there.
+        if let Some(ns) = &overlay.namespace {
+            if let Some(slots) = self.namespace_to_idx.get_mut(ns) {
+                slots.insert(idx);
+            } else {
+                self.namespace_to_idx
+                    .entry(ns.clone())
+                    .or_default()
+                    .insert(idx);
+            }
         }
     }
 
@@ -427,19 +431,17 @@ impl OverlayManager {
     /// `from`, before a swap-remove pulled it down).
     fn reindex_moved(&mut self, idx: usize, from: usize) {
         let overlay = &self.overlays[idx];
-        let (start, end, span) = (
-            overlay.start_marker,
-            overlay.end_marker,
-            overlay.span_marker,
-        );
-        let handle = overlay.handle.clone();
-        let namespace = overlay.namespace.clone();
-        self.marker_to_idx.insert(start, idx);
-        self.marker_to_idx.insert(end, idx);
-        self.marker_to_idx.insert(span, idx);
-        self.handle_to_idx.insert(handle, idx);
-        if let Some(ns) = namespace {
-            if let Some(slots) = self.namespace_to_idx.get_mut(&ns) {
+        self.marker_to_idx.insert(overlay.start_marker, idx);
+        self.marker_to_idx.insert(overlay.end_marker, idx);
+        self.marker_to_idx.insert(overlay.span_marker, idx);
+        // Both keys are already in their maps, so re-point them in place:
+        // `self.overlays` and the index maps are disjoint fields, so the
+        // borrows coexist and neither key needs cloning.
+        if let Some(slot) = self.handle_to_idx.get_mut(&overlay.handle) {
+            *slot = idx;
+        }
+        if let Some(ns) = &overlay.namespace {
+            if let Some(slots) = self.namespace_to_idx.get_mut(ns) {
                 slots.remove(&from);
                 slots.insert(idx);
             }
@@ -646,6 +648,12 @@ impl OverlayManager {
         for overlay in &self.overlays {
             marker_list.delete(overlay.start_marker);
             marker_list.delete(overlay.end_marker);
+            // The span marker too. Leaving it behind orphans one interval
+            // per overlay in the tree forever, and every query here now
+            // goes through that tree — `set_virtual_buffer_content` clears
+            // and refills on each content set, so the orphans would grow
+            // the `k` in O(log N + k) without bound across reloads.
+            marker_list.delete(overlay.span_marker);
         }
         self.overlays.clear();
         self.marker_to_idx.clear();
@@ -667,17 +675,6 @@ impl OverlayManager {
         let moved_from = self.overlays.len();
         if idx < moved_from {
             self.reindex_moved(idx, moved_from);
-        }
-    }
-
-    /// Rebuild every index from the current contents of `overlays`.
-    #[cfg(test)]
-    fn rebuild_indexes(&mut self) {
-        self.marker_to_idx.clear();
-        self.handle_to_idx.clear();
-        self.namespace_to_idx.clear();
-        for idx in 0..self.overlays.len() {
-            self.index_entry(idx);
         }
     }
 
@@ -1046,6 +1043,40 @@ impl Overlay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every removal path must delete all three of an overlay's markers.
+    /// `clear()` used to delete only the two endpoints, orphaning one
+    /// interval per overlay in the tree — invisible while queries walked
+    /// the overlay vector, but every query is driven by the marker tree
+    /// now, and `set_virtual_buffer_content` clears and refills on every
+    /// content set.
+    #[test]
+    fn clear_deletes_every_marker_it_created() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(1000);
+        let mut mgr = OverlayManager::new();
+        for i in 0..10 {
+            mgr.add(Overlay::new(
+                &mut marker_list,
+                (i * 10)..(i * 10 + 5),
+                OverlayFace::Background { color: Color::Red },
+            ));
+        }
+        assert_eq!(
+            marker_list.query_range(0, 1000).len(),
+            30,
+            "three markers per overlay: start, end, span"
+        );
+
+        mgr.clear(&mut marker_list);
+
+        assert_eq!(mgr.len(), 0);
+        assert_eq!(
+            marker_list.query_range(0, 1000).len(),
+            0,
+            "clear() must leave no marker behind"
+        );
+    }
 
     /// Clearing a namespace must not disturb overlays outside it, and must
     /// leave every index consistent for the ones that remain.

@@ -427,7 +427,6 @@ pub(crate) const PLUGIN_COMMAND_HANDLER_LIMIT: std::time::Duration =
 pub(crate) const PLUGIN_COMMAND_HANDLER_HARD_LIMIT: std::time::Duration =
     std::time::Duration::from_millis(500);
 
-/// The main editor struct - manages multiple buffers, clipboard, and rendering
 /// Counters for work whose cost must not grow with a buffer's content.
 ///
 /// A frame and a tick are supposed to cost what is on screen, not what is
@@ -448,6 +447,7 @@ pub struct PerfCounters {
     pub text_properties_copied: u64,
 }
 
+/// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
     /// See [`PerfCounters`]. Cheap to maintain (two increments on a path
     /// that is already copying), and the only way an assertion can tell a

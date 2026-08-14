@@ -2333,13 +2333,13 @@ function onFilesTreeSelect(nodeKey: string): void {
     filesSelectedNodeKey = nodeKey;
     const key = filesTree.fileByNodeKey[nodeKey];
     if (key === undefined || key === state.filesCurrentKey) return;
-    // Asked before the assignment: `fileBodyRendered` answers about the
-    // *current* build, and in side-by-side it is `filesCurrentKey` itself.
+    // Asked before the assignment: in side-by-side `fileBodyRendered` is
+    // `filesCurrentKey` itself, so the answer changes as we assign.
     const needsLayout = !fileBodyRendered(key);
     state.filesCurrentKey = key;
     if (needsLayout) {
-        // The centre doesn't carry this file (the composite draws one
-        // file; the stream's budget stopped short of it): rebuild around it.
+        // Side-by-side: the composite draws one file, so it has to be
+        // rebuilt around this one.
         refreshFocusedFile();
         return;
     }
@@ -2543,26 +2543,18 @@ function jumpToFile(file: FileEntry): void {
         state.collapsedFiles.delete(key);
         updateMagitDisplay();
     }
-    // Prefer first hunk row; fall back to the file-header row.
-    const fileIdx = state.files.indexOf(file);
-    if (fileIdx >= 0) {
-        // Compute visible hunk index of the first hunk for this file.
-        let visibleIdx = 0;
-        let foundGlobal = -1;
-        for (let i = 0; i < state.hunks.length; i++) {
-            const h = state.hunks[i];
-            const hKey = fileKeyOf(h.file, h.gitStatus || 'unstaged');
-            if (state.collapsedFiles.has(hKey)) continue;
-            if (h.file === file.path && h.gitStatus === file.category) {
-                foundGlobal = i;
-                break;
-            }
-            visibleIdx++;
-        }
-        if (foundGlobal >= 0) {
-            const row = state.hunkHeaderRows[visibleIdx];
-            if (row !== undefined) { jumpDiffCursorToRow(row); return; }
-        }
+    // Prefer this file's first hunk row; fall back to the file header.
+    // Read the row from the build's own map rather than counting hunks:
+    // the count used to skip collapsed files, but collapse is a conceal
+    // (see `applyFolds`) and their hunk headers are still in the stream,
+    // so the Nth counted hunk was not the Nth row — clicking the sticky
+    // header with a collapsed file above landed inside that file instead.
+    const firstHunk = state.hunks.find(
+        h => h.file === file.path && h.gitStatus === file.category
+    );
+    if (firstHunk) {
+        const row = state.hunkRowByHunkId[firstHunk.id];
+        if (row !== undefined) { jumpDiffCursorToRow(row); return; }
     }
     const headerRow = state.fileHeaderRows[key];
     if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
@@ -2624,15 +2616,6 @@ function on_review_mouse_click(data: {
         for (const f of state.files) {
             if (state.fileHeaderRows[fileKey(f)] === targetRow1) {
                 const key = fileKey(f);
-                // A header the center has no body for — the composite's
-                // other files, or a file past the stream's layout budget —
-                // has no fold to toggle. Clicking it loads that file
-                // instead. Headers with a body still fold as usual.
-                if (!fileBodyRendered(key)) {
-                    state.filesCurrentKey = key;
-                    refreshFocusedFile();
-                    return;
-                }
                 if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
                 else state.collapsedFiles.add(key);
                 applyFolds();
@@ -2728,9 +2711,9 @@ function jumpToComment(commentId: string): void {
     const file = state.files.find(f => f.path === hunk.file && f.category === hunk.gitStatus);
     if (file) {
         const key = fileKey(file);
-        // The comment may live in a file the center isn't carrying (the
-        // composite's one file, or past the stream's budget). Make it the
-        // current file so the anchor row exists after the rebuild.
+        // The comment may live in a file the center isn't carrying — the
+        // composite draws one file. Make it the current file so the anchor
+        // row exists after the rebuild.
         if (!fileBodyRendered(key)) {
             state.filesCurrentKey = key;
             needRebuild = true;
@@ -2981,13 +2964,6 @@ function review_toggle_file_collapse() {
     const headerFile = fileHeaderUnderCursor();
     if (headerFile) {
         const key = fileKey(headerFile);
-        // Nothing under the header to fold: the file is past the stream's
-        // layout budget, so the key that expands a header loads it.
-        if (!fileBodyRendered(key)) {
-            state.filesCurrentKey = key;
-            refreshFocusedFile();
-            return;
-        }
         if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
         else state.collapsedFiles.add(key);
         applyFolds();
@@ -5527,10 +5503,9 @@ function jumpToGlobalHunk(globalIdx: number) {
     state.collapsedFiles.delete(targetFileKey);
     state.collapsedHunks.delete(target.id);
     if (!fileBodyRendered(targetFileKey)) {
-        // The center has no rows for this file yet (the composite draws
-        // one file; the stream's budget stopped short of it), so it has to
+        // Side-by-side: the composite draws one file, so the target has to
         // become the current file before its hunk row exists. This is how
-        // `n`/`p` cross into a file the center wasn't carrying.
+        // `n`/`p` cross file boundaries there.
         state.filesCurrentKey = targetFileKey;
         refreshFocusedFile();
     } else {

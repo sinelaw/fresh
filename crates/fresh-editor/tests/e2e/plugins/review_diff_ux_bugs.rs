@@ -2094,15 +2094,16 @@ fn test_range_review_lays_out_every_file() {
 
     open_review_range_head(&mut harness);
 
+    // This is the load-bearing assertion, and it is specific: the sidebar
+    // groups by directory and sorts `src/` above `src/a/`, so its first
+    // file is `src/zeta.rs`, while the diff — which is what the stream
+    // emits and where the cursor starts — begins with `src/a/deep.rs`.
+    // Anything that renders only the sidebar's first file fails here.
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("DEEP_MARKER"),
-        "the stream must open on real diff content, not a wall of headers. \
-         Screen:\n{screen}"
-    );
-    assert!(
-        !screen.contains("not loaded"),
-        "no file may be left out of the layout. Screen:\n{screen}"
+        "the stream must open on the first file of the *diff*, not a wall \
+         of headers. Screen:\n{screen}"
     );
 
     // `n` walks hunks across file boundaries, into the rest of the diff.
@@ -2124,6 +2125,106 @@ fn test_range_review_lays_out_every_file() {
         crossed,
         "`n` should cross into the next file of the diff. Screen:\n{screen}"
     );
+}
+
+/// Clicking the sticky header jumps to the pinned file's first hunk. It
+/// used to find that row by counting hunks and skipping collapsed files —
+/// but collapse is a conceal, so a collapsed file's hunk headers are still
+/// rows in the stream, and the count drifted by exactly the hunks it
+/// skipped. With a collapsed file above, the click landed inside *that*
+/// file instead of the pinned one.
+#[test]
+fn test_sticky_header_jump_survives_a_collapsed_file_above() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // `a_first.rs` sorts before `b_second.rs` in both the diff's order and
+    // the sidebar's, so the collapsed file is reliably the one above.
+    repo.create_file("src/a_first.rs", "fn one() {}\nfn two() {}\n");
+    repo.create_file("src/b_second.rs", "fn three() {}\n");
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    fs::write(
+        repo.path.join("src/a_first.rs"),
+        "fn one() {\n    // FIRST_CHANGE\n}\nfn two() {\n    // ALSO_FIRST\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.path.join("src/b_second.rs"),
+        "fn three() {\n    // SECOND_CHANGE\n}\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+
+    let row_containing = |h: &EditorTestHarness, needle: &str, below: u16| -> Option<u16> {
+        (below..40).find(|r| h.screen_row_text(*r).contains(needle))
+    };
+
+    // The stream starts with the section header; the sticky header is the
+    // row above it, past the separator the layout draws between them.
+    let section_row = row_containing(&harness, "UNSTAGED", 0).expect("section header on screen");
+    let sticky_row = section_row - 2;
+
+    // Collapse the first file: step onto its header (the row after the
+    // section header) and press Enter.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("FIRST_CHANGE"))
+        .unwrap();
+
+    // Put the cursor in the second file so the sticky header pins it.
+    harness
+        .send_key(KeyCode::Char('.'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("SECOND_CHANGE"))
+        .unwrap();
+
+    // The status bar's "Hunk N of M" is the plugin's own numbering over the
+    // rows it rendered, so it says where the jump landed without mapping
+    // screen rows to buffer lines — a mapping a collapsed file breaks.
+    // src/b_second.rs is the last file, so its first hunk is the last hunk.
+    harness.mouse_click(2, sticky_row).unwrap();
+    harness
+        .wait_until(|h| hunk_index(&h.screen_to_string()).is_some())
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let (current, count) = hunk_index(&screen).expect("status bar reports a hunk index");
+    assert!(
+        count >= 2,
+        "test needs at least two hunks to tell the files apart, got {count}. \
+         Screen:\n{screen}"
+    );
+    assert_eq!(
+        current, count,
+        "clicking the sticky header pinned to src/b_second.rs should land on \
+         its hunk — the last one — but landed on hunk {current} of {count}, \
+         inside the collapsed file above. Screen:\n{screen}"
+    );
+}
+
+/// Parse `Hunk N of M` out of the review status line.
+fn hunk_index(screen: &str) -> Option<(usize, usize)> {
+    let idx = screen.find("Hunk ")?;
+    let rest = &screen[idx + 5..];
+    let (current, rest) = rest.split_once(" of ")?;
+    let count: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    Some((current.trim().parse().ok()?, count.parse().ok()?))
 }
 
 /// Every file of an ordinary review is laid out too — the same contract,
@@ -2158,10 +2259,6 @@ fn test_normal_review_lays_out_every_file() {
     harness.render().unwrap();
 
     let screen = open_review_diff(&mut harness);
-    assert!(
-        !screen.contains("not loaded"),
-        "a small review must be laid out in full. Screen:\n{screen}"
-    );
     assert!(
         screen.contains("MAIN_MARKER") && screen.contains("UTILS_MARKER"),
         "both changed files' hunks belong in the stream. Screen:\n{screen}"
