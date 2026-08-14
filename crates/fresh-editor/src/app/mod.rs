@@ -438,12 +438,14 @@ pub(crate) const PLUGIN_COMMAND_HANDLER_HARD_LIMIT: std::time::Duration =
 /// `plugin_snapshot_scaling`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PerfCounters {
-    /// Buffers whose text properties were copied into the plugin state
-    /// snapshot. One per buffer whose properties actually changed.
-    pub text_property_copies: u64,
-    /// Individual text properties copied — the size-sensitive one. Over a
-    /// run of ticks that change nothing, this must not grow with how much
-    /// the buffers hold.
+    /// Buffers whose text-property set was shared into the plugin state
+    /// snapshot — one refcount bump each, so this tracks the number of
+    /// buffers and never their contents.
+    pub text_property_shares: u64,
+    /// Text properties *copied* into the snapshot. Zero by construction:
+    /// the snapshot holds shared handles. A copy reappearing here is the
+    /// per-tick cost returning, which is what `plugin_snapshot_scaling`
+    /// watches for.
     pub text_properties_copied: u64,
 }
 

@@ -9,11 +9,15 @@
 //! range cost ~3.8s per keystroke, and the review plugin had grown a
 //! layout budget to compensate.
 //!
+//! The snapshot now shares each buffer's property set instead of copying
+//! it, so a tick's work is one refcount bump per buffer and cannot track
+//! their content at all.
+//!
 //! This pins the shape rather than a duration. Timings can't hold a line
 //! in CI — they move with the machine and the build profile, and the same
 //! defect measured 53ms in debug and 4ms in release — but the counters are
-//! exact: idle ticks and cursor moves copy nothing, whatever the buffer
-//! holds, and doubling the content doesn't double the copying.
+//! exact: what a tick does is proportional to the number of buffers, and a
+//! review five times the size gives the same number.
 
 use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
@@ -47,10 +51,9 @@ fn repo_with_diff(files: usize, lines_per_file: usize) -> GitTestRepo {
     repo
 }
 
-/// What idling and moving the cursor costs in copied text properties, for
-/// a review of the given size. Also returns the properties the buffers
-/// actually hold, so the caller can tell a flat cost from a lucky one.
-fn snapshot_copies_while_idle_and_moving(files: usize, lines_per_file: usize) -> (u64, u64) {
+/// What idling and moving the cursor costs the snapshot, for a review of
+/// the given size: `(property sets shared, properties copied)`.
+fn snapshot_work_while_idle_and_moving(files: usize, lines_per_file: usize) -> (u64, u64) {
     let repo = repo_with_diff(files, lines_per_file);
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -90,43 +93,40 @@ fn snapshot_copies_while_idle_and_moving(files: usize, lines_per_file: usize) ->
     }
     let after = harness.editor().perf_counters();
     (
+        after.text_property_shares - before.text_property_shares,
         after.text_properties_copied - before.text_properties_copied,
-        after.text_property_copies - before.text_property_copies,
     )
 }
 
-/// Ticks that change nothing must copy nothing, and a review five times
-/// the size must not cost five times as much.
-///
-/// The sizes are small enough to keep the test quick; what matters is the
-/// ratio between them, which was ~5x before the snapshot learned to skip
-/// unchanged buffers and is ~1x after.
+/// A review five times the size must not cost five times as much per
+/// tick, and no tick may copy a property at all.
 #[test]
-fn snapshot_copying_does_not_scale_with_review_size() {
-    let (small_props, small_copies) = snapshot_copies_while_idle_and_moving(4, 250);
-    let (big_props, big_copies) = snapshot_copies_while_idle_and_moving(20, 250);
+fn snapshot_work_does_not_scale_with_review_size() {
+    let (small_shares, small_copied) = snapshot_work_while_idle_and_moving(4, 250);
+    let (big_shares, big_copied) = snapshot_work_while_idle_and_moving(20, 250);
 
-    // Some copying is legitimate: moving the cursor repaints the sticky
-    // header and the toolbar, which are plugin-drawn buffers of a few rows
-    // each. What must not happen is the *diff* being recopied — that is
-    // thousands of properties per tick.
+    assert_eq!(
+        small_copied, 0,
+        "the snapshot shares property sets; copying {small_copied} of them \
+         back means a tick's cost tracks the buffers' content again"
+    );
+    assert_eq!(
+        big_copied, 0,
+        "the 5x review copied {big_copied} properties into the snapshot"
+    );
+
+    // Sharing is per buffer, and both reviews open the same panels, so the
+    // counts should match outright. Compared with a small tolerance rather
+    // than exactly: the number of ticks a review takes to settle is not
+    // something this test should pin.
     assert!(
-        small_props < 500,
-        "40 ticks over a small review copied {small_props} text properties \
-         ({small_copies} buffer copies); ticks that change nothing should \
-         copy nothing but the few rows the cursor repaints"
+        small_shares > 0,
+        "the snapshot should be sharing something — the counter never moved, \
+         so this test is not measuring the path it claims to"
     );
     assert!(
-        big_props < 500,
-        "40 ticks over a 5x larger review copied {big_props} text properties \
-         ({big_copies} buffer copies) — the per-tick cost is tracking the \
-         buffer's content again"
-    );
-    // The real contract: cost is independent of size. Compared with a
-    // floor so the assertion doesn't hinge on noise when both are tiny.
-    assert!(
-        big_props <= small_props.max(50) * 2,
-        "copying scaled with review size: {small_props} properties for the \
-         small review, {big_props} for the 5x one"
+        big_shares <= small_shares * 2,
+        "per-tick work scaled with review size: {small_shares} shares for \
+         the small review, {big_shares} for the 5x one"
     );
 }
