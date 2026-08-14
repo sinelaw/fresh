@@ -52,9 +52,13 @@ fn repo_with_diff(files: usize, lines_per_file: usize) -> GitTestRepo {
 /// actually hold, so the caller can tell a flat cost from a lucky one.
 fn snapshot_copies_while_idle_and_moving(files: usize, lines_per_file: usize) -> (u64, u64) {
     let repo = repo_with_diff(files, lines_per_file);
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), repo.path.clone())
-            .unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
     harness.render().unwrap();
 
     harness.run_palette_command("Review Diff").unwrap();
@@ -81,9 +85,7 @@ fn snapshot_copies_while_idle_and_moving(files: usize, lines_per_file: usize) ->
         harness.tick_and_render().unwrap();
     }
     for _ in 0..20 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.tick_and_render().unwrap();
     }
     let after = harness.editor().perf_counters();

@@ -106,7 +106,10 @@ fn bench_case(label: &str, files: usize, lines_per_file: usize) {
     for _ in 0..2 {
         let t = Instant::now();
         harness
-            .send_key(crossterm::event::KeyCode::Char('a'), crossterm::event::KeyModifiers::NONE)
+            .send_key(
+                crossterm::event::KeyCode::Char('a'),
+                crossterm::event::KeyModifiers::NONE,
+            )
             .unwrap();
         harness
             .wait_until(|h| {
@@ -146,7 +149,10 @@ fn bench_case(label: &str, files: usize, lines_per_file: usize) {
     let down_start = Instant::now();
     for _ in 0..20 {
         harness
-            .send_key(crossterm::event::KeyCode::Down, crossterm::event::KeyModifiers::NONE)
+            .send_key(
+                crossterm::event::KeyCode::Down,
+                crossterm::event::KeyModifiers::NONE,
+            )
             .unwrap();
         harness.tick_and_render().unwrap();
     }
@@ -161,7 +167,10 @@ fn bench_case(label: &str, files: usize, lines_per_file: usize) {
     let scroll_start = Instant::now();
     for _ in 0..20 {
         harness
-            .send_key(crossterm::event::KeyCode::PageDown, crossterm::event::KeyModifiers::NONE)
+            .send_key(
+                crossterm::event::KeyCode::PageDown,
+                crossterm::event::KeyModifiers::NONE,
+            )
             .unwrap();
         harness.tick_and_render().unwrap();
     }
@@ -232,7 +241,10 @@ fn bench_plain_buffer_frame_cost() {
         let down = Instant::now();
         for _ in 0..20 {
             harness
-                .send_key(crossterm::event::KeyCode::Down, crossterm::event::KeyModifiers::NONE)
+                .send_key(
+                    crossterm::event::KeyCode::Down,
+                    crossterm::event::KeyModifiers::NONE,
+                )
                 .unwrap();
         }
         let down_ms = down.elapsed().as_millis();
@@ -240,7 +252,10 @@ fn bench_plain_buffer_frame_cost() {
         let page = Instant::now();
         for _ in 0..20 {
             harness
-                .send_key(crossterm::event::KeyCode::PageDown, crossterm::event::KeyModifiers::NONE)
+                .send_key(
+                    crossterm::event::KeyCode::PageDown,
+                    crossterm::event::KeyModifiers::NONE,
+                )
                 .unwrap();
         }
         let page_ms = page.elapsed().as_millis();
