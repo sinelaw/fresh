@@ -9,7 +9,7 @@ use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::config::{Config, PluginConfig};
+use fresh::config::Config;
 use std::fs;
 
 // ---------------------------------------------------------------------------
@@ -2018,24 +2018,8 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
 }
 
 // ---------------------------------------------------------------------------
-// Oversized changesets: the unified stream lays out what it can afford
+// Oversized changesets
 // ---------------------------------------------------------------------------
-
-/// Config that shrinks the review stream's layout budget to a single diff
-/// line, so a two-file review exercises the same path a 100-commit range
-/// hits in the real world without the test having to build one.
-fn config_with_tiny_review_budget() -> Config {
-    let mut config = Config::default();
-    config.plugins.insert(
-        "audit_mode".to_string(),
-        PluginConfig {
-            enabled: true,
-            path: None,
-            settings: serde_json::json!({ "maxExpandedDiffLines": 1 }),
-        },
-    );
-    config
-}
 
 /// Open Review Range on `HEAD~..HEAD` and wait for the stream to render.
 fn open_review_range_head(harness: &mut EditorTestHarness) {
@@ -2068,26 +2052,27 @@ fn open_review_range_head(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
-/// A changeset too big to lay out at once (the reported case: a range like
-/// `HEAD~100..HEAD`) used to open on a list of file headers and *no diff at
-/// all* — the stream rendered exactly one file, and the one it picked came
-/// from the sidebar's dir-grouped order rather than the diff's, so it was
-/// rarely the file at the top of the stream the cursor was parked on.
+/// A big range (the reported case: `HEAD~100..HEAD`) used to open on a
+/// list of file headers and *no diff at all*. Above a line threshold the
+/// stream rendered exactly one file, and the one it picked came from the
+/// sidebar's dir-grouped order rather than the diff's, so it was rarely
+/// the file at the top of the stream the cursor was parked on.
 ///
-/// The stream now spends a line budget from the top of the diff down, and
-/// says so on the headers it didn't get to: the first file's hunks are on
-/// screen from the start, and the rest are marked as not loaded rather than
-/// looking like files with no changes.
+/// The threshold is gone — it was compensating for per-frame work in the
+/// host that grew with the buffer's decorations, which is fixed — so what
+/// has to hold now is simply that every file's hunks are in the stream:
+/// the first file's on screen at the top, the last file's reachable by
+/// walking hunks, and no file rendered as a bare header.
 #[test]
-fn test_oversized_range_review_renders_diff_and_marks_unloaded_files() {
+fn test_range_review_lays_out_every_file() {
     init_tracing_from_env();
     let repo = GitTestRepo::new();
     setup_audit_mode_plugin(&repo);
 
     // Two files whose diff order (`src/a/deep.rs` then `src/zeta.rs`, sorted
     // by path) is *not* the sidebar's order, which groups by directory and
-    // puts plain `src/` above `src/a/`. The stream must anchor on its own
-    // first file, not the sidebar's.
+    // puts plain `src/` above `src/a/`. The stream is emitted in diff order,
+    // so the cursor's first screen is the first file of the diff.
     repo.create_file("src/a/deep.rs", "fn deep() {}\n");
     repo.create_file("src/zeta.rs", "fn zeta() {}\n");
     repo.git_add_all();
@@ -2101,7 +2086,7 @@ fn test_oversized_range_review_renders_diff_and_marks_unloaded_files() {
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
         40,
-        config_with_tiny_review_budget(),
+        Config::default(),
         repo.path.clone(),
     )
     .unwrap();
@@ -2116,12 +2101,11 @@ fn test_oversized_range_review_renders_diff_and_marks_unloaded_files() {
          Screen:\n{screen}"
     );
     assert!(
-        screen.contains("not loaded"),
-        "a file left out of the layout must say so on its header. \
-         Screen:\n{screen}"
+        !screen.contains("not loaded"),
+        "no file may be left out of the layout. Screen:\n{screen}"
     );
 
-    // `n` walks hunks across file boundaries, loading the file it lands in.
+    // `n` walks hunks across file boundaries, into the rest of the diff.
     let mut crossed = false;
     for _ in 0..6 {
         harness
@@ -2138,13 +2122,12 @@ fn test_oversized_range_review_renders_diff_and_marks_unloaded_files() {
     let screen = harness.screen_to_string();
     assert!(
         crossed,
-        "`n` should cross into the file the budget left out and load it. \
-         Screen:\n{screen}"
+        "`n` should cross into the next file of the diff. Screen:\n{screen}"
     );
 }
 
-/// The budget must not touch an ordinary review: every file of a small
-/// changeset is laid out, and nothing is marked as unloaded.
+/// Every file of an ordinary review is laid out too — the same contract,
+/// on the path most reviews take.
 #[test]
 fn test_normal_review_lays_out_every_file() {
     init_tracing_from_env();

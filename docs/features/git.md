@@ -24,7 +24,7 @@ Inside a review:
 
 - **`n` / `p`** jump to the next and previous hunk.
 - Stage, unstage, or discard the hunk, file, or a line-level visual selection on the cursor row.
-- **Big changesets** — a review too large to lay out at once (a 100-commit range, say) fills the stream with as much diff as its line budget allows and lists the rest as headers marked *not loaded*; **Enter** or a click on one loads that file. The budget is the `maxExpandedDiffLines` setting under **Plugin Settings → audit_mode**.
+- **Big changesets** — a range spanning a hundred commits is laid out in full, like any other review; scrolling and hunk navigation cover the whole diff.
 - **Comments** — leave a line comment or a review-wide note. Comments persist per repository across editor restarts, so you can close the editor mid-review and pick up where you left off. A dedicated Comments panel lets you jump through them, edit, delete, or export to Markdown.
 
 ## Git Log

@@ -236,15 +236,9 @@ interface ReviewState {
   // When true, the center panel renders only the focused file
   // (`filesCurrentKey`) instead of every file's hunks. Derived, not a
   // user setting — see `syncFocusMode`: it is the side-by-side composite
-  // (per-file by construction) that renders one file; the unified stream
-  // lays out as much of the diff as its budget allows (see
-  // `syncRenderedFiles`).
+  // (per-file by construction) that renders one file. The unified stream
+  // lays out the whole changeset, however big.
   focusOnly: boolean;
-  // Keys of the files whose hunk rows the center currently carries.
-  // Every file gets a header row; a changeset too big to lay out at once
-  // has the tail of its stream header-only until the reader asks for it.
-  // Rebuilt on each center build by `syncRenderedFiles`.
-  renderedFileKeys: Set<string>;
   // When true, the focused file renders as a two-column side-by-side
   // (OLD | NEW) in the center panel instead of the unified stream. The
   // `1`/`2` keys toggle it; the sidebar and other panels stay put.
@@ -340,7 +334,6 @@ const state: ReviewState = {
   panelWidths: {},
   panelHeights: {},
   focusOnly: true,
-  renderedFileKeys: new Set(),
   splitView: false,
   commentsSelectedId: null,
   commentsHighlightId: null,
@@ -1082,13 +1075,8 @@ function pushSideBySideHunk(lines: DiffLine[], hunk: Hunk) {
  * Build the diff lines for the unified stream.
  * Emits one file-header row per file, followed by its hunks inline.
  * When the file is collapsed, only the header is emitted.
- *
- * Recomputes `state.renderedFileKeys` first, so the set the rest of the
- * plugin consults ("does the stream carry this file?") is always the one
- * this build acted on.
  */
 function buildDiffLines(_rightWidth: number): DiffLine[] {
-    syncRenderedFiles();
     const lines: DiffLine[] = [];
     if (state.files.length === 0) {
         if (state.emptyState === 'not_git') {
@@ -1153,21 +1141,12 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             });
         }
 
-        // File header. A file the layout budget left out gets the
-        // collapsed triangle and says so, so a header with nothing under
-        // it reads as "not loaded yet" rather than "no changes"; the rest
-        // carry the expanded triangle and let the conceal in `applyFolds`
-        // show the collapsed view.
+        // File header — always emit the expanded triangle; the
+        // conceal in `applyFolds` shows the collapsed view.
         const counts = fileChangeCounts(file);
         const key = fileKey(file);
-        const bodyRendered = state.renderedFileKeys.has(key);
         const filename = file.origPath ? `${file.origPath} → ${file.path}` : file.path;
-        const glyph = bodyRendered ? GLYPH_EXPANDED : GLYPH_COLLAPSED;
-        const notLoaded = bodyRendered
-            ? ''
-            : `   (${editor.t("panel.file_not_loaded") || "not loaded — Enter to load"})`;
-        const headerText =
-            ` ${glyph} ${filename}   +${counts.added} / -${counts.removed}${notLoaded}`;
+        const headerText = ` ${GLYPH_EXPANDED} ${filename}   +${counts.added} / -${counts.removed}`;
         lines.push({
             text: headerText,
             type: 'file-header',
@@ -1183,11 +1162,9 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             },
         });
 
-        // Beyond the budget (or not the composite's file): the header is
-        // the whole entry. Every file stays in the stream as a navigable
-        // overview while the buffer stays small — and thus responsive —
-        // on a changeset too big to lay out at once.
-        if (!bodyRendered) {
+        // The composite draws one file, so while it is up the stream
+        // carries headers only. The unified stream renders every file.
+        if (!fileBodyRendered(key)) {
             lines.push({ text: '', type: 'empty' });
             continue;
         }
@@ -2171,119 +2148,30 @@ function buildCommentsPanelSpec(): WidgetSpec {
     );
 }
 
-/** Raw diff lines per file key — what laying each file out costs. Built
- *  in one pass over the hunks, so choosing a layout is O(hunks + files)
- *  rather than a scan of every hunk per file. */
-function diffLineCountsByFile(): Record<string, number> {
-    const counts: Record<string, number> = {};
-    for (const h of state.hunks) {
-        const key = fileKeyOf(h.file, h.gitStatus || 'unstaged');
-        counts[key] = (counts[key] ?? 0) + h.lines.length;
-    }
-    return counts;
-}
-
-/** Diff lines the unified stream lays out in one pass. Big enough that a
- *  normal review — even a fat branch — is expanded end to end, small
- *  enough that a 100-commit range doesn't spend seconds building rows
- *  nobody scrolls to. Files past the budget still get their header row,
- *  and load on demand. */
-const DEFAULT_MAX_EXPANDED_DIFF_LINES = 20000;
-
-editor.defineConfigInteger("maxExpandedDiffLines", {
-    default: DEFAULT_MAX_EXPANDED_DIFF_LINES,
-    description:
-        "How many diff lines the unified review stream lays out at once. Files beyond the budget show a header until you open them.",
-    minimum: 1,
-});
-
-function maxExpandedDiffLines(): number {
-    const cfg = (editor.getPluginConfig() ?? {}) as { maxExpandedDiffLines?: number };
-    const n = cfg.maxExpandedDiffLines;
-    return typeof n === 'number' && n >= 1
-        ? Math.floor(n)
-        : DEFAULT_MAX_EXPANDED_DIFF_LINES;
-}
-
-/** The visible (filtered) files in the order the unified stream emits
- *  them — `state.files` is already in diff order, which is what the
- *  center renders, and is *not* the sidebar's dir-grouped order. */
-function streamFiles(): FileEntry[] {
-    return state.files.filter(fileMatchesFilter);
-}
-
 /**
  * Decide whether the center renders one file or a stream of them.
  *
  * Side-by-side builds a composite of one file's OLD/NEW buffers and is
- * per-file by construction. Unified is a single scrollable stream, so it
- * expands as much as it can afford — see `syncRenderedFiles`.
+ * per-file by construction. Unified is a single scrollable stream and
+ * lays out the whole changeset — a 100-commit range included.
+ *
+ * There used to be a line budget here, above which the stream rendered
+ * one file at a time and marked the rest "not loaded". It was
+ * compensating for per-frame work in the host that grew with the buffer's
+ * decorations; with that fixed (the plugin state snapshot deep-copied
+ * every text property on every tick, and rainbow brackets republished
+ * across the whole buffer on every frame) a fully laid-out 100k-line diff
+ * costs what a 20k-line one does per keystroke, so the budget bought
+ * nothing but a confusing review.
  */
 function syncFocusMode(): void {
     state.focusOnly = state.reviewLayout === 'side-by-side';
 }
 
-/**
- * Choose which files the unified stream lays out in full.
- *
- * Laying out every hunk of a 100-commit range costs more than the
- * scrolling it buys, so the stream spends a line budget instead of
- * rendering all-or-one: starting at the current file it fills forward
- * (reading direction), then back toward the top with whatever is left.
- * Every file still gets a header row, so the stream stays a complete
- * overview and an unrendered file is one Enter (or click) away — see
- * `buildDiffLines`.
- *
- * The current file always renders, however big it is: a reader who
- * navigated to a file has to see its diff.
- */
-function syncRenderedFiles(): void {
-    const rendered = new Set<string>();
-    const vis = streamFiles();
-    if (vis.length > 0) {
-        if (state.focusOnly) {
-            // The composite draws one file; nothing else is laid out.
-            rendered.add(state.filesCurrentKey ?? fileKey(vis[0]));
-        } else {
-            const cost = diffLineCountsByFile();
-            const costOf = (f: FileEntry) => cost[fileKey(f)] ?? 0;
-            let anchor = vis.findIndex(f => fileKey(f) === state.filesCurrentKey);
-            if (anchor < 0) anchor = 0;
-            // A file is added whole or not at all — a half-laid-out file
-            // would be worse than one that says it isn't loaded — so the
-            // one that crosses the line is still rendered in full.
-            let budget = maxExpandedDiffLines() - costOf(vis[anchor]);
-            rendered.add(fileKey(vis[anchor]));
-            for (let i = anchor + 1; i < vis.length && budget > 0; i++) {
-                budget -= costOf(vis[i]);
-                rendered.add(fileKey(vis[i]));
-            }
-            for (let i = anchor - 1; i >= 0 && budget > 0; i--) {
-                budget -= costOf(vis[i]);
-                rendered.add(fileKey(vis[i]));
-            }
-        }
-    }
-    state.renderedFileKeys = rendered;
-}
-
-/** Whether the center currently carries this file's hunk rows. False for
- *  a file the budget left header-only, and for every file but the focused
- *  one while the side-by-side composite is up. */
+/** Whether the center carries this file's hunk rows: everything in the
+ *  unified stream, and only the focused file while the composite is up. */
 function fileBodyRendered(key: string): boolean {
-    if (state.focusOnly) return key === state.filesCurrentKey;
-    return state.renderedFileKeys.has(key);
-}
-
-/** Files the unified stream shows as header-only right now. Zero before
- *  the first build, when there is no layout to report on yet. */
-function unrenderedFileCount(): number {
-    if (state.renderedFileKeys.size === 0) return 0;
-    let n = 0;
-    for (const f of streamFiles()) {
-        if (!state.renderedFileKeys.has(fileKey(f))) n++;
-    }
-    return n;
+    return !state.focusOnly || key === state.filesCurrentKey;
 }
 
 /** Whether `panel` is currently on screen. The diff and its sticky header
@@ -5599,31 +5487,21 @@ function updateReviewStatus(): void {
     const rangeNote = state.mode === 'range' && state.range
         ? ` · ${editor.t("status.working_tree_not_included") || "working tree not included"}`
         : '';
-    // A changeset too big to lay out at once leaves the tail of the
-    // stream header-only. Without a word here the missing hunks read as a
-    // broken diff rather than as files waiting to be opened.
-    const pending = state.reviewLayout === 'side-by-side' ? 0 : unrenderedFileCount();
-    const budgetNote = pending > 0
-        ? ` · ${editor.t("status.files_not_loaded", { count: String(pending) })
-            || `${pending} file(s) not loaded — Enter on a header loads one`}`
-        : '';
     if (current !== null) {
         editor.setStatus(editor.t("status.review_summary_indexed", {
             current: String(current),
             count: String(total),
-        }) + rangeNote + budgetNote);
+        }) + rangeNote);
     } else {
-        editor.setStatus(
-            editor.t("status.review_summary", { count: String(total) }) + rangeNote + budgetNote,
-        );
+        editor.setStatus(editor.t("status.review_summary", { count: String(total) }) + rangeNote);
     }
 }
 
 /**
  * Find the global index in `state.hunks` of the hunk the cursor is on or
  * below. Reads the build's own row map rather than counting rendered
- * hunks: the stream lays out only part of a big changeset (see
- * `syncRenderedFiles`), so the Nth rendered hunk is not the Nth hunk.
+ * hunks: a collapsed file still emits its hunk headers, so the Nth
+ * rendered hunk is not the Nth hunk of `state.hunks`.
  * Returns -1 if no rendered hunk is at or before the cursor.
  */
 function visibleHunkIndexAtCursor(): number {
@@ -6461,7 +6339,6 @@ function resetPerSessionState(): void {
     state.hunkHeaderRows = [];
     state.diffLineByteOffsets = [];
     state.fileHeaderRows = {};
-    state.renderedFileKeys = new Set();
     state.collapsedFiles = new Set();
     state.collapsedSections = new Set();
     state.collapsedHunks = new Set();
