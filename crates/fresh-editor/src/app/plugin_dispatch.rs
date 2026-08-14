@@ -218,11 +218,10 @@ impl Editor {
         };
         let mut snapshot = snapshot_handle.write().unwrap();
 
-        let (copies, properties_copied) = self
+        let shares = self
             .active_window_mut()
             .populate_plugin_state_snapshot(&mut snapshot);
-        self.perf_counters.text_property_copies += copies;
-        self.perf_counters.text_properties_copied += properties_copied;
+        self.perf_counters.text_property_shares += shares;
 
         // Editor-wide fields below — these reach state outside any
         // single Window.
@@ -6442,15 +6441,15 @@ impl Window {
     /// user_config_raw, plugin_global_state) are populated by the
     /// Editor coda after this returns.
     #[cfg(feature = "plugins")]
-    /// Returns what this pass copied, for [`crate::app::PerfCounters`] —
-    /// the caller owns the counters because they are editor-wide.
+    /// Returns how many buffers' property sets were shared into the
+    /// snapshot, for [`crate::app::PerfCounters`] — the caller owns the
+    /// counters because they are editor-wide.
     pub(crate) fn populate_plugin_state_snapshot(
         &mut self,
         snapshot: &mut fresh_core::api::EditorStateSnapshot,
-    ) -> (u64, u64) {
+    ) -> u64 {
         use fresh_core::api::{BufferInfo, CursorInfo, ViewportInfo};
-        let mut copies = 0u64;
-        let mut properties_copied = 0u64;
+        let mut shares = 0u64;
 
         // Rebuild only on registry mutation. Compares the registry's
         // monotonic catalog_gen against the last-seen value on the
@@ -6508,19 +6507,14 @@ impl Window {
         snapshot.buffers.clear();
         snapshot.buffer_saved_diffs.clear();
         snapshot.buffer_cursor_positions.clear();
-        // Text properties are *not* cleared: they are refreshed per buffer
-        // below, and only when that buffer's set has actually changed.
-        // Copying every property of every buffer on every tick is what made
-        // a tick cost grow with the content — 53ms of a 20 000-property
-        // review diff, on a loop that runs between frames.
-        let live_buffers: std::collections::HashSet<_> =
-            self.buffers.iter().map(|(id, _)| *id).collect();
-        snapshot
-            .buffer_text_properties
-            .retain(|id, _| live_buffers.contains(id));
-        snapshot
-            .buffer_text_property_versions
-            .retain(|id, _| live_buffers.contains(id));
+        // Rebuilt from scratch like the rest of the snapshot: each entry
+        // is a shared handle, so re-taking every buffer's set costs a
+        // refcount bump rather than a copy of its contents. Copying was
+        // what made a tick's cost grow with the buffers' content — 53ms of
+        // a 20 000-property review diff, on a loop that runs between
+        // frames — and sharing removes it without anything having to
+        // decide whether a copy is still fresh.
+        snapshot.buffer_text_properties.clear();
 
         let active_vs_opt = vs_ref.get(&active_split);
         for (buffer_id, state) in &self.buffers {
@@ -6628,23 +6622,12 @@ impl Window {
                 .buffer_cursor_positions
                 .insert(*buffer_id, cursor_pos);
 
-            // Store text properties if this buffer has any, and only if the
-            // copy in hand is stale.
-            if state.text_properties.is_empty() {
-                snapshot.buffer_text_properties.remove(buffer_id);
-                snapshot.buffer_text_property_versions.remove(buffer_id);
-            } else {
-                let version = state.text_properties.version();
-                if snapshot.buffer_text_property_versions.get(buffer_id) != Some(&version) {
-                    copies += 1;
-                    properties_copied += state.text_properties.len() as u64;
-                    snapshot
-                        .buffer_text_properties
-                        .insert(*buffer_id, state.text_properties.all().to_vec());
-                    snapshot
-                        .buffer_text_property_versions
-                        .insert(*buffer_id, version);
-                }
+            // Store text properties if this buffer has any.
+            if !state.text_properties.is_empty() {
+                shares += 1;
+                snapshot
+                    .buffer_text_properties
+                    .insert(*buffer_id, state.text_properties.shared());
             }
         }
 
@@ -6843,7 +6826,7 @@ impl Window {
         // Update active search state so plugins can query it via hasActiveSearch()
         snapshot.has_active_search = self.search_state.is_some();
 
-        (copies, properties_copied)
+        shares
     }
 }
 

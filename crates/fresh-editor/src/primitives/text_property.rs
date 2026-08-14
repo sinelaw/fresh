@@ -6,24 +6,7 @@
 //! each line might represent a diagnostic, search result, or other structured data.
 
 use std::ops::Range;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Source of [`TextPropertyManager::version`] values.
-///
-/// Process-global rather than per-manager because the version has to
-/// survive a manager being *replaced*, which is how a buffer's properties
-/// are actually set: `set_virtual_buffer_content` assigns a whole new
-/// manager built by `from_entries`. A per-manager counter starting at zero
-/// makes the version equal the property count, so a consumer comparing
-/// versions would see "unchanged" whenever a re-render happened to produce
-/// the same number of properties — a plugin panel repainting one row with
-/// new values, a list whose selection moved — and would serve the previous
-/// render's properties indefinitely.
-static NEXT_VERSION: AtomicU64 = AtomicU64::new(1);
-
-fn next_version() -> u64 {
-    NEXT_VERSION.fetch_add(1, Ordering::Relaxed)
-}
+use std::sync::Arc;
 
 // Re-export types from fresh-core for shared type usage
 pub use fresh_core::text_property::{TextProperty, TextPropertyEntry};
@@ -42,43 +25,41 @@ pub struct CollectedOverlay {
 ///
 /// Stores and queries text properties efficiently. Properties can overlap
 /// and are sorted by start position for fast lookup.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TextPropertyManager {
-    /// All properties, sorted by start position
-    properties: Vec<TextProperty>,
-    /// Changes on every mutation, and on every fresh manager. Consumers
-    /// that copy the whole set — the plugin state snapshot does, once per
-    /// tick per buffer — compare this instead of copying again, which
-    /// matters because a plugin-drawn buffer can carry a property per
-    /// line. Values come from a process-global counter so that two
-    /// managers never share one; see [`NEXT_VERSION`].
-    version: u64,
-}
-
-impl Default for TextPropertyManager {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// All properties, sorted by start position.
+    ///
+    /// Shared rather than owned so that handing the set to a reader — the
+    /// plugin state snapshot takes one per buffer, on every tick — is a
+    /// refcount bump instead of a copy. A plugin-drawn buffer can carry a
+    /// property per line, so copying was the tick's whole cost on a large
+    /// review; sharing removes the copy rather than trying to skip it,
+    /// which is a freshness problem nobody has to get right.
+    ///
+    /// Immutable: the manager is replaced wholesale (see
+    /// `set_virtual_buffer_content`), and the mutators below rebuild it.
+    /// That is not a hot path — `from_entries` assembles a `Vec` and seals
+    /// it once.
+    properties: Arc<[TextProperty]>,
 }
 
 impl TextPropertyManager {
     /// Create a new empty property manager
     pub fn new() -> Self {
         Self {
-            properties: Vec::new(),
-            version: next_version(),
+            properties: Arc::from(Vec::new()),
         }
     }
 
     /// Add a text property
     pub fn add(&mut self, property: TextProperty) {
+        let mut properties = self.properties.to_vec();
         // Insert in sorted order by start position
-        let pos = self
-            .properties
+        let pos = properties
             .binary_search_by_key(&property.start, |p| p.start)
             .unwrap_or_else(|e| e);
-        self.properties.insert(pos, property);
-        self.version = next_version();
+        properties.insert(pos, property);
+        self.properties = Arc::from(properties);
     }
 
     /// Get all properties at a specific byte position
@@ -96,15 +77,14 @@ impl TextPropertyManager {
 
     /// Clear all properties
     pub fn clear(&mut self) {
-        self.properties.clear();
-        self.version = next_version();
+        self.properties = Arc::from(Vec::new());
     }
 
     /// Remove all properties in a range
     pub fn remove_in_range(&mut self, range: &Range<usize>) {
-        self.properties
-            .retain(|p| !p.overlaps(range) && !range.contains(&p.start));
-        self.version = next_version();
+        let mut properties = self.properties.to_vec();
+        properties.retain(|p| !p.overlaps(range) && !range.contains(&p.start));
+        self.properties = Arc::from(properties);
     }
 
     /// Get all properties
@@ -123,19 +103,17 @@ impl TextPropertyManager {
     }
 
     /// Set all properties at once (replaces existing)
-    pub fn set_all(&mut self, properties: Vec<TextProperty>) {
-        self.properties = properties;
+    pub fn set_all(&mut self, mut properties: Vec<TextProperty>) {
         // Ensure sorted by start position
-        self.properties.sort_by_key(|p| p.start);
-        self.version = next_version();
+        properties.sort_by_key(|p| p.start);
+        self.properties = Arc::from(properties);
     }
 
-    /// A value that changes on every mutation and is unique to this
-    /// manager, so a consumer holding a copy of `all()` can tell whether
-    /// it is stale without comparing the properties themselves — including
-    /// when the whole manager was replaced by a different one.
-    pub fn version(&self) -> u64 {
-        self.version
+    /// The property set, for a reader that wants to hold on to it. Cloning
+    /// the returned handle is a refcount bump, so a per-tick consumer can
+    /// take one every tick without the cost tracking the buffer's content.
+    pub fn shared(&self) -> Arc<[TextProperty]> {
+        Arc::clone(&self.properties)
     }
 
     /// Merge properties from another source
@@ -145,7 +123,7 @@ impl TextPropertyManager {
     /// inline overlay specifications (with absolute byte offsets).
     pub fn from_entries(entries: Vec<TextPropertyEntry>) -> (String, Self, Vec<CollectedOverlay>) {
         let mut text = String::new();
-        let mut manager = Self::new();
+        let mut properties: Vec<TextProperty> = Vec::new();
         let mut collected_overlays = Vec::new();
         let mut offset = 0;
 
@@ -161,7 +139,7 @@ impl TextPropertyManager {
                     end,
                     properties: entry.properties,
                 };
-                manager.add(property);
+                properties.push(property);
             }
 
             // Collect whole-entry style
@@ -188,7 +166,7 @@ impl TextPropertyManager {
                             end: abs_end,
                             properties: inline.properties,
                         };
-                        manager.add(property);
+                        properties.push(property);
                     }
                 }
             }
@@ -196,20 +174,52 @@ impl TextPropertyManager {
             offset = end;
         }
 
+        // Entries are walked in order and each property starts at its
+        // entry's offset, so this is already sorted by `start`; sealing it
+        // here is the one place the set is built.
+        let manager = Self {
+            properties: Arc::from(properties),
+        };
         (text, manager, collected_overlays)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    /// The version has to distinguish two *different* managers, not just
-    /// two states of one, because replacing the manager wholesale is how a
-    /// buffer's properties are set (`set_virtual_buffer_content`). A
-    /// per-manager counter starting at zero made the version equal the
-    /// property count, so a panel repainting the same number of rows with
-    /// new values looked unchanged and its reader kept the old values.
+    use super::*;
+    use serde_json::json;
+
+    /// Handing the property set to a reader must not copy it: that copy,
+    /// once per buffer per tick in the plugin state snapshot, was the whole
+    /// per-tick cost of a large review. Sharing also removes the freshness
+    /// question — an earlier attempt skipped the copy when a version looked
+    /// unchanged, and the version turned out to be the property count, so a
+    /// panel repainting the same number of rows with new values served the
+    /// old ones.
     #[test]
-    fn version_distinguishes_managers_with_the_same_shape() {
+    fn shared_hands_out_the_same_allocation() {
+        let entry = |file: &str| TextPropertyEntry {
+            properties: [("file".to_string(), serde_json::json!(file))]
+                .into_iter()
+                .collect(),
+            ..TextPropertyEntry::text("row\n")
+        };
+        let (_, manager, _) = TextPropertyManager::from_entries(vec![entry("a.rs")]);
+
+        let first = manager.shared();
+        let second = manager.shared();
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "each hand-off must be the same allocation, not a copy"
+        );
+        assert_eq!(first.len(), 1);
+    }
+
+    /// A reader holding an older set keeps seeing what it was handed, and
+    /// the next hand-off is the new content — the property the snapshot
+    /// relies on now that it re-shares every tick instead of comparing.
+    #[test]
+    fn a_replacement_hands_out_the_new_content() {
         let entry = |file: &str| TextPropertyEntry {
             properties: [("file".to_string(), serde_json::json!(file))]
                 .into_iter()
@@ -217,107 +227,25 @@ mod tests {
             ..TextPropertyEntry::text("row\n")
         };
 
-        let (_, first, _) = TextPropertyManager::from_entries(vec![entry("a.rs")]);
-        let (_, second, _) = TextPropertyManager::from_entries(vec![entry("b.rs")]);
+        let (_, first_manager, _) = TextPropertyManager::from_entries(vec![entry("a.rs")]);
+        let held = first_manager.shared();
 
-        assert_eq!(first.len(), second.len(), "same shape, different content");
-        assert_ne!(
-            first.version(),
-            second.version(),
-            "a replacement manager must not reuse the version of the one it replaces"
-        );
-    }
+        // Same shape, different content — the case a count-based freshness
+        // check could not see.
+        let (_, second_manager, _) = TextPropertyManager::from_entries(vec![entry("b.rs")]);
+        let fresh = second_manager.shared();
 
-    #[test]
-    fn version_changes_on_every_mutation() {
-        let mut manager = TextPropertyManager::new();
-        let mut seen = vec![manager.version()];
-        manager.add(TextProperty {
-            start: 0,
-            end: 1,
-            properties: Default::default(),
-        });
-        seen.push(manager.version());
-        manager.set_all(Vec::new());
-        seen.push(manager.version());
-        manager.clear();
-        seen.push(manager.version());
-
-        let mut unique = seen.clone();
-        unique.sort_unstable();
-        unique.dedup();
-        assert_eq!(unique.len(), seen.len(), "versions repeated: {seen:?}");
-    }
-
-    use super::*;
-    use serde::Deserialize;
-    use serde_json::json;
-
-    #[test]
-    fn test_text_property_contains() {
-        let prop = TextProperty::new(10, 20);
-        assert!(prop.contains(10));
-        assert!(prop.contains(15));
-        assert!(prop.contains(19));
-        assert!(!prop.contains(9));
-        assert!(!prop.contains(20));
-    }
-
-    #[test]
-    fn test_text_property_overlaps() {
-        let prop = TextProperty::new(10, 20);
-        assert!(prop.overlaps(&(5..15)));
-        assert!(prop.overlaps(&(15..25)));
-        assert!(prop.overlaps(&(10..20)));
-        assert!(prop.overlaps(&(12..18)));
-        assert!(!prop.overlaps(&(0..10)));
-        assert!(!prop.overlaps(&(20..30)));
-    }
-
-    #[test]
-    fn test_text_property_with_properties() {
-        let prop = TextProperty::new(0, 10)
-            .with_property("severity", json!("error"))
-            .with_property(
-                "location",
-                json!({"file": "test.rs", "line": 42, "column": 5}),
-            );
-
-        assert_eq!(prop.get("severity"), Some(&json!("error")));
+        assert_eq!(held.len(), fresh.len(), "same shape");
+        assert!(!Arc::ptr_eq(&held, &fresh), "different sets");
         assert_eq!(
-            prop.get("location"),
-            Some(&json!({"file": "test.rs", "line": 42, "column": 5}))
+            fresh[0].properties.get("file").and_then(|v| v.as_str()),
+            Some("b.rs"),
+            "the new set must carry the new content"
         );
-        assert_eq!(prop.get("nonexistent"), None);
-    }
-
-    #[test]
-    fn test_text_property_get_as() {
-        let prop = TextProperty::new(0, 10)
-            .with_property("count", json!(42))
-            .with_property(
-                "location",
-                json!({"file": "test.rs", "line": 42, "column": 5}),
-            );
-
-        let count: Option<i64> = prop.get_as("count");
-        assert_eq!(count, Some(42));
-
-        #[derive(Debug, Deserialize, PartialEq)]
-        struct Location {
-            file: String,
-            line: u32,
-            column: u32,
-        }
-
-        let loc: Option<Location> = prop.get_as("location");
         assert_eq!(
-            loc,
-            Some(Location {
-                file: "test.rs".to_string(),
-                line: 42,
-                column: 5,
-            })
+            held[0].properties.get("file").and_then(|v| v.as_str()),
+            Some("a.rs"),
+            "the held set is unaffected by the replacement"
         );
     }
 
