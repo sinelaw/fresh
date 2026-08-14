@@ -31,9 +31,9 @@ impl Editor {
     /// overlay manager rather than round-tripping through an `AddOverlay` event
     /// — which would discard the handle. The handle comes straight from the add
     /// (via [`EditorState::add_overlay`]); recovering it from
-    /// `overlays.all().last()` would be wrong, since overlays are
-    /// priority-sorted and `.last()` is the highest-priority overlay (e.g. an
-    /// error diagnostic at priority 100), not the one just added.
+    /// `overlays.all().last()` would be wrong — the set is unordered and a
+    /// removal swaps entries around, so `.last()` is some other producer's
+    /// overlay (e.g. an error diagnostic), not the one just added.
     pub fn add_overlay(
         &mut self,
         namespace: Option<crate::view::overlay::OverlayNamespace>,
