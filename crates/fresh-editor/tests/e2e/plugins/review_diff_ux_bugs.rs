@@ -1794,15 +1794,40 @@ fn test_issue2036_refresh_shows_immediate_feedback() {
     // Press `r` once. The very next render must already carry the
     // refresh-in-flight marker — that is the user's only signal that the
     // keystroke landed before the async git calls complete.
+    //
+    // Straight through `Editor::handle_key`, not `send_key`: the harness's
+    // key path drains async work to a fixed point before it returns, and
+    // for this plugin that means the whole `git status` + `git diff` chain.
+    // The refresh would then be over — final status on the status bar,
+    // new lines in the diff — before the first frame this test can look
+    // at, and the wait below would sit forever on a message that had
+    // already been overwritten. That is how this test timed out on CI: the
+    // 10s screen dumps showed the refreshed diff and `Review Diff: 1
+    // hunks` while the wait was still looking for "refreshing".
     harness
-        .send_key(KeyCode::Char('r'), KeyModifiers::NONE)
+        .editor_mut()
+        .handle_key(KeyCode::Char('r'), KeyModifiers::NONE)
         .unwrap();
+
+    // Watch the frames from the keypress on, and stop as soon as either
+    // the feedback shows or the refreshed diff lands without it — never
+    // keep waiting for a state that can no longer arrive. "extra line
+    // three" is one of the lines appended above, so it is on screen only
+    // once the refresh has picked the file change up.
+    let mut saw_feedback = false;
     harness
         .wait_until(|h| {
             let s = h.screen_to_string().to_lowercase();
-            s.contains("refreshing")
+            saw_feedback |= s.contains("refreshing");
+            saw_feedback || s.contains("extra line three")
         })
         .unwrap();
+    assert!(
+        saw_feedback,
+        "`r` must acknowledge the keypress before the async refresh lands; \
+         the refreshed diff appeared with no refresh-in-flight status ever \
+         rendered"
+    );
 
     // The refresh should ultimately complete and the post-refresh status
     // summary (the existing "Review Diff: N hunks" message) should land.
