@@ -1189,38 +1189,41 @@ impl EditorTestHarness {
     ///      iteration — to catch the `WidgetCommand` that a
     ///      completed plugin action just pushed.
     ///
-    /// (1) used to share a ~200 ms cap with (2). That cap was a
-    /// *timeout inside a test* (CONTRIBUTING.md Testing §3) hidden
-    /// behind every `send_key`/`type_text`: on a loaded CI runner a
-    /// plugin action that needed longer than the budget left the
-    /// drain early and *silently* (a `tracing::warn!` that CI never
-    /// renders), so the caller's next assertion sampled a pre-action
-    /// frame. That is a flake with no diagnostic — the screen dump
-    /// shows a plausible-looking stale frame and nothing says why.
+    /// (1) is waited out indefinitely, per CONTRIBUTING.md Testing §3:
+    /// wait for the state change, and let `cargo nextest` bound the test
+    /// from outside. It carried a cap of its own twice — ~200 ms, then
+    /// 10 s — and both were a *timeout inside a test* hidden behind every
+    /// `send_key`/`type_text`. On a loaded CI runner an action that
+    /// needed longer than the cap left the drain early, so the caller's
+    /// next assertion sampled a pre-action frame: a key that "did
+    /// nothing", a click whose effect never applied, and then a
+    /// `wait_until` for a state that could no longer arrive — a 3-minute
+    /// kill whose screen dump shows a plausible-looking stale frame and
+    /// says nothing about why. Raising the cap only made that rarer,
+    /// which is worse: the same flake, harder to catch.
     ///
-    /// (1) is now waited out with a budget generous enough that no
-    /// real plugin action can miss it, and giving up is loud on
-    /// stderr (the one channel nextest surfaces for a killed or
-    /// failed test). It stays bounded rather than indefinite because
-    /// a plugin callback that never returns must not deadlock every
-    /// subsequent keypress in the suite; a genuinely stuck action now
-    /// reports itself instead of quietly corrupting one assertion.
+    /// A genuinely stuck plugin callback now hangs this test until
+    /// nextest kills it, and says so on stderr every
+    /// `STUCK_REPORT_INTERVAL` while it waits — the one channel that
+    /// survives into a killed test's output. That is a loud, correct
+    /// failure in place of a quiet, wrong assertion.
     ///
-    /// (2) keeps a short bound of its own: legitimately continuous
-    /// message sources — PTY output, timer-driven plugin polls — never
-    /// go quiet, and waiting for silence that will never come would
-    /// hang every terminal test.
+    /// (2) keeps a short bound of its own, and that one is not a
+    /// timeout: legitimately continuous message sources — PTY output,
+    /// timer-driven plugin polls — never go quiet, so it bounds a wait
+    /// for silence that may never come rather than one for a state
+    /// change that must.
     fn drain_async_work(&mut self) {
         const SLEEP_PER_ITER: std::time::Duration = std::time::Duration::from_millis(1);
-        /// Real-wall-clock budget for (1). ~50x the old cap: far beyond
-        /// any plugin action these tests perform, still bounded.
-        const ACTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+        /// How often an in-flight action reports itself while (1) waits.
+        const STUCK_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
         /// Iterations of (2) to tolerate before concluding the source is
         /// continuous rather than settling.
         const TAIL_ITERS: usize = 200;
         const QUIET_ITERS: usize = 2;
 
         let start = std::time::Instant::now();
+        let mut last_report = start;
         let mut quiet_iters = 0;
         let mut tail_iters = 0;
         loop {
@@ -1229,17 +1232,20 @@ impl EditorTestHarness {
             if !self.editor.pending_plugin_actions_is_empty() {
                 quiet_iters = 0;
                 tail_iters = 0;
-                if start.elapsed() >= ACTION_BUDGET {
+                if last_report.elapsed() >= STUCK_REPORT_INTERVAL {
+                    last_report = std::time::Instant::now();
                     // stderr, not just tracing: CI runs with tracing
                     // disabled, and this is the only channel that
                     // survives into a failed/killed test's output.
                     eprintln!(
                         "drain_async_work: plugin actions still in-flight after {:.1}s — \
-                         giving up. The next assertion may observe a pre-action frame.",
+                         still waiting.",
                         start.elapsed().as_secs_f64()
                     );
-                    tracing::warn!("drain_async_work exceeded action budget");
-                    return;
+                    tracing::warn!(
+                        elapsed_s = start.elapsed().as_secs_f64(),
+                        "drain_async_work still waiting on plugin actions"
+                    );
                 }
                 // Give the plugin thread time to actually run the
                 // queued action(s) before re-checking. This is
@@ -2716,8 +2722,15 @@ impl EditorTestHarness {
     /// the ~50ms real sleep per tick this is a window of genuine silence.
     pub fn wait_for_async_quiescence(&mut self, idle_ticks: usize) -> anyhow::Result<()> {
         const WAIT_SLEEP: std::time::Duration = std::time::Duration::from_millis(50);
-        // Bound the wait so a genuinely stuck pipeline fails loudly instead of
-        // hanging the suite. Matches the spirit of the other wait_* helpers.
+        // Unlike `drain_async_work`'s wait for a pending action — which is a
+        // state change that must arrive, and so waits indefinitely — silence
+        // is not guaranteed to come at all: a terminal's PTY output and
+        // timer-driven plugin polls keep the pipeline legitimately busy
+        // forever (see `terminal.rs`, which waits here). So this stays
+        // bounded, and gives up out loud: a caller that wanted quiescence
+        // and got the bound instead is about to assert against a frame the
+        // plugin has not caught up to, and must be able to see that in the
+        // output rather than infer it from a puzzling assertion.
         const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
         let start = std::time::Instant::now();
@@ -2733,6 +2746,20 @@ impl EditorTestHarness {
             std::thread::sleep(WAIT_SLEEP);
             self.advance_time(WAIT_SLEEP);
             if start.elapsed() > MAX_WAIT {
+                // stderr, not just tracing: CI runs with tracing disabled,
+                // and this is the only channel that survives into a
+                // failed/killed test's output.
+                eprintln!(
+                    "wait_for_async_quiescence: pipeline still busy after {:.1}s — \
+                     giving up short of {idle_ticks} idle ticks. The next assertion \
+                     may observe a frame the plugin has not caught up to.",
+                    start.elapsed().as_secs_f64()
+                );
+                tracing::warn!(
+                    idle_ticks,
+                    elapsed_s = start.elapsed().as_secs_f64(),
+                    "wait_for_async_quiescence gave up before the pipeline went quiet"
+                );
                 break;
             }
         }
