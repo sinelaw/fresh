@@ -6501,7 +6501,19 @@ impl Window {
         snapshot.buffers.clear();
         snapshot.buffer_saved_diffs.clear();
         snapshot.buffer_cursor_positions.clear();
-        snapshot.buffer_text_properties.clear();
+        // Text properties are *not* cleared: they are refreshed per buffer
+        // below, and only when that buffer's set has actually changed.
+        // Copying every property of every buffer on every tick is what made
+        // a tick cost grow with the content — 53ms of a 20 000-property
+        // review diff, on a loop that runs between frames.
+        let live_buffers: std::collections::HashSet<_> =
+            self.buffers.iter().map(|(id, _)| *id).collect();
+        snapshot
+            .buffer_text_properties
+            .retain(|id, _| live_buffers.contains(id));
+        snapshot
+            .buffer_text_property_versions
+            .retain(|id, _| live_buffers.contains(id));
 
         let active_vs_opt = vs_ref.get(&active_split);
         for (buffer_id, state) in &self.buffers {
@@ -6609,11 +6621,21 @@ impl Window {
                 .buffer_cursor_positions
                 .insert(*buffer_id, cursor_pos);
 
-            // Store text properties if this buffer has any
-            if !state.text_properties.is_empty() {
-                snapshot
-                    .buffer_text_properties
-                    .insert(*buffer_id, state.text_properties.all().to_vec());
+            // Store text properties if this buffer has any, and only if the
+            // copy in hand is stale.
+            if state.text_properties.is_empty() {
+                snapshot.buffer_text_properties.remove(buffer_id);
+                snapshot.buffer_text_property_versions.remove(buffer_id);
+            } else {
+                let version = state.text_properties.version();
+                if snapshot.buffer_text_property_versions.get(buffer_id) != Some(&version) {
+                    snapshot
+                        .buffer_text_properties
+                        .insert(*buffer_id, state.text_properties.all().to_vec());
+                    snapshot
+                        .buffer_text_property_versions
+                        .insert(*buffer_id, version);
+                }
             }
         }
 

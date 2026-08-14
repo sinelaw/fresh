@@ -149,6 +149,14 @@ fn bench_case(label: &str, files: usize, lines_per_file: usize, budget: u64) {
         harness.tick_and_render().unwrap();
     }
     let idle_ms = idle_start.elapsed().as_millis();
+    // Split the paint out of the tick: `tick_and_render` is one editor tick
+    // plus one full render, and which half carries the cost decides whether
+    // to chase the render pipeline or whatever the tick pumps.
+    let paint_start = Instant::now();
+    for _ in 0..20 {
+        harness.render().unwrap();
+    }
+    let paint_ms = paint_start.elapsed().as_millis();
     let stats_after = harness.editor().active_state().wrap_indices.stats();
     let idle_rebuilds = stats_after.rebuilds - stats_before.rebuilds;
     let idle_lines_built = stats_after.lines_built - stats_before.lines_built;
@@ -186,7 +194,7 @@ fn bench_case(label: &str, files: usize, lines_per_file: usize, budget: u64) {
     let not_loaded = screen.contains("not loaded");
     println!(
         "BENCH {label}: files={files} diff_lines~{} budget={budget} \
-         open={open_ms}ms rebuild={rebuild_ms:?}ms idle20={idle_ms}ms down20={down_ms}ms \
+         open={open_ms}ms rebuild={rebuild_ms:?}ms idle20={idle_ms}ms paint20={paint_ms}ms down20={down_ms}ms \
          scroll20={scroll_ms}ms not_loaded_on_screen={not_loaded}",
         files * lines_per_file * 2
     );

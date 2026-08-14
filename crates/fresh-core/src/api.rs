@@ -1508,8 +1508,18 @@ pub struct EditorStateSnapshot {
     pub splits: Vec<SplitSnapshot>,
     /// Cursor positions per buffer (for buffers other than active)
     pub buffer_cursor_positions: HashMap<BufferId, usize>,
-    /// Text properties per buffer (for virtual buffers with properties)
+    /// Text properties per buffer (for virtual buffers with properties).
+    ///
+    /// Carried across ticks rather than rebuilt on each one: a plugin-drawn
+    /// buffer can hold a property per line, and copying every buffer's set
+    /// each tick made the tick cost grow with the content. Refreshed only
+    /// for buffers whose `buffer_text_property_versions` entry has moved.
     pub buffer_text_properties: HashMap<BufferId, Vec<TextProperty>>,
+    /// `TextPropertyManager::version` of each entry in
+    /// `buffer_text_properties`, so a tick can tell a stale copy from a
+    /// current one without comparing the properties.
+    #[serde(default)]
+    pub buffer_text_property_versions: HashMap<BufferId, u64>,
     /// Selected text from the primary cursor (if any selection exists)
     /// This is populated on each update to avoid needing full buffer access
     pub selected_text: Option<String>,
@@ -1722,6 +1732,7 @@ impl EditorStateSnapshot {
             splits: Vec::new(),
             buffer_cursor_positions: HashMap::new(),
             buffer_text_properties: HashMap::new(),
+            buffer_text_property_versions: HashMap::new(),
             selected_text: None,
             clipboard: String::new(),
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
