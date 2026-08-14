@@ -100,9 +100,7 @@
     "status.open_no_line": "Няма съответен ред на диск",
     "status.no_head_version": "Няма версия HEAD на този файл",
     "status.opened_head_version": "Версия HEAD отворена (режим четене) на ред %{line}",
-    "status.file_deleted_no_open": "файлът беше изтрит — няма работно копие за отваряне",
-    "panel.file_not_loaded": "не е зареден — Enter зарежда",
-    "status.files_not_loaded": "%{count} файл(а) не са заредени — Enter върху заглавие зарежда"
+    "status.file_deleted_no_open": "файлът беше изтрит — няма работно копие за отваряне"
   },
   "cs": {
     "cmd.review_diff": "Revize rozdilu",
@@ -205,9 +203,7 @@
     "status.open_no_line": "Žádný odpovídající řádek na disku",
     "status.no_head_version": "Žádná verze HEAD tohoto souboru",
     "status.opened_head_version": "Otevřena verze HEAD (jen pro čtení) na řádku %{line}",
-    "status.file_deleted_no_open": "Soubor byl smazán — žádná pracovní kopie k otevření",
-    "panel.file_not_loaded": "nenačteno — Enter načte",
-    "status.files_not_loaded": "%{count} soubor(ů) nenačteno — Enter na záhlaví jeden načte"
+    "status.file_deleted_no_open": "Soubor byl smazán — žádná pracovní kopie k otevření"
   },
   "de": {
     "cmd.review_diff": "Unterschiede prufen",
@@ -310,9 +306,7 @@
     "status.open_no_line": "Keine entsprechende Zeile auf der Festplatte",
     "status.no_head_version": "Keine HEAD-Version dieser Datei",
     "status.opened_head_version": "HEAD-Version (schreibgeschützt) bei Zeile %{line} geöffnet",
-    "status.file_deleted_no_open": "Datei wurde gelöscht – keine Arbeitskopie zum Öffnen",
-    "panel.file_not_loaded": "nicht geladen — Enter lädt",
-    "status.files_not_loaded": "%{count} Datei(en) nicht geladen — Enter auf einer Kopfzeile lädt eine"
+    "status.file_deleted_no_open": "Datei wurde gelöscht – keine Arbeitskopie zum Öffnen"
   },
   "en": {
     "cmd.review_diff": "Review Diff",
@@ -415,9 +409,7 @@
     "status.open_no_line": "No corresponding line on disk",
     "status.no_head_version": "No HEAD version of this file",
     "status.opened_head_version": "Opened HEAD version (read-only) at line %{line}",
-    "status.file_deleted_no_open": "File was deleted — no working copy to open",
-    "panel.file_not_loaded": "not loaded — Enter to load",
-    "status.files_not_loaded": "%{count} file(s) not loaded — Enter on a header loads one"
+    "status.file_deleted_no_open": "File was deleted — no working copy to open"
   },
   "es": {
     "cmd.review_diff": "Revisar Diferencias",
@@ -520,9 +512,7 @@
     "status.open_no_line": "No hay línea correspondiente en el disco",
     "status.no_head_version": "No hay versión HEAD de este archivo",
     "status.opened_head_version": "Versión HEAD (solo lectura) abierta en la línea %{line}",
-    "status.file_deleted_no_open": "El archivo fue eliminado: no hay copia de trabajo para abrir",
-    "panel.file_not_loaded": "sin cargar — Enter para cargar",
-    "status.files_not_loaded": "%{count} archivo(s) sin cargar — Enter en un encabezado carga uno"
+    "status.file_deleted_no_open": "El archivo fue eliminado: no hay copia de trabajo para abrir"
   },
   "fr": {
     "cmd.review_diff": "Revoir les Differences",
@@ -625,9 +615,7 @@
     "status.open_no_line": "Aucune ligne correspondante sur le disque",
     "status.no_head_version": "Aucune version HEAD de ce fichier",
     "status.opened_head_version": "Version HEAD (lecture seule) ouverte à la ligne %{line}",
-    "status.file_deleted_no_open": "Le fichier a été supprimé — aucune copie de travail à ouvrir",
-    "panel.file_not_loaded": "non chargé — Entrée pour charger",
-    "status.files_not_loaded": "%{count} fichier(s) non chargé(s) — Entrée sur un en-tête en charge un"
+    "status.file_deleted_no_open": "Le fichier a été supprimé — aucune copie de travail à ouvrir"
   },
   "it": {
     "cmd.review_diff": "Revisiona differenze",
@@ -730,9 +718,7 @@
     "status.open_no_line": "Nessuna riga corrispondente su disco",
     "status.no_head_version": "Nessuna versione HEAD di questo file",
     "status.opened_head_version": "Versione HEAD (sola lettura) aperta alla riga %{line}",
-    "status.file_deleted_no_open": "Il file è stato eliminato — nessuna copia di lavoro da aprire",
-    "panel.file_not_loaded": "non caricato — Invio per caricare",
-    "status.files_not_loaded": "%{count} file non caricati — Invio su un'intestazione ne carica uno"
+    "status.file_deleted_no_open": "Il file è stato eliminato — nessuna copia di lavoro da aprire"
   },
   "ja": {
     "cmd.review_diff": "差分レビュー",
@@ -835,9 +821,7 @@
     "status.open_no_line": "ディスク上に対応する行がありません",
     "status.no_head_version": "このファイルの HEAD バージョンがありません",
     "status.opened_head_version": "HEAD バージョン（読み取り専用）を %{line} 行目で開きました",
-    "status.file_deleted_no_open": "ファイルは削除されました — 開く作業コピーがありません",
-    "panel.file_not_loaded": "未読み込み — Enter で読み込み",
-    "status.files_not_loaded": "%{count} 件のファイルが未読み込み — ヘッダーで Enter を押すと読み込みます"
+    "status.file_deleted_no_open": "ファイルは削除されました — 開く作業コピーがありません"
   },
   "ko": {
     "cmd.review_diff": "차이점 검토",
@@ -940,9 +924,7 @@
     "status.open_no_line": "디스크에 해당하는 줄이 없습니다",
     "status.no_head_version": "이 파일의 HEAD 버전이 없습니다",
     "status.opened_head_version": "HEAD 버전(읽기 전용)을 %{line}번째 줄에서 열었습니다",
-    "status.file_deleted_no_open": "파일이 삭제되었습니다 — 열 작업 복사본이 없습니다",
-    "panel.file_not_loaded": "불러오지 않음 — Enter로 불러오기",
-    "status.files_not_loaded": "%{count}개 파일을 불러오지 않음 — 헤더에서 Enter를 누르면 불러옵니다"
+    "status.file_deleted_no_open": "파일이 삭제되었습니다 — 열 작업 복사본이 없습니다"
   },
   "pt-BR": {
     "cmd.review_diff": "Revisar Diferencas",
@@ -1045,9 +1027,7 @@
     "status.open_no_line": "Nenhuma linha correspondente no disco",
     "status.no_head_version": "Nenhuma versão HEAD deste arquivo",
     "status.opened_head_version": "Versão HEAD (somente leitura) aberta na linha %{line}",
-    "status.file_deleted_no_open": "O arquivo foi excluído — nenhuma cópia de trabalho para abrir",
-    "panel.file_not_loaded": "não carregado — Enter para carregar",
-    "status.files_not_loaded": "%{count} arquivo(s) não carregado(s) — Enter em um cabeçalho carrega um"
+    "status.file_deleted_no_open": "O arquivo foi excluído — nenhuma cópia de trabalho para abrir"
   },
   "ru": {
     "cmd.review_diff": "Просмотр изменений",
@@ -1150,9 +1130,7 @@
     "status.open_no_line": "Нет соответствующей строки на диске",
     "status.no_head_version": "Нет версии HEAD этого файла",
     "status.opened_head_version": "Версия HEAD (только для чтения) открыта на строке %{line}",
-    "status.file_deleted_no_open": "Файл был удалён — нет рабочей копии для открытия",
-    "panel.file_not_loaded": "не загружено — Enter, чтобы загрузить",
-    "status.files_not_loaded": "%{count} файл(ов) не загружено — Enter на заголовке загрузит один"
+    "status.file_deleted_no_open": "Файл был удалён — нет рабочей копии для открытия"
   },
   "th": {
     "cmd.review_diff": "ตรวจสอบความแตกต่าง",
@@ -1255,9 +1233,7 @@
     "status.open_no_line": "ไม่มีบรรทัดที่ตรงกันบนดิสก์",
     "status.no_head_version": "ไม่มีเวอร์ชัน HEAD ของไฟล์นี้",
     "status.opened_head_version": "เปิดเวอร์ชัน HEAD (อ่านอย่างเดียว) ที่บรรทัด %{line}",
-    "status.file_deleted_no_open": "ไฟล์ถูกลบแล้ว — ไม่มีสำเนาทำงานให้เปิด",
-    "panel.file_not_loaded": "ยังไม่โหลด — กด Enter เพื่อโหลด",
-    "status.files_not_loaded": "ยังไม่โหลด %{count} ไฟล์ — กด Enter ที่ส่วนหัวเพื่อโหลด"
+    "status.file_deleted_no_open": "ไฟล์ถูกลบแล้ว — ไม่มีสำเนาทำงานให้เปิด"
   },
   "uk": {
     "cmd.review_diff": "Перегляд змін",
@@ -1360,9 +1336,7 @@
     "status.open_no_line": "Немає відповідного рядка на диску",
     "status.no_head_version": "Немає версії HEAD цього файлу",
     "status.opened_head_version": "Відкрито версію HEAD (лише читання) на рядку %{line}",
-    "status.file_deleted_no_open": "Файл було видалено — немає робочої копії для відкриття",
-    "panel.file_not_loaded": "не завантажено — Enter, щоб завантажити",
-    "status.files_not_loaded": "%{count} файл(ів) не завантажено — Enter на заголовку завантажить один"
+    "status.file_deleted_no_open": "Файл було видалено — немає робочої копії для відкриття"
   },
   "vi": {
     "cmd.review_diff": "Xem xét khác biệt",
@@ -1465,9 +1439,7 @@
     "status.open_no_line": "Không có dòng tương ứng trên đĩa",
     "status.no_head_version": "Không có phiên bản HEAD của tệp này",
     "status.opened_head_version": "Đã mở phiên bản HEAD (chỉ đọc) tại dòng %{line}",
-    "status.file_deleted_no_open": "Tệp đã bị xóa — không có bản sao làm việc để mở",
-    "panel.file_not_loaded": "chưa tải — nhấn Enter để tải",
-    "status.files_not_loaded": "%{count} tệp chưa được tải — nhấn Enter trên tiêu đề để tải"
+    "status.file_deleted_no_open": "Tệp đã bị xóa — không có bản sao làm việc để mở"
   },
   "zh-CN": {
     "cmd.review_diff": "审查差异",
@@ -1570,8 +1542,6 @@
     "status.open_no_line": "磁盘上没有对应的行",
     "status.no_head_version": "此文件没有 HEAD 版本",
     "status.opened_head_version": "已在第 %{line} 行打开 HEAD 版本（只读）",
-    "status.file_deleted_no_open": "文件已删除 — 没有可打开的工作副本",
-    "panel.file_not_loaded": "未加载 — 按 Enter 加载",
-    "status.files_not_loaded": "%{count} 个文件未加载 — 在文件标题上按 Enter 加载"
+    "status.file_deleted_no_open": "文件已删除 — 没有可打开的工作副本"
   }
 }

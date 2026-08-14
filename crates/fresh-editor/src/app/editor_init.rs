@@ -563,6 +563,7 @@ impl Editor {
     /// same parts agree on "now".
     pub(super) fn from_parts(parts: EditorParts) -> Self {
         let editor = Editor {
+            perf_counters: Default::default(),
             // From parts (non-trivial):
             next_buffer_id: parts.next_buffer_id,
             buffer_id_alloc: parts.buffer_id_alloc,

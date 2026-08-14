@@ -218,8 +218,11 @@ impl Editor {
         };
         let mut snapshot = snapshot_handle.write().unwrap();
 
-        self.active_window_mut()
+        let (copies, properties_copied) = self
+            .active_window_mut()
             .populate_plugin_state_snapshot(&mut snapshot);
+        self.perf_counters.text_property_copies += copies;
+        self.perf_counters.text_properties_copied += properties_copied;
 
         // Editor-wide fields below — these reach state outside any
         // single Window.
@@ -6439,11 +6442,15 @@ impl Window {
     /// user_config_raw, plugin_global_state) are populated by the
     /// Editor coda after this returns.
     #[cfg(feature = "plugins")]
+    /// Returns what this pass copied, for [`crate::app::PerfCounters`] —
+    /// the caller owns the counters because they are editor-wide.
     pub(crate) fn populate_plugin_state_snapshot(
         &mut self,
         snapshot: &mut fresh_core::api::EditorStateSnapshot,
-    ) {
+    ) -> (u64, u64) {
         use fresh_core::api::{BufferInfo, CursorInfo, ViewportInfo};
+        let mut copies = 0u64;
+        let mut properties_copied = 0u64;
 
         // Rebuild only on registry mutation. Compares the registry's
         // monotonic catalog_gen against the last-seen value on the
@@ -6629,6 +6636,8 @@ impl Window {
             } else {
                 let version = state.text_properties.version();
                 if snapshot.buffer_text_property_versions.get(buffer_id) != Some(&version) {
+                    copies += 1;
+                    properties_copied += state.text_properties.len() as u64;
                     snapshot
                         .buffer_text_properties
                         .insert(*buffer_id, state.text_properties.all().to_vec());
@@ -6833,6 +6842,8 @@ impl Window {
 
         // Update active search state so plugins can query it via hasActiveSearch()
         snapshot.has_active_search = self.search_state.is_some();
+
+        (copies, properties_copied)
     }
 }
 

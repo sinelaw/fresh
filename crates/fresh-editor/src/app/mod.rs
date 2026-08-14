@@ -428,7 +428,32 @@ pub(crate) const PLUGIN_COMMAND_HANDLER_HARD_LIMIT: std::time::Duration =
     std::time::Duration::from_millis(500);
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
+/// Counters for work whose cost must not grow with a buffer's content.
+///
+/// A frame and a tick are supposed to cost what is on screen, not what is
+/// in the buffer. That contract had no way to fail: the per-tick copy of
+/// every text property of every buffer went unnoticed until it was timed
+/// by hand, on a review diff carrying a property per line. Timings can't
+/// hold the line in CI — they vary with machine and build profile — but
+/// these counters are exact, so a test can assert the shape directly (see
+/// `plugin_snapshot_scaling`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PerfCounters {
+    /// Buffers whose text properties were copied into the plugin state
+    /// snapshot. One per buffer whose properties actually changed.
+    pub text_property_copies: u64,
+    /// Individual text properties copied — the size-sensitive one. Over a
+    /// run of ticks that change nothing, this must not grow with how much
+    /// the buffers hold.
+    pub text_properties_copied: u64,
+}
+
 pub struct Editor {
+    /// See [`PerfCounters`]. Cheap to maintain (two increments on a path
+    /// that is already copying), and the only way an assertion can tell a
+    /// per-tick copy from a per-change one.
+    pub(crate) perf_counters: PerfCounters,
+
     // Buffers moved onto `Window` (Step 0c). Each window owns its
     // own buffer storage; opening the same file in two windows
     // produces two independent buffers. Access through
@@ -1641,6 +1666,12 @@ impl Editor {
             .ids();
         ids.sort_by_key(|id| id.0);
         ids
+    }
+
+    /// Counters for work that must not scale with buffer content. See
+    /// [`PerfCounters`].
+    pub fn perf_counters(&self) -> PerfCounters {
+        self.perf_counters
     }
 
     /// Get the currently active buffer state

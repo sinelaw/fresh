@@ -1,52 +1,42 @@
-//! Benchmark: what laying out a very large review actually costs.
+//! Benchmark: what a large review costs, and whether that cost tracks the
+//! size of the review.
 //!
-//! Not a correctness test — it prints timings for the unified stream at a
-//! given diff size and layout budget, so `maxExpandedDiffLines` can be
-//! argued from numbers instead of intuition. Ignored by default; run with
-//! `--ignored --nocapture --test-threads=1`.
+//! Ignored by default; run with `--ignored --nocapture --test-threads=1`.
+//! The assertion-carrying version of this is
+//! `plugin_snapshot_scaling` — counters, which hold a line in CI where
+//! timings cannot. This file is for reading actual durations while
+//! working on the render and tick paths.
 //!
-//! Release build, per operation (20 samples each, harness numbers — a test
-//! frame is heavier than a real terminal one, so read the ratios, not the
-//! absolutes):
+//! Release, per operation (20 samples each; harness frames are heavier
+//! than a real terminal's, so read the ratios):
 //!
-//! | laid out | frame | cursor Down | PageDown | open  | rebuild |
-//! |----------|-------|-------------|----------|-------|---------|
-//! | 20k      | 24ms  | 176ms       | 218ms    | 1.5s  | 1.6s    |
-//! | 30k      | 45ms  | 324ms       | 421ms    | 2.1s  | 2.5s    |
-//! | 100k     | 210ms | 1682ms      | 1937ms   | 6.9s  | 9.8s    |
+//! | laid out | frame | cursor move | open  |
+//! |----------|-------|-------------|-------|
+//! | 20k      | 11ms  | 35ms        | 1.3s  |
+//! | 100k     | 12ms  | 35ms        | 5.7s  |
 //!
-//! For contrast, an ordinary buffer — same line counts, none of the review's
-//! per-line overlays — is flat: ~1.9ms per frame at 20k lines and at 100k,
-//! `.txt` or `.rs` alike (`bench_plain_buffer_frame_cost`). Buffer size is
-//! not what costs; what the review decorates its rows with is.
+//! Interaction is flat in the size of the review; only the one-time
+//! layout still tracks it. Getting there took three fixes, each found by
+//! measuring rather than reading:
 //!
-//! Every column is linear in the lines laid out, and nothing tracks the
-//! part of the diff left header-only — a 100k-line diff capped at 20k
-//! costs exactly what a 30k-line diff capped at 20k costs. The budget is
-//! what holds cost flat as reviews get bigger.
+//! * the plugin state snapshot deep-copied every text property of every
+//!   buffer on every tick, and a review carries one per row;
+//! * rainbow-bracket colorization republished its overlays across the
+//!   whole buffer on every frame;
+//! * the overlay set kept a globally sorted vector, so every add and
+//!   every namespace clear touched the whole set.
 //!
-//! The cost that dominates is per *frame*, not the one-time load: a key
-//! press runs several frames' worth of work at every size. So laying more
-//! out in the background — loading files async after the first paint —
-//! would not buy what it looks like it buys. It would hide the smaller term
-//! (open) and leave every subsequent keystroke paying the larger one.
+//! Before them, a cursor move over a 100k-line review cost 3.8s and the
+//! review plugin capped its own layout to compensate. The cap is gone.
 //!
-//! These numbers are already after the first of those per-frame costs was
-//! found and removed (rainbow-bracket colorization was republishing itself
-//! across the whole buffer every frame; see `BracketHighlightOverlay`).
-//! That was worth 6x on an idle frame and 3.8x on a cursor move. What
-//! remains is still linear in the lines laid out, and the next thing to
-//! look at is the same shape one level down: `OverlayManager::clear_namespace`
-//! scans the whole overlay set and `add` re-indexes the tail after it, and
-//! both run on every cursor move (bracket matching, and the review plugin's
-//! own cursor-line overlay).
-//!
-//! Before that fix, for comparison: 142ms/frame and 670ms/key at 20k;
-//! 862ms/frame and 3759ms/key at 100k.
+//! The control case (`bench_plain_buffer_frame_cost`) is what made the
+//! search tractable: an ordinary buffer of the same line counts was flat
+//! throughout, which ruled out the renderer in one run and pointed at
+//! what the review adds on top of it.
 
 use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
-use fresh::config::{Config, PluginConfig};
+use fresh::config::Config;
 use std::fs;
 use std::time::Instant;
 
@@ -55,19 +45,6 @@ fn setup_audit_mode_plugin(repo: &GitTestRepo) {
     fs::create_dir_all(&plugins_dir).expect("create plugins dir");
     copy_plugin(&plugins_dir, "audit_mode");
     copy_plugin_lib(&plugins_dir);
-}
-
-fn config_with_budget(budget: u64) -> Config {
-    let mut config = Config::default();
-    config.plugins.insert(
-        "audit_mode".to_string(),
-        PluginConfig {
-            enabled: true,
-            path: None,
-            settings: serde_json::json!({ "maxExpandedDiffLines": budget }),
-        },
-    );
-    config
 }
 
 /// Build a repo whose working tree differs from HEAD by
@@ -95,12 +72,12 @@ fn repo_with_big_diff(files: usize, lines_per_file: usize) -> GitTestRepo {
     repo
 }
 
-fn bench_case(label: &str, files: usize, lines_per_file: usize, budget: u64) {
+fn bench_case(label: &str, files: usize, lines_per_file: usize) {
     let repo = repo_with_big_diff(files, lines_per_file);
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
         40,
-        config_with_budget(budget),
+        Config::default(),
         repo.path.clone(),
     )
     .unwrap();
@@ -190,12 +167,10 @@ fn bench_case(label: &str, files: usize, lines_per_file: usize, budget: u64) {
     }
     let scroll_ms = scroll_start.elapsed().as_millis();
 
-    let screen = harness.screen_to_string();
-    let not_loaded = screen.contains("not loaded");
     println!(
-        "BENCH {label}: files={files} diff_lines~{} budget={budget} \
-         open={open_ms}ms rebuild={rebuild_ms:?}ms idle20={idle_ms}ms paint20={paint_ms}ms down20={down_ms}ms \
-         scroll20={scroll_ms}ms not_loaded_on_screen={not_loaded}",
+        "BENCH {label}: files={files} diff_lines~{} \
+         open={open_ms}ms rebuild={rebuild_ms:?}ms idle20={idle_ms}ms paint20={paint_ms}ms \
+         down20={down_ms}ms scroll20={scroll_ms}ms",
         files * lines_per_file * 2
     );
     println!(
@@ -210,26 +185,14 @@ fn bench_case(label: &str, files: usize, lines_per_file: usize, budget: u64) {
 
 #[test]
 #[ignore = "benchmark: run explicitly with --nocapture"]
-fn bench_review_layout_30k_capped() {
-    bench_case("30k/capped", 30, 500, 20000);
+fn bench_review_layout_30k() {
+    bench_case("30k", 30, 500);
 }
 
 #[test]
 #[ignore = "benchmark: run explicitly with --nocapture"]
-fn bench_review_layout_30k_uncapped() {
-    bench_case("30k/uncapped", 30, 500, 100_000_000);
-}
-
-#[test]
-#[ignore = "benchmark: run explicitly with --nocapture"]
-fn bench_review_layout_100k_uncapped() {
-    bench_case("100k/uncapped", 100, 500, 100_000_000);
-}
-
-#[test]
-#[ignore = "benchmark: run explicitly with --nocapture"]
-fn bench_review_layout_100k_capped() {
-    bench_case("100k/capped", 100, 500, 20000);
+fn bench_review_layout_100k() {
+    bench_case("100k", 100, 500);
 }
 
 // ---------------------------------------------------------------------------
