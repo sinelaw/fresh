@@ -6,6 +6,24 @@
 //! each line might represent a diagnostic, search result, or other structured data.
 
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Source of [`TextPropertyManager::version`] values.
+///
+/// Process-global rather than per-manager because the version has to
+/// survive a manager being *replaced*, which is how a buffer's properties
+/// are actually set: `set_virtual_buffer_content` assigns a whole new
+/// manager built by `from_entries`. A per-manager counter starting at zero
+/// makes the version equal the property count, so a consumer comparing
+/// versions would see "unchanged" whenever a re-render happened to produce
+/// the same number of properties — a plugin panel repainting one row with
+/// new values, a list whose selection moved — and would serve the previous
+/// render's properties indefinitely.
+static NEXT_VERSION: AtomicU64 = AtomicU64::new(1);
+
+fn next_version() -> u64 {
+    NEXT_VERSION.fetch_add(1, Ordering::Relaxed)
+}
 
 // Re-export types from fresh-core for shared type usage
 pub use fresh_core::text_property::{TextProperty, TextPropertyEntry};
@@ -24,15 +42,23 @@ pub struct CollectedOverlay {
 ///
 /// Stores and queries text properties efficiently. Properties can overlap
 /// and are sorted by start position for fast lookup.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TextPropertyManager {
     /// All properties, sorted by start position
     properties: Vec<TextProperty>,
-    /// Bumped by every mutation. Consumers that copy the whole set — the
-    /// plugin state snapshot does, once per tick per buffer — compare this
-    /// instead of copying again, which matters because a plugin-drawn
-    /// buffer can carry a property per line.
+    /// Changes on every mutation, and on every fresh manager. Consumers
+    /// that copy the whole set — the plugin state snapshot does, once per
+    /// tick per buffer — compare this instead of copying again, which
+    /// matters because a plugin-drawn buffer can carry a property per
+    /// line. Values come from a process-global counter so that two
+    /// managers never share one; see [`NEXT_VERSION`].
     version: u64,
+}
+
+impl Default for TextPropertyManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TextPropertyManager {
@@ -40,7 +66,7 @@ impl TextPropertyManager {
     pub fn new() -> Self {
         Self {
             properties: Vec::new(),
-            version: 0,
+            version: next_version(),
         }
     }
 
@@ -52,7 +78,7 @@ impl TextPropertyManager {
             .binary_search_by_key(&property.start, |p| p.start)
             .unwrap_or_else(|e| e);
         self.properties.insert(pos, property);
-        self.version = self.version.wrapping_add(1);
+        self.version = next_version();
     }
 
     /// Get all properties at a specific byte position
@@ -71,14 +97,14 @@ impl TextPropertyManager {
     /// Clear all properties
     pub fn clear(&mut self) {
         self.properties.clear();
-        self.version = self.version.wrapping_add(1);
+        self.version = next_version();
     }
 
     /// Remove all properties in a range
     pub fn remove_in_range(&mut self, range: &Range<usize>) {
         self.properties
             .retain(|p| !p.overlaps(range) && !range.contains(&p.start));
-        self.version = self.version.wrapping_add(1);
+        self.version = next_version();
     }
 
     /// Get all properties
@@ -101,12 +127,13 @@ impl TextPropertyManager {
         self.properties = properties;
         // Ensure sorted by start position
         self.properties.sort_by_key(|p| p.start);
-        self.version = self.version.wrapping_add(1);
+        self.version = next_version();
     }
 
-    /// A counter that moves on every mutation, and on nothing else. Lets a
-    /// consumer that holds a copy of `all()` tell whether it is stale
-    /// without comparing the properties themselves.
+    /// A value that changes on every mutation and is unique to this
+    /// manager, so a consumer holding a copy of `all()` can tell whether
+    /// it is stale without comparing the properties themselves — including
+    /// when the whole manager was replaced by a different one.
     pub fn version(&self) -> u64 {
         self.version
     }
@@ -175,6 +202,53 @@ impl TextPropertyManager {
 
 #[cfg(test)]
 mod tests {
+    /// The version has to distinguish two *different* managers, not just
+    /// two states of one, because replacing the manager wholesale is how a
+    /// buffer's properties are set (`set_virtual_buffer_content`). A
+    /// per-manager counter starting at zero made the version equal the
+    /// property count, so a panel repainting the same number of rows with
+    /// new values looked unchanged and its reader kept the old values.
+    #[test]
+    fn version_distinguishes_managers_with_the_same_shape() {
+        let entry = |file: &str| TextPropertyEntry {
+            properties: [("file".to_string(), serde_json::json!(file))]
+                .into_iter()
+                .collect(),
+            ..TextPropertyEntry::text("row\n")
+        };
+
+        let (_, first, _) = TextPropertyManager::from_entries(vec![entry("a.rs")]);
+        let (_, second, _) = TextPropertyManager::from_entries(vec![entry("b.rs")]);
+
+        assert_eq!(first.len(), second.len(), "same shape, different content");
+        assert_ne!(
+            first.version(),
+            second.version(),
+            "a replacement manager must not reuse the version of the one it replaces"
+        );
+    }
+
+    #[test]
+    fn version_changes_on_every_mutation() {
+        let mut manager = TextPropertyManager::new();
+        let mut seen = vec![manager.version()];
+        manager.add(TextProperty {
+            start: 0,
+            end: 1,
+            properties: Default::default(),
+        });
+        seen.push(manager.version());
+        manager.set_all(Vec::new());
+        seen.push(manager.version());
+        manager.clear();
+        seen.push(manager.version());
+
+        let mut unique = seen.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), seen.len(), "versions repeated: {seen:?}");
+    }
+
     use super::*;
     use serde::Deserialize;
     use serde_json::json;
