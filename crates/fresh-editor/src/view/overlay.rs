@@ -332,6 +332,15 @@ pub struct OverlayManager {
     /// Both endpoints of each overlay are registered. Kept in sync with
     /// every push / swap_remove on `overlays`, and rebuilt after any sort.
     marker_to_idx: HashMap<MarkerId, usize>,
+    /// Bumped by every removal that is not confined to a single namespace.
+    /// A producer that caches "the overlays I derived last time are still on
+    /// the buffer" stores this with its own inputs, so a clear from anywhere
+    /// else invalidates that belief — see `BracketHighlightOverlay`.
+    removal_epoch: u64,
+    /// Per-namespace removal counters, for the same purpose at finer grain:
+    /// one producer clearing its own namespace every frame (bracket matching
+    /// does, on each cursor move) must not invalidate another's cache.
+    namespace_removal_epochs: HashMap<OverlayNamespace, u64>,
 }
 
 impl OverlayManager {
@@ -340,6 +349,8 @@ impl OverlayManager {
         Self {
             overlays: Vec::new(),
             marker_to_idx: HashMap::new(),
+            removal_epoch: 0,
+            namespace_removal_epochs: HashMap::new(),
         }
     }
 
@@ -381,6 +392,15 @@ impl OverlayManager {
         handle: &OverlayHandle,
         marker_list: &mut MarkerList,
     ) -> bool {
+        match self
+            .overlays
+            .iter()
+            .find(|o| &o.handle == handle)
+            .and_then(|o| o.namespace.clone())
+        {
+            Some(ns) => self.bump_namespace_epoch(&ns),
+            None => self.removal_epoch = self.removal_epoch.wrapping_add(1),
+        }
         if let Some(pos) = self.overlays.iter().position(|o| &o.handle == handle) {
             let overlay = self.overlays.remove(pos);
             self.marker_to_idx.remove(&overlay.start_marker);
@@ -416,6 +436,7 @@ impl OverlayManager {
     /// and only indices at or after the first removal shift — everything
     /// before it keeps its slot and needs no re-indexing.
     pub fn clear_namespace(&mut self, namespace: &OverlayNamespace, marker_list: &mut MarkerList) {
+        self.bump_namespace_epoch(namespace);
         let Some(first) = self
             .overlays
             .iter()
@@ -457,6 +478,7 @@ impl OverlayManager {
         mut new_overlays: Vec<Overlay>,
         marker_list: &mut MarkerList,
     ) {
+        self.bump_namespace_epoch(namespace);
         // Find overlays in this namespace that overlap the range. Use the
         // marker-tree to narrow candidates; verify each candidate's true
         // range and namespace before removing.
@@ -511,6 +533,7 @@ impl OverlayManager {
 
     /// Remove all overlays in a range and clean up their markers
     pub fn remove_in_range(&mut self, range: &Range<usize>, marker_list: &mut MarkerList) {
+        self.removal_epoch = self.removal_epoch.wrapping_add(1);
         // O(log N + k) for the lookup; restoring the priority-sorted
         // invariant after `swap_remove` is O(N) (adaptive sort on a
         // near-sorted vec) plus O(N) marker_to_idx rebuild. For typical
@@ -564,6 +587,7 @@ impl OverlayManager {
         namespace: &OverlayNamespace,
         marker_list: &mut MarkerList,
     ) {
+        self.bump_namespace_epoch(namespace);
         if range.start >= range.end {
             return;
         }
@@ -604,6 +628,7 @@ impl OverlayManager {
 
     /// Clear all overlays and their markers
     pub fn clear(&mut self, marker_list: &mut MarkerList) {
+        self.removal_epoch = self.removal_epoch.wrapping_add(1);
         for overlay in &self.overlays {
             marker_list.delete(overlay.start_marker);
             marker_list.delete(overlay.end_marker);
@@ -742,6 +767,28 @@ impl OverlayManager {
     }
 
     /// Get all overlays (for rendering)
+    /// Counters a cache compares against to know whether the overlays it
+    /// produced are still on the buffer: the global one moves on any
+    /// removal that is not namespace-scoped, the second only on removals
+    /// within `namespace`. See `removal_epoch`.
+    pub fn removal_epochs_for(&self, namespace: &OverlayNamespace) -> (u64, u64) {
+        (
+            self.removal_epoch,
+            self.namespace_removal_epochs
+                .get(namespace)
+                .copied()
+                .unwrap_or(0),
+        )
+    }
+
+    fn bump_namespace_epoch(&mut self, namespace: &OverlayNamespace) {
+        let counter = self
+            .namespace_removal_epochs
+            .entry(namespace.clone())
+            .or_insert(0);
+        *counter = counter.wrapping_add(1);
+    }
+
     pub fn all(&self) -> &[Overlay] {
         &self.overlays
     }
