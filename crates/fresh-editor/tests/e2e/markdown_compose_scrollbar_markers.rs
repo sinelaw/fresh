@@ -126,15 +126,7 @@ fn comments_in_fenced_code_blocks_are_not_headings() {
         .expect("the one real `# Install` heading should be marked");
     // Let any marks for the 40 `#` comment lines have their chance to appear
     // before asserting that they don't.
-    let mut settle = usize::MAX;
-    harness
-        .wait_until_stable(|h| {
-            let n = marker_rows(h).len();
-            let stable = n == settle;
-            settle = n;
-            stable
-        })
-        .unwrap();
+    harness.wait_for_async_quiescence(8).unwrap();
 
     let (first, _) = harness.content_area_rows();
     assert_eq!(
@@ -199,15 +191,7 @@ fn only_top_level_headings_are_marked_by_default() {
         .expect("the `#` heading should be marked");
     // Give any deeper-level marks the same chance to appear before asserting
     // that they don't.
-    let mut settle = usize::MAX;
-    harness
-        .wait_until_stable(|h| {
-            let n = marker_rows(h).len();
-            let stable = n == settle;
-            settle = n;
-            stable
-        })
-        .unwrap();
+    harness.wait_for_async_quiescence(8).unwrap();
 
     let (first, _) = harness.content_area_rows();
     assert_eq!(
@@ -231,7 +215,23 @@ fn heading_marks_survive_exploring_the_document() {
     harness
         .wait_until(|h| !marker_rows(h).is_empty())
         .expect("initial heading marks");
+    // The first mark is not the whole set: compose mode's pre-scan walks the
+    // document over the async plugin bridge (see
+    // `every_heading_is_marked_without_scrolling`), so the marks arrive over
+    // several ticks. Reading the set on the frame the first mark lands
+    // compares a partial set against the complete one later — a scroll that
+    // "added" marks is how this test failed on CI, with an `initial` of two
+    // rows against an `after` of eighteen. Wait for the plugin pipeline
+    // itself to go quiet; a screen-stability streak does not do, because a
+    // plugin thread that has fallen behind emits identical stale frames.
+    harness.wait_for_async_quiescence(8).unwrap();
     let initial = marker_rows(&harness);
+    assert!(
+        initial.len() >= 10,
+        "the pre-scan should have marked the whole document before scrolling \
+         starts, otherwise this test compares two partial sets and proves \
+         nothing; saw {initial:?}"
+    );
 
     // Page down through the document so later sections enter the viewport,
     // letting the plugin's marks settle after each page.
@@ -239,16 +239,9 @@ fn heading_marks_survive_exploring_the_document() {
         harness
             .send_key(KeyCode::PageDown, KeyModifiers::NONE)
             .unwrap();
-        let mut prev = usize::MAX;
-        harness
-            .wait_until_stable(|h| {
-                let n = marker_rows(h).len();
-                let stable = n == prev;
-                prev = n;
-                stable
-            })
-            .unwrap();
+        harness.wait_for_async_quiescence(4).unwrap();
     }
+    harness.wait_for_async_quiescence(8).unwrap();
 
     // Each batch republishes only its own byte span, so the marks for the
     // sections scrolled past are left alone. With a whole-namespace replace
