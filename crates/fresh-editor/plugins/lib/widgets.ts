@@ -394,10 +394,15 @@ export function divider(
 
 /** Vertical list of pre-rendered rows with host-managed selection
  * styling, click routing, and **virtual scrolling**. Plugin passes
- * the full dataset of items + a `visibleRows` count; the widget
- * owns scroll offset as instance state (keyed by `key`) and
- * auto-clamps it to keep `selectedIndex` in view. Plugins never
- * compute scroll math.
+ * the full dataset of items; the widget owns scroll offset as
+ * instance state (keyed by `key`) and auto-clamps it to keep
+ * `selectedIndex` in view. Plugins never compute scroll math.
+ *
+ * Omit `visibleRows` to auto-size: the host windows the list to the
+ * panel height it already knows, minus the rows the list's Col
+ * siblings occupy — so a panel with a header and footer never needs
+ * `getViewportHeight()` arithmetic. Pass an explicit count only to
+ * pin the window (at most one auto-sized list/tree per Col).
  *
  * Click on a row fires `widget_event` with `eventType: "select"` and
  * `payload: { index, key }` where `index` is the *absolute* index
@@ -417,7 +422,10 @@ export function list(options: {
   itemSpecs?: WidgetSpec[];
   itemKeys?: string[];
   selectedIndex?: number;
-  visibleRows: number;
+  /** Rows this widget windows to. Omit to auto-size from the
+   * host-known panel height (recommended); an explicit value pins
+   * the window. */
+  visibleRows?: number;
   /** Whether Tab / Shift+Tab lands focus on this list. Default
    * true (matches other tabbable widgets). Set to false in
    * picker-style layouts where the filter input stays focused
@@ -503,7 +511,10 @@ export function tree(options: {
   nodes: TreeNode[];
   itemKeys?: string[];
   selectedIndex?: number;
-  visibleRows: number;
+  /** Rows this widget windows to. Omit to auto-size from the
+   * host-known panel height (recommended); an explicit value pins
+   * the window. */
+  visibleRows?: number;
   /** Initial expanded keys; subsequent expansion changes are
    * host-owned and don't read this field. Use
    * `panel.setExpandedKeys(...)` to override host state after

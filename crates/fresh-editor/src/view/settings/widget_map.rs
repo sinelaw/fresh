@@ -763,7 +763,7 @@ fn list_of(field_key: &str, rows: Vec<TextPropertyEntry>, selected: i32) -> Widg
         item_specs: Vec::new(),
         item_keys: Vec::new(),
         selected_index: selected,
-        visible_rows: visible,
+        visible_rows: Some(visible),
         focusable: true,
         key: Some(format!("{field_key}::list")),
     }

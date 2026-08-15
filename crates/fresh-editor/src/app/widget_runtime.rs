@@ -36,6 +36,7 @@ impl Editor {
         prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
         prev_focus_key: &str,
         panel_width: u32,
+        avail_height: Option<u32>,
     ) -> crate::widgets::RenderOutput {
         let theme_guard = self.theme.read().unwrap();
         crate::widgets::render_spec_with_options(
@@ -49,6 +50,11 @@ impl Editor {
                     theme: &theme_guard,
                     grammars: Some(self.grammar_registry.as_ref()),
                 }),
+                // Auto-size budget for `visible_rows: None` lists/trees:
+                // the viewport height of the split currently showing the
+                // panel's buffer (None when it isn't on screen — widgets
+                // then keep the legacy fallback until it is).
+                avail_height,
                 ..Default::default()
             },
         )
@@ -65,6 +71,7 @@ pub(super) fn render_floating_spec(
     prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
     prev_focus_key: &str,
     panel_width: u32,
+    avail_height: Option<u32>,
     hover_key: &str,
     hover_item_key: &str,
     markdown: Option<crate::widgets::MarkdownCtx<'_>>,
@@ -80,6 +87,7 @@ pub(super) fn render_floating_spec(
             marker_gutter: focus_marker,
             auto_focus_first: true,
             markdown,
+            avail_height,
         },
     )
 }
@@ -964,6 +972,23 @@ impl Editor {
         raw.saturating_sub(2).max(10)
     }
 
+    /// Height sibling of [`Self::widget_panel_width`]: the viewport
+    /// height of a split currently rendering this buffer, or `None`
+    /// when the buffer isn't on screen (auto-sized widgets then keep
+    /// the legacy fallback until it is). No padding is subtracted —
+    /// the viewport height is already the buffer's usable rows.
+    pub(super) fn widget_panel_height(&self, buffer_id: BufferId) -> Option<u32> {
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .and_then(|vs| {
+                vs.values()
+                    .find(|vs| vs.buffer_state(buffer_id).is_some() && vs.viewport.height > 0)
+                    .map(|vs| vs.viewport.height as u32)
+            })
+    }
+
     /// Re-render an existing widget panel after an in-host state
     /// change (focus advance, scroll move, etc.) without the plugin
     /// re-emitting the spec. Reads the panel's current spec from
@@ -1020,6 +1045,13 @@ impl Editor {
                 .and_then(|slot| self.panel(slot))
                 .map(|f| f.hovered_item_key.clone())
                 .unwrap_or_default();
+            // Row budget for auto-sized lists/trees: the floating
+            // panel's inner height when this is a floating/dock slot,
+            // else the split viewport height of the panel's buffer.
+            let avail_height = match panel_slot {
+                Some(slot) => self.floating_panel_inner_height(slot),
+                None => self.widget_panel_height(buffer_id),
+            };
             let theme_guard = self.theme.read().unwrap();
             let out = render_floating_spec(
                 focus_marker,
@@ -1027,6 +1059,7 @@ impl Editor {
                 &prev,
                 &prev_focus,
                 panel_width,
+                avail_height,
                 &hover_key,
                 &hover_item_key,
                 Some(crate::widgets::MarkdownCtx {
@@ -1325,9 +1358,19 @@ impl Editor {
                 // for non-scrollable widgets. A Tree paces in *nodes*, so
                 // a multi-row card tree divides the row budget by its
                 // fixed item height first.
+                // The row window comes from the panel's last render
+                // (`effective_rows`) — an auto-sized widget's spec
+                // carries no number, and even an explicit one can be
+                // superseded only there.
+                let effective = |spec_visible: Option<u32>| {
+                    self.widget_registry
+                        .get(panel_key)
+                        .map(|p| p.effective_visible_rows(&focus_key, spec_visible))
+                        .unwrap_or(fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
+                };
                 let page = match widget {
                     Some(fresh_core::api::WidgetSpec::List { visible_rows, .. }) => {
-                        visible_rows.saturating_sub(1).max(1) as i32
+                        effective(*visible_rows).saturating_sub(1).max(1) as i32
                     }
                     Some(fresh_core::api::WidgetSpec::Text { rows, .. }) if *rows > 1 => {
                         rows.saturating_sub(1).max(1) as i32
@@ -1346,7 +1389,7 @@ impl Editor {
                         } else {
                             (*item_height).max(1)
                         };
-                        let nodes = visible_rows / per_node;
+                        let nodes = effective(*visible_rows) / per_node;
                         nodes.saturating_sub(1).max(1) as i32
                     }
                     _ => 0,
@@ -2865,7 +2908,7 @@ impl Editor {
                 item_keys,
                 ..
             }) => (
-                *visible_rows,
+                panel.effective_visible_rows(widget_key, *visible_rows),
                 (*item_height).max(1),
                 *card_borders,
                 *checkable,
@@ -2963,7 +3006,10 @@ impl Editor {
                 } else {
                     item_specs.len()
                 };
-                (*visible_rows, total as u32)
+                (
+                    panel.effective_visible_rows(widget_key, *visible_rows),
+                    total as u32,
+                )
             }
             _ => return false,
         };
@@ -3859,6 +3905,25 @@ impl Editor {
             .unwrap_or(80);
         let w = (term_w * pct) / 100;
         w.saturating_sub(2).max(10)
+    }
+
+    /// Height sibling of [`Self::floating_panel_inner_width`]: the row
+    /// budget auto-sized (`visible_rows: None`) lists/trees inside this
+    /// panel size themselves to. A left dock spans the terminal height;
+    /// a centered modal takes its `height_pct` share. 2 rows are
+    /// reserved for the panel frame, mirroring the width helper's
+    /// 2-column reservation.
+    pub(super) fn floating_panel_inner_height(&self, slot: super::PanelSlot) -> Option<u32> {
+        let term_h = (self.terminal_height.max(1)) as u32;
+        let panel = self.panel(slot)?;
+        let h = match panel.placement {
+            super::PanelPlacement::LeftDock { .. } => term_h,
+            _ => {
+                let pct = panel.height_pct.clamp(1, 100) as u32;
+                (term_h * pct) / 100
+            }
+        };
+        Some(h.saturating_sub(2).max(3))
     }
 
     /// Restore keyboard focus to a (docked) floating panel that was

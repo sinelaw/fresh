@@ -206,7 +206,7 @@ fn collect_list(
     item_specs: &[WidgetSpec],
     item_keys: &[String],
     selected_index: i32,
-    visible_rows: u32,
+    spec_visible_rows: Option<u32>,
     list_key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
@@ -216,6 +216,21 @@ fn collect_list(
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
     let mut hits: Vec<HitArea> = Vec::new();
     let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
+    // Resolve the row window: an explicit spec value pins it exactly
+    // as before; an omitted one auto-sizes from the host's height
+    // budget (threaded down like `panel_width`, resolved to leftover
+    // rows by `collect_col`'s fill pass). No budget → legacy default,
+    // flagged so an enclosing Col with a real height can re-render
+    // this subtree with one.
+    let mut wants_fill = false;
+    let visible_rows = match (spec_visible_rows, ctx.avail_height) {
+        (Some(v), _) => v,
+        (None, Some(budget)) => budget.max(1),
+        (None, None) => {
+            wants_fill = true;
+            fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK
+        }
+    };
 
     // Two layouts share one selection/scroll model:
     //   * classic — one `items` `TextPropertyEntry` per row;
@@ -380,9 +395,17 @@ fn collect_list(
         });
     }
 
+    let mut effective_rows = HashMap::new();
+    if let Some(k) = list_key {
+        if !k.is_empty() {
+            effective_rows.insert(k.to_string(), visible_rows);
+        }
+    }
     CollectedOutput {
         entries,
         hits,
+        wants_fill,
+        effective_rows,
         focus_cursor: None,
         embeds: Vec::new(),
         overlays: Vec::new(),

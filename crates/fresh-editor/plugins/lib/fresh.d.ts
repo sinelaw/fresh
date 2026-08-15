@@ -1770,10 +1770,14 @@ type WidgetSpec = {
 	selectedIndex: number;
 	/**
 	* Number of rows of the panel's available height the list
-	* should occupy. Plugin computes from its viewport. The
-	* host shows up to this many items per render.
+	* should occupy. `None` (omitted) = auto: the host sizes the
+	* window from the panel height it already knows, so the
+	* plugin never re-derives layout arithmetic. An explicit
+	* value pins the window to that many rows, exactly as
+	* before. (Legacy fallback when the host has no height for
+	* the surface: 20 rows.)
 	*/
-	visibleRows: number;
+	visibleRows?: number | null;
 	/**
 	* Whether `Tab` / `Shift+Tab` will land focus on this
 	* list. Defaults to `true` (lists are normal tabbable
@@ -1790,7 +1794,13 @@ type WidgetSpec = {
 	nodes: Array<TreeNode>;
 	itemKeys: Array<string>;
 	selectedIndex: number;
-	visibleRows: number;
+	/**
+	* Rows of the panel's available height the tree occupies.
+	* `None` (omitted) = auto from the host-known panel height;
+	* an explicit value pins the window as before. (Legacy
+	* fallback when the host has no height: 20 rows.)
+	*/
+	visibleRows?: number | null;
 	/**
 	* Initial-only set of expanded item keys. Once the widget
 	* has rendered, the host's instance-state `expanded_keys`

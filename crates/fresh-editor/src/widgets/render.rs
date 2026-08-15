@@ -236,6 +236,12 @@ pub struct RenderOutput {
     /// the panel), so the list extends past the panel/modal frame. Only
     /// one can be open at a time (the focused widget). See [`DropdownPopup`].
     pub dropdown_popup: Option<DropdownPopup>,
+    /// Effective rows each keyed `List`/`Tree` actually windowed to
+    /// this render — spec value, or the auto-size height budget, or
+    /// the legacy fallback. Stored on the panel so key/mouse handlers
+    /// compute scroll bounds against what was really painted (an
+    /// auto-sized widget's spec carries no number at all).
+    pub effective_rows: HashMap<String, u32>,
 }
 
 /// The open `Dropdown`'s option list, projected for a host-native
@@ -321,6 +327,17 @@ pub(crate) struct CollectedOutput {
     /// `buffer_row`, then collapsed to `RenderOutput::dropdown_popup`
     /// (only one Dropdown is open at a time — the focused one).
     pub(crate) dropdown_popups: Vec<DropdownPopup>,
+    /// True when a descendant `List`/`Tree` omitted `visible_rows`
+    /// (wants auto-sizing) but no height budget reached it. A `Col`
+    /// with a real `avail_height` resolves this by re-rendering that
+    /// child with the leftover budget; unresolved it bubbles to the
+    /// caller (harmless — the widget used the legacy fallback rows).
+    pub(crate) wants_fill: bool,
+    /// Effective rows each keyed `List`/`Tree` actually windowed to
+    /// this render (spec value, height budget, or legacy fallback).
+    /// The renderer writes it; host key/mouse handlers read it for
+    /// scroll bounds — same contract as instance-state `item_height`.
+    pub(crate) effective_rows: HashMap<String, u32>,
 }
 
 /// Everything a render pass needs that isn't in the spec itself.
@@ -373,6 +390,14 @@ pub struct RenderContext<'a> {
     /// shifts as focus moves. Off for panels that predate it, which
     /// then render byte-for-byte as before.
     pub marker_gutter: bool,
+    /// Row budget for auto-sized (`visible_rows: None`) `List`/`Tree`
+    /// widgets, threaded down like `panel_width`. At the panel root
+    /// this is the surface's inner height (when the host knows it);
+    /// `Col` resolves it to "height minus the rows every sibling
+    /// occupies" before handing it to the one auto child (see
+    /// `collect_col`'s fill pass). `None` = no budget: auto widgets
+    /// fall back to the legacy default and report `wants_fill`.
+    pub avail_height: Option<u32>,
 }
 
 impl RenderContext<'_> {
@@ -421,6 +446,10 @@ pub struct RenderOptions<'a> {
     pub auto_focus_first: bool,
     /// See [`RenderContext::markdown`].
     pub markdown: Option<MarkdownCtx<'a>>,
+    /// See [`RenderContext::avail_height`] — the surface's inner
+    /// height in rows, when the host knows it. `None` keeps auto-sized
+    /// `List`/`Tree` widgets on the legacy fallback.
+    pub avail_height: Option<u32>,
 }
 
 /// Render a spec to a [`RenderOutput`] under explicit [`RenderOptions`].
@@ -458,6 +487,7 @@ pub fn render_spec_with_options(
         hover_item_key: opts.hover_item_key,
         markdown: opts.markdown,
         marker_gutter: opts.marker_gutter,
+        avail_height: opts.avail_height,
     };
     let mut next_state = HashMap::new();
     let collected = render_collected(spec, prev, &mut next_state, ctx, panel_width);
@@ -474,6 +504,7 @@ pub fn render_spec_with_options(
         // At most one Dropdown is open at a time (the focused one); take
         // the first if the spec somehow produced several.
         dropdown_popup: collected.dropdown_popups.into_iter().next(),
+        effective_rows: collected.effective_rows,
     }
 }
 
@@ -4054,7 +4085,7 @@ pub(crate) mod tests {
             nodes,
             item_keys: vec!["a".to_string(), "b".to_string()],
             selected_index: -1,
-            visible_rows: 4,
+            visible_rows: Some(4),
             expanded_keys: Vec::new(),
             checkable: false,
             item_height: 1,
@@ -4399,7 +4430,7 @@ pub(crate) mod tests {
             item_specs: vec![],
             item_keys: vec!["a".into(), "b".into(), "c".into()],
             selected_index: -1,
-            visible_rows: 10,
+            visible_rows: Some(10),
             focusable: true,
             key: None,
         };
@@ -4442,7 +4473,7 @@ pub(crate) mod tests {
             item_keys: vec!["a".into(), "b".into()],
             selected_index: 1,
             // 12 rows available: 2 cards * 3 rows = 6, padded to 12.
-            visible_rows: 12,
+            visible_rows: Some(12),
             focusable: true,
             key: Some("cards".into()),
         };
@@ -4518,7 +4549,7 @@ pub(crate) mod tests {
             item_specs: vec![card("aaa"), card("bbb")],
             item_keys: vec!["a".into(), "b".into()],
             selected_index: 1,
-            visible_rows: 12,
+            visible_rows: Some(12),
             focusable: true,
             key: Some("cards".into()),
         };
@@ -4575,7 +4606,7 @@ pub(crate) mod tests {
             item_specs: vec![],
             item_keys: vec!["x".into(), "y".into()],
             selected_index: 1,
-            visible_rows: 10,
+            visible_rows: Some(10),
             focusable: true,
             key: None,
         };
@@ -4608,7 +4639,7 @@ pub(crate) mod tests {
                     item_specs: vec![],
                     item_keys: vec!["a".into(), "b".into()],
                     selected_index: -1,
-                    visible_rows: 10,
+                    visible_rows: Some(10),
                     key: None,
                     focusable: true,
                 },
@@ -4634,7 +4665,7 @@ pub(crate) mod tests {
             item_specs: vec![],
             item_keys: vec!["match:42".into()],
             selected_index: 0,
-            visible_rows: 10,
+            visible_rows: Some(10),
             focusable: true,
             key: None,
         };
@@ -4674,7 +4705,7 @@ pub(crate) mod tests {
             item_specs: vec![],
             item_keys: vec!["only".into()],
             selected_index: -1,
-            visible_rows: 10,
+            visible_rows: Some(10),
             focusable: true,
             key: None,
         };
@@ -4698,7 +4729,7 @@ pub(crate) mod tests {
             item_specs: vec![],
             item_keys,
             selected_index: selected,
-            visible_rows: visible,
+            visible_rows: Some(visible),
             focusable: true,
             key: key.map(|s| s.to_string()),
         }
@@ -5099,7 +5130,7 @@ pub(crate) mod tests {
             nodes,
             item_keys: item_keys.iter().map(|s| s.to_string()).collect(),
             selected_index: selected,
-            visible_rows: visible,
+            visible_rows: Some(visible),
             expanded_keys: expanded.iter().map(|s| s.to_string()).collect(),
             checkable: false,
             item_height: 1,
@@ -5446,7 +5477,7 @@ pub(crate) mod tests {
             nodes: vec![node],
             item_keys: vec!["x".to_string()],
             selected_index: -1,
-            visible_rows: 10,
+            visible_rows: Some(10),
             expanded_keys: vec![],
             checkable: false,
             item_height: 2,
@@ -5783,7 +5814,7 @@ pub(crate) mod tests {
             nodes: vec![card("aa"), card("bb")],
             item_keys: vec!["ka".into(), "kb".into()],
             selected_index: -1,
-            visible_rows: 6,
+            visible_rows: Some(6),
             expanded_keys: vec![],
             checkable: false,
             item_height: 3,

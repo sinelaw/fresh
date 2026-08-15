@@ -502,6 +502,17 @@ impl Editor {
         {
             self.rerender_widget_panel(&panel_key);
         }
+
+        // Buffer-mounted (split) panels too: their auto-sized lists/trees
+        // window against the split viewport height the renderer captured,
+        // so a resize must re-run the layout even when the plugin never
+        // re-emits its spec. The dock / floating panels handled above are
+        // also in the registry, so they render twice on a resize — a
+        // benign cost on an event this rare, kept for the explicit
+        // ordering the Bug-13 fix established.
+        for panel_key in self.widget_registry.panel_keys() {
+            self.rerender_widget_panel(&panel_key);
+        }
     }
 }
 
