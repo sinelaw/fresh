@@ -1334,16 +1334,37 @@ impl Editor {
                 let gutter_width = state.margins.left_total_width() as u16;
                 let target_position = match terminal_grid_target {
                     Some(pos) => pos,
-                    None => crate::app::click_geometry::screen_to_buffer_position(
-                        col,
-                        row,
-                        content_rect,
-                        gutter_width,
-                        &cached_mappings,
-                        fallback,
-                        true, // Allow gutter clicks for drag selection
-                        compose_width,
-                    )?,
+                    None => {
+                        let target =
+                            crate::app::click_geometry::screen_to_buffer_position_with_overshoot(
+                                col,
+                                row,
+                                content_rect,
+                                gutter_width,
+                                &cached_mappings,
+                                fallback,
+                                true, // Allow gutter clicks for drag selection
+                                compose_width,
+                            )?;
+                        // Pointer outside the text area: the row→line lookup
+                        // can only name lines that are on screen, so it clamps
+                        // to the first/last visible one and the selection head
+                        // stops dead at the viewport edge. Carry the rows past
+                        // the edge into lines past the edge, so the head keeps
+                        // moving and the viewport follows it (issue #3006).
+                        //
+                        // Without this the drag only ever scrolls as a side
+                        // effect of the scroll-off margin, so a configured
+                        // `scroll_offset = 0` means dragging past the edge
+                        // does nothing at all.
+                        let rows_past_edge =
+                            target.row_overshoot as isize - target.row_undershoot as isize;
+                        crate::app::click_geometry::position_offset_by_lines(
+                            &state.buffer,
+                            target.position,
+                            rows_past_edge,
+                        )
+                    }
                 };
                 let (new_position, anchor_pos) = if drag_by_words {
                     if target_position >= anchor_position {
@@ -1396,6 +1417,21 @@ impl Editor {
 
         if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
             event_log.append(event.clone());
+        }
+        // A drag is cursor motion, so it owns vertical placement from here on
+        // — exactly like a key press, which clears this same flag in
+        // `handle_key`. A wheel or scrollbar scroll sets `skip_ensure_visible`
+        // so the render pass won't yank the viewport back to the cursor, and
+        // nothing on the mouse path used to clear it again: after any scroll
+        // by wheel or scrollbar, a drag-select moved the selection head but
+        // the viewport stayed frozen, in *both* directions (issue #3006).
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .and_then(|states| states.get_mut(&leaf_id))
+        {
+            view_state.viewport.clear_skip_ensure_visible();
         }
         self.active_window_mut()
             .apply_event_to_buffer(buffer_id, leaf_id, &event);
