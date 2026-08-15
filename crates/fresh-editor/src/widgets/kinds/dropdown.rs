@@ -15,6 +15,42 @@ use crate::widgets::render::{
 pub(crate) struct Dropdown;
 
 impl WidgetImpl for Dropdown {
+    fn on_key(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        key: &str,
+        fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        use super::KeyDisposition::{Consumed, Pass};
+        // The option popup claims its keys only while open: Up/Down
+        // move the (live) selection, Enter/Space commit-and-close,
+        // Esc closes. Closed, everything bubbles.
+        if !matches!(key, "Up" | "Down" | "Enter" | "Space" | "Escape")
+            || !is_open(widget_key, panel)
+        {
+            return Pass;
+        }
+        match key {
+            "Up" => {
+                cycle_selection(spec, widget_key, panel, -1, fx);
+                Consumed
+            }
+            "Down" => {
+                cycle_selection(spec, widget_key, panel, 1, fx);
+                Consumed
+            }
+            "Enter" | "Space" | "Escape" => {
+                // The selection is already live (Up/Down fired
+                // `change`); closing just dismisses the list.
+                set_open(spec, widget_key, panel, false, fx);
+                Consumed
+            }
+            _ => Pass,
+        }
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("dropdown");
         if let WidgetSpec::Dropdown { key: Some(k), .. } = spec {
@@ -190,4 +226,98 @@ fn collect_dropdown(
     ensure_trailing_newline(&mut entry);
     out.entries.insert(0, entry);
     out
+}
+
+/// Is this Dropdown's option popup open?
+pub(crate) fn is_open(widget_key: &str, panel: &crate::widgets::WidgetPanelState) -> bool {
+    matches!(
+        panel.instance_states.get(widget_key),
+        Some(WidgetInstanceState::Dropdown { open: true, .. })
+    )
+}
+
+/// Step the selection by `delta` with wraparound, preserving the
+/// popup's open state; queues `change` when the selection moved.
+pub(crate) fn cycle_selection(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    delta: i32,
+    fx: &mut super::KeyFx,
+) {
+    let WidgetSpec::Dropdown {
+        options,
+        selected_index: spec_sel,
+        ..
+    } = spec
+    else {
+        return;
+    };
+    if options.is_empty() {
+        return;
+    }
+    let (cur, open) = match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::Dropdown {
+            selected_index,
+            open,
+        }) => (*selected_index, *open),
+        _ => (*spec_sel, false),
+    };
+    let cur = cur.clamp(0, options.len() as i32 - 1);
+    let new_sel = crate::widgets::wrap_index(cur, delta, options.len());
+    panel.instance_states.insert(
+        widget_key.to_string(),
+        WidgetInstanceState::Dropdown {
+            selected_index: new_sel,
+            // Preserve the popup's open state across a cycle so
+            // Up/Down inside the open list keeps it open.
+            open,
+        },
+    );
+    if new_sel != cur {
+        let value = options.get(new_sel as usize).cloned().unwrap_or_default();
+        fx.events.push((
+            "change".into(),
+            serde_json::json!({ "index": new_sel, "value": value }),
+        ));
+    }
+}
+
+/// Open or close the option popup, preserving the selected index;
+/// queues `dropdown_open` when the state actually flipped (never
+/// `change` — opening/closing is not a value edit; the plugin needs
+/// the distinction so e.g. Escape can close the list vs cancel the
+/// dialog).
+pub(crate) fn set_open(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    open: bool,
+    fx: &mut super::KeyFx,
+) {
+    let WidgetSpec::Dropdown {
+        selected_index: spec_sel,
+        ..
+    } = spec
+    else {
+        return;
+    };
+    let (cur, prev_open) = match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::Dropdown {
+            selected_index,
+            open,
+        }) => (*selected_index, *open),
+        _ => (*spec_sel, false),
+    };
+    panel.instance_states.insert(
+        widget_key.to_string(),
+        WidgetInstanceState::Dropdown {
+            selected_index: cur,
+            open,
+        },
+    );
+    if open != prev_open {
+        fx.events
+            .push(("dropdown_open".into(), serde_json::json!({ "open": open })));
+    }
 }

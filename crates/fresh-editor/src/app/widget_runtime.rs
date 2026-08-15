@@ -1128,100 +1128,39 @@ impl Editor {
             None => return,
         };
         let focus_key = panel.focus_key.clone();
-        // Completion-popup short-circuit: when the focused Text
-        // widget has an open completion popup, intercept Tab /
-        // Up / Down / Enter / Esc so they drive the popup instead
-        // of falling through to the widget's default key
-        // behaviour. Tab fires `completion_accept`, Enter/Esc
-        // dismiss, Up/Down move the host-managed selection. Any
-        // other key (printable, Backspace, etc.) still goes to
-        // the text editor, which lets the user keep typing to
-        // refine the candidate list.
-        let completions_open = matches!(key, "Tab" | "Up" | "Down" | "Enter" | "Escape")
-            && self.focused_text_completions_open(panel_key);
-        if completions_open {
-            match key {
-                "Up" => {
-                    self.move_focused_text_completion_index(panel_key, -1);
-                    // Selection moved host-side; force a repaint
-                    // so the highlight + scroll-into-view shift
-                    // is visible without waiting for the next
-                    // unrelated mutation.
+        // Kind-owned key handling (widget-framework-v2-review.md §4.3):
+        // the focused widget's impl claims keys its own open popup
+        // needs — Text's completion list, Dropdown's option list —
+        // and passes everything else through. The popup short-circuit
+        // ladders that used to live here are gone; no code at this
+        // level knows those popups exist. `PassAfter` covers the
+        // dismiss-then-act keys (Enter submitting the form, Tab
+        // advancing focus, after closing a non-navigated popup).
+        if !focus_key.is_empty() {
+            let widget = crate::widgets::find_widget_by_key(&panel.spec, &focus_key).cloned();
+            if let Some(widget) = widget {
+                let mut fx = crate::widgets::kinds::KeyFx::default();
+                let disposition = match self.widget_registry.get_mut(panel_key) {
+                    Some(panel_mut) => crate::widgets::kinds::behavior(&widget)
+                        .on_key(&widget, &focus_key, panel_mut, key, &mut fx),
+                    None => return,
+                };
+                if disposition != crate::widgets::kinds::KeyDisposition::Pass {
                     self.rerender_widget_panel(panel_key);
+                }
+                for (event_type, payload) in fx.events {
+                    self.fire_widget_event(panel_key, focus_key.clone(), event_type, payload);
+                }
+                if disposition == crate::widgets::kinds::KeyDisposition::Consumed {
                     return;
                 }
-                "Down" => {
-                    self.move_focused_text_completion_index(panel_key, 1);
-                    self.rerender_widget_panel(panel_key);
-                    return;
-                }
-                "Escape" => {
-                    // First Esc only closes the popup — the form stays
-                    // open. (A second Esc, with no popup, cancels.)
-                    self.dismiss_focused_text_completions(panel_key);
-                    self.rerender_widget_panel(panel_key);
-                    return;
-                }
-                "Enter" => {
-                    if self.focused_text_completion_navigated(panel_key) {
-                        // The user stepped into the dropdown and Enter
-                        // accepts the highlighted candidate.
-                        self.fire_completion_accept(panel_key);
-                        return;
-                    }
-                    // Not navigated: the dropdown must not swallow the
-                    // submit. Close it, then fall through so Enter acts
-                    // on the form (advance / submit) below.
-                    self.dismiss_focused_text_completions(panel_key);
-                }
-                "Tab" => {
-                    if self.focused_text_completion_navigated(panel_key) {
-                        // The user stepped into the dropdown (↑/↓/wheel)
-                        // so a row is highlighted — Tab applies it and
-                        // closes the popup, just like Enter. Focus stays
-                        // on the field so the accepted value is visible
-                        // and editable (a second Tab then advances).
-                        self.fire_completion_accept(panel_key);
-                        return;
-                    }
-                    // Nothing highlighted (a freshly surfaced popup): Tab
-                    // commits the typed text and moves focus. Close the
-                    // popup, then fall through to the focus-advance
-                    // dispatch below.
-                    self.dismiss_focused_text_completions(panel_key);
-                }
-                _ => {}
-            }
-        }
-        // Dropdown-popup short-circuit: while a focused Dropdown's
-        // option popup is open, Up/Down move the (live) selection,
-        // Enter/Space commit-and-close, Esc closes. Mirrors the
-        // completions short-circuit above.
-        let dropdown_open = matches!(key, "Up" | "Down" | "Enter" | "Space" | "Escape")
-            && self.focused_dropdown_open(panel_key);
-        if dropdown_open {
-            match key {
-                "Up" => {
-                    self.handle_widget_dropdown_cycle(panel_key, &focus_key, -1);
-                    return;
-                }
-                "Down" => {
-                    self.handle_widget_dropdown_cycle(panel_key, &focus_key, 1);
-                    return;
-                }
-                "Enter" | "Space" | "Escape" => {
-                    // The selection is already live (Up/Down fired
-                    // `change`); closing just dismisses the list.
-                    self.set_dropdown_open(panel_key, &focus_key, false);
-                    return;
-                }
-                _ => {}
             }
         }
         // Re-fetch the focused widget for the main dispatch: the
-        // completion block above may have run `&mut self` (dismissing a
-        // popup), so we can't hold a borrow from before it. The spec is
-        // unchanged by a dismiss, so this resolves to the same widget.
+        // kind-owned handler above ran `&mut self` (it may have closed
+        // a popup), so we can't hold a borrow from before it. The spec
+        // is unchanged by a dismiss, so this resolves to the same
+        // widget.
         let panel = match self.widget_registry.get(panel_key) {
             Some(p) => p,
             None => return,
@@ -1773,190 +1712,6 @@ impl Editor {
             Some(crate::widgets::WidgetInstanceState::Text { completions, .. })
                 if !completions.is_empty()
         )
-    }
-
-    /// Has the user explicitly stepped into the focused Text widget's
-    /// open completion popup (via ↑/↓ / wheel)? Drives the Tab/Enter
-    /// dispatch: only a *navigated* popup accepts on Enter — a freshly
-    /// surfaced one lets Enter act on the form instead.
-    fn focused_text_completion_navigated(&self, panel_key: &crate::widgets::PanelKey) -> bool {
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return false,
-        };
-        if panel.focus_key.is_empty() {
-            return false;
-        }
-        matches!(
-            panel.instance_states.get(&panel.focus_key),
-            Some(crate::widgets::WidgetInstanceState::Text {
-                completions,
-                completion_navigated,
-                ..
-            }) if !completions.is_empty() && *completion_navigated
-        )
-    }
-
-    /// Move the selected-index cursor of the focused Text widget's
-    /// completion popup by `delta` (Up = -1, Down = +1). Clamps
-    /// at the ends rather than wrapping — Down past the last
-    /// candidate stays on the last candidate, Up past the first
-    /// stays on the first. Wraparound on a popup-style picker
-    /// reads as "I scrolled past the bottom and now I'm at the
-    /// top" which is jarring when the user is actively comparing
-    /// items they expect to be in monotonic positions. No-op
-    /// when the focused widget isn't a Text-with-open-
-    /// completions.
-    fn move_focused_text_completion_index(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        delta: i32,
-    ) {
-        // First read the spec's visible-rows cap so we can pull
-        // scroll back into view if the new selection lands above
-        // the current scroll offset. (The renderer only does
-        // forward-pull — it would otherwise fight the mouse-
-        // wheel handler which deliberately diverges scroll from
-        // selection.)
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return,
-        };
-        let focus_key = panel.focus_key.clone();
-        if focus_key.is_empty() {
-            return;
-        }
-        let spec_visible_rows = match crate::widgets::find_widget_by_key(&panel.spec, &focus_key) {
-            Some(fresh_core::api::WidgetSpec::Text {
-                completions_visible_rows,
-                ..
-            }) => *completions_visible_rows,
-            _ => 0,
-        };
-        let visible = if spec_visible_rows == 0 {
-            5u32
-        } else {
-            spec_visible_rows
-        };
-        let panel = match self.widget_registry.get_mut(panel_key) {
-            Some(p) => p,
-            None => return,
-        };
-        if let Some(crate::widgets::WidgetInstanceState::Text {
-            completions,
-            completion_selected_index,
-            completion_scroll_offset,
-            completion_navigated,
-            ..
-        }) = panel.instance_states.get_mut(&focus_key)
-        {
-            if completions.is_empty() {
-                return;
-            }
-            // The first ↑/↓ *enters* the dropdown: flip `navigated`
-            // and select the current (top) row without moving, so the
-            // user lands on a sensible candidate instead of skipping
-            // the first one. Subsequent presses move the selection.
-            if !*completion_navigated {
-                *completion_navigated = true;
-                return;
-            }
-            let max = (completions.len() - 1) as i32;
-            let cur = *completion_selected_index as i32;
-            let next = (cur + delta).clamp(0, max);
-            *completion_selected_index = next as usize;
-            // Keyboard-driven selection move: if the new
-            // selection sits above the current scroll window,
-            // pull the scroll back so the selection stays
-            // visible. Forward-pull is handled by the renderer.
-            let next_u = next as u32;
-            if next_u < *completion_scroll_offset {
-                *completion_scroll_offset = next_u;
-            } else if next_u >= *completion_scroll_offset + visible {
-                *completion_scroll_offset = next_u + 1 - visible;
-            }
-        }
-    }
-
-    /// Clear the focused Text widget's completion popup (close it)
-    /// and fire a `completion_dismiss` event so the plugin can
-    /// sync its own state (e.g. invalidate any in-flight fetch
-    /// token, so a late-arriving result doesn't re-open the
-    /// popup the user just closed). Used by Enter and Escape on
-    /// a Text-with-open-completions.
-    fn dismiss_focused_text_completions(&mut self, panel_key: &crate::widgets::PanelKey) {
-        let focus_key = {
-            let panel = match self.widget_registry.get_mut(panel_key) {
-                Some(p) => p,
-                None => return,
-            };
-            let focus_key = panel.focus_key.clone();
-            if focus_key.is_empty() {
-                return;
-            }
-            if let Some(crate::widgets::WidgetInstanceState::Text {
-                completions,
-                completion_selected_index,
-                ..
-            }) = panel.instance_states.get_mut(&focus_key)
-            {
-                if completions.is_empty() {
-                    return;
-                }
-                completions.clear();
-                *completion_selected_index = 0;
-            } else {
-                return;
-            }
-            focus_key
-        };
-        self.fire_widget_event(
-            panel_key,
-            focus_key,
-            "completion_dismiss".into(),
-            serde_json::json!({}),
-        );
-    }
-
-    /// Fire `completion_accept` on the focused Text widget's
-    /// currently-selected candidate. Used by Tab on a Text-with-
-    /// open-completions — the plugin's handler is expected to
-    /// apply the accepted value to the field (typically via
-    /// `WidgetMutation::SetValue`). The host does NOT close the
-    /// popup automatically: directory-descent style flows (the
-    /// orchestrator's Project Path acceptance of `/foo/` re-
-    /// fetches children for the new path) want the popup to
-    /// stay alive so the user can keep Tab-ing. Plugins that
-    /// want a one-shot accept close the popup themselves with
-    /// `setCompletions(key, [])`.
-    fn fire_completion_accept(&mut self, panel_key: &crate::widgets::PanelKey) {
-        let (focus_key, value) = {
-            let panel = match self.widget_registry.get(panel_key) {
-                Some(p) => p,
-                None => return,
-            };
-            let focus_key = panel.focus_key.clone();
-            if focus_key.is_empty() {
-                return;
-            }
-            match panel.instance_states.get(&focus_key) {
-                Some(crate::widgets::WidgetInstanceState::Text {
-                    completions,
-                    completion_selected_index,
-                    ..
-                }) if !completions.is_empty() => {
-                    let idx = (*completion_selected_index).min(completions.len() - 1);
-                    (focus_key, completions[idx].value.clone())
-                }
-                _ => return,
-            }
-        };
-        self.fire_widget_event(
-            panel_key,
-            focus_key,
-            "completion_accept".into(),
-            serde_json::json!({ "value": value }),
-        );
     }
 
     fn fire_list_activate(&mut self, panel_key: &crate::widgets::PanelKey, focus_key: &str) {

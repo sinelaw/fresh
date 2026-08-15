@@ -69,6 +69,29 @@ impl BoxMeta {
     }
 }
 
+/// Deferred plugin notifications collected while a widget handles a
+/// key: `(event_type, payload)` pairs fired against the handling
+/// widget's key, after its state mutations land and the panel
+/// repaints.
+#[derive(Debug, Default)]
+pub(crate) struct KeyFx {
+    pub events: Vec<(String, serde_json::Value)>,
+}
+
+/// What the focused widget did with a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeyDisposition {
+    /// Not this widget's key — the panel-level dispatch proceeds.
+    Pass,
+    /// Fully handled; the dispatcher repaints and stops.
+    Consumed,
+    /// The widget updated itself (e.g. closed its popup) but the key
+    /// must still act on the surface beneath it — Enter submitting
+    /// the form, Tab advancing focus. The dispatcher repaints and
+    /// proceeds.
+    PassAfter,
+}
+
 /// Behaviour for one widget kind. Implementations are unit structs;
 /// each `collect` destructures its own `WidgetSpec` variant (a
 /// mismatched variant is a dispatch bug and renders nothing rather
@@ -91,6 +114,29 @@ pub(crate) trait WidgetImpl: Sync {
     /// answers for its own variant — there is deliberately no central
     /// kind→tag table.
     fn box_meta(&self, spec: &WidgetSpec) -> BoxMeta;
+
+    /// A key event dispatched to the focused widget before the
+    /// panel-level fallbacks (Tab cycling, Enter submit, arrows).
+    /// This is what dissolved `handle_widget_key`'s popup
+    /// short-circuits: a kind whose own open popup needs the key
+    /// claims it here (`Dropdown` claims Up/Down while `open`,
+    /// `Text` claims them while its completion list is showing) and
+    /// returns [`KeyDisposition::Pass`] otherwise, letting the key
+    /// bubble. No central function knows these popups exist.
+    ///
+    /// Mutate `panel` for state changes; queue plugin notifications
+    /// on `fx` — the dispatcher rerenders and fires them after the
+    /// handler returns.
+    fn on_key(
+        &self,
+        _spec: &WidgetSpec,
+        _widget_key: &str,
+        _panel: &mut crate::widgets::WidgetPanelState,
+        _key: &str,
+        _fx: &mut KeyFx,
+    ) -> KeyDisposition {
+        KeyDisposition::Pass
+    }
 
     /// A wheel delta bubbling through this widget's box. Return true
     /// when the widget consumed it (actually moved its viewport) —
