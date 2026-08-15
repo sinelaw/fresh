@@ -17,6 +17,84 @@ use crate::widgets::render::{
 pub(crate) struct Tree;
 
 impl WidgetImpl for Tree {
+    fn on_wheel(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        delta: i32,
+    ) -> bool {
+        let WidgetSpec::Tree {
+            visible_rows,
+            item_height,
+            card_borders,
+            checkable,
+            nodes,
+            item_keys,
+            ..
+        } = spec
+        else {
+            return false;
+        };
+        if nodes.is_empty() {
+            return false;
+        }
+        let visible_rows = panel.effective_visible_rows(widget_key, *visible_rows);
+        let item_height = (*item_height).max(1);
+        let (cur_sel, cur_scroll, expanded) = match panel.instance_states.get(widget_key) {
+            Some(WidgetInstanceState::Tree {
+                selected_index,
+                scroll_offset,
+                expanded_keys,
+                ..
+            }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
+            _ => (-1, 0, std::collections::HashSet::<String>::new()),
+        };
+        let visible_indices = collect_visible_tree_indices(nodes, item_keys, &expanded);
+        if visible_indices.is_empty() {
+            return false;
+        }
+        // Scroll offset and clamp are in *row* units (line-level
+        // scrolling — a bordered card can be partially clipped at the
+        // viewport edges). Compute per-node heights and the clamp with
+        // the renderer's own helpers so the wheel can't disagree with
+        // what will actually be painted. Mirror the renderer's
+        // normalization: bordered-card layout only engages for
+        // multi-row items.
+        let card_borders = *card_borders && item_height > 1;
+        let heights: Vec<u32> = visible_indices
+            .iter()
+            .map(|&abs| {
+                crate::widgets::render::tree_node_rows(
+                    &nodes[abs],
+                    *checkable,
+                    item_height,
+                    card_borders,
+                )
+            })
+            .collect();
+        let max_scroll = crate::widgets::render::tree_max_scroll(&heights, visible_rows);
+        let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
+        if new_scroll == cur_scroll {
+            return false;
+        }
+        // Mouse scroll moves the *view* only — the selection stays put
+        // (and may scroll out of view). `user_scrolled` tells the
+        // renderer not to snap the offset back to the selection, and it
+        // survives a plugin `SetSelectedIndex` that re-pins the same
+        // selection.
+        panel.instance_states.insert(
+            widget_key.to_string(),
+            WidgetInstanceState::Tree {
+                scroll_offset: new_scroll,
+                selected_index: cur_sel,
+                expanded_keys: expanded,
+                user_scrolled: true,
+            },
+        );
+        true
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("tree");
         if let WidgetSpec::Tree { key: Some(k), .. } = spec {
@@ -506,4 +584,32 @@ fn render_widget_tree(
     }
 
     out
+}
+
+/// Indices of the tree nodes visible under the current expansion set:
+/// a node shows iff every ancestor on its depth path is expanded.
+/// Shared by the renderer-side wheel bound and the app-side selection
+/// movement / paging (`app/widget_runtime.rs`).
+pub(crate) fn collect_visible_tree_indices(
+    nodes: &[fresh_core::api::TreeNode],
+    item_keys: &[String],
+    expanded: &std::collections::HashSet<String>,
+) -> Vec<usize> {
+    let mut ancestor_open: Vec<bool> = Vec::new();
+    let mut visible: Vec<usize> = Vec::with_capacity(nodes.len());
+    for (i, node) in nodes.iter().enumerate() {
+        let depth = node.depth as usize;
+        ancestor_open.truncate(depth);
+        if ancestor_open.iter().all(|open| *open) {
+            visible.push(i);
+        }
+        let key = item_keys.get(i).cloned().unwrap_or_default();
+        let is_open = if node.has_children {
+            !key.is_empty() && expanded.contains(&key)
+        } else {
+            true
+        };
+        ancestor_open.push(is_open);
+    }
+    visible
 }

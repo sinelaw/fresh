@@ -16,6 +16,67 @@ use crate::widgets::render::{
 pub(crate) struct List;
 
 impl WidgetImpl for List {
+    fn on_wheel(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        delta: i32,
+    ) -> bool {
+        let WidgetSpec::List {
+            visible_rows,
+            items,
+            item_specs,
+            ..
+        } = spec
+        else {
+            return false;
+        };
+        let total = if item_specs.is_empty() {
+            items.len()
+        } else {
+            item_specs.len()
+        } as u32;
+        if total == 0 {
+            return false;
+        }
+        let visible_rows = panel.effective_visible_rows(widget_key, *visible_rows);
+        let (cur_sel, cur_scroll, item_height) = match panel.instance_states.get(widget_key) {
+            Some(WidgetInstanceState::List {
+                selected_index,
+                scroll_offset,
+                item_height,
+                ..
+            }) => (*selected_index, *scroll_offset, (*item_height).max(1)),
+            _ => (-1, 0, 1),
+        };
+        // Convert the row-denominated viewport into a per-item window so
+        // the bound is right for card lists (item_height > 1), and so a
+        // list that already shows everything (max_scroll == 0, e.g. the
+        // Git Log which sets visible_rows == commit count and scrolls via
+        // its enclosing pane) reports "can't scroll" and lets the wheel
+        // bubble to that pane rather than swallowing it.
+        let visible_items = (visible_rows.max(1) / item_height).max(1);
+        let max_scroll = total.saturating_sub(visible_items);
+        let new_scroll = (cur_scroll as i64 + delta as i64).clamp(0, max_scroll as i64) as u32;
+        if new_scroll == cur_scroll {
+            return false;
+        }
+        // Wheel scrolls the *view* only — the selection stays put (and
+        // may leave the visible window); `user_scrolled` tells the
+        // renderer not to snap the offset back to it.
+        panel.instance_states.insert(
+            widget_key.to_string(),
+            WidgetInstanceState::List {
+                scroll_offset: new_scroll,
+                selected_index: cur_sel,
+                item_height,
+                user_scrolled: true,
+            },
+        );
+        true
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("list");
         if let WidgetSpec::List {

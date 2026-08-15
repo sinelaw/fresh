@@ -761,6 +761,13 @@ fn collect_labeled_section(
     for mut b in std::mem::take(&mut child_out.boxes) {
         b.row += 1;
         b.col += LEFT_BORDER_PREFIX.chars().count() as u32;
+        // Scrollable boxes widen two more columns — through the right
+        // padding onto the `│` border — matching the scroll-region
+        // widening below so a wheel over the section border still
+        // scrolls the widget inside it.
+        if b.scrollable {
+            b.width += 2;
+        }
         boxes.push(b);
     }
     // Shift child overlays by 1 to account for the top
