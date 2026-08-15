@@ -288,8 +288,38 @@ interface ReviewState {
     isUntracked: boolean;
     hunkLineMap: Array<{ oldStart: number; newStart: number }>;
   } | null;
+  // The composite for the file the reader left when they switched to the
+  // unified stream, kept alive instead of destroyed. Switching back is
+  // then a panel swap rather than two `git show` calls, two whole-file
+  // buffers over the IPC boundary and an alignment pass. `signature`
+  // records what it was built from (see `compositeSignature`), so a
+  // review that has changed underneath it rebuilds rather than showing
+  // the reader a stale file.
+  parkedComposite: {
+    fileKey: string;
+    compositeBufId: number;
+    oldBufId: number;
+    newBufId: number;
+    absPath: string;
+    isUntracked: boolean;
+    hunkLineMap: Array<{ oldStart: number; newStart: number }>;
+    signature: string;
+  } | null;
   // Monotonic token guarding async center rebuilds (file-nav spam / watch).
   centerBuildToken: number;
+  // Bumped whenever anything the unified stream is built from changes.
+  // The stream costs a second to lay out on a big review, and re-emitting
+  // an identical one is not free-but-invisible: the panel swaps to the
+  // stream buffer immediately and the content lands a beat later, so the
+  // reader watches the old scroll position sit there and then jump.
+  streamRevision: number;
+  // `streamSignature()` as of the content currently in the stream buffer,
+  // or null when nothing has been emitted into it yet.
+  streamMountedSignature: string | null;
+  // Bumped by `refreshMagitData` — i.e. when the underlying git data is
+  // re-read, which is the one thing a hunk-range signature cannot see
+  // (a file can change without moving any hunk boundary).
+  dataRevision: number;
 }
 
 const state: ReviewState = {
@@ -342,17 +372,29 @@ const state: ReviewState = {
   lineSelection: null,
   reviewLayout: 'unified',
   centerComposite: null,
+  parkedComposite: null,
   centerBuildToken: 0,
+  streamRevision: 0,
+  streamMountedSignature: null,
+  dataRevision: 0,
 };
 
 function fileKey(f: FileEntry): string { return `${f.path}\0${f.category}`; }
 function fileKeyOf(path: string, category: string): string { return `${path}\0${category}`; }
 
-// Theme colour for the synthetic "cursor line" highlight in the panel
-// buffers. Reintroduced after the per-line bg overlay was deleted from the
-// builders — `applyCursorLineOverlay` writes it on every cursor_moved event.
+// Theme colour for the "cursor line" bar in the panel buffers. The bar
+// itself is declared once (`setCursorLineOverlay`) and placed by the host
+// from the cursor of the frame being drawn; painting it here from
+// `cursor_moved` left it a row behind a held arrow key, because the hook
+// only fires after the frame that already moved the caret.
 const STYLE_SELECTED_BG: OverlayColorSpec = "editor.selection_bg";
-const CURSOR_LINE_NS = "review-cursor-line";
+
+/** Mode carried by the buffers the editor's own cursor moves in — the
+ *  unified stream and the side-by-side composite. Same keymap as
+ *  `review-mode`, except that cursor motion is bound straight to the
+ *  built-in actions instead of taking a round trip through this plugin
+ *  (see `DIFF_NATIVE_MOTION`). */
+const REVIEW_DIFF_MODE = "review-diff";
 
 // --- Refresh State ---
 
@@ -2349,12 +2391,30 @@ function onFilesTreeSelect(nodeKey: string): void {
     if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
 }
 
+/** Declare that the unified stream's content is out of date: the next
+ *  render of the stream has to lay it out again.
+ *
+ *  Every caller that changes what the stream says goes through
+ *  `updateMagitDisplay` or `applyFileFilter`, so those two mark it — a
+ *  layout flip, which changes only *which* view is mounted, does not. */
+function markStreamDirty(): void {
+    state.streamRevision++;
+}
+
+/** What the content currently in the stream buffer was built from. The
+ *  focused file is part of it because the composite's stand-in stream
+ *  carries only that file's body (`fileBodyRendered`). */
+function streamSignature(): string {
+    return `${state.streamRevision}|${state.focusOnly ? state.filesCurrentKey : '*'}`;
+}
+
 /**
  * Full refresh — rebuild all three panels. Called on data changes
  * (refreshMagitData, comment add/edit, note edit, resize). NOT called on
  * scroll: scrolling is handled natively by the editor in the panel buffers.
  */
 function updateMagitDisplay(): void {
+    markStreamDirty();
     refreshViewportDimensions();
     if (state.groupId === null) return;
     syncFocusMode();
@@ -2807,7 +2867,12 @@ function on_review_viewport_changed(data: { split_id: number; buffer_id: number;
     }
     if (data.buffer_id !== state.panelBuffers["diff"]) return;
     // Inline comment boxes are laid out to this width (see
-    // `diffPanelWidth`); the next center rebuild picks up a change.
+    // `diffPanelWidth`); the next center rebuild picks up a change — and
+    // marking the stream dirty is what makes sure there *is* one, since
+    // an otherwise-unchanged stream is now reused rather than re-emitted.
+    if (state.panelWidths["diff"] !== data.width) {
+        markStreamDirty();
+    }
     state.panelWidths["diff"] = data.width;
     // Height too, so `refreshViewportDimensions` has an authoritative
     // size for the diff pane and never has to trust whichever split
@@ -2840,24 +2905,23 @@ function rowFromByte(topByte: number): number {
 }
 
 /**
- * Repaint the synthetic "cursor line" highlight in the diff panel.
+ * Ask the host for the "cursor line" bar in the diff panel.
  *
- * The diff panel buffer is created with show_cursors=true so the editor
- * moves the cursor natively, but a single-line bg overlay on the cursor row
- * gives a much more visible "you are here" indicator than the bare caret —
- * which matches the magit-style aesthetic and is what the user expects.
+ * The panel buffer is created with show_cursors=true so the editor moves
+ * the cursor natively, but a single-line bg bar on the cursor row gives a
+ * much more visible "you are here" indicator than the bare caret — which
+ * matches the magit-style aesthetic and is what the user expects.
+ *
+ * Declared once, not repainted: the host re-derives the bar's row from the
+ * cursor of the frame it is drawing. Painting it here from `cursor_moved`
+ * instead left it one row behind for as long as an arrow key repeated —
+ * the hook only fires after the frame that already moved the caret, so
+ * every repaint answered the previous frame's cursor.
  */
-function applyCursorLineOverlay(panel: 'diff'): void {
-    const bufId = state.panelBuffers[panel];
+function declareCursorLineBar(): void {
+    const bufId = state.panelBuffers["diff"];
     if (bufId === undefined) return;
-    editor.clearNamespace(bufId, CURSOR_LINE_NS);
-    const offsets = state.diffLineByteOffsets;
-    if (offsets.length < 2) return;
-    const idx = Math.max(0, Math.min(state.diffCursorRow - 1, offsets.length - 2));
-    const start = offsets[idx];
-    const end = offsets[idx + 1];
-    if (end <= start) return;
-    editor.addOverlay(bufId, CURSOR_LINE_NS, start, end, {
+    editor.setCursorLineOverlay(bufId, {
         bg: STYLE_SELECTED_BG,
         extendToLineEnd: true,
     });
@@ -3314,7 +3378,6 @@ function review_visual_cancel() {
         const diffId = state.panelBuffers["diff"];
         if (diffId !== undefined) editor.clearNamespace(diffId, "review-line-selection");
     }
-    applyCursorLineOverlay('diff');
 }
 registerHandler("review_visual_cancel", review_visual_cancel);
 
@@ -3443,17 +3506,15 @@ function review_expand_all() {
 }
 registerHandler("review_expand_all", review_expand_all);
 
+// The diff panel's own mode binds ↑/↓ straight to the built-in motions
+// (see `DIFF_NATIVE_MOTION`), so these two run only for a keystroke that
+// arrived while a side panel held focus. The line-selection follow-up that
+// used to live here now hangs off `cursor_moved`, which sees every motion
+// including the native ones.
 function review_nav_up() {
     if (state.focusPanel === 'comments') { review_comments_select_prev(); return; }
     if (state.focusPanel === 'files') { filesKey("Up"); return; }
     editor.executeAction("move_up");
-    if (state.lineSelection) {
-        // executeAction has already moved the cursor; sync the selection.
-        // Ensure we don't extend out of the hunk.
-        const newRow = Math.max(1, state.lineSelection.endRow - 1);
-        state.lineSelection.endRow = newRow;
-        paintLineSelectionOverlay();
-    }
 }
 registerHandler("review_nav_up", review_nav_up);
 
@@ -3461,10 +3522,6 @@ function review_nav_down() {
     if (state.focusPanel === 'comments') { review_comments_select_next(); return; }
     if (state.focusPanel === 'files') { filesKey("Down"); return; }
     editor.executeAction("move_down");
-    if (state.lineSelection) {
-        state.lineSelection.endRow = state.lineSelection.endRow + 1;
-        paintLineSelectionOverlay();
-    }
 }
 registerHandler("review_nav_down", review_nav_down);
 
@@ -3927,6 +3984,11 @@ async function refreshMagitData() {
         state.hunks = await fetchDiffsForFiles(status.files);
     }
     state.diffCursorRow = 1;
+    // The hunks and files under every cached view have just been replaced.
+    // A hunk-range signature can miss a file whose content changed without
+    // moving a boundary, so re-reading the data is itself the invalidation.
+    state.dataRevision++;
+    discardParkedComposite();
     updateMagitDisplay();
     restoreCursorAfterRebuild();
     updateReviewStatus();
@@ -4427,16 +4489,18 @@ function contentToLines(content: string): string[] {
     return lines;
 }
 
-/** Build composite source-buffer entries from file content. The last line
- *  gets no trailing newline so the buffer's line count matches the number of
- *  real lines — otherwise a trailing '\n' adds a phantom empty line with no
+/** Build a composite source buffer's content from a file's text. Entries
+ *  are spans, not lines, so the whole file is one of them: the composite
+ *  reads its line numbers from the buffer itself (`getCompositeCursorInfo`)
+ *  and never from per-line properties, and shipping one span instead of
+ *  one per line is what a large file's side-by-side switch was paying for.
+ *
+ *  The trailing newline is dropped so the buffer's line count matches the
+ *  number of real lines — otherwise it adds a phantom empty line with no
  *  ViewLine, which logs "ViewLine missing" when scrolled to the bottom. */
 function contentToEntries(content: string): TextPropertyEntry[] {
-    const lines = contentToLines(content);
-    return lines.map((line, idx) => ({
-        text: idx < lines.length - 1 ? line + '\n' : line,
-        properties: { type: 'line', lineNum: idx + 1 },
-    }));
+    const text = contentToLines(content).join('\n');
+    return text.length > 0 ? [{ text }] : [];
 }
 
 function compositeHunksForFile(fileHunks: Hunk[]): TsCompositeHunk[] {
@@ -4458,37 +4522,85 @@ function compositeHunksForFile(fileHunks: Hunk[]): TsCompositeHunk[] {
 }
 
 function teardownCenterComposite(): void {
-    const cc = state.centerComposite;
+    closeComposite(state.centerComposite);
+    state.centerComposite = null;
+}
+
+/** Close a composite and the two file buffers behind it. */
+function closeComposite(cc: { compositeBufId: number; oldBufId: number; newBufId: number } | null): void {
     if (!cc) return;
     try {
         editor.closeCompositeBuffer(cc.compositeBufId);
         editor.closeBuffer(cc.oldBufId);
         editor.closeBuffer(cc.newBufId);
     } catch { /* already gone */ }
-    state.centerComposite = null;
 }
 
+/** What a composite for `file` was built from. Two `git show` calls, two
+ *  whole-file buffers and an alignment pass are worth skipping when none
+ *  of this has moved — and worth redoing the moment any of it has. */
+function compositeSignature(file: FileEntry): string {
+    const ranges = state.hunks
+        .filter(h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category)
+        .map(h => `${h.oldRange.start}-${h.oldRange.end}:${h.range.start}-${h.range.end}`)
+        .join(',');
+    // The comment count is in the pane label, so it is part of what was built.
+    return `${state.dataRevision}|${fileKey(file)}|${commentCountForFile(file)}|${ranges}`;
+}
+
+/** Keep the current composite alive off-screen so a flip back to
+ *  side-by-side is a panel swap. Only one is parked: the reader has one
+ *  place they left. */
+function parkCenterComposite(): void {
+    const cc = state.centerComposite;
+    state.centerComposite = null;
+    if (!cc) return;
+    const file = state.files.find(f => fileKey(f) === cc.fileKey);
+    if (!file) {
+        closeComposite(cc);
+        return;
+    }
+    if (state.parkedComposite && state.parkedComposite.compositeBufId !== cc.compositeBufId) {
+        closeComposite(state.parkedComposite);
+    }
+    state.parkedComposite = { ...cc, signature: compositeSignature(file) };
+}
+
+/** Drop the parked composite (if any). Called when the review data is
+ *  replaced or the session ends — anything holding buffers open past the
+ *  thing they render is a leak. */
+function discardParkedComposite(): void {
+    closeComposite(state.parkedComposite);
+    state.parkedComposite = null;
+}
+
+/** Read both sides of `file`. The two reads are independent, so they run
+ *  together: fetching one version at a time made opening side-by-side
+ *  wait out two full `git show` round trips back to back, and that pair
+ *  is the largest single cost of the switch. */
 async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string; newContent: string; absPath: string }> {
     const root = state.repo ? state.repo.root : (editor.getCwd() || "");
     const absPath = root ? editor.pathJoin(root, file.path) : file.path;
     const cwd = root || editor.getCwd();
-    let oldContent = "";
-    let newContent = "";
+    const gitShow = async (rev: string): Promise<string> => {
+        const shown = await editor.spawnProcess("git", ["show", `${rev}:${file.path}`], cwd);
+        return shown.exit_code === 0 ? shown.stdout : "";
+    };
     if (state.mode === 'range' && state.range) {
-        const showOld = await editor.spawnProcess("git", ["show", `${state.range.from}:${file.path}`], cwd);
-        if (showOld.exit_code === 0) oldContent = showOld.stdout;
-        const showNew = await editor.spawnProcess("git", ["show", `${state.range.to}:${file.path}`], cwd);
-        if (showNew.exit_code === 0) newContent = showNew.stdout;
+        const [oldContent, newContent] = await Promise.all([
+            gitShow(state.range.from),
+            gitShow(state.range.to),
+        ]);
         return { oldContent, newContent, absPath };
     }
-    if (file.category !== 'untracked' && file.status !== 'A') {
-        const show = await editor.spawnProcess("git", ["show", `HEAD:${file.path}`], cwd);
-        if (show.exit_code === 0) oldContent = show.stdout;
-    }
-    if (file.status !== 'D') {
-        const read = await editor.readFile(editor.authorityPath(absPath));
-        if (read !== null) newContent = read;
-    }
+    // Only the `git show` is a round trip; reading the working file is a
+    // synchronous host call, so there is nothing to overlap it with.
+    const oldContent = file.category !== 'untracked' && file.status !== 'A'
+        ? await gitShow("HEAD")
+        : "";
+    const newContent = file.status !== 'D'
+        ? (editor.readFile(editor.authorityPath(absPath)) ?? "")
+        : "";
     return { oldContent, newContent, absPath };
 }
 
@@ -4520,12 +4632,36 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
     const file = key ? state.files.find(f => fileKey(f) === key) : undefined;
     if (!file) {
         teardownCenterComposite();
+        discardParkedComposite();
         if (state.panelBuffers["diff"] !== undefined) {
             editor.setBufferGroupPanelBuffer(state.groupId, "diff", state.panelBuffers["diff"]);
-            editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+            mountStreamContent();
         }
         return;
     }
+
+    // The composite the reader left behind, still describing this file as
+    // it stands: mount it instead of rebuilding it. Rebuilding costs two
+    // `git show` calls, two whole files across the IPC boundary and an
+    // alignment pass — seconds on a large file, every single flip.
+    const parked = state.parkedComposite;
+    if (parked && parked.fileKey === key && parked.signature === compositeSignature(file)) {
+        state.parkedComposite = null;
+        teardownCenterComposite();
+        const { signature: _signature, ...composite } = parked;
+        state.centerComposite = composite;
+        state.compositePane = 0;
+        editor.setBufferGroupPanelBuffer(state.groupId, "diff", composite.compositeBufId);
+        editor.focusBufferGroupPanel(state.groupId, "diff");
+        if (state.focusPanel !== 'diff' && panelVisible(state.focusPanel)) {
+            editor.focusBufferGroupPanel(state.groupId, state.focusPanel);
+        }
+        editor.flushLayout();
+        return;
+    }
+    // Not reusable — and only one composite is ever parked, so whatever is
+    // sitting there is now dead weight.
+    discardParkedComposite();
 
     const { oldContent, newContent, absPath } = await fetchFileVersions(file);
     if (token !== state.centerBuildToken || state.groupId === null) return;
@@ -4557,7 +4693,7 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
 
     const compositeBufId = await editor.createCompositeBuffer({
         name: `*Review: ${file.path}*`,
-        mode: "review-mode",
+        mode: REVIEW_DIFF_MODE,
         layout: layoutCfg as never,
         sources: [
             { bufferId: oldRes.bufferId, label: "OLD (HEAD)", editable: false, style: { gutterStyle: "diff-markers" } },
@@ -4636,10 +4772,10 @@ function renderCenter(): void {
     // Bump the build token so any in-flight side-by-side build is superseded
     // and won't swap a composite back in after we switch to unified.
     state.centerBuildToken++;
-    teardownCenterComposite();
+    parkCenterComposite();
     if (state.panelBuffers["diff"] !== undefined) {
         editor.setBufferGroupPanelBuffer(state.groupId, "diff", state.panelBuffers["diff"]);
-        editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+        mountStreamContent();
         // Only claim focus when the diff is where focus belongs. Rebuilding
         // the centre happens for reasons that have nothing to do with focus
         // — a filter keystroke in the sidebar, a comment added — and
@@ -4647,9 +4783,26 @@ function renderCenter(): void {
         if (state.focusPanel === 'diff') {
             editor.focusBufferGroupPanel(state.groupId, "diff");
         }
-        applyFolds();
-        applyCursorLineOverlay('diff');
     }
+}
+
+/** Put the unified stream's content into the diff panel buffer — unless
+ *  the content already there was built from the same state, in which case
+ *  the buffer is exactly what a rebuild would produce.
+ *
+ *  Laying out a large review takes a noticeable beat, and it lands as one
+ *  host command *after* the panel has already swapped to the stream. The
+ *  reader therefore sees the stream at its old scroll position, waits,
+ *  and then watches it jump — for a rebuild that changed nothing. Flipping
+ *  between the two layouts is exactly that case. */
+function mountStreamContent(): void {
+    if (state.groupId === null) return;
+    const signature = streamSignature();
+    if (state.streamMountedSignature === signature) return;
+    editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+    state.streamMountedSignature = signature;
+    // Fresh content, so the host's folds went with the old rows.
+    applyFolds();
 }
 
 /** Light refresh after the focused file changes (nav / sidebar click):
@@ -5250,6 +5403,8 @@ function flushPendingFileFilter(): void {
 /** Re-filter after an edit: the tree, the centre (the stream renders only
  *  matching files) and the status line. */
 function applyFileFilter(): void {
+    // The stream renders only matching files, so the filter changes it.
+    markStreamDirty();
     ensureFocusFile();
     renderFilesPanel();
     renderCenter();
@@ -5419,7 +5574,6 @@ function jumpDiffCursorToRow(row: number, options?: { recenter?: boolean }): voi
         editor.scrollBufferToLine(diffId, idx);
     }
     state.diffCursorRow = row;
-    applyCursorLineOverlay('diff');
     // The scroll this jump triggers reports back through
     // `viewport_changed`, which is what re-derives the sticky header.
     refreshStickyHeader(state.diffViewportTopRow);
@@ -6370,9 +6524,17 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
     state.groupId = groupResult.groupId;
     state.panelBuffers = groupResult.panels;
     state.reviewBufferId = groupResult.panels["diff"];
+    // A brand-new stream buffer holds nothing yet, whatever the last
+    // session left recorded.
+    state.streamMountedSignature = null;
 
     if (state.panelBuffers["diff"] !== undefined) {
         (editor as any).setBufferShowCursors(state.panelBuffers["diff"], true);
+        // The stream is where the editor's cursor lives, so it takes the
+        // motion-native copy of the keymap; the side panels keep
+        // `review-mode`, whose ↑/↓ drive their widgets instead.
+        editor.setBufferMode(state.panelBuffers["diff"], REVIEW_DIFF_MODE);
+        declareCursorLineBar();
     }
 
     // Mount the widget panels over the group's toolbar / sidebar / rail
@@ -6473,6 +6635,8 @@ registerHandler("start_review_diff", start_review_diff);
 
 function stop_review_diff() {
     teardownCenterComposite();
+    discardParkedComposite();
+    state.streamMountedSignature = null;
     // Unmount before the buffers go away, so the host drops the panels'
     // widget state instead of holding it against dead buffer ids.
     for (const panel of [toolbarPanel, filesPanel, commentsPanel]) panel?.unmount();
@@ -6827,7 +6991,14 @@ function on_review_cursor_moved(data: {
             reviewConfirmation = null;
         }
         state.diffCursorRow = data.line;
-        applyCursorLineOverlay('diff');
+        // A visual line selection follows the cursor wherever it goes.
+        // Extending it from the ↑/↓ handlers only covered the keys those
+        // handlers still see; the cursor's own move event covers every
+        // motion, native ones included.
+        if (state.lineSelection && state.lineSelection.endRow !== data.line) {
+            state.lineSelection.endRow = Math.max(1, data.line);
+            paintLineSelectionOverlay();
+        }
         // Use the cursor row as a sticky-header anchor too — viewport_changed
         // doesn't always fire reliably for plugin-managed virtual buffers
         // (top_line can be null). Tracking the cursor row gives a snappy
@@ -7615,7 +7786,7 @@ editor.on("buffer_closed", (data) => {
     }
 });
 
-editor.defineMode("review-mode", [
+const REVIEW_MODE_BINDINGS: string[][] = [
     // Native cursor motion in the unified diff stream.
     ["Up", "review_nav_up"], ["Down", "review_nav_down"],
     ["k", "review_nav_up"], ["j", "review_nav_down"],
@@ -7689,6 +7860,40 @@ editor.defineMode("review-mode", [
     // Close & export
     ["q", "close"],
     ["e", "review_export_session"],
-], true);
+];
+
+/** Motion handlers that exist only to forward to a built-in action once
+ *  the diff panel has focus. In the diff's own mode they *are* the
+ *  built-in action.
+ *
+ *  A plugin action is a round trip: the host hands the key to the plugin
+ *  thread, the handler asks for `move_down`, and only a later frame moves
+ *  the caret. That is a whole frame of lag on every repeat of a held
+ *  arrow key — for a keystroke whose entire job is to move the cursor one
+ *  row. Bound directly, the move lands in the frame the key arrived in.
+ *
+ *  The side panels keep the plugin handlers: there ↑/↓ drive a widget's
+ *  selection, which the editor's own cursor motion cannot do. */
+const DIFF_NATIVE_MOTION: Record<string, string> = {
+    review_nav_up: "move_up",
+    review_nav_down: "move_down",
+    review_page_up: "move_page_up",
+    review_page_down: "move_page_down",
+    review_nav_home: "move_line_start",
+    review_nav_end: "move_line_end",
+    review_nav_left: "move_left",
+    review_nav_right: "move_right",
+};
+
+editor.defineMode("review-mode", REVIEW_MODE_BINDINGS, true);
+/** The diff panel's copy of the map. Same keys, same commands — only the
+ *  motions differ (see `DIFF_NATIVE_MOTION`). The buffer carrying this
+ *  mode is the one the editor's cursor lives in: the unified stream, and
+ *  the side-by-side composite. */
+editor.defineMode(
+    REVIEW_DIFF_MODE,
+    REVIEW_MODE_BINDINGS.map(([key, action]) => [key, DIFF_NATIVE_MOTION[action] ?? action]),
+    true,
+);
 
 editor.debug("Review Diff plugin loaded with review comments support");
