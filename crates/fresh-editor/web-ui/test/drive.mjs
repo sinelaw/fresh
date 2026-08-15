@@ -329,7 +329,9 @@ const newInfo = await page.evaluate(() => {
     .find(b => /New Task/.test(b.textContent));
   if (!ov || !btn) return null;
   const o = ov.getBoundingClientRect(), b = btn.getBoundingClientRect();
-  const opt = ov.querySelector('.w-button'), row = opt && opt.closest('.w-row');
+  // Options live in a `.w-col`, not a `.w-row` — `closest('.w-row')` found
+  // nothing and the check reported false whatever the width was.
+  const opt = ov.querySelector('.w-button'), row = opt && opt.closest('.w-row, .w-col');
   return {
     floats: getComputedStyle(ov).position === 'absolute',
     belowButton: o.top >= b.bottom - 2,
@@ -857,9 +859,17 @@ check('dock alone (no modal) has zero modal-scrims', (await page.locator('.modal
 // "New Task… ▾" opens a create dropdown first (dock redesign); pick the
 // "New Task…" option (rendered as "  New Task…" / "● New Task…") to open
 // the form.
+//
+// The trailing `\s*` is load-bearing. Menu options are full-width buttons, so
+// the option's text is padded out to the dropdown's width — `"  New Task…    "`
+// — and Playwright does not trim before testing a RegExp `hasText`. A bare
+// `…$` therefore matches nothing and the click waits out its full timeout. It
+// still has to stay anchored: without the end anchor this also matches the
+// "New Task… ▾" button that opened the dropdown, and `.first()` would pick
+// that one and close the menu again.
 await page.locator('.widget-surface.w-dock .w-button', { hasText: 'New Task' }).first().click();
 await page.waitForTimeout(300);
-await page.locator('.widget-surface.w-dock .w-button', { hasText: /New Task…$/ }).first().click();
+await page.locator('.widget-surface.w-dock .w-button', { hasText: /New Task…\s*$/ }).first().click();
 await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(200);
 check('New Workspace dialog is a floatingModal', ((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'));
