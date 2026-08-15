@@ -190,6 +190,8 @@ fn collect_row(
     let mut overlays: Vec<OverlayRow> = Vec::new();
     let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
     let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
+    let mut wants_fill = false;
+    let mut effective_rows: HashMap<String, u32> = HashMap::new();
 
     // Two-pass layout for Row:
     //  1. Walk children, render each. Track flex spacers
@@ -223,7 +225,12 @@ fn collect_row(
             continue;
         }
         let child_panel_width = per_child_width[idx];
-        let child_out = render_collected(child, prev, next_state, ctx, child_panel_width);
+        let mut child_out = render_collected(child, prev, next_state, ctx, child_panel_width);
+        // A Row is a horizontal packer — it has no leftover vertical
+        // space to grant, so fill requests pass through to an
+        // enclosing Col; effective windows merge straight up.
+        wants_fill |= child_out.wants_fill;
+        effective_rows.extend(std::mem::take(&mut child_out.effective_rows));
         // Rows can host overlays in principle (e.g. a
         // tooltip on a button); forward them up without
         // a row-offset adjustment — Row pieces all sit
@@ -311,6 +318,8 @@ fn collect_row(
         overlays,
         scroll_regions,
         dropdown_popups,
+        wants_fill,
+        effective_rows,
     }
 }
 
@@ -499,8 +508,57 @@ fn collect_col(
     let mut overlays: Vec<OverlayRow> = Vec::new();
     let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
     let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
+    let mut wants_fill = false;
+    let mut effective_rows: HashMap<String, u32> = HashMap::new();
 
-    for child in children {
+    // Pass 1 — render every child with NO height budget, so an
+    // auto-sized List/Tree in a subtree reports `wants_fill` instead
+    // of consuming a budget meant for the whole column.
+    let child_ctx = RenderContext {
+        avail_height: None,
+        ..ctx
+    };
+    let mut child_outs: Vec<CollectedOutput> = children
+        .iter()
+        .map(|child| render_collected(child, prev, next_state, child_ctx, panel_width))
+        .collect();
+
+    // Fill pass — when this col HAS a height budget and exactly one
+    // child subtree wants auto-sizing, that child's List/Tree gets
+    // the leftover: the budget minus the rows every *other* child
+    // occupies (Overlay children occupy none). This is what lets a
+    // plugin write `list()` with no `visibleRows` and get "fill the
+    // panel, minus my header and footer" without doing the
+    // arithmetic. Two or more fill children is ambiguous — all keep
+    // the legacy fallback (documented; matches flex-grow needing a
+    // single growable child in this v1).
+    if let Some(budget) = ctx.avail_height {
+        let fill_idx: Vec<usize> = child_outs
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.wants_fill)
+            .map(|(i, _)| i)
+            .collect();
+        if let [idx] = fill_idx[..] {
+            let other_rows: u32 = child_outs
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != idx)
+                .zip(children.iter().enumerate().filter(|(i, _)| *i != idx))
+                .filter(|(_, (_, c))| !matches!(c, WidgetSpec::Overlay { .. }))
+                .map(|((_, o), _)| o.entries.len() as u32)
+                .sum();
+            let child_budget = budget.saturating_sub(other_rows).max(1);
+            let fill_ctx = RenderContext {
+                avail_height: Some(child_budget),
+                ..ctx
+            };
+            child_outs[idx] =
+                render_collected(&children[idx], prev, next_state, fill_ctx, panel_width);
+        }
+    }
+
+    for (child, child_out) in children.iter().zip(child_outs.into_iter()) {
         // Overlay children DO NOT contribute vertical
         // space to the col. Render them, but stash the
         // produced entries as overlays anchored at the
@@ -509,7 +567,8 @@ fn collect_col(
         // afterwards without pushing the rest of the
         // col downward.
         let is_overlay = matches!(child, WidgetSpec::Overlay { .. });
-        let child_out = render_collected(child, prev, next_state, ctx, panel_width);
+        wants_fill |= child_out.wants_fill;
+        effective_rows.extend(child_out.effective_rows.clone());
         let row_offset = entries.len() as u32;
         if is_overlay {
             // Promote the overlay child's regular
@@ -599,6 +658,10 @@ fn collect_col(
         overlays,
         scroll_regions,
         dropdown_popups,
+        // Resolved fill children re-rendered with a real budget no
+        // longer set the flag; only an unresolved request bubbles.
+        wants_fill,
+        effective_rows,
     }
 }
 
@@ -622,7 +685,16 @@ fn collect_labeled_section(
     // Inner area: 1 column of border + 1 column of
     // padding on each side ⇒ 4 columns of chrome.
     let inner_width = panel_width.saturating_sub(4).max(1);
-    let child_out = render_collected(child, prev, next_state, ctx, inner_width);
+    // The section's frame consumes two rows (top + bottom border), so
+    // any height budget flowing through shrinks accordingly before it
+    // reaches the child.
+    let section_ctx = RenderContext {
+        avail_height: ctx.avail_height.map(|h| h.saturating_sub(2)),
+        ..ctx
+    };
+    let mut child_out = render_collected(child, prev, next_state, section_ctx, inner_width);
+    let wants_fill = child_out.wants_fill;
+    let effective_rows = std::mem::take(&mut child_out.effective_rows);
     // Shift child overlays by 1 to account for the top
     // border row this section emits — the child authored
     // its anchors relative to its own row 0 (e.g. anchor 1
@@ -712,6 +784,8 @@ fn collect_labeled_section(
         overlays,
         scroll_regions,
         dropdown_popups,
+        wants_fill,
+        effective_rows,
     }
 }
 
@@ -740,6 +814,12 @@ fn collect_overlay(
         overlays: child_out.overlays,
         scroll_regions: child_out.scroll_regions,
         dropdown_popups: child_out.dropdown_popups,
+        // An Overlay occupies no column rows, so it never receives a
+        // fill budget from `collect_col`; a fill request inside one
+        // stays on the legacy fallback (bubbling it would let a popup
+        // consume the column's leftover height).
+        wants_fill: false,
+        effective_rows: child_out.effective_rows,
     }
 }
 
@@ -1195,5 +1275,126 @@ mod tests {
             saw_selection_band,
             "the selected row must still paint its selection band"
         );
+    }
+}
+
+#[cfg(test)]
+mod fill_tests {
+    use super::*;
+    use crate::widgets::render::tests::make_list;
+    use crate::widgets::render_spec_with_options;
+    use crate::widgets::RenderOptions;
+    use fresh_core::api::{HintEntry, WidgetSpec};
+
+    fn auto_list(total: usize, key: &str) -> WidgetSpec {
+        // make_list builds an explicit-visible list; blank the field to
+        // exercise the auto path.
+        let mut spec = make_list(0, 1, total, Some(key));
+        if let WidgetSpec::List { visible_rows, .. } = &mut spec {
+            *visible_rows = None;
+        }
+        spec
+    }
+
+    fn hint_bar() -> WidgetSpec {
+        WidgetSpec::HintBar {
+            entries: vec![HintEntry {
+                keys: "Esc".into(),
+                label: "close".into(),
+            }],
+            key: None,
+        }
+    }
+
+    #[test]
+    fn auto_list_fills_the_panel_height() {
+        // A lone auto list in a 12-row panel windows to 12 rows.
+        let out = render_spec_with_options(
+            &auto_list(50, "l"),
+            &HashMap::new(),
+            40,
+            RenderOptions {
+                avail_height: Some(12),
+                ..Default::default()
+            },
+        );
+        assert_eq!(out.effective_rows.get("l"), Some(&12));
+        assert_eq!(out.entries.len(), 12);
+    }
+
+    #[test]
+    fn auto_list_without_budget_uses_legacy_fallback() {
+        let out = render_spec_with_options(
+            &auto_list(50, "l"),
+            &HashMap::new(),
+            40,
+            RenderOptions::default(),
+        );
+        assert_eq!(
+            out.effective_rows.get("l"),
+            Some(&fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
+        );
+    }
+
+    #[test]
+    fn col_fill_grants_the_leftover_after_siblings() {
+        // header + auto list + footer in a 12-row panel: the list gets
+        // 12 - 2 = 10 rows, so the footer still fits on screen. This is
+        // the panel shape (chrome above AND below) that plugins used to
+        // hand-compute with `getViewportHeight() - fixedRows`.
+        let spec = WidgetSpec::Col {
+            children: vec![hint_bar(), auto_list(50, "l"), hint_bar()],
+            key: None,
+        };
+        let out = render_spec_with_options(
+            &spec,
+            &HashMap::new(),
+            40,
+            RenderOptions {
+                avail_height: Some(12),
+                ..Default::default()
+            },
+        );
+        assert_eq!(out.effective_rows.get("l"), Some(&10));
+        assert_eq!(out.entries.len(), 12);
+    }
+
+    #[test]
+    fn explicit_visible_rows_still_wins_over_the_budget() {
+        let spec = WidgetSpec::Col {
+            children: vec![make_list(0, 4, 50, Some("l"))],
+            key: None,
+        };
+        let out = render_spec_with_options(
+            &spec,
+            &HashMap::new(),
+            40,
+            RenderOptions {
+                avail_height: Some(12),
+                ..Default::default()
+            },
+        );
+        assert_eq!(out.effective_rows.get("l"), Some(&4));
+        assert_eq!(out.entries.len(), 4);
+    }
+
+    #[test]
+    fn two_auto_children_is_ambiguous_and_keeps_the_fallback() {
+        let spec = WidgetSpec::Col {
+            children: vec![auto_list(50, "a"), auto_list(50, "b")],
+            key: None,
+        };
+        let out = render_spec_with_options(
+            &spec,
+            &HashMap::new(),
+            40,
+            RenderOptions {
+                avail_height: Some(12),
+                ..Default::default()
+            },
+        );
+        let legacy = fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK;
+        assert_eq!(out.effective_rows.get("a"), Some(&legacy));
+        assert_eq!(out.effective_rows.get("b"), Some(&legacy));
     }
 }

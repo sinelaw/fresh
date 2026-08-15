@@ -267,6 +267,25 @@ pub struct WidgetPanelState {
     /// it, and the split render pass paints a scrollbar over each
     /// overflowing one.
     pub scroll_regions: Vec<crate::widgets::ScrollRegion>,
+    /// Effective rows each keyed `List`/`Tree` actually windowed to in
+    /// the most recent render — the spec's explicit value, the
+    /// auto-size height budget, or the legacy fallback. Key/mouse
+    /// handlers read this for scroll/page bounds instead of the spec,
+    /// because an auto-sized widget's spec carries no number at all.
+    pub effective_rows: HashMap<String, u32>,
+}
+
+impl WidgetPanelState {
+    /// Rows the keyed widget actually windowed to in the last render,
+    /// falling back to the spec's explicit value and then the legacy
+    /// default (a panel that has never rendered).
+    pub fn effective_visible_rows(&self, key: &str, spec_visible: Option<u32>) -> u32 {
+        self.effective_rows
+            .get(key)
+            .copied()
+            .or(spec_visible)
+            .unwrap_or(fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
+    }
 }
 
 /// Global registry of mounted widget panels, keyed by composite
@@ -302,6 +321,7 @@ impl WidgetRegistry {
         focus_key: String,
         tabbable: Vec<String>,
         scroll_regions: Vec<crate::widgets::ScrollRegion>,
+        effective_rows: HashMap<String, u32>,
     ) -> Option<WidgetPanelState> {
         self.panels.insert(
             panel_key,
@@ -313,6 +333,7 @@ impl WidgetRegistry {
                 focus_key,
                 tabbable,
                 scroll_regions,
+                effective_rows,
             },
         )
     }
@@ -334,6 +355,7 @@ impl WidgetRegistry {
         focus_key: String,
         tabbable: Vec<String>,
         scroll_regions: Vec<crate::widgets::ScrollRegion>,
+        effective_rows: HashMap<String, u32>,
     ) -> Result<BufferId, ()> {
         match self.panels.get_mut(panel_key) {
             Some(state) => {
@@ -343,6 +365,7 @@ impl WidgetRegistry {
                 state.focus_key = focus_key;
                 state.tabbable = tabbable;
                 state.scroll_regions = scroll_regions;
+                state.effective_rows = effective_rows;
                 Ok(state.buffer_id)
             }
             None => Err(()),
@@ -691,6 +714,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         );
         let hit = reg.hit_test(BufferId(7), 0, 8).expect("inside b");
         assert_eq!(hit.0, pk(42));
@@ -709,6 +733,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         );
         assert!(
             reg.hit_test(BufferId(0), 0, 5).is_none(),
@@ -748,6 +773,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         );
         // Byte 10 is the exclusive end, so `hit_test` alone misses...
         assert!(reg.hit_test(BufferId(2), 0, 10).is_none());
@@ -773,6 +799,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         );
         let (_, hit) = reg
             .hit_test_row_aware(BufferId(3), 0, 2)
@@ -795,6 +822,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         );
         assert!(reg.hit_test_row_aware(BufferId(4), 3, 0).is_none());
     }
@@ -819,6 +847,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         );
     }
 
@@ -883,6 +912,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         );
         let evicted = reg.mount(
             PanelKey::new("beta", 1),
@@ -893,6 +923,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         );
         assert!(evicted.is_none(), "beta:1 must not evict alpha:1");
 
@@ -921,6 +952,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         );
         assert!(reg.hit_test(BufferId(2), 0, 1).is_some());
         reg.unmount(&pk(5));
@@ -939,6 +971,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         );
         reg.update(
             &pk(5),
@@ -948,6 +981,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
+            HashMap::new(),
         )
         .expect("mounted");
         // Old hit gone; new hit visible.

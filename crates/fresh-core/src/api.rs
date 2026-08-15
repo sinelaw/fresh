@@ -1832,11 +1832,10 @@ fn default_list_selected() -> i32 {
     -1
 }
 
-/// Default visible-rows for a `List` when the plugin doesn't supply
-/// one. 20 is a reasonable terminal-panel default.
-fn default_list_visible_rows() -> u32 {
-    20
-}
+/// Legacy visible-rows fallback for a `List`/`Tree` whose spec omits
+/// the value AND whose surface gave the renderer no height. 20 is a
+/// reasonable terminal-panel default.
+pub const LEGACY_VISIBLE_ROWS_FALLBACK: u32 = 20;
 
 /// Default glyph for a `Divider`: the light horizontal box-drawing rule.
 fn default_divider_char() -> String {
@@ -1846,11 +1845,6 @@ fn default_divider_char() -> String {
 /// Default for `Tree::selected_index`. -1 ⇒ "no selection".
 fn default_tree_selected() -> i32 {
     -1
-}
-
-/// Default visible-rows for a `Tree`. Same default as `List`.
-fn default_tree_visible_rows() -> u32 {
-    20
 }
 
 /// Default `item_height` for a `Tree` — `1` ⇒ one screen row per
@@ -2378,10 +2372,14 @@ pub enum WidgetSpec {
         #[serde(default = "default_list_selected")]
         selected_index: i32,
         /// Number of rows of the panel's available height the list
-        /// should occupy. Plugin computes from its viewport. The
-        /// host shows up to this many items per render.
-        #[serde(default = "default_list_visible_rows")]
-        visible_rows: u32,
+        /// should occupy. `None` (omitted) = auto: the host sizes the
+        /// window from the panel height it already knows, so the
+        /// plugin never re-derives layout arithmetic. An explicit
+        /// value pins the window to that many rows, exactly as
+        /// before. (Legacy fallback when the host has no height for
+        /// the surface: 20 rows.)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        visible_rows: Option<u32>,
         /// Whether `Tab` / `Shift+Tab` will land focus on this
         /// list. Defaults to `true` (lists are normal tabbable
         /// widgets). Picker-style usage typically sets this to
@@ -2425,8 +2423,12 @@ pub enum WidgetSpec {
         item_keys: Vec<String>,
         #[serde(default = "default_tree_selected")]
         selected_index: i32,
-        #[serde(default = "default_tree_visible_rows")]
-        visible_rows: u32,
+        /// Rows of the panel's available height the tree occupies.
+        /// `None` (omitted) = auto from the host-known panel height;
+        /// an explicit value pins the window as before. (Legacy
+        /// fallback when the host has no height: 20 rows.)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        visible_rows: Option<u32>,
         /// Initial-only set of expanded item keys. Once the widget
         /// has rendered, the host's instance-state `expanded_keys`
         /// is authoritative; updating this field on subsequent specs

@@ -5136,7 +5136,8 @@ impl Editor {
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.widget_panel_width(buffer_id);
-        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width);
+        let avail_height = self.widget_panel_height(buffer_id);
+        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
         let focus_cursor = out.focus_cursor;
         self.widget_registry.mount(
             panel_key.clone(),
@@ -5147,6 +5148,7 @@ impl Editor {
             out.focus_key,
             out.tabbable,
             out.scroll_regions,
+            out.effective_rows,
         );
         // Mark the buffer as hosting an interactive widget panel so the
         // focus/click paths keep routing focus to it even when it opts out
@@ -5203,7 +5205,8 @@ impl Editor {
             .map(|(b, _)| b)
             .unwrap_or(BufferId(0));
         let panel_width = self.widget_panel_width(buffer_id_for_width);
-        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width);
+        let avail_height = self.widget_panel_height(buffer_id_for_width);
+        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         match self.widget_registry.update(
@@ -5214,6 +5217,7 @@ impl Editor {
             out.focus_key,
             out.tabbable,
             out.scroll_regions,
+            out.effective_rows,
         ) {
             Ok(buffer_id) => {
                 if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
@@ -5670,6 +5674,7 @@ impl Editor {
                 &prev,
                 &prev_focus,
                 panel_width,
+                self.floating_panel_inner_height(slot),
                 "",
                 "",
                 Some(crate::widgets::MarkdownCtx {
@@ -5693,6 +5698,7 @@ impl Editor {
             out.focus_key,
             out.tabbable,
             scroll_regions.clone(),
+            out.effective_rows,
         );
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
@@ -5760,6 +5766,7 @@ impl Editor {
                 &prev,
                 &prev_focus,
                 panel_width,
+                self.floating_panel_inner_height(slot),
                 &hover_key,
                 &hover_item_key,
                 Some(crate::widgets::MarkdownCtx {
@@ -5784,6 +5791,7 @@ impl Editor {
                 out.focus_key,
                 out.tabbable,
                 scroll_regions.clone(),
+                out.effective_rows,
             )
             .is_err()
         {

@@ -64,7 +64,7 @@ fn render_widget_tree(
     nodes: &[TreeNode],
     item_keys: &[String],
     selected_index: i32,
-    visible_rows: u32,
+    spec_visible_rows: Option<u32>,
     expanded_keys: &[String],
     checkable: bool,
     item_height: u32,
@@ -77,6 +77,23 @@ fn render_widget_tree(
     panel_width: u32,
 ) -> CollectedOutput {
     let mut out = CollectedOutput::default();
+    // Resolve the row window: explicit spec value pins it; omitted
+    // auto-sizes from the host's height budget; no budget → legacy
+    // default, flagged for `collect_col`'s fill pass. Same protocol
+    // as `collect_list`.
+    let visible_rows = match (spec_visible_rows, ctx.avail_height) {
+        (Some(v), _) => v,
+        (None, Some(budget)) => budget.max(1),
+        (None, None) => {
+            out.wants_fill = true;
+            fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK
+        }
+    };
+    if let Some(k) = tree_key {
+        if !k.is_empty() {
+            out.effective_rows.insert(k.to_string(), visible_rows);
+        }
+    }
     // Fixed rows per node. `1` is the classic single-line tree; a
     // larger value renders every node as a card of this many rows.
     // Windowing/scroll stay in *node* units so single-line trees (the
