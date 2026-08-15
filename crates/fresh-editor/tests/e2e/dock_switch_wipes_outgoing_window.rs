@@ -19,7 +19,6 @@
 //! is caught mid-transition or after it settles.
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
-use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
 use std::path::PathBuf;
@@ -52,14 +51,14 @@ fn setup_projects() -> (tempfile::TempDir, PathBuf) {
 
 /// Toggle the dock open via the command palette and wait for it to render
 /// *and* take keyboard focus (the plugin sets focus asynchronously).
+///
+/// `run_palette_command` rather than type-then-Enter: the palette rebuilds
+/// its suggestion list only on input change, so a command the orchestrator
+/// plugin has not registered yet never appears and never will. Enter would
+/// then fire on some other row and the focus wait below would block for
+/// good — the helper retypes until the row is really listed.
 fn open_dock(h: &mut EditorTestHarness) {
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    h.wait_for_prompt().unwrap();
-    h.type_text("Orchestrator: Toggle Dock").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
-        .unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.run_palette_command("Orchestrator: Toggle Dock").unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
         .unwrap();
 }
@@ -84,15 +83,10 @@ fn col_of(screen: &str, needle: &str) -> Option<u16> {
 }
 
 /// Open the file explorer in the active window through the command
-/// palette, and wait for its tree to carry the marker directory.
+/// palette, and wait for its tree to carry the marker directory. Same
+/// reason as `open_dock` for going through `run_palette_command`.
 fn open_explorer(h: &mut EditorTestHarness) {
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    h.wait_for_prompt().unwrap();
-    h.type_text("Toggle File Explorer").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Toggle File Explorer"))
-        .unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.run_palette_command("Toggle File Explorer").unwrap();
     h.wait_until(|h| h.screen_to_string().contains("zzbetaonly"))
         .unwrap();
 }
@@ -176,7 +170,13 @@ fn dock_switch_never_paints_two_workspaces_into_one_frame() {
     // explorer. Only this workspace has a sidebar.
     let beta_row = row_of(&h, "betaws");
     h.mouse_click(3, beta_row).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("AAAA"))
+    // A row click both switches window and hands keyboard focus back to
+    // the editor, and the plugin issues those as separate commands. The
+    // sentinel below has to be typed into betaws' buffer, so wait for the
+    // focus half too — typed into a still-focused dock it would land in
+    // the session filter, where it is on screen (as the filter's own
+    // echo) without ever reaching a buffer.
+    h.wait_until(|h| !h.screen_to_string().contains("AAAA") && !h.editor().is_dock_focused())
         .unwrap();
     h.type_text("BBBB").unwrap();
     h.wait_until(|h| h.screen_to_string().contains("BBBB"))
