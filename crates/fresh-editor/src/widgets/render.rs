@@ -524,10 +524,10 @@ pub fn render_spec_with_options(
     // The box tree is the focus authority: publish the ring derived
     // from it (focusable boxes in document order). The spec-walk ring
     // computed above exists because focus must resolve *before*
-    // collection (widgets style by focus); the two are equal by
-    // construction — box_meta mirrors collect_tabbable's rules — and
-    // the debug assert keeps them that way until the pre-pass ring
-    // can be retired with the constraint-layout phase.
+    // collection (widgets style by focus); both rings now ask the same
+    // `box_meta` impls, so they cannot diverge on rules — this assert
+    // guards arena construction (container merge order) until the
+    // pre-pass ring is retired with the constraint-layout phase.
     let derived_tabbable = crate::widgets::layout_box::focus_ring(&collected.boxes);
     debug_assert_eq!(
         derived_tabbable, tabbable,
@@ -643,33 +643,18 @@ pub(crate) fn ensure_trailing_newline(entry: &mut TextPropertyEntry) {
 /// declaration order. Layout containers (`Row`, `Col`) recurse;
 /// `Raw`, `Spacer`, `HintBar` skip.
 fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
-    match spec {
-        WidgetSpec::Button {
-            key: Some(k),
-            disabled,
-            focusable,
-            ..
-        } if !k.is_empty() && !*disabled && *focusable => {
-            out.push(k.clone());
+    // One copy of the focusability rules: each kind's `box_meta` is the
+    // authority (it also builds the layout-box tree the published ring
+    // derives from). This walk exists only because focus must resolve
+    // *before* collection builds the tree; it asks the same impls the
+    // tree does, so the two rings cannot diverge on rules — only an
+    // arena-construction bug could split them, which the debug assert
+    // in `render_spec_with_options` still guards.
+    let meta = super::kinds::behavior(spec).box_meta(spec);
+    if meta.focusable {
+        if let Some(k) = meta.key {
+            out.push(k);
         }
-        WidgetSpec::Toggle { key: Some(k), .. }
-        | WidgetSpec::Number { key: Some(k), .. }
-        | WidgetSpec::Dropdown { key: Some(k), .. }
-        | WidgetSpec::DualList { key: Some(k), .. }
-        | WidgetSpec::Text { key: Some(k), .. }
-        | WidgetSpec::Tree { key: Some(k), .. }
-            if !k.is_empty() =>
-        {
-            out.push(k.clone());
-        }
-        WidgetSpec::List {
-            key: Some(k),
-            focusable,
-            ..
-        } if !k.is_empty() && *focusable => {
-            out.push(k.clone());
-        }
-        _ => {}
     }
     for c in spec.children() {
         collect_tabbable(c, out);
