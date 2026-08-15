@@ -51,6 +51,41 @@ fn prompt_scrollbar_offset_for_row(
         .offset_for_thumb_top(sb_rect.height as usize, track_row)
 }
 
+/// A layered surface a left-click can land on, for the precedence
+/// table in `Editor::CLICK_SURFACES`. Like `WheelDispatchSurface`,
+/// this only names the surfaces so their precedence can be data; each
+/// surface's containment and behaviour live with its own handler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClickDispatchSurface {
+    ContextMenus,
+    /// Guard, not a target: clicking anywhere off-popup dismisses
+    /// transient popups before routing continues. Never consumes.
+    TransientPopupGuard,
+    Suggestions,
+    PromptScrollbar,
+    PopupScrollbar,
+    GlobalPopups,
+    BufferPopups,
+    /// Guard: a click over any popup that none of the popup targets
+    /// above claimed stops here — it must not leak to the chrome or
+    /// buffer beneath.
+    PopupAbsorb,
+    FileBrowser,
+    MenuBar,
+    FileExplorer,
+    Scrollbar,
+    HorizontalScrollbar,
+    StatusBar,
+    SearchOptions,
+    SplitSeparator,
+    SplitControls,
+    TabBar,
+    /// The mouse-modal floating overlay prompt: toolbar toggles,
+    /// everything else swallowed.
+    OverlayPrompt,
+    EditorContent,
+}
+
 /// A layered surface the wheel can land on, for the precedence table
 /// in `Editor::WHEEL_SURFACES`. Containment and scroll behaviour live
 /// with each surface's own handler; this enum only names them so the
@@ -1871,121 +1906,137 @@ impl Editor {
                 self.blur_floating_panel(super::PanelSlot::Dock);
             }
         }
-        if let Some(r) = self.handle_click_context_menus(col, row) {
-            return r;
-        }
-        if !self.is_mouse_over_any_popup(col, row) {
-            self.dismiss_transient_popups();
-        }
-        if let Some(r) = self.handle_click_suggestions(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_prompt_scrollbar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_popup_scrollbar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_global_popups(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_buffer_popups(col, row) {
-            return r;
-        }
-        if self.is_mouse_over_any_popup(col, row) {
-            return Ok(());
-        }
-        if self.is_file_open_active() && self.handle_file_open_click(col, row) {
-            return Ok(());
-        }
-        if let Some(r) = self.handle_click_menu_bar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_file_explorer_area(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_scrollbar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_horizontal_scrollbar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_status_bar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_search_options(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_split_separator(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_split_controls(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_tab_bar(col, row) {
-            return r;
-        }
-
-        // A floating-overlay prompt is mouse-modal: its own targets (result
-        // list, scrollbar) were handled above. A click on a toolbar control
-        // toggles it through the host (which emits a widget_event); anything
-        // else — the input row, separator, preview pane, empty space, or a
-        // click outside the frame — is swallowed here so it never reaches the
-        // buffer and moves its cursor.
-        if self.overlay_prompt_active() {
-            let hit = self
-                .active_chrome()
-                .prompt_toolbar_hits
-                .iter()
-                .find(|(_, r)| in_rect(col, row, *r))
-                .map(|(k, _)| k.clone());
-            if let Some(widget_key) = hit {
-                // Move keyboard focus to the clicked control so Tab continues
-                // from here, then flip it through the host (which emits a
-                // widget_event for the plugin).
-                if let Some(p) = self.active_window_mut().prompt.as_mut() {
-                    p.toolbar_focus = Some(widget_key.clone());
-                }
-                self.toggle_overlay_toolbar_widget(&widget_key);
-            }
-            return Ok(());
-        }
-
-        // Check if click is in editor content area
-        tracing::debug!(
-            "handle_mouse_click: checking {} split_areas for click at ({}, {})",
-            self.active_layout().split_areas.len(),
-            col,
-            row
-        );
-        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.active_layout().split_areas
-        {
-            tracing::debug!(
-                "  split_id={:?}, content_rect=({}, {}, {}x{})",
-                split_id,
-                content_rect.x,
-                content_rect.y,
-                content_rect.width,
-                content_rect.height
-            );
-            if in_rect(col, row, *content_rect) {
-                // Click in editor - focus split and position cursor
-                tracing::debug!("  -> HIT! calling handle_editor_click");
-                self.handle_editor_click(
-                    col,
-                    row,
-                    *split_id,
-                    *buffer_id,
-                    *content_rect,
-                    modifiers,
-                )?;
-                return Ok(());
+        for surface in Self::CLICK_SURFACES {
+            if let Some(r) = self.click_surface_dispatch(surface, col, row, modifiers) {
+                return r;
             }
         }
-        tracing::debug!("  -> No split area hit");
-
         Ok(())
+    }
+
+    /// The click-routable surfaces, in precedence order — the old
+    /// 18-step else-if chain of `handle_mouse_click` as DATA, walked
+    /// with a uniform contract: `Some(result)` consumes the click,
+    /// `None` passes it down. The two mid-chain guards ride in the
+    /// same table at their exact old positions: the transient-popup
+    /// dismissal (a side effect that never consumes) and the popup
+    /// absorb (anything over a popup that no popup target claimed
+    /// stops there). Adding a click surface = one variant, one table
+    /// position, one dispatch arm.
+    const CLICK_SURFACES: [ClickDispatchSurface; 20] = [
+        ClickDispatchSurface::ContextMenus,
+        ClickDispatchSurface::TransientPopupGuard,
+        ClickDispatchSurface::Suggestions,
+        ClickDispatchSurface::PromptScrollbar,
+        ClickDispatchSurface::PopupScrollbar,
+        ClickDispatchSurface::GlobalPopups,
+        ClickDispatchSurface::BufferPopups,
+        ClickDispatchSurface::PopupAbsorb,
+        ClickDispatchSurface::FileBrowser,
+        ClickDispatchSurface::MenuBar,
+        ClickDispatchSurface::FileExplorer,
+        ClickDispatchSurface::Scrollbar,
+        ClickDispatchSurface::HorizontalScrollbar,
+        ClickDispatchSurface::StatusBar,
+        ClickDispatchSurface::SearchOptions,
+        ClickDispatchSurface::SplitSeparator,
+        ClickDispatchSurface::SplitControls,
+        ClickDispatchSurface::TabBar,
+        ClickDispatchSurface::OverlayPrompt,
+        ClickDispatchSurface::EditorContent,
+    ];
+
+    /// One surface's click handling: `Some` = consumed (with the
+    /// handler's result), `None` = not this surface, keep walking.
+    fn click_surface_dispatch(
+        &mut self,
+        surface: ClickDispatchSurface,
+        col: u16,
+        row: u16,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> Option<AnyhowResult<()>> {
+        match surface {
+            ClickDispatchSurface::ContextMenus => self.handle_click_context_menus(col, row),
+            ClickDispatchSurface::TransientPopupGuard => {
+                if !self.is_mouse_over_any_popup(col, row) {
+                    self.dismiss_transient_popups();
+                }
+                None
+            }
+            ClickDispatchSurface::Suggestions => self.handle_click_suggestions(col, row),
+            ClickDispatchSurface::PromptScrollbar => self.handle_click_prompt_scrollbar(col, row),
+            ClickDispatchSurface::PopupScrollbar => self.handle_click_popup_scrollbar(col, row),
+            ClickDispatchSurface::GlobalPopups => self.handle_click_global_popups(col, row),
+            ClickDispatchSurface::BufferPopups => self.handle_click_buffer_popups(col, row),
+            ClickDispatchSurface::PopupAbsorb => {
+                self.is_mouse_over_any_popup(col, row).then(|| Ok(()))
+            }
+            ClickDispatchSurface::FileBrowser => (self.is_file_open_active()
+                && self.handle_file_open_click(col, row))
+            .then(|| Ok(())),
+            ClickDispatchSurface::MenuBar => self.handle_click_menu_bar(col, row),
+            ClickDispatchSurface::FileExplorer => self.handle_click_file_explorer_area(col, row),
+            ClickDispatchSurface::Scrollbar => self.handle_click_scrollbar(col, row),
+            ClickDispatchSurface::HorizontalScrollbar => {
+                self.handle_click_horizontal_scrollbar(col, row)
+            }
+            ClickDispatchSurface::StatusBar => self.handle_click_status_bar(col, row),
+            ClickDispatchSurface::SearchOptions => self.handle_click_search_options(col, row),
+            ClickDispatchSurface::SplitSeparator => self.handle_click_split_separator(col, row),
+            ClickDispatchSurface::SplitControls => self.handle_click_split_controls(col, row),
+            ClickDispatchSurface::TabBar => self.handle_click_tab_bar(col, row),
+            ClickDispatchSurface::OverlayPrompt => {
+                // A floating-overlay prompt is mouse-modal: its own targets
+                // (result list, scrollbar) were handled above. A click on a
+                // toolbar control toggles it through the host (which emits a
+                // widget_event); anything else — the input row, separator,
+                // preview pane, empty space, or a click outside the frame —
+                // is swallowed here so it never reaches the buffer and moves
+                // its cursor.
+                if !self.overlay_prompt_active() {
+                    return None;
+                }
+                let hit = self
+                    .active_chrome()
+                    .prompt_toolbar_hits
+                    .iter()
+                    .find(|(_, r)| in_rect(col, row, *r))
+                    .map(|(k, _)| k.clone());
+                if let Some(widget_key) = hit {
+                    // Move keyboard focus to the clicked control so Tab
+                    // continues from here, then flip it through the host
+                    // (which emits a widget_event for the plugin).
+                    if let Some(p) = self.active_window_mut().prompt.as_mut() {
+                        p.toolbar_focus = Some(widget_key.clone());
+                    }
+                    self.toggle_overlay_toolbar_widget(&widget_key);
+                }
+                Some(Ok(()))
+            }
+            ClickDispatchSurface::EditorContent => {
+                let areas: Vec<_> = self
+                    .active_layout()
+                    .split_areas
+                    .iter()
+                    .map(|(split_id, buffer_id, content_rect, _, _, _)| {
+                        (*split_id, *buffer_id, *content_rect)
+                    })
+                    .collect();
+                for (split_id, buffer_id, content_rect) in areas {
+                    if in_rect(col, row, content_rect) {
+                        return Some(self.handle_editor_click(
+                            col,
+                            row,
+                            split_id,
+                            buffer_id,
+                            content_rect,
+                            modifiers,
+                        ));
+                    }
+                }
+                None
+            }
+        }
     }
 
     // ── handle_mouse_click helpers ──────────────────────────────────────────
