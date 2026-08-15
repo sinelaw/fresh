@@ -306,6 +306,19 @@ fn emit_completion_overlays(
         buffer_row: anchor,
         entry: render_completion_bottom_border(popup_total),
     });
+    // The popup is a real box in the panel's layout tree: one
+    // stacking level up, opaque (a click inside it that resolves to
+    // nothing must not fall through to the rows it covers), spanning
+    // the dim separator (anchor 1), the item rows, and the bottom
+    // border. Containers shift it exactly as they shift the overlay
+    // rows it describes.
+    out.boxes.push({
+        let mut b =
+            crate::widgets::LayoutBox::plain("text_completions", 1, 0, panel_width, visible + 2);
+        b.z = 1;
+        b.pointer_opaque = true;
+        b
+    });
     scroll
 }
 

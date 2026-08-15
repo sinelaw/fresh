@@ -7225,4 +7225,72 @@ pub(crate) mod tests {
         assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, 1));
         assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, -1));
     }
+    #[test]
+    fn box_tree_carries_popup_pseudo_boxes() {
+        // Completion popup: a focused Text with candidates in instance
+        // state renders overlay rows AND a z=1 opaque box spanning
+        // them (separator + items + bottom border).
+        let spec = make_text_area("qu", 2, true, 1, 40, Some("q"));
+        let mut prev = HashMap::new();
+        prev.insert(
+            "q".into(),
+            WidgetInstanceState::Text {
+                editor: crate::primitives::text_edit::TextEdit::with_text("qu"),
+                scroll: 0,
+                completions: vec!["quick".to_string().into(), "quiet".to_string().into()],
+                completion_selected_index: 0,
+                completion_scroll_offset: 0,
+                completion_navigated: false,
+                user_scrolled: false,
+            },
+        );
+        let out = render_spec(&spec, &prev, "q", 40);
+        let popup = out
+            .boxes
+            .iter()
+            .find(|b| b.kind == "text_completions")
+            .expect("completion popup box");
+        assert_eq!(popup.z, 1);
+        assert!(popup.pointer_opaque);
+        // Anchored one row below the field: separator + 2 items + border.
+        assert_eq!((popup.row, popup.height), (1, 4));
+        assert!(!out.overlays.is_empty(), "popup rows exist");
+        // Its parent is the Text box itself — the popup belongs to the
+        // field, deeper in the tree, which is what lets depth-first
+        // dispatch reach it without a short-circuit.
+        assert_eq!(out.boxes[popup.parent.unwrap()].kind, "text");
+
+        // Dropdown pop-over: open state renders the screen-space box.
+        let spec = WidgetSpec::Dropdown {
+            options: vec!["a".into(), "b".into()],
+            selected_index: 0,
+            label: "Pick".into(),
+            focused: true,
+            label_width: 0,
+            open: false,
+            scroll_offset: 0,
+            key: Some("dd".into()),
+        };
+        let mut prev = HashMap::new();
+        prev.insert(
+            "dd".into(),
+            WidgetInstanceState::Dropdown {
+                selected_index: 0,
+                open: true,
+            },
+        );
+        let out = render_spec(&spec, &prev, "dd", 40);
+        let popup = out
+            .boxes
+            .iter()
+            .find(|b| b.kind == "dropdown_popup")
+            .expect("dropdown popup box");
+        assert!(popup.screen_space);
+        assert_eq!(popup.z, 2);
+        assert!(
+            out.dropdown_popup.is_some(),
+            "side channel still feeds paint"
+        );
+        assert_eq!(out.boxes[popup.parent.unwrap()].kind, "dropdown");
+    }
 }
