@@ -17,6 +17,14 @@
 //! The first two are asserted on the panel-relayout counter (a rebuild is
 //! not visible on screen — its *absence* is the fix), the last two on
 //! rendered output after a single frame.
+//!
+//! Two more from the same session, same shape:
+//!
+//!   5. `n` / `p` re-laid-out the whole stream on every press, to reveal
+//!      rows that a fold was hiding — usually with no fold in the way at
+//!      all;
+//!   6. the FILES sidebar stayed on the file you started in while the
+//!      cursor read its way down through the others.
 
 use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
@@ -30,6 +38,26 @@ fn setup_audit_mode_plugin(repo: &GitTestRepo) {
     fs::create_dir_all(&plugins_dir).expect("create plugins dir");
     copy_plugin(&plugins_dir, "audit_mode");
     copy_plugin_lib(&plugins_dir);
+}
+
+/// Two changed files, so the cursor can walk out of one and into the next.
+fn repo_with_two_changed_files() -> GitTestRepo {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.create_file("src/alpha.rs", "fn alpha_original() {}\n");
+    repo.create_file("src/beta.rs", "fn beta_original() {}\n");
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    let alpha: String = (0..12)
+        .map(|i| format!("fn alpha_changed_{i}() {{ let a = {i}; }}\n"))
+        .collect();
+    let beta: String = (0..12)
+        .map(|i| format!("fn beta_changed_{i}() {{ let b = {i}; }}\n"))
+        .collect();
+    repo.create_file("src/alpha.rs", &alpha);
+    repo.create_file("src/beta.rs", &beta);
+    repo
 }
 
 /// A repo whose single file has a long, unbroken run of changed lines, so
@@ -58,6 +86,15 @@ fn harness_for(repo: &GitTestRepo) -> EditorTestHarness {
 }
 
 fn open_review_diff(harness: &mut EditorTestHarness) {
+    // A rewritten file diffs as every removal and then every addition, so
+    // the rows on screen are the `original_` side.
+    open_review_diff_for(harness, "original_0()");
+}
+
+/// Open the review and wait until `first_row` — a string from the first
+/// diff rows the stream puts on screen — is actually rendered. The toolbar
+/// lands well before the stream does.
+fn open_review_diff_for(harness: &mut EditorTestHarness, first_row: &str) {
     harness.run_palette_command("Review Diff").unwrap();
     harness.wait_for_prompt_closed().unwrap();
     harness
@@ -69,12 +106,55 @@ fn open_review_diff(harness: &mut EditorTestHarness) {
             s.contains("next hunk") && !s.contains("Generating Review")
         })
         .unwrap();
-    // The toolbar lands before the stream does; wait for real diff rows.
-    // A rewritten file diffs as 60 removals and then 60 additions, so the
-    // rows on screen are the `original_` side.
     harness
-        .wait_until(|h| h.screen_to_string().contains("original_0()"))
+        .wait_until(|h| h.screen_to_string().contains(first_row))
         .unwrap();
+}
+
+/// Reveal the FILES sidebar (`F`) and hand the keys back to the diff —
+/// `F` focuses what it reveals, and these tests drive the diff.
+fn show_files_panel(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('F'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("FILES"))
+        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("\u{25b8}FILES"))
+        .unwrap();
+}
+
+/// Text of the sidebar's selected row, read off the screen by the
+/// selection band a widget tree paints behind its selected node
+/// (`ui.popup_selection_bg` — not the editor's own selection colour).
+/// Restricted to the columns left of the panel divider, so nothing in the
+/// diff beside it can be mistaken for the sidebar's selection.
+fn selected_sidebar_row(harness: &EditorTestHarness) -> Option<String> {
+    let selection_bg = harness.editor().theme().popup_selection_bg;
+    let screen = harness.screen_to_string();
+    let divider = screen
+        .lines()
+        .filter_map(|line| line.find('\u{2502}'))
+        .min()? as u16;
+    let area = harness.buffer().area;
+    (0..area.height).find_map(|y| {
+        let washed = (0..divider)
+            .filter(|&x| {
+                harness
+                    .get_cell_style(x, y)
+                    .is_some_and(|style| style.bg == Some(selection_bg))
+            })
+            .count();
+        if washed < 3 {
+            return None;
+        }
+        screen
+            .lines()
+            .nth(y as usize)
+            .map(|line| line.chars().take(divider as usize).collect())
+    })
 }
 
 /// Screen row carrying the cursor-line bar, found by its background: the
@@ -345,5 +425,87 @@ fn test_flip_back_to_unified_lands_on_the_line_the_reader_left() {
         "the stream should come back around the line the reader left, not \
          the top of the file:\n{}",
         screen
+    );
+}
+
+/// Issue 5: `n` and `p` are navigation, not a reason to lay the review
+/// out again.
+///
+/// They expand whatever collapse hides the target so the jump never lands
+/// on an invisible row — but collapsing is a host fold over rows the
+/// stream already carries, so revealing them costs a fold change, not a
+/// relayout. Re-emitting the stream for it put a second of work behind
+/// every press on a large review, and did it even when nothing was
+/// collapsed in the first place.
+#[test]
+fn test_hunk_navigation_does_not_relayout_the_stream() {
+    init_tracing_from_env();
+    let repo = repo_with_two_changed_files();
+    let mut harness = harness_for(&repo);
+    open_review_diff_for(&mut harness, "alpha_changed_0");
+
+    let before = harness.editor().perf_counters().panel_content_rows;
+    for _ in 0..4 {
+        harness
+            .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::NONE)
+        .unwrap();
+    let after = harness.editor().perf_counters().panel_content_rows;
+
+    // The sticky header is a panel and it does change as `n` crosses into
+    // another file, so this is not zero — but it is a row per press
+    // against the stream's dozens.
+    assert!(
+        after - before < 20,
+        "five hunk jumps re-laid-out {} panel rows; navigation should only \
+         move the cursor",
+        after - before
+    );
+}
+
+/// Issue 6: the FILES sidebar points at the file the cursor is in.
+///
+/// A tree's selected row is host state after its first render, so the
+/// plugin repainting the panel with a new "current file" moved nothing.
+#[test]
+fn test_files_sidebar_follows_the_diff_cursor() {
+    init_tracing_from_env();
+    let repo = repo_with_two_changed_files();
+    let mut harness = harness_for(&repo);
+    open_review_diff_for(&mut harness, "alpha_changed_0");
+    show_files_panel(&mut harness);
+
+    // Walk down until the cursor bar itself is sitting on a beta.rs row —
+    // both files fit on one screen here, so what is *visible* says nothing
+    // about where the cursor is.
+    let mut landed = false;
+    for _ in 0..60 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        if cursor_bar_text(&harness).contains("beta_changed_") {
+            landed = true;
+            break;
+        }
+    }
+    assert!(
+        landed,
+        "the cursor never reached beta.rs:\n{}",
+        harness.screen_to_string()
+    );
+
+    let selected = selected_sidebar_row(&harness).unwrap_or_else(|| {
+        panic!(
+            "no row selected in the sidebar:\n{}",
+            harness.screen_to_string()
+        )
+    });
+    assert!(
+        selected.contains("beta.rs"),
+        "the sidebar should have followed the cursor into beta.rs, but it \
+         is on `{}`:\n{}",
+        selected.trim(),
+        harness.screen_to_string()
     );
 }
