@@ -148,7 +148,7 @@ pub fn hit_path(boxes: &[LayoutBox], row: u32, col: u32) -> Vec<usize> {
             continue;
         }
         let cand = (b.z, depth(boxes, idx), idx);
-        if best.map_or(true, |cur| cand >= cur) {
+        if best.is_none_or(|cur| cand >= cur) {
             best = Some(cand);
         }
     }
