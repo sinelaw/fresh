@@ -2403,9 +2403,14 @@ function markStreamDirty(): void {
 
 /** What the content currently in the stream buffer was built from. The
  *  focused file is part of it because the composite's stand-in stream
- *  carries only that file's body (`fileBodyRendered`). */
+ *  carries only that file's body (`fileBodyRendered`), and the panel's
+ *  width because inline comment boxes are wrapped to it. */
 function streamSignature(): string {
-    return `${state.streamRevision}|${state.focusOnly ? state.filesCurrentKey : '*'}`;
+    return [
+        state.streamRevision,
+        state.focusOnly ? state.filesCurrentKey : '*',
+        diffPanelWidth(),
+    ].join('|');
 }
 
 /**
@@ -2815,18 +2820,25 @@ function jumpToComment(commentId: string): void {
  *  content catches up the moment the pointer settles. */
 const PANEL_RELAYOUT_DEBOUNCE_MS = 60;
 
-const panelRelayoutTimers: { files: number | null; comments: number | null } = {
+const panelRelayoutTimers: { files: number | null; comments: number | null; diff: number | null } = {
     files: null,
     comments: null,
+    diff: null,
+};
+
+const RELAYOUT_HANDLERS: Record<'files' | 'comments' | 'diff', string> = {
+    files: "review_relayout_files",
+    comments: "review_relayout_comments",
+    diff: "review_relayout_diff",
 };
 
 /** Repaint `panel` once its size stops changing. */
-function schedulePanelRelayout(panel: 'files' | 'comments'): void {
+function schedulePanelRelayout(panel: 'files' | 'comments' | 'diff'): void {
     const pending = panelRelayoutTimers[panel];
     if (pending !== null) editor.clearInterval(pending);
     panelRelayoutTimers[panel] = editor.setTimeout(
         PANEL_RELAYOUT_DEBOUNCE_MS,
-        panel === 'files' ? "review_relayout_files" : "review_relayout_comments",
+        RELAYOUT_HANDLERS[panel],
     );
 }
 
@@ -2843,6 +2855,18 @@ function review_relayout_comments(): void {
     renderCommentsPanel();
 }
 registerHandler("review_relayout_comments", review_relayout_comments);
+
+/** The stream's inline comment boxes are wrapped to the diff panel's
+ *  width, so a width the layout did not know about leaves them the wrong
+ *  shape. Re-render once the width settles — the signature check inside
+ *  `mountStreamContent` makes this a no-op when the width is what the
+ *  content was already built to. */
+function review_relayout_diff(): void {
+    panelRelayoutTimers.diff = null;
+    if (state.groupId === null || state.reviewLayout === 'side-by-side') return;
+    renderCenter();
+}
+registerHandler("review_relayout_diff", review_relayout_diff);
 
 function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
     if (state.groupId === null) return;
@@ -2867,13 +2891,13 @@ function on_review_viewport_changed(data: { split_id: number; buffer_id: number;
     }
     if (data.buffer_id !== state.panelBuffers["diff"]) return;
     // Inline comment boxes are laid out to this width (see
-    // `diffPanelWidth`); the next center rebuild picks up a change — and
-    // marking the stream dirty is what makes sure there *is* one, since
-    // an otherwise-unchanged stream is now reused rather than re-emitted.
-    if (state.panelWidths["diff"] !== data.width) {
-        markStreamDirty();
-    }
+    // `diffPanelWidth`), so it is part of the stream's signature: record
+    // it synchronously, then re-render once the width settles. Dragging a
+    // divider walks through every intervening width and none of them is
+    // worth a layout of the whole stream.
+    const widthChanged = state.panelWidths["diff"] !== data.width;
     state.panelWidths["diff"] = data.width;
+    if (widthChanged) schedulePanelRelayout('diff');
     // Height too, so `refreshViewportDimensions` has an authoritative
     // size for the diff pane and never has to trust whichever split
     // happens to hold focus.
