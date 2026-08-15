@@ -790,6 +790,31 @@ Phase 8 is deliberately last. Per §2.5, attempting it before the phases above i
 produced the projection layer; the plan document's own §5.3.1 is a record of paying
 that cost.
 
+**Implementation status.** Shipped on this plan's first PR: phase 1 in
+full (17 kinds behind `WidgetImpl`, one dispatch); phase 2 in full
+(`avail_height`, auto-sized `List`/`Tree`, `search_replace.ts`
+migrated); phase 3's substrate — the internal `LayoutBox` tree
+(`widgets/layout_box.rs`: rects, z, clip-order, parent links, built by
+collection and shifted through every container path alongside the
+embed/scroll-region channels) — with vertical flex/justify still open;
+phase 4 panel-local — wheel dispatch bubbles the hit path with scroll
+chaining, and both `handle_widget_key` short-circuits are deleted in
+favour of kind-owned `on_key` (`KeyDisposition::PassAfter` carrying the
+dismiss-then-act contract); phase 5 panel-local — the published Tab
+ring derives from the box tree (spec-walk ring retained pre-collection
+only, pinned equal by debug assert) and `focus_trap` scoping is live;
+phase 6 step 1 (typed key fast lane); and phase 7's tree half — the
+completion popup and dropdown pop-over are boxes (z=1 opaque /
+screen-space z=2) parented to their owning field, which is the
+structural fact the deleted short-circuits used to hand-simulate.
+Still open, in plan order: vertical flex/justify (3), growing the hit
+tree outward to non-widget chrome and the app wheel/click ladders +
+`*Layout` caches (4), the app-level focus unification — `FocusManager`,
+`Prompt.toolbar_focus`, dock focus (5), host-side editing keys (6 step
+2), `WidgetSpec::Popup` + side-channel/`overlay_hit_test` deletion (7 —
+plugin-visible wire change, budget the web renderer mirror), Settings
+(8), and tokens/`Async` (9).
+
 Two standing costs every phase must budget for, found in review: (a) the **web widget
 renderer** (`web-ui/js/65-widgets.js`) hand-mirrors the spec vocabulary and must be
 updated for every kind/field change; (b) the **e2e suites assert on screen strings**,

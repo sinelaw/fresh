@@ -404,6 +404,7 @@ fn allocate_row_child_widths(children: &[WidgetSpec], panel_width: u32) -> Vec<u
 /// shifted by the running byte offset so they stay aligned in the
 /// merged row. The inline-only counterpart to [`zip_row_blocks`] and
 /// [`assemble_wrapped_row`].
+#[allow(clippy::too_many_arguments)]
 fn assemble_inline_row(
     pieces: Vec<RowPiece>,
     panel_width: u32,
@@ -604,7 +605,7 @@ fn collect_col(
         }
     }
 
-    for (child, mut child_out) in children.iter().zip(child_outs.into_iter()) {
+    for (child, mut child_out) in children.iter().zip(child_outs) {
         // Overlay children DO NOT contribute vertical
         // space to the col. Render them, but stash the
         // produced entries as overlays anchored at the
