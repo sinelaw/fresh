@@ -803,6 +803,23 @@ export function overlay(
   };
 }
 
+/** A focus and event scope around a subtree — the unit for composing
+ * reusable pieces. Renders its child transparently (no chrome of its
+ * own); Tab / Shift+Tab cycle among the focusable widgets INSIDE the
+ * component instead of the whole panel, so a picker or dialog subtree
+ * keeps its own ring without hand-written focus code. Give it a `key`
+ * for stable identity (keyed reconciliation, targeted swaps). */
+export function component(
+  child: WidgetSpec,
+  options?: { key?: string },
+): WidgetSpec {
+  return {
+    kind: "component",
+    child,
+    key: options?.key,
+  };
+}
+
 // =============================================================================
 // HintEntry parsing — for the legacy `Tab:section  Esc:close` format
 // shipped in existing plugin i18n bundles.

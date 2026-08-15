@@ -21,6 +21,7 @@
 //! `app/widget_runtime.rs`) without moving the code again.
 
 mod button;
+mod component;
 mod containers;
 mod divider;
 pub(crate) mod dropdown;
@@ -176,5 +177,6 @@ pub(crate) fn behavior(spec: &WidgetSpec) -> &'static dyn WidgetImpl {
         WidgetSpec::Col { .. } => &containers::Col,
         WidgetSpec::LabeledSection { .. } => &containers::LabeledSection,
         WidgetSpec::Overlay { .. } => &containers::Overlay,
+        WidgetSpec::Component { .. } => &component::Component,
     }
 }

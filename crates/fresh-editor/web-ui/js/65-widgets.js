@@ -512,6 +512,12 @@ function widgetEl(spec, ctx){
     if(spec.child) el.appendChild(widgetEl(spec.child, ctx));
     return el;
   }
+  if(kind==="component"){
+    // A focus/event scope — purely behavioural in the TUI; renders its
+    // child transparently here.
+    if(spec.child) return widgetEl(spec.child, ctx);
+    return div("w-component-empty");
+  }
   if(kind==="raw"&&spec.entries){ const el=div("w-raw"); el.textContent=spec.entries.map(entryText).join("\n"); return el; }
   if(kind==="windowEmbed"){
     // Embedding another editor window's live cells inside a native panel
