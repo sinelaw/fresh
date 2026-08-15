@@ -17,6 +17,7 @@ use crate::primitives::reference_highlighter::ReferenceHighlighter;
 use crate::primitives::text_property::TextPropertyManager;
 use crate::view::bracket_highlight_overlay::BracketHighlightOverlay;
 use crate::view::conceal::ConcealManager;
+use crate::view::cursor_line_overlay::CursorLineOverlay;
 use crate::view::folding::LspFoldRanges;
 use crate::view::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
@@ -367,6 +368,11 @@ pub struct EditorState {
     /// Bracket matching highlight overlay
     pub bracket_highlight_overlay: BracketHighlightOverlay,
 
+    /// Host-placed bar following this buffer's cursor. Off unless a plugin
+    /// declares one (`setCursorLineOverlay`); placed from the cursor at
+    /// paint time, so it can never lag the caret it marks.
+    pub cursor_line_overlay: CursorLineOverlay,
+
     /// Cached LSP semantic tokens (converted to buffer byte ranges)
     pub semantic_tokens: Option<SemanticTokenStore>,
 
@@ -503,6 +509,7 @@ impl EditorState {
             debug_highlight_mode: false,
             reference_highlight_overlay: ReferenceHighlightOverlay::new(),
             bracket_highlight_overlay: BracketHighlightOverlay::new(),
+            cursor_line_overlay: CursorLineOverlay::new(),
             semantic_tokens: None,
             folding_ranges: LspFoldRanges::new(),
             language: "text".to_string(),

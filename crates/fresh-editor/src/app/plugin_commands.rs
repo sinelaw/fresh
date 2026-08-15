@@ -150,6 +150,31 @@ impl Editor {
         }
     }
 
+    /// Handle SetCursorLineOverlay command
+    pub(super) fn handle_set_cursor_line_overlay(
+        &mut self,
+        buffer_id: BufferId,
+        options: Option<OverlayOptions>,
+    ) {
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        else {
+            tracing::warn!("SetCursorLineOverlay: buffer {:?} not found", buffer_id);
+            return;
+        };
+        state.cursor_line_overlay.set_spec(options);
+        // The bar itself is placed by the next frame's decoration pass —
+        // ask for that frame, since declaring one usually happens while
+        // nothing else is redrawing.
+        #[cfg(feature = "plugins")]
+        {
+            self.plugin_render_requested = true;
+        }
+    }
+
     /// Handle RemoveOverlay command
     pub(super) fn handle_remove_overlay(&mut self, buffer_id: BufferId, handle: OverlayHandle) {
         if let Some(state) = self

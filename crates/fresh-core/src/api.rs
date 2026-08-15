@@ -3041,6 +3041,20 @@ pub enum PluginCommand {
         handle: OverlayHandle,
     },
 
+    /// Declare a one-line overlay that follows the buffer's cursor, or
+    /// withdraw it with `None`.
+    ///
+    /// The host re-places it from the cursor as part of drawing the frame,
+    /// so it marks the row the caret is on in that same frame. A plugin
+    /// painting the bar itself from `cursor_moved` cannot manage that: the
+    /// hook fires after the move, so its `addOverlay` lands one frame late
+    /// and the bar trails the caret for as long as an arrow key repeats.
+    SetCursorLineOverlay {
+        buffer_id: BufferId,
+        /// Styling, exactly as `AddOverlay` takes it. `None` removes the bar.
+        options: Option<OverlayOptions>,
+    },
+
     /// Set status message
     SetStatus { message: String },
 
