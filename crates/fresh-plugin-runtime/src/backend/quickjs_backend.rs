@@ -9197,7 +9197,54 @@ impl QuickJsBackend {
                 None => (action_name.to_string(), None, None),
             },
         };
+        self.start_action_resolved(
+            action_name,
+            lookup_name,
+            fallback_name,
+            text_input_char,
+            args_json,
+            request_id,
+        )
+    }
 
+    /// Typed fast lane for a mode's printable text input. Carries the
+    /// mode and the typed text as structured fields instead of the
+    /// legacy `mode_text_input@<mode>:<char>` action-name encoding
+    /// (which `start_action` still parses for keymap-bound plugin
+    /// actions). Rides the same request channel as every other
+    /// dispatched action, so a mode's own bindings (Backspace, Space,
+    /// ...) and plain characters stay strictly ordered.
+    pub fn start_mode_text_input(&mut self, mode: Option<&str>, text: &str) -> Result<()> {
+        let (lookup_name, fallback_name) = match mode {
+            // A mode-qualified dispatch resolves to the plugin that
+            // defined that mode, falling back to the bare registration
+            // (and finally to a main-context global of the bare name).
+            Some(m) => (format!("mode_text_input@{}", m), Some("mode_text_input")),
+            None => ("mode_text_input".to_string(), None),
+        };
+        self.start_action_resolved(
+            "mode_text_input",
+            lookup_name,
+            fallback_name,
+            Some(text.to_string()),
+            None,
+            None,
+        )
+    }
+
+    /// Shared tail of [`start_action`] / [`start_mode_text_input`]:
+    /// resolve the handler registration and invoke it. `lookup_name` is
+    /// the primary registration key, `fallback_name` the secondary; a
+    /// `text_input_char` is passed to the handler as `({text})`.
+    fn start_action_resolved(
+        &mut self,
+        action_name: &str,
+        lookup_name: String,
+        fallback_name: Option<&str>,
+        text_input_char: Option<String>,
+        args_json: Option<&str>,
+        request_id: Option<u64>,
+    ) -> Result<()> {
         let pair = {
             let registered = self.registered_actions.borrow();
             registered
