@@ -42,6 +42,33 @@ use fresh_core::api::WidgetSpec;
 use super::registry::WidgetInstanceState;
 use super::render::{CollectedOutput, RenderContext};
 
+/// Static box-tree metadata for one widget node: what its
+/// [`crate::widgets::LayoutBox`] should carry, derived from the spec
+/// alone. `render_collected` combines this with the collected row count
+/// to push the node's box after `collect` returns, so containers only
+/// ever handle child-box *merging*.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BoxMeta {
+    pub kind: &'static str,
+    pub key: Option<String>,
+    /// Mirrors `collect_tabbable`'s rules exactly (keyed, non-disabled,
+    /// `focusable` where the variant has the flag) — the derived focus
+    /// ring must reproduce the collected one order-for-order.
+    pub focusable: bool,
+    pub scrollable: bool,
+    pub pointer_opaque: bool,
+    pub focus_trap: bool,
+}
+
+impl BoxMeta {
+    pub(crate) fn plain(kind: &'static str) -> Self {
+        BoxMeta {
+            kind,
+            ..Default::default()
+        }
+    }
+}
+
 /// Behaviour for one widget kind. Implementations are unit structs;
 /// each `collect` destructures its own `WidgetSpec` variant (a
 /// mismatched variant is a dispatch bug and renders nothing rather
@@ -58,6 +85,12 @@ pub(crate) trait WidgetImpl: Sync {
         ctx: RenderContext<'_>,
         panel_width: u32,
     ) -> CollectedOutput;
+
+    /// This node's layout-box metadata: the tag, key, and dispatch
+    /// flags its [`crate::widgets::LayoutBox`] carries. Each impl
+    /// answers for its own variant — there is deliberately no central
+    /// kind→tag table.
+    fn box_meta(&self, spec: &WidgetSpec) -> BoxMeta;
 }
 
 /// The one kind-dispatch — the single surviving `match` on a

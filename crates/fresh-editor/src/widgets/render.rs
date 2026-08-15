@@ -20,6 +20,7 @@
 //! `Layer`, `Transient`, `Table`) extend the dispatch without
 //! changing the public function signature.
 
+use crate::widgets::layout_box::LayoutBox;
 use crate::widgets::registry::{HitArea, WidgetInstanceState};
 use fresh_core::api::{
     ButtonKind, DualListOption, HintEntry, OverlayColorSpec, OverlayOptions, TreeNode, WidgetSpec,
@@ -242,6 +243,12 @@ pub struct RenderOutput {
     /// compute scroll bounds against what was really painted (an
     /// auto-sized widget's spec carries no number at all).
     pub effective_rows: HashMap<String, u32>,
+    /// The panel's layout-box tree (root-last arena; see
+    /// [`crate::widgets::layout_box`]). One box per widget with its
+    /// panel-relative rectangle, stacking level, and dispatch flags —
+    /// the geometry substrate hit-tested event routing and the derived
+    /// focus ring are built on.
+    pub boxes: Vec<LayoutBox>,
 }
 
 /// The open `Dropdown`'s option list, projected for a host-native
@@ -338,6 +345,52 @@ pub(crate) struct CollectedOutput {
     /// The renderer writes it; host key/mouse handlers read it for
     /// scroll bounds — same contract as instance-state `item_height`.
     pub(crate) effective_rows: HashMap<String, u32>,
+    /// The layout-box arena for this subtree (root-last; see
+    /// [`crate::widgets::layout_box`]). Containers shift child box
+    /// rectangles alongside the other column-addressed side channels
+    /// and re-parent subtree roots onto their own box.
+    pub(crate) boxes: Vec<LayoutBox>,
+}
+
+impl CollectedOutput {
+    /// Append this subtree's own root box: rectangle covering the rows
+    /// the subtree emitted at full `panel_width`, every parentless box
+    /// so far re-parented onto it. Leaf kinds call this on an output
+    /// with no boxes; containers call it after merging children.
+    pub(crate) fn push_self_box(&mut self, mut own: LayoutBox, panel_width: u32) {
+        own.width = panel_width;
+        own.height = self.entries.len() as u32;
+        let idx = self.boxes.len();
+        for b in &mut self.boxes {
+            if b.parent.is_none() {
+                b.parent = Some(idx);
+            }
+        }
+        self.boxes.push(own);
+    }
+
+    /// Merge a child subtree's boxes into this accumulator, shifting
+    /// every rectangle by (`row_offset`, `col_offset`) and remapping
+    /// parent indices. Boxes that were roots in the child stay
+    /// parentless until the caller's own `push_self_box`. `z_bump`
+    /// raises the whole child subtree's stacking level (overlay
+    /// promotion).
+    pub(crate) fn merge_child_boxes(
+        &mut self,
+        child_boxes: Vec<LayoutBox>,
+        row_offset: u32,
+        col_offset: u32,
+        z_bump: u8,
+    ) {
+        let base = self.boxes.len();
+        for mut b in child_boxes {
+            b.parent = b.parent.map(|p| p + base);
+            b.row += row_offset;
+            b.col += col_offset;
+            b.z = b.z.saturating_add(z_bump);
+            self.boxes.push(b);
+        }
+    }
 }
 
 /// Everything a render pass needs that isn't in the spec itself.
@@ -505,6 +558,7 @@ pub fn render_spec_with_options(
         // the first if the spec somehow produced several.
         dropdown_popup: collected.dropdown_popups.into_iter().next(),
         effective_rows: collected.effective_rows,
+        boxes: collected.boxes,
     }
 }
 
@@ -654,7 +708,21 @@ pub(crate) fn render_collected(
     // Every kind's behaviour lives in `widgets::kinds` behind the
     // `WidgetImpl` trait (widget-framework-v2-review.md §4.3); the single
     // kind-dispatch is `kinds::behavior`.
-    super::kinds::behavior(spec).collect(spec, prev, next_state, ctx, panel_width)
+    let behavior = super::kinds::behavior(spec);
+    let mut out = behavior.collect(spec, prev, next_state, ctx, panel_width);
+    // Cap the subtree with its own layout box (rectangle = the rows it
+    // just emitted at this width), re-parenting child-subtree roots.
+    // Done here, once, so `collect` impls never see box bookkeeping
+    // beyond the container merge helpers.
+    let meta = behavior.box_meta(spec);
+    let mut own = LayoutBox::plain(meta.kind, 0, 0, 0, 0);
+    own.key = meta.key;
+    own.focusable = meta.focusable;
+    own.scrollable = meta.scrollable;
+    own.pointer_opaque = meta.pointer_opaque;
+    own.focus_trap = meta.focus_trap;
+    out.push_self_box(own, panel_width);
+    out
 }
 
 // =========================================================================
@@ -6954,5 +7022,165 @@ pub(crate) mod tests {
         let mut tabbable = Vec::new();
         collect_tabbable(&spec, &mut tabbable);
         assert_eq!(tabbable, vec!["d"]);
+    }
+    // -------------------------------------------------------------
+    // Layout-box tree (phase 3 substrate)
+    // -------------------------------------------------------------
+
+    fn boxed_list(key: &str, n: usize, visible: u32) -> WidgetSpec {
+        WidgetSpec::List {
+            items: (0..n)
+                .map(|i| TextPropertyEntry::text(&format!("item{i}")))
+                .collect(),
+            item_specs: vec![],
+            item_keys: (0..n).map(|i| format!("{key}{i}")).collect(),
+            selected_index: -1,
+            visible_rows: Some(visible),
+            focusable: true,
+            key: Some(key.to_string()),
+        }
+    }
+
+    #[test]
+    fn box_tree_mirrors_structure_rows_and_focus_ring() {
+        use crate::widgets::layout_box::{focus_ring, hit_path};
+        let spec = WidgetSpec::Col {
+            key: None,
+            children: vec![
+                WidgetSpec::Button {
+                    label: "Go".into(),
+                    focused: false,
+                    intent: ButtonKind::Normal,
+                    key: Some("b".into()),
+                    disabled: false,
+                    focusable: true,
+                    bare: false,
+                    full_width: false,
+                    hover_style: None,
+                },
+                WidgetSpec::LabeledSection {
+                    label: "Files".into(),
+                    child: Box::new(boxed_list("l", 3, 5)),
+                    width_pct: None,
+                    key: None,
+                },
+            ],
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        let boxes = &out.boxes;
+        // Root-last arena: the outer Col caps the vec and spans the
+        // whole surface.
+        let root = boxes.last().expect("root box");
+        assert_eq!(root.kind, "col");
+        assert_eq!(root.parent, None);
+        assert_eq!((root.row, root.col), (0, 0));
+        assert_eq!(root.width, 40);
+        assert_eq!(root.height as usize, out.entries.len());
+
+        let find = |kind: &str| {
+            boxes
+                .iter()
+                .position(|b| b.kind == kind)
+                .unwrap_or_else(|| panic!("no {kind} box"))
+        };
+        let button = &boxes[find("button")];
+        assert_eq!((button.row, button.height), (0, 1));
+        assert!(button.focusable);
+        let section = &boxes[find("labeled_section")];
+        // Below the button: top border + 5 list rows + bottom border.
+        assert_eq!((section.row, section.height), (1, 7));
+        let list = &boxes[find("list")];
+        // Inside the section: down past the top border, right past the
+        // "| " border prefix; the section rendered it at width - 4.
+        assert_eq!((list.row, list.col), (2, 2));
+        assert_eq!((list.width, list.height), (36, 5));
+        assert!(list.scrollable && list.focusable);
+        assert_eq!(boxes[list.parent.unwrap()].kind, "labeled_section");
+
+        // The derived focus ring reproduces the collected tabbable
+        // list order-for-order — the invariant the phase-5 focus
+        // unification stands on.
+        assert_eq!(focus_ring(boxes), out.tabbable);
+        assert_eq!(out.tabbable, vec!["b".to_string(), "l".to_string()]);
+
+        // Hit-testing resolves through the structure: a point inside
+        // the list's rows lands on the list via col -> section -> list.
+        let path = hit_path(boxes, 3, 10);
+        let kinds: Vec<&str> = path.iter().map(|&i| boxes[i].kind).collect();
+        assert_eq!(kinds, vec!["col", "labeled_section", "list"]);
+        // The button row resolves to the button.
+        let path = hit_path(boxes, 0, 1);
+        assert_eq!(*path.last().unwrap(), find("button"));
+    }
+
+    #[test]
+    fn box_tree_row_zip_offsets_block_columns() {
+        let spec = WidgetSpec::Row {
+            key: None,
+            children: vec![boxed_list("left", 2, 3), boxed_list("right", 2, 3)],
+            wrap: false,
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        let lists: Vec<&LayoutBox> = out.boxes.iter().filter(|b| b.kind == "list").collect();
+        assert_eq!(lists.len(), 2);
+        // Two zip blocks split the width; the right one starts at the
+        // left one's column budget.
+        assert_eq!((lists[0].row, lists[0].col, lists[0].width), (0, 0, 20));
+        assert_eq!((lists[1].row, lists[1].col, lists[1].width), (0, 20, 20));
+        // Side-by-side hit-tests pick the correct list.
+        use crate::widgets::layout_box::hit_path;
+        let left_hit = hit_path(&out.boxes, 1, 5);
+        let right_hit = hit_path(&out.boxes, 1, 25);
+        assert_eq!(
+            out.boxes[*left_hit.last().unwrap()].key.as_deref(),
+            Some("left")
+        );
+        assert_eq!(
+            out.boxes[*right_hit.last().unwrap()].key.as_deref(),
+            Some("right")
+        );
+    }
+
+    #[test]
+    fn box_tree_overlay_promotion_bumps_z_and_wins_hits() {
+        use crate::widgets::layout_box::hit_path;
+        let spec = WidgetSpec::Col {
+            key: None,
+            children: vec![
+                WidgetSpec::Raw {
+                    entries: vec![
+                        TextPropertyEntry::text("base0"),
+                        TextPropertyEntry::text("base1"),
+                        TextPropertyEntry::text("base2"),
+                    ],
+                    key: None,
+                },
+                WidgetSpec::Overlay {
+                    key: None,
+                    child: Box::new(WidgetSpec::Raw {
+                        entries: vec![TextPropertyEntry::text("popup")],
+                        key: None,
+                    }),
+                },
+            ],
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        let overlay = out
+            .boxes
+            .iter()
+            .find(|b| b.kind == "overlay")
+            .expect("overlay box");
+        // Promoted: anchored where the col cursor stood (after 3 raw
+        // rows), one stacking level up, opaque to fall-through.
+        assert_eq!(overlay.z, 1);
+        assert!(overlay.pointer_opaque);
+        assert_eq!(overlay.row, 3);
+        // Its raw child rides along at the same z.
+        let raws: Vec<&LayoutBox> = out.boxes.iter().filter(|b| b.kind == "raw").collect();
+        assert!(raws.iter().any(|b| b.z == 1 && b.row == 3));
+        // A hit at the overlay's anchor row resolves to the promoted
+        // subtree, not the base surface.
+        let path = hit_path(&out.boxes, 3, 2);
+        assert_eq!(out.boxes[*path.last().unwrap()].z, 1);
     }
 }

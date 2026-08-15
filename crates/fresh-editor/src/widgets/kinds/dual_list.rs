@@ -19,6 +19,16 @@ use crate::widgets::render::{
 pub(crate) struct DualList;
 
 impl WidgetImpl for DualList {
+    fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
+        let mut m = super::BoxMeta::plain("dual_list");
+        if let WidgetSpec::DualList { key: Some(k), .. } = spec {
+            if !k.is_empty() {
+                m.key = Some(k.clone());
+                m.focusable = true;
+            }
+        }
+        m
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

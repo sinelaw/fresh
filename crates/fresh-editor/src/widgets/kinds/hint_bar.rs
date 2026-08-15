@@ -13,6 +13,9 @@ use crate::widgets::render::{
 pub(crate) struct HintBar;
 
 impl WidgetImpl for HintBar {
+    fn box_meta(&self, _spec: &WidgetSpec) -> super::BoxMeta {
+        super::BoxMeta::plain("hint_bar")
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

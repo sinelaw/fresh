@@ -11,6 +11,7 @@ use fresh_core::api::WidgetSpec;
 use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 
 use super::WidgetImpl;
+use crate::widgets::layout_box::LayoutBox;
 use crate::widgets::registry::{HitArea, WidgetInstanceState};
 use crate::widgets::render::{
     ensure_trailing_newline, pad_or_truncate_cols, render_collected, render_section_bottom_border,
@@ -22,6 +23,9 @@ use crate::widgets::render::{
 pub(crate) struct Row;
 
 impl WidgetImpl for Row {
+    fn box_meta(&self, _spec: &WidgetSpec) -> super::BoxMeta {
+        super::BoxMeta::plain("row")
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -40,6 +44,9 @@ impl WidgetImpl for Row {
 pub(crate) struct Col;
 
 impl WidgetImpl for Col {
+    fn box_meta(&self, _spec: &WidgetSpec) -> super::BoxMeta {
+        super::BoxMeta::plain("col")
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -58,6 +65,9 @@ impl WidgetImpl for Col {
 pub(crate) struct LabeledSection;
 
 impl WidgetImpl for LabeledSection {
+    fn box_meta(&self, _spec: &WidgetSpec) -> super::BoxMeta {
+        super::BoxMeta::plain("labeled_section")
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -76,6 +86,14 @@ impl WidgetImpl for LabeledSection {
 pub(crate) struct Overlay;
 
 impl WidgetImpl for Overlay {
+    fn box_meta(&self, _spec: &WidgetSpec) -> super::BoxMeta {
+        let mut m = super::BoxMeta::plain("overlay");
+        // Promoted overlay content is an opaque surface: a click inside
+        // it that nothing consumes must not fall through to the rows
+        // beneath (mirrors `WidgetRegistry::overlay_hit_test`).
+        m.pointer_opaque = true;
+        m
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -152,6 +170,11 @@ enum RowPiece {
         embeds: Vec<EmbedRect>,
         /// Scroll regions propagated up from this inline child.
         scroll_regions: Vec<ScrollRegion>,
+        /// Layout boxes from this inline child's subtree; the collapse
+        /// pass shifts their columns by the merged inline_shift, the
+        /// same (byte≈column for ASCII inline content) approximation
+        /// the embed channel uses.
+        boxes: Vec<LayoutBox>,
     },
     Block {
         /// Allocated column width for the zip path. May differ
@@ -170,6 +193,9 @@ enum RowPiece {
         /// Scroll regions propagated up from this block child,
         /// shifted by the zip pass identically to `embeds`.
         scroll_regions: Vec<ScrollRegion>,
+        /// Layout boxes from this block child's subtree, shifted by the
+        /// zip pass identically to `scroll_regions`.
+        boxes: Vec<LayoutBox>,
     },
     Flex,
 }
@@ -190,6 +216,7 @@ fn collect_row(
     let mut overlays: Vec<OverlayRow> = Vec::new();
     let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
     let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
+    let mut boxes: Vec<LayoutBox> = Vec::new();
     let mut wants_fill = false;
     let mut effective_rows: HashMap<String, u32> = HashMap::new();
 
@@ -244,6 +271,7 @@ fn collect_row(
             debug_assert!(child_out.hits.is_empty(), "empty children produce no hits");
             continue;
         }
+        let child_boxes = std::mem::take(&mut child_out.boxes);
         if child_out.entries.len() == 1 {
             let mut entry = child_out.entries.into_iter().next().unwrap();
             // Inline children can't carry their own newlines
@@ -257,6 +285,7 @@ fn collect_row(
                 focus_cursor: child_out.focus_cursor,
                 embeds: child_out.embeds,
                 scroll_regions: child_out.scroll_regions,
+                boxes: child_boxes,
             });
         } else {
             row_pieces.push(RowPiece::Block {
@@ -266,6 +295,7 @@ fn collect_row(
                 focus_cursor: child_out.focus_cursor,
                 embeds: child_out.embeds,
                 scroll_regions: child_out.scroll_regions,
+                boxes: child_boxes,
             });
         }
     }
@@ -284,6 +314,7 @@ fn collect_row(
             &mut focus_cursor,
             &mut embeds,
             &mut scroll_regions,
+            &mut boxes,
         );
     } else if wrap {
         // Wrapping path: greedily pack inline pieces onto lines no
@@ -297,6 +328,7 @@ fn collect_row(
             &mut entries,
             &mut hits,
             &mut focus_cursor,
+            &mut boxes,
         );
     } else {
         assemble_inline_row(
@@ -307,6 +339,7 @@ fn collect_row(
             &mut focus_cursor,
             &mut embeds,
             &mut scroll_regions,
+            &mut boxes,
         );
     }
 
@@ -320,6 +353,7 @@ fn collect_row(
         dropdown_popups,
         wants_fill,
         effective_rows,
+        boxes,
     }
 }
 
@@ -378,6 +412,7 @@ fn assemble_inline_row(
     focus_cursor: &mut Option<FocusCursor>,
     embeds: &mut Vec<EmbedRect>,
     scroll_regions: &mut Vec<ScrollRegion>,
+    out_boxes: &mut Vec<LayoutBox>,
 ) {
     // Compute flex sizing. Width is measured in display columns
     // (`str_width`) to match `panel_width`; using the raw byte length
@@ -420,11 +455,21 @@ fn assemble_inline_row(
                 focus_cursor: child_focus,
                 embeds: child_embeds,
                 scroll_regions: child_scroll,
+                boxes: child_boxes,
             } => {
                 let inline_shift = match acc.as_ref() {
                     Some(e) => e.text.len(),
                     None => 0,
                 };
+                // Boxes shift columns like embeds do (byte≈column for
+                // the ASCII inline content that lands here); the arena
+                // merge remaps parent indices by the boxes so far.
+                let base = out_boxes.len();
+                for mut b in child_boxes {
+                    b.parent = b.parent.map(|pi| pi + base);
+                    b.col += inline_shift as u32;
+                    out_boxes.push(b);
+                }
                 for mut h in child_hits {
                     h.byte_start += inline_shift;
                     h.byte_end += inline_shift;
@@ -508,6 +553,7 @@ fn collect_col(
     let mut overlays: Vec<OverlayRow> = Vec::new();
     let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
     let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
+    let mut boxes: Vec<LayoutBox> = Vec::new();
     let mut wants_fill = false;
     let mut effective_rows: HashMap<String, u32> = HashMap::new();
 
@@ -558,7 +604,7 @@ fn collect_col(
         }
     }
 
-    for (child, child_out) in children.iter().zip(child_outs.into_iter()) {
+    for (child, mut child_out) in children.iter().zip(child_outs.into_iter()) {
         // Overlay children DO NOT contribute vertical
         // space to the col. Render them, but stash the
         // produced entries as overlays anchored at the
@@ -570,6 +616,18 @@ fn collect_col(
         wants_fill |= child_out.wants_fill;
         effective_rows.extend(child_out.effective_rows.clone());
         let row_offset = entries.len() as u32;
+        // Child boxes anchor at the col cursor. An overlay child's
+        // whole subtree additionally moves up one stacking level — the
+        // same promotion its entries get — so hit-testing prefers the
+        // popup over whatever it covers.
+        let z_bump = if is_overlay { 1 } else { 0 };
+        let base = boxes.len();
+        for mut b in std::mem::take(&mut child_out.boxes) {
+            b.parent = b.parent.map(|pi| pi + base);
+            b.row += row_offset;
+            b.z = b.z.saturating_add(z_bump);
+            boxes.push(b);
+        }
         if is_overlay {
             // Promote the overlay child's regular
             // entries to overlay rows anchored at the
@@ -662,6 +720,7 @@ fn collect_col(
         // longer set the flag; only an unresolved request bubbles.
         wants_fill,
         effective_rows,
+        boxes,
     }
 }
 
@@ -695,6 +754,15 @@ fn collect_labeled_section(
     let mut child_out = render_collected(child, prev, next_state, section_ctx, inner_width);
     let wants_fill = child_out.wants_fill;
     let effective_rows = std::mem::take(&mut child_out.effective_rows);
+    // Child boxes shift down past the top border and right past the
+    // `│ ` prefix — the same (row +1, col +prefix_cols) shift the
+    // embed/scroll-region channels get below.
+    let mut boxes: Vec<LayoutBox> = Vec::new();
+    for mut b in std::mem::take(&mut child_out.boxes) {
+        b.row += 1;
+        b.col += LEFT_BORDER_PREFIX.chars().count() as u32;
+        boxes.push(b);
+    }
     // Shift child overlays by 1 to account for the top
     // border row this section emits — the child authored
     // its anchors relative to its own row 0 (e.g. anchor 1
@@ -786,6 +854,7 @@ fn collect_labeled_section(
         dropdown_popups,
         wants_fill,
         effective_rows,
+        boxes,
     }
 }
 
@@ -814,6 +883,7 @@ fn collect_overlay(
         overlays: child_out.overlays,
         scroll_regions: child_out.scroll_regions,
         dropdown_popups: child_out.dropdown_popups,
+        boxes: child_out.boxes,
         // An Overlay occupies no column rows, so it never receives a
         // fill budget from `collect_col`; a fill request inside one
         // stays on the legacy fallback (bubbling it would let a popup
@@ -836,6 +906,7 @@ fn assemble_wrapped_row(
     entries: &mut Vec<TextPropertyEntry>,
     hits: &mut Vec<HitArea>,
     focus_cursor: &mut Option<FocusCursor>,
+    out_boxes: &mut Vec<LayoutBox>,
 ) {
     use crate::primitives::display_width::str_width;
     let max_w = panel_width as usize;
@@ -854,6 +925,7 @@ fn assemble_wrapped_row(
             mut entry,
             hits: child_hits,
             focus_cursor: piece_fc,
+            boxes: child_boxes,
             ..
         } = piece
         else {
@@ -878,6 +950,15 @@ fn assemble_wrapped_row(
             h.byte_end += shift;
             h.buffer_row = row;
             hits.push(h);
+        }
+        // Boxes land on the wrapped line at the line-so-far column
+        // (byte≈column, as in the inline collapse path).
+        let base = out_boxes.len();
+        for mut b in child_boxes {
+            b.parent = b.parent.map(|pi| pi + base);
+            b.row += row;
+            b.col += shift as u32;
+            out_boxes.push(b);
         }
         // A focused piece (e.g. the search TextInput) reports its caret;
         // shift it by the line-so-far and stamp the wrapped line index so
@@ -939,6 +1020,7 @@ fn merge_inline(merged: &mut TextPropertyEntry, next: &mut TextPropertyEntry) {
 /// offset (which output line we're on) and the per-piece
 /// byte-column offset (where in the merged text the piece
 /// starts).
+#[allow(clippy::too_many_arguments)]
 fn zip_row_blocks(
     pieces: Vec<RowPiece>,
     panel_width: u32,
@@ -947,6 +1029,7 @@ fn zip_row_blocks(
     out_focus_cursor: &mut Option<FocusCursor>,
     out_embeds: &mut Vec<EmbedRect>,
     out_scroll: &mut Vec<ScrollRegion>,
+    out_boxes: &mut Vec<LayoutBox>,
 ) {
     let starting_row = out_entries.len() as u32;
     let _ = panel_width;
@@ -975,6 +1058,7 @@ fn zip_row_blocks(
                     focus_cursor,
                     embeds: inline_embeds,
                     scroll_regions: inline_scroll,
+                    boxes: piece_boxes,
                 } => {
                     let inline_cols = entry.text.chars().count();
                     let byte_shift = text.len();
@@ -998,6 +1082,14 @@ fn zip_row_blocks(
                             sr.buffer_row += starting_row;
                             sr.col_in_row += col_shift;
                             out_scroll.push(sr);
+                        }
+                        let base = out_boxes.len();
+                        for b in piece_boxes {
+                            let mut b = b.clone();
+                            b.parent = b.parent.map(|pi| pi + base);
+                            b.row += starting_row;
+                            b.col += col_shift;
+                            out_boxes.push(b);
                         }
                         for overlay in &entry.inline_overlays {
                             overlays.push(InlineOverlay {
@@ -1037,6 +1129,7 @@ fn zip_row_blocks(
                     focus_cursor,
                     embeds: block_embeds,
                     scroll_regions: block_scroll,
+                    boxes: piece_boxes,
                 } => {
                     let block_w = *column_width as usize;
                     let byte_shift = text.len();
@@ -1062,6 +1155,14 @@ fn zip_row_blocks(
                             sr.buffer_row += starting_row;
                             sr.col_in_row += col_shift;
                             out_scroll.push(sr);
+                        }
+                        let base = out_boxes.len();
+                        for b in piece_boxes {
+                            let mut b = b.clone();
+                            b.parent = b.parent.map(|pi| pi + base);
+                            b.row += starting_row;
+                            b.col += col_shift;
+                            out_boxes.push(b);
                         }
                     }
                     if let Some(line) = entries.get(row_idx) {

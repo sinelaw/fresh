@@ -16,6 +16,7 @@
 
 mod actions;
 pub(crate) mod kinds;
+pub(crate) mod layout_box;
 mod registry;
 pub(crate) mod render;
 mod text_click;
@@ -25,6 +26,7 @@ pub use actions::{
     set_toggle_checked_in_spec, set_tree_checked_keys_in_spec, set_tree_nodes_in_spec,
     tree_parent_index,
 };
+pub use layout_box::LayoutBox;
 pub use registry::{
     HitArea, PanelId, PanelKey, WidgetInstanceState, WidgetPanelState, WidgetRegistry,
 };

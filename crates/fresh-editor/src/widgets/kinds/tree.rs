@@ -17,6 +17,17 @@ use crate::widgets::render::{
 pub(crate) struct Tree;
 
 impl WidgetImpl for Tree {
+    fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
+        let mut m = super::BoxMeta::plain("tree");
+        if let WidgetSpec::Tree { key: Some(k), .. } = spec {
+            if !k.is_empty() {
+                m.key = Some(k.clone());
+                m.focusable = true;
+                m.scrollable = true;
+            }
+        }
+        m
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

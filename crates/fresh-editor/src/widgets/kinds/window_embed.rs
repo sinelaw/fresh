@@ -12,6 +12,9 @@ use crate::widgets::render::{CollectedOutput, EmbedRect, RenderContext};
 pub(crate) struct WindowEmbed;
 
 impl WidgetImpl for WindowEmbed {
+    fn box_meta(&self, _spec: &WidgetSpec) -> super::BoxMeta {
+        super::BoxMeta::plain("window_embed")
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,
