@@ -111,6 +111,7 @@ pub mod issue_2878_split_cursor_independence;
 pub mod issue_2893_replace_all_many_matches;
 pub mod issue_2953_search_replace_double_open;
 pub mod issue_2969_wheel_over_chrome;
+pub mod issue_3006_drag_beyond_text_area;
 pub mod issue_3006_shift_select_at_buffer_edges;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_779_after_eof_shade;
