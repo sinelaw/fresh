@@ -83,6 +83,54 @@ pub struct HitArea {
     /// not the text of the row it covers, so click resolution has to
     /// keep the two apart. See [`WidgetRegistry::overlay_hit_test`].
     pub overlay: bool,
+    /// Byte span of the layout **column** this hit sits in, when a `Row`
+    /// zipped several children onto one line. `None` when the hit's row
+    /// was never zipped, which means the hit owns the whole row.
+    ///
+    /// Without this a hit remembers only one of the two dimensions it was
+    /// laid out in. `Row` knows exactly which columns each child occupies
+    /// — it pads every block to its allotted width — and then discards it,
+    /// so resolution downstream can only *guess* which column a pointer
+    /// meant, by looking for the nearest hit on the row. That guess is
+    /// wrong whenever a column has no hits of its own: a panel with a
+    /// transcript beside a list handed every click and every hover in the
+    /// transcript to the list, because the list held the only hits there
+    /// were.
+    ///
+    /// Carrying the span makes the question answerable instead of
+    /// guessable: a hit is a candidate only if the pointer is inside the
+    /// column that produced it. Nested rows keep the innermost span, which
+    /// is the most specific true statement about where the hit lives.
+    pub column: Option<(usize, usize)>,
+}
+
+impl HitArea {
+    /// Whether `col` (a byte offset into the row's text) falls in this
+    /// hit's layout column. Always true for a hit that has no column,
+    /// i.e. one that owns its whole row.
+    pub fn column_contains(&self, col: usize) -> bool {
+        match self.column {
+            Some((start, end)) => col >= start && col < end,
+            None => true,
+        }
+    }
+
+    /// Shift the hit's byte coordinates by `bytes`, adopting `column` as
+    /// its layout column if it does not already have one.
+    ///
+    /// Called by every `Row`/`Col` collapse as it merges a child's output
+    /// into the parent's coordinate space. The "if it does not already
+    /// have one" is what keeps nested rows correct: an inner row has
+    /// already said which of *its* columns the hit is in, and that is a
+    /// narrower and equally true claim than the outer row's.
+    pub fn shift(&mut self, bytes: usize, column: Option<(usize, usize)>) {
+        self.byte_start += bytes;
+        self.byte_end += bytes;
+        self.column = match self.column {
+            Some((start, end)) => Some((start + bytes, end + bytes)),
+            None => column,
+        };
+    }
 }
 
 /// Widget instance state retained across spec updates, keyed by
@@ -203,6 +251,21 @@ pub enum WidgetInstanceState {
         /// without it, a background spec refresh that re-pins the same
         /// selection (the orchestrator dock's probe poll) yanked a
         /// wheel-scrolled dock back to the selected card.
+        user_scrolled: bool,
+    },
+    /// `Raw` instance state for a **windowed** block (`visible_rows >
+    /// 0`): the first visible row, plus whether the user has taken
+    /// the viewport over from the follow-the-tail default.
+    ///
+    /// A windowed Raw is bottom-anchored — it exists for blocks that
+    /// grow (a chat transcript, a log), where the newest row is the
+    /// one you came to read. So the renderer pins the viewport to the
+    /// end until `user_scrolled` is set, and the wheel handler clears
+    /// the flag again the moment the offset returns to the bottom, so
+    /// scrolling back down re-arms following instead of leaving the
+    /// view stranded one message behind forever.
+    Raw {
+        scroll_offset: u32,
         user_scrolled: bool,
     },
     /// `Number` instance state: the host-owned current value. Becomes
@@ -411,6 +474,17 @@ impl WidgetRegistry {
                 *so = scroll_offset;
                 *user_scrolled = true;
             }
+            // A windowed Raw block has no selection to leave behind, but
+            // it does have a tail it otherwise sticks to — dragging its
+            // thumb has to count as taking the viewport over, or the next
+            // render would yank it straight back to the bottom.
+            WidgetInstanceState::Raw {
+                scroll_offset: so,
+                user_scrolled,
+            } => {
+                *so = scroll_offset;
+                *user_scrolled = true;
+            }
             _ => return None,
         }
         None
@@ -601,12 +675,18 @@ impl WidgetRegistry {
         // "first hit on this row" would hand every click in the right-hand
         // column to the left-hand list.
         //
-        // Pick the row hit *nearest* the click instead. Distance is zero when
-        // the click is inside a hit's own span, so a single-column panel is
-        // unaffected. Choosing by "last hit starting at or before the click"
-        // was almost right, but resolved the seam between two columns — the
-        // right-hand section's border cell — to the left-hand list, which is
-        // the column the user visibly did not click.
+        // The column a hit belongs to is recorded (`HitArea::column`), so
+        // that is settled by containment rather than by proximity: a hit
+        // whose column does not hold the pointer is not a candidate at all,
+        // whatever else is on the row. This is what stops a pointer over a
+        // column with no hits of its own — a chat transcript, a terminal, a
+        // blank pane — from being claimed by the list in the next column.
+        //
+        // Among the candidates that remain, pick the one *nearest* the
+        // click. Distance is zero when the click is inside a hit's own span,
+        // so a single-column panel is unaffected; the fallback still exists
+        // because a compact row's text is narrower than its column and a
+        // click past the label is still on the row.
         fn distance(hit: &HitArea, col: usize) -> usize {
             if col < hit.byte_start {
                 hit.byte_start - col
@@ -634,6 +714,9 @@ impl WidgetRegistry {
                         && hit.widget_kind == "text"
                         && hit.payload.get("mdLine").is_some());
                 if hit.buffer_row != row || !row_gesture {
+                    continue;
+                }
+                if !hit.column_contains(col) {
                     continue;
                 }
                 let d = distance(hit, col);
@@ -669,6 +752,7 @@ mod tests {
     fn make_hit(row: u32, byte_start: usize, byte_end: usize, key: &str) -> HitArea {
         HitArea {
             overlay: false,
+            column: None,
             widget_key: key.into(),
             widget_kind: "button",
             buffer_row: row,
@@ -677,6 +761,83 @@ mod tests {
             payload: json!({}),
             event_type: "activate",
         }
+    }
+
+    /// A pointer in a column with no hits of its own is claimed by nobody.
+    ///
+    /// The shape is Home's: a transcript on the left (bytes 0..50, no
+    /// interactive widgets in it) beside a list on the right (bytes
+    /// 50..100, whose rows are `select` hits spanning only their text).
+    /// Every click and hover in the left column used to resolve to the
+    /// nearest list row — the list highlighted rows under a pointer that
+    /// was nowhere near it, and clicking the transcript selected an agent.
+    ///
+    /// With the column recorded, the left half has no candidates at all.
+    #[test]
+    fn a_row_hit_does_not_reach_across_its_column() {
+        let mut reg = WidgetRegistry::new();
+        let mut list_row = make_row_select_hit(0, 0, "agents");
+        // The right column, and the row's own text inside it.
+        list_row.byte_start = 52;
+        list_row.byte_end = 70;
+        list_row.column = Some((50, 100));
+        reg.mount(
+            pk(5),
+            BufferId(2),
+            empty_spec(),
+            vec![list_row],
+            HashMap::new(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        // Inside the list's own column, past its text: still the row. This
+        // is the fallback the column rule must not break — a compact row's
+        // text is narrower than the column it sits in.
+        assert_eq!(
+            reg.hit_test_row_aware(BufferId(2), 0, 90)
+                .expect("a click in the list's column lands on its row")
+                .1
+                .widget_key,
+            "agents"
+        );
+
+        // In the transcript column, at the same distance from the row's
+        // text. Nearest-hit resolution answered "agents" here.
+        assert!(
+            reg.hit_test_row_aware(BufferId(2), 0, 20).is_none(),
+            "a pointer in the column beside the list is not the list's"
+        );
+        // Including the seam: the last cell before the list's column.
+        assert!(
+            reg.hit_test_row_aware(BufferId(2), 0, 49).is_none(),
+            "the cell before a column belongs to the column it is in"
+        );
+    }
+
+    /// A hit that was never laid out beside anything keeps the old
+    /// behaviour: no column means it owns its whole row.
+    #[test]
+    fn a_hit_with_no_column_still_owns_its_row() {
+        let mut reg = WidgetRegistry::new();
+        reg.mount(
+            pk(6),
+            BufferId(3),
+            empty_spec(),
+            vec![make_row_select_hit(0, 12, "tree")],
+            HashMap::new(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        assert_eq!(
+            reg.hit_test_row_aware(BufferId(3), 0, 200)
+                .expect("a single-column panel is unaffected")
+                .1
+                .widget_key,
+            "tree"
+        );
     }
 
     #[test]
@@ -722,6 +883,7 @@ mod tests {
     fn make_row_select_hit(row: u32, byte_end: usize, key: &str) -> HitArea {
         HitArea {
             overlay: false,
+            column: None,
             widget_key: key.into(),
             widget_kind: "tree",
             buffer_row: row,

@@ -5206,3 +5206,156 @@ fn test_tab_drag_split_resizes_terminal() {
         screen
     );
 }
+
+/// A terminal is readable and writable from a script *while a different
+/// window is active*.
+///
+/// This is the property the control plane rests on. Terminals are owned
+/// per-window, so before `window_id` existed on these paths both the read and
+/// the write resolved against whatever window happened to be active when the
+/// command was serviced — which meant a caller could only ever reach one
+/// window's terminals, and could not name which. Cross-workspace observation
+/// was not restricted by policy; it was unexpressible.
+///
+/// Asserting through `terminal_screen` (the same call `readTerminal` answers
+/// from) rather than through rendered output on purpose: the terminal under
+/// test is deliberately *not* the one on screen.
+#[test]
+fn test_read_and_write_terminal_in_a_non_active_window() {
+    let mut harness = harness_or_return!(100, 30);
+
+    // A terminal in the window we start in...
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    let home = harness.editor().active_window_id();
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("the active buffer should be the terminal just opened");
+
+    // ...and then leave that window entirely.
+    let other = harness
+        .editor_mut()
+        .create_window_at(std::env::temp_dir(), "other".to_string());
+    harness.editor_mut().set_active_window(other);
+    harness.render().unwrap();
+    assert_ne!(
+        harness.editor().active_window_id(),
+        home,
+        "precondition: the terminal's window must not be the active one"
+    );
+
+    // Wait for the shell to come up, write to it, then wait for the echo.
+    //
+    // Two waits rather than one because they fail differently: a shell that
+    // never starts is an environment problem, an echo that never comes back
+    // is this feature broken.
+    //
+    // `wait_until` rather than a bounded poll (CONTRIBUTING.md §3): a budget
+    // here is a guess about how slow the slowest CI runner's shell is, and an
+    // earlier 5s one failed on Windows at 5.8s while passing in under a
+    // second on Linux. nextest applies the timeout from outside.
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .terminal_screen(home, terminal_id, None, true)
+                .is_ok_and(|s| !s.text.is_empty())
+        })
+        .unwrap();
+
+    // Write by naming its window. Nothing about which window is *active*
+    // should matter — that is the property under test.
+    harness
+        .editor_mut()
+        .send_terminal_input_to(home, terminal_id, "echo CROSSWINDOW\n");
+
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .terminal_screen(home, terminal_id, None, true)
+                .is_ok_and(|s| s.text.iter().any(|l| l.contains("CROSSWINDOW")))
+        })
+        .unwrap();
+
+    let screen = harness
+        .editor()
+        .terminal_screen(home, terminal_id, None, true)
+        .expect("the terminal is readable by naming its window");
+    assert!(screen.rows > 0, "the grid should report its real height");
+
+    // Naming a window that does not own the terminal is an error rather than
+    // a silent empty read — the two are different mistakes and the caller
+    // needs to tell them apart.
+    assert!(
+        harness
+            .editor()
+            .terminal_screen(other, terminal_id, None, true)
+            .is_err(),
+        "a terminal id from another window must not resolve against this one"
+    );
+}
+
+/// `describeEnvironment` reports every window and its terminals, not just the
+/// window the caller happens to be pointed at.
+///
+/// The active-window state snapshot that backs `describeWorkspace` cannot
+/// answer this — covering only one window is exactly the limit this call
+/// exists to lift — so the guard here is that a terminal in a *non-active*
+/// window is present in the result.
+#[test]
+fn test_describe_environment_spans_windows() {
+    let mut harness = harness_or_return!(100, 30);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    let home = harness.editor().active_window_id();
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("the active buffer should be the terminal just opened");
+
+    let other = harness
+        .editor_mut()
+        .create_window_at(std::env::temp_dir(), "other".to_string());
+    harness.editor_mut().set_active_window(other);
+    harness.render().unwrap();
+
+    let env = harness.editor().describe_environment();
+
+    assert_eq!(
+        env.active_window_id, other,
+        "the active window is reported as a value to read"
+    );
+    assert!(
+        env.windows.len() >= 2,
+        "both windows should be listed, got {}",
+        env.windows.len()
+    );
+    assert!(
+        env.windows
+            .windows(2)
+            .all(|w| w[0].window_id.0 <= w[1].window_id.0),
+        "windows are id-ordered so a repeated poll sees a stable list"
+    );
+
+    let described_home = env
+        .windows
+        .iter()
+        .find(|w| w.window_id == home)
+        .expect("the non-active window must still be described");
+    assert!(
+        described_home
+            .terminals
+            .iter()
+            .any(|t| t.terminal_id == terminal_id),
+        "a terminal in a non-active window must appear in the environment"
+    );
+    assert!(
+        !described_home.active,
+        "only the focused window is flagged active"
+    );
+}

@@ -588,10 +588,11 @@ fn next_window_cycles_only_dock_visible_sessions() {
     }
 }
 
-/// Rows a dock card occupies below its name row in card view: the
-/// remaining content row (branch/project + PR) plus the bottom border.
-/// Mirrors the plugin's `DOCK_CARD_HEIGHT` (2 content rows).
-const DOCK_CARD_ROWS_BELOW_NAME: u16 = 2;
+/// Rows a dock card occupies below its name row in card view: the two
+/// remaining content rows (branch/project + PR, then what the agent is
+/// doing) plus the bottom border. Mirrors the plugin's `DOCK_CARD_HEIGHT`
+/// (3 content rows).
+const DOCK_CARD_ROWS_BELOW_NAME: u16 = 3;
 
 /// Column of the dock's right-edge divider (the "wall") on the title row.
 fn dock_wall_col(h: &EditorTestHarness) -> u16 {
@@ -2890,16 +2891,19 @@ fn dock_hint_bar_pinned_to_bottom_with_sparse_tree() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Both hint rows render, pinned to the dock's bottom edge (the dock
-    // column spans the full 32-row frame): "F2 menu" on the last row,
-    // "↑↓ switch →← fold" directly above it — not directly under the
-    // single session card near the top. Waiting on the final pinned
-    // state directly (rather than settling and asserting) rides out any
-    // interleaved async re-renders (git probes, discovery sweeps).
+    // Both hint rows render, pinned to the bottom of the tree's region —
+    // "F2 menu" on the last row above the chat, "↑↓ switch →← fold"
+    // directly above it — not directly under the single session card near
+    // the top. The chat section owns the dock's final two rows (its rule
+    // and header; it is collapsed by default), so the hints land two rows
+    // short of the 32-row frame rather than on its last row. Waiting on
+    // the final pinned state directly (rather than settling and asserting)
+    // rides out any interleaved async re-renders (git probes, discovery
+    // sweeps).
     h.wait_until(|h| {
         let s = h.screen_to_string();
         let row_with = |needle: &str| s.lines().position(|l| l.contains(needle));
-        row_with("F2 menu") == Some(31) && row_with("fold") == Some(30)
+        row_with("F2 menu") == Some(29) && row_with("fold") == Some(28)
     })
     .unwrap();
 }
@@ -2924,22 +2928,24 @@ fn dock_hint_bar_not_padded_when_tree_overflows() {
     open_dock(&mut h);
 
     // The hints are on screen (not clipped away by bogus padding) and on
-    // the dock's bottom row exactly: row-granular tree rendering fills
-    // every budgeted row when overflowing (partial cards clip at the
-    // edge), so no padding is inserted and the hints land flush at the
-    // bottom.
+    // the last row above the chat exactly: row-granular tree rendering
+    // fills every budgeted row when overflowing (partial cards clip at
+    // the edge), so no padding is inserted and the hints land flush
+    // against the chat section, which owns the dock's final two rows.
     h.wait_until(|h| {
         h.screen_to_string()
             .lines()
             .position(|l| l.contains("F2 menu"))
-            == Some(31)
+            == Some(29)
     })
     .unwrap();
 }
 
 /// Collapsing a folder shrinks the tree by the folded cards; the hint
-/// bar must stay pinned to the dock bottom (the padding re-balances on
-/// the fold) instead of jumping up with the shorter tree.
+/// bar must stay pinned to the bottom of the tree's region (the padding
+/// re-balances on the fold) instead of jumping up with the shorter tree.
+/// "Bottom" is two rows short of the frame: the collapsed chat section
+/// owns the dock's final two rows.
 #[test]
 fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     let (_tmp, root) = setup_project("alphaproj");
@@ -2969,12 +2975,12 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     .unwrap();
 
     // Pre-collapse steady state: the card is visible (git probe landed
-    // its "clean" line) AND the hint bar is pinned to the dock bottom.
+    // its "clean" line) AND the hint bar is pinned above the chat.
     // A single semantic wait rides out interleaved probe re-renders.
     let hint_row = |s: &str| s.lines().position(|l| l.contains("F2 menu"));
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("clean") && hint_row(&s) == Some(31)
+        s.contains("clean") && hint_row(&s) == Some(29)
     })
     .unwrap();
 
@@ -2986,7 +2992,7 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     h.mouse_click(0, folder_row).unwrap();
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        !s.contains("clean") && hint_row(&s) == Some(31)
+        !s.contains("clean") && hint_row(&s) == Some(29)
     })
     .unwrap();
 }
@@ -3514,7 +3520,7 @@ fn dock_git_summary_survives_transient_probe_failure() {
 /// floated in the middle of the card instead of starting at its left
 /// edge, and the third row stood empty on every session without a PR.
 #[test]
-fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
+fn dock_card_starts_the_branch_at_the_left_edge() {
     let (_tmp, root) = setup_committed_project("alphaproj");
     // The measured workspace lives in its own repo, so its card can be
     // read without the launch project's own status bleeding in. It stays
@@ -3584,12 +3590,17 @@ fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
         "the branch starts at the card's left edge, got {row2:?}"
     );
 
-    // ...and that is the last content row: the card is two rows tall, so
-    // the next line is its bottom border.
-    let after = screen.lines().nth(name_row + 2).unwrap_or_default();
+    // The branch row is followed by the agent's reason row, and then the
+    // bottom border. What this test pins is *where the branch starts*, not
+    // how tall the card is, so the border is found from the shared
+    // geometry constant rather than a literal offset.
+    let after = screen
+        .lines()
+        .nth(name_row + DOCK_CARD_ROWS_BELOW_NAME as usize)
+        .unwrap_or_default();
     assert!(
         after.trim_start().starts_with('╰'),
-        "the card ends after the branch row, got {after:?}"
+        "the card ends after its content rows, got {after:?}"
     );
 }
 
@@ -3704,13 +3715,19 @@ fn dock_card_leaves_the_second_row_empty_rather_than_echo_the_name() {
     })
     .unwrap();
 
-    // ...and it is still a two-row card, closed by its bottom border.
+    // ...and the card is closed by its bottom border after the third
+    // content row (the agent's reason line, blank for a folder with no
+    // agent) — the point being that the *second* row stays empty rather
+    // than echoing the name, not that the card is any particular height.
     let screen = h.screen_to_string();
     let name_row = screen.lines().position(|l| l.contains("loose")).unwrap();
-    let after = screen.lines().nth(name_row + 2).unwrap_or_default();
+    let after = screen
+        .lines()
+        .nth(name_row + DOCK_CARD_ROWS_BELOW_NAME as usize)
+        .unwrap_or_default();
     assert!(
         after.trim_start().starts_with('╰'),
-        "the card still ends after its second row, got {after:?}"
+        "the card ends after its content rows, got {after:?}"
     );
 }
 

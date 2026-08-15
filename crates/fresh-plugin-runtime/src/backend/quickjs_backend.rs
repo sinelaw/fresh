@@ -1693,6 +1693,26 @@ impl JsEditorApi {
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
+    /// Inner content width, in columns, of the panel docked to the
+    /// left edge — the width the host actually rendered it at, not the
+    /// width its plugin asked for. `0` when nothing is docked.
+    ///
+    /// The two differ whenever the host clamps the request against the
+    /// terminal, or the user has dragged the dock to a width of their
+    /// own (which is persisted and overrides the request). A plugin
+    /// that sizes its rows against the width it requested therefore
+    /// wraps text, truncates labels and budgets rows against a number
+    /// the host disagrees with — and since the flexible region absorbs
+    /// the error, the mistake lands at the far end of the panel, which
+    /// is where the user notices it.
+    #[plugin_api(ts_return = "number")]
+    pub fn get_dock_width(&self) -> u32 {
+        self.state_snapshot
+            .read()
+            .map(|s| s.dock_content_width as u32)
+            .unwrap_or(0)
+    }
+
     /// Total terminal dimensions in cells. Unlike `getViewport()`
     /// (which reports the active split, shrunk by any vertical
     /// split layout), this reflects the full terminal — what a
@@ -6656,6 +6676,40 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Broadcast an event to every plugin subscribed to `name`, as
+    /// `editor.on(name, handler)`.
+    ///
+    /// The counterpart of `on` for events the host does not produce. A
+    /// subscriber cannot tell a plugin-emitted event from a host one, and
+    /// that is the point: a watcher subscribes to `agent_state_change`
+    /// — which only Orchestrator can know — exactly as it subscribes to
+    /// `window_created`, which the host emits.
+    ///
+    /// The emitting plugin receives its own event too. Filter on the
+    /// payload's `from` field when that matters.
+    ///
+    /// ```js
+    /// editor.emitEvent("agent_state_change", {
+    ///   workspaceId: 12, state: "waiting", summary: "approve edit to e2e.rs",
+    /// });
+    /// ```
+    #[qjs(rename = "emitEvent")]
+    pub fn emit_event<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+        #[plugin_api(ts_type = "unknown")] payload: rquickjs::Value<'js>,
+    ) -> bool {
+        let payload = js_to_json(&ctx, payload);
+        self.command_sender
+            .send(PluginCommand::EmitEvent {
+                plugin: self.plugin_name.clone(),
+                name,
+                payload,
+            })
+            .is_ok()
+    }
+
     // === Async Operations ===
 
     /// Spawn a process (async, returns request_id)
@@ -7675,14 +7729,91 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Send input data to a terminal
-    pub fn send_terminal_input(&self, terminal_id: u64, data: String) -> bool {
+    /// Send input data to a terminal.
+    ///
+    /// `windowId` names the window that owns `terminalId`. Terminals are
+    /// owned per-window, so without it this reaches only the active
+    /// window's terminals — and "active" is whatever it happens to be when
+    /// the command is serviced, not when you sent it. Omit it only for a
+    /// terminal in your own window, and prefer passing it always.
+    pub fn send_terminal_input(
+        &self,
+        terminal_id: u64,
+        data: String,
+        window_id: rquickjs::function::Opt<u64>,
+    ) -> bool {
         self.command_sender
             .send(PluginCommand::SendTerminalInput {
                 terminal_id: fresh_core::TerminalId(terminal_id as usize),
+                window_id: window_id.0.map(fresh_core::WindowId),
                 data,
             })
             .is_ok()
+    }
+
+    /// Describe every open window and the terminals in it.
+    ///
+    /// The cross-window counterpart to `describeWorkspace()`, which reports
+    /// only the window you are pointed at. This is the one call that answers
+    /// "what is going on everywhere" — before it, that took a call per window
+    /// and still could not reach another window's terminals at all.
+    ///
+    /// Structural facts only. Whether a terminal holds an agent, and whether
+    /// that agent is working or waiting on you, comes from the Orchestrator's
+    /// own listing, which joins on `terminalId`.
+    #[plugin_api(
+        async_promise,
+        js_name = "describeEnvironment",
+        ts_return = "EnvironmentDescription"
+    )]
+    #[qjs(rename = "_describeEnvironmentStart")]
+    pub fn describe_environment_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::DescribeEnvironment { request_id: id });
+        id
+    }
+
+    /// Read a terminal's live screen as plain text rows.
+    ///
+    /// Both ids are required: terminals are owned per-window, so a terminal
+    /// id alone does not identify one. Resolves to `{ text, rows, cols,
+    /// cursor, altScreen, title }`, and rejects when the window or the
+    /// terminal within it is unknown.
+    ///
+    /// `lines` returns at most that many rows counted from the **bottom** —
+    /// the tail, which for a full-screen agent is the prompt and input area
+    /// and therefore the part that says whether it is waiting for you.
+    /// `trim` (default `true`) strips trailing blanks, since a grid is a
+    /// fixed rectangle and the padding is pure cost to read.
+    ///
+    /// This is the cheap, reason-over-it view. To *show* a human another
+    /// workspace's terminal, render the window itself rather than pasting
+    /// this into a buffer.
+    #[plugin_api(
+        async_promise,
+        js_name = "readTerminal",
+        ts_return = "TerminalScreenInfo"
+    )]
+    #[qjs(rename = "_readTerminalStart")]
+    pub fn read_terminal_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        window_id: u64,
+        terminal_id: u64,
+        lines: rquickjs::function::Opt<u32>,
+        trim: rquickjs::function::Opt<bool>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::ReadTerminal {
+            window_id: fresh_core::WindowId(window_id),
+            terminal_id: fresh_core::TerminalId(terminal_id as usize),
+            lines: lines.0.map(|n| n as usize),
+            trim: trim.0.unwrap_or(true),
+            request_id: id,
+        });
+        id
     }
 
     /// Close a terminal
@@ -8180,6 +8311,8 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.spawnProcessWait = _wrapAsync("_spawnProcessWaitStart", "spawnProcessWait");
                 editor.watchPath = _wrapAsync("_watchPathStart", "watchPath");
                 editor.getBufferText = _wrapAsync("_getBufferTextStart", "getBufferText");
+                editor.readTerminal = _wrapAsync("_readTerminalStart", "readTerminal");
+                editor.describeEnvironment = _wrapAsync("_describeEnvironmentStart", "describeEnvironment");
                 editor.createCompositeBuffer = _wrapAsync("_createCompositeBufferStart", "createCompositeBuffer");
                 editor.getCompositeCursorInfo = _wrapAsync("_getCompositeCursorInfoStart", "getCompositeCursorInfo");
                 editor.getHighlights = _wrapAsync("_getHighlightsStart", "getHighlights");
@@ -11551,6 +11684,7 @@ mod tests {
                     root: std::path::PathBuf::from("/repo"),
                     project_path: std::path::PathBuf::from("/repo"),
                     shared_worktree: false,
+                    agent_command: Vec::new(),
                     remote: None,
                 },
                 fresh_core::api::WindowInfo {
@@ -11560,6 +11694,7 @@ mod tests {
                     root: std::path::PathBuf::from("/wt/feat-auth"),
                     project_path: std::path::PathBuf::from("/wt/feat-auth"),
                     shared_worktree: false,
+                    agent_command: Vec::new(),
                     remote: None,
                 },
             ];

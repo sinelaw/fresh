@@ -50,6 +50,10 @@ struct Cli {
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
+    /// Everything an agent working inside Fresh needs, in one page
+    #[arg(long)]
+    skills: bool,
+
     /// Files to open (supports file:line:col, ranges, and @"message" syntax)
     #[arg(value_name = "FILES")]
     files: Vec<String>,
@@ -3645,6 +3649,13 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
     match rest.first().copied() {
         Some("script") => {
             match &rest[1..] {
+                [.., "--help"] | [.., "-h"] => {
+                    eprintln!("usage: fresh --cmd script api <query> [--json]   search the API by name or description");
+                    eprintln!("       fresh --cmd script check [FILE|-]        parse + check editor.* names, without running");
+                    eprintln!("       fresh --cmd script run [--as NAME] [FILE|-]  evaluate against this workspace");
+                    eprintln!("       fresh --cmd script types                 paths of the API declaration files");
+                    Ok(())
+                }
                 ["run", from @ ..] => script_run(session, from),
                 ["check", from @ ..] => script_check(from),
                 ["api", query, flags @ ..] => script_api(query, flags),
@@ -3656,7 +3667,7 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
                 _ => {
                     eprintln!("usage: fresh --cmd script api <query>     search the API by name or description");
                     eprintln!("       fresh --cmd script check [FILE|-]  parse + check editor.* names, without running");
-                    eprintln!("       fresh --cmd script run [FILE|-]    evaluate against this workspace (default: stdin)");
+                    eprintln!("       fresh --cmd script run [--as NAME] [FILE|-]  evaluate against this workspace (default: stdin)");
                     eprintln!("       fresh --cmd script types           paths of the API declaration files");
                     std::process::exit(2);
                 }
@@ -3667,7 +3678,50 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
         // running editor. Two different `init`s is unfortunate, but `reload`
         // belongs with the thing it reloads.
         Some("init") if rest.get(1).copied() == Some("reload") => init_reload_command(session),
+        // The agent mailbox. Thin wrappers like everything else here: the
+        // script channel is already window-scoped and token-checked, so these
+        // verbs inherit "which Fresh instance, which workspace" for free —
+        // which is the whole reason an agent should not be reaching for the
+        // filesystem to do this.
+        Some("agent") => {
+            match &rest[1..] {
+                [.., "--help"] | [.., "-h"] | [] => {
+                    eprintln!(
+                    "usage: fresh --cmd agent status <working|waiting|idle|done|blocked> [summary]"
+                );
+                    eprintln!("       fresh --cmd agent say <message>     say something in the user's chat");
+                    eprintln!(
+                        "       fresh --cmd agent inbox [--take]    read what the user asked for"
+                    );
+                    Ok(())
+                }
+                ["status", state, summary @ ..] => agent_status_command(session, state, summary),
+                ["say", words @ ..] => agent_say_command(session, words),
+                ["inbox", flags @ ..] => agent_inbox_command(session, flags.contains(&"--take")),
+                _ => {
+                    eprintln!(
+                    "usage: fresh --cmd agent status <working|waiting|idle|done|blocked> [summary]"
+                );
+                    eprintln!("       fresh --cmd agent say <message>     say something in the user's chat");
+                    eprintln!(
+                        "       fresh --cmd agent inbox [--take]    read what the user asked for"
+                    );
+                    std::process::exit(2);
+                }
+            }
+        }
         Some("command") => match &rest[1..] {
+            // Before the verb arms, or `run --help` runs a command named
+            // `--help` and reports that no such command is registered.
+            [.., "--help"] | [.., "-h"] | [] => {
+                eprintln!(
+                    "usage: fresh --cmd command run \"<name>\"   run a registered command by its palette name"
+                );
+                eprintln!(
+                    "       fresh --cmd command list [QUERY]    list registered commands (built-in + plugin)"
+                );
+                Ok(())
+            }
             ["run", name] => command_run_command(session, name),
             ["list", query] => command_list_command(session, Some(query)),
             ["list"] => command_list_command(session, None),
@@ -3685,6 +3739,7 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
             eprintln!("Unknown command: {}", rest.join(" "));
             eprintln!("usage: fresh --cmd script <api|check|run|types> ...");
             eprintln!("       fresh --cmd command <run|list> ...");
+            eprintln!("       fresh --cmd agent <status|say|inbox> ...");
             eprintln!("       fresh --cmd init reload");
             std::process::exit(2);
         }
@@ -3732,13 +3787,18 @@ fn help_command(topic: &[&str]) -> AnyhowResult<()> {
                 "  plugin   write init.ts / a plugin — the runtime contract, the \
                  dev loop, a worked auto-refreshing panel"
             );
+            println!(
+                "  agents   work with the other agents — your status and inbox, the \
+                 fleet, delegation, the event log"
+            );
             Ok(())
         }
         ["tour", flags @ ..] => help_tour(flags),
         ["script", ..] => help_script(),
         ["plugin", ..] | ["plugins", ..] | ["init", ..] => help_plugin(),
+        ["agents", ..] | ["agent", ..] | ["orchestrator", ..] | ["fleet", ..] => help_agents(),
         [other, ..] => {
-            eprintln!("unknown help topic: {other} (available: tour, script, plugin)");
+            eprintln!("unknown help topic: {other} (available: tour, script, plugin, agents)");
             std::process::exit(2);
         }
     }
@@ -3870,7 +3930,7 @@ Drive a running Fresh with the same API plugins use. A script runs as
 the body of an async function with an `editor` global; whatever it
 returns is printed as JSON. Source comes from a file or stdin.
 
-  fresh --cmd script run [FILE|-]           evaluate against this workspace
+  fresh --cmd script run [--as NAME] [FILE|-]  evaluate against this workspace
   fresh --cmd script check [FILE|-]         parse + check editor.* names, no run
   fresh --cmd script api <query> [--json]   search the API by name/description
   fresh --cmd script types                  paths of the API declaration files
@@ -3885,11 +3945,17 @@ Those three are the author → reload → test loop for customizing the editor:
 edit init.ts, `init reload`, then `command run` the command you registered.
 No keystroke from the user is needed at any point.
 
-Target a specific daemon with --session NAME (default: the daemon of the
-current working directory). Inside a Fresh terminal the right session is
-already in `$FRESH_SESSION`, so no flag is needed — reach for --session only
-when running from outside, where `fresh --cmd daemon list` names the
-candidates.
+A script that sticks around — a panel, an event watcher — should be named:
+
+  fresh --cmd script run --as fleet-watch watch.ts
+
+A submitted script is loaded as a real plugin and is never unloaded on its
+own, because unloading runs the cleanup path that would tear down the
+terminals and workspaces scripts are usually run to create. So an unnamed
+script that mounts a panel or subscribes to an event leaves another copy
+running every time you submit it. `--as` replaces the previous load of that
+name instead, which makes install idempotent and `edit → re-run` a loop
+rather than a leak.
 
 Examples:
   echo 'return editor.listBuffers().map(b => b.path)' | fresh --cmd script run
@@ -3924,7 +3990,539 @@ See also: fresh --cmd help plugin   — the runtime contract, and a worked
     out
 }
 
+/// One line per member of a `type XxxApi = { … }` block: the signature, and
+/// the first sentence of its doc comment.
+///
+/// Generated rather than written out, so the list cannot drift from the build
+/// — and printed in `--skills` so an agent sees the whole verb set without
+/// running a second command to discover it.
+fn api_block_summary(text: &str, type_name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut inside = false;
+    let mut doc: Vec<String> = Vec::new();
+    let mut in_doc = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if !inside {
+            let head = t.trim_start_matches("export ").trim();
+            if head.starts_with(&format!("type {type_name} "))
+                || head.starts_with(&format!("type {type_name}="))
+            {
+                inside = true;
+            }
+            continue;
+        }
+        if t == "}" || t == "};" {
+            break;
+        }
+        if t.starts_with("/**") {
+            doc.clear();
+            in_doc = true;
+            if let Some(rest) = t.strip_prefix("/**").and_then(|r| r.strip_suffix("*/")) {
+                doc.push(rest.trim().to_string());
+                in_doc = false;
+            } else {
+                // See `parse_dts_entries`: the opening line carries the first
+                // sentence, and it is the one worth keeping.
+                let rest = t.trim_start_matches("/**").trim();
+                if !rest.is_empty() {
+                    doc.push(rest.to_string());
+                }
+            }
+            continue;
+        }
+        if in_doc {
+            let (body, closes) = match t.find("*/") {
+                Some(i) => (&t[..i], true),
+                None => (t, false),
+            };
+            let body = body.trim_start_matches('*').trim();
+            if !body.is_empty() {
+                doc.push(body.to_string());
+            }
+            if closes {
+                in_doc = false;
+            }
+            continue;
+        }
+        let head: String = t
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if head.is_empty() || !t[head.len()..].trim_start().starts_with('(') {
+            doc.clear();
+            continue;
+        }
+        // First sentence only: the point is a menu, not the manual. `script
+        // api <name>` prints the whole doc comment when one is wanted.
+        let summary = doc
+            .join(" ")
+            .split(". ")
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches('.')
+            .to_string();
+        let sig = t.trim_end_matches(';');
+        // Signatures spanning several lines (an inline options object) are
+        // truncated at the brace — the shape is a `script api` away and the
+        // name is what this list is for.
+        let sig = sig.split(" {").next().unwrap_or(sig).trim_end();
+        out.push(if summary.is_empty() {
+            format!("  {sig}")
+        } else {
+            format!("  {sig}\n      {summary}")
+        });
+        doc.clear();
+    }
+    out
+}
+
+/// Signature + first doc sentence for named members of `fresh.d.ts`.
+fn editor_member_summary(names: &[&str]) -> Vec<String> {
+    let entries = parse_dts_entries(EMBEDDED_FRESH_DTS, "fresh.d.ts");
+    let mut out = Vec::new();
+    for want in names {
+        if let Some(e) = entries
+            .iter()
+            .find(|e| &e.name == want && e.signature.contains('('))
+        {
+            let summary = e
+                .doc
+                .join(" ")
+                .split(". ")
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_end_matches('.')
+                .to_string();
+            let sig = e
+                .signature
+                .split(" {")
+                .next()
+                .unwrap_or(&e.signature)
+                .trim_end();
+            out.push(if summary.is_empty() {
+                format!("  {sig}")
+            } else {
+                format!("  {sig}\n      {summary}")
+            });
+        }
+    }
+    out
+}
+
+/// `fresh --skills` — everything an agent working inside Fresh needs, in one
+/// page.
+///
+/// The topics already exist (`help agents`, `help script`, `help plugin`) and
+/// that turned out to be the problem: an agent has to know they exist, guess
+/// which one holds the thing it needs, and read three of them to find out that
+/// the high-level call it wanted lives behind an indirection none of them
+/// mention up front. This is the page you print when you know nothing —
+/// deliberately short, deliberately duplicating the parts that get missed, and
+/// pointing at the long topics for the rest.
+fn skills_text() -> String {
+    let mut out = String::new();
+    out.push_str(
+        r##"Working inside Fresh — everything you need, on one page
+
+You are running in a terminal inside the Fresh editor. You can report what you
+are doing, talk to the user, take instructions, drive the editor, and start and
+steer other agents.
+
+Always invoke the CLI through $FRESH_BIN — it is the exact binary running this
+editor. $FRESH_SESSION says which instance you belong to and the commands below
+use it for you, so you can never report into the wrong editor by accident.
+
+═══ TALKING TO THE USER ══════════════════════════════════════════════════════
+
+1. SAY HELLO. Do this first, before anything else, even with nothing to report.
+
+    "$FRESH_BIN" --cmd agent status idle ready
+    "$FRESH_BIN" --cmd agent say "$FRESH_AGENT_NAME here. What do you need?"
+
+   The user's chat is where agents appear. One that says nothing is
+   indistinguishable from one that failed to start. If Fresh did not start you,
+   you have no name yet — saying something is what gets you one, and the reply
+   tells you what it is.
+
+2. REPORT YOUR STATE whenever it changes, and above all when you are blocked.
+
+    "$FRESH_BIN" --cmd agent status working running the e2e suite
+    "$FRESH_BIN" --cmd agent status waiting approve my edit to tests/e2e.rs
+    "$FRESH_BIN" --cmd agent status done 3 files changed, suite green
+
+   States: working / waiting / idle / done / blocked. `waiting` is the one that
+   puts you at the top of the user's list, in red, with your summary as the
+   reason. Without a status, Fresh guesses your state from your terminal
+   output — usually a spinner, a progress bar, or half a redraw — and cannot
+   tell "I am asking you to approve" from "the word approve appeared in a diff
+   I am showing you". A line you write is the only reliable signal.
+
+3. SAY THINGS. Status is one line you overwrite; a message is said once and
+   stays. Use it when you finish, when you have a question, when you find
+   something they should know.
+
+    "$FRESH_BIN" --cmd agent say "pushed the 3 PRs; want me to start the fourth?"
+
+   With no arguments it reads the message from stdin, so long or multi-line
+   text needs no quoting:
+
+    printf 'done:\n- api.rs\n- tests\n' | "$FRESH_BIN" --cmd agent say
+
+4. READ YOUR INBOX at the start of each turn. `--take` acknowledges what it
+   returns, so nothing is handed to you twice or lost to a crash between
+   reading and acting. Empty output means nothing is waiting.
+
+    "$FRESH_BIN" --cmd agent inbox --take
+
+   Output is one block per message:  `--- from <who>` then the text.
+
+═══ DRIVING THE EDITOR ═══════════════════════════════════════════════════════
+
+Submit TypeScript. The body is an async function with an `editor` global:
+top-level `await` works, `return value` is the answer and prints as JSON, a
+throw exits non-zero with the message on stderr.
+
+    "$FRESH_BIN" --cmd script run <<'EOF'
+    return editor.describeWorkspace();
+    EOF
+
+A script that sticks around — a panel, an event watcher — must be named, or
+every submission leaves another copy running:
+
+    "$FRESH_BIN" --cmd script run --as fleet-watch watch.ts
+
+Ids are never ambient. There is no "current" window or terminal: a call that
+meant something different depending on where the user last clicked could not be
+reasoned about, so every call takes explicit ids. `describeEnvironment()` lists
+every window and its terminals with theirs.
+
+"##,
+    );
+
+    use std::fmt::Write as _;
+
+    out.push_str("Calls you will want first (from this build's declarations):\n\n");
+    for line in editor_member_summary(&[
+        "describeWorkspace",
+        "describeEnvironment",
+        "readTerminal",
+        "listWindows",
+        "listBuffers",
+        "openFile",
+        "createTerminal",
+        "sendTerminalInput",
+        "splitWindow",
+        "setStatus",
+        "runCommand",
+        "getPluginApi",
+    ]) {
+        let _ = writeln!(out, "{line}");
+    }
+
+    out.push_str(
+        r##"
+Find anything else with:
+
+    "$FRESH_BIN" --cmd script api <query>
+
+It searches names and descriptions, prints the doc comment, and expands the
+option types — so one call usually answers the question outright. Two things
+that are not obvious and cost people whole sessions:
+
+  * Plugin APIs are NOT on `editor`. They are behind `getPluginApi`, and the
+    search output tells you which name to pass:
+
+        const orch = editor.getPluginApi("orchestrator");
+
+  * Prefer the high-level call. `createWindowWithTerminal` is a primitive and
+    will happily let you hand-build a worktree, a branch, an agent launch and
+    the wiring between them. `orch.newWorkspace({...})` does all of that in one
+    call. When a palette command does what you want, look for its scriptable
+    twin before building it yourself; `--cmd command list` names the commands.
+
+═══ THE OTHER AGENTS ═════════════════════════════════════════════════════════
+
+    const orch = editor.getPluginApi("orchestrator");
+
+"##,
+    );
+
+    // The orchestrator's whole verb set, generated so it cannot drift. Read
+    // from the declarations the editor writes on startup; absent those (a
+    // `--skills` run before the editor has ever started), the prose above
+    // still stands and `script api` finds the rest.
+    let mut listed = false;
+    if let Ok(files) = read_api_declarations() {
+        if let Some((_, text)) = files.iter().find(|(n, _)| n.contains("plugins.d.ts")) {
+            let lines = api_block_summary(text, "OrchestratorApi");
+            if !lines.is_empty() {
+                for line in lines {
+                    let _ = writeln!(out, "{line}");
+                }
+                listed = true;
+            }
+        }
+    }
+    if !listed {
+        out.push_str(
+            "  (start the editor once, then `--cmd script api orchestrator` lists these)\n",
+        );
+    }
+
+    out.push_str(
+        r##"
+Worked examples:
+
+  # Create a workspace on a new branch and start an agent in it
+  "$FRESH_BIN" --cmd script run <<'EOF'
+  const orch = editor.getPluginApi("orchestrator");
+  return await orch.newWorkspace({
+    path: "/repos/api", newBranch: "fix/flaky", name: "flaky",
+    agent: "claude", prompt: "Fix the flaky retry test.",
+    worktree: true, visit: false,
+  });
+  EOF
+
+  # Who needs the user right now
+  echo 'return editor.getPluginApi("orchestrator").fleet()' \
+    | "$FRESH_BIN" --cmd script run
+
+  # Tell another agent to do something (delivery, not completion — it acts
+  # because its own briefing says to read its inbox)
+  "$FRESH_BIN" --cmd script run <<'EOF'
+  const orch = editor.getPluginApi("orchestrator");
+  return await orch.delegate({
+    target: "flaky",
+    instruction: "Rerun with --nocapture and report what fails.",
+  });
+  EOF
+
+  # Read another agent's screen, when it writes no status
+  echo 'return await editor.readTerminal(WINDOW_ID, TERMINAL_ID, 40, true)' \
+    | "$FRESH_BIN" --cmd script run
+
+Watching instead of asking:
+
+  $FRESH_FLEET_EVENTS is a file with one JSON object per line — every state
+  change and every delegation, for every workspace:
+
+    tail -f "$FRESH_FLEET_EVENTS"
+
+  A plugin would subscribe with `editor.on("agent_state_change", ...)`; from a
+  shell the file is the same information without a protocol.
+
+═══ IF YOU CANNOT RUN THE CLI ════════════════════════════════════════════════
+
+Underneath, the mailbox is files, and they are the same mailbox:
+
+    <root>/.fresh/agents/<name>/status     one line, "<state> <summary>"
+    <root>/.fresh/agents/<name>/inbox/     one file per instruction; move to done/
+    <root>/.fresh/agents/<name>/outbox/    one file per message to the user
+
+Fresh looks under `.fresh/agents/` in every checkout it knows about, so an
+agent nobody launched still shows up and can still be messaged. Add
+`.fresh/.gitignore` containing `*` so none of it touches `git status`:
+
+    NAME=schema-work
+    mkdir -p ".fresh/agents/$NAME/inbox/done" ".fresh/agents/$NAME/outbox/read"
+    printf '*\n' > .fresh/.gitignore
+    echo "waiting need a decision on the schema" > ".fresh/agents/$NAME/status"
+
+Prefer the CLI where you can run it: the paths are a contract you have to get
+right, the commands are not, and the commands cannot address the wrong
+instance.
+
+═══ LONGER READS ═════════════════════════════════════════════════════════════
+
+    "$FRESH_BIN" --cmd agent --help      the mailbox verbs
+    "$FRESH_BIN" --cmd script --help     the script verbs
+    "$FRESH_BIN" --cmd help agents       the control plane in full
+    "$FRESH_BIN" --cmd help script       scripting, and this build's API surface
+    "$FRESH_BIN" --cmd help plugin       panels, events, the runtime contract
+    "$FRESH_BIN" --cmd help tour         authoring guided code tours
+    "$FRESH_BIN" --cmd command list      every palette command, built-in and plugin
+    "$FRESH_BIN" --cmd script types      where the full declaration files live
+"##,
+    );
+    out
+}
+
 /// `fresh --cmd help plugin` — how to write init.ts / a plugin.
+/// `fresh --cmd help agents` — the control plane, from an agent's side.
+fn help_agents() -> AnyhowResult<()> {
+    print!("{}", agents_help_text());
+    Ok(())
+}
+
+/// The `help agents` body.
+///
+/// Written for the reader who is *an* agent rather than the one running the
+/// editor: what you are expected to write, what you may ask for, and what you
+/// can watch. The launch briefing carries an abridged version of this — this
+/// is where the detail lives, so the briefing can stay short.
+fn agents_help_text() -> String {
+    r#"Working with the other agents
+
+Fresh runs many workspaces at once, and a workspace may hold more than one
+agent. Your mailbox is yours alone — it is keyed by your name, not by the
+checkout — so two agents in one directory never overwrite each other.
+
+WHAT YOU ARE EXPECTED TO SAY
+
+Three commands. They reach the editor through the same authorized, window-
+scoped channel as `script run`, so they find the right Fresh instance and the
+right workspace on their own — you do not need to know where any of this is
+stored, and you cannot report into the wrong editor by accident.
+
+  fresh --cmd agent status <state> <summary>   what you are doing now
+  fresh --cmd agent say <message>              say it in the user's chat
+  fresh --cmd agent inbox [--take]             what the user has asked for
+
+SAY HELLO FIRST
+
+Before anything else, on startup, even with nothing to report:
+
+    fresh --cmd agent status idle ready
+    fresh --cmd agent say "$FRESH_AGENT_NAME here. What do you need?"
+
+The user's chat is where agents appear. One that says nothing is
+indistinguishable from one that failed to start, and they cannot message an
+agent they have not seen. If you were not started by Fresh you have no name
+yet — saying something is what gets you one, and the answer names it.
+
+STATUS
+
+`<state> <summary>`, where state is one of:
+
+    working   you are doing something
+    waiting   you are blocked and need the user   <- the important one
+    idle      nothing in progress
+    done      finished the task you were given
+    blocked   stuck on something the user must resolve
+
+    fresh --cmd agent status working running the e2e suite
+    fresh --cmd agent status waiting approve my edit to tests/e2e.rs
+    fresh --cmd agent status done 3 files changed, suite green
+
+Write it often, and above all the moment you need the user. Without it, Fresh
+falls back to guessing your state from your terminal output — which is usually
+a spinner, a progress bar, or half a redraw, and cannot tell "I am asking you
+to approve" from "the word approve appeared in a diff I am showing you". A
+line you write is the only reliable way the user sees that you are waiting.
+
+SAYING THINGS
+
+Status is a state, not a conversation: it is one line and you overwrite it, so
+anything said there is gone at the next state change. "I'm done pushing the 3
+PRs" is said once, at a moment, and must still be there when the user looks up
+two minutes later. That is what `say` is for:
+
+    fresh --cmd agent say "pushed the 3 PRs; want me to start the fourth?"
+
+With no arguments it reads the message from stdin, so long text needs no
+quoting.
+
+YOUR INBOX
+
+Read it at the start of each turn. `--take` acknowledges what it returns, so
+an instruction is never handed to you twice and none is lost to a crash
+between reading and acting:
+
+    fresh --cmd agent inbox --take
+
+WITHOUT THE CLI
+
+Underneath, all of it is files, and an agent that cannot run the CLI can use
+them directly — it is the same mailbox:
+
+    <root>/.fresh/agents/<name>/status     one line, "<state> <summary>"
+    <root>/.fresh/agents/<name>/inbox/     one file per instruction; move to done/
+    <root>/.fresh/agents/<name>/outbox/    one file per message to the user
+
+Fresh looks under `.fresh/agents/` for every checkout it knows about, so an
+agent nobody launched from the editor still shows up and can still be messaged.
+Create `.fresh/.gitignore` containing `*` so none of it touches `git status`:
+
+    NAME=schema-work
+    mkdir -p ".fresh/agents/$NAME/inbox/done" ".fresh/agents/$NAME/outbox/read"
+    printf '*\n' > .fresh/.gitignore
+    echo "waiting need a decision on the schema" > ".fresh/agents/$NAME/status"
+
+Prefer the CLI where you can run it. The paths are a contract you have to get
+right; the commands are not, and they cannot address the wrong instance.
+
+WHAT YOU MAY ASK FOR
+
+  const orch = editor.getPluginApi("orchestrator");
+
+  orch.fleet()               who is doing what, most urgent first
+  orch.delegate({...})       write an instruction into another agent's inbox
+  orch.listWorkspaces()      the dock's own model, including archived/on-disk
+  orch.newWorkspace({...})   create a workspace and start an agent in it
+
+    "$FRESH_BIN" --cmd script run <<'EOF'
+    const orch = editor.getPluginApi("orchestrator");
+    return orch.fleet();
+    EOF
+
+Each `fleet()` row carries `agentName`, `project`, `state`, `summary` and
+`source`. `source` is "agent" when that agent wrote its own status and
+"inferred" when the summary was guessed from its screen — weigh them
+differently.
+
+Delegation reports **delivery, not completion**. The peer acts because its
+briefing tells it to read its inbox; nothing is injected into its terminal.
+Address it by name — that is the form that still means one agent when two of
+them share a checkout:
+
+    await orch.delegate({
+      target: "refactor-1",
+      instruction: "Rerun the flaky test with --nocapture and report what fails.",
+    });
+
+WHAT YOU CAN WATCH
+
+  $FRESH_FLEET_EVENTS   one JSON object per line: every state change, every
+                        delegation, for every workspace
+
+    tail -f "$FRESH_FLEET_EVENTS"
+
+This is how you notice something instead of being told. A plugin would
+subscribe with `editor.on("agent_state_change", ...)`; from a shell, the file
+is the same information without a protocol.
+
+READING ANOTHER AGENT'S SCREEN
+
+When a peer writes no status, its terminal is all there is:
+
+    return await editor.readTerminal(windowId, terminalId, 40, true);
+
+Both ids are required — there is no ambient "current" workspace, because a
+call that means something different depending on where the user last clicked
+cannot be reasoned about. `editor.describeEnvironment()` lists every window
+and its terminals with their ids.
+
+WHAT THE USER SEES
+
+  Orchestrator: Open    the workspace dock, with the agent list sorted by who
+                        needs them and a chat carrying everything every agent
+                        has said — and a line to answer them on
+
+Your status is the reason column on your row; your outbox is your half of the
+chat. Keeping both current is what puts you in front of the user at the right
+moment, and what makes their reply reach you rather than a terminal nobody is
+looking at.
+
+See also: fresh --skills             — all of this on one page, shortest first
+          fresh --cmd help script   — the API surface of this build
+          fresh --cmd help plugin   — panels, events, the runtime contract
+"#
+    .to_string()
+}
+
 fn help_plugin() -> AnyhowResult<()> {
     print!("{}", plugin_help_text());
     Ok(())
@@ -4183,12 +4781,46 @@ fn script_types() -> AnyhowResult<()> {
 ///
 /// Whatever the script returns is printed as JSON; a throw becomes a non-zero
 /// exit with the message on stderr.
+/// `script run [--as NAME] [FILE|-]`.
+///
+/// `--as` names the loaded plugin so a persistent script — a panel, an event
+/// watcher — can be re-submitted without stacking another copy of itself. A
+/// script is never unloaded on its own, so without a name every submission
+/// leaves the previous one running.
 fn script_run(session: Option<&str>, from: &[&str]) -> AnyhowResult<()> {
-    let source = read_script_source(from)?;
+    let (as_name, rest) = take_as_flag(from)?;
+    let rest_refs: Vec<&str> = rest.iter().map(|s| s.as_str()).collect();
+    let source = read_script_source(&rest_refs)?;
     if source.trim().is_empty() {
         anyhow::bail!("empty script: pass a file, or pipe the source on stdin");
     }
-    submit_script(session, source, false)
+    submit_script_as(session, source, false, as_name)
+}
+
+/// Split `--as NAME` (or `--as=NAME`) out of the argument list, wherever it
+/// appears — a flag that only worked before the filename would be a trap.
+fn take_as_flag(args: &[&str]) -> AnyhowResult<(Option<String>, Vec<String>)> {
+    let mut name: Option<String> = None;
+    let mut rest: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        if let Some(v) = arg.strip_prefix("--as=") {
+            name = Some(v.to_string());
+        } else if *arg == "--as" {
+            let v = it.next().ok_or_else(|| {
+                anyhow::anyhow!("--as needs a name: fresh --cmd script run --as my-watcher")
+            })?;
+            name = Some((*v).to_string());
+        } else {
+            rest.push((*arg).to_string());
+        }
+    }
+    if let Some(n) = name.as_deref() {
+        if n.trim().is_empty() {
+            anyhow::bail!("--as needs a non-empty name");
+        }
+    }
+    Ok((name, rest))
 }
 
 /// Send `source` to a live editor's script channel and report the outcome:
@@ -4204,11 +4836,20 @@ fn script_run(session: Option<&str>, from: &[&str]) -> AnyhowResult<()> {
 /// caller asked for JSON); the convenience verbs return prose meant to be
 /// read, where the surrounding quotes and `\n` escapes would be noise.
 fn submit_script(session: Option<&str>, source: String, unwrap_string: bool) -> AnyhowResult<()> {
+    submit_script_as(session, source, unwrap_string, None)
+}
+
+fn submit_script_as(
+    session: Option<&str>,
+    source: String,
+    unwrap_string: bool,
+    as_name: Option<String>,
+) -> AnyhowResult<()> {
     use fresh::server::protocol::ClientControl;
 
     let socket = resolve_cmd_socket(session)?;
     let mut conn = connect_cmd(&socket)?;
-    conn.send(&ClientControl::RunScript { source })?;
+    conn.send(&ClientControl::RunScript { source, as_name })?;
 
     // A script gets the long wait: it can create a workspace (a git worktree
     // plus an agent process) before it answers, and timing that out would
@@ -4229,6 +4870,80 @@ fn submit_script(session: Option<&str>, source: String, unwrap_string: bool) -> 
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// The agent's own name, when Fresh started it and said so.
+///
+/// Absent for an agent nobody launched through the editor, which is fine: the
+/// plugin then resolves the caller from the window the script channel is bound
+/// to, and mints a name if there is not one yet. That is what lets an agent
+/// become visible by saying something rather than by adopting a convention.
+fn agent_name_env() -> String {
+    std::env::var("FRESH_AGENT_NAME").unwrap_or_default()
+}
+
+/// `fresh --cmd agent status <state> [summary...]`
+fn agent_status_command(session: Option<&str>, state: &str, summary: &[&str]) -> AnyhowResult<()> {
+    let script = format!(
+        "const orch = editor.getPluginApi(\"orchestrator\");\n\
+         const r = orch.agentStatus({{ window: FRESH_WINDOW_ID, name: {name}, \
+         state: {state}, summary: {summary} }});\n\
+         if (!r.ok) throw new Error(r.reason ?? \"could not report\");\n\
+         return \"\";",
+        name = json_str(&agent_name_env()),
+        state = json_str(state),
+        summary = json_str(&summary.join(" ")),
+    );
+    submit_script_as(session, script, true, None)
+}
+
+/// `fresh --cmd agent say <message...>` — or the message on stdin.
+fn agent_say_command(session: Option<&str>, words: &[&str]) -> AnyhowResult<()> {
+    // Words when given, stdin otherwise, so a long message can be piped and a
+    // short one typed without quoting gymnastics.
+    let text = if words.is_empty() {
+        let mut buf = String::new();
+        use std::io::Read;
+        std::io::stdin().read_to_string(&mut buf)?;
+        buf
+    } else {
+        words.join(" ")
+    };
+    if text.trim().is_empty() {
+        anyhow::bail!("nothing to say: pass a message, or pipe one on stdin");
+    }
+    let script = format!(
+        "const orch = editor.getPluginApi(\"orchestrator\");\n\
+         const r = orch.agentSay({{ window: FRESH_WINDOW_ID, name: {name}, text: {text} }});\n\
+         if (!r.ok) throw new Error(r.reason ?? \"could not send\");\n\
+         return \"\";",
+        name = json_str(&agent_name_env()),
+        text = json_str(text.trim()),
+    );
+    submit_script_as(session, script, true, None)
+}
+
+/// `fresh --cmd agent inbox [--take]`
+fn agent_inbox_command(session: Option<&str>, take: bool) -> AnyhowResult<()> {
+    let script = format!(
+        "const orch = editor.getPluginApi(\"orchestrator\");\n\
+         const r = orch.agentInbox({{ window: FRESH_WINDOW_ID, name: {name}, take: {take} }});\n\
+         if (!r.ok) throw new Error(r.reason ?? \"could not read the inbox\");\n\
+         return r.messages.map((m) => `--- from ${{m.from}}\\n${{m.text}}`).join(\"\\n\\n\");",
+        name = json_str(&agent_name_env()),
+        take = take,
+    );
+    submit_script_as(session, script, true, None)
+}
+
+/// JSON-encode a string for embedding in generated script source.
+///
+/// The arguments are the user's prose — quotes, backslashes, newlines and all
+/// — and they are being spliced into JavaScript. Anything less than a real
+/// encoder here is an injection bug with the agent's own message as the
+/// payload.
+fn json_str(s: &str) -> String {
+    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
 /// `fresh --cmd init reload` — re-read and run `~/.config/fresh/init.ts` in
@@ -4351,14 +5066,39 @@ fn parse_dts_entries(text: &str, source: &str) -> Vec<ApiEntry> {
             if let Some(rest) = t.strip_prefix("/**").and_then(|r| r.strip_suffix("*/")) {
                 doc.push(rest.trim().to_string());
                 in_doc = false;
+            } else {
+                // Text on the opening line of a multi-line comment. Dropping
+                // it lost the first sentence of every doc in the file, which
+                // is the sentence that says what the thing is — `runAgent`
+                // summarised as `"Run Agent…" dialog`, having thrown away
+                // "Launch a coding agent in THIS workspace".
+                let rest = t.trim_start_matches("/**").trim();
+                if !rest.is_empty() {
+                    doc.push(rest.to_string());
+                }
             }
             continue;
         }
         if in_doc {
-            if t.starts_with("*/") {
+            // `*/` closes the comment wherever it appears, not only at the
+            // start of a line. Requiring it to lead made every declaration in
+            // `plugins.d.ts` invisible to search: that file is generated by a
+            // different emitter, which ends the last text line with ` */`, so
+            // `in_doc` never cleared and every member after the first doc
+            // comment was swallowed as more comment text. `script api
+            // newWorkspace` answering "no API member matches" — about a method
+            // that is right there — was this, and it is the worst possible
+            // answer, because it reads as "the editor cannot do this".
+            let (body, closes) = match t.find("*/") {
+                Some(i) => (&t[..i], true),
+                None => (t, false),
+            };
+            let body = body.trim_start_matches('*').trim();
+            if !body.is_empty() {
+                doc.push(body.to_string());
+            }
+            if closes {
                 in_doc = false;
-            } else {
-                doc.push(t.trim_start_matches('*').trim().to_string());
             }
             continue;
         }
@@ -4399,6 +5139,159 @@ fn parse_dts_entries(text: &str, source: &str) -> Vec<ApiEntry> {
         }
     }
     entries
+}
+
+/// Which plugin exposes `member`, by finding the `XxxApi` type it is declared
+/// in and looking that type up in the `getPluginApi` map at the end of
+/// `plugins.d.ts`.
+fn owning_plugin_api(member: &str, files: &[(String, String)]) -> Option<String> {
+    let (_, text) = files.iter().find(|(n, _)| n.contains("plugins.d.ts"))?;
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        let t = line.trim_start_matches("export ").trim();
+        if let Some(rest) = t.strip_prefix("type ") {
+            current = rest
+                .split(|c: char| c == ' ' || c == '=' || c == '<')
+                .next()
+                .map(|s| s.to_string());
+        }
+        let head: String = t
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if head == member && t[head.len()..].trim_start().starts_with('(') {
+            let ty = current?;
+            // `  orchestrator: OrchestratorApi;` — the key is the name
+            // `getPluginApi` takes.
+            for l in text.lines() {
+                let l = l.trim().trim_end_matches(';');
+                if let Some((k, v)) = l.split_once(':') {
+                    if v.trim() == ty {
+                        return Some(k.trim().to_string());
+                    }
+                }
+            }
+            return None;
+        }
+    }
+    None
+}
+
+/// Type names a signature refers to, in order, ignoring the built-ins that
+/// carry no information worth printing.
+fn referenced_type_names(signature: &str) -> Vec<String> {
+    const BORING: &[&str] = &[
+        "string",
+        "number",
+        "boolean",
+        "void",
+        "null",
+        "undefined",
+        "any",
+        "unknown",
+        "never",
+        "Promise",
+        "Array",
+        "Record",
+        "Partial",
+        "Map",
+        "Set",
+        "true",
+        "false",
+        "type",
+        "readonly",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    let mut word = String::new();
+    for ch in signature.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            word.push(ch);
+            continue;
+        }
+        if !word.is_empty() {
+            let w = std::mem::take(&mut word);
+            let looks_like_a_type = w.chars().next().is_some_and(|c| c.is_uppercase());
+            if looks_like_a_type && !BORING.contains(&w.as_str()) && !out.contains(&w) {
+                out.push(w);
+            }
+        }
+    }
+    out
+}
+
+/// The body of `type Name = …`, as printable lines.
+///
+/// Follows one level of `|` and `&` composition, because that is how the
+/// option types are actually written — `NewWorkspaceOptions` is a union of
+/// two intersections, and printing only the alias line ("A | B") repeats the
+/// problem it was supposed to solve.
+fn type_body(name: &str, files: &[(String, String)], depth: usize) -> Option<Vec<String>> {
+    // Deep enough for the option types as they are actually written:
+    // `NewWorkspaceOptions` is a union of intersections that bottoms out in
+    // `RunAgentOptions` four hops down, and stopping short of it hides
+    // `agent` and `prompt` — the two fields a caller most needs.
+    if depth > 3 {
+        return None;
+    }
+    for (_, text) in files {
+        let head = format!("type {name} ");
+        let Some(at) = text.lines().position(|l| {
+            let t = l.trim_start_matches("export ").trim();
+            t.starts_with(&head) || t.starts_with(&format!("type {name}="))
+        }) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        let first = lines[at].trim().trim_start_matches("export ").trim();
+        // `type X = A | B;` — an alias with no body of its own. Print what it
+        // is, then the things it is made of.
+        if !first.ends_with('{') {
+            let mut out = vec![first.to_string()];
+            for part in referenced_type_names(first.split('=').nth(1).unwrap_or("")) {
+                if let Some(body) = type_body(&part, files, depth + 1) {
+                    out.push(format!("{part}:"));
+                    out.extend(body.into_iter().map(|l| format!("  {l}")));
+                }
+            }
+            return Some(out);
+        }
+        // A record body: everything up to the closing brace, comments and all
+        // — the comments are where the meaning of each field is.
+        let mut out = Vec::new();
+        let mut depth_braces = 1usize;
+        for line in lines.iter().skip(at + 1) {
+            let t = line.trim();
+            depth_braces += t.matches('{').count();
+            depth_braces = depth_braces.saturating_sub(t.matches('}').count());
+            if depth_braces == 0 {
+                break;
+            }
+            out.push(t.to_string());
+        }
+        // An intersection body (`A & { ... }`) still names its other half.
+        for part in referenced_type_names(first.split('=').nth(1).unwrap_or("")) {
+            if let Some(body) = type_body(&part, files, depth + 1) {
+                out.push(format!("{part}:"));
+                out.extend(body.into_iter().map(|l| format!("  {l}")));
+            }
+        }
+        return Some(out);
+    }
+    None
+}
+
+/// Option/record types a signature mentions, expanded. Capped, because a
+/// signature that names five types wants a summary, not a type dump.
+fn expand_types(signature: &str, files: &[(String, String)]) -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    for name in referenced_type_names(signature).into_iter().take(3) {
+        if let Some(body) = type_body(&name, files, 0) {
+            if !body.is_empty() {
+                out.push((name, body));
+            }
+        }
+    }
+    out
 }
 
 /// Where the API declarations live, and their contents.
@@ -4522,11 +5415,31 @@ fn script_api(query: &str, flags: &[&str]) -> AnyhowResult<()> {
 
     for entry in hits.iter().take(20) {
         println!("{}  [{}]", entry.signature, entry.source);
+        // How to reach it. A plugin API is not on `editor` — it is behind
+        // `getPluginApi`, and nothing about a signature says so, which left
+        // that indirection to be learned from an unrelated doc comment.
+        if entry.source.contains("plugins.d.ts") {
+            if let Some(owner) = owning_plugin_api(&entry.name, &files) {
+                println!("    reach it with: editor.getPluginApi(\"{owner}\")");
+            }
+        }
         for line in &entry.doc {
             if line.is_empty() {
                 println!();
             } else {
                 println!("    {}", line);
+            }
+        }
+        // The shape of what it takes, not just the name of it. A signature
+        // reading `newWorkspace(options?: NewWorkspaceOptions)` tells the
+        // caller nothing they can act on — and the type it names is a union of
+        // intersections four aliases deep, so finding the actual field list
+        // meant grepping the declaration file by hand. Expand the option types
+        // it mentions, following aliases, so one call answers the question.
+        for (name, body) in expand_types(&entry.signature, &files) {
+            println!("  {name}:");
+            for line in body {
+                println!("    {line}");
             }
         }
         println!();
@@ -5368,6 +6281,14 @@ fn real_main() -> AnyhowResult<()> {
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);
 
+    // One page, no editor, no arguments to get right. Top-level rather than a
+    // `--cmd help` topic because it is the thing you run when you do not yet
+    // know that `--cmd help` exists.
+    if cli.skills {
+        print!("{}", skills_text());
+        return Ok(());
+    }
+
     // The agent script verbs run against a live editor and never spawn a
     // daemon, so handle them here — before the `Args` conversion, whose slice
     // match would otherwise reject them as unknown commands. The `_ =>`
@@ -5376,7 +6297,7 @@ fn real_main() -> AnyhowResult<()> {
     if !cli.cmd.is_empty() {
         let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
         match cmd_args.as_slice() {
-            ["script", ..] | ["command", ..] => {
+            ["script", ..] | ["command", ..] | ["agent", ..] => {
                 run_cmd_command(&cmd_args)?;
                 return Ok(());
             }

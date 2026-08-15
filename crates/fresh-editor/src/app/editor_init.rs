@@ -614,6 +614,7 @@ impl Editor {
             remote_reconnect_forwarders: std::collections::HashSet::new(),
             remote_connected_cache: HashMap::new(),
             materialize_pending: std::collections::HashSet::new(),
+            dormant_agent_argv: HashMap::new(),
             workspace_persistence_enabled: true,
             grammar_reload_pending: false,
             grammar_build_in_progress: false,
@@ -679,6 +680,8 @@ impl Editor {
             path_changes_for_test: Vec::new(),
             last_watch_response_for_test: None,
             preview_window_id: None,
+            pane_view_states: std::collections::HashMap::new(),
+            pane_composite_view_states: std::collections::HashMap::new(),
             settings_state: None,
             calibration_wizard: None,
             // event_debug moved to Window

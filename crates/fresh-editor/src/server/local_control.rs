@@ -71,6 +71,7 @@ enum LocalControlRequest {
     RunScript {
         token: Option<String>,
         source: String,
+        as_name: Option<String>,
         reply: Sender<ServerControl>,
     },
 }
@@ -255,9 +256,15 @@ fn pump_shared(shared: &Shared, editor: &mut Editor) -> bool {
             Ok(LocalControlRequest::RunScript {
                 token,
                 source,
+                as_name,
                 reply,
             }) => {
-                match command_access::run_script(Some(editor), token.as_deref(), &source) {
+                match command_access::run_script(
+                    Some(editor),
+                    token.as_deref(),
+                    &source,
+                    as_name.as_deref(),
+                ) {
                     // Only a refusal settles here — a script that started
                     // answers for itself.
                     command_access::CommandDispatch::Settled { ok, error, output } => {
@@ -440,7 +447,7 @@ fn handle_connection(
                     waiters.lock().unwrap().remove(&id);
                 }
             }
-            ClientControl::RunScript { source } => {
+            ClientControl::RunScript { source, as_name } => {
                 // Round-trip to the editor thread (it owns the plugin manager)
                 // and relay its answer back to the client.
                 let (reply_tx, reply_rx) = mpsc::channel::<ServerControl>();
@@ -448,6 +455,7 @@ fn handle_connection(
                 let _ = req_tx.send(LocalControlRequest::RunScript {
                     token: cmd_token.clone(),
                     source,
+                    as_name,
                     reply: reply_tx,
                 });
                 // Bounded, unlike the other requests: a script could in
@@ -840,6 +848,7 @@ mod tests {
         let conn = connect_client_with_token(&paths, "tok-123");
         let msg = ClientControl::RunScript {
             source: "return 1;".to_string(),
+            as_name: None,
         };
         conn.write_control(&serde_json::to_string(&msg).unwrap())
             .unwrap();
@@ -921,6 +930,7 @@ mod tests {
             conn.write_control(
                 &serde_json::to_string(&ClientControl::RunScript {
                     source: "return editor.activeWindow();".to_string(),
+                    as_name: None,
                 })
                 .unwrap(),
             )
@@ -982,6 +992,7 @@ mod tests {
         conn.write_control(
             &serde_json::to_string(&ClientControl::RunScript {
                 source: "return 1;".to_string(),
+                as_name: None,
             })
             .unwrap(),
         )
@@ -1009,6 +1020,7 @@ mod tests {
         let conn = connect_client(&paths);
         let msg = ClientControl::RunScript {
             source: "return 1;".to_string(),
+            as_name: None,
         };
         conn.write_control(&serde_json::to_string(&msg).unwrap())
             .unwrap();
