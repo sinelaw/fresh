@@ -509,3 +509,43 @@ fn test_files_sidebar_follows_the_diff_cursor() {
         harness.screen_to_string()
     );
 }
+
+/// Issue 7: a hunk header is a place too.
+///
+/// `n` leaves the cursor on the `@@` row, which is exactly where a reader
+/// flips the layout from — and the anchor that carries the reader's place
+/// across the flip only understood `+`/`-`/context rows. Anchored on
+/// nothing, the switch back reopened the file wherever the composite
+/// happened to be, throwing away the hunk the reader was standing on.
+#[test]
+fn test_layout_flip_from_a_hunk_header_comes_back_to_it() {
+    init_tracing_from_env();
+    let repo = repo_with_two_changed_files();
+    let mut harness = harness_for(&repo);
+    open_review_diff_for(&mut harness, "alpha_changed_0");
+
+    // Second hunk: far enough from the top that losing the anchor shows.
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    let header = cursor_bar_text(&harness);
+    assert!(
+        header.contains("@@"),
+        "`n` should leave the cursor on a hunk header, got `{}`:\n{}",
+        header.trim(),
+        harness.screen_to_string()
+    );
+
+    flip_to_split_and_back(&mut harness);
+
+    assert_eq!(
+        cursor_bar_text(&harness),
+        header,
+        "the flip should come back to the hunk header the reader left.\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+}

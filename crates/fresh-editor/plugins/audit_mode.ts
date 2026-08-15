@@ -5091,27 +5091,62 @@ const AUTO_SPLIT_MIN_WIDTH = 140;
  *  other view opens on the same line rather than at the top of the file. */
 interface ReviewAnchor {
     fileKey: string;
-    lineType: 'add' | 'remove' | 'context';
+    /** Absent when the cursor was not on a diff line — a hunk header, a
+     *  file header, a comment box. Those rows are where `n` and `,`/`.`
+     *  leave you, so they are exactly where a layout switch is likely to
+     *  happen from. */
+    lineType?: 'add' | 'remove' | 'context';
     oldLine?: number;
     newLine?: number;
+    /** The hunk the row belongs to, when it belongs to one. Carries a
+     *  header row across the switch on its own: it is enough to open the
+     *  other layout on that hunk and to find the row again coming back. */
+    hunkId?: string;
 }
 
 /** The anchor for the current cursor position. Reads the composite's
  *  cursor in side-by-side and the unified stream's row properties
- *  otherwise. */
+ *  otherwise.
+ *
+ *  A row that is not a diff line still anchors: pressing `n` leaves the
+ *  cursor on a hunk header, and requiring a `+`/`-`/context line meant
+ *  flipping the layout from there threw the reader's place away and
+ *  reopened the file at the top. */
 async function currentReviewAnchor(): Promise<ReviewAnchor | null> {
     const info = state.centerComposite
         ? await getCompositeLineInfo()
         : getCurrentLineInfo();
-    if (!info || !info.lineType) return null;
-    const file = state.files.find(f => f.path === info.file);
+    if (info && info.lineType) {
+        const file = state.files.find(f => f.path === info.file);
+        if (file) {
+            return {
+                fileKey: fileKey(file),
+                lineType: info.lineType,
+                oldLine: info.oldLine,
+                newLine: info.newLine,
+                hunkId: info.hunkId,
+            };
+        }
+    }
+    // Not on a diff line. In the stream the row still says which hunk (or
+    // at least which file) it belongs to.
+    if (state.centerComposite) return null;
+    const props = propsAtCursorRow();
+    if (!props) return null;
+    const path = typeof props["file"] === 'string' ? props["file"] as string : null;
+    const file = path !== null
+        ? state.files.find(f => f.path === path)
+        : state.files.find(f => fileKey(f) === state.filesCurrentKey);
     if (!file) return null;
-    return {
-        fileKey: fileKey(file),
-        lineType: info.lineType,
-        oldLine: info.oldLine,
-        newLine: info.newLine,
-    };
+    const hunkId = typeof props["hunkId"] === 'string' ? props["hunkId"] as string : undefined;
+    return { fileKey: fileKey(file), hunkId };
+}
+
+/** The hunk an anchor names, if it names one. */
+function anchorHunk(anchor: ReviewAnchor): Hunk | undefined {
+    return anchor.hunkId !== undefined
+        ? state.hunks.find(h => h.id === anchor.hunkId)
+        : undefined;
 }
 
 /** Index, within its file's hunks, of the hunk holding the anchor's line —
@@ -5123,6 +5158,12 @@ function anchorHunkIndex(anchor: ReviewAnchor): number {
     const fileHunks = state.hunks.filter(
         h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
     );
+    // The hunk the anchor names outright wins: a header row has no line
+    // to place inside a range.
+    if (anchor.hunkId !== undefined) {
+        const named = fileHunks.findIndex(h => h.id === anchor.hunkId);
+        if (named >= 0) return named;
+    }
     const idx = fileHunks.findIndex(h =>
         (anchor.newLine !== undefined
             && anchor.newLine >= h.range.start && anchor.newLine <= h.range.end)
@@ -5139,10 +5180,33 @@ function restoreReviewAnchor(anchor: ReviewAnchor): void {
     if (state.reviewLayout === 'side-by-side') {
         const cc = state.centerComposite;
         if (!cc) return;
-        const pane = anchor.lineType === 'remove' ? 0 : 1;
-        const line = anchor.lineType === 'remove' ? anchor.oldLine : anchor.newLine;
+        const hunk = anchorHunk(anchor);
+        // A header row names a hunk but no line: open on where that hunk
+        // starts. Its NEW side exists for everything but a pure deletion.
+        const pane = anchor.lineType === 'remove'
+            || (anchor.lineType === undefined && hunk !== undefined && hunk.range.start === 0)
+            ? 0 : 1;
+        const line = anchor.lineType === 'remove'
+            ? anchor.oldLine
+            : anchor.lineType !== undefined
+                ? anchor.newLine
+                : (pane === 0 ? hunk?.oldRange.start : hunk?.range.start);
         if (line === undefined) return;
         editor.setCompositeCursorLine(cc.compositeBufId, pane, line - 1);
+        return;
+    }
+    if (anchor.lineType === undefined) {
+        // Came from a header row: its own row in the stream is the place
+        // to land, not some line inside the hunk.
+        const hunkRow = anchor.hunkId !== undefined
+            ? state.hunkRowByHunkId[anchor.hunkId]
+            : undefined;
+        if (hunkRow !== undefined) {
+            jumpDiffCursorToRow(hunkRow);
+            return;
+        }
+        const fileRow = state.fileHeaderRows[anchor.fileKey];
+        if (fileRow !== undefined) jumpDiffCursorToRow(fileRow);
         return;
     }
     for (const rowStr of Object.keys(state.entryPropsByRow)) {
@@ -5200,8 +5264,15 @@ function nearestHunkRowToAnchor(anchor: ReviewAnchor): number | undefined {
 
 async function review_set_layout(layout: 'unified' | 'side-by-side'): Promise<void> {
     if (state.reviewLayout !== layout) {
-        // Read where the reader is *before* the center is rebuilt.
-        const anchor = await currentReviewAnchor();
+        // Read where the reader is *before* the center is rebuilt. On the
+        // way back from a side-by-side the reader never moved in, the row
+        // they left the stream on is a better answer than anything the
+        // composite's cursor can say: the composite has no header rows, so
+        // a hunk header becomes "the hunk's first line" on the round trip.
+        const anchor = (layout === 'unified' && await composedCursorUnmoved())
+            ? layoutReturn!.anchor
+            : await currentReviewAnchor();
+        layoutReturn = null;
         state.reviewLayout = layout;
         // Unified expands every file, side-by-side renders one — the
         // center rebuild below has to see the new mode.
@@ -5217,6 +5288,16 @@ async function review_set_layout(layout: 'unified' | 'side-by-side'): Promise<vo
             renderCenter();
         }
         if (anchor) restoreReviewAnchor(anchor);
+        if (layout === 'side-by-side' && anchor) {
+            const placed = await editor.getCompositeCursorInfo();
+            if (placed) {
+                layoutReturn = {
+                    anchor,
+                    pane: placed.focusedPane,
+                    line: placed.lines[placed.focusedPane] ?? null,
+                };
+            }
+        }
         // The sticky names the current file in side-by-side and the
         // top-of-view file in unified — either way it has just changed.
         refreshStickyHeader(state.diffViewportTopRow);
@@ -5227,6 +5308,21 @@ async function review_set_layout(layout: 'unified' | 'side-by-side'): Promise<vo
             : (editor.t("status.unified_view") || "Unified view")
     );
 }
+/** Where the switch into side-by-side put the composite's cursor, and the
+ *  stream row it came from. Cleared as soon as it is used or superseded. */
+let layoutReturn: { anchor: ReviewAnchor; pane: number; line: number | null } | null = null;
+
+/** True when the composite's cursor is still exactly where switching into
+ *  side-by-side put it — i.e. the reader looked and came back without
+ *  moving, so the row they left is still the row they mean. */
+async function composedCursorUnmoved(): Promise<boolean> {
+    if (layoutReturn === null || state.centerComposite === null) return false;
+    const info = await editor.getCompositeCursorInfo();
+    if (!info) return false;
+    return info.focusedPane === layoutReturn.pane
+        && (info.lines[info.focusedPane] ?? null) === layoutReturn.line;
+}
+
 async function review_layout_split() { await review_set_layout('side-by-side'); }
 registerHandler("review_layout_split", review_layout_split);
 
