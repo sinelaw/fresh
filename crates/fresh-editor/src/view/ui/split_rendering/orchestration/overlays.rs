@@ -176,6 +176,18 @@ pub(crate) fn decoration_context(
         theme.semantic_highlight_bg,
     );
 
+    // Place the cursor-following bar (if a plugin declared one) from the
+    // cursor this frame is about to draw. Doing it here rather than from
+    // the `cursor_moved` hook is the whole point: a plugin painting it
+    // itself is always answering the *previous* frame's cursor, so the bar
+    // trails the caret by a row for as long as an arrow key repeats.
+    state.cursor_line_overlay.update(
+        &state.buffer,
+        &mut state.overlays,
+        &mut state.marker_list,
+        primary_cursor_position,
+    );
+
     // Brackets inside comments and strings are prose/data, not structural
     // punctuation, so they must be excluded from bracket matching and rainbow
     // colorization (issue #2405). The highlighter already classifies these

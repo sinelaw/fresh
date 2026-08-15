@@ -451,6 +451,9 @@ impl Editor {
             PluginCommand::RemoveOverlay { buffer_id, handle } => {
                 self.handle_remove_overlay(buffer_id, handle);
             }
+            PluginCommand::SetCursorLineOverlay { buffer_id, options } => {
+                self.handle_set_cursor_line_overlay(buffer_id, options);
+            }
             PluginCommand::ClearAllOverlays { buffer_id } => {
                 self.handle_clear_all_overlays(buffer_id);
             }
@@ -1666,6 +1669,7 @@ impl Editor {
                 panel_name,
                 entries,
             } => {
+                self.perf_counters.panel_content_sets += 1;
                 self.set_panel_content(group_id, panel_name, entries);
             }
             PluginCommand::CloseBufferGroup { group_id } => {

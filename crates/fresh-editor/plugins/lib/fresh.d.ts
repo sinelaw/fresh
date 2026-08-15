@@ -3619,6 +3619,26 @@ interface EditorAPI {
 	*/
 	addOverlay(bufferId: number, namespace: string, start: number, end: number, options: Record<string, unknown>): boolean;
 	/**
+	* Declare a one-line overlay that follows this buffer's cursor.
+	* 
+	* Takes the same options as `addOverlay` and paints the same way — the
+	* difference is who places it. The host re-derives the range from the
+	* cursor while drawing each frame, so the bar marks the row the caret
+	* is on in that very frame. Painting it by hand from `cursor_moved`
+	* cannot: the hook fires after the move that already drew, so the bar
+	* lands a frame late and visibly trails a held arrow key.
+	* 
+	* Pass `null` to withdraw it.
+	* 
+	* ```typescript
+	* editor.setCursorLineOverlay(bufferId, {
+	* bg: "editor.selection_bg",
+	* extendToLineEnd: true,
+	* });
+	* ```
+	*/
+	setCursorLineOverlay(bufferId: number, options: unknown): boolean;
+	/**
 	* Clear all overlays in a namespace
 	*/
 	clearNamespace(bufferId: number, namespace: string): boolean;

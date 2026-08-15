@@ -3966,6 +3966,71 @@ impl JsEditorApi {
         Ok(true)
     }
 
+    /// Declare a one-line overlay that follows this buffer's cursor.
+    ///
+    /// Takes the same options as `addOverlay` and paints the same way — the
+    /// difference is who places it. The host re-derives the range from the
+    /// cursor while drawing each frame, so the bar marks the row the caret
+    /// is on in that very frame. Painting it by hand from `cursor_moved`
+    /// cannot: the hook fires after the move that already drew, so the bar
+    /// lands a frame late and visibly trails a held arrow key.
+    ///
+    /// Pass `null` to withdraw it.
+    ///
+    /// ```typescript
+    /// editor.setCursorLineOverlay(bufferId, {
+    ///   bg: "editor.selection_bg",
+    ///   extendToLineEnd: true,
+    /// });
+    /// ```
+    #[qjs(rename = "setCursorLineOverlay")]
+    pub fn set_cursor_line_overlay<'js>(
+        &self,
+        _ctx: rquickjs::Ctx<'js>,
+        buffer_id: u32,
+        options: rquickjs::Value<'js>,
+    ) -> rquickjs::Result<bool> {
+        use fresh_core::api::OverlayColorSpec;
+
+        // Same parser shape as addOverlay; accepts `[r, g, b]` arrays or
+        // theme-key strings.
+        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+            if let Ok(theme_key) = obj.get::<_, String>(key) {
+                if !theme_key.is_empty() {
+                    return Some(OverlayColorSpec::ThemeKey(theme_key));
+                }
+            }
+            if let Ok(arr) = obj.get::<_, Vec<u8>>(key) {
+                if arr.len() >= 3 {
+                    return Some(OverlayColorSpec::Rgb(arr[0], arr[1], arr[2]));
+                }
+            }
+            None
+        }
+
+        let parsed = options.as_object().map(|obj| OverlayOptions {
+            fg: parse_color_spec("fg", obj),
+            bg: parse_color_spec("bg", obj),
+            underline: obj.get("underline").unwrap_or(false),
+            bold: obj.get("bold").unwrap_or(false),
+            italic: obj.get("italic").unwrap_or(false),
+            strikethrough: obj.get("strikethrough").unwrap_or(false),
+            extend_to_line_end: obj.get("extendToLineEnd").unwrap_or(false),
+            reversed: obj.get("reversed").unwrap_or(false),
+            fg_on_collision_only: obj.get("fgOnCollisionOnly").unwrap_or(false),
+            url: obj.get("url").ok(),
+        });
+
+        let _ = self
+            .command_sender
+            .send(PluginCommand::SetCursorLineOverlay {
+                buffer_id: BufferId(buffer_id as usize),
+                options: parsed,
+            });
+
+        Ok(true)
+    }
+
     /// Clear all overlays in a namespace
     pub fn clear_namespace(&self, buffer_id: u32, namespace: String) -> bool {
         self.command_sender
