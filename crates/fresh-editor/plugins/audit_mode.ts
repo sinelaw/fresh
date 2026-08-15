@@ -2229,6 +2229,33 @@ function panelVisible(panel: 'files' | 'diff' | 'comments'): boolean {
 function renderFilesPanel(): void {
     if (filesPanel === null || !panelVisible('files')) return;
     filesPanel.set(buildFilesPanelSpec());
+    pointSidebarAtCurrentFile();
+}
+
+/** Move the sidebar's selection onto the review's current file.
+ *
+ *  A tree's selected row is host state after its first render — the
+ *  `selectedIndex` in a rebuilt spec is a seed the host ignores — so
+ *  repainting the panel with a new current file left the highlight
+ *  wherever the sidebar's own navigation had last put it. Reading down
+ *  the stream then walked the cursor through file after file with the
+ *  sidebar still pointing at the one you started in. This is the
+ *  host-side setter, so the selection actually moves (and scrolls itself
+ *  into view).
+ *
+ *  A directory or section row the user selected stays put: those are the
+ *  sidebar's own navigation, and folding one is a gesture the diff cursor
+ *  has no opinion about. */
+function pointSidebarAtCurrentFile(): void {
+    if (filesPanel === null || !panelVisible('files')) return;
+    if (state.filesCurrentKey === null) return;
+    if (filesSelectedNodeKey.startsWith("dir:") || filesSelectedNodeKey.startsWith("cat:")) return;
+    const nodeKey = `file:${state.filesCurrentKey}`;
+    if (nodeKey === filesSelectedNodeKey) return;
+    const idx = filesTree.keys.indexOf(nodeKey);
+    if (idx < 0) return;
+    filesSelectedNodeKey = nodeKey;
+    filesPanel.setSelectedIndex(FILES_TREE_KEY, idx);
 }
 
 /** Repaint the COMMENTS rail, if it is on screen. */
@@ -2403,13 +2430,19 @@ function markStreamDirty(): void {
 
 /** What the content currently in the stream buffer was built from. The
  *  focused file is part of it because the composite's stand-in stream
- *  carries only that file's body (`fileBodyRendered`), and the panel's
- *  width because inline comment boxes are wrapped to it. */
+ *  carries only that file's body (`fileBodyRendered`).
+ *
+ *  The panel's width counts only while notes are on screen: comment boxes
+ *  are the one thing wrapped to it (`pushLineComments`), and the host
+ *  reports the panel's real width a moment after the stream is first laid
+ *  out — so treating every width as significant put a full relayout in
+ *  the reader's way seconds into a review that had no notes in it. */
 function streamSignature(): string {
+    const widthShapesTheStream = state.showComments && state.comments.length > 0;
     return [
         state.streamRevision,
         state.focusOnly ? state.filesCurrentKey : '*',
-        diffPanelWidth(),
+        widthShapesTheStream ? diffPanelWidth() : '*',
     ].join('|');
 }
 
@@ -2598,16 +2631,16 @@ function refreshStickyHeader(topVisibleRow: number): void {
     }
 }
 
+
+
 /**
  * Helper: jump the diff cursor to the file's first hunk (or its file
  * header if it has no hunks). Auto-expands the file if collapsed.
  */
 function jumpToFile(file: FileEntry): void {
     const key = fileKey(file);
-    if (state.collapsedFiles.has(key)) {
-        state.collapsedFiles.delete(key);
-        updateMagitDisplay();
-    }
+    // Collapse is a fold, so revealing the file is one too — no relayout.
+    if (state.collapsedFiles.delete(key)) applyFolds();
     // Prefer this file's first hunk row; fall back to the file header.
     // Read the row from the build's own map rather than counting hunks:
     // the count used to skip collapsed files, but collapse is a conceal
@@ -2767,12 +2800,12 @@ function jumpToComment(commentId: string): void {
         return;
     }
 
-    // Auto-expand whatever's between the cursor and this comment.
+    // Auto-expand whatever's between the cursor and this comment. Two
+    // different costs hide here: revealing a collapse is a fold change,
+    // while changing which file the centre carries is a real relayout.
+    let revealed = false;
     let needRebuild = false;
-    if (hunk.gitStatus && state.collapsedSections.has(hunk.gitStatus)) {
-        state.collapsedSections.delete(hunk.gitStatus);
-        needRebuild = true;
-    }
+    if (hunk.gitStatus) revealed = state.collapsedSections.delete(hunk.gitStatus) || revealed;
     const file = state.files.find(f => f.path === hunk.file && f.category === hunk.gitStatus);
     if (file) {
         const key = fileKey(file);
@@ -2783,16 +2816,11 @@ function jumpToComment(commentId: string): void {
             state.filesCurrentKey = key;
             needRebuild = true;
         }
-        if (state.collapsedFiles.has(key)) {
-            state.collapsedFiles.delete(key);
-            needRebuild = true;
-        }
+        revealed = state.collapsedFiles.delete(key) || revealed;
     }
-    if (state.collapsedHunks.has(hunk.id)) {
-        state.collapsedHunks.delete(hunk.id);
-        needRebuild = true;
-    }
+    revealed = state.collapsedHunks.delete(hunk.id) || revealed;
     if (needRebuild) updateMagitDisplay();
+    else if (revealed) applyFolds();
     // Pin this comment as the highlighted one BEFORE jumping. Any
     // subsequent cursor_moved event that re-derives the highlight
     // will recompute the same id; doing it eagerly avoids a flicker
@@ -5676,19 +5704,23 @@ function jumpToGlobalHunk(globalIdx: number) {
     const target = state.hunks[globalIdx];
     const targetFileKey = fileKeyOf(target.file, target.gitStatus || 'unstaged');
     // Always expand any collapse on the target's section / file / hunk so
-    // n/p never silently lands on an invisible row.
-    if (target.gitStatus) state.collapsedSections.delete(target.gitStatus);
-    state.collapsedFiles.delete(targetFileKey);
-    state.collapsedHunks.delete(target.id);
+    // n/p never silently lands on an invisible row. Collapsing is a host
+    // fold over rows the stream already carries (see `applyFolds`), so
+    // revealing them is a fold change — re-laying-out the stream for it
+    // put a second of work behind every `n` on a large review, most of
+    // them for a target that was not collapsed in the first place.
+    let revealed = false;
+    if (target.gitStatus) revealed = state.collapsedSections.delete(target.gitStatus) || revealed;
+    revealed = state.collapsedFiles.delete(targetFileKey) || revealed;
+    revealed = state.collapsedHunks.delete(target.id) || revealed;
     if (!fileBodyRendered(targetFileKey)) {
         // Side-by-side: the composite draws one file, so the target has to
         // become the current file before its hunk row exists. This is how
         // `n`/`p` cross file boundaries there.
         state.filesCurrentKey = targetFileKey;
         refreshFocusedFile();
-    } else {
-        // Already laid out: rebuild so the just-expanded rows render.
-        updateMagitDisplay();
+    } else if (revealed) {
+        applyFolds();
     }
     // Look up the target hunk's row directly — much simpler than counting.
     const row = state.hunkRowByHunkId[target.id];
