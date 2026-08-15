@@ -425,12 +425,26 @@ fn test_quick_open_goto_line_live_preview_mouse_click_commits() {
 
     // The pre-preview snapshot (line 1) must NOT overwrite the click target
     // (line 78) — status bar must report line 78 after the prompt closes.
+    //
+    // Wait for the status bar to report *a* line, then assert which one,
+    // rather than waiting for line 78 itself. The click and the Esc are both
+    // fully dispatched by the time we get here, so the cursor's line is
+    // already decided: if the click did not land where this test intends —
+    // absorbed by the suggestion popup's outer rect, or a row off — the
+    // status bar will say so on its first frame and no later frame will
+    // change it. Waiting on "Ln 78," in that case is a wait for a state that
+    // can no longer arrive, i.e. a 180 s nextest timeout with no failed
+    // assertion to point at (CONTRIBUTING Code §16); this way the same
+    // failure names the line the cursor actually ended on.
     harness
-        .wait_until(|h| h.screen_to_string().contains("Ln 78,"))
-        .expect(
-            "Cursor should stay on the clicked line 78 — pre-preview snapshot must be \
-             dropped on editor click",
-        );
+        .wait_until(|h| h.screen_to_string().contains(", Col "))
+        .expect("Status bar should be visible once the prompt closes");
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 78,"),
+        "Cursor should stay on the clicked line 78 — pre-preview snapshot must be \
+         dropped on editor click; screen:\n{screen}"
+    );
 }
 
 /// A buffer edit that shifts the cursor via `adjust_for_edit` while the
