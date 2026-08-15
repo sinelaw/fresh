@@ -84,15 +84,12 @@ impl DetectedLanguage {
         // work — even when the grammar registry is empty (common in tests)
         // or has no matching entry.
         let config_lang_id = crate::services::lsp::manager::detect_language(path, languages);
-        let override_name = |mut d: Self| -> Self {
-            if let Some(id) = config_lang_id.clone() {
-                d.name = id;
-            }
-            d
+        let align = |d: Self| -> Self {
+            Self::align_with_config_id(d, &config_lang_id, registry, languages)
         };
 
         if let Some(entry) = registry.find_by_path(path, first_line) {
-            return override_name(Self::from_entry(entry, registry));
+            return align(Self::from_entry(entry, registry));
         }
 
         // No grammar match — try the user-configured default language for
@@ -105,11 +102,68 @@ impl DetectedLanguage {
                 .filter(|g| !g.is_empty())
                 .unwrap_or(lang_key);
             if let Some(entry) = registry.find_by_name(grammar) {
-                return override_name(Self::from_entry(entry, registry));
+                return align(Self::from_entry(entry, registry));
             }
         }
 
-        override_name(Self::plain_text())
+        align(Self::plain_text())
+    }
+
+    /// Make the highlighter, tree-sitter grammar and display name agree with
+    /// the language id detection resolved.
+    ///
+    /// Detection has two halves that historically answered independently:
+    /// `detect_language` resolves the config/LSP id from `[languages.*]`
+    /// (including content-independent promotions such as `.h` → `cpp` inside
+    /// a C++ tree, #3009), while `GrammarRegistry::find_by_path` resolves the
+    /// grammar from the extension table. When they disagree the buffer ends
+    /// up with a C++ language id and a C grammar: the status bar says `C`,
+    /// keywords like `namespace` / `template` render unhighlighted, and `::`
+    /// doesn't scope.
+    ///
+    /// Rather than patching each caller, this is the single fork where the two
+    /// halves are reconciled: the config id wins, and the grammar is
+    /// re-resolved through that id's `[languages.<id>].grammar`. If the id has
+    /// no grammar the registry knows about, the path-resolved grammar is kept
+    /// — an unknown config key must never downgrade working highlighting.
+    ///
+    /// Cost is one hash lookup; no filesystem access and no buffer scan are
+    /// added on top of what `detect_language` already does.
+    fn align_with_config_id(
+        mut detected: Self,
+        config_lang_id: &Option<String>,
+        registry: &GrammarRegistry,
+        languages: &HashMap<String, LanguageConfig>,
+    ) -> Self {
+        let Some(id) = config_lang_id.as_deref() else {
+            return detected;
+        };
+
+        // The grammar the config id asks for. An empty `grammar` field means
+        // "same name as the key" — matching `apply_language_config`.
+        let grammar_name = languages
+            .get(id)
+            .map(|lc| lc.grammar.as_str())
+            .filter(|g| !g.is_empty())
+            .unwrap_or(id);
+
+        if let Some(entry) = registry
+            .find_by_name(grammar_name)
+            .or_else(|| registry.find_by_name(id))
+        {
+            // `find_by_name` resolves aliases, so an entry with the same
+            // `language_id` *is* the grammar we already have — the common
+            // case (`[languages.rust] grammar = "Rust"` on a `.rs` file), and
+            // nothing but the name needs stamping.
+            if entry.language_id != detected.name {
+                let mut aligned = Self::from_entry(entry, registry);
+                aligned.name = id.to_string();
+                return aligned;
+            }
+        }
+
+        detected.name = id.to_string();
+        detected
     }
 
     /// Set language by syntax name (user selected from the language palette).
@@ -180,4 +234,136 @@ pub fn resolve_language_id(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    /// The default `[languages]` table — `c` owns `h`, `cpp` does not.
+    fn default_languages() -> HashMap<String, LanguageConfig> {
+        Config::default().languages
+    }
+
+    fn registry_with(languages: &HashMap<String, LanguageConfig>) -> GrammarRegistry {
+        let mut registry = GrammarRegistry::default();
+        registry.apply_language_config(languages);
+        registry
+    }
+
+    /// #3009: a `.h` header sitting next to C++ sources must highlight with
+    /// the C++ grammar, not just route to clangd in C++ mode. Before the
+    /// alignment step the id said `cpp` while the grammar and the status-bar
+    /// label said `C`.
+    #[test]
+    fn test_h_header_beside_cpp_sibling_detects_cpp_grammar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let header = tmp.path().join("widget.h");
+        std::fs::write(&header, "namespace ui { class Widget {}; }\n").unwrap();
+        std::fs::write(tmp.path().join("widget.cpp"), "").unwrap();
+
+        let languages = default_languages();
+        let registry = registry_with(&languages);
+        let detected = DetectedLanguage::from_path(&header, None, &registry, &languages);
+
+        assert_eq!(detected.name, "cpp");
+        assert_eq!(detected.display_name, "C++");
+        assert_eq!(detected.ts_language, Some(Language::Cpp));
+    }
+
+    /// The mirror case: the same bytes in a plain C project stay C, so the
+    /// promotion can't turn every header into C++.
+    #[test]
+    fn test_h_header_in_pure_c_project_stays_c_grammar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let header = tmp.path().join("widget.h");
+        std::fs::write(&header, "namespace ui { class Widget {}; }\n").unwrap();
+        std::fs::write(tmp.path().join("widget.c"), "").unwrap();
+
+        let languages = default_languages();
+        let registry = registry_with(&languages);
+        let detected = DetectedLanguage::from_path(&header, None, &registry, &languages);
+
+        assert_eq!(detected.name, "c");
+        assert_eq!(detected.display_name, "C");
+        assert_eq!(detected.ts_language, Some(Language::C));
+    }
+
+    /// The pre-existing user workaround — moving `h` into
+    /// `languages.cpp.extensions` — must still force C++ unconditionally,
+    /// with no C++ sibling anywhere in the tree.
+    #[test]
+    fn test_user_config_can_force_h_to_cpp_without_siblings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let header = tmp.path().join("lonely.h");
+        std::fs::write(&header, "").unwrap();
+
+        let mut languages = default_languages();
+        languages.get_mut("c").unwrap().extensions = vec!["c".to_string()];
+        languages
+            .get_mut("cpp")
+            .unwrap()
+            .extensions
+            .push("h".to_string());
+        let registry = registry_with(&languages);
+        let detected = DetectedLanguage::from_path(&header, None, &registry, &languages);
+
+        assert_eq!(detected.name, "cpp");
+        assert_eq!(detected.ts_language, Some(Language::Cpp));
+    }
+
+    /// And the other direction: a user with no `cpp` language configured
+    /// keeps the C grammar even in a tree full of C++ sources.
+    #[test]
+    fn test_user_config_without_cpp_language_keeps_h_as_c() {
+        let tmp = tempfile::tempdir().unwrap();
+        let header = tmp.path().join("widget.h");
+        std::fs::write(&header, "").unwrap();
+        std::fs::write(tmp.path().join("widget.cpp"), "").unwrap();
+
+        let mut languages = default_languages();
+        languages.remove("cpp");
+        let registry = registry_with(&languages);
+        let detected = DetectedLanguage::from_path(&header, None, &registry, &languages);
+
+        assert_eq!(detected.name, "c");
+        assert_eq!(detected.ts_language, Some(Language::C));
+    }
+
+    /// Aliasing a built-in grammar under a custom config key must keep that
+    /// grammar — the alignment step resolves `[languages.mylang].grammar` and
+    /// lands on the very entry the path lookup already produced.
+    #[test]
+    fn test_config_alias_keeps_aliased_grammar() {
+        let mut languages = default_languages();
+        let mut alias = languages.get("rust").cloned().unwrap();
+        alias.extensions = vec!["ml2".to_string()];
+        alias.grammar = "Rust".to_string();
+        languages.insert("mylang".to_string(), alias);
+        let registry = registry_with(&languages);
+
+        let detected = DetectedLanguage::from_path(Path::new("a.ml2"), None, &registry, &languages);
+        assert_eq!(detected.name, "mylang");
+        assert_eq!(detected.ts_language, Some(Language::Rust));
+    }
+
+    /// A config key whose grammar the registry knows nothing about must not
+    /// downgrade the highlighting the path lookup already resolved.
+    #[test]
+    fn test_unknown_config_grammar_keeps_path_resolved_highlighter() {
+        let mut languages = default_languages();
+        let mut odd = languages.get("rust").cloned().unwrap();
+        odd.extensions = vec!["rs".to_string()];
+        odd.grammar = "no-such-grammar".to_string();
+        languages.remove("rust");
+        languages.insert("weird".to_string(), odd);
+        // Deliberately *not* applying the config: the registry still resolves
+        // `.rs` to Rust, and the unknown grammar name must leave it alone.
+        let registry = GrammarRegistry::default();
+
+        let detected = DetectedLanguage::from_path(Path::new("a.rs"), None, &registry, &languages);
+        assert_eq!(detected.name, "weird");
+        assert_eq!(detected.ts_language, Some(Language::Rust));
+    }
 }
