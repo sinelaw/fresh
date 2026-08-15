@@ -447,13 +447,14 @@ pub struct PerfCounters {
     /// per-tick cost returning, which is what `plugin_snapshot_scaling`
     /// watches for.
     pub text_properties_copied: u64,
-    /// Whole-panel content replacements applied for a plugin
-    /// (`SetPanelContent`). Laying out a big panel — a review diff of a
-    /// hundred commits, say — costs about a second, and the panel it
-    /// lands in is already on screen, so a needless one is a visible
-    /// stale-then-jump rather than invisible waste. Counted so a test can
-    /// assert which gestures re-lay-out a panel and which reuse it.
-    pub panel_content_sets: u64,
+    /// Rows shipped into a plugin's panel by `SetPanelContent`. Laying
+    /// out a big panel — a review diff of a hundred commits, say — costs
+    /// about a second, and the panel it lands in is already on screen, so
+    /// a needless one is a visible stale-then-jump rather than invisible
+    /// waste. Counted in rows rather than calls because that is what
+    /// separates re-emitting a whole diff stream from repainting the
+    /// one-row sticky header above it.
+    pub panel_content_rows: u64,
 }
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering

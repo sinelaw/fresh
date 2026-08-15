@@ -1669,7 +1669,7 @@ impl Editor {
                 panel_name,
                 entries,
             } => {
-                self.perf_counters.panel_content_sets += 1;
+                self.perf_counters.panel_content_rows += entries.len() as u64;
                 self.set_panel_content(group_id, panel_name, entries);
             }
             PluginCommand::CloseBufferGroup { group_id } => {

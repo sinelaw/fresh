@@ -70,24 +70,44 @@ fn open_review_diff(harness: &mut EditorTestHarness) {
         })
         .unwrap();
     // The toolbar lands before the stream does; wait for real diff rows.
+    // A rewritten file diffs as 60 removals and then 60 additions, so the
+    // rows on screen are the `original_` side.
     harness
-        .wait_until(|h| h.screen_to_string().contains("changed_0"))
+        .wait_until(|h| h.screen_to_string().contains("original_0()"))
         .unwrap();
 }
 
-/// Screen row carrying the cursor-line bar, found by its background.
-///
-/// The bar is declared with `extendToLineEnd`, but the diff's own row
-/// backgrounds (added / removed / hunk body) paint over most of it — the
-/// panel's first column is the one place it always shows through.
+/// Screen row carrying the cursor-line bar, found by its background: the
+/// bar washes its whole row in the selection colour, and no other row in
+/// the diff carries more than a cell or two of it.
 fn cursor_bar_row(harness: &EditorTestHarness) -> Option<u16> {
     let selection_bg = harness.editor().theme().selection_bg;
-    let height = harness.buffer().area.height;
-    (0..height).find(|&y| {
-        harness
-            .get_cell_style(0, y)
-            .is_some_and(|style| style.bg == Some(selection_bg))
-    })
+    let area = harness.buffer().area;
+    (0..area.height)
+        .map(|y| {
+            let washed = (0..area.width)
+                .filter(|&x| {
+                    harness
+                        .get_cell_style(x, y)
+                        .is_some_and(|style| style.bg == Some(selection_bg))
+                })
+                .count();
+            (y, washed)
+        })
+        .max_by_key(|&(_, washed)| washed)
+        .filter(|&(_, washed)| washed > 3)
+        .map(|(y, _)| y)
+}
+
+/// Every cell's background, so a test can tell "the frame changed" from
+/// "the text changed" — a cursor move repaints highlights without moving
+/// a single character.
+fn background_fingerprint(harness: &EditorTestHarness) -> Vec<Option<ratatui::style::Color>> {
+    let area = harness.buffer().area;
+    (0..area.height)
+        .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+        .map(|(x, y)| harness.get_cell_style(x, y).and_then(|style| style.bg))
+        .collect()
 }
 
 /// The diff row the bar is sitting on, as text.
@@ -105,6 +125,22 @@ fn cursor_bar_text(harness: &EditorTestHarness) -> String {
         .unwrap_or_default()
         .trim_end()
         .to_string()
+}
+
+/// `2` then `1`, waiting for each layout to be the one on screen.
+fn flip_to_split_and_back(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Side-by-side view"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Unified view"))
+        .unwrap();
 }
 
 /// Press a key and draw exactly one frame — no draining of plugin work in
@@ -187,13 +223,13 @@ fn test_side_by_side_cursor_moves_in_the_frame_the_key_arrives_in() {
         .wait_until(|h| h.screen_to_string().contains("Side-by-side view"))
         .unwrap();
 
-    let before = harness.editor().active_cursors().primary().position;
+    let before = background_fingerprint(&harness);
     key_then_one_frame(&mut harness, KeyCode::Down);
     assert_ne!(
         before,
-        harness.editor().active_cursors().primary().position,
-        "Down should move the composite's cursor within the same frame.\n\
-         Screen:\n{}",
+        background_fingerprint(&harness),
+        "Down should move the composite's cursor — and its row highlight — \
+         within the frame the key arrived in.\nScreen:\n{}",
         harness.screen_to_string()
     );
 }
@@ -213,37 +249,32 @@ fn test_layout_flips_do_not_relayout_the_stream() {
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
 
-    let before = harness.editor().perf_counters().panel_content_sets;
-    for _ in 0..2 {
-        harness
-            .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
-            .unwrap();
-        harness
-            .wait_until(|h| h.screen_to_string().contains("Side-by-side view"))
-            .unwrap();
-        harness
-            .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
-            .unwrap();
-        harness
-            .wait_until(|h| h.screen_to_string().contains("Unified view"))
-            .unwrap();
-    }
-    let after = harness.editor().perf_counters().panel_content_sets;
+    // One warm-up pair first. The panel reports its real width to the
+    // plugin only after the stream has been laid out once, and the inline
+    // comment boxes are wrapped to that width — so the first flip legitimately
+    // carries one relayout the reader is owed. What must not repeat is the
+    // one after it.
+    flip_to_split_and_back(&mut harness);
+
+    let before = harness.editor().perf_counters().panel_content_rows;
+    flip_to_split_and_back(&mut harness);
+    flip_to_split_and_back(&mut harness);
+    let after = harness.editor().perf_counters().panel_content_rows;
 
     // The sticky header is a panel too and it *does* change on a flip (it
-    // names the current file), so the budget is not zero — but the stream,
-    // the expensive one, must not be among them. Four flips would be four
-    // stream layouts before the fix.
+    // names the current file), so the budget is not zero — but it is a row
+    // or two per flip against the stream's ~125, which is what a rebuild
+    // would put through here twice over.
     assert!(
-        after - before <= 4,
-        "four layout flips re-laid-out panels {} times; the stream should \
-         have been reused",
+        after - before < 60,
+        "two layout flips re-laid-out {} panel rows; the stream should have \
+         been reused",
         after - before
     );
 
     // The stream is still the real thing afterwards, not a stale husk.
     assert!(
-        harness.screen_to_string().contains("changed_"),
+        harness.screen_to_string().contains("original_"),
         "the reused stream should still show the diff:\n{}",
         harness.screen_to_string()
     );
@@ -260,7 +291,7 @@ fn test_a_content_change_still_relayouts_the_stream() {
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
 
-    let before = harness.editor().perf_counters().panel_content_sets;
+    let before = harness.editor().perf_counters().panel_content_rows;
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::NONE)
         .unwrap();
@@ -271,9 +302,9 @@ fn test_a_content_change_still_relayouts_the_stream() {
         })
         .unwrap();
     assert!(
-        harness.editor().perf_counters().panel_content_sets > before,
-        "a view toggle changes what the stream says, so it has to be laid \
-         out again"
+        harness.editor().perf_counters().panel_content_rows - before > 60,
+        "a view toggle changes what the stream says, so the whole stream \
+         has to be laid out again"
     );
 }
 
@@ -305,11 +336,12 @@ fn test_flip_back_to_unified_lands_on_the_line_the_reader_left() {
         .wait_until(|h| h.screen_to_string().contains("Unified view"))
         .unwrap();
 
-    // The composite's cursor was ~30 lines into the file; the stream
-    // should have followed it there rather than staying at the top.
+    // The composite's cursor was ~30 lines into the file, which is past
+    // the bottom of the stream's viewport: the stream should have followed
+    // it there, leaving the file's first row behind.
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("changed_2") || screen.contains("original_2"),
+        !screen.contains("original_0()"),
         "the stream should come back around the line the reader left, not \
          the top of the file:\n{}",
         screen
