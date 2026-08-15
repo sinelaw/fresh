@@ -4579,16 +4579,21 @@ impl Editor {
         // completion popup — covers the base rows beneath it. This used
         // to be re-derived by scanning the painted overlay rows; the
         // box tree is the same fact, stated structurally.
-        let on_overlay = self
-            .widget_registry
-            .panels_for_buffer(slot.buffer_id())
-            .first()
-            .and_then(|k| self.widget_registry.get(k))
-            .is_some_and(|p| {
-                crate::widgets::layout_box::hit_path(&p.boxes, brow, local_screen_col as u32)
-                    .last()
-                    .is_some_and(|&i| p.boxes[i].z > 0)
-            });
+        // Resolve the boxes through the slot's own panel key — never a
+        // `panels_for_buffer(..).first()` pick, whose HashMap order is
+        // arbitrary and could name a different panel than the one whose
+        // overlays/entries the text lookup below reads.
+        let slot_panel_key = self.panel(slot)?.panel_key.clone();
+        let on_overlay = self.widget_registry.get(&slot_panel_key).is_some_and(|p| {
+            // The covering surface is named by `pointer_opaque` on
+            // the hit path — the popup boxes (overlay promotion,
+            // completion list) carry it. z alone is not enough: a
+            // future non-opaque cover (a pass-through tooltip)
+            // must NOT capture the pointer.
+            crate::widgets::layout_box::hit_path(&p.boxes, brow, local_screen_col as u32)
+                .iter()
+                .any(|&i| p.boxes[i].pointer_opaque && p.boxes[i].z > 0)
+        });
         // The column maps to a byte offset through the text of the
         // surface the pointer is on — a covered row is DRAWN from the
         // overlay's text, and the overlay's hit areas were measured

@@ -294,6 +294,53 @@ pub(crate) fn cycle_selection(
     }
 }
 
+/// Set the selection to an absolute index (a click on an option row
+/// of the open list), clamped into the option set, preserving the
+/// popup's open state; queues `change` when the selection actually
+/// moved. The absolute-index sibling of [`cycle_selection`].
+pub(crate) fn set_selection(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    index: i32,
+    fx: &mut super::KeyFx,
+) {
+    let WidgetSpec::Dropdown {
+        options,
+        selected_index: spec_sel,
+        ..
+    } = spec
+    else {
+        return;
+    };
+    if options.is_empty() {
+        return;
+    }
+    let (cur, open) = match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::Dropdown {
+            selected_index,
+            open,
+        }) => (*selected_index, *open),
+        _ => (*spec_sel, false),
+    };
+    let new_sel = index.clamp(0, options.len() as i32 - 1);
+    let changed = new_sel != cur.clamp(0, options.len() as i32 - 1);
+    panel.instance_states.insert(
+        widget_key.to_string(),
+        WidgetInstanceState::Dropdown {
+            selected_index: new_sel,
+            open,
+        },
+    );
+    if changed {
+        let value = options.get(new_sel as usize).cloned().unwrap_or_default();
+        fx.events.push((
+            "change".into(),
+            serde_json::json!({ "index": new_sel, "value": value }),
+        ));
+    }
+}
+
 /// Open or close the option popup, preserving the selected index;
 /// queues `dropdown_open` when the state actually flipped (never
 /// `change` — opening/closing is not a value edit; the plugin needs

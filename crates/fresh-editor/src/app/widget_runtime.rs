@@ -1837,61 +1837,18 @@ impl Editor {
     }
 
     /// Set a `Dropdown`'s selected index to an absolute value (a click
-    /// on an option row of the open list). Clamps into the option set,
-    /// fires `change` when the selection actually moved.
+    /// on an option row of the open list) — the same kind-owned
+    /// mutation shell as cycle/open, so the clamp/change logic exists
+    /// exactly once.
     pub(super) fn handle_widget_dropdown_set(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
         widget_key: &str,
         index: i32,
     ) {
-        if widget_key.is_empty() {
-            return;
-        }
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return,
-        };
-        let (options, spec_sel) = match crate::widgets::find_widget_by_key(&panel.spec, widget_key)
-        {
-            Some(fresh_core::api::WidgetSpec::Dropdown {
-                options,
-                selected_index,
-                ..
-            }) => (options.clone(), *selected_index),
-            _ => return,
-        };
-        if options.is_empty() {
-            return;
-        }
-        let (cur, open) = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::Dropdown {
-                selected_index,
-                open,
-            }) => (*selected_index, *open),
-            _ => (spec_sel, false),
-        };
-        let new_sel = index.clamp(0, options.len() as i32 - 1);
-        let changed = new_sel != cur.clamp(0, options.len() as i32 - 1);
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::Dropdown {
-                    selected_index: new_sel,
-                    open,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_key);
-        if changed {
-            let value = options.get(new_sel as usize).cloned().unwrap_or_default();
-            self.fire_widget_event(
-                panel_key,
-                widget_key.to_string(),
-                "change".into(),
-                serde_json::json!({ "index": new_sel, "value": value }),
-            );
-        }
+        self.with_dropdown_helper(panel_key, widget_key, |spec, key, panel, fx| {
+            crate::widgets::kinds::dropdown::set_selection(spec, key, panel, index, fx);
+        });
     }
 
     /// True when the panel's focused widget is a `Dropdown` whose
