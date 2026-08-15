@@ -21,6 +21,63 @@ use crate::widgets::render::{
 pub(crate) struct Text;
 
 impl WidgetImpl for Text {
+    fn on_key(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        key: &str,
+        fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        use super::KeyDisposition::{Consumed, Pass, PassAfter};
+        // The completion popup claims its keys only while showing.
+        if !matches!(key, "Tab" | "Up" | "Down" | "Enter" | "Escape")
+            || !completions_open(widget_key, panel)
+        {
+            return Pass;
+        }
+        match key {
+            "Up" => {
+                move_completion_index(spec, widget_key, panel, -1);
+                Consumed
+            }
+            "Down" => {
+                move_completion_index(spec, widget_key, panel, 1);
+                Consumed
+            }
+            "Escape" => {
+                // First Esc only closes the popup — the form stays
+                // open. (A second Esc, with no popup, cancels.)
+                dismiss_completions(widget_key, panel, fx);
+                Consumed
+            }
+            "Enter" | "Tab" => {
+                if completion_navigated(widget_key, panel) {
+                    // The user stepped into the dropdown (↑/↓/wheel) so
+                    // a row is highlighted — accept it. The host does
+                    // NOT close the popup: directory-descent flows (the
+                    // orchestrator's Project Path accepting `/foo/`
+                    // re-fetches children) keep it alive; plugins that
+                    // want one-shot accept close it via
+                    // `setCompletions(key, [])`.
+                    if let Some(value) = selected_completion_value(widget_key, panel) {
+                        fx.events.push((
+                            "completion_accept".into(),
+                            serde_json::json!({ "value": value }),
+                        ));
+                    }
+                    return Consumed;
+                }
+                // Not navigated: the popup must not swallow the key.
+                // Close it, then let Enter act on the form (submit /
+                // advance) and Tab advance focus.
+                dismiss_completions(widget_key, panel, fx);
+                PassAfter
+            }
+            _ => Pass,
+        }
+    }
+
     fn on_wheel(
         &self,
         spec: &WidgetSpec,
@@ -835,4 +892,120 @@ fn render_widget_text(
         );
     }
     out
+}
+
+/// Is this Text widget's completion popup showing?
+pub(crate) fn completions_open(widget_key: &str, panel: &crate::widgets::WidgetPanelState) -> bool {
+    matches!(
+        panel.instance_states.get(widget_key),
+        Some(WidgetInstanceState::Text { completions, .. }) if !completions.is_empty()
+    )
+}
+
+/// Has the user explicitly stepped into the popup (↑/↓ / wheel)? Only
+/// a *navigated* popup accepts on Enter/Tab — a freshly surfaced one
+/// lets the key act on the form instead.
+fn completion_navigated(widget_key: &str, panel: &crate::widgets::WidgetPanelState) -> bool {
+    matches!(
+        panel.instance_states.get(widget_key),
+        Some(WidgetInstanceState::Text {
+            completions,
+            completion_navigated,
+            ..
+        }) if !completions.is_empty() && *completion_navigated
+    )
+}
+
+/// Move the completion selection by `delta` (clamped, no wraparound —
+/// wrap on a popup picker reads as jarring while comparing rows). The
+/// first ↑/↓ *enters* the dropdown: it flips `navigated` and selects
+/// the current (top) row without moving. Keyboard moves also pull the
+/// scroll window back so the selection stays visible (forward-pull is
+/// the renderer's job).
+fn move_completion_index(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    delta: i32,
+) {
+    let spec_visible_rows = match spec {
+        WidgetSpec::Text {
+            completions_visible_rows,
+            ..
+        } => *completions_visible_rows,
+        _ => 0,
+    };
+    let visible = if spec_visible_rows == 0 {
+        5u32
+    } else {
+        spec_visible_rows
+    };
+    if let Some(WidgetInstanceState::Text {
+        completions,
+        completion_selected_index,
+        completion_scroll_offset,
+        completion_navigated,
+        ..
+    }) = panel.instance_states.get_mut(widget_key)
+    {
+        if completions.is_empty() {
+            return;
+        }
+        if !*completion_navigated {
+            *completion_navigated = true;
+            return;
+        }
+        let max = (completions.len() - 1) as i32;
+        let cur = *completion_selected_index as i32;
+        let next = (cur + delta).clamp(0, max);
+        *completion_selected_index = next as usize;
+        let next_u = next as u32;
+        if next_u < *completion_scroll_offset {
+            *completion_scroll_offset = next_u;
+        } else if next_u >= *completion_scroll_offset + visible {
+            *completion_scroll_offset = next_u + 1 - visible;
+        }
+    }
+}
+
+/// Close the popup and queue `completion_dismiss` so the plugin can
+/// sync its own state (e.g. invalidate an in-flight fetch token, so a
+/// late-arriving result doesn't re-open the popup the user closed).
+fn dismiss_completions(
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    fx: &mut super::KeyFx,
+) {
+    if let Some(WidgetInstanceState::Text {
+        completions,
+        completion_selected_index,
+        ..
+    }) = panel.instance_states.get_mut(widget_key)
+    {
+        if completions.is_empty() {
+            return;
+        }
+        completions.clear();
+        *completion_selected_index = 0;
+        fx.events
+            .push(("completion_dismiss".into(), serde_json::json!({})));
+    }
+}
+
+/// The currently-highlighted candidate's value, if any.
+fn selected_completion_value(
+    widget_key: &str,
+    panel: &crate::widgets::WidgetPanelState,
+) -> Option<String> {
+    match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::Text {
+            completions,
+            completion_selected_index,
+            ..
+        }) if !completions.is_empty() => {
+            let idx = (*completion_selected_index).min(completions.len() - 1);
+            Some(completions[idx].value.clone())
+        }
+        _ => None,
+    }
 }

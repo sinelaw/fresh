@@ -368,29 +368,6 @@ impl CollectedOutput {
         }
         self.boxes.push(own);
     }
-
-    /// Merge a child subtree's boxes into this accumulator, shifting
-    /// every rectangle by (`row_offset`, `col_offset`) and remapping
-    /// parent indices. Boxes that were roots in the child stay
-    /// parentless until the caller's own `push_self_box`. `z_bump`
-    /// raises the whole child subtree's stacking level (overlay
-    /// promotion).
-    pub(crate) fn merge_child_boxes(
-        &mut self,
-        child_boxes: Vec<LayoutBox>,
-        row_offset: u32,
-        col_offset: u32,
-        z_bump: u8,
-    ) {
-        let base = self.boxes.len();
-        for mut b in child_boxes {
-            b.parent = b.parent.map(|p| p + base);
-            b.row += row_offset;
-            b.col += col_offset;
-            b.z = b.z.saturating_add(z_bump);
-            self.boxes.push(b);
-        }
-    }
 }
 
 /// Everything a render pass needs that isn't in the spec itself.

@@ -160,6 +160,9 @@ pub fn hit_path(boxes: &[LayoutBox], row: u32, col: u32) -> Vec<usize> {
 
 /// Indices of all boxes in document order (pre-order over the tree,
 /// siblings in insertion order). This is the order the focus ring uses.
+// Consumed by the phase-5 focus derivation (next commit in the arc);
+// exercised by the unit tests below until then.
+#[allow(dead_code)]
 pub fn document_order(boxes: &[LayoutBox]) -> Vec<usize> {
     // Children of each parent, in arena (insertion) order.
     let mut roots: Vec<usize> = Vec::new();
@@ -182,6 +185,9 @@ pub fn document_order(boxes: &[LayoutBox]) -> Vec<usize> {
 }
 
 /// Keys of focusable boxes in document order — the derived Tab ring.
+// Consumed by the phase-5 focus derivation (next commit in the arc);
+// exercised by the unit tests below until then.
+#[allow(dead_code)]
 pub fn focus_ring(boxes: &[LayoutBox]) -> Vec<String> {
     document_order(boxes)
         .into_iter()
