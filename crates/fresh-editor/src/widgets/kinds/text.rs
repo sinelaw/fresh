@@ -85,11 +85,42 @@ impl WidgetImpl for Text {
         panel: &mut crate::widgets::WidgetPanelState,
         delta: i32,
     ) -> bool {
-        // Only a multi-line (document) Text scrolls under the wheel; a
-        // single-line field scrolls with its caret and emits no region.
-        let WidgetSpec::Text { rows, .. } = spec else {
+        let WidgetSpec::Text {
+            rows,
+            completions_visible_rows,
+            ..
+        } = spec
+        else {
             return false;
         };
+        // An open completion popup scrolls first — the wheel reached
+        // this widget because the pointer sat on the popup's own box
+        // (or the field's). Scrolling counts as stepping into the
+        // popup: Enter then accepts the highlighted row.
+        if let Some(WidgetInstanceState::Text {
+            completions,
+            completion_scroll_offset,
+            completion_navigated,
+            ..
+        }) = panel.instance_states.get_mut(widget_key)
+        {
+            if !completions.is_empty() {
+                let visible = if *completions_visible_rows == 0 {
+                    5u32
+                } else {
+                    *completions_visible_rows
+                };
+                *completion_navigated = true;
+                let total = completions.len() as u32;
+                let max_scroll = total.saturating_sub(visible.min(total));
+                let next = (*completion_scroll_offset as i32 + delta).clamp(0, max_scroll as i32);
+                *completion_scroll_offset = next as u32;
+                return true;
+            }
+        }
+        // Otherwise only a multi-line (document) Text scrolls under
+        // the wheel; a single-line field scrolls with its caret and
+        // emits no region.
         if *rows <= 1 {
             return false;
         }
@@ -246,6 +277,7 @@ fn effective_text_field_width(
 #[allow(clippy::too_many_arguments)]
 fn emit_completion_overlays(
     out: &mut CollectedOutput,
+    key: Option<&str>,
     completions: &[fresh_core::api::CompletionItem],
     visible_rows: u32,
     panel_width: u32,
@@ -317,6 +349,12 @@ fn emit_completion_overlays(
             crate::widgets::LayoutBox::plain("text_completions", 1, 0, panel_width, visible + 2);
         b.z = 1;
         b.pointer_opaque = true;
+        // Keyed with the field's key and scrollable: a wheel over the
+        // popup routes here through the ordinary hit-path bubble and
+        // lands in `Text::on_wheel`'s completions branch — no
+        // panel-wide absorb, no bespoke popup scroller.
+        b.key = key.map(|k| k.to_string());
+        b.scrollable = true;
         b
     });
     scroll
@@ -877,6 +915,7 @@ fn render_widget_text(
     // popup paints on top; persists the forward-only auto-scroll offset.
     prev_completion_scroll = emit_completion_overlays(
         &mut out,
+        key,
         &prev_completions,
         effective_visible_rows,
         panel_width,
