@@ -1699,32 +1699,6 @@ impl Editor {
         self.fire_widget_event(panel_key, focus_key, event_type.to_string(), payload);
     }
 
-    /// Fire a `widget_event { event_type: "activate", payload: {
-    /// index, key } }` for the focused List, using its instance-state
-    /// selection (or spec selection on first render). The plugin's
-    /// activate handler does the actual user-visible thing — open
-    /// the matched file, expand/collapse a tree node, etc.
-    /// True when the focused widget on `panel_key` is a Text input
-    /// whose host-managed completion popup is currently open
-    /// (instance state has at least one candidate). Lets the
-    /// smart-key dispatcher route Tab/Enter/Up/Down/Esc to the
-    /// popup-specific paths before falling through to the
-    /// widget's default key behaviour.
-    fn focused_text_completions_open(&self, panel_key: &crate::widgets::PanelKey) -> bool {
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return false,
-        };
-        if panel.focus_key.is_empty() {
-            return false;
-        }
-        matches!(
-            panel.instance_states.get(&panel.focus_key),
-            Some(crate::widgets::WidgetInstanceState::Text { completions, .. })
-                if !completions.is_empty()
-        )
-    }
-
     fn fire_list_activate(&mut self, panel_key: &crate::widgets::PanelKey, focus_key: &str) {
         let panel = match self.widget_registry.get(panel_key) {
             Some(p) => p,
@@ -2365,25 +2339,6 @@ impl Editor {
         let panels = self.widget_registry.panels_for_buffer(buffer_id);
         let mut consumed = false;
         for panel_key in panels {
-            // First chance: a focused Text widget with an open
-            // completion popup absorbs the wheel — scrolling the
-            // candidate list when the popup is what the user is
-            // pointing at takes priority over scrolling a
-            // sibling List/Tree elsewhere on the panel.
-            if self.focused_text_completions_open(&panel_key) {
-                self.scroll_focused_text_completions(&panel_key, delta);
-                // The renderer reads `completion_scroll_offset`
-                // out of the Text widget's instance state on
-                // each paint, so flushing a rerender here is
-                // what actually puts the new scroll on screen
-                // — without this, the cached overlay rows on
-                // the floating panel stay pinned to the old
-                // offset until the user's next keystroke
-                // happens to re-render for some other reason.
-                self.rerender_widget_panel(&panel_key);
-                consumed = true;
-                continue;
-            }
             // Hit-tested routing: the deepest box under the pointer,
             // then bubbling outward — each scrollable ancestor gets the
             // delta until one consumes it (scroll chaining). A widget
@@ -2435,61 +2390,6 @@ impl Editor {
             }
         }
         consumed
-    }
-
-    /// Shift the focused Text widget's completion popup scroll
-    /// offset by `delta` rows. The renderer reads the visible-
-    /// rows cap from the Text spec; we approximate it here as
-    /// "5 if zero / unset" to mirror the renderer's default —
-    /// the cap matters for clamping the max scroll so the
-    /// thumb doesn't drift past the end.
-    fn scroll_focused_text_completions(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        delta: i32,
-    ) {
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return,
-        };
-        let focus_key = panel.focus_key.clone();
-        if focus_key.is_empty() {
-            return;
-        }
-        let spec_visible_rows = match crate::widgets::find_widget_by_key(&panel.spec, &focus_key) {
-            Some(fresh_core::api::WidgetSpec::Text {
-                completions_visible_rows,
-                ..
-            }) => *completions_visible_rows,
-            _ => 0,
-        };
-        let visible = if spec_visible_rows == 0 {
-            5u32
-        } else {
-            spec_visible_rows
-        };
-        let panel = match self.widget_registry.get_mut(panel_key) {
-            Some(p) => p,
-            None => return,
-        };
-        if let Some(crate::widgets::WidgetInstanceState::Text {
-            completions,
-            completion_scroll_offset,
-            completion_navigated,
-            ..
-        }) = panel.instance_states.get_mut(&focus_key)
-        {
-            if completions.is_empty() {
-                return;
-            }
-            // Scrolling the popup with the wheel counts as stepping
-            // into it — Enter should then accept the highlighted row.
-            *completion_navigated = true;
-            let total = completions.len() as u32;
-            let max_scroll = total.saturating_sub(visible.min(total));
-            let next = (*completion_scroll_offset as i32 + delta).clamp(0, max_scroll as i32);
-            *completion_scroll_offset = next as u32;
-        }
     }
 
     /// Right/Left arrow on a focused Tree.

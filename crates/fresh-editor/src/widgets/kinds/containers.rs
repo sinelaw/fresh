@@ -605,111 +605,11 @@ fn collect_col(
         }
     }
 
-    for (child, mut child_out) in children.iter().zip(child_outs) {
-        // Overlay children DO NOT contribute vertical
-        // space to the col. Render them, but stash the
-        // produced entries as overlays anchored at the
-        // current `entries.len()` (the row they would
-        // have occupied) — they get painted on top
-        // afterwards without pushing the rest of the
-        // col downward.
-        let is_overlay = matches!(child, WidgetSpec::Overlay { .. });
-        wants_fill |= child_out.wants_fill;
-        effective_rows.extend(child_out.effective_rows.clone());
-        let row_offset = entries.len() as u32;
-        // Child boxes anchor at the col cursor. An overlay child's
-        // whole subtree additionally moves up one stacking level — the
-        // same promotion its entries get — so hit-testing prefers the
-        // popup over whatever it covers.
-        let z_bump = if is_overlay { 1 } else { 0 };
-        let base = boxes.len();
-        for mut b in std::mem::take(&mut child_out.boxes) {
-            b.parent = b.parent.map(|pi| pi + base);
-            b.row += row_offset;
-            b.z = b.z.saturating_add(z_bump);
-            boxes.push(b);
-        }
-        if is_overlay {
-            // Promote the overlay child's regular
-            // entries to overlay rows anchored at the
-            // current col cursor (`row_offset`). Hits
-            // for those entries are shifted to the same
-            // anchor row so click-to-pick targets the
-            // painted row.
-            for (i, e) in child_out.entries.into_iter().enumerate() {
-                overlays.push(OverlayRow {
-                    buffer_row: row_offset + i as u32,
-                    entry: e,
-                });
-            }
-            for mut h in child_out.hits {
-                h.buffer_row += row_offset;
-                // Mark them as the popup's own: their byte ranges are
-                // measured against the overlay's row text, which is what
-                // the user sees at these rows — the covered row's text
-                // is invisible and must not resolve clicks. See
-                // `WidgetRegistry::overlay_hit_test`.
-                h.overlay = true;
-                hits.push(h);
-            }
-            // Focus cursor inside an overlay (rare but
-            // legal) anchors at the same row; without
-            // this shift Up/Down + cursor placement
-            // would land on the col's "natural" row.
-            if let Some(mut fc) = child_out.focus_cursor {
-                fc.buffer_row += row_offset;
-                focus_cursor = Some(fc);
-            }
-            // Forward nested overlays without further
-            // adjustment (already anchored).
-            overlays.extend(child_out.overlays);
-            // Embeds inside an overlay don't make sense
-            // today (a window-embed below a popup would
-            // be confusing) — propagate at the same
-            // anchor row so behaviour is well-defined
-            // if someone tries it.
-            for mut emb in child_out.embeds {
-                emb.buffer_row += row_offset;
-                embeds.push(emb);
-            }
-            for mut sr in child_out.scroll_regions {
-                sr.buffer_row += row_offset;
-                scroll_regions.push(sr);
-            }
-            for mut dp in child_out.dropdown_popups {
-                dp.anchor_row += row_offset;
-                dropdown_popups.push(dp);
-            }
-            continue;
-        }
-        for mut h in child_out.hits {
-            h.buffer_row += row_offset;
-            hits.push(h);
-        }
-        if let Some(mut fc) = child_out.focus_cursor {
-            fc.buffer_row += row_offset;
-            focus_cursor = Some(fc);
-        }
-        for mut emb in child_out.embeds {
-            emb.buffer_row += row_offset;
-            embeds.push(emb);
-        }
-        for mut sr in child_out.scroll_regions {
-            sr.buffer_row += row_offset;
-            scroll_regions.push(sr);
-        }
-        for mut dp in child_out.dropdown_popups {
-            dp.anchor_row += row_offset;
-            dropdown_popups.push(dp);
-        }
-        overlays.extend(child_out.overlays.into_iter().map(|mut o| {
-            o.buffer_row += row_offset;
-            o
-        }));
-        entries.extend(child_out.entries);
-    }
-
-    CollectedOutput {
+    // Fold every child in through the one shift point — a Col cannot
+    // shift some geometry channels and forget others. Overlay children
+    // occupy no column height; their subtree is promoted a stacking
+    // level and anchored at the current cursor.
+    let mut acc = CollectedOutput {
         entries,
         hits,
         focus_cursor,
@@ -717,12 +617,18 @@ fn collect_col(
         overlays,
         scroll_regions,
         dropdown_popups,
-        // Resolved fill children re-rendered with a real budget no
-        // longer set the flag; only an unresolved request bubbles.
         wants_fill,
         effective_rows,
         boxes,
+    };
+    for (child, child_out) in children.iter().zip(child_outs) {
+        let row_offset = acc.entries.len() as u32;
+        let is_overlay = matches!(child, WidgetSpec::Overlay { .. });
+        acc.absorb_child(child_out, row_offset, is_overlay);
     }
+    // Resolved fill children re-rendered with a real budget no longer
+    // set the flag; only an unresolved request bubbles.
+    acc
 }
 
 #[allow(clippy::too_many_arguments)]

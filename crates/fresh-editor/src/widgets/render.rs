@@ -353,6 +353,85 @@ pub(crate) struct CollectedOutput {
 }
 
 impl CollectedOutput {
+    /// Fold a child subtree's entire output into this accumulator at
+    /// the current column cursor: every geometry channel — hits,
+    /// focus cursor, embeds, scroll regions, dropdown anchors,
+    /// overlays, boxes, entries — shifts down by `row_offset`
+    /// together. Containers MUST use this (or the overlay promotion
+    /// variant) instead of shifting channels by hand: a container
+    /// that shifts two of three column-addressed channels compiles
+    /// fine and mis-routes the wheel, which is exactly the drift
+    /// class the box tree exists to kill.
+    ///
+    /// `promote_overlay` = the child is an `Overlay` in a `Col`: its
+    /// entries become overlay rows anchored at the cursor (occupying
+    /// no column height), its hits are stamped `overlay`, and its
+    /// whole box subtree moves up one stacking level.
+    pub(crate) fn absorb_child(
+        &mut self,
+        mut child: CollectedOutput,
+        row_offset: u32,
+        promote_overlay: bool,
+    ) {
+        self.wants_fill |= child.wants_fill;
+        self.effective_rows
+            .extend(std::mem::take(&mut child.effective_rows));
+        let base = self.boxes.len();
+        for mut b in child.boxes {
+            b.parent = b.parent.map(|pi| pi + base);
+            b.row += row_offset;
+            if promote_overlay {
+                b.z = b.z.saturating_add(1);
+            }
+            self.boxes.push(b);
+        }
+        if let Some(mut fc) = child.focus_cursor {
+            fc.buffer_row += row_offset;
+            self.focus_cursor = Some(fc);
+        }
+        for mut emb in child.embeds {
+            emb.buffer_row += row_offset;
+            self.embeds.push(emb);
+        }
+        for mut sr in child.scroll_regions {
+            sr.buffer_row += row_offset;
+            self.scroll_regions.push(sr);
+        }
+        for mut dp in child.dropdown_popups {
+            dp.anchor_row += row_offset;
+            self.dropdown_popups.push(dp);
+        }
+        if promote_overlay {
+            for (i, e) in child.entries.into_iter().enumerate() {
+                self.overlays.push(OverlayRow {
+                    buffer_row: row_offset + i as u32,
+                    entry: e,
+                });
+            }
+            for mut h in child.hits {
+                h.buffer_row += row_offset;
+                // Byte ranges are measured against the overlay's row
+                // text — the covered row's text is invisible and must
+                // not resolve clicks.
+                h.overlay = true;
+                self.hits.push(h);
+            }
+            // Nested overlays are already anchored.
+            self.overlays.extend(child.overlays);
+        } else {
+            for mut h in child.hits {
+                h.buffer_row += row_offset;
+                self.hits.push(h);
+            }
+            self.overlays
+                .extend(child.overlays.into_iter().map(|mut o| {
+                    o.buffer_row += row_offset;
+                    o
+                }));
+            self.entries.extend(child.entries);
+        }
+    }
+
     /// Append this subtree's own root box: rectangle covering the rows
     /// the subtree emitted at full `panel_width`, every parentless box
     /// so far re-parented onto it. Leaf kinds call this on an output
