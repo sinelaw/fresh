@@ -222,6 +222,17 @@ fn collect_dropdown(
             selected: cur as usize,
             scroll: scroll_offset,
         });
+        // The pop-over as a box: screen-space (its final rectangle is
+        // resolved at paint, flipping above the anchor near the frame
+        // edge), two stacking levels up. Panel-space hit-testing skips
+        // screen-space boxes — the click path checks the paint-recorded
+        // rect first, same ordering as before.
+        out.boxes.push({
+            let mut b = crate::widgets::LayoutBox::plain("dropdown_popup", 0, 0, 0, 0);
+            b.screen_space = true;
+            b.z = 2;
+            b
+        });
     }
     ensure_trailing_newline(&mut entry);
     out.entries.insert(0, entry);
