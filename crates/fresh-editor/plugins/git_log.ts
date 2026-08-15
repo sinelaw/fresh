@@ -3,6 +3,7 @@
 import {
   type GitCommit,
   buildCommitLogEntries,
+  byteLength,
   fetchGitLog,
 } from "./lib/git_history.ts";
 import {
@@ -474,7 +475,10 @@ async function applyDiffHighlights(bufferId: number): Promise<void> {
 
   // Walk lines tracking byte offsets; coalesce consecutive same-kind
   // rows into single ranges so a 30-line added block costs one
-  // overlay, not 30.
+  // overlay, not 30. Overlay offsets are UTF-8 bytes, so every line
+  // advances by its *byte* length — `line.length` counts UTF-16 code
+  // units, which drags every overlay below a non-ASCII line a few
+  // bytes too early and paints the stripes onto their neighbours.
   let byte = 0;
   let runKind: "+" | "-" | "@" | null = null;
   let runStart = 0;
@@ -496,7 +500,7 @@ async function applyDiffHighlights(bufferId: number): Promise<void> {
   };
 
   for (const line of text.split("\n")) {
-    const lineLen = line.length;
+    const lineLen = byteLength(line);
     const ch = line.charAt(0);
     let kind: "+" | "-" | "@" | null = null;
     if (ch === "+" && !line.startsWith("+++")) kind = "+";
@@ -1074,11 +1078,14 @@ async function deriveFileAndLineFromDiffCursor(
 
   // Locate the cursor's line index by walking byte offsets. `lines[i]`
   // covers bytes [byte, byte+len]; the `\n` separator lives at
-  // byte+len, so the next line starts at byte+len+1.
+  // byte+len, so the next line starts at byte+len+1. `len` is the
+  // line's UTF-8 byte length — the cursor is a byte offset, so a
+  // UTF-16 `.length` would land on the wrong line in any diff
+  // containing non-ASCII text.
   let byte = 0;
   let cursorLineIdx = lines.length - 1;
   for (let i = 0; i < lines.length; i++) {
-    const lineLen = lines[i].length;
+    const lineLen = byteLength(lines[i]);
     if (cursor <= byte + lineLen) {
       cursorLineIdx = i;
       break;
