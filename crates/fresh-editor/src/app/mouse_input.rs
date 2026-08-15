@@ -51,6 +51,21 @@ fn prompt_scrollbar_offset_for_row(
         .offset_for_thumb_top(sb_rect.height as usize, track_row)
 }
 
+/// A layered surface the wheel can land on, for the precedence table
+/// in `Editor::WHEEL_SURFACES`. Containment and scroll behaviour live
+/// with each surface's own handler; this enum only names them so the
+/// precedence can be data instead of an else-if chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WheelDispatchSurface {
+    OverlayPrompt,
+    PromptSuggestions,
+    FileBrowser,
+    Popups,
+    FloatingPanel,
+    Dock,
+    SplitWidgetPanel,
+}
+
 /// Where a screen cell lands inside a floating widget panel. See
 /// [`Editor::probe_floating_widget`].
 struct FloatingWidgetProbe {
@@ -555,8 +570,96 @@ impl Editor {
         (is_double, is_triple)
     }
 
-    /// Dispatch a vertical scroll event (ScrollUp/ScrollDown) through the priority chain:
-    /// Shift → horizontal scroll, prompt, file browser, popup, editor/terminal.
+    /// The wheel-scrollable surfaces, in precedence order — topmost
+    /// layer first, mirroring `overlay_layers()`. This used to be an
+    /// else-if ladder in `handle_vertical_scroll`, its precedence
+    /// expressed as control flow that could only be extended by
+    /// someone holding the whole chain in their head (every branch
+    /// carried an issue number). The ordering is now DATA; dispatch
+    /// is one walk with a uniform contract: each surface either
+    /// consumes the wheel (its handler returns true — containment
+    /// checks live with the surface's own geometry) or passes it to
+    /// the next. Adding a surface = one variant, one table position,
+    /// one dispatch arm.
+    const WHEEL_SURFACES: [WheelDispatchSurface; 7] = [
+        // Floating-overlay prompt (Live Grep): mouse-modal — scrolls
+        // the preview under the pointer or the result list, and never
+        // leaks below (#2119).
+        WheelDispatchSurface::OverlayPrompt,
+        // Bottom-anchored prompt dropdown: scrolls its list without
+        // moving the selection.
+        WheelDispatchSurface::PromptSuggestions,
+        WheelDispatchSurface::FileBrowser,
+        WheelDispatchSurface::Popups,
+        // A centered modal is modal: scroll it when the pointer is
+        // over it, otherwise swallow — never leaks to the buffer or
+        // dock behind it.
+        WheelDispatchSurface::FloatingPanel,
+        // The dock swallows the wheel whenever the pointer is over
+        // its column.
+        WheelDispatchSurface::Dock,
+        WheelDispatchSurface::SplitWidgetPanel,
+    ];
+
+    /// One surface's wheel handling: true = consumed, stop; false =
+    /// not this surface (inactive, or pointer outside it), keep
+    /// walking.
+    fn wheel_surface_scroll(
+        &mut self,
+        surface: WheelDispatchSurface,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> bool {
+        match surface {
+            WheelDispatchSurface::OverlayPrompt => {
+                self.handle_overlay_prompt_scroll(col, row, delta)
+            }
+            WheelDispatchSurface::PromptSuggestions => self.handle_prompt_scroll(delta),
+            WheelDispatchSurface::FileBrowser => {
+                self.is_file_open_active()
+                    && self.is_mouse_over_file_browser(col, row)
+                    && self.handle_file_open_scroll(delta)
+            }
+            WheelDispatchSurface::Popups => {
+                if !self.is_mouse_over_any_popup(col, row) {
+                    return false;
+                }
+                self.scroll_popup(delta);
+                true
+            }
+            WheelDispatchSurface::FloatingPanel => {
+                if self.floating_widget_panel.is_none() {
+                    return false;
+                }
+                self.handle_floating_widget_panel_wheel(
+                    super::PanelSlot::Floating,
+                    col,
+                    row,
+                    delta,
+                );
+                true
+            }
+            WheelDispatchSurface::Dock => {
+                self.dock.is_some()
+                    && self.handle_floating_widget_panel_wheel(
+                        super::PanelSlot::Dock,
+                        col,
+                        row,
+                        delta,
+                    )
+            }
+            WheelDispatchSurface::SplitWidgetPanel => {
+                self.handle_split_widget_panel_wheel(col, row, delta)
+            }
+        }
+    }
+
+    /// Dispatch a vertical scroll event (ScrollUp/ScrollDown): Shift
+    /// pans horizontally; otherwise the wheel walks WHEEL_SURFACES
+    /// top-down until one consumes it, then falls to the permanent
+    /// layout (pane / file explorer / tab strip) via
+    /// `wheel_surface_at`.
     fn handle_vertical_scroll(
         &mut self,
         col: u16,
@@ -567,69 +670,45 @@ impl Editor {
         if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
             self.active_window_mut()
                 .handle_horizontal_scroll(col, row, delta)?;
-        } else if self.handle_overlay_prompt_scroll(col, row, delta) {
-            // Floating-overlay prompt (Live Grep): the wheel scrolls the pane
-            // under the pointer — the preview when over it, otherwise the
-            // result list (without moving the selection). See issue #2119.
-        } else if self.handle_prompt_scroll(delta) {
-            // bottom-anchored prompt dropdown consumed the scroll: it scrolls
-            // its list without moving the selection, like every other wheel
-            // surface in the editor.
-        } else if self.is_file_open_active()
-            && self.is_mouse_over_file_browser(col, row)
-            && self.handle_file_open_scroll(delta)
-        {
-            // file browser consumed the scroll
-        } else if self.is_mouse_over_any_popup(col, row) {
-            self.scroll_popup(delta);
-        } else if self.floating_widget_panel.is_some() {
-            // A centered modal (orchestrator picker, New-Session form,
-            // ...) is modal and takes precedence: scroll it when the
-            // pointer is over it, otherwise swallow the wheel so it
-            // can't leak through to the buffer (or the dock) behind it.
-            // Either way the event is consumed here — never falls through.
-            self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, delta);
-        } else if self.dock.is_some()
-            && self.handle_floating_widget_panel_wheel(super::PanelSlot::Dock, col, row, delta)
-        {
-            // The dock swallows the wheel whenever the pointer is over
-            // its column (never leaks to the window beneath).
-        } else if self.handle_split_widget_panel_wheel(col, row, delta) {
-            // a mounted widget panel consumed the scroll
-        } else {
-            // Nothing above claimed the wheel, so it belongs to whatever the
-            // pointer is over in the permanent layout: a pane, the file
-            // explorer, a tab strip — or nothing at all, on chrome that owns
-            // no content (the menu bar, the status bar, a split separator).
-            // Before this fork existed the miss fell through to the *focused*
-            // pane, so resting the pointer on the status bar scrolled a
-            // focused terminal's scrollback (sinelaw/fresh#2969).
-            match self.active_window().wheel_surface_at(col, row) {
-                None => {}
-                Some(surface) => {
-                    // Only a wheel over a pane changes that terminal's
-                    // live/scrollback state; panning the tab strip or the
-                    // explorer leaves a live terminal streaming.
-                    if let WheelSurface::Split(split_id, buffer_id) = surface {
-                        if self.active_window().focused_terminal_live() {
-                            // Scrolling up drops the focused split into read-only
-                            // scrollback (recorded per-split, so re-focusing keeps
-                            // it there).
-                            self.enter_terminal_scrollback();
-                        } else {
-                            // Scrolling a terminal split that a drag parked in
-                            // implicit scrollback means the user is now *reading*
-                            // the scrollback: convert the visit to an explicit
-                            // one, so copy / click-away no longer auto-resume the
-                            // live grid (no-op for everything else).
-                            self.active_window_mut()
-                                .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
-                        }
+            return Ok(());
+        }
+        for surface in Self::WHEEL_SURFACES {
+            if self.wheel_surface_scroll(surface, col, row, delta) {
+                return Ok(());
+            }
+        }
+        // Nothing above claimed the wheel, so it belongs to whatever the
+        // pointer is over in the permanent layout: a pane, the file
+        // explorer, a tab strip — or nothing at all, on chrome that owns
+        // no content (the menu bar, the status bar, a split separator).
+        // Before this fork existed the miss fell through to the *focused*
+        // pane, so resting the pointer on the status bar scrolled a
+        // focused terminal's scrollback (sinelaw/fresh#2969).
+        match self.active_window().wheel_surface_at(col, row) {
+            None => {}
+            Some(surface) => {
+                // Only a wheel over a pane changes that terminal's
+                // live/scrollback state; panning the tab strip or the
+                // explorer leaves a live terminal streaming.
+                if let WheelSurface::Split(split_id, buffer_id) = surface {
+                    if self.active_window().focused_terminal_live() {
+                        // Scrolling up drops the focused split into read-only
+                        // scrollback (recorded per-split, so re-focusing keeps
+                        // it there).
+                        self.enter_terminal_scrollback();
+                    } else {
+                        // Scrolling a terminal split that a drag parked in
+                        // implicit scrollback means the user is now *reading*
+                        // the scrollback: convert the visit to an explicit
+                        // one, so copy / click-away no longer auto-resume the
+                        // live grid (no-op for everything else).
+                        self.active_window_mut()
+                            .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
                     }
-                    self.dismiss_transient_popups();
-                    self.active_window_mut()
-                        .handle_mouse_scroll(col, row, delta)?;
                 }
+                self.dismiss_transient_popups();
+                self.active_window_mut()
+                    .handle_mouse_scroll(col, row, delta)?;
             }
         }
         Ok(())
