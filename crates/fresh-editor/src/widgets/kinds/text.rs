@@ -21,6 +21,51 @@ use crate::widgets::render::{
 pub(crate) struct Text;
 
 impl WidgetImpl for Text {
+    fn on_wheel(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        delta: i32,
+    ) -> bool {
+        // Only a multi-line (document) Text scrolls under the wheel; a
+        // single-line field scrolls with its caret and emits no region.
+        let WidgetSpec::Text { rows, .. } = spec else {
+            return false;
+        };
+        if *rows <= 1 {
+            return false;
+        }
+        let Some((total, visible)) = panel
+            .scroll_regions
+            .iter()
+            .find(|r| r.list_key == widget_key)
+            .map(|r| (r.total, r.visible))
+        else {
+            return false;
+        };
+        let max_scroll = total.saturating_sub(visible) as i64;
+        if max_scroll == 0 {
+            return false;
+        }
+        match panel.instance_states.get_mut(widget_key) {
+            Some(WidgetInstanceState::Text {
+                scroll,
+                user_scrolled,
+                ..
+            }) => {
+                let new = (*scroll as i64 + delta as i64).clamp(0, max_scroll) as u32;
+                if new == *scroll {
+                    return false;
+                }
+                *scroll = new;
+                *user_scrolled = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("text");
         if let WidgetSpec::Text {

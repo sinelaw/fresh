@@ -7091,9 +7091,12 @@ pub(crate) mod tests {
         assert_eq!((section.row, section.height), (1, 7));
         let list = &boxes[find("list")];
         // Inside the section: down past the top border, right past the
-        // "| " border prefix; the section rendered it at width - 4.
+        // "| " border prefix; the section rendered it at width - 4,
+        // then widened the scrollable box +2 through the right border
+        // (wheel over the border scrolls the list, matching the
+        // scroll-region widening).
         assert_eq!((list.row, list.col), (2, 2));
-        assert_eq!((list.width, list.height), (36, 5));
+        assert_eq!((list.width, list.height), (38, 5));
         assert!(list.scrollable && list.focusable);
         assert_eq!(boxes[list.parent.unwrap()].kind, "labeled_section");
 
@@ -7182,5 +7185,55 @@ pub(crate) mod tests {
         // subtree, not the base surface.
         let path = hit_path(&out.boxes, 3, 2);
         assert_eq!(out.boxes[*path.last().unwrap()].z, 1);
+    }
+    // -------------------------------------------------------------
+    // WidgetImpl::on_wheel (phase 4 dispatch)
+    // -------------------------------------------------------------
+
+    fn wheel_panel(spec: &WidgetSpec) -> crate::widgets::WidgetPanelState {
+        let out = render_spec(spec, &HashMap::new(), "", 40);
+        crate::widgets::WidgetPanelState {
+            buffer_id: crate::model::event::BufferId(1),
+            spec: spec.clone(),
+            hits: out.hits,
+            instance_states: out.instance_states,
+            focus_key: out.focus_key,
+            tabbable: out.tabbable,
+            scroll_regions: out.scroll_regions,
+            effective_rows: out.effective_rows,
+            boxes: out.boxes,
+        }
+    }
+
+    #[test]
+    fn list_on_wheel_consumes_until_bound_then_chains() {
+        use crate::widgets::kinds::behavior;
+        // 6 items, 3 visible → max_scroll 3.
+        let spec = boxed_list("l", 6, 3);
+        let mut panel = wheel_panel(&spec);
+        // Consume 3 notches down…
+        for i in 1..=3 {
+            assert!(
+                behavior(&spec).on_wheel(&spec, "l", &mut panel, 1),
+                "notch {i} should scroll"
+            );
+        }
+        // …then the bound is hit: the wheel is NOT consumed, so the
+        // dispatcher keeps bubbling (scroll chaining) instead of the
+        // event going dead on a maxed-out list.
+        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, 1));
+        // Back up consumes again.
+        assert!(behavior(&spec).on_wheel(&spec, "l", &mut panel, -1));
+    }
+
+    #[test]
+    fn fitting_list_on_wheel_never_consumes() {
+        use crate::widgets::kinds::behavior;
+        // Everything visible (Git Log shape): nothing to scroll, the
+        // wheel must fall through to the enclosing pane.
+        let spec = boxed_list("l", 3, 10);
+        let mut panel = wheel_panel(&spec);
+        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, 1));
+        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, -1));
     }
 }

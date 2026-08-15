@@ -200,29 +200,7 @@ fn step_cursor(cursor: usize, delta: i32, len: usize) -> usize {
     raw.clamp(0, len as i32 - 1) as usize
 }
 
-fn collect_visible_tree_indices(
-    nodes: &[fresh_core::api::TreeNode],
-    item_keys: &[String],
-    expanded: &std::collections::HashSet<String>,
-) -> Vec<usize> {
-    let mut ancestor_open: Vec<bool> = Vec::new();
-    let mut visible: Vec<usize> = Vec::with_capacity(nodes.len());
-    for (i, node) in nodes.iter().enumerate() {
-        let depth = node.depth as usize;
-        ancestor_open.truncate(depth);
-        if ancestor_open.iter().all(|open| *open) {
-            visible.push(i);
-        }
-        let key = item_keys.get(i).cloned().unwrap_or_default();
-        let is_open = if node.has_children {
-            !key.is_empty() && expanded.contains(&key)
-        } else {
-            true
-        };
-        ancestor_open.push(is_open);
-    }
-    visible
-}
+use crate::widgets::kinds::tree::collect_visible_tree_indices;
 
 /// Translate the plugin-facing animation description to the internal
 /// `AnimationKind` the runner consumes.
@@ -2733,101 +2711,57 @@ impl Editor {
                 consumed = true;
                 continue;
             }
-            // Position-aware routing: the rendered region under the
-            // pointer names the widget to scroll. Regions are emitted
-            // for every keyed List/Tree (overflowing or not), so a
-            // wheel over a list that happens to fit is *not* rerouted
-            // to a scrollable sibling elsewhere on the panel.
-            let (spec, hovered_key) = match self.widget_registry.get(&panel_key) {
+            // Hit-tested routing: the deepest box under the pointer,
+            // then bubbling outward — each scrollable ancestor gets the
+            // delta until one consumes it (scroll chaining). A widget
+            // already at its bound returns false from `on_wheel`, so a
+            // List/Tree that shows everything (e.g. Git Log, which sets
+            // visible_rows == total and scrolls via its enclosing pane)
+            // lets the wheel keep bubbling instead of going dead. With
+            // no position, or a pointer on chrome outside every box,
+            // fall back to the first scrollable widget in the spec (the
+            // pre-position behaviour).
+            let (spec, mut candidates) = match self.widget_registry.get(&panel_key) {
                 Some(p) => {
-                    let hovered = pos.and_then(|(row, col)| {
-                        p.scroll_regions
-                            .iter()
-                            .find(|r| {
-                                row >= r.buffer_row
-                                    && row < r.buffer_row.saturating_add(r.height_rows)
-                                    && col >= r.col_in_row
-                                    && col < r.col_in_row.saturating_add(r.width_cols)
-                            })
-                            .map(|r| r.list_key.clone())
-                    });
-                    (p.spec.clone(), hovered)
+                    let along_path: Vec<String> = pos
+                        .map(|(row, col)| {
+                            crate::widgets::layout_box::hit_path(&p.boxes, row, col)
+                                .into_iter()
+                                .rev()
+                                .filter(|&i| p.boxes[i].scrollable)
+                                .filter_map(|i| p.boxes[i].key.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    (p.spec.clone(), along_path)
                 }
                 None => continue,
             };
-            let Some(widget_key) = hovered_key.or_else(|| find_scrollable_widget_key(&spec)) else {
-                continue;
-            };
-            let widget = crate::widgets::find_widget_by_key(&spec, &widget_key);
-            match widget {
-                Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                    // Only claim the wheel if the widget actually scrolled.
-                    // A List/Tree that declares `visible_rows >= total`
-                    // (e.g. Git Log, which renders every row and relies on
-                    // its scrollable region's buffer scroll instead) has
-                    // nothing to scroll here; swallowing the event would
-                    // leave the wheel dead. Falling through lets the
-                    // underlying buffer scroll handle it.
-                    consumed |= self.handle_widget_tree_wheel(&panel_key, &widget_key, delta);
+            if candidates.is_empty() {
+                if let Some(k) = find_scrollable_widget_key(&spec) {
+                    candidates.push(k);
                 }
-                Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                    consumed |= self.handle_widget_list_wheel(&panel_key, &widget_key, delta);
+            }
+            for widget_key in candidates {
+                let Some(widget) = crate::widgets::find_widget_by_key(&spec, &widget_key) else {
+                    continue;
+                };
+                let Some(panel) = self.widget_registry.get_mut(&panel_key) else {
+                    break;
+                };
+                if crate::widgets::kinds::behavior(widget).on_wheel(
+                    widget,
+                    &widget_key,
+                    panel,
+                    delta,
+                ) {
+                    self.rerender_widget_panel(&panel_key);
+                    consumed = true;
+                    break;
                 }
-                Some(fresh_core::api::WidgetSpec::Text { rows, .. }) if *rows > 1 => {
-                    consumed |= self.handle_widget_text_wheel(&panel_key, &widget_key, delta);
-                }
-                _ => {}
             }
         }
         consumed
-    }
-
-    /// Wheel over a multi-line (markdown) Text document: shift its
-    /// viewport by `delta` rows, clamped to the rendered line count
-    /// recorded in the widget's scroll region. Sets `user_scrolled` so
-    /// the next render doesn't snap back to the caret. Returns `true`
-    /// when the viewport actually moved.
-    fn handle_widget_text_wheel(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        widget_key: &str,
-        delta: i32,
-    ) -> bool {
-        let Some(panel) = self.widget_registry.get(panel_key) else {
-            return false;
-        };
-        let Some((total, visible)) = panel
-            .scroll_regions
-            .iter()
-            .find(|r| r.list_key == widget_key)
-            .map(|r| (r.total, r.visible))
-        else {
-            return false;
-        };
-        let max_scroll = total.saturating_sub(visible) as i64;
-        if max_scroll == 0 {
-            return false;
-        }
-        let Some(panel) = self.widget_registry.get_mut(panel_key) else {
-            return false;
-        };
-        match panel.instance_states.get_mut(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::Text {
-                scroll,
-                user_scrolled,
-                ..
-            }) => {
-                let new = (*scroll as i64 + delta as i64).clamp(0, max_scroll) as u32;
-                if new == *scroll {
-                    return false;
-                }
-                *scroll = new;
-                *user_scrolled = true;
-            }
-            _ => return false,
-        }
-        self.rerender_widget_panel(panel_key);
-        true
     }
 
     /// Shift the focused Text widget's completion popup scroll
@@ -2883,178 +2817,6 @@ impl Editor {
             let next = (*completion_scroll_offset as i32 + delta).clamp(0, max_scroll as i32);
             *completion_scroll_offset = next as u32;
         }
-    }
-
-    /// Shift a Tree's `scroll_offset` by `delta` rows. If the
-    /// selection would fall outside the new viewport, drag it to
-    /// the edge so the renderer's keep-selection-visible logic
-    /// doesn't snap the offset back.
-    fn handle_widget_tree_wheel(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        widget_key: &str,
-        delta: i32,
-    ) -> bool {
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return false,
-        };
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
-        let (visible_rows, item_height, card_borders, checkable, nodes, item_keys) = match widget {
-            Some(fresh_core::api::WidgetSpec::Tree {
-                visible_rows,
-                item_height,
-                card_borders,
-                checkable,
-                nodes,
-                item_keys,
-                ..
-            }) => (
-                panel.effective_visible_rows(widget_key, *visible_rows),
-                (*item_height).max(1),
-                *card_borders,
-                *checkable,
-                nodes.clone(),
-                item_keys.clone(),
-            ),
-            _ => return false,
-        };
-        if nodes.is_empty() {
-            return false;
-        }
-        let (cur_sel, cur_scroll, expanded) = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::Tree {
-                selected_index,
-                scroll_offset,
-                expanded_keys,
-                ..
-            }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
-            _ => (-1, 0, std::collections::HashSet::<String>::new()),
-        };
-        let visible_indices = collect_visible_tree_indices(&nodes, &item_keys, &expanded);
-        if visible_indices.is_empty() {
-            return false;
-        }
-        // Scroll offset and clamp are in *row* units (line-level
-        // scrolling — a bordered card can be partially clipped at the
-        // viewport edges). Compute per-node heights and the clamp with
-        // the renderer's own helpers so the wheel can't disagree with
-        // what will actually be painted: fixed `item_height` bands
-        // normally, variable rows with `card_borders` (bordered cards
-        // are `item_height + 2` rows, folder headers a single row).
-        // Mirror the renderer's normalization: bordered-card layout only
-        // engages for multi-row items.
-        let card_borders = card_borders && item_height > 1;
-        let heights: Vec<u32> = visible_indices
-            .iter()
-            .map(|&abs| {
-                crate::widgets::render::tree_node_rows(
-                    &nodes[abs],
-                    checkable,
-                    item_height,
-                    card_borders,
-                )
-            })
-            .collect();
-        let max_scroll = crate::widgets::render::tree_max_scroll(&heights, visible_rows);
-        let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
-        if new_scroll == cur_scroll {
-            return false;
-        }
-        // Mouse scroll moves the *view* only — the selection stays put
-        // (and may scroll out of view). `user_scrolled` tells the
-        // renderer not to snap the offset back to the selection, and —
-        // unlike the old drag-selection-to-the-edge workaround — it
-        // survives a plugin `SetSelectedIndex` that re-pins the same
-        // selection (the orchestrator dock re-pins on every probe-poll
-        // refresh, which used to yank the scrolled view back to the top).
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::Tree {
-                    scroll_offset: new_scroll,
-                    selected_index: cur_sel,
-                    expanded_keys: expanded,
-                    user_scrolled: true,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_key);
-        true
-    }
-
-    /// List counterpart of `handle_widget_tree_wheel`. Returns true if the
-    /// list's scroll offset actually changed (the wheel was consumed).
-    fn handle_widget_list_wheel(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        widget_key: &str,
-        delta: i32,
-    ) -> bool {
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return false,
-        };
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
-        let (visible_rows, total) = match widget {
-            Some(fresh_core::api::WidgetSpec::List {
-                visible_rows,
-                items,
-                item_specs,
-                ..
-            }) => {
-                let total = if item_specs.is_empty() {
-                    items.len()
-                } else {
-                    item_specs.len()
-                };
-                (
-                    panel.effective_visible_rows(widget_key, *visible_rows),
-                    total as u32,
-                )
-            }
-            _ => return false,
-        };
-        if total == 0 {
-            return false;
-        }
-        let (cur_sel, cur_scroll, item_height) = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::List {
-                selected_index,
-                scroll_offset,
-                item_height,
-                ..
-            }) => (*selected_index, *scroll_offset, (*item_height).max(1)),
-            _ => (-1, 0, 1),
-        };
-        // Convert the row-denominated viewport into a per-item window so
-        // the bound is right for card lists (item_height > 1), and so a
-        // list that already shows everything (max_scroll == 0, e.g. the
-        // Git Log which sets visible_rows == commit count and scrolls via
-        // its enclosing pane) reports "can't scroll" and lets the wheel
-        // bubble to that pane rather than swallowing it.
-        let visible_items = (visible_rows.max(1) / item_height).max(1);
-        let max_scroll = total.saturating_sub(visible_items);
-        let new_scroll = (cur_scroll as i64 + delta as i64).clamp(0, max_scroll as i64) as u32;
-        if new_scroll == cur_scroll {
-            return false;
-        }
-        // Wheel scrolls the *view* only — the selection stays put (and
-        // may leave the visible window); `user_scrolled` tells the
-        // renderer not to snap the offset back to it.
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::List {
-                    scroll_offset: new_scroll,
-                    selected_index: cur_sel,
-                    item_height,
-                    user_scrolled: true,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_key);
-        true
     }
 
     /// Right/Left arrow on a focused Tree.

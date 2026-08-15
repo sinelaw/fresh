@@ -32,7 +32,7 @@ mod raw;
 mod spacer;
 mod text;
 mod toggle;
-mod tree;
+pub(crate) mod tree;
 mod window_embed;
 
 use std::collections::HashMap;
@@ -91,6 +91,22 @@ pub(crate) trait WidgetImpl: Sync {
     /// answers for its own variant — there is deliberately no central
     /// kind→tag table.
     fn box_meta(&self, spec: &WidgetSpec) -> BoxMeta;
+
+    /// A wheel delta bubbling through this widget's box. Return true
+    /// when the widget consumed it (actually moved its viewport) —
+    /// the dispatcher then rerenders the panel and stops bubbling. A
+    /// widget already at its bound returns false so the event keeps
+    /// bubbling (scroll chaining), ultimately falling through to the
+    /// enclosing buffer scroll. The default is "not scrollable".
+    fn on_wheel(
+        &self,
+        _spec: &WidgetSpec,
+        _widget_key: &str,
+        _panel: &mut crate::widgets::WidgetPanelState,
+        _delta: i32,
+    ) -> bool {
+        false
+    }
 }
 
 /// The one kind-dispatch — the single surviving `match` on a
