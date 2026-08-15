@@ -4284,44 +4284,27 @@ impl Editor {
         col: u16,
         row: u16,
     ) -> bool {
-        let (panel_key, inner) = match self.panel(slot) {
-            Some(fwp) => match fwp.last_inner_rect {
-                Some(rect) => (fwp.panel_key.clone(), rect),
-                None => return false,
-            },
+        let panel_key = match self.panel(slot) {
+            Some(fwp) => fwp.panel_key.clone(),
             None => return false,
         };
-        if col < inner.x || col >= inner.x + inner.width {
-            return false;
-        }
-        if row < inner.y || row >= inner.y + inner.height {
-            return false;
-        }
-        let brow = (row - inner.y) as u32;
-        let entries = self
-            .panel(slot)
-            .map(|f| f.entries.clone())
-            .unwrap_or_default();
-        let local_screen_col = (col - inner.x) as usize;
-        let bcol = match entries.get(brow as usize) {
-            Some(entry) => crate::primitives::display_width::grapheme_byte_at_visual_column(
-                &entry.text,
-                local_screen_col,
-            ),
+        // One probe for every pointer gesture on a panel — the same
+        // geometry, surface decision (base vs covering popup), and
+        // row-aware resolution the left-click and hover paths use.
+        // This path used to duplicate the geometry inline WITHOUT the
+        // overlay check, so a right-click went through an open popup
+        // to the rows it covered.
+        let probe = match self.probe_floating_widget(slot, col, row) {
+            Some(p) => p,
             None => return false,
         };
-        // Resolve row-aware (exact byte hit, else the row's body `select`
-        // when the click lands past a compact row's text — a context menu
-        // targets the ROW, not a byte), then keep only list/tree hits: a
-        // right-click raises a menu for a session row, not for a button or
-        // empty padding. Shares `hit_test_row_aware` with the left-click
-        // path so the row-width rule lives in exactly one place.
-        let (mut payload, key, _kind) = match self
-            .widget_registry
-            .hit_test_row_aware(slot.buffer_id(), brow, bcol as u32)
-            .filter(|(_, hit)| hit.widget_kind == "list" || hit.widget_kind == "tree")
+        // Keep only list/tree hits: a right-click raises a menu for a
+        // session row, not for a button or empty padding.
+        let (mut payload, key, _kind) = match probe
+            .hit
+            .filter(|hit| hit.widget_kind == "list" || hit.widget_kind == "tree")
         {
-            Some((_, hit)) => (hit.payload.clone(), hit.widget_key.clone(), hit.widget_kind),
+            Some(hit) => (hit.payload.clone(), hit.widget_key.clone(), hit.widget_kind),
             None => return false,
         };
         // Carry the screen cell so the plugin can anchor its popup at the
@@ -4460,43 +4443,53 @@ impl Editor {
         }
         let brow = (row - inner.y) as u32;
         let local_screen_col = (col - inner.x) as usize;
-        // A row an `Overlay` covers (the dock's "New Task… ▾" / "Move to
-        // Folder…" dropdowns float over the tree without reflowing it) is
-        // DRAWN from the overlay's text, so the column has to be mapped
-        // through that text — it is what the user is pointing at, and what
-        // the overlay's hit areas were measured against. Mapping through
-        // the row underneath yields a byte offset in a different string,
-        // which is why the dropdown options were unclickable: the offset
-        // never landed inside an option's range.
+        // Which surface is the pointer on? The panel's layout-box tree
+        // answers: a z>0 box — an Overlay-promoted subtree (the dock's
+        // "New Task… ▾" / "Move to Folder…" dropdowns) or the Text
+        // completion popup — covers the base rows beneath it. This used
+        // to be re-derived by scanning the painted overlay rows; the
+        // box tree is the same fact, stated structurally.
+        let on_overlay = self
+            .widget_registry
+            .panels_for_buffer(slot.buffer_id())
+            .first()
+            .and_then(|k| self.widget_registry.get(k))
+            .is_some_and(|p| {
+                crate::widgets::layout_box::hit_path(&p.boxes, brow, local_screen_col as u32)
+                    .last()
+                    .is_some_and(|&i| p.boxes[i].z > 0)
+            });
+        // The column maps to a byte offset through the text of the
+        // surface the pointer is on — a covered row is DRAWN from the
+        // overlay's text, and the overlay's hit areas were measured
+        // against it. Mapping through the row underneath yields a byte
+        // offset in a different string, which is why the dropdown
+        // options were once unclickable.
         let panel = self.panel(slot)?;
-        let overlay_text = panel
-            .overlays
-            .iter()
-            .find(|o| o.buffer_row == brow)
-            .map(|o| o.entry.text.as_str());
-        let on_overlay = overlay_text.is_some();
-        let row_text =
-            overlay_text.or_else(|| panel.entries.get(brow as usize).map(|e| e.text.as_str()))?;
+        let row_text = if on_overlay {
+            panel
+                .overlays
+                .iter()
+                .find(|o| o.buffer_row == brow)
+                .map(|o| o.entry.text.as_str())?
+        } else {
+            panel.entries.get(brow as usize).map(|e| e.text.as_str())?
+        };
         let bcol = crate::primitives::display_width::grapheme_byte_at_visual_column(
             row_text,
             local_screen_col,
         );
-        // Row-aware resolution: an exact byte hit wins, but a click past a
-        // compact list/tree row's text still lands on the row (its body
-        // `select`) instead of being dropped — the same rule the
-        // right-click context path uses.
-        //
-        // Over an overlay that rule is off: the popup is opaque, so only its
-        // own hits are reachable and a click that misses every option (its
-        // border, its padding) is swallowed rather than falling through to
-        // the row it hides.
-        let hit = if on_overlay {
-            self.widget_registry
-                .overlay_hit_test(slot.buffer_id(), brow, bcol as u32)
-        } else {
-            self.widget_registry
-                .hit_test_row_aware(slot.buffer_id(), brow, bcol as u32)
-        };
+        // Row-aware resolution on the base surface (a click past a
+        // compact row's text still lands on the row); opaque popup
+        // semantics on the overlay surface (only its own hits are
+        // reachable, misses swallowed) — both inside
+        // `hit_test_row_aware`, keyed by the surface parameter.
+        let hit = self.widget_registry.hit_test_row_aware(
+            slot.buffer_id(),
+            brow,
+            bcol as u32,
+            on_overlay,
+        );
         Some(FloatingWidgetProbe {
             brow,
             bcol,

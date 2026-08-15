@@ -237,7 +237,7 @@ impl Editor {
             // floating dock does, from the one shared resolver.
             if let Some((panel_key, hit)) = self
                 .widget_registry
-                .hit_test_row_aware(buffer_id, brow, bcol)
+                .hit_test_row_aware(buffer_id, brow, bcol, false)
             {
                 self.deliver_widget_hit(&panel_key, &hit, Some(bcol as usize));
             }
