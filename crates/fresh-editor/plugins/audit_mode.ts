@@ -2886,13 +2886,18 @@ registerHandler("review_relayout_comments", review_relayout_comments);
 
 /** The stream's inline comment boxes are wrapped to the diff panel's
  *  width, so a width the layout did not know about leaves them the wrong
- *  shape. Re-render once the width settles — the signature check inside
- *  `mountStreamContent` makes this a no-op when the width is what the
- *  content was already built to. */
+ *  shape. Re-emit the content once the width settles — and *only* the
+ *  content: this runs off a timer, at a moment nobody asked for, so it
+ *  must not swap which buffer the panel shows or move focus the way a
+ *  full `renderCenter` does. Firing that in the middle of a drill-down
+ *  would pull the reader out of the composite they just opened. The
+ *  signature check inside `mountStreamContent` makes it a no-op when the
+ *  width is what the content was already built to. */
 function review_relayout_diff(): void {
     panelRelayoutTimers.diff = null;
     if (state.groupId === null || state.reviewLayout === 'side-by-side') return;
-    renderCenter();
+    if (state.centerComposite !== null) return;
+    mountStreamContent();
 }
 registerHandler("review_relayout_diff", review_relayout_diff);
 
