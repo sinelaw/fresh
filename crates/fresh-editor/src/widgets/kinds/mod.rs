@@ -23,7 +23,7 @@
 mod button;
 mod containers;
 mod divider;
-mod dropdown;
+pub(crate) mod dropdown;
 mod dual_list;
 mod hint_bar;
 mod list;

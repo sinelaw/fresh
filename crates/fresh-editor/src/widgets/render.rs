@@ -521,12 +521,24 @@ pub fn render_spec_with_options(
     };
     let mut next_state = HashMap::new();
     let collected = render_collected(spec, prev, &mut next_state, ctx, panel_width);
+    // The box tree is the focus authority: publish the ring derived
+    // from it (focusable boxes in document order). The spec-walk ring
+    // computed above exists because focus must resolve *before*
+    // collection (widgets style by focus); the two are equal by
+    // construction — box_meta mirrors collect_tabbable's rules — and
+    // the debug assert keeps them that way until the pre-pass ring
+    // can be retired with the constraint-layout phase.
+    let derived_tabbable = crate::widgets::layout_box::focus_ring(&collected.boxes);
+    debug_assert_eq!(
+        derived_tabbable, tabbable,
+        "box-tree focus ring diverged from collect_tabbable"
+    );
     RenderOutput {
         entries: collected.entries,
         hits: collected.hits,
         instance_states: next_state,
         focus_key,
-        tabbable,
+        tabbable: derived_tabbable,
         focus_cursor: collected.focus_cursor,
         embeds: collected.embeds,
         overlays: collected.overlays,

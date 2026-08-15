@@ -1506,17 +1506,28 @@ impl Editor {
             Some(p) => p,
             None => return,
         };
-        if panel.tabbable.is_empty() {
+        // The ring comes from the layout-box tree, scoped to the
+        // nearest focus-trap ancestor of the focused box (a modal /
+        // Component subtree contains Tab cycling; without traps this
+        // is the whole panel's document order). Panels mounted without
+        // a box tree (tests, legacy paths) fall back to the stored
+        // flat ring.
+        let ring = {
+            let scoped =
+                crate::widgets::layout_box::focus_ring_scoped(&panel.boxes, &panel.focus_key);
+            if scoped.is_empty() {
+                panel.tabbable.clone()
+            } else {
+                scoped
+            }
+        };
+        if ring.is_empty() {
             return;
         }
-        let cur_idx = panel
-            .tabbable
-            .iter()
-            .position(|k| k == &panel.focus_key)
-            .unwrap_or(0) as i32;
-        let n = panel.tabbable.len() as i32;
+        let cur_idx = ring.iter().position(|k| k == &panel.focus_key).unwrap_or(0) as i32;
+        let n = ring.len() as i32;
         let new_idx = ((cur_idx + delta) % n + n) % n;
-        let new_key = panel.tabbable[new_idx as usize].clone();
+        let new_key = ring[new_idx as usize].clone();
         self.set_panel_focus_and_notify(panel_key, new_key);
         self.rerender_widget_panel(panel_key);
     }
@@ -1820,56 +1831,9 @@ impl Editor {
         widget_key: &str,
         delta: i32,
     ) {
-        if widget_key.is_empty() {
-            return;
-        }
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return,
-        };
-        let (options, spec_sel) = match crate::widgets::find_widget_by_key(&panel.spec, widget_key)
-        {
-            Some(fresh_core::api::WidgetSpec::Dropdown {
-                options,
-                selected_index,
-                ..
-            }) => (options.clone(), *selected_index),
-            _ => return,
-        };
-        if options.is_empty() {
-            return;
-        }
-        let (cur, open) = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::Dropdown {
-                selected_index,
-                open,
-            }) => (*selected_index, *open),
-            _ => (spec_sel, false),
-        };
-        let cur = cur.clamp(0, options.len() as i32 - 1);
-        let new_sel = crate::widgets::wrap_index(cur, delta, options.len());
-        let changed = new_sel != cur;
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::Dropdown {
-                    selected_index: new_sel,
-                    // Preserve the popup's open state across a cycle so
-                    // Up/Down inside the open list keeps it open.
-                    open,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_key);
-        if changed {
-            let value = options.get(new_sel as usize).cloned().unwrap_or_default();
-            self.fire_widget_event(
-                panel_key,
-                widget_key.to_string(),
-                "change".into(),
-                serde_json::json!({ "index": new_sel, "value": value }),
-            );
-        }
+        self.with_dropdown_helper(panel_key, widget_key, |spec, key, panel, fx| {
+            crate::widgets::kinds::dropdown::cycle_selection(spec, key, panel, delta, fx);
+        });
     }
 
     /// Set a `Dropdown`'s selected index to an absolute value (a click
@@ -1957,48 +1921,45 @@ impl Editor {
         widget_key: &str,
         open: bool,
     ) {
+        self.with_dropdown_helper(panel_key, widget_key, |spec, key, panel, fx| {
+            crate::widgets::kinds::dropdown::set_open(spec, key, panel, open, fx);
+        });
+    }
+
+    /// Shared shell for the Dropdown click paths: resolve the widget's
+    /// spec node, run the kind-owned mutation (the same helpers
+    /// `Dropdown::on_key` uses — one copy of the cycle/open logic),
+    /// repaint, and fire the queued events.
+    fn with_dropdown_helper(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget_key: &str,
+        f: impl FnOnce(
+            &fresh_core::api::WidgetSpec,
+            &str,
+            &mut crate::widgets::WidgetPanelState,
+            &mut crate::widgets::kinds::KeyFx,
+        ),
+    ) {
         if widget_key.is_empty() {
             return;
         }
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
+        let widget = match self
+            .widget_registry
+            .get(panel_key)
+            .and_then(|p| crate::widgets::find_widget_by_key(&p.spec, widget_key))
+        {
+            Some(w) => w.clone(),
             None => return,
         };
-        let spec_sel = match crate::widgets::find_widget_by_key(&panel.spec, widget_key) {
-            Some(fresh_core::api::WidgetSpec::Dropdown { selected_index, .. }) => *selected_index,
-            _ => return,
-        };
-        let (cur, prev_open) = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::Dropdown {
-                selected_index,
-                open,
-            }) => (*selected_index, *open),
-            _ => (spec_sel, false),
-        };
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::Dropdown {
-                    selected_index: cur,
-                    open,
-                },
-            );
+        let mut fx = crate::widgets::kinds::KeyFx::default();
+        match self.widget_registry.get_mut(panel_key) {
+            Some(panel) => f(&widget, widget_key, panel, &mut fx),
+            None => return,
         }
         self.rerender_widget_panel(panel_key);
-        // Notify the plugin when the option pop-over actually opens or
-        // closes (any path: keyboard, a `[value ▼]` trigger click, or an
-        // option pick that closes it). The plugin mirrors this so its own
-        // key handlers can tell "dropdown open" apart from "dropdown
-        // closed" — e.g. Escape closes the open list but cancels the
-        // dialog when it's already closed. Not a value edit, so it's a
-        // distinct `dropdown_open` event, never `change`.
-        if open != prev_open {
-            self.fire_widget_event(
-                panel_key,
-                widget_key.to_string(),
-                "dropdown_open".into(),
-                serde_json::json!({ "open": open }),
-            );
+        for (event_type, payload) in fx.events {
+            self.fire_widget_event(panel_key, widget_key.to_string(), event_type, payload);
         }
     }
 
