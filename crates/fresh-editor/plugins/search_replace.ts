@@ -1395,7 +1395,40 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
 // Panel lifecycle
 // =============================================================================
 
+/** In-flight `openPanel` run, if any (#2953).
+ *
+ * `openPanel` awaits the host round-trip that creates the panel's virtual
+ * buffer, and only learns the buffer id when that resolves. A second
+ * invocation arriving inside that await — pressing `Alt+A` twice, or the
+ * keymap and the palette firing together — used to see the half-built
+ * `panel` object, take the "already open" branch and render the widget tree
+ * into `resultsBufferId === 0`. The host has no buffer 0, so the mount
+ * failed, the panel stayed bound to the bogus id and every later update
+ * failed too: a panel with no search field, no replace field and no footer,
+ * which never repaired itself.
+ *
+ * Opens are therefore serialized. A concurrent caller waits for the run
+ * ahead of it and then applies its own intent (prefill, scope) to the
+ * finished panel, so pressing the key twice ends up exactly where pressing
+ * it twice slowly does. */
+let openPanelInFlight: Promise<void> | null = null;
+
 async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
+  // Wait out any open already in progress (a chain of them, if the user
+  // leaned on the key), then take the baton.
+  while (openPanelInFlight) {
+    await openPanelInFlight;
+  }
+  const run = openPanelInner(opts);
+  openPanelInFlight = run;
+  try {
+    await run;
+  } finally {
+    if (openPanelInFlight === run) openPanelInFlight = null;
+  }
+}
+
+async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
   // Try to pre-fill search from editor selection
   let prefill = "";
   let sourceBufferPath = "";
@@ -1437,43 +1470,21 @@ async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
 
   const sourceSplitId = editor.getActiveSplitId();
 
-  panel = {
-    resultsBufferId: 0,
-    sourceSplitId,
-    resultsSplitId: 0,
-    searchResults: [],
-    fileGroups: [],
-    searchPattern: prefill,
-    replaceText: "",
-    fileGlob: "",
-    focusPanel: "query",
-    queryField: "search",
-    optionIndex: 0,
-    matchIndex: 0,
-    caseSensitive: false,
-    useRegex: false,
-    wholeWords: false,
-    allFiles,
-    sourceBufferPath,
-    sourceBufferRelPath,
-    sourceBufferId,
-    viewportWidth: DEFAULT_WIDTH,
-    busy: false,
-    searchPerformed: false,
-    truncated: false,
-    cursorPos: prefill.length,
-    scrollOffset: 0,
-    expandedFileKeys: new Set<string>(),
-    knownFileKeys: new Set<string>(),
-    widgetPanel: null,
-  };
-
   try {
+    // Create the buffer *before* publishing `panel`. Everything that reads
+    // the module-level `panel` — the `resize` hook, `after_file_open`,
+    // `updatePanelContent` — would otherwise be able to observe a panel
+    // whose `resultsBufferId` is still the 0 placeholder and render the
+    // widget tree into a buffer that does not exist (#2953). Assigning only
+    // once the real id is in hand makes that state unrepresentable rather
+    // than merely guarded against.
     const result = await editor.createVirtualBufferInSplit({
       name: "*Search/Replace*",
       mode: "search-replace-list",
       readOnly: true,
-      entries: buildPanelEntries(),
+      // The panel's content is painted by `updatePanelContent()` below, as
+      // a widget tree; the buffer starts empty for the one frame in between.
+      entries: [],
       ratio: 0.6,
       panelId: "search-replace-panel",
       // Opt into the Utility Dock (issue #1796 / Section 2 of
@@ -1490,12 +1501,40 @@ async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
       // search inputs off-screen, revealing empty space below (#2434).
       scrollable: false,
     });
-    panel.resultsBufferId = result.bufferId;
-    panel.resultsSplitId = result.splitId ?? editor.getActiveSplitId();
+
+    panel = {
+      resultsBufferId: result.bufferId,
+      sourceSplitId,
+      resultsSplitId: result.splitId ?? editor.getActiveSplitId(),
+      searchResults: [],
+      fileGroups: [],
+      searchPattern: prefill,
+      replaceText: "",
+      fileGlob: "",
+      focusPanel: "query",
+      queryField: "search",
+      optionIndex: 0,
+      matchIndex: 0,
+      caseSensitive: false,
+      useRegex: false,
+      wholeWords: false,
+      allFiles,
+      sourceBufferPath,
+      sourceBufferRelPath,
+      sourceBufferId,
+      // Now we have the split, so the real width is available.
+      viewportWidth: getViewportWidth(),
+      busy: false,
+      searchPerformed: false,
+      truncated: false,
+      cursorPos: prefill.length,
+      scrollOffset: 0,
+      expandedFileKeys: new Set<string>(),
+      knownFileKeys: new Set<string>(),
+      widgetPanel: null,
+    };
     editor.debug(`Search/Replace: panel opened, bufferId=${result.bufferId}, splitId=${result.splitId}`);
 
-    // Now we have the split, refresh width
-    panel.viewportWidth = getViewportWidth();
     updatePanelContent();
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
