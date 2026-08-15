@@ -15,6 +15,7 @@
 //! design.
 
 mod actions;
+pub(crate) mod kinds;
 mod registry;
 pub(crate) mod render;
 mod text_click;
