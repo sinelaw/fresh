@@ -9186,6 +9186,18 @@ impl QuickJsBackend {
         let qualified = action_name
             .strip_prefix("mode_text_input@")
             .and_then(|rest| rest.split_once(':'));
+        if qualified.is_some() || action_name.starts_with("mode_text_input:") {
+            // Nothing in-tree produces this string encoding anymore —
+            // the host dispatches typed ModeTextInput requests. This
+            // parse survives only for user keymaps that bound the
+            // string form directly; the warning is the signal for when
+            // it can be deleted.
+            tracing::warn!(
+                action = action_name,
+                "deprecated mode_text_input string encoding — bind the mode's \
+                 text-input action instead; this compatibility parse will be removed"
+            );
+        }
         let (lookup_name, fallback_name, text_input_char) = match qualified {
             Some((mode, ch)) => (
                 format!("mode_text_input@{}", mode),
