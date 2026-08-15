@@ -807,9 +807,23 @@ phase 6 step 1 (typed key fast lane); and phase 7's tree half — the
 completion popup and dropdown pop-over are boxes (z=1 opaque /
 screen-space z=2) parented to their owning field, which is the
 structural fact the deleted short-circuits used to hand-simulate.
-Still open, in plan order: vertical flex/justify (3), growing the hit
-tree outward to non-widget chrome and the app wheel/click ladders +
-`*Layout` caches (4), the app-level focus unification — `FocusManager`,
+The outward growth has since begun: `WidgetRegistry::overlay_hit_test`
+is deleted — which surface the pointer is on (base rows vs a covering
+popup) is the box tree's call, passed as a parameter to the one
+byte-ranged resolver, and the right-click path now shares the same
+probe as left-click/hover (fixing its overlay blind spot). The two
+big precedence ladders are data: `handle_vertical_scroll`'s else-if
+chain is `WHEEL_SURFACES` and `handle_mouse_click`'s 18-step chain is
+`CLICK_SURFACES` — const tables walked with a uniform consumed/pass
+contract, mid-chain guards included as explicit entries. Adding a
+surface is a variant + a table position + a dispatch arm; the
+ordering no longer lives in control flow. What the tables are *not*
+yet: a real hit-test — containment still lives inside each surface's
+handler because non-widget chrome has no boxes. Still open, in plan
+order: vertical flex/justify (3), chrome boxes + true hit-tested
+capture/bubble replacing the tables and the `*Layout` caches, and the
+short gesture-scoped double-/right-click chains (4), the app-level
+focus unification — `FocusManager`,
 `Prompt.toolbar_focus`, dock focus (5), host-side editing keys (6 step
 2), `WidgetSpec::Popup` + side-channel/`overlay_hit_test` deletion (7 —
 plugin-visible wire change, budget the web renderer mirror), Settings
