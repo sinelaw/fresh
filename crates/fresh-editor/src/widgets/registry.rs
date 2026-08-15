@@ -81,7 +81,9 @@ pub struct HitArea {
     /// them (the dock's "New Task… ▾" and "Move to Folder…" dropdowns).
     /// Its byte range is measured against the overlay's own row text,
     /// not the text of the row it covers, so click resolution has to
-    /// keep the two apart. See [`WidgetRegistry::overlay_hit_test`].
+    /// keep the two apart — `hit_test_row_aware` takes the surface as
+    /// a parameter, decided by the panel's layout-box tree (a z>0 box
+    /// covers the base rows beneath it).
     pub overlay: bool,
 }
 
@@ -548,12 +550,29 @@ impl WidgetRegistry {
         row: u32,
         col_byte: u32,
     ) -> Option<(PanelKey, HitArea)> {
+        self.surface_hit(buffer_id, row, col_byte, false)
+    }
+
+    /// One byte-ranged scan for both surfaces: `on_overlay` selects
+    /// whether the byte ranges are measured against the popup rows an
+    /// `Overlay` painted (`hit.overlay == true`) or the base rows
+    /// beneath. Which surface the pointer is on is the layout-box
+    /// tree's call (a z>0 box covers the base) — made by the caller,
+    /// not re-derived here.
+    fn surface_hit(
+        &self,
+        buffer_id: BufferId,
+        row: u32,
+        col_byte: u32,
+        on_overlay: bool,
+    ) -> Option<(PanelKey, HitArea)> {
         for (key, state) in &self.panels {
             if state.buffer_id != buffer_id {
                 continue;
             }
             for hit in &state.hits {
-                if hit.buffer_row == row
+                if hit.overlay == on_overlay
+                    && hit.buffer_row == row
                     && (col_byte as usize) >= hit.byte_start
                     && (col_byte as usize) < hit.byte_end
                 {
@@ -583,45 +602,25 @@ impl WidgetRegistry {
     /// the left-click path stayed byte-exact, so compact dock rows
     /// silently ignored left-clicks past their label. Route new click
     /// surfaces through here rather than calling `hit_test` directly.
+    /// `on_overlay` = the pointer sits on a popup surface (decided by
+    /// the panel's layout-box tree). Overlay surfaces are opaque: only
+    /// hits the popup itself contributed are reachable, with no
+    /// row-wide fallback — a click on its border/padding resolves to
+    /// nothing and the caller swallows it, never reaching the rows
+    /// the popup covers. Callers must map the click column to
+    /// `col_byte` through the text of the surface they name.
     pub fn hit_test_row_aware(
         &self,
         buffer_id: BufferId,
         row: u32,
         col_byte: u32,
+        on_overlay: bool,
     ) -> Option<(PanelKey, HitArea)> {
-        self.hit_test(buffer_id, row, col_byte)
-            .or_else(|| self.row_select_hit(buffer_id, row, col_byte))
-    }
-
-    /// Resolve a click on a row that an `Overlay` paints over.
-    ///
-    /// Only hits the overlay itself contributed are reachable there. The
-    /// row underneath is hidden by the popup, so a click anywhere on it —
-    /// including the border columns, where no option sits — must never
-    /// reach the widget behind. Callers must map the click column to
-    /// `col_byte` through the *overlay's* row text, since that is the
-    /// text these byte ranges were measured against.
-    pub fn overlay_hit_test(
-        &self,
-        buffer_id: BufferId,
-        row: u32,
-        col_byte: u32,
-    ) -> Option<(PanelKey, HitArea)> {
-        for (key, state) in &self.panels {
-            if state.buffer_id != buffer_id {
-                continue;
-            }
-            for hit in &state.hits {
-                if hit.overlay
-                    && hit.buffer_row == row
-                    && (col_byte as usize) >= hit.byte_start
-                    && (col_byte as usize) < hit.byte_end
-                {
-                    return Some((key.clone(), hit.clone()));
-                }
-            }
+        if on_overlay {
+            return self.surface_hit(buffer_id, row, col_byte, true);
         }
-        None
+        self.surface_hit(buffer_id, row, col_byte, false)
+            .or_else(|| self.row_select_hit(buffer_id, row, col_byte))
     }
 
     /// The row-body `select` hit of a list/tree row in `buffer_id`,
@@ -800,7 +799,7 @@ mod tests {
         assert!(reg.hit_test(BufferId(2), 0, 10).is_none());
         // ...but the row-aware resolver falls back to the row's body select.
         let (_, hit) = reg
-            .hit_test_row_aware(BufferId(2), 0, 40)
+            .hit_test_row_aware(BufferId(2), 0, 40, false)
             .expect("click past text still lands on the row");
         assert_eq!(hit.widget_key, "session-a");
         assert_eq!(hit.event_type, "select");
@@ -824,7 +823,7 @@ mod tests {
             Vec::new(),
         );
         let (_, hit) = reg
-            .hit_test_row_aware(BufferId(3), 0, 2)
+            .hit_test_row_aware(BufferId(3), 0, 2, false)
             .expect("on button");
         assert_eq!(hit.widget_key, "btn");
         assert_eq!(hit.event_type, "activate");
@@ -847,7 +846,42 @@ mod tests {
             HashMap::new(),
             Vec::new(),
         );
-        assert!(reg.hit_test_row_aware(BufferId(4), 3, 0).is_none());
+        assert!(reg.hit_test_row_aware(BufferId(4), 3, 0, false).is_none());
+    }
+
+    #[test]
+    fn overlay_surface_is_opaque_and_separate() {
+        let mut reg = WidgetRegistry::default();
+        let mut base = make_hit(0, 0, 10, "under");
+        base.event_type = "select";
+        base.widget_kind = "list";
+        let mut popup = make_hit(0, 2, 6, "option");
+        popup.overlay = true;
+        reg.mount(
+            pk(9),
+            BufferId(9),
+            empty_spec(),
+            vec![base, popup],
+            HashMap::new(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            HashMap::new(),
+            Vec::new(),
+        );
+        // On the overlay surface only the popup's own hits resolve…
+        let (_, hit) = reg
+            .hit_test_row_aware(BufferId(9), 0, 3, true)
+            .expect("popup option");
+        assert_eq!(hit.widget_key, "option");
+        // …and a miss (border/padding) is swallowed — no row fallback
+        // to the covered list row.
+        assert!(reg.hit_test_row_aware(BufferId(9), 0, 8, true).is_none());
+        // On the base surface the popup's hits are invisible.
+        let (_, hit) = reg
+            .hit_test_row_aware(BufferId(9), 0, 3, false)
+            .expect("covered row");
+        assert_eq!(hit.widget_key, "under");
     }
 
     fn mount_with_list(reg: &mut WidgetRegistry, scroll: u32, sel: i32) {
