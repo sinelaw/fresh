@@ -1821,10 +1821,13 @@ impl TextMateEngine {
     /// Map scope stack to highlight category, memoising per-scope lookups.
     /// `scope.build_string()` is the costly step; the cache hides it after
     /// each scope atom has been seen once.
+    /// Innermost scope wins, except that a diff wash anywhere in the stack
+    /// beats it — see the free [`scope_stack_to_category`] for why.
     fn scope_stack_to_category(
         &mut self,
         scopes: &syntect::parsing::ScopeStack,
     ) -> Option<HighlightCategory> {
+        let mut innermost = None;
         for scope in scopes.as_slice().iter().rev() {
             let cat = match self.scope_category_cache.get(scope) {
                 Some(c) => *c,
@@ -1835,10 +1838,15 @@ impl TextMateEngine {
                 }
             };
             if let Some(c) = cat {
-                return Some(c);
+                if is_diff_wash(c) {
+                    return Some(c);
+                }
+                if innermost.is_none() {
+                    innermost = Some(c);
+                }
             }
         }
-        None
+        innermost
     }
 
     /// Classify every line start in `range` by its role in an
@@ -2439,15 +2447,40 @@ pub fn highlight_string(
     spans
 }
 
+/// Does `category` wash a whole diff row with a background colour?
+///
+/// These are the only categories `highlight_bg` gives a background to, and
+/// their scopes (`markup.inserted`, `markup.deleted`, `meta.diff.range`, …)
+/// cover the entire row. An inner scope that only carries a foreground must
+/// therefore not displace them — see [`scope_stack_to_category`].
+fn is_diff_wash(category: HighlightCategory) -> bool {
+    matches!(
+        category,
+        HighlightCategory::Inserted | HighlightCategory::Deleted | HighlightCategory::Changed
+    )
+}
+
 /// Map scope stack to highlight category (for highlight_string)
+///
+/// Innermost scope wins, *except* that a diff wash anywhere in the stack
+/// beats it. syntect's `Diff` grammar scopes the trailing section context of
+/// a `@@ -1,3 +1,5 @@ fn main()` header as its own entity inside
+/// `meta.diff.range.unified`; letting that inner, background-less scope win
+/// punched a hole through the middle of the hunk header's bar.
 fn scope_stack_to_category(scopes: &syntect::parsing::ScopeStack) -> Option<HighlightCategory> {
+    let mut innermost = None;
     for scope in scopes.as_slice().iter().rev() {
         let scope_str = scope.build_string();
         if let Some(cat) = scope_to_category(&scope_str) {
-            return Some(cat);
+            if is_diff_wash(cat) {
+                return Some(cat);
+            }
+            if innermost.is_none() {
+                innermost = Some(cat);
+            }
         }
     }
-    None
+    innermost
 }
 
 /// Merge adjacent spans with same color
@@ -3577,6 +3610,52 @@ mod tests {
             }
         } else {
             panic!("Expected TextMate engine for .diff file");
+        }
+    }
+
+    /// A hunk header carries the enclosing section after the closing `@@`
+    /// (`git diff` puts the surrounding function there on nearly every real
+    /// hunk). syntect scopes that trailing text as its own entity inside
+    /// `meta.diff.range.unified`, and taking the innermost scope's category
+    /// dropped the row's `diff_modify_bg` across exactly those columns — a
+    /// black hole punched through the middle of the hunk header's bar.
+    #[test]
+    fn test_diff_hunk_header_with_section_context_is_fully_covered() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("commit.diff"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        let content = "diff --git a/file.rs b/file.rs\n\
+             index aaa..bbb 100644\n\
+             --- a/file.rs\n\
+             +++ b/file.rs\n\
+             @@ -2,6 +2,8 @@ fn main() {\n\
+             +    let x = 1;\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+
+        let HighlightEngine::TextMate(ref mut tm) = engine else {
+            panic!("Expected TextMate engine for .diff file");
+        };
+        let spans = tm.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+
+        let hunk_start = content.find("@@ -2,6").expect("hunk header in fixture");
+        let hunk_end = hunk_start
+            + content[hunk_start..]
+                .find('\n')
+                .expect("hunk header is newline-terminated");
+        for byte_pos in hunk_start..hunk_end {
+            let span = spans
+                .iter()
+                .find(|s| s.range.start <= byte_pos && s.range.end > byte_pos);
+            assert_eq!(
+                span.and_then(|s| s.bg),
+                Some(theme.diff_modify_bg),
+                "byte {} (`{}`) of the hunk header should carry diff_modify_bg; got span={:?}",
+                byte_pos,
+                content[byte_pos..byte_pos + 1].escape_debug(),
+                span,
+            );
         }
     }
 

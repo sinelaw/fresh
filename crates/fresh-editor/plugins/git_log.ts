@@ -328,7 +328,13 @@ function renderLog(): void {
  */
 function cachePathForHash(hash: string): string {
   // `<dataDir>/git-show/<sha>.diff` — the .diff extension lets the
-  // syntax-highlight grammar kick in for free.
+  // syntax-highlight grammar kick in for free. That covers the whole
+  // detail panel: the host paints `+` / `-` / `@@` rows from
+  // `editor.diff_add_bg` / `diff_remove_bg` / `diff_modify_bg`, so the
+  // plugin adds no colouring of its own. A plugin-side overlay pass
+  // used to duplicate it and was the only thing that could put a
+  // stripe on the wrong row; the host's pass is also viewport-local,
+  // where the plugin's had to walk the whole buffer.
   return `${editor.getDataDir()}/git-show/${hash}.diff`;
 }
 
@@ -435,93 +441,6 @@ async function pollUntilSpawnDone(
   // says "complete". Written after the bytes are on disk so a reader
   // that sees the marker also sees the full diff.
   editor.writeFile(editor.localPath(donePathForHash(hash)), "");
-  // Apply diff coloring once the buffer is complete. Doing this
-  // pre-completion would either churn (re-walk on every refresh) or
-  // double-overlay newly-extended lines; on completion we walk once.
-  await applyDiffHighlights(bufferId);
-}
-
-// =============================================================================
-// Diff syntax highlighting via per-line bg overlays
-//
-// Sublime-syntax's bundled `Diff` definition only scopes the `diff`
-// keyword, so themes only colour that. Plugins are responsible for the
-// rest — same approach `live_diff` uses for inline diff coloring in
-// regular buffers.
-//
-// One overlay per line of added/removed content is fine for the
-// "normal commit" workload but explodes on giant commits (the
-// rewrite-bun commit is 1M lines = 1M overlays = back to the old
-// 500k-overlay problem this rewire eliminated). Gate on buffer size;
-// gracefully degrade to no highlighting for outliers.
-// =============================================================================
-
-const HIGHLIGHT_BG_ADDED = "editor.diff_add_bg";
-const HIGHLIGHT_BG_REMOVED = "editor.diff_remove_bg";
-const HIGHLIGHT_BG_HUNK = "editor.diff_modify_bg";
-const HIGHLIGHT_NAMESPACE = "git-log-diff";
-/** Skip overlay highlighting above this size. ~256 KB covers
- *  basically every hand-written commit comfortably; very large
- *  generated-file diffs (lockfiles, minified code) just stay
- *  uncoloured — the cost would be a few thousand-to-a-million
- *  overlays for content the user mostly skims. */
-const HIGHLIGHT_MAX_BYTES = 256 * 1024;
-
-async function applyDiffHighlights(bufferId: number): Promise<void> {
-  const total = editor.getBufferLength(bufferId);
-  if (total === 0 || total > HIGHLIGHT_MAX_BYTES) return;
-  const text = await editor.getBufferText(bufferId, 0, total);
-  if (!text) return;
-
-  // Walk lines tracking byte offsets; coalesce consecutive same-kind
-  // rows into single ranges so a 30-line added block costs one
-  // overlay, not 30. Overlay offsets are UTF-8 bytes, so every line
-  // advances by its *byte* length — `line.length` counts UTF-16 code
-  // units, which drags every overlay below a non-ASCII line a few
-  // bytes too early and paints the stripes onto their neighbours.
-  let byte = 0;
-  let runKind: "+" | "-" | "@" | null = null;
-  let runStart = 0;
-  let runEnd = 0;
-
-  const flushRun = () => {
-    if (runKind === null) return;
-    const bg =
-      runKind === "+"
-        ? HIGHLIGHT_BG_ADDED
-        : runKind === "-"
-        ? HIGHLIGHT_BG_REMOVED
-        : HIGHLIGHT_BG_HUNK;
-    editor.addOverlay(bufferId, HIGHLIGHT_NAMESPACE, runStart, runEnd, {
-      bg,
-      extendToLineEnd: true,
-    });
-    runKind = null;
-  };
-
-  for (const line of text.split("\n")) {
-    const lineLen = byteLength(line);
-    const ch = line.charAt(0);
-    let kind: "+" | "-" | "@" | null = null;
-    if (ch === "+" && !line.startsWith("+++")) kind = "+";
-    else if (ch === "-" && !line.startsWith("---")) kind = "-";
-    else if (line.startsWith("@@")) kind = "@";
-
-    if (kind !== runKind) {
-      flushRun();
-      if (kind !== null) {
-        runStart = byte;
-        runKind = kind;
-      }
-    }
-    if (kind !== null) {
-      // Include the trailing newline in the range so the bg colour
-      // fills the row even on empty lines that wrap-extend.
-      runEnd = byte + lineLen + 1;
-    }
-    byte += lineLen + 1;
-  }
-  flushRun();
 }
 
 /**
