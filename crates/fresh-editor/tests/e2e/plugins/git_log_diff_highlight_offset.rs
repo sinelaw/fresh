@@ -1,14 +1,18 @@
 //! Regression: the Git Log detail panel's diff colouring drifted away from the
 //! lines it belongs to as soon as the commit contained non-ASCII text.
 //!
-//! `git_log` paints the streaming `git show` output itself, walking the diff
-//! line by line and adding one background overlay per run of `+` / `-` / `@@`
-//! rows. Overlay positions are **UTF-8 byte offsets**, but the walk advanced by
-//! `line.length` — the number of UTF-16 code units. Every multi-byte character
-//! above a row therefore pulled that row's stripe a few bytes earlier, so the
-//! green and red blocks bled onto the neighbouring context lines: the symptom
-//! is a diff whose colours are offset by a few characters from the text they
-//! describe.
+//! `git_log` used to paint the streamed `git show` output itself, walking the
+//! diff line by line and adding one background overlay per run of `+` / `-` /
+//! `@@` rows. Overlay positions are **UTF-8 byte offsets**, but the walk
+//! advanced by `line.length` — the number of UTF-16 code units. Every
+//! multi-byte character above a row therefore pulled that row's stripe a few
+//! bytes earlier, so the green and red blocks bled onto the neighbouring
+//! context lines: the symptom is a diff whose colours are offset by a few
+//! characters from the text they describe.
+//!
+//! That pass is gone — the buffer is a `.diff` file the host highlights on its
+//! own — so these tests now guard the rendered result rather than any one
+//! layer producing it.
 //!
 //! The commit below puts an accented added line above a plain added line so a
 //! single frame shows both sides of the drift: the plain `+` row must be
@@ -19,10 +23,31 @@
 //! counted UTF-16 units the same way and so opened the file at the wrong line.
 
 use crate::common::git_test_helper::{DirGuard, GitTestRepo};
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use ratatui::style::Color;
+
+/// A harness whose grammar registry can actually highlight the `.diff` buffer
+/// the detail panel shows. Tests default to an empty registry for startup
+/// speed, which leaves the panel's diff uncoloured — and this file's whole
+/// subject is which cells that colouring lands on.
+fn harness_with_highlighting(
+    width: u16,
+    height: u16,
+    working_dir: std::path::PathBuf,
+) -> EditorTestHarness {
+    EditorTestHarness::create(
+        width,
+        height,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(working_dir)
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
+    )
+    .unwrap()
+}
 
 /// The context line that sits between the accented addition and the plain one.
 const CTX_ROW: &str = "CTX KEEP LINE";
@@ -97,13 +122,7 @@ fn git_log_diff_colours_stay_on_their_lines_after_non_ascii() {
     let original_dir = repo.change_to_repo_dir();
     let _guard = DirGuard::new(original_dir);
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        120,
-        40,
-        Config::default(),
-        repo.path.clone(),
-    )
-    .unwrap();
+    let mut harness = harness_with_highlighting(120, 40, repo.path.clone());
 
     harness.open_file(&repo.path.join("notes.txt")).unwrap();
     harness.render().unwrap();
@@ -127,9 +146,9 @@ fn git_log_diff_colours_stay_on_their_lines_after_non_ascii() {
                 && s.contains(CLEAN_ROW)
         })
         .unwrap();
-    // The text arrives before the colours: `applyDiffHighlights` runs once the
-    // `git show` stream completes, so a frame can show the diff with no
-    // overlays at all. Let the plugin pipeline go quiet before reading cells.
+    // The text can land a frame before its colouring does: `git show` streams
+    // into the buffer and the highlighter runs over what has arrived. Let the
+    // pipeline go quiet before reading cells.
     harness.wait_for_async_quiescence(3).unwrap();
 
     let screen = harness.screen_to_string();
@@ -216,13 +235,7 @@ fn git_log_enter_opens_the_line_under_the_cursor_after_non_ascii() {
     // Wide enough that no diff row wraps in the 40%-width detail panel — the
     // cursor is walked down by display rows below, so a wrapped row would
     // desync the count from the buffer's lines.
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        160,
-        45,
-        Config::default(),
-        repo.path.clone(),
-    )
-    .unwrap();
+    let mut harness = harness_with_highlighting(160, 45, repo.path.clone());
 
     harness.open_file(&repo.path.join("notes.txt")).unwrap();
     harness.render().unwrap();

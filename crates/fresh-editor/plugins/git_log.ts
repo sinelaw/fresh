@@ -334,7 +334,10 @@ function cachePathForHash(hash: string): string {
   // plugin adds no colouring of its own. A plugin-side overlay pass
   // used to duplicate it and was the only thing that could put a
   // stripe on the wrong row; the host's pass is also viewport-local,
-  // where the plugin's had to walk the whole buffer.
+  // where the plugin's had to walk the whole buffer. The host leaves
+  // one gap the overlay used to cover — the section context after a
+  // hunk header's closing `@@` gets no wash (#3021) — which is a
+  // host-side issue for every `.diff` buffer, not one to re-patch here.
   return `${editor.getDataDir()}/git-show/${hash}.diff`;
 }
 
