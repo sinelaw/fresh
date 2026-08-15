@@ -110,6 +110,18 @@ pub enum PluginRequest {
         response: oneshot::Sender<Result<()>>,
     },
 
+    /// Typed fast lane for a text-input mode's printable characters:
+    /// the mode and the typed text travel as structured fields instead
+    /// of being spliced into an action-name string
+    /// (`mode_text_input@<mode>:<char>`). Same channel as
+    /// `ExecuteAction`, so a mode's other bindings and plain characters
+    /// stay strictly ordered.
+    ModeTextInput {
+        mode: Option<String>,
+        text: String,
+        response: oneshot::Sender<Result<()>>,
+    },
+
     /// Run a hook (fire-and-forget, no response needed). When `target`
     /// is set, only that plugin's handlers run — used for events that
     /// belong to one plugin, like a panel's `widget_event`.
@@ -701,6 +713,27 @@ impl PluginThreadHandle {
         Ok(rx)
     }
 
+    /// Dispatch a text-input mode's typed character through the typed
+    /// fast lane (see [`PluginRequest::ModeTextInput`]). FIFO with
+    /// `execute_action_async` — both ride the same request channel.
+    pub fn mode_text_input_async(
+        &self,
+        mode: Option<&str>,
+        text: &str,
+    ) -> Result<oneshot::Receiver<Result<()>>> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Plugin thread shut down"))?
+            .send(PluginRequest::ModeTextInput {
+                mode: mode.map(str::to_string),
+                text: text.to_string(),
+                response: tx,
+            })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
+        Ok(rx)
+    }
+
     /// Run a hook (non-blocking, fire-and-forget)
     ///
     /// This is the key improvement: hooks are now non-blocking.
@@ -1095,6 +1128,19 @@ async fn plugin_thread_loop(
                         fire_and_forget(response.send(result));
                         has_pending_work = true; // Action may have started async work
                     }
+                    Some(PluginRequest::ModeTextInput {
+                        mode,
+                        text,
+                        response,
+                    }) => {
+                        // Same non-blocking treatment as ExecuteAction — the
+                        // handler may await host calls resolved on later ticks.
+                        let result = runtime
+                            .borrow_mut()
+                            .start_mode_text_input(mode.as_deref(), &text);
+                        fire_and_forget(response.send(result));
+                        has_pending_work = true;
+                    }
                     Some(request) => {
                         let should_shutdown =
                             handle_request(request, Rc::clone(&runtime), plugins).await;
@@ -1218,6 +1264,13 @@ async fn handle_request(
             fire_and_forget(response.send(result));
         }
 
+        PluginRequest::ModeTextInput { response, .. } => {
+            // Handled in plugin_thread_loop's select! alongside ExecuteAction;
+            // reaching here means a dispatch bug.
+            let _ = response.send(Err(anyhow!(
+                "ModeTextInput should be handled in plugin_thread_loop"
+            )));
+        }
         PluginRequest::ExecuteAction {
             action_name,
             response,

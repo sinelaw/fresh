@@ -22,6 +22,49 @@ use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 impl Editor {
+    /// Dispatch a text-input mode's typed character to its plugin
+    /// through the typed fast lane (`PluginRequest::ModeTextInput`) —
+    /// same ordered queue as every other dispatched plugin action, so
+    /// the mode's own bindings (Backspace, Space, …) and plain
+    /// characters cannot reorder. Replaces the legacy
+    /// `PluginAction("mode_text_input@<mode>:<char>")` string encoding.
+    pub(crate) fn dispatch_mode_text_input(&mut self, mode: Option<&str>, ch: char) {
+        #[cfg(feature = "plugins")]
+        {
+            let text = ch.to_string();
+            let result = self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .mode_text_input_async(mode, &text);
+            match result {
+                Some(Ok(receiver)) => {
+                    // Same pending-action bookkeeping as the
+                    // `Action::PluginAction` arm; the label is for
+                    // logging only.
+                    let label = match mode {
+                        Some(m) => format!("mode_text_input@{}", m),
+                        None => "mode_text_input".to_string(),
+                    };
+                    self.pending_plugin_actions.push((label, receiver));
+                }
+                Some(Err(e)) => {
+                    self.set_status_message(
+                        t!("view.plugin_error", error = e.to_string()).to_string(),
+                    );
+                    tracing::error!("mode text-input dispatch error: {}", e);
+                }
+                None => {
+                    self.set_status_message(t!("status.plugin_manager_unavailable").to_string());
+                }
+            }
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            let _ = (mode, ch);
+        }
+    }
+
     /// If a plugin is awaiting the next keypress (via
     /// `editor.getNextKey()`), resolve the front-most pending
     /// callback with this key and return `true` so the caller can
@@ -434,21 +477,20 @@ impl Editor {
                 Some(Ok(()))
             }
             ModeKeyDisposition::TextInput(ch) => {
-                // Qualify the dispatch with the mode that claimed the key
-                // so it reaches the plugin that *defined* that mode.
-                // `mode_text_input` alone is one global name, so several
-                // text-input modes would otherwise fight over it and the
-                // last plugin to call `defineMode` would swallow everyone
-                // else's typing. Deliberately still an async plugin
-                // action: a mode's other bindings (Space, Backspace, …)
-                // edit the same field through the same queue, and taking
-                // a host-side shortcut here would let plain characters
-                // overtake them and scramble the typed text.
-                let action_name = match view.effective_mode.as_deref() {
-                    Some(mode) => format!("mode_text_input@{}:{}", mode, ch),
-                    None => format!("mode_text_input:{}", ch),
-                };
-                Some(self.handle_action(Action::PluginAction(action_name)))
+                // Typed fast lane: the mode and character travel as
+                // structured fields, not spliced into an action-name
+                // string. The dispatch stays mode-qualified so it
+                // reaches the plugin that *defined* the mode —
+                // `mode_text_input` alone is one global name, and
+                // several text-input modes would otherwise fight over
+                // it. Deliberately still asynchronous through the same
+                // ordered plugin queue: a mode's other bindings (Space,
+                // Backspace, …) edit the same field through that queue,
+                // and taking a host-side shortcut here would let plain
+                // characters overtake them and scramble the typed text.
+                let mode = view.effective_mode.clone();
+                self.dispatch_mode_text_input(mode.as_deref(), ch);
+                Some(Ok(()))
             }
             ModeKeyDisposition::Forward(action) => Some(self.handle_action(action)),
             ModeKeyDisposition::WidgetSelection(mv) => {
