@@ -2751,6 +2751,28 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+
+    /// A focus and event scope around a subtree — the unit a plugin
+    /// composes reusable pieces with. Renders its child transparently
+    /// (no chrome, no rows of its own); what it adds is *behavioural*
+    /// scoping:
+    ///
+    /// * **Focus trap**: Tab / Shift+Tab cycle among the focusable
+    ///   widgets *inside* the component instead of the whole panel —
+    ///   a picker or dialog subtree keeps its own ring without any
+    ///   hand-interleaved focus code.
+    /// * **Stable identity**: the component's `key` names the subtree
+    ///   for keyed reconciliation and targeted swaps.
+    ///
+    /// This is deliberately composition, not an open component
+    /// registry: behaviour stays host-side and synchronous, the wire
+    /// format stays closed, and every frontend can paint the subtree
+    /// because it is made of kinds they already know.
+    Component {
+        child: Box<WidgetSpec>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
 }
 
 impl WidgetSpec {
@@ -2772,9 +2794,9 @@ impl WidgetSpec {
             WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
                 Box::new(children.iter())
             }
-            WidgetSpec::LabeledSection { child, .. } | WidgetSpec::Overlay { child, .. } => {
-                Box::new(std::iter::once(child.as_ref()))
-            }
+            WidgetSpec::LabeledSection { child, .. }
+            | WidgetSpec::Overlay { child, .. }
+            | WidgetSpec::Component { child, .. } => Box::new(std::iter::once(child.as_ref())),
             _ => Box::new(std::iter::empty()),
         }
     }
@@ -2788,9 +2810,9 @@ impl WidgetSpec {
             WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
                 Box::new(children.iter_mut())
             }
-            WidgetSpec::LabeledSection { child, .. } | WidgetSpec::Overlay { child, .. } => {
-                Box::new(std::iter::once(child.as_mut()))
-            }
+            WidgetSpec::LabeledSection { child, .. }
+            | WidgetSpec::Overlay { child, .. }
+            | WidgetSpec::Component { child, .. } => Box::new(std::iter::once(child.as_mut())),
             _ => Box::new(std::iter::empty()),
         }
     }

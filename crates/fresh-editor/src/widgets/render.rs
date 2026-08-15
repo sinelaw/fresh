@@ -7357,4 +7357,50 @@ pub(crate) mod tests {
         );
         assert_eq!(out.boxes[popup.parent.unwrap()].kind, "dropdown");
     }
+    #[test]
+    fn component_is_a_transparent_focus_trap() {
+        use crate::widgets::layout_box::focus_ring_scoped;
+        let btn = |k: &str| WidgetSpec::Button {
+            label: k.to_uppercase(),
+            focused: false,
+            intent: ButtonKind::Normal,
+            key: Some(k.into()),
+            disabled: false,
+            focusable: true,
+            bare: false,
+            full_width: false,
+            hover_style: None,
+        };
+        let spec = WidgetSpec::Col {
+            key: None,
+            children: vec![
+                btn("outside"),
+                WidgetSpec::Component {
+                    key: Some("dialog".into()),
+                    child: Box::new(WidgetSpec::Col {
+                        key: None,
+                        children: vec![btn("ok"), btn("cancel")],
+                    }),
+                },
+            ],
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        // Transparent: rows identical to rendering without the wrapper,
+        // and the published ring still sees every focusable.
+        assert_eq!(out.tabbable, vec!["outside", "ok", "cancel"]);
+        let comp = out
+            .boxes
+            .iter()
+            .find(|b| b.kind == "component")
+            .expect("component box");
+        assert!(comp.focus_trap);
+        assert_eq!(comp.key.as_deref(), Some("dialog"));
+        // Tab cycling from inside the component stays inside it; from
+        // outside, the whole panel ring applies.
+        assert_eq!(focus_ring_scoped(&out.boxes, "ok"), vec!["ok", "cancel"]);
+        assert_eq!(
+            focus_ring_scoped(&out.boxes, "outside"),
+            vec!["outside", "ok", "cancel"]
+        );
+    }
 }
