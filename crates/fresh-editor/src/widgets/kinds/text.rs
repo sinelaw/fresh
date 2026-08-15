@@ -21,6 +21,20 @@ use crate::widgets::render::{
 pub(crate) struct Text;
 
 impl WidgetImpl for Text {
+    fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
+        let mut m = super::BoxMeta::plain("text");
+        if let WidgetSpec::Text {
+            key: Some(k), rows, ..
+        } = spec
+        {
+            if !k.is_empty() {
+                m.key = Some(k.clone());
+                m.focusable = true;
+                m.scrollable = *rows > 1;
+            }
+        }
+        m
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

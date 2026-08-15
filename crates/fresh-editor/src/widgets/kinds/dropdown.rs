@@ -15,6 +15,16 @@ use crate::widgets::render::{
 pub(crate) struct Dropdown;
 
 impl WidgetImpl for Dropdown {
+    fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
+        let mut m = super::BoxMeta::plain("dropdown");
+        if let WidgetSpec::Dropdown { key: Some(k), .. } = spec {
+            if !k.is_empty() {
+                m.key = Some(k.clone());
+                m.focusable = true;
+            }
+        }
+        m
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

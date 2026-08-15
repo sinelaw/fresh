@@ -15,6 +15,22 @@ use crate::widgets::render::{
 pub(crate) struct Button;
 
 impl WidgetImpl for Button {
+    fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
+        let mut m = super::BoxMeta::plain("button");
+        if let WidgetSpec::Button {
+            key: Some(k),
+            disabled,
+            focusable,
+            ..
+        } = spec
+        {
+            if !k.is_empty() {
+                m.key = Some(k.clone());
+                m.focusable = !*disabled && *focusable;
+            }
+        }
+        m
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

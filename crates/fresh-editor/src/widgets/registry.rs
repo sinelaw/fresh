@@ -273,6 +273,11 @@ pub struct WidgetPanelState {
     /// handlers read this for scroll/page bounds instead of the spec,
     /// because an auto-sized widget's spec carries no number at all.
     pub effective_rows: HashMap<String, u32>,
+    /// The panel's layout-box tree from the most recent render
+    /// (root-last arena; see [`crate::widgets::layout_box`]).
+    /// Structure + panel-relative geometry for hit-tested dispatch
+    /// and the derived focus ring.
+    pub boxes: Vec<crate::widgets::LayoutBox>,
 }
 
 impl WidgetPanelState {
@@ -322,6 +327,7 @@ impl WidgetRegistry {
         tabbable: Vec<String>,
         scroll_regions: Vec<crate::widgets::ScrollRegion>,
         effective_rows: HashMap<String, u32>,
+        boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Option<WidgetPanelState> {
         self.panels.insert(
             panel_key,
@@ -334,6 +340,7 @@ impl WidgetRegistry {
                 tabbable,
                 scroll_regions,
                 effective_rows,
+                boxes,
             },
         )
     }
@@ -356,6 +363,7 @@ impl WidgetRegistry {
         tabbable: Vec<String>,
         scroll_regions: Vec<crate::widgets::ScrollRegion>,
         effective_rows: HashMap<String, u32>,
+        boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Result<BufferId, ()> {
         match self.panels.get_mut(panel_key) {
             Some(state) => {
@@ -366,6 +374,7 @@ impl WidgetRegistry {
                 state.tabbable = tabbable;
                 state.scroll_regions = scroll_regions;
                 state.effective_rows = effective_rows;
+                state.boxes = boxes;
                 Ok(state.buffer_id)
             }
             None => Err(()),
@@ -445,6 +454,7 @@ impl WidgetRegistry {
     /// current (mutation helpers like `append_tree_nodes_in_spec` mutate it
     /// in place), so cloning it back through `update()` just to write the
     /// same value would waste a 5 000-node deep clone for every IPC.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_side_effects(
         &mut self,
         panel_key: &PanelKey,
@@ -453,6 +463,8 @@ impl WidgetRegistry {
         focus_key: String,
         tabbable: Vec<String>,
         scroll_regions: Vec<crate::widgets::ScrollRegion>,
+        effective_rows: HashMap<String, u32>,
+        boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Option<BufferId> {
         let state = self.panels.get_mut(panel_key)?;
         state.hits = hits;
@@ -460,6 +472,12 @@ impl WidgetRegistry {
         state.focus_key = focus_key;
         state.tabbable = tabbable;
         state.scroll_regions = scroll_regions;
+        // Host-driven rerenders (focus moves, hover, wheel) refresh the
+        // window sizes and geometry too — previously `effective_rows`
+        // was only written on the plugin-driven mount/update paths and
+        // went stale across every host-side rerender.
+        state.effective_rows = effective_rows;
+        state.boxes = boxes;
         Some(state.buffer_id)
     }
 
@@ -715,6 +733,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         );
         let hit = reg.hit_test(BufferId(7), 0, 8).expect("inside b");
         assert_eq!(hit.0, pk(42));
@@ -734,6 +753,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         );
         assert!(
             reg.hit_test(BufferId(0), 0, 5).is_none(),
@@ -774,6 +794,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         );
         // Byte 10 is the exclusive end, so `hit_test` alone misses...
         assert!(reg.hit_test(BufferId(2), 0, 10).is_none());
@@ -800,6 +821,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         );
         let (_, hit) = reg
             .hit_test_row_aware(BufferId(3), 0, 2)
@@ -823,6 +845,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         );
         assert!(reg.hit_test_row_aware(BufferId(4), 3, 0).is_none());
     }
@@ -848,6 +871,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         );
     }
 
@@ -913,6 +937,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         );
         let evicted = reg.mount(
             PanelKey::new("beta", 1),
@@ -924,6 +949,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         );
         assert!(evicted.is_none(), "beta:1 must not evict alpha:1");
 
@@ -953,6 +979,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         );
         assert!(reg.hit_test(BufferId(2), 0, 1).is_some());
         reg.unmount(&pk(5));
@@ -972,6 +999,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         );
         reg.update(
             &pk(5),
@@ -982,6 +1010,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             HashMap::new(),
+            Vec::new(),
         )
         .expect("mounted");
         // Old hit gone; new hit visible.

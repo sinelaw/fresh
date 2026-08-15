@@ -12,6 +12,9 @@ use crate::widgets::render::{ensure_trailing_newline, CollectedOutput, RenderCon
 pub(crate) struct Spacer;
 
 impl WidgetImpl for Spacer {
+    fn box_meta(&self, _spec: &WidgetSpec) -> super::BoxMeta {
+        super::BoxMeta::plain("spacer")
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

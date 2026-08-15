@@ -12,6 +12,9 @@ use crate::widgets::render::{ensure_trailing_newline, CollectedOutput, RenderCon
 pub(crate) struct Divider;
 
 impl WidgetImpl for Divider {
+    fn box_meta(&self, _spec: &WidgetSpec) -> super::BoxMeta {
+        super::BoxMeta::plain("divider")
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

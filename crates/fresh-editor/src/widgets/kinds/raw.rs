@@ -11,6 +11,9 @@ use crate::widgets::render::{ensure_trailing_newline, CollectedOutput, RenderCon
 pub(crate) struct Raw;
 
 impl WidgetImpl for Raw {
+    fn box_meta(&self, _spec: &WidgetSpec) -> super::BoxMeta {
+        super::BoxMeta::plain("raw")
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

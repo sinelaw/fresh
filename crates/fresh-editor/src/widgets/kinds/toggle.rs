@@ -16,6 +16,16 @@ use crate::widgets::render::{
 pub(crate) struct Toggle;
 
 impl WidgetImpl for Toggle {
+    fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
+        let mut m = super::BoxMeta::plain("toggle");
+        if let WidgetSpec::Toggle { key: Some(k), .. } = spec {
+            if !k.is_empty() {
+                m.key = Some(k.clone());
+                m.focusable = true;
+            }
+        }
+        m
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

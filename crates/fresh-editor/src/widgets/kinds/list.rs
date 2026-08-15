@@ -16,6 +16,22 @@ use crate::widgets::render::{
 pub(crate) struct List;
 
 impl WidgetImpl for List {
+    fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
+        let mut m = super::BoxMeta::plain("list");
+        if let WidgetSpec::List {
+            key: Some(k),
+            focusable,
+            ..
+        } = spec
+        {
+            if !k.is_empty() {
+                m.key = Some(k.clone());
+                m.focusable = *focusable;
+                m.scrollable = true;
+            }
+        }
+        m
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -411,5 +427,10 @@ fn collect_list(
         overlays: Vec::new(),
         scroll_regions,
         dropdown_popups: Vec::new(),
+        // List items are virtualized rows, not independently
+        // addressable boxes — the List's own box (pushed by
+        // `render_collected`) is the dispatch target; row-level
+        // targeting stays on `HitArea`s.
+        boxes: Vec::new(),
     }
 }

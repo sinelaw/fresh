@@ -15,6 +15,16 @@ use crate::widgets::render::{
 pub(crate) struct Number;
 
 impl WidgetImpl for Number {
+    fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
+        let mut m = super::BoxMeta::plain("number");
+        if let WidgetSpec::Number { key: Some(k), .. } = spec {
+            if !k.is_empty() {
+                m.key = Some(k.clone());
+                m.focusable = true;
+            }
+        }
+        m
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,

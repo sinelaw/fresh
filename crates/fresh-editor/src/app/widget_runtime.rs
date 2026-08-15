@@ -1086,6 +1086,8 @@ impl Editor {
                 out_pieces.focus_key,
                 out_pieces.tabbable,
                 scroll_regions.clone(),
+                out_pieces.effective_rows,
+                out_pieces.boxes,
             )
             .is_none()
         {
