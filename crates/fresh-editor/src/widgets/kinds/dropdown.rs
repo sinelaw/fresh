@@ -24,12 +24,29 @@ impl WidgetImpl for Dropdown {
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
         use super::KeyDisposition::{Consumed, Pass};
-        // The option popup claims its keys only while open: Up/Down
-        // move the (live) selection, Enter/Space commit-and-close,
-        // Esc closes. Closed, everything bubbles.
-        if !matches!(key, "Up" | "Down" | "Enter" | "Space" | "Escape")
-            || !is_open(widget_key, panel)
-        {
+        if !is_open(widget_key, panel) {
+            // Closed: arrows cycle the value in place (matching the
+            // ◂/▸ glyphs), Enter/Space open the option popup —
+            // everything else bubbles to the panel dispatch.
+            return match key {
+                "Up" | "Left" => {
+                    cycle_selection(spec, widget_key, panel, -1, fx);
+                    Consumed
+                }
+                "Down" | "Right" => {
+                    cycle_selection(spec, widget_key, panel, 1, fx);
+                    Consumed
+                }
+                "Enter" | "Space" => {
+                    set_open(spec, widget_key, panel, true, fx);
+                    Consumed
+                }
+                _ => Pass,
+            };
+        }
+        // Open: Up/Down move the (live) selection, Enter/Space
+        // commit-and-close, Esc closes.
+        if !matches!(key, "Up" | "Down" | "Enter" | "Space" | "Escape") {
             return Pass;
         }
         match key {

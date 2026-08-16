@@ -15,6 +15,28 @@ use crate::widgets::render::{
 pub(crate) struct Button;
 
 impl WidgetImpl for Button {
+    fn on_key(
+        &self,
+        spec: &WidgetSpec,
+        _widget_key: &str,
+        _panel: &mut crate::widgets::WidgetPanelState,
+        key: &str,
+        fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        if !matches!(key, "Enter" | "Space") {
+            return super::KeyDisposition::Pass;
+        }
+        // Disabled buttons don't fire activate. The renderer already
+        // excludes them from the tab cycle; a focus key still pointing
+        // at one is a stale-focus race — drop the key.
+        if let WidgetSpec::Button { disabled, .. } = spec {
+            if !disabled {
+                fx.events.push(("activate".into(), serde_json::json!({})));
+            }
+        }
+        super::KeyDisposition::Consumed
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("button");
         if let WidgetSpec::Button {

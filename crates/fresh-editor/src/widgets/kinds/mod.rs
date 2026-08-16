@@ -28,7 +28,7 @@ pub(crate) mod dropdown;
 mod dual_list;
 mod hint_bar;
 mod list;
-mod number;
+pub(crate) mod number;
 mod raw;
 mod spacer;
 mod text;
