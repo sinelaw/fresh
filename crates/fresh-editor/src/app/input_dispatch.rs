@@ -615,14 +615,13 @@ impl Editor {
         }
     }
 
-    /// Ordered toggle keys of the active overlay's widget toolbar (render
-    /// order). Drives the focus ring. Empty when there's no toolbar.
+    /// The active overlay toolbar's focus ring, derived from its
+    /// layout-box tree exactly the way panel rings are: document order
+    /// of focusable boxes. Any focusable kind the plugin puts in the
+    /// toolbar joins the ring — nothing here knows which kinds those
+    /// are. Empty when there's no toolbar.
     fn overlay_toolbar_keys(&self) -> Vec<String> {
-        self.active_chrome()
-            .prompt_toolbar_hits
-            .iter()
-            .map(|(k, _)| k.clone())
-            .collect()
+        crate::widgets::layout_box::focus_ring(&self.active_chrome().prompt_toolbar_boxes)
     }
 
     /// Advance (or retreat) the overlay focus ring: input → toggle0 → … →
@@ -688,61 +687,90 @@ impl Editor {
         }
     }
 
-    /// Activate the overlay toolbar control with `key` and emit a
-    /// `widget_event` so the plugin can react. For a `Toggle` the host owns
-    /// the checked state — it flips it in place and emits `toggle`
-    /// (`{checked}`). For a `Button` it emits `activate` (`{}`). Shared by
-    /// mouse clicks, Space/Enter on the focused control, and the
-    /// `toggleOverlayToolbarWidget` plugin API — one host path for every way
-    /// a control can be triggered.
+    /// Activate the overlay toolbar control with `key` and emit the
+    /// resulting `widget_event`s so the plugin can react. Shared by mouse
+    /// clicks, Space/Enter on the focused control, and the
+    /// `toggleOverlayToolbarWidget` plugin API — one host path for every
+    /// way a control can be triggered.
+    ///
+    /// Dispatch is generic: the control's kind answers the activation
+    /// through the same `on_key` machinery registry panels use, queueing
+    /// its events on `KeyFx` (a `Toggle` queues `toggle` with the flipped
+    /// value, a `Button` queues `activate` — no per-kind match here, and a
+    /// future focusable kind participates for free). Toolbar policy is
+    /// what stays host-side: the toolbar spec is host-held, so a queued
+    /// `toggle` is applied back to it (the host owns the checked state),
+    /// and events broadcast with `panel_id: 0` — the toolbar isn't a
+    /// registry panel, so there's no owner to target. (Kinds with
+    /// per-instance state — open dropdowns, text editors — need the real
+    /// registry mount, a recorded later arc; the ephemeral panel here
+    /// carries no instance state across events.)
     pub(crate) fn toggle_overlay_toolbar_widget(&mut self, key: &str) {
         if key.is_empty() {
             return;
         }
-        // Resolve what event to emit, flipping a toggle's checked state in
-        // place. `None` → the key isn't a toggle/button (no-op).
-        let event: Option<(&'static str, serde_json::Value)> = {
-            let Some(prompt) = self.active_window_mut().prompt.as_mut() else {
-                return;
-            };
-            let Some(spec) = prompt.toolbar_widget.as_mut() else {
-                return;
-            };
-            match crate::widgets::find_widget_by_key(spec, key) {
-                Some(fresh_core::api::WidgetSpec::Toggle { checked, .. }) => {
-                    let nv = !*checked;
-                    crate::widgets::set_toggle_checked_in_spec(spec, key, nv);
-                    Some(("toggle", serde_json::json!({ "checked": nv })))
-                }
-                Some(fresh_core::api::WidgetSpec::Button { .. }) => {
-                    Some(("activate", serde_json::json!({})))
-                }
-                _ => None,
-            }
-        };
-        let Some((event_type, payload)) = event else {
+        let Some(spec_node) = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .and_then(|p| p.toolbar_widget.as_ref())
+            .and_then(|s| crate::widgets::find_widget_by_key(s, key))
+            .cloned()
+        else {
             return;
         };
-        #[cfg(feature = "plugins")]
-        {
-            // The overlay toolbar isn't a registry panel — it has no
-            // owner to target, so this broadcasts with panel_id 0.
-            let pm = self.plugin_manager.read().unwrap();
-            if pm.has_hook_handlers("widget_event") {
-                pm.run_hook(
-                    "widget_event",
-                    crate::services::plugins::hooks::HookArgs::WidgetEvent {
-                        panel_id: 0,
-                        widget_key: key.to_string(),
-                        event_type: event_type.to_string(),
-                        payload,
-                    },
-                );
+        let mut fx = crate::widgets::kinds::KeyFx::default();
+        let mut scratch = crate::widgets::WidgetPanelState {
+            buffer_id: crate::model::event::BufferId(0),
+            spec: spec_node.clone(),
+            hits: Vec::new(),
+            instance_states: std::collections::HashMap::new(),
+            focus_key: key.to_string(),
+            tabbable: Vec::new(),
+            effective_rows: std::collections::HashMap::new(),
+            boxes: Vec::new(),
+        };
+        // Every trigger converges on the kind's activation key; Toggle and
+        // Button treat Space and Enter identically.
+        let _ = crate::widgets::kinds::behavior(&spec_node).on_key(
+            &spec_node,
+            key,
+            &mut scratch,
+            "Space",
+            &mut fx,
+        );
+        for (event_type, payload) in fx.events {
+            if event_type == "toggle" {
+                if let Some(nv) = payload.get("checked").and_then(|v| v.as_bool()) {
+                    if let Some(spec) = self
+                        .active_window_mut()
+                        .prompt
+                        .as_mut()
+                        .and_then(|p| p.toolbar_widget.as_mut())
+                    {
+                        crate::widgets::set_toggle_checked_in_spec(spec, key, nv);
+                    }
+                }
             }
-        }
-        #[cfg(not(feature = "plugins"))]
-        {
-            let _ = (event_type, payload);
+            #[cfg(feature = "plugins")]
+            {
+                let pm = self.plugin_manager.read().unwrap();
+                if pm.has_hook_handlers("widget_event") {
+                    pm.run_hook(
+                        "widget_event",
+                        crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                            panel_id: 0,
+                            widget_key: key.to_string(),
+                            event_type,
+                            payload,
+                        },
+                    );
+                }
+            }
+            #[cfg(not(feature = "plugins"))]
+            {
+                let _ = (event_type, payload);
+            }
         }
     }
 
