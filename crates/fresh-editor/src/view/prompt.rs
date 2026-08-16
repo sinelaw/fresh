@@ -473,6 +473,28 @@ impl Prompt {
         self.redo_stack.clear();
     }
 
+    /// Run one editing operation through the shared single-field
+    /// engine ([`TextEdit`](crate::primitives::text_edit::TextEdit)) —
+    /// the prompt's `(input, cursor_pos, selection_anchor)` sync in,
+    /// the op runs, and the post-state syncs back. This is what
+    /// deleted the prompt's private editing implementations: boundary
+    /// walks, drains, and selection bookkeeping exist once, in the
+    /// engine every text field uses. (The prompt keeps its own word
+    /// *motion* policy below — it deliberately mimics the buffer's
+    /// next-word-start / select-to-word-end behavior, which differs
+    /// from the engine's word hops.)
+    fn apply_edit(&mut self, op: impl FnOnce(&mut crate::primitives::text_edit::TextEdit)) {
+        let mut e = crate::primitives::text_edit::TextEdit::single_line_with_text(&self.input);
+        e.set_cursor_from_flat(self.cursor_pos.min(self.input.len()));
+        if let Some(a) = self.selection_anchor {
+            e.selection_anchor = Some((0, a.min(self.input.len())));
+        }
+        op(&mut e);
+        self.input = e.value();
+        self.cursor_pos = e.flat_cursor_byte();
+        self.selection_anchor = e.selection_anchor.map(|(_, col)| col);
+    }
+
     /// Undo the last input edit. Returns true if the input changed.
     pub fn undo_input(&mut self) -> bool {
         if let Some((text, cursor)) = self.undo_stack.pop() {
@@ -502,8 +524,7 @@ impl Prompt {
     /// Insert a character at the cursor position
     pub fn insert_char(&mut self, ch: char) {
         self.push_undo_snapshot();
-        self.input.insert(self.cursor_pos, ch);
-        self.cursor_pos += ch.len_utf8();
+        self.apply_edit(|e| e.insert_char(ch));
     }
 
     /// Delete one code point before cursor (backspace)
@@ -512,17 +533,9 @@ impl Prompt {
     /// of combining characters. For Thai text, this means you can delete just the
     /// tone mark without removing the base consonant.
     pub fn backspace(&mut self) {
-        if self.cursor_pos > 0 {
+        if self.cursor_pos > 0 || self.has_selection() {
             self.push_undo_snapshot();
-            // Find the previous character (code point) boundary, not grapheme boundary
-            // This allows layer-by-layer deletion of combining marks
-            let prev_boundary = self.input[..self.cursor_pos]
-                .char_indices()
-                .next_back()
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            self.input.drain(prev_boundary..self.cursor_pos);
-            self.cursor_pos = prev_boundary;
+            self.apply_edit(|e| e.backspace());
         }
     }
 
@@ -530,10 +543,9 @@ impl Prompt {
     ///
     /// Deletes the entire grapheme cluster, handling combining characters properly.
     pub fn delete(&mut self) {
-        if self.cursor_pos < self.input.len() {
+        if self.cursor_pos < self.input.len() || self.has_selection() {
             self.push_undo_snapshot();
-            let next_boundary = grapheme::next_grapheme_boundary(&self.input, self.cursor_pos);
-            self.input.drain(self.cursor_pos..next_boundary);
+            self.apply_edit(|e| e.delete());
         }
     }
 
@@ -741,11 +753,9 @@ impl Prompt {
     /// assert_eq!(prompt.cursor_pos, 0);
     /// ```
     pub fn delete_word_forward(&mut self) {
-        let word_end = find_word_end_bytes(self.input.as_bytes(), self.cursor_pos);
-        if word_end > self.cursor_pos {
+        if find_word_end_bytes(self.input.as_bytes(), self.cursor_pos) > self.cursor_pos {
             self.push_undo_snapshot();
-            self.input.drain(self.cursor_pos..word_end);
-            // Cursor stays at same position
+            self.apply_edit(|e| e.delete_word_forward());
         }
     }
 
@@ -765,11 +775,9 @@ impl Prompt {
     /// assert_eq!(prompt.cursor_pos, 0);
     /// ```
     pub fn delete_word_backward(&mut self) {
-        let word_start = find_word_start_bytes(self.input.as_bytes(), self.cursor_pos);
-        if word_start < self.cursor_pos {
+        if find_word_start_bytes(self.input.as_bytes(), self.cursor_pos) < self.cursor_pos {
             self.push_undo_snapshot();
-            self.input.drain(word_start..self.cursor_pos);
-            self.cursor_pos = word_start;
+            self.apply_edit(|e| e.delete_word_backward());
         }
     }
 
@@ -790,7 +798,7 @@ impl Prompt {
     pub fn delete_to_end(&mut self) {
         if self.cursor_pos < self.input.len() {
             self.push_undo_snapshot();
-            self.input.truncate(self.cursor_pos);
+            self.apply_edit(|e| e.delete_to_end());
         }
     }
 
@@ -801,8 +809,7 @@ impl Prompt {
     pub fn delete_to_start(&mut self) {
         if self.cursor_pos > 0 {
             self.push_undo_snapshot();
-            self.input.drain(..self.cursor_pos);
-            self.cursor_pos = 0;
+            self.apply_edit(|e| e.delete_to_start());
         }
     }
 
@@ -859,12 +866,8 @@ impl Prompt {
     /// assert_eq!(prompt.cursor_pos, 9);
     /// ```
     pub fn insert_str(&mut self, text: &str) {
-        // If there's a selection, delete it first
-        if self.has_selection() {
-            self.delete_selection();
-        }
-        self.input.insert_str(self.cursor_pos, text);
-        self.cursor_pos += text.len();
+        // Replaces any active selection (engine behavior).
+        self.apply_edit(|e| e.insert_str(text));
     }
 
     // ========================================================================
@@ -896,13 +899,11 @@ impl Prompt {
 
     /// Delete the current selection and return the deleted text
     pub fn delete_selection(&mut self) -> Option<String> {
-        if let Some((start, end)) = self.selection_range() {
+        if self.selection_range().is_some() {
             self.push_undo_snapshot();
-            let deleted = self.input[start..end].to_string();
-            self.input.drain(start..end);
-            self.cursor_pos = start;
-            self.selection_anchor = None;
-            Some(deleted)
+            let mut deleted = None;
+            self.apply_edit(|e| deleted = e.delete_selection());
+            deleted
         } else {
             None
         }
@@ -915,44 +916,22 @@ impl Prompt {
 
     /// Move cursor left with selection (by grapheme cluster)
     pub fn move_left_selecting(&mut self) {
-        // Set anchor if not already set
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.cursor_pos);
-        }
-
-        // Move cursor left by grapheme cluster
-        if self.cursor_pos > 0 {
-            self.cursor_pos = grapheme::prev_grapheme_boundary(&self.input, self.cursor_pos);
-        }
+        self.apply_edit(|e| e.move_left_selecting());
     }
 
     /// Move cursor right with selection (by grapheme cluster)
     pub fn move_right_selecting(&mut self) {
-        // Set anchor if not already set
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.cursor_pos);
-        }
-
-        // Move cursor right by grapheme cluster
-        if self.cursor_pos < self.input.len() {
-            self.cursor_pos = grapheme::next_grapheme_boundary(&self.input, self.cursor_pos);
-        }
+        self.apply_edit(|e| e.move_right_selecting());
     }
 
     /// Move to start of input with selection
     pub fn move_home_selecting(&mut self) {
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.cursor_pos);
-        }
-        self.cursor_pos = 0;
+        self.apply_edit(|e| e.move_home_selecting());
     }
 
     /// Move to end of input with selection
     pub fn move_end_selecting(&mut self) {
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.cursor_pos);
-        }
-        self.cursor_pos = self.input.len();
+        self.apply_edit(|e| e.move_end_selecting());
     }
 
     /// Move to start of previous word with selection

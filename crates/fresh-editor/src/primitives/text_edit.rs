@@ -567,11 +567,13 @@ impl TextEdit {
             .unwrap_or(0);
         if self.cursor_col < line_len {
             let line = &mut self.lines[self.cursor_row];
-            // Find next char boundary
-            let mut del_end = self.cursor_col + 1;
-            while del_end < line.len() && !line.is_char_boundary(del_end) {
-                del_end += 1;
-            }
+            // Delete the whole grapheme cluster (same boundary rule as
+            // move_right), so forward-delete on an emoji+modifier or a
+            // Thai base+mark removes the visible glyph rather than
+            // leaving combining-mark residue. Backspace deliberately
+            // stays code-point-based (layer-by-layer deletion).
+            let del_end =
+                crate::primitives::grapheme::next_grapheme_boundary(line, self.cursor_col);
             line.drain(self.cursor_col..del_end);
         } else if self.cursor_row + 1 < self.lines.len() && self.multiline {
             // Join with next line
@@ -618,6 +620,22 @@ impl TextEdit {
             self.cursor_row -= 1;
             self.cursor_col = self.lines[self.cursor_row].len();
             self.lines[self.cursor_row].push_str(&current_line);
+        }
+    }
+
+    /// Delete from start of line to cursor (Ctrl+U) — readline
+    /// kill-to-start, so a field can be cleared without holding
+    /// Backspace.
+    pub fn delete_to_start(&mut self) {
+        if self.has_selection() {
+            self.delete_selection();
+            return;
+        }
+        if self.cursor_col > 0 {
+            if let Some(line) = self.lines.get_mut(self.cursor_row) {
+                line.drain(..self.cursor_col);
+            }
+            self.cursor_col = 0;
         }
     }
 
