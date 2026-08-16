@@ -345,51 +345,51 @@ mod tests {
             &mut ctx,
         );
 
-        assert_eq!(prompt.input, "hi");
-        assert_eq!(prompt.cursor_pos, 2);
+        assert_eq!(prompt.input_str(), "hi");
+        assert_eq!(prompt.cursor_byte(), 2);
     }
 
     #[test]
     fn test_prompt_backspace() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello".to_string();
-        prompt.cursor_pos = 5;
+        prompt.set_input_plain("hello".to_string());
+        prompt.set_cursor_byte(5);
         let mut ctx = InputContext::new();
 
         prompt.handle_key_event(&key(KeyCode::Backspace), &mut ctx);
-        assert_eq!(prompt.input, "hell");
-        assert_eq!(prompt.cursor_pos, 4);
+        assert_eq!(prompt.input_str(), "hell");
+        assert_eq!(prompt.cursor_byte(), 4);
     }
 
     #[test]
     fn test_prompt_cursor_movement() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello".to_string();
-        prompt.cursor_pos = 5;
+        prompt.set_input_plain("hello".to_string());
+        prompt.set_cursor_byte(5);
         let mut ctx = InputContext::new();
 
         // Move to start
         prompt.handle_key_event(&key(KeyCode::Home), &mut ctx);
-        assert_eq!(prompt.cursor_pos, 0);
+        assert_eq!(prompt.cursor_byte(), 0);
 
         // Move to end
         prompt.handle_key_event(&key(KeyCode::End), &mut ctx);
-        assert_eq!(prompt.cursor_pos, 5);
+        assert_eq!(prompt.cursor_byte(), 5);
 
         // Move left
         prompt.handle_key_event(&key(KeyCode::Left), &mut ctx);
-        assert_eq!(prompt.cursor_pos, 4);
+        assert_eq!(prompt.cursor_byte(), 4);
 
         // Move right
         prompt.handle_key_event(&key(KeyCode::Right), &mut ctx);
-        assert_eq!(prompt.cursor_pos, 5);
+        assert_eq!(prompt.cursor_byte(), 5);
     }
 
     #[test]
     fn test_prompt_selection() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello world".to_string();
-        prompt.cursor_pos = 0;
+        prompt.set_input_plain("hello world".to_string());
+        prompt.set_cursor_byte(0);
         let mut ctx = InputContext::new();
 
         // Select with Shift+Right

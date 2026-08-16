@@ -792,8 +792,8 @@ fn test_resume_live_grep_capture_on_confirm_with_results() {
         .editor_mut()
         .start_prompt("Live grep: ".to_string(), PromptType::LiveGrep);
     if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.input = "needle".to_string();
-        prompt.cursor_pos = prompt.input.len();
+        prompt.set_input_plain("needle".to_string());
+        prompt.set_cursor_byte(prompt.input_str().len());
         let mut s = Suggestion::new("src/foo.rs:42".to_string());
         s.description = Some("fn needle() {}".to_string());
         s.value = Some("src/foo.rs:42:1".to_string());

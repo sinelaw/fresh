@@ -872,10 +872,19 @@ widget Text fields too. Deliberately retained prompt-side: the
 undo/redo stacks (engine undo is the recorded §4.5 follow-up), the
 word-motion *policy* (buffer-style next-word-start /
 select-to-word-end, which differs from the engine's word hops), and
-the `(input, cursor_pos, selection_anchor)` field surface (~140
-read sites; collapsing state into an embedded `TextEdit` is the
-next slice, followed by the `prompt_input.rs` key ladder moving
-onto the shared text-key table).
+the word-motion *policy* only. Since then the collapse completed:
+the `prompt_input.rs` editing key arms ride the shared text-key
+table (twelve per-KeyCode arms → two, through
+`Prompt::handle_text_key`), every external reader moved onto an
+accessor layer (`input_str`/`cursor_byte`/`set_input_selected`/
+`set_input_plain`/`set_cursor_byte`/`select_range`), and the
+`input`/`cursor_pos`/`selection_anchor` fields are DELETED — the
+prompt's text state IS an embedded single-line `TextEdit`; the
+sync shim reduced to a direct engine call. One text engine, one
+selection model, one key table across prompt, Settings fields, and
+widget Text. Still prompt-side: the undo/redo stacks (engine undo
+remains the recorded follow-up) and the buffer-style word-motion
+policy, now computed over the engine's value.
 Still open, in plan order: chrome geometry produced by layout rather
 than recorded by paint (which is what retires the `*Layout` caches),
 then true capture/bubble over one shared chrome tree replacing the

@@ -1,7 +1,6 @@
 //! Prompt/minibuffer system for user input
 
 use crate::input::commands::Suggestion;
-use crate::primitives::grapheme;
 use crate::primitives::word_navigation::{
     find_word_end_bytes, find_word_start_bytes, is_word_char,
 };
@@ -216,10 +215,10 @@ impl PromptType {
 pub struct Prompt {
     /// The prompt message (e.g., "Find file: ")
     pub message: String,
-    /// User's current input
-    pub input: String,
-    /// Cursor position in the input
-    pub cursor_pos: usize,
+    /// The query's text engine — the same single-field `TextEdit`
+    /// every text surface uses. Text, caret, and selection all live
+    /// here; access goes through the accessors below.
+    edit: crate::primitives::text_edit::TextEdit,
     /// What to do when user confirms
     pub prompt_type: PromptType,
     /// Autocomplete suggestions (filtered)
@@ -239,9 +238,6 @@ pub struct Prompt {
     /// keyboard or the suggestion list is rebuilt, so normal navigation
     /// re-engages the keep-selection-visible behaviour.
     pub manual_scroll: bool,
-    /// Selection anchor position (for Shift+Arrow selection)
-    /// When Some(pos), there's a selection from anchor to cursor_pos
-    pub selection_anchor: Option<usize>,
     /// Tracks the input value when suggestions were last set by a plugin.
     /// Used to skip Rust-side filtering when plugin has already filtered for this input.
     pub suggestions_set_for_input: Option<String>,
@@ -314,15 +310,13 @@ impl Prompt {
     pub fn new(message: String, prompt_type: PromptType) -> Self {
         Self {
             message,
-            input: String::new(),
-            cursor_pos: 0,
+            edit: crate::primitives::text_edit::TextEdit::single_line(),
             prompt_type,
             suggestions: Vec::new(),
             original_suggestions: None,
             selected_suggestion: None,
             scroll_offset: 0,
             manual_scroll: false,
-            selection_anchor: None,
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
@@ -352,15 +346,13 @@ impl Prompt {
         };
         Self {
             message,
-            input: String::new(),
-            cursor_pos: 0,
+            edit: crate::primitives::text_edit::TextEdit::single_line(),
             prompt_type,
             original_suggestions: Some(suggestions.clone()),
             suggestions,
             selected_suggestion,
             scroll_offset: 0,
             manual_scroll: false,
-            selection_anchor: None,
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
@@ -401,23 +393,21 @@ impl Prompt {
         initial_text: String,
         select_all: bool,
     ) -> Self {
-        let cursor_pos = initial_text.len();
-        let selection_anchor = if select_all && !initial_text.is_empty() {
-            Some(0)
+        let mut edit = crate::primitives::text_edit::TextEdit::single_line_with_text(&initial_text);
+        if select_all && !initial_text.is_empty() {
+            edit.select_all();
         } else {
-            None
-        };
+            edit.move_end();
+        }
         Self {
             message,
-            input: initial_text,
-            cursor_pos,
+            edit,
             prompt_type,
             suggestions: Vec::new(),
             original_suggestions: None,
             selected_suggestion: None,
             scroll_offset: 0,
             manual_scroll: false,
-            selection_anchor,
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
@@ -436,9 +426,7 @@ impl Prompt {
     /// Uses grapheme cluster boundaries for proper handling of combining characters
     /// like Thai diacritics, emoji with modifiers, etc.
     pub fn cursor_left(&mut self) {
-        if self.cursor_pos > 0 {
-            self.cursor_pos = grapheme::prev_grapheme_boundary(&self.input, self.cursor_pos);
-        }
+        self.edit.move_left();
     }
 
     /// Move cursor right (to next grapheme cluster boundary)
@@ -446,9 +434,7 @@ impl Prompt {
     /// Uses grapheme cluster boundaries for proper handling of combining characters
     /// like Thai diacritics, emoji with modifiers, etc.
     pub fn cursor_right(&mut self) {
-        if self.cursor_pos < self.input.len() {
-            self.cursor_pos = grapheme::next_grapheme_boundary(&self.input, self.cursor_pos);
-        }
+        self.edit.move_right();
     }
 
     /// Capture the current `(input, cursor_pos)` for undo, and drop any
@@ -456,10 +442,11 @@ impl Prompt {
     /// No-ops if the input is unchanged from the most recent snapshot so
     /// repeated no-op edits don't bloat the stack.
     fn push_undo_snapshot(&mut self) {
+        let value = self.edit.value();
         if self
             .undo_stack
             .last()
-            .is_some_and(|(text, _)| *text == self.input)
+            .is_some_and(|(text, _)| *text == value)
         {
             return;
         }
@@ -469,7 +456,7 @@ impl Prompt {
         if self.undo_stack.len() >= MAX_UNDO {
             self.undo_stack.remove(0);
         }
-        self.undo_stack.push((self.input.clone(), self.cursor_pos));
+        self.undo_stack.push((value, self.edit.flat_cursor_byte()));
         self.redo_stack.clear();
     }
 
@@ -484,25 +471,7 @@ impl Prompt {
     /// next-word-start / select-to-word-end behavior, which differs
     /// from the engine's word hops.)
     fn apply_edit(&mut self, op: impl FnOnce(&mut crate::primitives::text_edit::TextEdit)) {
-        let mut e = crate::primitives::text_edit::TextEdit::single_line_with_text(&self.input);
-        e.set_cursor_from_flat(self.cursor_pos.min(self.input.len()));
-        // Only a *real* selection syncs in. The prompt's fields may
-        // carry a degenerate anchor (anchor == cursor — e.g. left
-        // behind by `clear()`), which Prompt::has_selection treats as
-        // "no selection"; the engine's invariant is that an anchor
-        // exists only while selecting, so handing it a degenerate one
-        // would make the very next cursor move look like a live
-        // selection and eat a character.
-        if let Some(a) = self.selection_anchor {
-            let a = a.min(self.input.len());
-            if a != self.cursor_pos.min(self.input.len()) {
-                e.selection_anchor = Some((0, a));
-            }
-        }
-        op(&mut e);
-        self.input = e.value();
-        self.cursor_pos = e.flat_cursor_byte();
-        self.selection_anchor = e.selection_anchor.map(|(_, col)| col);
+        op(&mut self.edit);
     }
 
     /// Route one editing key through the shared text-key table — the
@@ -541,10 +510,10 @@ impl Prompt {
     /// Undo the last input edit. Returns true if the input changed.
     pub fn undo_input(&mut self) -> bool {
         if let Some((text, cursor)) = self.undo_stack.pop() {
-            self.redo_stack.push((self.input.clone(), self.cursor_pos));
-            self.input = text;
-            self.cursor_pos = cursor.min(self.input.len());
-            self.selection_anchor = None;
+            self.redo_stack
+                .push((self.edit.value(), self.edit.flat_cursor_byte()));
+            self.edit.set_value(&text);
+            self.edit.set_cursor_from_flat(cursor);
             true
         } else {
             false
@@ -554,10 +523,10 @@ impl Prompt {
     /// Redo the last undone input edit. Returns true if the input changed.
     pub fn redo_input(&mut self) -> bool {
         if let Some((text, cursor)) = self.redo_stack.pop() {
-            self.undo_stack.push((self.input.clone(), self.cursor_pos));
-            self.input = text;
-            self.cursor_pos = cursor.min(self.input.len());
-            self.selection_anchor = None;
+            self.undo_stack
+                .push((self.edit.value(), self.edit.flat_cursor_byte()));
+            self.edit.set_value(&text);
+            self.edit.set_cursor_from_flat(cursor);
             true
         } else {
             false
@@ -576,7 +545,7 @@ impl Prompt {
     /// of combining characters. For Thai text, this means you can delete just the
     /// tone mark without removing the base consonant.
     pub fn backspace(&mut self) {
-        if self.cursor_pos > 0 || self.has_selection() {
+        if self.cursor_byte() > 0 || self.has_selection() {
             self.push_undo_snapshot();
             self.apply_edit(|e| e.backspace());
         }
@@ -586,7 +555,7 @@ impl Prompt {
     ///
     /// Deletes the entire grapheme cluster, handling combining characters properly.
     pub fn delete(&mut self) {
-        if self.cursor_pos < self.input.len() || self.has_selection() {
+        if self.cursor_byte() < self.input_str().len() || self.has_selection() {
             self.push_undo_snapshot();
             self.apply_edit(|e| e.delete());
         }
@@ -594,12 +563,12 @@ impl Prompt {
 
     /// Move to start of input
     pub fn move_to_start(&mut self) {
-        self.cursor_pos = 0;
+        self.edit.move_home();
     }
 
     /// Move to end of input
     pub fn move_to_end(&mut self) {
-        self.cursor_pos = self.input.len();
+        self.edit.move_end();
     }
 
     /// Set the input text and cursor position
@@ -611,18 +580,17 @@ impl Prompt {
     /// ```
     /// # use fresh::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Search: ".to_string(), PromptType::Search);
-    /// prompt.input = "current".to_string();
-    /// prompt.cursor_pos = 7;
+    /// prompt.set_input_plain("current".to_string());
+    /// prompt.set_cursor_byte(7);
     ///
     /// prompt.set_input("from history".to_string());
-    /// assert_eq!(prompt.input, "from history");
-    /// assert_eq!(prompt.cursor_pos, 12); // At end
+    /// assert_eq!(prompt.input_str(), "from history");
+    /// assert_eq!(prompt.cursor_byte(), 12); // At end
     /// ```
     pub fn set_input(&mut self, text: String) {
         self.push_undo_snapshot();
-        self.cursor_pos = text.len();
-        self.input = text;
-        self.clear_selection();
+        self.edit.set_value(&text);
+        self.edit.move_end();
     }
 
     /// Select next suggestion
@@ -681,42 +649,51 @@ impl Prompt {
     /// readers go through this (not the field) so the storage can
     /// become an embedded `TextEdit` without touching them again.
     pub fn input_str(&self) -> &str {
-        &self.input
+        self.edit.current_line()
     }
 
     /// The caret's byte offset in the query text. Accessor twin of
     /// [`Self::input_str`].
     pub fn cursor_byte(&self) -> usize {
-        self.cursor_pos
+        self.edit.flat_cursor_byte()
     }
 
     /// Replace the query with `text`, caret at end, whole text
     /// selected (anchor at 0) — the suggestion-navigation sync shape:
     /// the synced value sits selected so typing replaces it.
     pub fn set_input_selected(&mut self, text: String) {
-        self.cursor_pos = text.len();
-        self.input = text;
-        self.selection_anchor = Some(0);
+        self.edit.set_value(&text);
+        self.edit.select_all();
     }
 
     /// Replace the query with `text`, caret at end, no selection and
     /// no undo snapshot — the programmatic sync shape (click-on-
     /// suggestion, encoding pre-fill, dialog resets).
     pub fn set_input_plain(&mut self, text: String) {
-        self.cursor_pos = text.len();
-        self.input = text;
-        self.selection_anchor = None;
+        self.edit.set_value(&text);
+        self.edit.move_end();
     }
 
     /// Place the caret at `byte` (clamped into the text). Accessor
     /// twin of [`Self::cursor_byte`] for callers that position the
     /// caret directly (mouse placement, tests).
     pub fn set_cursor_byte(&mut self, byte: usize) {
-        self.cursor_pos = byte.min(self.input.len());
+        self.edit.set_cursor_from_flat(byte);
+    }
+
+    /// Select the byte range `anchor..cursor` (caret lands at
+    /// `cursor`). Used by flows that programmatically select a
+    /// sub-range (and by tests).
+    pub fn select_range(&mut self, anchor: usize, cursor: usize) {
+        self.edit.set_cursor_from_flat(cursor);
+        if anchor != self.edit.flat_cursor_byte() {
+            let a = anchor.min(self.input_str().len());
+            self.edit.selection_anchor = Some((0, a));
+        }
     }
 
     pub fn get_final_input(&self) -> String {
-        self.selected_value().unwrap_or_else(|| self.input.clone())
+        self.selected_value().unwrap_or_else(|| self.edit.value())
     }
 
     /// Apply fuzzy filtering to suggestions based on current input
@@ -730,7 +707,7 @@ impl Prompt {
         // This handles the race condition where run_hook("prompt_changed") is async:
         // the plugin may have already responded with filtered results via setPromptSuggestions.
         if let Some(ref set_for_input) = self.suggestions_set_for_input {
-            if set_for_input == &self.input {
+            if set_for_input.as_str() == self.input_str() {
                 return;
             }
         }
@@ -743,7 +720,8 @@ impl Prompt {
             return;
         };
 
-        let input = &self.input;
+        let input = self.input_str().to_string();
+        let input = &input;
         let mut filtered: Vec<(crate::input::commands::Suggestion, i32)> = original
             .iter()
             .filter_map(|s| {
@@ -827,14 +805,15 @@ impl Prompt {
     /// ```
     /// # use fresh::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
-    /// prompt.input = "hello world".to_string();
-    /// prompt.cursor_pos = 0; // At start of "hello"
+    /// prompt.set_input_plain("hello world".to_string());
+    /// prompt.set_cursor_byte(0); // At start of "hello"
     /// prompt.delete_word_forward();
-    /// assert_eq!(prompt.input, " world");
-    /// assert_eq!(prompt.cursor_pos, 0);
+    /// assert_eq!(prompt.input_str(), " world");
+    /// assert_eq!(prompt.cursor_byte(), 0);
     /// ```
     pub fn delete_word_forward(&mut self) {
-        if find_word_end_bytes(self.input.as_bytes(), self.cursor_pos) > self.cursor_pos {
+        if find_word_end_bytes(self.input_str().as_bytes(), self.cursor_byte()) > self.cursor_byte()
+        {
             self.push_undo_snapshot();
             self.apply_edit(|e| e.delete_word_forward());
         }
@@ -849,14 +828,16 @@ impl Prompt {
     /// ```
     /// # use fresh::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
-    /// prompt.input = "hello world".to_string();
-    /// prompt.cursor_pos = 5; // After "hello"
+    /// prompt.set_input_plain("hello world".to_string());
+    /// prompt.set_cursor_byte(5); // After "hello"
     /// prompt.delete_word_backward();
-    /// assert_eq!(prompt.input, " world");
-    /// assert_eq!(prompt.cursor_pos, 0);
+    /// assert_eq!(prompt.input_str(), " world");
+    /// assert_eq!(prompt.cursor_byte(), 0);
     /// ```
     pub fn delete_word_backward(&mut self) {
-        if find_word_start_bytes(self.input.as_bytes(), self.cursor_pos) < self.cursor_pos {
+        if find_word_start_bytes(self.input_str().as_bytes(), self.cursor_byte())
+            < self.cursor_byte()
+        {
             self.push_undo_snapshot();
             self.apply_edit(|e| e.delete_word_backward());
         }
@@ -870,14 +851,14 @@ impl Prompt {
     /// ```
     /// # use fresh::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
-    /// prompt.input = "hello world".to_string();
-    /// prompt.cursor_pos = 5; // After "hello"
+    /// prompt.set_input_plain("hello world".to_string());
+    /// prompt.set_cursor_byte(5); // After "hello"
     /// prompt.delete_to_end();
-    /// assert_eq!(prompt.input, "hello");
-    /// assert_eq!(prompt.cursor_pos, 5);
+    /// assert_eq!(prompt.input_str(), "hello");
+    /// assert_eq!(prompt.cursor_byte(), 5);
     /// ```
     pub fn delete_to_end(&mut self) {
-        if self.cursor_pos < self.input.len() {
+        if self.cursor_byte() < self.input_str().len() {
             self.push_undo_snapshot();
             self.apply_edit(|e| e.delete_to_end());
         }
@@ -888,7 +869,7 @@ impl Prompt {
     /// Mirrors the standard readline kill-to-start behavior so the
     /// command palette can be cleared without holding Backspace.
     pub fn delete_to_start(&mut self) {
-        if self.cursor_pos > 0 {
+        if self.cursor_byte() > 0 {
             self.push_undo_snapshot();
             self.apply_edit(|e| e.delete_to_start());
         }
@@ -903,11 +884,11 @@ impl Prompt {
     /// ```
     /// # use fresh::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Search: ".to_string(), PromptType::Search);
-    /// prompt.input = "test query".to_string();
+    /// prompt.set_input_plain("test query".to_string());
     /// assert_eq!(prompt.get_text(), "test query");
     /// ```
     pub fn get_text(&self) -> String {
-        self.input.clone()
+        self.edit.value()
     }
 
     /// Clear the input (used for cut operation).
@@ -918,15 +899,14 @@ impl Prompt {
     /// ```
     /// # use fresh::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
-    /// prompt.input = "some text".to_string();
-    /// prompt.cursor_pos = 9;
+    /// prompt.set_input_plain("some text".to_string());
+    /// prompt.set_cursor_byte(9);
     /// prompt.clear();
-    /// assert_eq!(prompt.input, "");
-    /// assert_eq!(prompt.cursor_pos, 0);
+    /// assert_eq!(prompt.input_str(), "");
+    /// assert_eq!(prompt.cursor_byte(), 0);
     /// ```
     pub fn clear(&mut self) {
-        self.input.clear();
-        self.cursor_pos = 0;
+        self.edit.clear();
         // Also clear selection when clearing input
         self.selected_suggestion = None;
     }
@@ -940,11 +920,11 @@ impl Prompt {
     /// ```
     /// # use fresh::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Command: ".to_string(), PromptType::QuickOpen);
-    /// prompt.input = "save".to_string();
-    /// prompt.cursor_pos = 4;
+    /// prompt.set_input_plain("save".to_string());
+    /// prompt.set_cursor_byte(4);
     /// prompt.insert_str(" file");
-    /// assert_eq!(prompt.input, "save file");
-    /// assert_eq!(prompt.cursor_pos, 9);
+    /// assert_eq!(prompt.input_str(), "save file");
+    /// assert_eq!(prompt.cursor_byte(), 9);
     /// ```
     pub fn insert_str(&mut self, text: &str) {
         // Replaces any active selection (engine behavior).
@@ -957,25 +937,17 @@ impl Prompt {
 
     /// Check if there's an active selection
     pub fn has_selection(&self) -> bool {
-        self.selection_anchor.is_some() && self.selection_anchor != Some(self.cursor_pos)
+        self.edit.has_selection()
     }
 
     /// Get the selection range (start, end) where start <= end
     pub fn selection_range(&self) -> Option<(usize, usize)> {
-        if let Some(anchor) = self.selection_anchor {
-            if anchor != self.cursor_pos {
-                let start = anchor.min(self.cursor_pos);
-                let end = anchor.max(self.cursor_pos);
-                return Some((start, end));
-            }
-        }
-        None
+        self.edit.selection_flat_range()
     }
 
     /// Get the selected text
     pub fn selected_text(&self) -> Option<String> {
-        self.selection_range()
-            .map(|(start, end)| self.input[start..end].to_string())
+        self.edit.selected_text()
     }
 
     /// Delete the current selection and return the deleted text
@@ -992,7 +964,7 @@ impl Prompt {
 
     /// Clear selection without deleting text
     pub fn clear_selection(&mut self) {
-        self.selection_anchor = None;
+        self.edit.clear_selection();
     }
 
     /// Move cursor left with selection (by grapheme cluster)
@@ -1018,16 +990,20 @@ impl Prompt {
     /// Move to start of previous word with selection
     /// Mimics Buffer's find_word_start_left behavior
     pub fn move_word_left_selecting(&mut self) {
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.cursor_pos);
-        }
-
-        let bytes = self.input.as_bytes();
-        if self.cursor_pos == 0 {
+        let anchor = self
+            .edit
+            .selection_anchor
+            .map(|(_, col)| col)
+            .unwrap_or_else(|| self.edit.flat_cursor_byte());
+        let value = self.edit.value();
+        let bytes = value.as_bytes();
+        let cursor = self.edit.flat_cursor_byte();
+        if cursor == 0 {
+            self.edit.selection_anchor = Some((0, anchor));
             return;
         }
 
-        let mut new_pos = self.cursor_pos.saturating_sub(1);
+        let mut new_pos = cursor.saturating_sub(1);
 
         // Skip non-word characters (spaces) backwards
         while new_pos > 0 && !is_word_char(bytes[new_pos]) {
@@ -1039,27 +1015,34 @@ impl Prompt {
             new_pos = new_pos.saturating_sub(1);
         }
 
-        self.cursor_pos = new_pos;
+        // `set_cursor_from_flat` clears the anchor; re-attach it after.
+        self.edit.set_cursor_from_flat(new_pos);
+        self.edit.selection_anchor = Some((0, anchor));
     }
 
     /// Move to end of next word with selection
     /// For selection, we want to select whole words, so move to word END, not word START
     pub fn move_word_right_selecting(&mut self) {
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.cursor_pos);
-        }
-
+        let anchor = self
+            .edit
+            .selection_anchor
+            .map(|(_, col)| col)
+            .unwrap_or_else(|| self.edit.flat_cursor_byte());
         // Use find_word_end_bytes which moves to the END of words
-        let bytes = self.input.as_bytes();
-        let mut new_pos = find_word_end_bytes(bytes, self.cursor_pos);
+        let value = self.edit.value();
+        let bytes = value.as_bytes();
+        let cursor = self.edit.flat_cursor_byte();
+        let mut new_pos = find_word_end_bytes(bytes, cursor);
 
         // If we didn't move (already at word end), move forward to next word end
-        if new_pos == self.cursor_pos && new_pos < bytes.len() {
+        if new_pos == cursor && new_pos < bytes.len() {
             new_pos = (new_pos + 1).min(bytes.len());
             new_pos = find_word_end_bytes(bytes, new_pos);
         }
 
-        self.cursor_pos = new_pos;
+        // `set_cursor_from_flat` clears the anchor; re-attach it after.
+        self.edit.set_cursor_from_flat(new_pos);
+        self.edit.selection_anchor = Some((0, anchor));
     }
 
     /// Move to start of previous word (without selection)
@@ -1067,12 +1050,14 @@ impl Prompt {
     pub fn move_word_left(&mut self) {
         self.clear_selection();
 
-        let bytes = self.input.as_bytes();
-        if self.cursor_pos == 0 {
+        let value = self.edit.value();
+        let bytes = value.as_bytes();
+        let cursor = self.edit.flat_cursor_byte();
+        if cursor == 0 {
             return;
         }
 
-        let mut new_pos = self.cursor_pos.saturating_sub(1);
+        let mut new_pos = cursor.saturating_sub(1);
 
         // Skip non-word characters (spaces) backwards
         while new_pos > 0 && !is_word_char(bytes[new_pos]) {
@@ -1084,7 +1069,7 @@ impl Prompt {
             new_pos = new_pos.saturating_sub(1);
         }
 
-        self.cursor_pos = new_pos;
+        self.edit.set_cursor_from_flat(new_pos);
     }
 
     /// Move to start of next word (without selection)
@@ -1092,12 +1077,14 @@ impl Prompt {
     pub fn move_word_right(&mut self) {
         self.clear_selection();
 
-        let bytes = self.input.as_bytes();
-        if self.cursor_pos >= bytes.len() {
+        let value = self.edit.value();
+        let bytes = value.as_bytes();
+        let cursor = self.edit.flat_cursor_byte();
+        if cursor >= bytes.len() {
             return;
         }
 
-        let mut new_pos = self.cursor_pos;
+        let mut new_pos = cursor;
 
         // Skip current word
         while new_pos < bytes.len() && is_word_char(bytes[new_pos]) {
@@ -1109,7 +1096,7 @@ impl Prompt {
             new_pos += 1;
         }
 
-        self.cursor_pos = new_pos;
+        self.edit.set_cursor_from_flat(new_pos);
     }
 }
 
@@ -1120,90 +1107,90 @@ mod tests {
     #[test]
     fn test_delete_word_forward_basic() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello world test".to_string();
-        prompt.cursor_pos = 0;
+        prompt.set_input_plain("hello world test".to_string());
+        prompt.set_cursor_byte(0);
 
         prompt.delete_word_forward();
-        assert_eq!(prompt.input, " world test");
-        assert_eq!(prompt.cursor_pos, 0);
+        assert_eq!(prompt.input_str(), " world test");
+        assert_eq!(prompt.cursor_byte(), 0);
     }
 
     #[test]
     fn test_delete_word_forward_middle() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello world test".to_string();
-        prompt.cursor_pos = 3; // Middle of "hello"
+        prompt.set_input_plain("hello world test".to_string());
+        prompt.set_cursor_byte(3); // Middle of "hello"
 
         prompt.delete_word_forward();
-        assert_eq!(prompt.input, "hel world test");
-        assert_eq!(prompt.cursor_pos, 3);
+        assert_eq!(prompt.input_str(), "hel world test");
+        assert_eq!(prompt.cursor_byte(), 3);
     }
 
     #[test]
     fn test_delete_word_forward_at_space() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello world".to_string();
-        prompt.cursor_pos = 5; // At space after "hello"
+        prompt.set_input_plain("hello world".to_string());
+        prompt.set_cursor_byte(5); // At space after "hello"
 
         prompt.delete_word_forward();
-        assert_eq!(prompt.input, "hello");
-        assert_eq!(prompt.cursor_pos, 5);
+        assert_eq!(prompt.input_str(), "hello");
+        assert_eq!(prompt.cursor_byte(), 5);
     }
 
     #[test]
     fn test_delete_word_backward_basic() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello world test".to_string();
-        prompt.cursor_pos = 5; // After "hello"
+        prompt.set_input_plain("hello world test".to_string());
+        prompt.set_cursor_byte(5); // After "hello"
 
         prompt.delete_word_backward();
-        assert_eq!(prompt.input, " world test");
-        assert_eq!(prompt.cursor_pos, 0);
+        assert_eq!(prompt.input_str(), " world test");
+        assert_eq!(prompt.cursor_byte(), 0);
     }
 
     #[test]
     fn test_delete_word_backward_middle() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello world test".to_string();
-        prompt.cursor_pos = 8; // Middle of "world"
+        prompt.set_input_plain("hello world test".to_string());
+        prompt.set_cursor_byte(8); // Middle of "world"
 
         prompt.delete_word_backward();
-        assert_eq!(prompt.input, "hello rld test");
-        assert_eq!(prompt.cursor_pos, 6);
+        assert_eq!(prompt.input_str(), "hello rld test");
+        assert_eq!(prompt.cursor_byte(), 6);
     }
 
     #[test]
     fn test_delete_word_backward_at_end() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello world".to_string();
-        prompt.cursor_pos = 11; // At end
+        prompt.set_input_plain("hello world".to_string());
+        prompt.set_cursor_byte(11); // At end
 
         prompt.delete_word_backward();
-        assert_eq!(prompt.input, "hello ");
-        assert_eq!(prompt.cursor_pos, 6);
+        assert_eq!(prompt.input_str(), "hello ");
+        assert_eq!(prompt.cursor_byte(), 6);
     }
 
     #[test]
     fn test_delete_word_with_special_chars() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "save-file-as".to_string();
-        prompt.cursor_pos = 12; // At end
+        prompt.set_input_plain("save-file-as".to_string());
+        prompt.set_cursor_byte(12); // At end
 
         // Delete "as"
         prompt.delete_word_backward();
-        assert_eq!(prompt.input, "save-file-");
-        assert_eq!(prompt.cursor_pos, 10);
+        assert_eq!(prompt.input_str(), "save-file-");
+        assert_eq!(prompt.cursor_byte(), 10);
 
         // Delete "file"
         prompt.delete_word_backward();
-        assert_eq!(prompt.input, "save-");
-        assert_eq!(prompt.cursor_pos, 5);
+        assert_eq!(prompt.input_str(), "save-");
+        assert_eq!(prompt.cursor_byte(), 5);
     }
 
     #[test]
     fn test_get_text() {
         let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
-        prompt.input = "test content".to_string();
+        prompt.set_input_plain("test content".to_string());
 
         assert_eq!(prompt.get_text(), "test content");
     }
@@ -1211,133 +1198,133 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
-        prompt.input = "some text".to_string();
-        prompt.cursor_pos = 5;
+        prompt.set_input_plain("some text".to_string());
+        prompt.set_cursor_byte(5);
         prompt.selected_suggestion = Some(0);
 
         prompt.clear();
 
-        assert_eq!(prompt.input, "");
-        assert_eq!(prompt.cursor_pos, 0);
+        assert_eq!(prompt.input_str(), "");
+        assert_eq!(prompt.cursor_byte(), 0);
         assert_eq!(prompt.selected_suggestion, None);
     }
 
     #[test]
     fn test_delete_forward_basic() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello".to_string();
-        prompt.cursor_pos = 1; // After 'h'
+        prompt.set_input_plain("hello".to_string());
+        prompt.set_cursor_byte(1); // After 'h'
 
         // Simulate delete key (remove 'e')
-        prompt.input.drain(prompt.cursor_pos..prompt.cursor_pos + 1);
+        prompt.delete();
 
-        assert_eq!(prompt.input, "hllo");
-        assert_eq!(prompt.cursor_pos, 1);
+        assert_eq!(prompt.input_str(), "hllo");
+        assert_eq!(prompt.cursor_byte(), 1);
     }
 
     #[test]
     fn test_delete_at_end() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello".to_string();
-        prompt.cursor_pos = 5; // At end
+        prompt.set_input_plain("hello".to_string());
+        prompt.set_cursor_byte(5); // At end
 
         // Delete at end should do nothing
-        if prompt.cursor_pos < prompt.input.len() {
-            prompt.input.drain(prompt.cursor_pos..prompt.cursor_pos + 1);
+        if prompt.cursor_byte() < prompt.input_str().len() {
+            prompt.delete();
         }
 
-        assert_eq!(prompt.input, "hello");
-        assert_eq!(prompt.cursor_pos, 5);
+        assert_eq!(prompt.input_str(), "hello");
+        assert_eq!(prompt.cursor_byte(), 5);
     }
 
     #[test]
     fn test_insert_str_at_start() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "world".to_string();
-        prompt.cursor_pos = 0;
+        prompt.set_input_plain("world".to_string());
+        prompt.set_cursor_byte(0);
 
         prompt.insert_str("hello ");
-        assert_eq!(prompt.input, "hello world");
-        assert_eq!(prompt.cursor_pos, 6);
+        assert_eq!(prompt.input_str(), "hello world");
+        assert_eq!(prompt.cursor_byte(), 6);
     }
 
     #[test]
     fn test_insert_str_at_middle() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "helloworld".to_string();
-        prompt.cursor_pos = 5;
+        prompt.set_input_plain("helloworld".to_string());
+        prompt.set_cursor_byte(5);
 
         prompt.insert_str(" ");
-        assert_eq!(prompt.input, "hello world");
-        assert_eq!(prompt.cursor_pos, 6);
+        assert_eq!(prompt.input_str(), "hello world");
+        assert_eq!(prompt.cursor_byte(), 6);
     }
 
     #[test]
     fn test_insert_str_at_end() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello".to_string();
-        prompt.cursor_pos = 5;
+        prompt.set_input_plain("hello".to_string());
+        prompt.set_cursor_byte(5);
 
         prompt.insert_str(" world");
-        assert_eq!(prompt.input, "hello world");
-        assert_eq!(prompt.cursor_pos, 11);
+        assert_eq!(prompt.input_str(), "hello world");
+        assert_eq!(prompt.cursor_byte(), 11);
     }
 
     #[test]
     fn test_delete_word_forward_empty() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "".to_string();
-        prompt.cursor_pos = 0;
+        prompt.set_input_plain("".to_string());
+        prompt.set_cursor_byte(0);
 
         prompt.delete_word_forward();
-        assert_eq!(prompt.input, "");
-        assert_eq!(prompt.cursor_pos, 0);
+        assert_eq!(prompt.input_str(), "");
+        assert_eq!(prompt.cursor_byte(), 0);
     }
 
     #[test]
     fn test_delete_word_backward_empty() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "".to_string();
-        prompt.cursor_pos = 0;
+        prompt.set_input_plain("".to_string());
+        prompt.set_cursor_byte(0);
 
         prompt.delete_word_backward();
-        assert_eq!(prompt.input, "");
-        assert_eq!(prompt.cursor_pos, 0);
+        assert_eq!(prompt.input_str(), "");
+        assert_eq!(prompt.cursor_byte(), 0);
     }
 
     #[test]
     fn test_delete_word_forward_only_spaces() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "   ".to_string();
-        prompt.cursor_pos = 0;
+        prompt.set_input_plain("   ".to_string());
+        prompt.set_cursor_byte(0);
 
         prompt.delete_word_forward();
-        assert_eq!(prompt.input, "");
-        assert_eq!(prompt.cursor_pos, 0);
+        assert_eq!(prompt.input_str(), "");
+        assert_eq!(prompt.cursor_byte(), 0);
     }
 
     #[test]
     fn test_multiple_word_deletions() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "one two three four".to_string();
-        prompt.cursor_pos = 18;
+        prompt.set_input_plain("one two three four".to_string());
+        prompt.set_cursor_byte(18);
 
         prompt.delete_word_backward(); // Delete "four"
-        assert_eq!(prompt.input, "one two three ");
+        assert_eq!(prompt.input_str(), "one two three ");
 
         prompt.delete_word_backward(); // Delete "three"
-        assert_eq!(prompt.input, "one two ");
+        assert_eq!(prompt.input_str(), "one two ");
 
         prompt.delete_word_backward(); // Delete "two"
-        assert_eq!(prompt.input, "one ");
+        assert_eq!(prompt.input_str(), "one ");
     }
 
     // Tests for selection functionality
     #[test]
     fn test_selection_with_shift_arrows() {
         let mut prompt = Prompt::new("Command: ".to_string(), PromptType::QuickOpen);
-        prompt.input = "hello world".to_string();
-        prompt.cursor_pos = 5; // After "hello"
+        prompt.set_input_plain("hello world".to_string());
+        prompt.set_cursor_byte(5); // After "hello"
 
         // No selection initially
         assert!(!prompt.has_selection());
@@ -1363,8 +1350,8 @@ mod tests {
     #[test]
     fn test_selection_backward() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "abcdef".to_string();
-        prompt.cursor_pos = 4; // After "abcd"
+        prompt.set_input_plain("abcdef".to_string());
+        prompt.set_cursor_byte(4); // After "abcd"
 
         // Select backward
         prompt.move_left_selecting();
@@ -1377,8 +1364,8 @@ mod tests {
     #[test]
     fn test_selection_with_home_end() {
         let mut prompt = Prompt::new("Prompt: ".to_string(), PromptType::QuickOpen);
-        prompt.input = "select this text".to_string();
-        prompt.cursor_pos = 7; // After "select "
+        prompt.set_input_plain("select this text".to_string());
+        prompt.set_cursor_byte(7); // After "select "
 
         // Select to end
         prompt.move_end_selecting();
@@ -1395,8 +1382,8 @@ mod tests {
     #[test]
     fn test_word_selection() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "one two three".to_string();
-        prompt.cursor_pos = 4; // After "one "
+        prompt.set_input_plain("one two three".to_string());
+        prompt.set_cursor_byte(4); // After "one "
 
         // Select word right
         prompt.move_word_right_selecting();
@@ -1412,8 +1399,8 @@ mod tests {
     #[test]
     fn test_word_selection_backward() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "one two three".to_string();
-        prompt.cursor_pos = 13; // At end
+        prompt.set_input_plain("one two three".to_string());
+        prompt.set_cursor_byte(13); // At end
 
         // Select word left - moves to start of "three"
         prompt.move_word_left_selecting();
@@ -1429,8 +1416,8 @@ mod tests {
     #[test]
     fn test_delete_selection() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello world".to_string();
-        prompt.cursor_pos = 5;
+        prompt.set_input_plain("hello world".to_string());
+        prompt.set_cursor_byte(5);
 
         // Select " world"
         prompt.move_end_selecting();
@@ -1439,16 +1426,16 @@ mod tests {
         // Delete selection
         let deleted = prompt.delete_selection();
         assert_eq!(deleted, Some(" world".to_string()));
-        assert_eq!(prompt.input, "hello");
-        assert_eq!(prompt.cursor_pos, 5);
+        assert_eq!(prompt.input_str(), "hello");
+        assert_eq!(prompt.cursor_byte(), 5);
         assert!(!prompt.has_selection());
     }
 
     #[test]
     fn test_insert_deletes_selection() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello world".to_string();
-        prompt.cursor_pos = 0;
+        prompt.set_input_plain("hello world".to_string());
+        prompt.set_cursor_byte(0);
 
         // Select "hello"
         for _ in 0..5 {
@@ -1458,16 +1445,16 @@ mod tests {
 
         // Insert text - should delete selection first
         prompt.insert_str("goodbye");
-        assert_eq!(prompt.input, "goodbye world");
-        assert_eq!(prompt.cursor_pos, 7);
+        assert_eq!(prompt.input_str(), "goodbye world");
+        assert_eq!(prompt.cursor_byte(), 7);
         assert!(!prompt.has_selection());
     }
 
     #[test]
     fn test_clear_selection() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "test".to_string();
-        prompt.cursor_pos = 0;
+        prompt.set_input_plain("test".to_string());
+        prompt.set_cursor_byte(0);
 
         // Create selection
         prompt.move_end_selecting();
@@ -1476,33 +1463,33 @@ mod tests {
         // Clear selection
         prompt.clear_selection();
         assert!(!prompt.has_selection());
-        assert_eq!(prompt.cursor_pos, 4); // Cursor should remain at end
-        assert_eq!(prompt.input, "test"); // Input unchanged
+        assert_eq!(prompt.cursor_byte(), 4); // Cursor should remain at end
+        assert_eq!(prompt.input_str(), "test"); // Input unchanged
     }
 
     #[test]
     fn test_selection_edge_cases() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "abc".to_string();
-        prompt.cursor_pos = 3;
+        prompt.set_input_plain("abc".to_string());
+        prompt.set_cursor_byte(3);
 
         // Select beyond end should stop at end (no movement, no selection)
         prompt.move_right_selecting();
-        assert_eq!(prompt.cursor_pos, 3);
+        assert_eq!(prompt.cursor_byte(), 3);
         // Since cursor didn't move, anchor equals cursor, so no selection
         assert_eq!(prompt.selection_range(), None);
         assert_eq!(prompt.selected_text(), None);
 
         // Delete non-existent selection should return None
         assert_eq!(prompt.delete_selection(), None);
-        assert_eq!(prompt.input, "abc");
+        assert_eq!(prompt.input_str(), "abc");
     }
 
     #[test]
     fn test_selection_with_unicode() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello 世界 world".to_string();
-        prompt.cursor_pos = 6; // After "hello "
+        prompt.set_input_plain("hello 世界 world".to_string());
+        prompt.set_cursor_byte(6); // After "hello "
 
         // Select the Chinese characters
         for _ in 0..2 {
@@ -1514,7 +1501,7 @@ mod tests {
 
         // Delete should work correctly
         prompt.delete_selection();
-        assert_eq!(prompt.input, "hello  world");
+        assert_eq!(prompt.input_str(), "hello  world");
     }
 
     // BUG REPRODUCTION TESTS
@@ -1523,8 +1510,8 @@ mod tests {
     #[test]
     fn test_word_selection_continues_across_words() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "one two three".to_string();
-        prompt.cursor_pos = 13; // At end
+        prompt.set_input_plain("one two three".to_string());
+        prompt.set_cursor_byte(13); // At end
 
         // First Ctrl+Shift+Left - selects "three"
         prompt.move_word_left_selecting();
@@ -1554,13 +1541,13 @@ mod tests {
                 cursor_pos in 0usize..50
             ) {
                 let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-                prompt.input = input.clone();
-                prompt.cursor_pos = cursor_pos.min(input.len());
+                prompt.set_input_plain(input.clone());
+                prompt.set_cursor_byte(cursor_pos.min(input.len()));
 
-                let original_len = prompt.input.len();
+                let original_len = prompt.input_str().len();
                 prompt.delete_word_backward();
 
-                prop_assert!(prompt.input.len() <= original_len);
+                prop_assert!(prompt.input_str().len() <= original_len);
             }
 
             /// Property: delete_word_forward should never increase input length
@@ -1570,13 +1557,13 @@ mod tests {
                 cursor_pos in 0usize..50
             ) {
                 let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-                prompt.input = input.clone();
-                prompt.cursor_pos = cursor_pos.min(input.len());
+                prompt.set_input_plain(input.clone());
+                prompt.set_cursor_byte(cursor_pos.min(input.len()));
 
-                let original_len = prompt.input.len();
+                let original_len = prompt.input_str().len();
                 prompt.delete_word_forward();
 
-                prop_assert!(prompt.input.len() <= original_len);
+                prop_assert!(prompt.input_str().len() <= original_len);
             }
 
             /// Property: delete_word_backward should not move cursor past input start
@@ -1586,12 +1573,12 @@ mod tests {
                 cursor_pos in 0usize..50
             ) {
                 let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-                prompt.input = input.clone();
-                prompt.cursor_pos = cursor_pos.min(input.len());
+                prompt.set_input_plain(input.clone());
+                prompt.set_cursor_byte(cursor_pos.min(input.len()));
 
                 prompt.delete_word_backward();
 
-                prop_assert!(prompt.cursor_pos <= prompt.input.len());
+                prop_assert!(prompt.cursor_byte() <= prompt.input_str().len());
             }
 
             /// Property: delete_word_forward should keep cursor in valid range
@@ -1601,12 +1588,12 @@ mod tests {
                 cursor_pos in 0usize..50
             ) {
                 let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-                prompt.input = input.clone();
-                prompt.cursor_pos = cursor_pos.min(input.len());
+                prompt.set_input_plain(input.clone());
+                prompt.set_cursor_byte(cursor_pos.min(input.len()));
 
                 prompt.delete_word_forward();
 
-                prop_assert!(prompt.cursor_pos <= prompt.input.len());
+                prop_assert!(prompt.cursor_byte() <= prompt.input_str().len());
             }
 
             /// Property: insert_str should increase length by inserted text length
@@ -1617,13 +1604,13 @@ mod tests {
                 cursor_pos in 0usize..30
             ) {
                 let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-                prompt.input = input.clone();
-                prompt.cursor_pos = cursor_pos.min(input.len());
+                prompt.set_input_plain(input.clone());
+                prompt.set_cursor_byte(cursor_pos.min(input.len()));
 
-                let original_len = prompt.input.len();
+                let original_len = prompt.input_str().len();
                 prompt.insert_str(&insert);
 
-                prop_assert_eq!(prompt.input.len(), original_len + insert.len());
+                prop_assert_eq!(prompt.input_str().len(), original_len + insert.len());
             }
 
             /// Property: insert_str should move cursor by inserted text length
@@ -1634,26 +1621,26 @@ mod tests {
                 cursor_pos in 0usize..30
             ) {
                 let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-                prompt.input = input.clone();
+                prompt.set_input_plain(input.clone());
                 let original_pos = cursor_pos.min(input.len());
-                prompt.cursor_pos = original_pos;
+                prompt.set_cursor_byte(original_pos);
 
                 prompt.insert_str(&insert);
 
-                prop_assert_eq!(prompt.cursor_pos, original_pos + insert.len());
+                prop_assert_eq!(prompt.cursor_byte(), original_pos + insert.len());
             }
 
             /// Property: clear should always result in empty string and zero cursor
             #[test]
             fn prop_clear_resets(input in "[a-zA-Z0-9_ ]{0,50}") {
                 let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-                prompt.input = input;
-                prompt.cursor_pos = prompt.input.len();
+                prompt.set_input_plain(input);
+                prompt.set_cursor_byte(prompt.input_str().len());
 
                 prompt.clear();
 
-                prop_assert_eq!(prompt.input, "");
-                prop_assert_eq!(prompt.cursor_pos, 0);
+                prop_assert_eq!(prompt.input_str(), "");
+                prop_assert_eq!(prompt.cursor_byte(), 0);
             }
         }
     }

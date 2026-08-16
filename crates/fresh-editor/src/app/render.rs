@@ -3706,7 +3706,7 @@ impl Editor {
         let right_cluster_w = status_w + status_gap + count_w + right_gap;
         let visible_input_width = (input_row.width as usize).saturating_sub(right_cluster_w);
         let truncated_input: String = prompt
-            .input
+            .input_str()
             .chars()
             .take(visible_input_width.saturating_sub(str_width(&prompt.message)))
             .collect();
