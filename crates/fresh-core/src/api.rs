@@ -2787,6 +2787,18 @@ pub enum WidgetSpec {
         child: Box<WidgetSpec>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
+        /// Anchor `[row, col]` in the panel's inner coordinates the
+        /// popup drops from (the host resolves the final screen rect
+        /// — opening below the anchor, flipping above near the frame
+        /// edge, clamped on screen). `None` anchors at the popup's
+        /// own position in the tree.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<[u32; 2]>,
+        /// When true, the popup escapes the panel's clipping and is
+        /// painted at screen level (what the dropdown pop-over does);
+        /// false keeps it panel-clipped like `Overlay`.
+        #[serde(default)]
+        screen_space: bool,
     },
 }
 

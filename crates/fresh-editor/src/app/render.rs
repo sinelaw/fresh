@@ -5156,24 +5156,20 @@ impl Editor {
         let mut dropdown_popup_hits: Vec<super::DropdownPopupOptionHit> = Vec::new();
         let mut dropdown_popup_rect: Option<ratatui::layout::Rect> = None;
         if let Some(dp) = dropdown_popup.as_ref() {
-            use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
-            use ratatui::style::{Modifier, Style};
-            // The renderer already applied windowing + scroll: `rows`
-            // is exactly what shows. The host owns geometry and paint.
-            let visible = dp.rows.len();
+            use crate::primitives::display_width::str_width;
+            // The renderer delivered fully-rendered rows (windowing,
+            // padding, selection styling as theme-key overlays). The
+            // host resolves geometry, draws the border, and paints the
+            // entries verbatim — it knows nothing about the content.
+            let visible = dp.entries.len();
             if visible > 0 {
-                // Box width = widest visible option + 1 col of left padding,
-                // + 2 for the borders; clamped to the frame.
                 let content_w = dp
-                    .rows
+                    .entries
                     .iter()
-                    .map(|(o, _)| str_width(o) as u16)
+                    .map(|e| str_width(&e.text) as u16)
                     .max()
                     .unwrap_or(0);
-                let w = content_w
-                    .saturating_add(1)
-                    .saturating_add(2)
-                    .clamp(4, area.width);
+                let w = content_w.saturating_add(2).clamp(4, area.width);
                 let h = (visible as u16).saturating_add(2).clamp(3, area.height);
                 // Anchor to the trigger's screen row; prefer opening below
                 // (one row under the trigger), flipping above when the box
@@ -5202,47 +5198,34 @@ impl Editor {
                 let popup_block = Block::default()
                     .borders(Borders::ALL)
                     .border_style(ratatui::style::Style::default().fg(theme.popup_border_fg))
-                    .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
+                    .style(ratatui::style::Style::default().bg(theme.popup_bg));
                 let popup_inner = popup_block.inner(popup_rect);
                 frame.render_widget(popup_block, popup_rect);
-                for (row_i, (opt, idx)) in dp.rows.iter().enumerate() {
-                    let idx = *idx;
+                for (row_i, entry) in dp.entries.iter().enumerate() {
                     let ry = popup_inner.y + row_i as u16;
                     if ry >= popup_inner.y + popup_inner.height {
                         break;
                     }
-                    let row_rect = ratatui::layout::Rect {
-                        x: popup_inner.x,
-                        y: ry,
-                        width: popup_inner.width,
-                        height: 1,
-                    };
-                    let selected = dp.selected_row == Some(row_i);
-                    let row_bg = if selected {
-                        theme.suggestion_selected_bg
-                    } else {
-                        theme.suggestion_bg
-                    };
-                    frame.render_widget(
-                        Block::default().style(ratatui::style::Style::default().bg(row_bg)),
-                        row_rect,
+                    paint_text_property_entry(
+                        frame,
+                        entry,
+                        popup_inner.x,
+                        ry,
+                        popup_inner.width,
+                        &theme,
+                        None,
                     );
-                    // One col of left padding, truncated to the interior.
-                    let avail = popup_inner.width.saturating_sub(1) as usize;
-                    let opt = opt.as_str();
-                    let cut = byte_offset_at_visual_column(opt, avail);
-                    let text = &opt[..cut];
-                    let mut style = Style::default().fg(theme.suggestion_fg).bg(row_bg);
-                    if selected {
-                        style = style.add_modifier(Modifier::BOLD);
+                    if let Some(idx) = dp.row_indices.get(row_i) {
+                        dropdown_popup_hits.push(super::DropdownPopupOptionHit {
+                            rect: ratatui::layout::Rect {
+                                x: popup_inner.x,
+                                y: ry,
+                                width: popup_inner.width,
+                                height: 1,
+                            },
+                            index: *idx,
+                        });
                     }
-                    frame
-                        .buffer_mut()
-                        .set_string(popup_inner.x + 1, ry, text, style);
-                    dropdown_popup_hits.push(super::DropdownPopupOptionHit {
-                        rect: row_rect,
-                        index: idx,
-                    });
                 }
                 dropdown_popup_rect = Some(popup_rect);
             }
