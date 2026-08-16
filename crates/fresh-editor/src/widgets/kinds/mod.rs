@@ -31,7 +31,7 @@ pub(crate) mod list;
 pub(crate) mod number;
 mod raw;
 mod spacer;
-mod text;
+pub(crate) mod text;
 mod toggle;
 pub(crate) mod tree;
 mod window_embed;
@@ -88,6 +88,10 @@ pub(crate) struct KeyFx {
     /// the selection sits). Which panels *have* such a bar is host
     /// policy — a no-op elsewhere.
     pub flash_scrollbar: bool,
+    /// Text to place on the editor's clipboard (a copy/cut chord on
+    /// a text widget's selection). The clipboard is host state, so
+    /// the kind hands the text out rather than reaching for it.
+    pub clipboard_copy: Option<String>,
 }
 
 /// What the focused widget did with a key.

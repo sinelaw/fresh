@@ -839,6 +839,15 @@ last hand-ordered ladder — became the same walk in query form
 (`hover_chrome_boxes` + `hover_chrome_target`: 13 z-ordered surfaces,
 handlers decline where geometry is finer than their rect). No gesture
 in the codebase resolves its target through an if/else chain anymore.
+Key ownership is now complete on the same model: every kind's whole
+keyboard vocabulary lives in its `on_key` (DualList's column/cursor
+ops, List/Tree selection + paging + activate, Text's caret motion,
+chords, clipboard, and multi-line Enter), with a `KeyFx` effects
+channel (`focus_advance`, `flash_scrollbar`, `clipboard_copy`) so
+kinds request host actions without reaching into the Editor.
+`handle_widget_key`'s match holds only genuine cross-widget panel
+policy: Tab ring cycling, picker forwarding to a sibling scrollable,
+and the single-line-Enter submit/advance fallback.
 Still open, in plan order: chrome geometry produced by layout rather
 than recorded by paint (which is what retires the `*Layout` caches),
 then true capture/bubble over one shared chrome tree replacing the
