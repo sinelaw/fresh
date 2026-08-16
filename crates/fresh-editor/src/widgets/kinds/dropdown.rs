@@ -68,6 +68,38 @@ impl WidgetImpl for Dropdown {
         }
     }
 
+    /// Pointer model: clicking the `[value ▼]` trigger toggles the
+    /// option popup open/closed; clicking an option row commits that
+    /// index (fires `change` through the same kind-owned mutation
+    /// keyboard nav uses) and closes the popup. The host owns both
+    /// the open flag and the index, so both hits are fully handled
+    /// here — the recorded events never reach the plugin raw.
+    fn on_pointer(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        event_type: &str,
+        payload: &serde_json::Value,
+        fx: &mut super::PointerFx,
+    ) -> super::PointerDisposition {
+        match event_type {
+            "dropdown_toggle" => {
+                let now_open = !is_open(widget_key, panel);
+                set_open(spec, widget_key, panel, now_open, &mut fx.key);
+                super::PointerDisposition::Consumed
+            }
+            "dropdown_select" => {
+                if let Some(idx) = payload.get("index").and_then(|v| v.as_i64()) {
+                    set_selection(spec, widget_key, panel, idx as i32, &mut fx.key);
+                }
+                set_open(spec, widget_key, panel, false, &mut fx.key);
+                super::PointerDisposition::Consumed
+            }
+            _ => super::PointerDisposition::Default,
+        }
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("dropdown");
         if let WidgetSpec::Dropdown { key: Some(k), .. } = spec {
@@ -211,6 +243,7 @@ fn collect_dropdown(
         byte_end: button_range.1,
         payload: json!({}),
         event_type: "dropdown_toggle",
+        owner_key: None,
     });
     // Open: surface the option list as a floating pop-over anchored to
     // the trigger's row (row 0 within this sub-render; Col/Row/Section
