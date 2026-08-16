@@ -1806,9 +1806,9 @@ mod wave_dismiss_tests {
             close_button_rect: None,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
-            dropdown_popup: None,
-            dropdown_popup_hits: Vec::new(),
-            dropdown_popup_rect: None,
+            popup: None,
+            popup_hits: Vec::new(),
+            popup_rect: None,
         });
 
         let consumed = server

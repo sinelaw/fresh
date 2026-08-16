@@ -8,7 +8,7 @@ use serde_json::json;
 use super::WidgetImpl;
 use crate::widgets::registry::{HitArea, WidgetInstanceState};
 use crate::widgets::render::{
-    ensure_trailing_newline, render_dropdown, CollectedOutput, DropdownPopup, RenderContext,
+    ensure_trailing_newline, render_dropdown, CollectedOutput, PanelPopup, RenderContext,
     RenderedDropdown,
 };
 
@@ -225,7 +225,7 @@ fn collect_dropdown(
         ctx.marker_gutter,
     );
     // The open list now floats as a screen-level pop-over
-    // (`out.dropdown_popups`) instead of growing inline, so the panel
+    // (`out.popups`) instead of growing inline, so the panel
     // keeps only the compact `[value ▲]` trigger row and never
     // grows/clips inside the frame. `render_dropdown`'s inline
     // `option_rows` are discarded here (the Settings dialog, which calls
@@ -305,10 +305,11 @@ fn collect_dropdown(
             popup_entries.push(e);
             row_indices.push(idx);
         }
-        out.dropdown_popups.push(DropdownPopup {
+        out.popups.push(PanelPopup {
             widget_key,
             anchor_row: 0,
             anchor_col,
+            anchor_absolute: false,
             entries: popup_entries,
             row_indices,
         });

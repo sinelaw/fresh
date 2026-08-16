@@ -5660,9 +5660,9 @@ impl Editor {
             close_button_rect: None,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
-            dropdown_popup: None,
-            dropdown_popup_hits: Vec::new(),
-            dropdown_popup_rect: None,
+            popup: None,
+            popup_hits: Vec::new(),
+            popup_rect: None,
         });
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
@@ -5692,7 +5692,7 @@ impl Editor {
         let embeds = out.embeds;
         let overlays = out.overlays;
         let panel_boxes = out.boxes.clone();
-        let dropdown_popup = out.dropdown_popup;
+        let popup = out.popup;
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
@@ -5710,7 +5710,7 @@ impl Editor {
             fwp.embeds = embeds;
             fwp.overlays = overlays;
             fwp.boxes = panel_boxes;
-            fwp.dropdown_popup = dropdown_popup;
+            fwp.popup = popup;
         }
         tracing::debug!(
             "Mounted floating widget panel {} ({}%x{}%)",
@@ -5784,7 +5784,7 @@ impl Editor {
         let embeds = out.embeds;
         let overlays = out.overlays;
         let panel_boxes = out.boxes.clone();
-        let dropdown_popup = out.dropdown_popup;
+        let popup = out.popup;
         if self
             .widget_registry
             .update(
@@ -5811,7 +5811,7 @@ impl Editor {
             fwp.embeds = embeds;
             fwp.overlays = overlays;
             fwp.boxes = panel_boxes;
-            fwp.dropdown_popup = dropdown_popup;
+            fwp.popup = popup;
         }
     }
 

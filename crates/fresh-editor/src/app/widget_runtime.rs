@@ -872,7 +872,7 @@ impl Editor {
         let embeds = out_pieces.embeds;
         let overlays = out_pieces.overlays;
         let panel_boxes = out_pieces.boxes.clone();
-        let dropdown_popup = out_pieces.dropdown_popup;
+        let popup = out_pieces.popup;
         if self
             .widget_registry
             .update_side_effects(
@@ -897,7 +897,7 @@ impl Editor {
                     fwp.embeds = embeds;
                     fwp.overlays = overlays;
                     fwp.boxes = panel_boxes;
-                    fwp.dropdown_popup = dropdown_popup;
+                    fwp.popup = popup;
                 }
             }
             return;
