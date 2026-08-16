@@ -1211,13 +1211,28 @@ impl Editor {
             boxes.push(rect_box("chrome:suggestions", 17, *inner_rect));
         }
         boxes.push(full("chrome:transient_guard", 17));
-        boxes.push(full("chrome:prompt_scrollbar", 17));
-        boxes.push(full("chrome:popup_scrollbar", 17));
+        // Scrollbar tracks at their painted rects: the prompt
+        // suggestion list's bar (shared by the floating-overlay prompt
+        // and the bottom-anchored dropdown) and each popup's own bar.
+        // No box when the paint pass recorded none — nothing to hit.
+        if let Some(r) = self.active_chrome().suggestions_scrollbar_rect {
+            boxes.push(rect_box("chrome:prompt_scrollbar", 17, r));
+        }
+        for area in &self.active_chrome().popup_areas {
+            if let Some(r) = area.5 {
+                boxes.push(rect_box("chrome:popup_scrollbar", 17, r));
+            }
+        }
         if self.overlay_prompt_active() {
             if let Some(r) = self.active_chrome().prompt_preview_area {
                 boxes.push(rect_box("chrome:prompt_preview", 17, r));
             }
         }
+        // DELIBERATE full-frame capture, not a geometry proxy: while a
+        // prompt with suggestions is open, the wheel scrolls that list
+        // wherever the pointer sits (position-blind capture for the
+        // bottom-anchored dropdown — see WHEEL_ORDER's doc). Other
+        // gestures have no handler for it and skip it.
         boxes.push(full("chrome:prompt_suggestions", 17));
         // The floating-overlay prompt as a mouse-modal surface (its own
         // result rows resolved above via the suggestions box).

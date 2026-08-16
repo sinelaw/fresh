@@ -909,15 +909,19 @@ walk), and proxy retirement covered the geometric bulk — menu
 bar/dropdowns via MenuLayout, context menus via
 ContextMenuCore::rect, tabs via TabLayout.bar_area, search options,
 file explorer, per-split/per-item editor scrollbars, separators,
-buttons, status bar all carry real rects. NOT yet retired:
-`chrome:prompt_scrollbar` and `chrome:popup_scrollbar` are still
-full-frame proxies whose real rects exist in the paint caches
-(`suggestions_scrollbar_rect`, per-popup `scrollbar_rect`), and
-`chrome:prompt_suggestions` plus the file-browser no-popup-area
-fallback are full-frame with handler-decline. Full-frame is
-otherwise named guards whose semantics ARE full-screen
-(menu/context-menu close guards, popup absorb/dismiss,
-overlay-prompt modal). The dropdown pop-over's windowing moved into
+buttons, status bar all carry real rects — and, closing the last
+two proxies the milestone review caught, `chrome:prompt_scrollbar`
+and `chrome:popup_scrollbar` now ride their painted rects
+(`suggestions_scrollbar_rect`, per-popup `scrollbar_rect`; no box
+when none was painted). `chrome:prompt_suggestions` stays
+full-frame ON PURPOSE: it is the wheel's position-blind capture of
+an open prompt's suggestion list (scroll anywhere scrolls the
+list), not missing geometry — the box now says so. The remaining
+full-frame surfaces are named guards whose semantics ARE
+full-screen (menu/context-menu close guards, popup absorb/dismiss,
+overlay-prompt modal, transient guard, and the file browser's
+no-recorded-layout fallback, which is a modal dialog absorbing
+strays). The dropdown pop-over's windowing moved into
 the widget renderer — the host paints handed-down rows + indices and
 no longer windows — but the window itself (the
 `DROPDOWN_VISIBLE_OPTIONS = 8` constant) lives on in the renderer;
