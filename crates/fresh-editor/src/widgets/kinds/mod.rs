@@ -22,7 +22,6 @@
 
 mod button;
 mod component;
-mod popup;
 mod containers;
 mod divider;
 pub(crate) mod dropdown;
@@ -30,6 +29,7 @@ mod dual_list;
 mod hint_bar;
 pub(crate) mod list;
 pub(crate) mod number;
+mod popup;
 mod raw;
 mod spacer;
 pub(crate) mod text;
