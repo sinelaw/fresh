@@ -1168,8 +1168,20 @@ impl Editor {
             b
         };
         let mut boxes = Vec::new();
-        if self.active_window().context_menu_core().is_some() {
-            boxes.push(full("chrome:context_menu", 18));
+        if let Some(core) = self.active_window().context_menu_core() {
+            let r = core.rect(frame.width, frame.height);
+            let mut b = LayoutBox::plain(
+                "chrome:context_menu",
+                r.y as u32,
+                r.x as u32,
+                r.width as u32,
+                r.height as u32,
+            );
+            b.z = 18;
+            boxes.push(b);
+            // TRUE full-frame semantics: a click outside the menu box
+            // dismisses it and is consumed.
+            boxes.push(full("chrome:context_menu_close_guard", 18));
         }
         let rect_box = |kind: &'static str, z: u8, r: ratatui::layout::Rect| {
             let mut b = LayoutBox::plain(
@@ -1215,10 +1227,11 @@ impl Editor {
         // Block-or-dismiss guard for transient popups (double-click).
         boxes.push(full("chrome:popup_guard", 14));
         if self.is_file_open_active() {
-            boxes.push(full("chrome:file_browser", 13));
-        }
-        if let Some(layout) = &self.active_window().file_browser_layout {
-            boxes.push(rect_box("chrome:file_browser_popup", 13, layout.popup_area));
+            if let Some(layout) = &self.active_window().file_browser_layout {
+                boxes.push(rect_box("chrome:file_browser", 13, layout.popup_area));
+            } else {
+                boxes.push(full("chrome:file_browser", 13));
+            }
         }
         if self.floating_widget_panel.is_some() {
             // A centered modal consumes the wheel even on a miss.
@@ -1238,15 +1251,23 @@ impl Editor {
                 boxes.push(rect_box("chrome:split_widget_panel", 12, *content_rect));
             }
         }
-        if self.active_window().menu_bar_visible && self.active_chrome().menu_layout.is_some() {
-            // Deliberately full-frame: the click arm also owns
-            // open-dropdown item clicks and close-on-outside-click,
-            // which land anywhere on screen. Shrinks to the bar row +
-            // a dropdown rect once the menu layout exposes one.
-            boxes.push(full("chrome:menu_bar", 12));
+        if self.active_window().menu_bar_visible {
+            if let Some(ml) = &self.active_chrome().menu_layout {
+                boxes.push(rect_box("chrome:menu_bar", 12, ml.bar_area));
+            }
         }
         if self.menu_state.active_menu.is_some() {
-            boxes.push(full("chrome:menu_dropdown", 11));
+            if let Some(ml) = &self.active_chrome().menu_layout {
+                if let Some(r) = ml.dropdown_box {
+                    boxes.push(rect_box("chrome:menu_dropdown", 12, r));
+                }
+                for (_, r) in &ml.submenu_boxes {
+                    boxes.push(rect_box("chrome:menu_dropdown", 12, *r));
+                }
+            }
+            // TRUE full-frame semantics: any click outside the open
+            // menu closes it and is consumed.
+            boxes.push(full("chrome:menu_close_guard", 11));
         }
         if let Some(r) = self.active_layout().file_explorer_area {
             let mut b = LayoutBox::plain(
@@ -1261,13 +1282,53 @@ impl Editor {
         }
         // Off-explorer right-click clears its menu (declining guard).
         boxes.push(full("chrome:clear_explorer_menu", 9));
-        if !self.active_layout().separator_areas.is_empty() {
-            boxes.push(full("chrome:split_separators", 8));
+        for (_, direction, sep_x, sep_y, sep_len) in &self.active_layout().separator_areas {
+            let (w, h) = match direction {
+                SplitDirection::Horizontal => (*sep_len as u32, 1),
+                SplitDirection::Vertical => (1, *sep_len as u32),
+            };
+            let mut b = LayoutBox::plain(
+                "chrome:split_separators",
+                *sep_y as u32,
+                *sep_x as u32,
+                w,
+                h,
+            );
+            b.z = 8;
+            boxes.push(b);
         }
-        boxes.push(full("chrome:split_buttons", 7));
+        for (_, btn_row, start, end) in &self.active_layout().close_split_areas {
+            let mut b = LayoutBox::plain(
+                "chrome:split_buttons",
+                *btn_row as u32,
+                *start as u32,
+                end.saturating_sub(*start) as u32,
+                1,
+            );
+            b.z = 7;
+            boxes.push(b);
+        }
+        for (_, btn_row, start, end) in &self.active_layout().maximize_split_areas {
+            let mut b = LayoutBox::plain(
+                "chrome:split_buttons",
+                *btn_row as u32,
+                *start as u32,
+                end.saturating_sub(*start) as u32,
+                1,
+            );
+            b.z = 7;
+            boxes.push(b);
+        }
+        // Tab strips stay full-frame: TabLayout records per-target hit
+        // regions, not one plain rect — the leftover retires when it
+        // exposes its bar bounds.
         boxes.push(full("chrome:tabs", 6));
-        boxes.push(full("chrome:scrollbars", 5));
-        boxes.push(full("chrome:h_scrollbar", 5));
+        for (_, _, _, scrollbar_rect, _, _) in &self.active_layout().split_areas {
+            boxes.push(rect_box("chrome:scrollbars", 5, *scrollbar_rect));
+        }
+        for (_, _, r, _, _, _) in &self.active_layout().horizontal_scrollbar_areas {
+            boxes.push(rect_box("chrome:h_scrollbar", 5, *r));
+        }
         if let Some((status_row, status_x, status_width)) = self.active_chrome().status_bar.area {
             let mut b = LayoutBox::plain(
                 "chrome:status_bar",
@@ -1279,8 +1340,21 @@ impl Editor {
             b.z = 4;
             boxes.push(b);
         }
-        if self.active_chrome().search_options_layout.is_some() {
-            boxes.push(full("chrome:search_options", 3));
+        if let Some(l) = &self.active_chrome().search_options_layout {
+            let spans = [l.case_sensitive, l.whole_word, l.regex, l.confirm_each];
+            let start = spans.iter().flatten().map(|(s, _)| *s).min();
+            let end = spans.iter().flatten().map(|(_, e)| *e).max();
+            if let (Some(start), Some(end)) = (start, end) {
+                let mut b = LayoutBox::plain(
+                    "chrome:search_options",
+                    l.row as u32,
+                    start as u32,
+                    end.saturating_sub(start) as u32,
+                    1,
+                );
+                b.z = 3;
+                boxes.push(b);
+            }
         }
         for (_, _, content_rect, ..) in &self.active_layout().split_areas {
             boxes.push(rect_box("chrome:editor", 1, *content_rect));
@@ -2055,14 +2129,17 @@ impl Editor {
     /// the arrays dissolve once surfaces carry real rects).
     const CLICK_ORDER: &'static [&'static str] = &[
         "chrome:context_menu",
+        "chrome:context_menu_close_guard",
         "chrome:transient_guard",
         "chrome:suggestions",
         "chrome:prompt_scrollbar",
         "chrome:popup_scrollbar",
         "chrome:popups",
         "chrome:popup_absorb",
-        "chrome:file_browser_popup",
+        "chrome:file_browser",
         "chrome:menu_bar",
+        "chrome:menu_dropdown",
+        "chrome:menu_close_guard",
         "chrome:file_explorer",
         "chrome:scrollbars",
         "chrome:h_scrollbar",
@@ -2086,6 +2163,15 @@ impl Editor {
     ) -> Option<AnyhowResult<()>> {
         match surface {
             "chrome:context_menu" => self.handle_click_context_menus(col, row),
+            "chrome:context_menu_close_guard" => {
+                // Outside the menu's rect (which claimed inside clicks
+                // above): dismiss and consume.
+                if self.active_window().open_context_menu().is_some() {
+                    self.active_window_mut().close_context_menus();
+                    return Some(Ok(()));
+                }
+                None
+            }
             "chrome:transient_guard" => {
                 if !self.is_mouse_over_any_popup(col, row) {
                     self.dismiss_transient_popups();
@@ -2099,10 +2185,21 @@ impl Editor {
                 .handle_click_global_popups(col, row)
                 .or_else(|| self.handle_click_buffer_popups(col, row)),
             "chrome:popup_absorb" => self.is_mouse_over_any_popup(col, row).then(|| Ok(())),
-            "chrome:file_browser_popup" => (self.is_file_open_active()
+            "chrome:file_browser" => (self.is_file_open_active()
                 && self.handle_file_open_click(col, row))
             .then(|| Ok(())),
             "chrome:menu_bar" => self.handle_click_menu_bar(col, row),
+            "chrome:menu_dropdown" => self.handle_click_menu_dropdown_surface(col, row),
+            "chrome:menu_close_guard" => {
+                // Any click outside the open menu's boxes closes it and
+                // is consumed (the rect surfaces above claimed inside
+                // clicks first).
+                if self.menu_state.active_menu.is_some() {
+                    self.close_menu_with_auto_hide();
+                    return Some(Ok(()));
+                }
+                None
+            }
             "chrome:file_explorer" => self.handle_click_file_explorer_area(col, row),
             "chrome:scrollbars" => self.handle_click_scrollbar(col, row),
             "chrome:h_scrollbar" => self.handle_click_horizontal_scrollbar(col, row),
@@ -2149,7 +2246,7 @@ impl Editor {
                 }
                 Some(Ok(()))
             }
-            "click:editor" => {
+            "chrome:editor" => {
                 let areas: Vec<_> = self
                     .active_layout()
                     .split_areas
@@ -2565,26 +2662,37 @@ impl Editor {
             }
         }
 
-        if let Some(active_idx) = self.menu_state.active_menu {
-            let all_menus: Vec<crate::config::Menu> = self
-                .menus
-                .menus
-                .iter()
-                .chain(self.menu_state.plugin_menus.iter())
-                .cloned()
-                .collect();
-            if let Some(menu) = all_menus.get(active_idx) {
-                match self.handle_menu_dropdown_click(col, row, menu) {
-                    Ok(Some(click_result)) => return Some(click_result),
-                    Ok(None) => {}
-                    Err(e) => return Some(Err(e)),
-                }
-            }
-            self.close_menu_with_auto_hide();
-            return Some(Ok(()));
-        }
-
         None
+    }
+
+    /// A click inside the open menu's dropdown / submenu boxes (the
+    /// chrome:menu_dropdown rect surfaces). Outside clicks never reach
+    /// here — chrome:menu_close_guard owns those.
+    fn handle_click_menu_dropdown_surface(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
+        let active_idx = self.menu_state.active_menu?;
+        let all_menus: Vec<crate::config::Menu> = self
+            .menus
+            .menus
+            .iter()
+            .chain(self.menu_state.plugin_menus.iter())
+            .cloned()
+            .collect();
+        if let Some(menu) = all_menus.get(active_idx) {
+            match self.handle_menu_dropdown_click(col, row, menu) {
+                Ok(Some(click_result)) => return Some(click_result),
+                Ok(None) => {}
+                Err(e) => return Some(Err(e)),
+            }
+        }
+        // Inside the dropdown box but not on an item (border / inert
+        // cell): close the menu and consume — the pre-split behavior
+        // for any non-item click while a menu is open.
+        self.close_menu_with_auto_hide();
+        Some(Ok(()))
     }
 
     fn handle_click_file_explorer_area(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
