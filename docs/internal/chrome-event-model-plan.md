@@ -218,9 +218,17 @@ to one) are DONE. Remaining, in order:
   whether a centered popup overlapping the dock column should keep
   losing to the dock (today's pre-walk behavior) or win by z (the
   tree's answer).
-- **Modal per-gesture decomposition + opacity gate (5 residue).**
-  `capture_mouse` is whole-channel by design until the grab slot
-  exists; the scan does not yet honor `pointer_opaque`.
+- **Modal per-gesture decomposition (5 residue).** `capture_mouse`
+  is whole-channel by design until the grab slot exists. The scan's
+  OPACITY GATE has landed for the pointer gestures (hover, click,
+  right-click, double-click stop at a declining `pointer_opaque` box;
+  the wheel deliberately keeps falling — scroll chaining), and the
+  popup rects exercise it: `chrome:popup_absorb` is deleted, absorb
+  is the popups' own opacity. Two recorded subtleties: the wheel
+  exemption, and double-click's post-walk split scan (the popup box
+  must CONSUME double-clicks — a gate break would also skip the
+  popup_guard below it and let the split scan select through the
+  popup).
 - **Geometry-from-layout (7).** Per component, one cache per PR, the
   only pixel-touching slice.
 

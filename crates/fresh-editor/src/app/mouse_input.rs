@@ -994,12 +994,18 @@ impl Editor {
         // borders, tab-bar background) decline so the point falls
         // through to the boxes below.
         let tree = super::chrome::chrome_tree(self);
-        crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32)
-            .into_iter()
-            .find_map(|i| {
-                let b = &tree[i];
-                super::chrome::components()[b.owner].hover(self, &b.lb, col, row)
-            })
+        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
+            let b = &tree[i];
+            if let Some(t) = super::chrome::components()[b.owner].hover(self, &b.lb, col, row) {
+                return Some(t);
+            }
+            // Opacity gate: a declining opaque surface (a popup) stops
+            // the scan — nothing beneath it is hoverable through it.
+            if b.lb.pointer_opaque {
+                return None;
+            }
+        }
+        None
     }
 
     /// The `hover:file_explorer` box: the close button on the title
@@ -1127,7 +1133,18 @@ impl Editor {
             };
             match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
                 super::chrome::Disposition::Consumed => return Ok(()),
-                super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
+                super::chrome::Disposition::PassAfter => {}
+                // Opacity gate: a declining opaque surface stops the
+                // walk (PassAfter guards acted and must keep routing;
+                // plain Pass on an opaque box means the event dies
+                // here rather than reaching content beneath). The
+                // post-walk split scan below still runs — the
+                // popup_guard consume covers that.
+                super::chrome::Disposition::Pass => {
+                    if b.lb.pointer_opaque {
+                        break;
+                    }
+                }
             }
         }
 
@@ -1541,7 +1558,15 @@ impl Editor {
             };
             match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
                 super::chrome::Disposition::Consumed => return Ok(()),
-                super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
+                super::chrome::Disposition::PassAfter => {}
+                // Opacity gate: a click inside an opaque popup that no
+                // handler claims is ABSORBED here — the tree property
+                // that replaced the chrome:popup_absorb guard box.
+                super::chrome::Disposition::Pass => {
+                    if b.lb.pointer_opaque {
+                        break;
+                    }
+                }
             }
         }
         Ok(())
@@ -3134,7 +3159,15 @@ impl Editor {
             };
             match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
                 super::chrome::Disposition::Consumed => return Ok(()),
-                super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
+                super::chrome::Disposition::PassAfter => {}
+                // Opacity gate: a right-click inside an opaque popup
+                // that nothing claims dies there — it must not raise
+                // or clear the tab menu THROUGH the popup.
+                super::chrome::Disposition::Pass => {
+                    if b.lb.pointer_opaque {
+                        break;
+                    }
+                }
             }
         }
         Ok(())

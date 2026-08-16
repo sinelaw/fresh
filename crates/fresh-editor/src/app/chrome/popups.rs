@@ -1,5 +1,6 @@
-//! Info/message popups: transient-dismiss guard, per-popup rects and
-//! scrollbar tracks, and the absorb/dismiss guards.
+//! Info/message popups: transient-dismiss guard, per-popup OPAQUE
+//! rects (absorb as a tree property) and scrollbar tracks, and the
+//! double-click block guard.
 
 use crate::app::types::HoverTarget;
 use crate::widgets::LayoutBox;
@@ -22,17 +23,31 @@ impl ChromeComponent for Popups {
                 t.rect("chrome:popup_scrollbar", 170, r);
             }
         }
-        // Popups are rect-bounded (a wheel or click outside every popup
-        // rect falls through); the absorb/dismiss guards below stay
-        // full-frame.
+        // Popups are rect-bounded, OPAQUE surfaces: a pointer event
+        // inside a popup that its handlers decline dies at the popup
+        // box (the scan's opacity gate) instead of falling to content
+        // beneath — absorb is a tree property, not a guard box.
+        let opaque_popup = |t: &mut ChromeTreeBuilder, r: ratatui::layout::Rect| {
+            let mut b = LayoutBox::plain(
+                "chrome:popups",
+                r.y as u32,
+                r.x as u32,
+                r.width as u32,
+                r.height as u32,
+            );
+            b.z = 150;
+            b.pointer_opaque = true;
+            t.push(b);
+        };
         for (_, popup_rect, ..) in &ed.active_chrome().global_popup_areas {
-            t.rect("chrome:popups", 150, *popup_rect);
+            opaque_popup(t, *popup_rect);
         }
         for area in &ed.active_chrome().popup_areas {
-            t.rect("chrome:popups", 150, area.1);
+            opaque_popup(t, area.1);
         }
-        t.full("chrome:popup_absorb", 140);
-        // Block-or-dismiss guard for transient popups (double-click).
+        // Block-or-dismiss guard for transient popups (double-click's
+        // post-walk split scan runs unconditionally after the walk, so
+        // the block half must CONSUME — opacity alone can't stop it).
         t.full("chrome:popup_guard", 140);
     }
 
@@ -90,27 +105,32 @@ impl ChromeComponent for Popups {
                     }
                     Ok(Disposition::Pass)
                 }
-                // Inside a popup rect that nothing above claimed:
-                // absorb so the click can't fall to content beneath.
-                "chrome:popup_absorb" => {
-                    if ed.is_mouse_over_any_popup(ev.col, ev.row) {
-                        return Ok(Disposition::Consumed);
-                    }
-                    Ok(Disposition::Pass)
-                }
                 _ => Ok(Disposition::Pass),
             };
         }
-        if ev.press != PointerPress::Double || bx.kind != "chrome:popup_guard" {
+        if ev.press != PointerPress::Double {
             return Ok(Disposition::Pass);
         }
-        // Inside a popup: block. Outside: dismiss transients and keep
-        // routing (act-then-continue guard).
-        if ed.is_mouse_over_any_popup(ev.col, ev.row) {
-            return Ok(Disposition::Consumed);
+        match bx.kind {
+            // Double-click inside a popup: BLOCK, as a consume — the
+            // double-click walk's post-walk split scan runs
+            // unconditionally after the loop, so the opaque box must
+            // consume rather than rely on the opacity gate (which
+            // would also skip the guard below it in the same scan).
+            "chrome:popups" => Ok(Disposition::Consumed),
+            // Outside every popup: dismiss transients and keep
+            // routing (act-then-continue guard).
+            "chrome:popup_guard" => {
+                if ed.is_mouse_over_any_popup(ev.col, ev.row) {
+                    // Defensive: rect sources for the boxes and this
+                    // check could drift; blocking stays correct.
+                    return Ok(Disposition::Consumed);
+                }
+                ed.dismiss_transient_popups();
+                Ok(Disposition::PassAfter)
+            }
+            _ => Ok(Disposition::Pass),
         }
-        ed.dismiss_transient_popups();
-        Ok(Disposition::PassAfter)
     }
 
     fn on_wheel(
