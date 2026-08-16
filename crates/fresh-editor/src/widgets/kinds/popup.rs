@@ -1,16 +1,26 @@
 //! `Popup` — a popup layer as a first-class tree node.
 //!
-//! Replaces the `overlays`/`popup` side channels as the plugin-facing
-//! vocabulary (widget-framework-v2-review.md phase 7). Two modes:
-//! panel-clipped (`screen_space: false`) renders through the same
-//! promoted-overlay path `Overlay` uses; `screen_space: true`
-//! projects the child's fully-rendered rows through the generalized
-//! [`PanelPopup`] channel — the same channel the Dropdown pop-over
-//! rides — so the box escapes the panel/modal border and is painted
-//! (bordered, anchored, flipped and clamped on screen) by the host,
-//! which knows nothing about the content. The remaining internal
-//! producers (dropdown pop-over, completion popup) migrate onto this
-//! node in later slices, which is what lets the side channels close.
+//! The plugin-facing popup vocabulary (widget-framework-v2-review.md
+//! phase 7). Two modes: panel-clipped (`screen_space: false`) renders
+//! through the same promoted-overlay path `Overlay` uses;
+//! `screen_space: true` projects the child's fully-rendered rows
+//! through the generalized [`PanelPopup`] channel — the same channel
+//! the Dropdown pop-over rides — so the box escapes the panel/modal
+//! border and is painted (bordered, anchored, flipped and clamped on
+//! screen) by the host, which knows nothing about the content.
+//!
+//! On the audited fate of the `overlays` row channel (phase 7's
+//! "side-channel deletion"): it is NOT an event side channel anymore.
+//! The covering-surface decision is box-driven (`hit_path` +
+//! `pointer_opaque`), and `HitArea::overlay` only marks which row
+//! text a hit's byte range was measured against — a coordinate-space
+//! fact, not dispatch. What remains of `overlays` is the PAINT wire
+//! for panel-clipped popup rows (this node's non-screen-space mode,
+//! `Overlay`, the Text completion list), the same standing as
+//! `entries` for base rows. Migrating the completion popup to
+//! screen-space would be a deliberate visual change (escaping panel
+//! clipping), not an architecture requirement — recorded as optional
+//! follow-up, not debt.
 
 use std::collections::HashMap;
 

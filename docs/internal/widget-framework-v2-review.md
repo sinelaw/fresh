@@ -941,10 +941,20 @@ renders its child subtree and projects the fully-rendered rows
 through the same channel (empty `row_indices`: generic rows are not
 option cells, so the host records no select hits and the box absorbs
 clicks), with `anchor_absolute` marking explicit anchors so
-container merges don't drift them. The internal producers
-(dropdown pop-over — already riding it — and the completion popup)
-migrating onto the `Popup` node is what lets the `overlays` channel
-and `HitArea::overlay` close in a later slice.
+container merges don't drift them. The `overlays` channel and
+`HitArea::overlay` were then AUDITED for deletion and the honest
+answer is: they are not event side channels anymore. The
+covering-surface decision is box-driven (`hit_path` +
+`pointer_opaque` names the surface; z alone deliberately does not),
+and `HitArea::overlay` records only which row text a hit's byte
+range was measured against — a coordinate-space fact
+`hit_test_row_aware` needs, not dispatch. What remains of
+`overlays` is the PAINT wire for panel-clipped popup rows (Overlay,
+panel-clipped Popup, the Text completion list) — the same standing
+`entries` has for base rows. Migrating the completion popup to the
+screen-space channel would change visuals (escape panel clipping;
+e2e assertion churn) and is recorded as an optional follow-up, not
+debt. Phase 7's task closes on that disposition.
 The chrome registration arc (`chrome-event-model-plan.md`) has since
 executed its dispatch half — slices 0 through 4: chrome surfaces
 REGISTER (a `ChromeComponent` per surface, one `components()`
