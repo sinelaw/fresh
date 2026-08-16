@@ -1191,7 +1191,7 @@ impl Editor {
         // borders, tab-bar background) decline so the point falls
         // through to the boxes below.
         let mut candidates: Vec<crate::widgets::LayoutBox> = self
-            .hover_chrome_boxes()
+            .chrome_boxes()
             .into_iter()
             .filter(|b| b.contains(row as u32, col as u32))
             .collect();
@@ -1208,7 +1208,16 @@ impl Editor {
     /// bar, search options). Surfaces whose geometry is one cached rect
     /// carry it; collection-shaped surfaces (many separators, many tab
     /// bars) are full-frame boxes whose handlers do their own hit-test.
-    fn hover_chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
+    /// The ONE chrome surface tree for hover, right-click, and
+    /// double-click (wheel and left-click join next): every routable
+    /// chrome surface as a z-ordered box with a surface-named kind.
+    /// Geometry is a real rectangle where one cached rect exists;
+    /// collection-shaped surfaces (many separators, many tab bars) are
+    /// full-frame and their handlers hit-test internally. Each gesture
+    /// walk consults its own dispatch for a surface and DECLINES
+    /// surfaces it has no handler for — same box tree, per-gesture
+    /// behavior, exactly the panel model.
+    fn chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
         use crate::widgets::LayoutBox;
         let frame = self.active_chrome().last_frame;
         let full = |kind: &'static str, z: u8| {
@@ -1218,54 +1227,64 @@ impl Editor {
         };
         let mut boxes = Vec::new();
         if self.active_window().context_menu_core().is_some() {
-            boxes.push(full("hover:context_menu", 14));
+            boxes.push(full("chrome:context_menu", 18));
         }
         if let Some((inner_rect, _, _, _)) = &self.active_chrome().suggestions_area {
             let mut b = LayoutBox::plain(
-                "hover:suggestions",
+                "chrome:suggestions",
                 inner_rect.y as u32,
                 inner_rect.x as u32,
                 inner_rect.width as u32,
                 inner_rect.height as u32,
             );
-            b.z = 13;
+            b.z = 17;
             boxes.push(b);
         }
+        // The floating-overlay prompt as a mouse-modal surface (its own
+        // result rows resolved above via the suggestions box).
+        boxes.push(full("chrome:overlay_prompt_modal", 16));
         if !self.active_chrome().popup_areas.is_empty() {
-            boxes.push(full("hover:popups", 12));
+            boxes.push(full("chrome:popups", 15));
         }
+        // Block-or-dismiss guard for transient popups (double-click).
+        boxes.push(full("chrome:popup_guard", 14));
         if self.is_file_open_active() {
-            boxes.push(full("hover:file_browser", 11));
+            boxes.push(full("chrome:file_browser", 13));
         }
         if self.active_window().menu_bar_visible && self.active_chrome().menu_layout.is_some() {
-            boxes.push(full("hover:menu_bar", 10));
+            boxes.push(full("chrome:menu_bar", 12));
         }
         if self.menu_state.active_menu.is_some() {
-            boxes.push(full("hover:menu_dropdown", 9));
+            boxes.push(full("chrome:menu_dropdown", 11));
         }
         if let Some(r) = self.active_layout().file_explorer_area {
             let mut b = LayoutBox::plain(
-                "hover:file_explorer",
+                "chrome:file_explorer",
                 r.y as u32,
                 r.x as u32,
                 r.width as u32,
                 r.height as u32,
             );
-            b.z = 8;
+            b.z = 10;
             boxes.push(b);
         }
+        // Off-explorer right-click clears its menu (declining guard).
+        boxes.push(full("chrome:clear_explorer_menu", 9));
         if !self.active_layout().separator_areas.is_empty() {
-            boxes.push(full("hover:split_separators", 7));
+            boxes.push(full("chrome:split_separators", 8));
         }
-        boxes.push(full("hover:split_buttons", 6));
-        boxes.push(full("hover:tabs", 5));
-        boxes.push(full("hover:scrollbars", 4));
+        boxes.push(full("chrome:split_buttons", 7));
+        boxes.push(full("chrome:tabs", 6));
+        boxes.push(full("chrome:scrollbars", 5));
         if self.active_chrome().status_bar.area.is_some() {
-            boxes.push(full("hover:status_bar", 3));
+            boxes.push(full("chrome:status_bar", 4));
         }
         if self.active_chrome().search_options_layout.is_some() {
-            boxes.push(full("hover:search_options", 2));
+            boxes.push(full("chrome:search_options", 3));
         }
+        // The base surface: splits / tab strip fallback (right-click's
+        // tab context menu, double-click's word select).
+        boxes.push(full("chrome:base", 0));
         boxes
     }
 
@@ -1273,7 +1292,7 @@ impl Editor {
     /// so the walk falls through to the next box down.
     fn hover_chrome_target(&self, kind: &str, col: u16, row: u16) -> Option<HoverTarget> {
         match kind {
-            "hover:context_menu" => {
+            "chrome:context_menu" => {
                 // The native context menus (tab / "+" new-tab /
                 // file-explorer) share one geometry core, so a single
                 // hit-test over the open menu covers all three. An
@@ -1290,7 +1309,7 @@ impl Editor {
                 }
                 None
             }
-            "hover:suggestions" => {
+            "chrome:suggestions" => {
                 // Command palette / autocomplete list.
                 let (inner_rect, start_idx, _visible_count, total_count) =
                     self.active_chrome().suggestions_area.as_ref()?;
@@ -1303,7 +1322,7 @@ impl Editor {
                 }
                 None
             }
-            "hover:popups" => {
+            "chrome:popups" => {
                 // Check popups (they're rendered on top)
                 // Check from top to bottom (reverse order since last popup is on top)
                 for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
@@ -1321,17 +1340,17 @@ impl Editor {
                 }
                 None
             }
-            "hover:file_browser" => self.compute_file_browser_hover(col, row),
-            "hover:menu_bar" => {
+            "chrome:file_browser" => self.compute_file_browser_hover(col, row),
+            "chrome:menu_bar" => {
                 let menu_layout = self.active_chrome().menu_layout.as_ref()?;
                 menu_layout.menu_at(col, row).map(HoverTarget::MenuBarItem)
             }
-            "hover:menu_dropdown" => {
+            "chrome:menu_dropdown" => {
                 let active_idx = self.menu_state.active_menu?;
                 self.compute_menu_dropdown_hover(col, row, active_idx)
             }
-            "hover:file_explorer" => self.hover_target_in_file_explorer(col, row),
-            "hover:split_separators" => {
+            "chrome:file_explorer" => self.hover_target_in_file_explorer(col, row),
+            "chrome:split_separators" => {
                 // Check split separators
                 for (split_id, direction, sep_x, sep_y, sep_length) in
                     &self.active_layout().separator_areas
@@ -1351,7 +1370,7 @@ impl Editor {
                 }
                 None
             }
-            "hover:split_buttons" => {
+            "chrome:split_buttons" => {
                 // Check tab areas using cached hit regions (computed during rendering)
                 // Check split control buttons first (they're on top of the tab row)
                 for (split_id, btn_row, start_col, end_col) in
@@ -1371,7 +1390,7 @@ impl Editor {
                 }
                 None
             }
-            "hover:tabs" => {
+            "chrome:tabs" => {
                 for (split_id, tab_layout) in &self.active_layout().tab_layouts {
                     match tab_layout.hit_test(col, row) {
                         Some(TabHit::CloseButton(target)) => {
@@ -1389,7 +1408,7 @@ impl Editor {
                 }
                 None
             }
-            "hover:scrollbars" => {
+            "chrome:scrollbars" => {
                 // Check scrollbars
                 for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
                     &self.active_layout().split_areas
@@ -1410,7 +1429,7 @@ impl Editor {
                 }
                 None
             }
-            "hover:status_bar" => {
+            "chrome:status_bar" => {
                 // Check status bar indicators — one generic hit-test over every
                 // clickable segment recorded last frame (encoding, LSP, remote, …).
                 if let Some((status_row, _status_x, _status_width)) =
@@ -1428,7 +1447,7 @@ impl Editor {
                 }
                 None
             }
-            "hover:search_options" => {
+            "chrome:search_options" => {
                 // Check search options bar checkboxes
                 if let Some(ref layout) = self.active_chrome().search_options_layout {
                     use crate::view::ui::status_bar::SearchOptionsHover;
@@ -1565,26 +1584,26 @@ impl Editor {
         // guard, the file-open dialog, the explorer body, then the
         // splits.
         let mut candidates: Vec<crate::widgets::LayoutBox> = self
-            .dblclick_chrome_boxes()
+            .chrome_boxes()
             .into_iter()
             .filter(|b| b.contains(row as u32, col as u32))
             .collect();
         candidates.sort_by(|a, b| b.z.cmp(&a.z));
         for b in candidates {
             match b.kind {
-                "dblclick:suggestions" => {
+                "chrome:suggestions" => {
                     if let Some(r) = self.handle_click_suggestions_confirm(col, row) {
                         return r;
                     }
                 }
-                "dblclick:overlay_prompt" => {
+                "chrome:overlay_prompt_modal" => {
                     // Mouse-modal: swallow anything that wasn't a result
                     // row so it can't word-select in the buffer below.
                     if self.overlay_prompt_active() {
                         return Ok(());
                     }
                 }
-                "dblclick:popup_guard" => {
+                "chrome:popup_guard" => {
                     // Inside a popup: block. Outside: dismiss transients
                     // and keep routing.
                     if self.is_mouse_over_any_popup(col, row) {
@@ -1592,17 +1611,24 @@ impl Editor {
                     }
                     self.dismiss_transient_popups();
                 }
-                "dblclick:file_browser" => {
+                "chrome:file_browser" => {
                     if self.handle_file_open_double_click(col, row) {
                         return Ok(());
                     }
                 }
-                "dblclick:file_explorer" => {
+                "chrome:file_explorer" => {
+                    // Title row is not a double-click target (the union
+                    // box spans the whole explorer).
+                    if let Some(r) = self.active_layout().file_explorer_area {
+                        if row <= r.y {
+                            continue;
+                        }
+                    }
                     // Open file AND focus editor.
                     self.file_explorer_open_file()?;
                     return Ok(());
                 }
-                _ => break,
+                _ => continue,
             }
         }
 
@@ -3690,7 +3716,7 @@ impl Editor {
         // clear-explorer-menu side effect is a guard box at its old
         // position.
         let mut candidates: Vec<crate::widgets::LayoutBox> = self
-            .rclick_chrome_boxes()
+            .chrome_boxes()
             .into_iter()
             .filter(|b| b.contains(row as u32, col as u32))
             .collect();
@@ -3707,66 +3733,9 @@ impl Editor {
     /// swallows (full frame, handler declines when the point is
     /// outside), the explorer body raises its menu, and the base
     /// clears/raises the tab menu.
-    /// Double-click chrome boxes, top-down. Full-frame guards encode
-    /// the mouse-modal overlay and the popup block/dismiss step at
-    /// their old chain positions.
-    fn dblclick_chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
-        use crate::widgets::LayoutBox;
-        let frame = self.active_chrome().last_frame;
-        let full = |kind: &'static str, z: u8| {
-            let mut b = LayoutBox::plain(kind, 0, 0, frame.width as u32, frame.height as u32);
-            b.z = z;
-            b
-        };
-        let mut boxes = Vec::new();
-        boxes.push(full("dblclick:suggestions", 5));
-        boxes.push(full("dblclick:overlay_prompt", 4));
-        boxes.push(full("dblclick:popup_guard", 3));
-        boxes.push(full("dblclick:file_browser", 2));
-        if let Some(r) = self.active_layout().file_explorer_area {
-            let mut b = LayoutBox::plain(
-                "dblclick:file_explorer",
-                r.y as u32 + 1,
-                r.x as u32,
-                r.width as u32,
-                (r.height as u32).saturating_sub(1),
-            );
-            b.z = 1;
-            boxes.push(b);
-        }
-        boxes
-    }
-
-    fn rclick_chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
-        use crate::widgets::LayoutBox;
-        let frame = self.active_chrome().last_frame;
-        let full = |kind: &'static str, z: u8| {
-            let mut b = LayoutBox::plain(kind, 0, 0, frame.width as u32, frame.height as u32);
-            b.z = z;
-            b
-        };
-        let mut boxes = Vec::new();
-        boxes.push(full("rclick:context_menu_guard", 3));
-        if let Some(r) = self.active_layout().file_explorer_area {
-            // Skip the title row: the box starts one row down.
-            let mut b = LayoutBox::plain(
-                "rclick:file_explorer",
-                r.y as u32 + 1,
-                r.x as u32,
-                r.width as u32,
-                (r.height as u32).saturating_sub(1),
-            );
-            b.z = 2;
-            boxes.push(b);
-        }
-        boxes.push(full("rclick:clear_explorer_menu", 1));
-        boxes.push(full("rclick:base", 0));
-        boxes
-    }
-
     fn rclick_chrome_dispatch(&mut self, kind: &str, col: u16, row: u16) -> AnyhowResult<bool> {
         Ok(match kind {
-            "rclick:context_menu_guard" => {
+            "chrome:context_menu" => {
                 // A right-click inside an already-open native context menu
                 // (file-explorer or tab) is swallowed so the menu stays put
                 // rather than being re-opened / re-targeted.
@@ -3781,10 +3750,15 @@ impl Editor {
                     false
                 }
             }
-            "rclick:file_explorer" => {
+            "chrome:file_explorer" => {
                 let Some(explorer_area) = self.active_layout().file_explorer_area else {
                     return Ok(false);
                 };
+                // The union box spans the whole explorer; the title row
+                // is not a right-click target.
+                if row <= explorer_area.y {
+                    return Ok(false);
+                }
                 let relative_row = row.saturating_sub(explorer_area.y + 1);
                 let (is_multi, is_root_selected) =
                     if let Some(explorer) = self.file_explorer_mut().as_mut() {
@@ -3811,13 +3785,13 @@ impl Editor {
                     ));
                 true
             }
-            "rclick:clear_explorer_menu" => {
+            "chrome:clear_explorer_menu" => {
                 // Off-explorer right-click dismisses its menu, then routing
                 // continues (guard, never consumes).
                 self.active_window_mut().file_explorer_context_menu = None;
                 false
             }
-            "rclick:base" => {
+            "chrome:base" => {
                 let tab_hit =
                     self.active_layout()
                         .tab_layouts
