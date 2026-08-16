@@ -832,12 +832,17 @@ cached chrome geometry (`wheel_chrome_boxes` / `click_chrome_boxes`)
 full-frame box + handler-decline where geometry is derived, and the
 two mid-chain click guards ride at their old positions as boxes. The
 WHEEL_SURFACES/CLICK_SURFACES tables and their enums are deleted.
-Still open, in plan order: hover/double-/right-click onto the same
-builders, chrome geometry produced by layout rather than recorded by
-paint (which is what retires the `*Layout` caches), then true
-capture/bubble replacing the tables and the `*Layout` caches, and the
-short gesture-scoped double-/right-click chains (4), the app-level
-focus unification — `FocusManager`,
+ALL FIVE pointer gestures now walk chrome boxes: right-click and
+double-click converted their short chains (`rclick_chrome_boxes` /
+`dblclick_chrome_boxes`, guards as declining boxes), and hover — the
+last hand-ordered ladder — became the same walk in query form
+(`hover_chrome_boxes` + `hover_chrome_target`: 13 z-ordered surfaces,
+handlers decline where geometry is finer than their rect). No gesture
+in the codebase resolves its target through an if/else chain anymore.
+Still open, in plan order: chrome geometry produced by layout rather
+than recorded by paint (which is what retires the `*Layout` caches),
+then true capture/bubble over one shared chrome tree replacing the
+five per-gesture builders (4), the app-level focus unification — `FocusManager`,
 `Prompt.toolbar_focus`, dock focus (5), host-side editing keys (6 step
 2), `WidgetSpec::Popup` + side-channel/`overlay_hit_test` deletion (7 —
 plugin-visible wire change, budget the web renderer mirror), Settings

@@ -175,31 +175,6 @@ fn text_key_mutates(event: &crossterm::event::KeyEvent) -> bool {
     )
 }
 
-/// A `DualList` interaction, resolved from a keystroke or click by
-/// [`Editor::handle_widget_dual`].
-pub(super) enum DualOp {
-    /// Make the Included column active (`true`) or Available (`false`).
-    SwitchColumn(bool),
-    /// Move the active column's cursor by `delta`.
-    CursorMove(i32),
-    /// Move the focused item across columns (add if Available is
-    /// active, remove if Included is active).
-    MoveAcross,
-    /// Reorder the focused Included item by `delta` (no-op unless the
-    /// Included column is active).
-    Reorder(i32),
-}
-
-/// Step a column cursor by `delta`, clamped to `[0, len)`. Empty
-/// column stays at 0.
-fn step_cursor(cursor: usize, delta: i32, len: usize) -> usize {
-    if len == 0 {
-        return 0;
-    }
-    let raw = cursor as i32 + delta;
-    raw.clamp(0, len as i32 - 1) as usize
-}
-
 use crate::widgets::kinds::tree::collect_visible_tree_indices;
 
 /// Translate the plugin-facing animation description to the internal
@@ -1150,6 +1125,9 @@ impl Editor {
                 for (event_type, payload) in fx.events {
                     self.fire_widget_event(panel_key, focus_key.clone(), event_type, payload);
                 }
+                if let Some(delta) = fx.focus_advance {
+                    self.handle_widget_focus_advance(panel_key, delta);
+                }
                 if disposition == crate::widgets::kinds::KeyDisposition::Consumed {
                     return;
                 }
@@ -1188,10 +1166,6 @@ impl Editor {
                         // line, but skipping the dispatch keeps
                         // the change-event quiet.
                         self.handle_widget_text_key(panel_key, key);
-                    }
-                    Some(fresh_core::api::WidgetSpec::DualList { .. }) => {
-                        let d = if key == "Up" { -1 } else { 1 };
-                        self.handle_widget_dual(panel_key, &focus_key, DualOp::CursorMove(d));
                     }
                     _ => {
                         // Picker-style nav: when the focused widget
@@ -1252,13 +1226,6 @@ impl Editor {
                 }
             }
             "PageUp" | "PageDown" => {
-                // DualList repurposes PageUp/PageDown to reorder the
-                // focused Included item up/down.
-                if let Some(fresh_core::api::WidgetSpec::DualList { .. }) = widget {
-                    let d = if key == "PageUp" { -1 } else { 1 };
-                    self.handle_widget_dual(panel_key, &focus_key, DualOp::Reorder(d));
-                    return;
-                }
                 // Page step = visible_rows - 1 (one row of overlap so
                 // the user keeps a visual anchor across pages). Ignored
                 // for non-scrollable widgets. A Tree paces in *nodes*, so
@@ -1339,14 +1306,6 @@ impl Editor {
                 Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
                     self.handle_widget_tree_lateral(panel_key, key == "Right");
                 }
-                Some(fresh_core::api::WidgetSpec::DualList { .. }) => {
-                    // Left focuses the Available column, Right the Included.
-                    self.handle_widget_dual(
-                        panel_key,
-                        &focus_key,
-                        DualOp::SwitchColumn(key == "Right"),
-                    );
-                }
                 _ => {}
             },
             "Backspace" | "Delete" | "Home" | "End" => {
@@ -1384,13 +1343,6 @@ impl Editor {
                 }
             }
             "Enter" => match widget {
-                Some(fresh_core::api::WidgetSpec::DualList { .. }) => {
-                    // Form-like: Enter commits the column edits and
-                    // moves to the next widget. (Button/Toggle activate
-                    // and closed-Dropdown open are kind-owned in
-                    // on_key now.)
-                    self.handle_widget_focus_advance(panel_key, 1);
-                }
                 Some(fresh_core::api::WidgetSpec::List { .. }) => {
                     self.fire_list_activate(panel_key, &focus_key);
                 }
@@ -1436,10 +1388,6 @@ impl Editor {
                 _ => {}
             },
             "Space" => match widget {
-                Some(fresh_core::api::WidgetSpec::DualList { .. }) => {
-                    // Space moves the focused item across columns.
-                    self.handle_widget_dual(panel_key, &focus_key, DualOp::MoveAcross);
-                }
                 Some(fresh_core::api::WidgetSpec::Text { .. }) => {
                     self.handle_widget_text_char(panel_key, " ");
                 }
@@ -1792,112 +1740,6 @@ impl Editor {
     /// Apply a `DualList` interaction, update the host-owned instance
     /// state, repaint, and fire `change` with the new `included` order
     /// when it actually changed.
-    pub(super) fn handle_widget_dual(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        widget_key: &str,
-        op: DualOp,
-    ) {
-        if widget_key.is_empty() {
-            return;
-        }
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return,
-        };
-        let (options, excluded, spec_included) =
-            match crate::widgets::find_widget_by_key(&panel.spec, widget_key) {
-                Some(fresh_core::api::WidgetSpec::DualList {
-                    options,
-                    excluded,
-                    included,
-                    ..
-                }) => (options.clone(), excluded.clone(), included.clone()),
-                _ => return,
-            };
-        // Load current instance state (or seed from spec).
-        let (mut included, mut active_included, mut avail_cur, mut incl_cur) =
-            match panel.instance_states.get(widget_key) {
-                Some(crate::widgets::WidgetInstanceState::DualList {
-                    included,
-                    active_included,
-                    available_cursor,
-                    included_cursor,
-                }) => (
-                    included.clone(),
-                    *active_included,
-                    *available_cursor as usize,
-                    *included_cursor as usize,
-                ),
-                _ => (spec_included, false, 0usize, 0usize),
-            };
-        included = crate::widgets::dual_sanitize_included(&options, &included);
-        let mut available = crate::widgets::dual_available_values(&options, &included, &excluded);
-        let clamp = |c: usize, len: usize| if len == 0 { 0 } else { c.min(len - 1) };
-        avail_cur = clamp(avail_cur, available.len());
-        incl_cur = clamp(incl_cur, included.len());
-
-        let before = included.clone();
-        match op {
-            DualOp::SwitchColumn(to_included) => active_included = to_included,
-            DualOp::CursorMove(delta) => {
-                if active_included {
-                    incl_cur = step_cursor(incl_cur, delta, included.len());
-                } else {
-                    avail_cur = step_cursor(avail_cur, delta, available.len());
-                }
-            }
-            DualOp::MoveAcross => {
-                if active_included {
-                    // Remove the focused included item back to Available.
-                    if incl_cur < included.len() {
-                        included.remove(incl_cur);
-                        incl_cur = clamp(incl_cur, included.len());
-                    }
-                } else {
-                    // Add the focused available item to the Included list.
-                    if avail_cur < available.len() {
-                        included.push(available[avail_cur].clone());
-                        available =
-                            crate::widgets::dual_available_values(&options, &included, &excluded);
-                        avail_cur = clamp(avail_cur, available.len());
-                    }
-                }
-            }
-            DualOp::Reorder(delta) => {
-                // Only meaningful in the Included column.
-                if active_included && !included.is_empty() {
-                    let target = incl_cur as i32 + delta;
-                    if target >= 0 && (target as usize) < included.len() {
-                        included.swap(incl_cur, target as usize);
-                        incl_cur = target as usize;
-                    }
-                }
-            }
-        }
-        let changed = included != before;
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::DualList {
-                    included: included.clone(),
-                    active_included,
-                    available_cursor: avail_cur as u32,
-                    included_cursor: incl_cur as u32,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_key);
-        if changed {
-            self.fire_widget_event(
-                panel_key,
-                widget_key.to_string(),
-                "change".into(),
-                serde_json::json!({ "included": included }),
-            );
-        }
-    }
-
     /// Click on a `DualList` cell: make the clicked column active and
     /// move its cursor to the clicked row. Cursor/active state only —
     /// no `change` (the included set is unchanged).
