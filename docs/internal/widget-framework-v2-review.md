@@ -882,9 +882,23 @@ accessor layer (`input_str`/`cursor_byte`/`set_input_selected`/
 prompt's text state IS an embedded single-line `TextEdit`; the
 sync shim reduced to a direct engine call. One text engine, one
 selection model, one key table across prompt, Settings fields, and
-widget Text. Still prompt-side: the undo/redo stacks (engine undo
-remains the recorded follow-up) and the buffer-style word-motion
-policy, now computed over the engine's value.
+widget Text. Engine undo has since landed too:
+`TextEdit` owns a bounded, deduped `(value, cursor)` history —
+every mutating edit checkpoints, `set_value` deliberately never
+does (programmatic nav-syncs must not flood history; hosts
+checkpoint explicitly for deliberate replacements) — so the
+prompt's host-side undo stacks are deleted and widget Text fields
+gained C-z/C-y for free, with `change` firing on restore. §4.5
+step 1 including "with undo" is complete. Still prompt-side: the
+buffer-style word-motion policy, computed over the engine's value.
+The chrome-geometry arc (phase 4's last piece) has begun: ONE
+`chrome_boxes()` surface tree — every routable chrome surface
+once, surface-named kinds, one master z-order — now serves hover,
+right-click, and double-click, whose per-gesture builders are
+deleted; each gesture's dispatch declines surfaces it has no
+handler for. Wheel and left-click join next; then the tree stops
+being rebuilt per event and the `*Layout` caches retire as their
+readers convert.
 Still open, in plan order: chrome geometry produced by layout rather
 than recorded by paint (which is what retires the `*Layout` caches),
 then true capture/bubble over one shared chrome tree replacing the
