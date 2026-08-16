@@ -109,6 +109,19 @@ impl ContextMenu {
     /// item row, a border row, or outside. This is the single hit-test both
     /// mouse hover and click routing consult, so the drawn box and the
     /// clickable box can never disagree.
+    /// The menu's on-screen box (edge-clamped), as the rect `hit`
+    /// classifies against — so the chrome surface tree can carry the
+    /// menu's real geometry.
+    pub fn rect(&self, screen_width: u16, screen_height: u16) -> ratatui::layout::Rect {
+        let (x, y) = self.clamped_position(screen_width, screen_height);
+        ratatui::layout::Rect {
+            x,
+            y,
+            width: self.width,
+            height: self.height(),
+        }
+    }
+
     pub fn hit(&self, col: u16, row: u16, screen_width: u16, screen_height: u16) -> ContextMenuHit {
         let (menu_x, menu_y) = self.clamped_position(screen_width, screen_height);
         let menu_height = self.height();
