@@ -29,49 +29,127 @@ impl WidgetImpl for Text {
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
         use super::KeyDisposition::{Consumed, Pass, PassAfter};
-        // The completion popup claims its keys only while showing.
-        if !matches!(key, "Tab" | "Up" | "Down" | "Enter" | "Escape")
-            || !completions_open(widget_key, panel)
+        // The completion popup claims its keys first, and only while
+        // showing.
+        if matches!(key, "Tab" | "Up" | "Down" | "Enter" | "Escape")
+            && completions_open(widget_key, panel)
         {
-            return Pass;
-        }
-        match key {
-            "Up" => {
-                move_completion_index(spec, widget_key, panel, -1);
-                Consumed
-            }
-            "Down" => {
-                move_completion_index(spec, widget_key, panel, 1);
-                Consumed
-            }
-            "Escape" => {
-                // First Esc only closes the popup — the form stays
-                // open. (A second Esc, with no popup, cancels.)
-                dismiss_completions(widget_key, panel, fx);
-                Consumed
-            }
-            "Enter" | "Tab" => {
-                if completion_navigated(widget_key, panel) {
-                    // The user stepped into the dropdown (↑/↓/wheel) so
-                    // a row is highlighted — accept it. The host does
-                    // NOT close the popup: directory-descent flows (the
-                    // orchestrator's Project Path accepting `/foo/`
-                    // re-fetches children) keep it alive; plugins that
-                    // want one-shot accept close it via
-                    // `setCompletions(key, [])`.
-                    if let Some(value) = selected_completion_value(widget_key, panel) {
-                        fx.events.push((
-                            "completion_accept".into(),
-                            serde_json::json!({ "value": value }),
-                        ));
-                    }
-                    return Consumed;
+            return match key {
+                "Up" => {
+                    move_completion_index(spec, widget_key, panel, -1);
+                    Consumed
                 }
-                // Not navigated: the popup must not swallow the key.
-                // Close it, then let Enter act on the form (submit /
-                // advance) and Tab advance focus.
-                dismiss_completions(widget_key, panel, fx);
-                PassAfter
+                "Down" => {
+                    move_completion_index(spec, widget_key, panel, 1);
+                    Consumed
+                }
+                "Escape" => {
+                    // First Esc only closes the popup — the form stays
+                    // open. (A second Esc, with no popup, cancels.)
+                    dismiss_completions(widget_key, panel, fx);
+                    Consumed
+                }
+                "Enter" | "Tab" => {
+                    if completion_navigated(widget_key, panel) {
+                        // The user stepped into the dropdown (↑/↓/wheel)
+                        // so a row is highlighted — accept it. The host
+                        // does NOT close the popup: directory-descent
+                        // flows (the orchestrator's Project Path
+                        // accepting `/foo/` re-fetches children) keep it
+                        // alive; plugins that want one-shot accept close
+                        // it via `setCompletions(key, [])`.
+                        if let Some(value) = selected_completion_value(widget_key, panel) {
+                            fx.events.push((
+                                "completion_accept".into(),
+                                serde_json::json!({ "value": value }),
+                            ));
+                        }
+                        return Consumed;
+                    }
+                    // Not navigated: the popup must not swallow the key.
+                    // Close it, then let Enter act on the form (submit /
+                    // advance) and Tab advance focus.
+                    dismiss_completions(widget_key, panel, fx);
+                    PassAfter
+                }
+                _ => Pass,
+            };
+        }
+        // The editing vocabulary. Caret motion, mutation, selection
+        // chords, clipboard, and multi-line paging are the field's
+        // own; what stays panel policy is the single-line field's
+        // Up/Down (picker forwarding to a sibling list) and Enter
+        // (submit / advance) — those Pass.
+        let WidgetSpec::Text { rows, .. } = spec else {
+            return Pass;
+        };
+        match key {
+            "Up" | "Down" | "PageUp" | "PageDown" if *rows <= 1 => Pass,
+            "Up" | "Down" | "Left" | "Right" | "Backspace" | "Delete" | "Home" | "End" | "S-Up"
+            | "S-Down" | "S-Left" | "S-Right" | "S-Home" | "S-End" | "C-Left" | "C-Right"
+            | "C-S-Left" | "C-S-Right" => {
+                text_key(spec, widget_key, panel, key, fx);
+                Consumed
+            }
+            "PageUp" | "PageDown" => {
+                // Multi-line: page the caret (the viewport follows
+                // it), one row of overlap like the lists so the user
+                // keeps a visual anchor across pages.
+                let page = rows.saturating_sub(1).max(1) as i32;
+                let down = key == "PageDown";
+                clear_user_scrolled(widget_key, panel);
+                apply_edit(spec, widget_key, panel, fx, |editor| {
+                    for _ in 0..page.unsigned_abs() {
+                        if down {
+                            editor.move_down();
+                        } else {
+                            editor.move_up();
+                        }
+                    }
+                });
+                Consumed
+            }
+            "Enter" => {
+                if *rows <= 1 {
+                    // Form policy (submit / picker-activate / advance)
+                    // belongs to the panel.
+                    return Pass;
+                }
+                text_key(spec, widget_key, panel, "Enter", fx);
+                Consumed
+            }
+            "Space" => {
+                insert_str_edit(spec, widget_key, panel, " ", fx);
+                Consumed
+            }
+            "C-c" => {
+                // Copy is consumed even with an empty selection so it
+                // doesn't fall through to the buffer's copy path.
+                if let Some(text) = selected_text(widget_key, panel) {
+                    fx.clipboard_copy = Some(text);
+                }
+                Consumed
+            }
+            "C-x" => {
+                if let Some(text) = selected_text(widget_key, panel) {
+                    fx.clipboard_copy = Some(text);
+                    // On a read-only / markdown document, Cut degrades
+                    // to Copy: the selection reaches the clipboard,
+                    // nothing is deleted.
+                    if !mode(spec).1 {
+                        apply_edit(spec, widget_key, panel, fx, |editor| {
+                            editor.delete_selection();
+                        });
+                    }
+                }
+                Consumed
+            }
+            "C-a" => {
+                // SelectAll moves the cursor to end-of-value and sets
+                // anchor at start; `apply_edit` skips the change event
+                // when nothing moved.
+                apply_edit(spec, widget_key, panel, fx, |editor| editor.select_all());
+                Consumed
             }
             _ => Pass,
         }
@@ -943,6 +1021,253 @@ fn render_widget_text(
 }
 
 /// Is this Text widget's completion popup showing?
+/// `(markdown, read_only)` for a Text spec. A `markdown` multi-line
+/// Text is forcibly read-only; a plain Text honours its `read_only`
+/// flag; a non-Text spec is `(false, false)`.
+pub(crate) fn mode(spec: &WidgetSpec) -> (bool, bool) {
+    let WidgetSpec::Text {
+        markdown,
+        read_only,
+        rows,
+        ..
+    } = spec
+    else {
+        return (false, false);
+    };
+    let md = *markdown && *rows > 1;
+    (md, md || *read_only)
+}
+
+/// Ensure `panel.instance_states[widget_key]` is a seeded
+/// `Text { editor, .. }`. If instance state already has the entry,
+/// no-op. If not, seeds from the spec's `value` / `cursor_byte` /
+/// `rows`. Returns true when the widget is a Text now present in
+/// instance state.
+fn ensure_seeded(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+) -> bool {
+    if matches!(
+        panel.instance_states.get(widget_key),
+        Some(WidgetInstanceState::Text { .. })
+    ) {
+        return true;
+    }
+    let WidgetSpec::Text {
+        value,
+        cursor_byte,
+        rows,
+        ..
+    } = spec
+    else {
+        return false;
+    };
+    let mut editor = if *rows > 1 {
+        crate::primitives::text_edit::TextEdit::with_text(value)
+    } else {
+        crate::primitives::text_edit::TextEdit::single_line_with_text(value)
+    };
+    let seed = if *cursor_byte < 0 {
+        value.len()
+    } else {
+        (*cursor_byte as usize).min(value.len())
+    };
+    editor.set_cursor_from_flat(seed);
+    panel.instance_states.insert(
+        widget_key.to_string(),
+        WidgetInstanceState::Text {
+            editor,
+            scroll: 0,
+            completions: Vec::new(),
+            completion_selected_index: 0,
+            completion_scroll_offset: 0,
+            completion_navigated: false,
+            user_scrolled: false,
+        },
+    );
+    true
+}
+
+/// Apply a mutating operation to the widget's `TextEdit`. Handles
+/// seeding the editor from the spec on first touch, no-op detection
+/// (skips the change event), and queueing the `change` event with
+/// the post-state. Returns true when the op ran *and* produced a
+/// visible change. The single mutation path — the host's
+/// `with_focused_text_editor` shell and every key here go through
+/// it.
+pub(crate) fn apply_edit(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    fx: &mut super::KeyFx,
+    op: impl FnOnce(&mut crate::primitives::text_edit::TextEdit),
+) -> bool {
+    if !ensure_seeded(spec, widget_key, panel) {
+        return false;
+    }
+    let Some(WidgetInstanceState::Text { editor, .. }) = panel.instance_states.get_mut(widget_key)
+    else {
+        return false;
+    };
+    let (before_value, before_cursor) = (editor.value(), editor.flat_cursor_byte());
+    op(editor);
+    let (after_value, after_cursor) = (editor.value(), editor.flat_cursor_byte());
+    if after_value == before_value && after_cursor == before_cursor {
+        return false;
+    }
+    fx.events.push((
+        "change".into(),
+        json!({ "value": after_value, "cursorByte": after_cursor as i64, }),
+    ));
+    true
+}
+
+/// Clear the widget's `user_scrolled` flag (re-arming
+/// keep-caret-visible). Returns true when the flag was set.
+pub(crate) fn clear_user_scrolled(
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+) -> bool {
+    match panel.instance_states.get_mut(widget_key) {
+        Some(WidgetInstanceState::Text { user_scrolled, .. }) if *user_scrolled => {
+            *user_scrolled = false;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The widget's current selection, if its editor holds one.
+pub(crate) fn selected_text(
+    widget_key: &str,
+    panel: &crate::widgets::WidgetPanelState,
+) -> Option<String> {
+    match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::Text { editor, .. }) => editor.selected_text(),
+        _ => None,
+    }
+}
+
+/// Insert printable / IME-committed text at the cursor (replacing
+/// any active selection). Read-only and markdown fields accept no
+/// insertion. `TextEdit::insert_str` strips embedded newlines when
+/// the editor is single-line.
+pub(crate) fn insert_str_edit(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    text: &str,
+    fx: &mut super::KeyFx,
+) {
+    if text.is_empty() || mode(spec).1 {
+        return;
+    }
+    apply_edit(spec, widget_key, panel, fx, |editor| {
+        editor.insert_str(text);
+    });
+}
+
+/// Apply a non-printable editing key. Every caret-motion / mutation
+/// key routes through the shared
+/// [`apply_text_key`](crate::primitives::text_key::apply_text_key)
+/// table — the single source of truth the Settings input handler
+/// also uses, so the two surfaces can't drift. `Enter` = newline is
+/// the one widget-multiline affordance the shared table deliberately
+/// leaves as chrome (it means "commit" on other surfaces), so it's
+/// handled here: a markdown document has no newline to insert —
+/// Enter is its activate gesture (the tour jumps to the step's
+/// code).
+pub(crate) fn text_key(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    key: &str,
+    fx: &mut super::KeyFx,
+) {
+    let (is_markdown, is_read_only) = mode(spec);
+    if key == "Enter" {
+        if is_markdown {
+            fx.events.push(("activate".into(), json!({})));
+            return;
+        }
+        if is_read_only {
+            return;
+        }
+        apply_edit(spec, widget_key, panel, fx, |editor| {
+            editor.insert_char('\n');
+        });
+        return;
+    }
+    let Some(event) = key_name_to_event(key) else {
+        return;
+    };
+    if is_read_only && key_mutates(&event) {
+        return;
+    }
+    // A key-driven caret move re-arms follow-the-caret: even if the
+    // caret was already at a boundary (the op below no-ops), the
+    // viewport must snap back from a wheel-scrolled position on the
+    // repaint that follows.
+    clear_user_scrolled(widget_key, panel);
+    apply_edit(spec, widget_key, panel, fx, |editor| {
+        crate::primitives::text_key::apply_text_key(
+            editor,
+            &event,
+            crate::primitives::text_key::TextKeyContext::multiline(true),
+        );
+    });
+}
+
+/// Re-hydrate a widget key name back into a `KeyEvent` so text
+/// fields can share the editor's text-key table rather than their
+/// own dispatch. Only the named keys the router forwards to text
+/// fields are recognized; `"Enter"` is handled by the caller.
+fn key_name_to_event(name: &str) -> Option<crossterm::event::KeyEvent> {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    // Peel `C-` / `S-` / `A-` prefixes (in any order) so shift-selection
+    // and word-motion chords reach the shared text-key table — a
+    // markdown document view needs `S-Down` to extend the selection.
+    let mut modifiers = KeyModifiers::NONE;
+    let mut rest = name;
+    loop {
+        if let Some(r) = rest.strip_prefix("C-") {
+            modifiers |= KeyModifiers::CONTROL;
+            rest = r;
+        } else if let Some(r) = rest.strip_prefix("S-") {
+            modifiers |= KeyModifiers::SHIFT;
+            rest = r;
+        } else if let Some(r) = rest.strip_prefix("A-") {
+            modifiers |= KeyModifiers::ALT;
+            rest = r;
+        } else {
+            break;
+        }
+    }
+    let code = match rest {
+        "Backspace" => KeyCode::Backspace,
+        "Delete" => KeyCode::Delete,
+        "Left" => KeyCode::Left,
+        "Right" => KeyCode::Right,
+        "Up" => KeyCode::Up,
+        "Down" => KeyCode::Down,
+        "Home" => KeyCode::Home,
+        "End" => KeyCode::End,
+        _ => return None,
+    };
+    Some(KeyEvent::new(code, modifiers))
+}
+
+/// Whether routing `event` through `apply_text_key` would mutate the
+/// surface. Everything else in the table is caret motion / selection.
+fn key_mutates(event: &crossterm::event::KeyEvent) -> bool {
+    use crossterm::event::KeyCode;
+    matches!(
+        event.code,
+        KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete
+    )
+}
+
 pub(crate) fn completions_open(widget_key: &str, panel: &crate::widgets::WidgetPanelState) -> bool {
     matches!(
         panel.instance_states.get(widget_key),

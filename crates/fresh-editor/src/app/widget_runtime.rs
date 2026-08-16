@@ -123,58 +123,6 @@ fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<Stri
     spec.children().find_map(find_scrollable_widget_key)
 }
 
-/// Re-hydrate the plugin runtime's flattened key *name* (e.g. `"Home"`)
-/// back into a `KeyEvent`, so widget text editing can go through the shared
-/// [`apply_text_key`](crate::primitives::text_key::apply_text_key) table
-/// rather than its own dispatch. Only the bare named keys the widget key
-/// router forwards to text fields are recognized; `"Enter"` is handled by
-/// the caller, and modifier chords aren't currently surfaced to widget
-/// text fields.
-fn widget_key_name_to_event(name: &str) -> Option<crossterm::event::KeyEvent> {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    // Peel `C-` / `S-` / `A-` prefixes (in any order) so shift-selection
-    // and word-motion chords reach the shared text-key table — a
-    // markdown document view needs `S-Down` to extend the selection.
-    let mut modifiers = KeyModifiers::NONE;
-    let mut rest = name;
-    loop {
-        if let Some(r) = rest.strip_prefix("C-") {
-            modifiers |= KeyModifiers::CONTROL;
-            rest = r;
-        } else if let Some(r) = rest.strip_prefix("S-") {
-            modifiers |= KeyModifiers::SHIFT;
-            rest = r;
-        } else if let Some(r) = rest.strip_prefix("A-") {
-            modifiers |= KeyModifiers::ALT;
-            rest = r;
-        } else {
-            break;
-        }
-    }
-    let code = match rest {
-        "Backspace" => KeyCode::Backspace,
-        "Delete" => KeyCode::Delete,
-        "Left" => KeyCode::Left,
-        "Right" => KeyCode::Right,
-        "Up" => KeyCode::Up,
-        "Down" => KeyCode::Down,
-        "Home" => KeyCode::Home,
-        "End" => KeyCode::End,
-        _ => return None,
-    };
-    Some(KeyEvent::new(code, modifiers))
-}
-
-/// Whether routing `event` through [`apply_text_key`] would mutate the
-/// surface. Everything else in the table is caret motion / selection.
-fn text_key_mutates(event: &crossterm::event::KeyEvent) -> bool {
-    use crossterm::event::KeyCode;
-    matches!(
-        event.code,
-        KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete
-    )
-}
-
 use crate::widgets::kinds::tree::collect_visible_tree_indices;
 
 /// Translate the plugin-facing animation description to the internal
@@ -1127,6 +1075,9 @@ impl Editor {
                     // never moved.
                     self.flash_dock_scrollbar(panel_key);
                 }
+                if let Some(text) = fx.clipboard_copy.take() {
+                    self.clipboard.copy(text);
+                }
                 if disposition != crate::widgets::kinds::KeyDisposition::Pass {
                     self.rerender_widget_panel(panel_key);
                 }
@@ -1161,14 +1112,6 @@ impl Editor {
             "Up" | "Down" => {
                 let delta = if key == "Up" { -1 } else { 1 };
                 match widget {
-                    Some(fresh_core::api::WidgetSpec::Text { rows, .. }) if *rows > 1 => {
-                        // Multi-line Text: line nav. Single-line
-                        // is filtered out — TextEdit::move_up /
-                        // move_down would no-op on the single
-                        // line, but skipping the dispatch keeps
-                        // the change-event quiet.
-                        self.handle_widget_text_key(panel_key, key);
-                    }
                     _ => {
                         // Picker-style nav: when the focused widget
                         // doesn't have a meaningful Up/Down (single-
@@ -1227,84 +1170,12 @@ impl Editor {
                     }
                 }
             }
-            "PageUp" | "PageDown" => {
-                // List/Tree paging is kind-owned in on_key; what's
-                // left is multi-line Text — page the caret (the
-                // viewport follows it), one row of overlap like the
-                // lists so the user keeps a visual anchor.
-                let Some(fresh_core::api::WidgetSpec::Text { rows, .. }) = widget else {
-                    return;
-                };
-                if *rows <= 1 {
-                    return;
-                }
-                let page = rows.saturating_sub(1).max(1) as i32;
-                let delta = if key == "PageUp" { -page } else { page };
-                let down = delta > 0;
-                let rearmed = self.clear_focused_text_user_scrolled(panel_key);
-                let changed = self.with_focused_text_editor(panel_key, |editor| {
-                    for _ in 0..delta.unsigned_abs() {
-                        if down {
-                            editor.move_down();
-                        } else {
-                            editor.move_up();
-                        }
-                    }
-                });
-                if rearmed && !changed {
-                    self.rerender_widget_panel(panel_key);
-                }
-            }
-            "Left" | "Right" => match widget {
-                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
-                    self.handle_widget_text_key(panel_key, key);
-                }
-                _ => {}
-            },
-            "Backspace" | "Delete" | "Home" | "End" => {
-                if let Some(fresh_core::api::WidgetSpec::Text { .. }) = widget {
-                    self.handle_widget_text_key(panel_key, key);
-                }
-            }
-            // Selection / word-motion chords for text widgets. Routed by
-            // name so a plugin panel mode can bind e.g. `S-Down` and
-            // dispatch it straight through (the markdown document view's
-            // keyboard selection rides this).
-            "S-Up" | "S-Down" | "S-Left" | "S-Right" | "S-Home" | "S-End" | "C-Left"
-            | "C-Right" | "C-S-Left" | "C-S-Right" => {
-                if let Some(fresh_core::api::WidgetSpec::Text { .. }) = widget {
-                    self.handle_widget_text_key(panel_key, key);
-                }
-            }
-            // Clipboard chords on a focused text widget. These also
-            // arrive via the editor-level Copy/Cut/Select-All routing
-            // when the panel buffer holds focus; the explicit names let
-            // custom panel modes (the tour) dispatch them directly.
-            "C-c" => {
-                if matches!(widget, Some(fresh_core::api::WidgetSpec::Text { .. })) {
-                    self.handle_widget_copy(panel_key);
-                }
-            }
-            "C-x" => {
-                if matches!(widget, Some(fresh_core::api::WidgetSpec::Text { .. })) {
-                    self.handle_widget_cut(panel_key);
-                }
-            }
-            "C-a" => {
-                if matches!(widget, Some(fresh_core::api::WidgetSpec::Text { .. })) {
-                    self.handle_widget_select_all(panel_key);
-                }
-            }
             "Enter" => match widget {
-                Some(fresh_core::api::WidgetSpec::Text { rows, .. }) => {
-                    if *rows > 1 {
-                        // Multi-line: Enter inserts a newline at the
-                        // cursor. Plugins that want Enter to submit
-                        // can intercept it in their mode binding
-                        // before dispatching through the smart-key
-                        // router.
-                        self.handle_widget_text_key(panel_key, "Enter");
-                    } else if let Some(target_key) = self
+                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
+                    // Multi-line Enter (newline, or markdown
+                    // activate) is kind-owned in on_key; what
+                    // reaches here is a single-line field.
+                    if let Some(target_key) = self
                         .widget_registry
                         .get(panel_key)
                         .and_then(|p| find_scrollable_widget_key(&p.spec))
@@ -1331,12 +1202,6 @@ impl Editor {
                         // moves to the next tabbable widget.
                         self.handle_widget_focus_advance(panel_key, 1);
                     }
-                }
-                _ => {}
-            },
-            "Space" => match widget {
-                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
-                    self.handle_widget_text_char(panel_key, " ");
                 }
                 _ => {}
             },
@@ -1643,6 +1508,9 @@ impl Editor {
         }
         if fx.flash_scrollbar {
             self.flash_dock_scrollbar(panel_key);
+        }
+        if let Some(text) = fx.clipboard_copy.take() {
+            self.clipboard.copy(text);
         }
         self.rerender_widget_panel(panel_key);
         for (event_type, payload) in fx.events {
@@ -2095,69 +1963,12 @@ impl Editor {
         true
     }
 
-    /// Ensure `panel.instance_states[focus_key]` is a seeded
-    /// `Text { editor, .. }` for the focused widget. If instance
-    /// state already has the entry, no-op. If not, seeds from the
-    /// spec's `value` / `cursor_byte` / `rows`. Returns true on
-    /// success (focus is a Text widget that's now in instance state),
-    /// false otherwise.
-    fn ensure_focused_text_seeded(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        focus_key: &str,
-    ) -> bool {
-        let panel = match self.widget_registry.get_mut(panel_key) {
-            Some(p) => p,
-            None => return false,
-        };
-        if matches!(
-            panel.instance_states.get(focus_key),
-            Some(crate::widgets::WidgetInstanceState::Text { .. })
-        ) {
-            return true;
-        }
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, focus_key);
-        let (value, cursor_byte, multiline) = match widget {
-            Some(fresh_core::api::WidgetSpec::Text {
-                value,
-                cursor_byte,
-                rows,
-                ..
-            }) => (value.clone(), *cursor_byte, *rows > 1),
-            _ => return false,
-        };
-        let mut editor = if multiline {
-            crate::primitives::text_edit::TextEdit::with_text(&value)
-        } else {
-            crate::primitives::text_edit::TextEdit::single_line_with_text(&value)
-        };
-        let seed = if cursor_byte < 0 {
-            value.len()
-        } else {
-            (cursor_byte as usize).min(value.len())
-        };
-        editor.set_cursor_from_flat(seed);
-        panel.instance_states.insert(
-            focus_key.to_string(),
-            crate::widgets::WidgetInstanceState::Text {
-                editor,
-                scroll: 0,
-                completions: Vec::new(),
-                completion_selected_index: 0,
-                completion_scroll_offset: 0,
-                completion_navigated: false,
-                user_scrolled: false,
-            },
-        );
-        true
-    }
-
     /// Apply a mutating operation to the focused `Text` widget's
-    /// `TextEdit`. Handles seeding the editor from the spec on first
-    /// touch, no-op detection (skips rerender + change event), and
-    /// firing the `widget_event` "change" hook with the post-state.
-    ///
-    /// Returns true when the op ran *and* produced a visible change.
+    /// `TextEdit` — the host shell over the kind-owned
+    /// `kinds::text::apply_edit` (seeding, no-op detection, and the
+    /// `change` event live there, once). Repaints and fires the
+    /// queued events; returns true when the op produced a visible
+    /// change.
     pub(super) fn with_focused_text_editor<F>(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
@@ -2170,45 +1981,28 @@ impl Editor {
             Some(p) if !p.focus_key.is_empty() => p.focus_key.clone(),
             _ => return false,
         };
-        if !self.ensure_focused_text_seeded(panel_key, &focus_key) {
-            return false;
-        }
-        let (before_value, before_cursor) = {
-            let panel = self.widget_registry.get(panel_key).unwrap();
-            match panel.instance_states.get(&focus_key) {
-                Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => {
-                    (editor.value(), editor.flat_cursor_byte())
-                }
-                _ => return false,
-            }
-        };
+        let widget = match self
+            .widget_registry
+            .get(panel_key)
+            .and_then(|p| crate::widgets::find_widget_by_key(&p.spec, &focus_key))
         {
-            let panel = self.widget_registry.get_mut(panel_key).unwrap();
-            match panel.instance_states.get_mut(&focus_key) {
-                Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => op(editor),
-                _ => return false,
-            }
-        }
-        let (after_value, after_cursor) = {
-            let panel = self.widget_registry.get(panel_key).unwrap();
-            match panel.instance_states.get(&focus_key) {
-                Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => {
-                    (editor.value(), editor.flat_cursor_byte())
-                }
-                _ => return false,
-            }
+            Some(w) => w.clone(),
+            None => return false,
         };
-        if after_value == before_value && after_cursor == before_cursor {
-            return false;
+        let mut fx = crate::widgets::kinds::KeyFx::default();
+        let changed = match self.widget_registry.get_mut(panel_key) {
+            Some(panel) => {
+                crate::widgets::kinds::text::apply_edit(&widget, &focus_key, panel, &mut fx, op)
+            }
+            None => return false,
+        };
+        if changed {
+            self.rerender_widget_panel(panel_key);
         }
-        self.rerender_widget_panel(panel_key);
-        self.fire_widget_event(
-            panel_key,
-            focus_key.clone(),
-            "change".into(),
-            serde_json::json!({ "value": after_value, "cursorByte": after_cursor as i64, }),
-        );
-        true
+        for (event_type, payload) in fx.events {
+            self.fire_widget_event(panel_key, focus_key.clone(), event_type, payload);
+        }
+        changed
     }
 
     /// Reposition a just-focused Text widget's cursor to the byte under
@@ -2381,73 +2175,24 @@ impl Editor {
         self.rerender_widget_panel(&drag.panel);
     }
 
-    /// Apply a non-printable editing key to the focused text widget. See
-    /// [`widget_key_name_to_event`] for the name → `KeyEvent` re-hydration.
-    ///
-    /// Every caret-motion / mutation key is routed through the shared
-    /// [`apply_text_key`](crate::primitives::text_key::apply_text_key)
-    /// table — the single source of truth the Settings input handler also
-    /// uses, so the two surfaces can't drift. `Enter` = newline is the one
-    /// widget-multiline affordance the shared table deliberately leaves as
-    /// chrome (it means "commit" on other surfaces), so it's handled here.
-    ///
-    /// The single/multi-line discriminator is carried by `TextEdit`'s own
-    /// `multiline` field, so passing `multiline: true` lets the router
-    /// forward Up/Down while a single-line editor simply no-ops on them —
-    /// matching the prior dispatch.
+    /// Apply a non-printable editing key to the focused text widget —
+    /// the host shell over the kind-owned `kinds::text::text_key`
+    /// (the shared text-key table, read-only gating, and markdown
+    /// Enter-as-activate live there). Kept as an Editor entry point
+    /// for the plugin-facing `WidgetAction::TextInputKey`.
     fn handle_widget_text_key(&mut self, panel_key: &crate::widgets::PanelKey, key: &str) {
-        let (is_markdown, is_read_only) = self.focused_text_mode(panel_key);
-        if key == "Enter" {
-            if is_markdown {
-                // A markdown document has no newline to insert; Enter is
-                // its activate gesture (the tour jumps to the step's code).
-                let focus_key = self
-                    .widget_registry
-                    .get(panel_key)
-                    .map(|p| p.focus_key.clone())
-                    .unwrap_or_default();
-                if !focus_key.is_empty() {
-                    self.fire_widget_event(
-                        panel_key,
-                        focus_key,
-                        "activate".into(),
-                        serde_json::json!({}),
-                    );
-                }
-                return;
-            }
-            if is_read_only {
-                return;
-            }
-            self.with_focused_text_editor(panel_key, |editor| editor.insert_char('\n'));
-            return;
-        }
-        let Some(event) = widget_key_name_to_event(key) else {
-            return;
+        let focus_key = match self.widget_registry.get(panel_key) {
+            Some(p) if !p.focus_key.is_empty() => p.focus_key.clone(),
+            _ => return,
         };
-        if is_read_only && text_key_mutates(&event) {
-            return;
-        }
-        // A key-driven caret move re-arms follow-the-caret: even if the
-        // caret was already at a boundary (the op below no-ops), the
-        // viewport must snap back from a wheel-scrolled position.
-        let rearmed = self.clear_focused_text_user_scrolled(panel_key);
-        let changed = self.with_focused_text_editor(panel_key, |editor| {
-            crate::primitives::text_key::apply_text_key(
-                editor,
-                &event,
-                crate::primitives::text_key::TextKeyContext::multiline(true),
-            );
+        self.with_dropdown_helper(panel_key, &focus_key, |spec, wkey, panel, fx| {
+            crate::widgets::kinds::text::text_key(spec, wkey, panel, key, fx);
         });
-        if rearmed && !changed {
-            self.rerender_widget_panel(panel_key);
-        }
     }
 
-    /// `(markdown, read_only)` for the panel's focused widget. A
-    /// `markdown` multi-line Text is forcibly read-only; a plain Text
-    /// honours its `read_only` flag; every other widget is `(false,
-    /// false)`.
+    /// `(markdown, read_only)` for the panel's focused widget —
+    /// `kinds::text::mode` on its spec; `(false, false)` for a
+    /// non-Text focus.
     fn focused_text_mode(&self, panel_key: &crate::widgets::PanelKey) -> (bool, bool) {
         let Some(panel) = self.widget_registry.get(panel_key) else {
             return (false, false);
@@ -2456,16 +2201,8 @@ impl Editor {
             return (false, false);
         }
         match crate::widgets::find_widget_by_key(&panel.spec, &panel.focus_key) {
-            Some(fresh_core::api::WidgetSpec::Text {
-                markdown,
-                read_only,
-                rows,
-                ..
-            }) => {
-                let md = *markdown && *rows > 1;
-                (md, md || *read_only)
-            }
-            _ => (false, false),
+            Some(spec) => crate::widgets::kinds::text::mode(spec),
+            None => (false, false),
         }
     }
 
@@ -2479,15 +2216,7 @@ impl Editor {
         if focus_key.is_empty() {
             return false;
         }
-        match panel.instance_states.get_mut(&focus_key) {
-            Some(crate::widgets::WidgetInstanceState::Text { user_scrolled, .. })
-                if *user_scrolled =>
-            {
-                *user_scrolled = false;
-                true
-            }
-            _ => false,
-        }
+        crate::widgets::kinds::text::clear_user_scrolled(&focus_key, panel)
     }
 
     /// Insert printable / IME-committed text at the focused text
