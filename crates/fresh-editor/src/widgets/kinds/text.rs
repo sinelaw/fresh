@@ -151,6 +151,21 @@ impl WidgetImpl for Text {
                 apply_edit(spec, widget_key, panel, fx, |editor| editor.select_all());
                 Consumed
             }
+            "C-z" => {
+                // Engine undo (history lives in the TextEdit itself);
+                // routing through apply_edit fires `change` with the
+                // restored value so a plugin mirror stays in sync.
+                apply_edit(spec, widget_key, panel, fx, |editor| {
+                    editor.undo();
+                });
+                Consumed
+            }
+            "C-y" => {
+                apply_edit(spec, widget_key, panel, fx, |editor| {
+                    editor.redo();
+                });
+                Consumed
+            }
             _ => Pass,
         }
     }
