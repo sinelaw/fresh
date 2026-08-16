@@ -1151,23 +1151,29 @@ impl Editor {
             .find_map(|b| self.hover_chrome_target(b.kind, col, row))
     }
 
-    /// Hover chrome boxes, top-down: the floating overlays (native
-    /// context menus, suggestion list, popup lists, the file-open
-    /// dialog) above the permanent chrome (menu bar and dropdowns, file
-    /// explorer, split separators and buttons, tabs, scrollbars, status
-    /// bar, search options). Surfaces whose geometry is one cached rect
-    /// carry it; collection-shaped surfaces (many separators, many tab
-    /// bars) are full-frame boxes whose handlers do their own hit-test.
-    /// The ONE chrome surface tree for hover, right-click, and
-    /// double-click (wheel and left-click join next): every routable
-    /// chrome surface as a z-ordered box with a surface-named kind.
-    /// Geometry is a real rectangle where one cached rect exists;
-    /// collection-shaped surfaces (many separators, many tab bars) are
-    /// full-frame and their handlers hit-test internally. Each gesture
-    /// walk consults its own dispatch for a surface and DECLINES
-    /// surfaces it has no handler for — same box tree, per-gesture
-    /// behavior, exactly the panel model.
+    /// The ONE chrome surface tree for every pointer gesture: each
+    /// registered [`super::chrome::ChromeComponent`] contributes its
+    /// surfaces as z-ordered boxes with surface-named kinds, built per
+    /// event from live state (`super::chrome::chrome_tree`). Geometry
+    /// is a real rectangle where one exists; full-frame survives only
+    /// as named guards/captures whose semantics ARE full-screen. Each
+    /// gesture walk consults its own dispatch for a surface and
+    /// DECLINES surfaces it has no handler for — same box tree,
+    /// per-gesture behavior, exactly the panel model.
     fn chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
+        let tree = super::chrome::chrome_tree(self);
+        // Slice-0 tripwire (chrome-event-model-plan.md): the component
+        // registry must reproduce the legacy enumeration per kind.
+        // Deleted together with the legacy body next slice.
+        #[cfg(debug_assertions)]
+        super::chrome::assert_parity(&tree, &self.chrome_boxes_legacy());
+        tree
+    }
+
+    /// The pre-registration enumeration, kept in debug builds only as
+    /// the parity oracle for the component registry.
+    #[cfg(debug_assertions)]
+    fn chrome_boxes_legacy(&self) -> Vec<crate::widgets::LayoutBox> {
         use crate::widgets::LayoutBox;
         let frame = self.active_chrome().last_frame;
         let full = |kind: &'static str, z: u8| {
