@@ -20,6 +20,7 @@ mod file_browser;
 mod file_explorer;
 mod floating_modal;
 mod menu;
+mod modals;
 mod popups;
 mod prompt;
 mod search_options;
@@ -160,6 +161,32 @@ pub(crate) trait ChromeComponent: Sync {
         Ok(Disposition::Pass)
     }
 
+    /// Whole-channel mouse capture for modal surfaces. A component
+    /// whose modal is up claims the ENTIRE mouse event stream — every
+    /// event kind (press, drag, release, wheel, move) — before any
+    /// gesture walk runs, exactly the contract the deleted
+    /// `dispatch_modal_mouse` ladder enforced: nothing may leak to a
+    /// terminal, buffer, or surface beneath a modal. `None` = not
+    /// capturing. The first capturing component in registry order
+    /// wins, so the registry lists the modal band first, in the same
+    /// relative order `overlay_layers()` ranks those layers (slice 6
+    /// derives `overlay_layers` from the components, collapsing the
+    /// duplicated activity predicates).
+    ///
+    /// Whole-event capture (rather than per-gesture boxes) is the
+    /// honest intermediate: the modal handlers own presses, drags,
+    /// releases, and hover as one unit; decomposing them onto the
+    /// gesture walks needs the pointer-grab slot and the scan's
+    /// opacity gate, recorded as the residue of this slice.
+    fn capture_mouse(
+        &self,
+        _ed: &mut Editor,
+        _ev: crossterm::event::MouseEvent,
+        _is_double_click: bool,
+    ) -> Option<AnyhowResult<bool>> {
+        None
+    }
+
     /// A wheel delta over one of this component's boxes. `Consumed`
     /// stops the walk; a scroll surface already at its bound (or a
     /// box whose real target the pointer missed) returns `Pass` so
@@ -190,6 +217,14 @@ pub(crate) trait ChromeComponent: Sync {
 /// components push specific targets before guards.
 pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
     &[
+        // The modal band: whole-channel mouse capture, first-active
+        // wins, ranked as `overlay_layers()` ranks their layers.
+        // (FloatingModal captures too — it sits lower, after the
+        // surfaces that render above it.)
+        &modals::Settings,
+        &modals::KeybindingEditor,
+        &modals::CalibrationWizard,
+        &modals::WorkspaceTrust,
         &context_menu::ContextMenu,
         &prompt::Prompt,
         &popups::Popups,
