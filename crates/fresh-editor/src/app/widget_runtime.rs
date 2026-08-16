@@ -1705,36 +1705,6 @@ impl Editor {
         self.handle_widget_select_move_for_key(panel_key, &focus_key, delta);
     }
 
-    /// Step a `Number` widget's host-owned value by `steps * step` —
-    /// the same kind-owned mutation shell as the dropdown paths, so
-    /// the clamp/change logic exists exactly once (in
-    /// `kinds::number::adjust`, shared with `Number::on_key`).
-    pub(super) fn handle_widget_number_adjust(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        widget_key: &str,
-        steps: i32,
-    ) {
-        self.with_dropdown_helper(panel_key, widget_key, |spec, key, panel, fx| {
-            crate::widgets::kinds::number::adjust(spec, key, panel, steps, fx);
-        });
-    }
-
-    /// Cycle a `Dropdown` widget's selected option by `delta`
-    /// (wrapping), repaint, and fire `change` with the new
-    /// `{ index, value }`. A click on `◂`/`▸` or an arrow key passes
-    /// `±1`.
-    pub(super) fn handle_widget_dropdown_cycle(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        widget_key: &str,
-        delta: i32,
-    ) {
-        self.with_dropdown_helper(panel_key, widget_key, |spec, key, panel, fx| {
-            crate::widgets::kinds::dropdown::cycle_selection(spec, key, panel, delta, fx);
-        });
-    }
-
     /// Set a `Dropdown`'s selected index to an absolute value (a click
     /// on an option row of the open list) — the same kind-owned
     /// mutation shell as cycle/open, so the clamp/change logic exists

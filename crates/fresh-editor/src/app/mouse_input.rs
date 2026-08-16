@@ -1184,91 +1184,276 @@ impl Editor {
 
     /// Compute what hover target is at the given position
     fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
-        self.hover_target_in_floating_overlays(col, row)
-            .or_else(|| self.hover_target_in_chrome(col, row))
+        // The hover surfaces, as chrome boxes — the same geometric walk
+        // as wheel/click/right-click/double-click, in query form: the
+        // highest-z box whose handler names a target wins, and handlers
+        // whose geometry is finer than their rectangle (context-menu
+        // borders, tab-bar background) decline so the point falls
+        // through to the boxes below.
+        let mut candidates: Vec<crate::widgets::LayoutBox> = self
+            .hover_chrome_boxes()
+            .into_iter()
+            .filter(|b| b.contains(row as u32, col as u32))
+            .collect();
+        candidates.sort_by(|a, b| b.z.cmp(&a.z));
+        candidates
+            .into_iter()
+            .find_map(|b| self.hover_chrome_target(b.kind, col, row))
     }
 
-    /// Hit-test floating overlay layers: context menus, command palette,
-    /// popup lists, and the file-browser dialog. These always render on
-    /// top of the chrome and must be checked first.
-    fn hover_target_in_floating_overlays(&self, col: u16, row: u16) -> Option<HoverTarget> {
-        // The native context menus (tab / "+" new-tab / file-explorer) all
-        // render on top and share one geometry core, so a single hit-test
-        // over the open menu covers all three. An interior (item) row yields
-        // a hover target; border rows and outside positions fall through to
-        // the chrome below.
-        if let Some(core) = self.active_window().context_menu_core() {
-            if let super::types::ContextMenuHit::Item(item_idx) = core.hit(
-                col,
-                row,
-                self.active_chrome().last_frame.width,
-                self.active_chrome().last_frame.height,
-            ) {
-                return Some(HoverTarget::ContextMenuItem(item_idx));
-            }
+    /// Hover chrome boxes, top-down: the floating overlays (native
+    /// context menus, suggestion list, popup lists, the file-open
+    /// dialog) above the permanent chrome (menu bar and dropdowns, file
+    /// explorer, split separators and buttons, tabs, scrollbars, status
+    /// bar, search options). Surfaces whose geometry is one cached rect
+    /// carry it; collection-shaped surfaces (many separators, many tab
+    /// bars) are full-frame boxes whose handlers do their own hit-test.
+    fn hover_chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
+        use crate::widgets::LayoutBox;
+        let frame = self.active_chrome().last_frame;
+        let full = |kind: &'static str, z: u8| {
+            let mut b = LayoutBox::plain(kind, 0, 0, frame.width as u32, frame.height as u32);
+            b.z = z;
+            b
+        };
+        let mut boxes = Vec::new();
+        if self.active_window().context_menu_core().is_some() {
+            boxes.push(full("hover:context_menu", 14));
         }
-
-        // Check suggestions area first (command palette, autocomplete)
-        if let Some((inner_rect, start_idx, _visible_count, total_count)) =
-            &self.active_chrome().suggestions_area
-        {
-            if in_rect(col, row, *inner_rect) {
-                let relative_row = (row - inner_rect.y) as usize;
-                let item_idx = start_idx + relative_row;
-
-                if item_idx < *total_count {
-                    return Some(HoverTarget::SuggestionItem(item_idx));
-                }
-            }
+        if let Some((inner_rect, _, _, _)) = &self.active_chrome().suggestions_area {
+            let mut b = LayoutBox::plain(
+                "hover:suggestions",
+                inner_rect.y as u32,
+                inner_rect.x as u32,
+                inner_rect.width as u32,
+                inner_rect.height as u32,
+            );
+            b.z = 13;
+            boxes.push(b);
         }
-
-        // Check popups (they're rendered on top)
-        // Check from top to bottom (reverse order since last popup is on top)
-        for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
-            self.active_chrome().popup_areas.iter().rev()
-        {
-            if in_rect(col, row, *inner_rect) && *num_items > 0 {
-                // Calculate which item is being hovered
-                let relative_row = (row - inner_rect.y) as usize;
-                let item_idx = scroll_offset + relative_row;
-
-                if item_idx < *num_items {
-                    return Some(HoverTarget::PopupListItem(*popup_idx, item_idx));
-                }
-            }
+        if !self.active_chrome().popup_areas.is_empty() {
+            boxes.push(full("hover:popups", 12));
         }
-
-        // Check file browser popup
         if self.is_file_open_active() {
-            if let Some(hover) = self.compute_file_browser_hover(col, row) {
-                return Some(hover);
-            }
+            boxes.push(full("hover:file_browser", 11));
         }
-
-        None
+        if self.active_window().menu_bar_visible && self.active_chrome().menu_layout.is_some() {
+            boxes.push(full("hover:menu_bar", 10));
+        }
+        if self.menu_state.active_menu.is_some() {
+            boxes.push(full("hover:menu_dropdown", 9));
+        }
+        if let Some(r) = self.active_layout().file_explorer_area {
+            let mut b = LayoutBox::plain(
+                "hover:file_explorer",
+                r.y as u32,
+                r.x as u32,
+                r.width as u32,
+                r.height as u32,
+            );
+            b.z = 8;
+            boxes.push(b);
+        }
+        if !self.active_layout().separator_areas.is_empty() {
+            boxes.push(full("hover:split_separators", 7));
+        }
+        boxes.push(full("hover:split_buttons", 6));
+        boxes.push(full("hover:tabs", 5));
+        boxes.push(full("hover:scrollbars", 4));
+        if self.active_chrome().status_bar.area.is_some() {
+            boxes.push(full("hover:status_bar", 3));
+        }
+        if self.active_chrome().search_options_layout.is_some() {
+            boxes.push(full("hover:search_options", 2));
+        }
+        boxes
     }
 
-    /// Hit-test the permanent chrome: menu bar, file explorer panel,
-    /// split separators, tabs, scrollbars, status bar, and search
-    /// options. Called only after floating overlays have been ruled out.
-    fn hover_target_in_chrome(&self, col: u16, row: u16) -> Option<HoverTarget> {
-        // Check menu bar (row 0, only when visible)
-        // Check menu bar using cached layout from previous render
-        if self.active_window().menu_bar_visible {
-            if let Some(ref menu_layout) = self.active_chrome().menu_layout {
-                if let Some(menu_idx) = menu_layout.menu_at(col, row) {
-                    return Some(HoverTarget::MenuBarItem(menu_idx));
+    /// Name the hover target for one chrome box, or decline (`None`)
+    /// so the walk falls through to the next box down.
+    fn hover_chrome_target(&self, kind: &str, col: u16, row: u16) -> Option<HoverTarget> {
+        match kind {
+            "hover:context_menu" => {
+                // The native context menus (tab / "+" new-tab /
+                // file-explorer) share one geometry core, so a single
+                // hit-test over the open menu covers all three. An
+                // interior (item) row yields a hover target; border rows
+                // and outside positions fall through.
+                let core = self.active_window().context_menu_core()?;
+                if let super::types::ContextMenuHit::Item(item_idx) = core.hit(
+                    col,
+                    row,
+                    self.active_chrome().last_frame.width,
+                    self.active_chrome().last_frame.height,
+                ) {
+                    return Some(HoverTarget::ContextMenuItem(item_idx));
                 }
+                None
             }
-        }
-
-        // Check menu dropdown items if a menu is open (including submenus)
-        if let Some(active_idx) = self.menu_state.active_menu {
-            if let Some(hover) = self.compute_menu_dropdown_hover(col, row, active_idx) {
-                return Some(hover);
+            "hover:suggestions" => {
+                // Command palette / autocomplete list.
+                let (inner_rect, start_idx, _visible_count, total_count) =
+                    self.active_chrome().suggestions_area.as_ref()?;
+                if in_rect(col, row, *inner_rect) {
+                    let relative_row = (row - inner_rect.y) as usize;
+                    let item_idx = start_idx + relative_row;
+                    if item_idx < *total_count {
+                        return Some(HoverTarget::SuggestionItem(item_idx));
+                    }
+                }
+                None
             }
-        }
+            "hover:popups" => {
+                // Check popups (they're rendered on top)
+                // Check from top to bottom (reverse order since last popup is on top)
+                for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
+                    self.active_chrome().popup_areas.iter().rev()
+                {
+                    if in_rect(col, row, *inner_rect) && *num_items > 0 {
+                        // Calculate which item is being hovered
+                        let relative_row = (row - inner_rect.y) as usize;
+                        let item_idx = scroll_offset + relative_row;
 
+                        if item_idx < *num_items {
+                            return Some(HoverTarget::PopupListItem(*popup_idx, item_idx));
+                        }
+                    }
+                }
+                None
+            }
+            "hover:file_browser" => self.compute_file_browser_hover(col, row),
+            "hover:menu_bar" => {
+                let menu_layout = self.active_chrome().menu_layout.as_ref()?;
+                menu_layout.menu_at(col, row).map(HoverTarget::MenuBarItem)
+            }
+            "hover:menu_dropdown" => {
+                let active_idx = self.menu_state.active_menu?;
+                self.compute_menu_dropdown_hover(col, row, active_idx)
+            }
+            "hover:file_explorer" => self.hover_target_in_file_explorer(col, row),
+            "hover:split_separators" => {
+                // Check split separators
+                for (split_id, direction, sep_x, sep_y, sep_length) in
+                    &self.active_layout().separator_areas
+                {
+                    let is_on_separator = match direction {
+                        SplitDirection::Horizontal => {
+                            row == *sep_y && col >= *sep_x && col < sep_x + sep_length
+                        }
+                        SplitDirection::Vertical => {
+                            col == *sep_x && row >= *sep_y && row < sep_y + sep_length
+                        }
+                    };
+
+                    if is_on_separator {
+                        return Some(HoverTarget::SplitSeparator(*split_id, *direction));
+                    }
+                }
+                None
+            }
+            "hover:split_buttons" => {
+                // Check tab areas using cached hit regions (computed during rendering)
+                // Check split control buttons first (they're on top of the tab row)
+                for (split_id, btn_row, start_col, end_col) in
+                    &self.active_layout().close_split_areas
+                {
+                    if row == *btn_row && col >= *start_col && col < *end_col {
+                        return Some(HoverTarget::CloseSplitButton(*split_id));
+                    }
+                }
+
+                for (split_id, btn_row, start_col, end_col) in
+                    &self.active_layout().maximize_split_areas
+                {
+                    if row == *btn_row && col >= *start_col && col < *end_col {
+                        return Some(HoverTarget::MaximizeSplitButton(*split_id));
+                    }
+                }
+                None
+            }
+            "hover:tabs" => {
+                for (split_id, tab_layout) in &self.active_layout().tab_layouts {
+                    match tab_layout.hit_test(col, row) {
+                        Some(TabHit::CloseButton(target)) => {
+                            return Some(HoverTarget::TabCloseButton(target, *split_id));
+                        }
+                        Some(TabHit::TabName(target)) => {
+                            return Some(HoverTarget::TabName(target, *split_id));
+                        }
+                        Some(TabHit::ScrollLeft)
+                        | Some(TabHit::ScrollRight)
+                        | Some(TabHit::BarBackground)
+                        | Some(TabHit::NewTabButton)
+                        | None => {}
+                    }
+                }
+                None
+            }
+            "hover:scrollbars" => {
+                // Check scrollbars
+                for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
+                    &self.active_layout().split_areas
+                {
+                    if in_rect(col, row, *scrollbar_rect) {
+                        let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
+                        let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
+
+                        if is_on_thumb {
+                            return Some(HoverTarget::ScrollbarThumb(*split_id));
+                        } else {
+                            return Some(HoverTarget::ScrollbarTrack(
+                                *split_id,
+                                relative_row as u16,
+                            ));
+                        }
+                    }
+                }
+                None
+            }
+            "hover:status_bar" => {
+                // Check status bar indicators — one generic hit-test over every
+                // clickable segment recorded last frame (encoding, LSP, remote, …).
+                if let Some((status_row, _status_x, _status_width)) =
+                    self.active_chrome().status_bar.area
+                {
+                    if row == status_row {
+                        for (id, indicator_row, start, end) in
+                            &self.active_chrome().status_bar.clickable
+                        {
+                            if row == *indicator_row && col >= *start && col < *end {
+                                return Some(HoverTarget::StatusBarClickable(*id));
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            "hover:search_options" => {
+                // Check search options bar checkboxes
+                if let Some(ref layout) = self.active_chrome().search_options_layout {
+                    use crate::view::ui::status_bar::SearchOptionsHover;
+                    if let Some(hover) = layout.checkbox_at(col, row) {
+                        return Some(match hover {
+                            SearchOptionsHover::CaseSensitive => {
+                                HoverTarget::SearchOptionCaseSensitive
+                            }
+                            SearchOptionsHover::WholeWord => HoverTarget::SearchOptionWholeWord,
+                            SearchOptionsHover::Regex => HoverTarget::SearchOptionRegex,
+                            SearchOptionsHover::ConfirmEach => HoverTarget::SearchOptionConfirmEach,
+                            SearchOptionsHover::None => return None,
+                        });
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// The `hover:file_explorer` box: the close button on the title
+    /// row, per-item trailing status indicators, and the resize border
+    /// on the rightmost column.
+    fn hover_target_in_file_explorer(&self, col: u16, row: u16) -> Option<HoverTarget> {
         // Check file explorer close button and border (for resize)
         if let Some(explorer_area) = self.active_layout().file_explorer_area {
             // Close button is at position: explorer_area.x + explorer_area.width - 3 to -1
@@ -1363,95 +1548,6 @@ impl Editor {
                 && row < explorer_area.y + explorer_area.height
             {
                 return Some(HoverTarget::FileExplorerBorder);
-            }
-        }
-
-        // Check split separators
-        for (split_id, direction, sep_x, sep_y, sep_length) in &self.active_layout().separator_areas
-        {
-            let is_on_separator = match direction {
-                SplitDirection::Horizontal => {
-                    row == *sep_y && col >= *sep_x && col < sep_x + sep_length
-                }
-                SplitDirection::Vertical => {
-                    col == *sep_x && row >= *sep_y && row < sep_y + sep_length
-                }
-            };
-
-            if is_on_separator {
-                return Some(HoverTarget::SplitSeparator(*split_id, *direction));
-            }
-        }
-
-        // Check tab areas using cached hit regions (computed during rendering)
-        // Check split control buttons first (they're on top of the tab row)
-        for (split_id, btn_row, start_col, end_col) in &self.active_layout().close_split_areas {
-            if row == *btn_row && col >= *start_col && col < *end_col {
-                return Some(HoverTarget::CloseSplitButton(*split_id));
-            }
-        }
-
-        for (split_id, btn_row, start_col, end_col) in &self.active_layout().maximize_split_areas {
-            if row == *btn_row && col >= *start_col && col < *end_col {
-                return Some(HoverTarget::MaximizeSplitButton(*split_id));
-            }
-        }
-
-        for (split_id, tab_layout) in &self.active_layout().tab_layouts {
-            match tab_layout.hit_test(col, row) {
-                Some(TabHit::CloseButton(target)) => {
-                    return Some(HoverTarget::TabCloseButton(target, *split_id));
-                }
-                Some(TabHit::TabName(target)) => {
-                    return Some(HoverTarget::TabName(target, *split_id));
-                }
-                Some(TabHit::ScrollLeft)
-                | Some(TabHit::ScrollRight)
-                | Some(TabHit::BarBackground)
-                | Some(TabHit::NewTabButton)
-                | None => {}
-            }
-        }
-
-        // Check scrollbars
-        for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
-            &self.active_layout().split_areas
-        {
-            if in_rect(col, row, *scrollbar_rect) {
-                let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
-                let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
-
-                if is_on_thumb {
-                    return Some(HoverTarget::ScrollbarThumb(*split_id));
-                } else {
-                    return Some(HoverTarget::ScrollbarTrack(*split_id, relative_row as u16));
-                }
-            }
-        }
-
-        // Check status bar indicators — one generic hit-test over every
-        // clickable segment recorded last frame (encoding, LSP, remote, …).
-        if let Some((status_row, _status_x, _status_width)) = self.active_chrome().status_bar.area {
-            if row == status_row {
-                for (id, indicator_row, start, end) in &self.active_chrome().status_bar.clickable {
-                    if row == *indicator_row && col >= *start && col < *end {
-                        return Some(HoverTarget::StatusBarClickable(*id));
-                    }
-                }
-            }
-        }
-
-        // Check search options bar checkboxes
-        if let Some(ref layout) = self.active_chrome().search_options_layout {
-            use crate::view::ui::status_bar::SearchOptionsHover;
-            if let Some(hover) = layout.checkbox_at(col, row) {
-                return Some(match hover {
-                    SearchOptionsHover::CaseSensitive => HoverTarget::SearchOptionCaseSensitive,
-                    SearchOptionsHover::WholeWord => HoverTarget::SearchOptionWholeWord,
-                    SearchOptionsHover::Regex => HoverTarget::SearchOptionRegex,
-                    SearchOptionsHover::ConfirmEach => HoverTarget::SearchOptionConfirmEach,
-                    SearchOptionsHover::None => return None,
-                });
             }
         }
 
