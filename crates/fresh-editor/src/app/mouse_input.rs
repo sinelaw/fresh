@@ -555,10 +555,16 @@ impl Editor {
         (is_double, is_triple)
     }
 
-    /// Wheel precedence over the shared tree. Full-frame proxy boxes
-    /// make a single z-order gesture-specific for now — each gesture
-    /// ranks the surfaces it handles and skips the rest; the arrays
-    /// dissolve once surfaces carry real rects from the layout pass.
+    /// Wheel precedence over the shared tree. With every geometric
+    /// surface now rect-bounded, most entries are order-agnostic
+    /// (their rects are disjoint); what the per-gesture arrays still
+    /// encode — irreducibly — is where each gesture slots its GUARD
+    /// and CAPTURE surfaces: the wheel treats the overlay prompt as
+    /// mouse-modal near the top and captures for the bottom-prompt
+    /// dropdown position-blind, while the click lets its own targets
+    /// resolve first and swallows leftovers at the bottom. That is
+    /// per-gesture *semantics* (like handlers differing per event
+    /// type), not missing geometry.
     const WHEEL_ORDER: &'static [&'static str] = &[
         "chrome:prompt_preview",
         "chrome:overlay_prompt_modal",
@@ -1319,10 +1325,9 @@ impl Editor {
             b.z = 7;
             boxes.push(b);
         }
-        // Tab strips stay full-frame: TabLayout records per-target hit
-        // regions, not one plain rect — the leftover retires when it
-        // exposes its bar bounds.
-        boxes.push(full("chrome:tabs", 6));
+        for (_, tl) in &self.active_layout().tab_layouts {
+            boxes.push(rect_box("chrome:tabs", 6, tl.bar_area));
+        }
         for (_, _, _, scrollbar_rect, _, _) in &self.active_layout().split_areas {
             boxes.push(rect_box("chrome:scrollbars", 5, *scrollbar_rect));
         }
@@ -2125,8 +2130,8 @@ impl Editor {
         Ok(())
     }
 
-    /// Click precedence over the shared tree (see WHEEL_ORDER's note —
-    /// the arrays dissolve once surfaces carry real rects).
+    /// Click precedence over the shared tree (see WHEEL_ORDER's note
+    /// on why the guard/capture ordering is per-gesture by nature).
     const CLICK_ORDER: &'static [&'static str] = &[
         "chrome:context_menu",
         "chrome:context_menu_close_guard",

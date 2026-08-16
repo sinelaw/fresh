@@ -896,9 +896,24 @@ The chrome-geometry arc (phase 4's last piece) has begun: ONE
 once, surface-named kinds, one master z-order — now serves hover,
 right-click, and double-click, whose per-gesture builders are
 deleted; each gesture's dispatch declines surfaces it has no
-handler for. Wheel and left-click join next; then the tree stops
-being rebuilt per event and the `*Layout` caches retire as their
-readers convert.
+handler for. Since then the arc completed: wheel and left-click joined
+(all five gestures, one tree, four more builders deleted), and the
+proxy retirement ran to the end — every geometric surface carries
+its real rect (menu bar/dropdowns via MenuLayout, context menus via
+ContextMenuCore::rect, tabs via TabLayout.bar_area, search options,
+file browser, per-split/per-item scrollbars, separators, buttons,
+status bar), full-frame survives only as named guards whose
+semantics ARE full-screen (menu/context-menu close guards, popup
+absorb/dismiss, overlay-prompt modal), and the dropdown pop-over's
+windowing moved into the renderer (the host paints visible rows +
+indices — the "hardcoded 8-row window" is gone). The per-gesture
+WHEEL_ORDER/CLICK_ORDER arrays were evaluated for collapse: with
+rects disjoint they are mostly order-agnostic, and what remains in
+them is the irreducibly per-gesture slotting of guard/capture
+surfaces — documented as semantics, not debt. The tree is built per
+event from the recorded layouts (cheap, always state-fresh);
+persisting it per render was evaluated and rejected as staleness
+risk without measured cost.
 Still open, in plan order: chrome geometry produced by layout rather
 than recorded by paint (which is what retires the `*Layout` caches),
 then true capture/bubble over one shared chrome tree replacing the
