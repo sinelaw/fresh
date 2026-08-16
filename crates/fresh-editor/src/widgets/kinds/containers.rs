@@ -169,9 +169,9 @@ enum RowPiece {
         /// rather than dropping.
         embeds: Vec<EmbedRect>,
         /// Layout boxes from this inline child's subtree; the collapse
-        /// pass shifts their columns by the merged inline_shift, the
-        /// same (byte≈column for ASCII inline content) approximation
-        /// the embed channel uses.
+        /// pass shifts their columns by the *display width* of the
+        /// line so far (boxes and embeds are column-addressed; hits
+        /// stay byte-addressed within the row text).
         boxes: Vec<LayoutBox>,
     },
     Block {
@@ -450,13 +450,21 @@ fn assemble_inline_row(
                     Some(e) => e.text.len(),
                     None => 0,
                 };
-                // Boxes shift columns like embeds do (byte≈column for
-                // the ASCII inline content that lands here); the arena
-                // merge remaps parent indices by the boxes so far.
+                // Boxes and embeds are column-addressed, so they shift
+                // by the *display width* of the line so far — not its
+                // byte length, which over-counts every multi-byte glyph
+                // (a localized toggle label, `▸`, `·`). Hits and the
+                // focus cursor stay byte-addressed within the row text.
+                let inline_cols = acc
+                    .as_ref()
+                    .map(|e| crate::primitives::display_width::str_width(&e.text))
+                    .unwrap_or(0) as u32;
+                // The arena merge remaps parent indices by the boxes so
+                // far.
                 let base = out_boxes.len();
                 for mut b in child_boxes {
                     b.parent = b.parent.map(|pi| pi + base);
-                    b.col += inline_shift as u32;
+                    b.col += inline_cols;
                     out_boxes.push(b);
                 }
                 for mut h in child_hits {
@@ -470,12 +478,7 @@ fn assemble_inline_row(
                     *focus_cursor = Some(fc);
                 }
                 for mut emb in child_embeds {
-                    // Inline shift is in bytes; for ASCII
-                    // inline content this matches columns,
-                    // which is the only case that lands here
-                    // in practice (single-row embeds are
-                    // rare).
-                    emb.col_in_row += inline_shift as u32;
+                    emb.col_in_row += inline_cols;
                     embeds.push(emb);
                 }
                 match acc.as_mut() {
@@ -878,13 +881,17 @@ fn assemble_wrapped_row(
             h.buffer_row = row;
             hits.push(h);
         }
-        // Boxes land on the wrapped line at the line-so-far column
-        // (byte≈column, as in the inline collapse path).
+        // Boxes are column-addressed: they land on the wrapped line at
+        // the line-so-far *display width*, not its byte length — the
+        // two diverge on every multi-byte glyph. (Recomputed here
+        // rather than reusing `acc_w`, which is stale after a flush
+        // started a fresh line.)
+        let shift_cols = acc.as_ref().map(|e| str_width(&e.text)).unwrap_or(0) as u32;
         let base = out_boxes.len();
         for mut b in child_boxes {
             b.parent = b.parent.map(|pi| pi + base);
             b.row += row;
-            b.col += shift as u32;
+            b.col += shift_cols;
             out_boxes.push(b);
         }
         // A focused piece (e.g. the search TextInput) reports its caret;
@@ -988,9 +995,10 @@ fn zip_row_blocks(
                     let inline_cols = entry.text.chars().count();
                     let byte_shift = text.len();
                     // Cumulative column width to the left of this
-                    // piece, for embed positioning. Embeds are
-                    // column-addressed, not byte-addressed.
-                    let col_shift = text.chars().count() as u32;
+                    // piece, for embed/box positioning. Embeds and
+                    // boxes are column-addressed (display width), not
+                    // byte- or char-addressed.
+                    let col_shift = crate::primitives::display_width::str_width(&text) as u32;
                     if row_idx == 0 {
                         text.push_str(&entry.text);
                         for emb in inline_embeds {
@@ -1052,8 +1060,8 @@ fn zip_row_blocks(
                     let block_w = *column_width as usize;
                     let byte_shift = text.len();
                     // Cumulative column width to the left of this
-                    // block, for embed positioning.
-                    let col_shift = text.chars().count() as u32;
+                    // block, for embed/box positioning (display width).
+                    let col_shift = crate::primitives::display_width::str_width(&text) as u32;
                     // Emit each embed exactly once, on the row
                     // where its top edge lands. The embed's
                     // buffer_row is relative to the block's row
