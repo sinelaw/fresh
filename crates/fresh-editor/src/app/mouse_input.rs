@@ -1239,6 +1239,10 @@ impl Editor {
             }
         }
         if self.active_window().menu_bar_visible && self.active_chrome().menu_layout.is_some() {
+            // Deliberately full-frame: the click arm also owns
+            // open-dropdown item clicks and close-on-outside-click,
+            // which land anywhere on screen. Shrinks to the bar row +
+            // a dropdown rect once the menu layout exposes one.
             boxes.push(full("chrome:menu_bar", 12));
         }
         if self.menu_state.active_menu.is_some() {
@@ -1264,8 +1268,16 @@ impl Editor {
         boxes.push(full("chrome:tabs", 6));
         boxes.push(full("chrome:scrollbars", 5));
         boxes.push(full("chrome:h_scrollbar", 5));
-        if self.active_chrome().status_bar.area.is_some() {
-            boxes.push(full("chrome:status_bar", 4));
+        if let Some((status_row, status_x, status_width)) = self.active_chrome().status_bar.area {
+            let mut b = LayoutBox::plain(
+                "chrome:status_bar",
+                status_row as u32,
+                status_x as u32,
+                status_width as u32,
+                1,
+            );
+            b.z = 4;
+            boxes.push(b);
         }
         if self.active_chrome().search_options_layout.is_some() {
             boxes.push(full("chrome:search_options", 3));
