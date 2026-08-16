@@ -113,6 +113,7 @@ impl Editor {
                             first_line.as_deref(),
                             &self.grammar_registry,
                             &self.config.languages,
+                            state.buffer.filesystem().as_ref(),
                         );
                     state.apply_language(detected);
                     state.apply_buffer_config(&self.config);
