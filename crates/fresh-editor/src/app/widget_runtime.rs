@@ -1189,18 +1189,6 @@ impl Editor {
                         // the change-event quiet.
                         self.handle_widget_text_key(panel_key, key);
                     }
-                    Some(fresh_core::api::WidgetSpec::Number { .. }) => {
-                        // Up increments, Down decrements (the reverse
-                        // of the list's Up = select-previous).
-                        let step_delta = if key == "Up" { 1 } else { -1 };
-                        self.handle_widget_number_adjust(panel_key, &focus_key, step_delta);
-                    }
-                    Some(fresh_core::api::WidgetSpec::Dropdown { .. }) => {
-                        // Up = previous option, Down = next option
-                        // (wrapping), matching the ◂/▸ glyphs.
-                        let cycle = if key == "Up" { -1 } else { 1 };
-                        self.handle_widget_dropdown_cycle(panel_key, &focus_key, cycle);
-                    }
                     Some(fresh_core::api::WidgetSpec::DualList { .. }) => {
                         let d = if key == "Up" { -1 } else { 1 };
                         self.handle_widget_dual(panel_key, &focus_key, DualOp::CursorMove(d));
@@ -1351,14 +1339,6 @@ impl Editor {
                 Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
                     self.handle_widget_tree_lateral(panel_key, key == "Right");
                 }
-                Some(fresh_core::api::WidgetSpec::Number { .. }) => {
-                    let step_delta = if key == "Right" { 1 } else { -1 };
-                    self.handle_widget_number_adjust(panel_key, &focus_key, step_delta);
-                }
-                Some(fresh_core::api::WidgetSpec::Dropdown { .. }) => {
-                    let cycle = if key == "Right" { 1 } else { -1 };
-                    self.handle_widget_dropdown_cycle(panel_key, &focus_key, cycle);
-                }
                 Some(fresh_core::api::WidgetSpec::DualList { .. }) => {
                     // Left focuses the Available column, Right the Included.
                     self.handle_widget_dual(
@@ -1404,19 +1384,12 @@ impl Editor {
                 }
             }
             "Enter" => match widget {
-                Some(fresh_core::api::WidgetSpec::Button { .. })
-                | Some(fresh_core::api::WidgetSpec::Toggle { .. }) => {
-                    self.handle_widget_activate(panel_key);
-                }
                 Some(fresh_core::api::WidgetSpec::DualList { .. }) => {
                     // Form-like: Enter commits the column edits and
-                    // moves to the next widget.
+                    // moves to the next widget. (Button/Toggle activate
+                    // and closed-Dropdown open are kind-owned in
+                    // on_key now.)
                     self.handle_widget_focus_advance(panel_key, 1);
-                }
-                Some(fresh_core::api::WidgetSpec::Dropdown { .. }) => {
-                    // Closed dropdown (open case handled above): Enter
-                    // opens the option popup.
-                    self.set_dropdown_open(panel_key, &focus_key, true);
                 }
                 Some(fresh_core::api::WidgetSpec::List { .. }) => {
                     self.fire_list_activate(panel_key, &focus_key);
@@ -1463,15 +1436,6 @@ impl Editor {
                 _ => {}
             },
             "Space" => match widget {
-                Some(fresh_core::api::WidgetSpec::Button { .. })
-                | Some(fresh_core::api::WidgetSpec::Toggle { .. }) => {
-                    self.handle_widget_activate(panel_key);
-                }
-                Some(fresh_core::api::WidgetSpec::Dropdown { .. }) => {
-                    // Closed dropdown (the open case is handled by the
-                    // short-circuit above): Space opens the option popup.
-                    self.set_dropdown_open(panel_key, &focus_key, true);
-                }
                 Some(fresh_core::api::WidgetSpec::DualList { .. }) => {
                     // Space moves the focused item across columns.
                     self.handle_widget_dual(panel_key, &focus_key, DualOp::MoveAcross);
@@ -1741,57 +1705,19 @@ impl Editor {
         self.handle_widget_select_move_for_key(panel_key, &focus_key, delta);
     }
 
-    /// Step a `Number` widget's host-owned value by `steps * step`,
-    /// clamp to `[min, max]`, repaint, and fire `change` when the
-    /// value actually moved. `steps` is the number of `step` units
-    /// (positive = increment); a click on `◂`/`▸` or an arrow key
-    /// passes `±1`.
+    /// Step a `Number` widget's host-owned value by `steps * step` —
+    /// the same kind-owned mutation shell as the dropdown paths, so
+    /// the clamp/change logic exists exactly once (in
+    /// `kinds::number::adjust`, shared with `Number::on_key`).
     pub(super) fn handle_widget_number_adjust(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
         widget_key: &str,
         steps: i32,
     ) {
-        if widget_key.is_empty() {
-            return;
-        }
-        let panel = match self.widget_registry.get(panel_key) {
-            Some(p) => p,
-            None => return,
-        };
-        let (spec_value, min, max, step) =
-            match crate::widgets::find_widget_by_key(&panel.spec, widget_key) {
-                Some(fresh_core::api::WidgetSpec::Number {
-                    value,
-                    min,
-                    max,
-                    step,
-                    ..
-                }) => (*value, *min, *max, *step),
-                _ => return,
-            };
-        let cur = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::Number { value }) => *value,
-            _ => spec_value,
-        };
-        let raw = cur + (steps as f64) * step;
-        let clamped = crate::widgets::clamp_number(raw, min, max);
-        let changed = clamped != cur;
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::Number { value: clamped },
-            );
-        }
-        self.rerender_widget_panel(panel_key);
-        if changed {
-            self.fire_widget_event(
-                panel_key,
-                widget_key.to_string(),
-                "change".into(),
-                serde_json::json!({ "value": clamped }),
-            );
-        }
+        self.with_dropdown_helper(panel_key, widget_key, |spec, key, panel, fx| {
+            crate::widgets::kinds::number::adjust(spec, key, panel, steps, fx);
+        });
     }
 
     /// Cycle a `Dropdown` widget's selected option by `delta`

@@ -15,6 +15,25 @@ use crate::widgets::render::{
 pub(crate) struct Number;
 
 impl WidgetImpl for Number {
+    fn on_key(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        key: &str,
+        fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        // Up/Right increment, Down/Left decrement — matching the
+        // ◂/▸ glyphs (the reverse of a list's Up = select-previous).
+        let steps = match key {
+            "Up" | "Right" => 1,
+            "Down" | "Left" => -1,
+            _ => return super::KeyDisposition::Pass,
+        };
+        adjust(spec, widget_key, panel, steps, fx);
+        super::KeyDisposition::Consumed
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("number");
         if let WidgetSpec::Number { key: Some(k), .. } = spec {
@@ -145,4 +164,42 @@ fn collect_number(
     ensure_trailing_newline(&mut entry);
     out.entries.push(entry);
     out
+}
+
+/// Step the host-owned value by `steps * step`, clamped to
+/// `[min, max]`; queues `change` when the value actually moved. Used
+/// by `Number::on_key` and the click paths (`◂`/`▸` press) through
+/// the Editor's shared mutation shell.
+pub(crate) fn adjust(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    steps: i32,
+    fx: &mut super::KeyFx,
+) {
+    let WidgetSpec::Number {
+        value: spec_value,
+        min,
+        max,
+        step,
+        ..
+    } = spec
+    else {
+        return;
+    };
+    let cur = match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::Number { value }) => *value,
+        _ => *spec_value,
+    };
+    let raw = cur + (steps as f64) * step;
+    let clamped = crate::widgets::clamp_number(raw, *min, *max);
+    let changed = clamped != cur;
+    panel.instance_states.insert(
+        widget_key.to_string(),
+        WidgetInstanceState::Number { value: clamped },
+    );
+    if changed {
+        fx.events
+            .push(("change".into(), serde_json::json!({ "value": clamped })));
+    }
 }

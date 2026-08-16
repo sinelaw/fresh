@@ -16,6 +16,24 @@ use crate::widgets::render::{
 pub(crate) struct Toggle;
 
 impl WidgetImpl for Toggle {
+    fn on_key(
+        &self,
+        spec: &WidgetSpec,
+        _widget_key: &str,
+        _panel: &mut crate::widgets::WidgetPanelState,
+        key: &str,
+        fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        if !matches!(key, "Enter" | "Space") {
+            return super::KeyDisposition::Pass;
+        }
+        if let WidgetSpec::Toggle { checked, .. } = spec {
+            fx.events
+                .push(("toggle".into(), serde_json::json!({ "checked": !checked })));
+        }
+        super::KeyDisposition::Consumed
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("toggle");
         if let WidgetSpec::Toggle { key: Some(k), .. } = spec {
