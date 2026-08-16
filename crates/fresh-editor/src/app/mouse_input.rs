@@ -4251,9 +4251,9 @@ impl Editor {
         };
         let buffer_id = panel.buffer_id;
         let Some(region) = panel
-            .scroll_regions
+            .boxes
             .iter()
-            .find(|r| r.list_key == drag.widget)
+            .find(|b| b.scroll.is_some() && b.key.as_deref() == Some(drag.widget.as_str()))
             .cloned()
         else {
             return;
@@ -4274,15 +4274,16 @@ impl Editor {
             .unwrap_or((0, 0));
         // Buffer row under the pointer, clamped into the region's row
         // band (dragging past either edge selects to the visible edge).
+        let Some(sc) = region.scroll else { return };
         let brow = top_line + usize::from(row.max(rect.y) - rect.y);
         let rel_row = brow
-            .saturating_sub(region.buffer_row as usize)
-            .min(region.height_rows.saturating_sub(1) as usize);
-        let line = (region.scroll + rel_row).min(region.total.saturating_sub(1));
+            .saturating_sub(region.row as usize)
+            .min(region.height.saturating_sub(1) as usize);
+        let line = (sc.offset + rel_row).min(sc.total.saturating_sub(1));
         // Byte within the rendered line, from the pointer's display
         // column within the widget's region.
         let widget_col = usize::from(col.saturating_sub(rect.x).saturating_sub(gutter))
-            .saturating_sub(region.col_in_row as usize);
+            .saturating_sub(region.col as usize);
         let line_text = self
             .widget_registry
             .get(&drag.panel)

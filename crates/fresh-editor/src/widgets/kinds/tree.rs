@@ -11,7 +11,7 @@ use crate::widgets::registry::{HitArea, WidgetInstanceState};
 use crate::widgets::render::{
     apply_hover_band, ensure_trailing_newline, mark_list_card_selected, render_tree_row,
     tree_max_scroll, tree_node_is_card, tree_node_rows, CollectedOutput, RenderContext,
-    ScrollRegion, KEY_FOCUSED_BG,
+    KEY_FOCUSED_BG,
 };
 
 pub(crate) struct Tree;
@@ -570,16 +570,11 @@ fn render_widget_tree(
     // routing can hit-test the pointer against the tree's geometry too.
     // Totals are in rows (matching the row-based scroll offset), so the
     // thumb size/position track line-level scrolling exactly.
-    if let Some(k) = tree_key.filter(|k| !k.is_empty()) {
-        out.scroll_regions.push(ScrollRegion {
-            list_key: k.to_string(),
-            buffer_row: 0,
-            col_in_row: 0,
-            width_cols: panel_width,
-            height_rows: rows_emitted,
+    if tree_key.filter(|k| !k.is_empty()).is_some() {
+        out.self_scroll = Some(crate::widgets::layout_box::BoxScroll {
             total: total_rows as usize,
             visible: rows_emitted as usize,
-            scroll: scroll as usize,
+            offset: scroll as usize,
         });
     }
 

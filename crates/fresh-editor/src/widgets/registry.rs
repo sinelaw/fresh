@@ -262,13 +262,6 @@ pub struct WidgetPanelState {
     /// current `focus_key`'s position in this list and advances by
     /// the requested delta (with wraparound).
     pub tabbable: Vec<String>,
-    /// Geometry + scroll state of every keyed `List`/`Tree` in the
-    /// most recent render, panel-relative (row 0 = first rendered
-    /// row, columns in display cells). Mouse-wheel routing hit-tests
-    /// the pointer against these so the wheel scrolls the list under
-    /// it, and the split render pass paints a scrollbar over each
-    /// overflowing one.
-    pub scroll_regions: Vec<crate::widgets::ScrollRegion>,
     /// Effective rows each keyed `List`/`Tree` actually windowed to in
     /// the most recent render — the spec's explicit value, the
     /// auto-size height budget, or the legacy fallback. Key/mouse
@@ -327,7 +320,6 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
-        scroll_regions: Vec<crate::widgets::ScrollRegion>,
         effective_rows: HashMap<String, u32>,
         boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Option<WidgetPanelState> {
@@ -340,7 +332,6 @@ impl WidgetRegistry {
                 instance_states,
                 focus_key,
                 tabbable,
-                scroll_regions,
                 effective_rows,
                 boxes,
             },
@@ -363,7 +354,6 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
-        scroll_regions: Vec<crate::widgets::ScrollRegion>,
         effective_rows: HashMap<String, u32>,
         boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Result<BufferId, ()> {
@@ -374,7 +364,6 @@ impl WidgetRegistry {
                 state.instance_states = instance_states;
                 state.focus_key = focus_key;
                 state.tabbable = tabbable;
-                state.scroll_regions = scroll_regions;
                 state.effective_rows = effective_rows;
                 state.boxes = boxes;
                 Ok(state.buffer_id)
@@ -464,7 +453,6 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
-        scroll_regions: Vec<crate::widgets::ScrollRegion>,
         effective_rows: HashMap<String, u32>,
         boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Option<BufferId> {
@@ -473,7 +461,6 @@ impl WidgetRegistry {
         state.instance_states = instance_states;
         state.focus_key = focus_key;
         state.tabbable = tabbable;
-        state.scroll_regions = scroll_regions;
         // Host-driven rerenders (focus moves, hover, wheel) refresh the
         // window sizes and geometry too — previously `effective_rows`
         // was only written on the plugin-driven mount/update paths and
@@ -730,7 +717,6 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
         );
@@ -749,7 +735,6 @@ mod tests {
             vec![make_hit(0, 0, 5, "a")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             Vec::new(),
             HashMap::new(),
             Vec::new(),
@@ -791,7 +776,6 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
         );
@@ -818,7 +802,6 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
         );
@@ -842,7 +825,6 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
         );
@@ -864,7 +846,6 @@ mod tests {
             vec![base, popup],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             Vec::new(),
             HashMap::new(),
             Vec::new(),
@@ -902,7 +883,6 @@ mod tests {
             Vec::new(),
             states,
             String::new(),
-            Vec::new(),
             Vec::new(),
             HashMap::new(),
             Vec::new(),
@@ -969,7 +949,6 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
         );
@@ -980,7 +959,6 @@ mod tests {
             vec![make_hit(0, 0, 5, "b-btn")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             Vec::new(),
             HashMap::new(),
             Vec::new(),
@@ -1011,7 +989,6 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
         );
@@ -1031,7 +1008,6 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
         );
@@ -1041,7 +1017,6 @@ mod tests {
             vec![make_hit(1, 4, 9, "new")],
             HashMap::new(),
             String::new(),
-            Vec::new(),
             Vec::new(),
             HashMap::new(),
             Vec::new(),

@@ -14,8 +14,7 @@ use crate::widgets::render::{
     focus_gutter_prefix, form_label_width, ratatui_style_to_overlay,
     render_completion_bottom_border, render_completion_dim_separator_overlay,
     render_completion_item_overlay, render_text_area, render_text_input, CollectedOutput,
-    FocusCursor, OverlayRow, RenderContext, ScrollRegion, KEY_COMPLETION_SEL_FG,
-    KEY_TEXT_INPUT_SELECTION_BG,
+    FocusCursor, OverlayRow, RenderContext, KEY_COMPLETION_SEL_FG, KEY_TEXT_INPUT_SELECTION_BG,
 };
 
 pub(crate) struct Text;
@@ -125,10 +124,11 @@ impl WidgetImpl for Text {
             return false;
         }
         let Some((total, visible)) = panel
-            .scroll_regions
+            .boxes
             .iter()
-            .find(|r| r.list_key == widget_key)
-            .map(|r| (r.total, r.visible))
+            .find(|b| b.key.as_deref() == Some(widget_key))
+            .and_then(|b| b.scroll)
+            .map(|sc| (sc.total, sc.visible))
         else {
             return false;
         };
@@ -575,17 +575,13 @@ fn render_markdown_text_area(
     }
 
     if let Some(k) = key.filter(|k| !k.is_empty()) {
-        // Geometry region: wheel routing hit-tests it, and the host
-        // paints a scrollbar when the document overflows.
-        out.scroll_regions.push(ScrollRegion {
-            list_key: k.to_string(),
-            buffer_row: 0,
-            col_in_row: 0,
-            width_cols: panel_width,
-            height_rows: visible,
+        // Scroll payload on the widget's own box: wheel bounds clamp
+        // against it, and the host paints a scrollbar when the
+        // document overflows.
+        out.self_scroll = Some(crate::widgets::layout_box::BoxScroll {
             total: total as usize,
             visible: visible as usize,
-            scroll: scroll as usize,
+            offset: scroll as usize,
         });
         next_state.insert(
             k.to_string(),

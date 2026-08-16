@@ -34,6 +34,6 @@ pub use render::{
     clamp_number, dual_available_values, dual_label, dual_sanitize_included, format_number_value,
     render_dropdown, render_number, render_spec, render_spec_no_autofocus, render_spec_with_marker,
     render_spec_with_options, wrap_index, DropdownPopup, EmbedRect, FocusCursor, MarkdownCtx,
-    OverlayRow, RenderContext, RenderOptions, RenderOutput, ScrollRegion, DROPDOWN_VISIBLE_OPTIONS,
+    OverlayRow, RenderContext, RenderOptions, RenderOutput, DROPDOWN_VISIBLE_OPTIONS,
 };
 pub use text_click::{row_byte_to_value_byte, WidgetTextClickGeometry};
