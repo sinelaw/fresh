@@ -268,13 +268,6 @@ pub struct Prompt {
     /// session_preview delegate region was already provided by
     /// Primitive #1 — `editor.previewWindowInRect`).
     pub footer: Vec<fresh_core::api::StyledText>,
-    /// Undo history for the input field: `(input, cursor_pos)` snapshots
-    /// captured before each text mutation. Ctrl+Z pops from here. Kept
-    /// local to the prompt so undo edits the query box rather than the
-    /// underlying (modal-inaccessible) buffer.
-    undo_stack: Vec<(String, usize)>,
-    /// Redo counterpart to `undo_stack`. Cleared on any fresh mutation.
-    redo_stack: Vec<(String, usize)>,
     /// Optional toolbar for the overlay's header band, as real widgets
     /// (`Toggle`/`Button` in a `Row`/`Col`). When `Some`, it is rendered via
     /// the widget engine *in place of* the styled-text `title`, so the
@@ -322,8 +315,6 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
             toolbar_widget: None,
             toolbar_focus: None,
             status: String::new(),
@@ -358,8 +349,6 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
             toolbar_widget: None,
             toolbar_focus: None,
             status: String::new(),
@@ -413,8 +402,6 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
             toolbar_widget: None,
             toolbar_focus: None,
             status: String::new(),
@@ -435,29 +422,6 @@ impl Prompt {
     /// like Thai diacritics, emoji with modifiers, etc.
     pub fn cursor_right(&mut self) {
         self.edit.move_right();
-    }
-
-    /// Capture the current `(input, cursor_pos)` for undo, and drop any
-    /// redo history. Call at the start of every text-mutating operation.
-    /// No-ops if the input is unchanged from the most recent snapshot so
-    /// repeated no-op edits don't bloat the stack.
-    fn push_undo_snapshot(&mut self) {
-        let value = self.edit.value();
-        if self
-            .undo_stack
-            .last()
-            .is_some_and(|(text, _)| *text == value)
-        {
-            return;
-        }
-        // Bound the history so a very long editing session can't grow it
-        // without limit.
-        const MAX_UNDO: usize = 500;
-        if self.undo_stack.len() >= MAX_UNDO {
-            self.undo_stack.remove(0);
-        }
-        self.undo_stack.push((value, self.edit.flat_cursor_byte()));
-        self.redo_stack.clear();
     }
 
     /// Run one editing operation through the shared single-field
@@ -494,9 +458,7 @@ impl Prompt {
         if !covered {
             return false;
         }
-        if matches!(event.code, KeyCode::Backspace | KeyCode::Delete) {
-            self.push_undo_snapshot();
-        }
+        if matches!(event.code, KeyCode::Backspace | KeyCode::Delete) {}
         self.apply_edit(|e| {
             crate::primitives::text_key::apply_text_key(
                 e,
@@ -507,35 +469,20 @@ impl Prompt {
         true
     }
 
-    /// Undo the last input edit. Returns true if the input changed.
+    /// Undo the last input edit (engine history — the prompt keeps no
+    /// stacks of its own). Consumed by Ctrl+Z so undo edits the query
+    /// box rather than the underlying (modal-inaccessible) buffer.
     pub fn undo_input(&mut self) -> bool {
-        if let Some((text, cursor)) = self.undo_stack.pop() {
-            self.redo_stack
-                .push((self.edit.value(), self.edit.flat_cursor_byte()));
-            self.edit.set_value(&text);
-            self.edit.set_cursor_from_flat(cursor);
-            true
-        } else {
-            false
-        }
+        self.edit.undo()
     }
 
     /// Redo the last undone input edit. Returns true if the input changed.
     pub fn redo_input(&mut self) -> bool {
-        if let Some((text, cursor)) = self.redo_stack.pop() {
-            self.undo_stack
-                .push((self.edit.value(), self.edit.flat_cursor_byte()));
-            self.edit.set_value(&text);
-            self.edit.set_cursor_from_flat(cursor);
-            true
-        } else {
-            false
-        }
+        self.edit.redo()
     }
 
     /// Insert a character at the cursor position
     pub fn insert_char(&mut self, ch: char) {
-        self.push_undo_snapshot();
         self.apply_edit(|e| e.insert_char(ch));
     }
 
@@ -546,7 +493,6 @@ impl Prompt {
     /// tone mark without removing the base consonant.
     pub fn backspace(&mut self) {
         if self.cursor_byte() > 0 || self.has_selection() {
-            self.push_undo_snapshot();
             self.apply_edit(|e| e.backspace());
         }
     }
@@ -556,7 +502,6 @@ impl Prompt {
     /// Deletes the entire grapheme cluster, handling combining characters properly.
     pub fn delete(&mut self) {
         if self.cursor_byte() < self.input_str().len() || self.has_selection() {
-            self.push_undo_snapshot();
             self.apply_edit(|e| e.delete());
         }
     }
@@ -588,7 +533,9 @@ impl Prompt {
     /// assert_eq!(prompt.cursor_byte(), 12); // At end
     /// ```
     pub fn set_input(&mut self, text: String) {
-        self.push_undo_snapshot();
+        // A wholesale replacement (history navigation, Tab-accept) is
+        // an undoable step; `set_value` itself never checkpoints.
+        self.edit.push_undo_checkpoint();
         self.edit.set_value(&text);
         self.edit.move_end();
     }
@@ -814,7 +761,6 @@ impl Prompt {
     pub fn delete_word_forward(&mut self) {
         if find_word_end_bytes(self.input_str().as_bytes(), self.cursor_byte()) > self.cursor_byte()
         {
-            self.push_undo_snapshot();
             self.apply_edit(|e| e.delete_word_forward());
         }
     }
@@ -838,7 +784,6 @@ impl Prompt {
         if find_word_start_bytes(self.input_str().as_bytes(), self.cursor_byte())
             < self.cursor_byte()
         {
-            self.push_undo_snapshot();
             self.apply_edit(|e| e.delete_word_backward());
         }
     }
@@ -859,7 +804,6 @@ impl Prompt {
     /// ```
     pub fn delete_to_end(&mut self) {
         if self.cursor_byte() < self.input_str().len() {
-            self.push_undo_snapshot();
             self.apply_edit(|e| e.delete_to_end());
         }
     }
@@ -870,7 +814,6 @@ impl Prompt {
     /// command palette can be cleared without holding Backspace.
     pub fn delete_to_start(&mut self) {
         if self.cursor_byte() > 0 {
-            self.push_undo_snapshot();
             self.apply_edit(|e| e.delete_to_start());
         }
     }
@@ -953,7 +896,6 @@ impl Prompt {
     /// Delete the current selection and return the deleted text
     pub fn delete_selection(&mut self) -> Option<String> {
         if self.selection_range().is_some() {
-            self.push_undo_snapshot();
             let mut deleted = None;
             self.apply_edit(|e| deleted = e.delete_selection());
             deleted

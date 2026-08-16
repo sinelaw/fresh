@@ -37,6 +37,12 @@ pub struct TextEdit {
     pub selection_anchor: Option<(usize, usize)>,
     /// Whether to allow multiline (newlines)
     pub multiline: bool,
+    /// Undo history: `(value, flat_cursor_byte)` snapshots captured
+    /// before each mutating edit. Bounded; deduped against the top so
+    /// repeated no-op edits don't grow it.
+    undo_stack: Vec<(String, usize)>,
+    /// Redo counterpart. Cleared on any fresh mutation.
+    redo_stack: Vec<(String, usize)>,
 }
 
 impl Default for TextEdit {
@@ -54,6 +60,8 @@ impl TextEdit {
             cursor_col: 0,
             selection_anchor: None,
             multiline: true,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -65,6 +73,8 @@ impl TextEdit {
             cursor_col: 0,
             selection_anchor: None,
             multiline: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -82,6 +92,8 @@ impl TextEdit {
             cursor_col: 0,
             selection_anchor: None,
             multiline: true,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -94,6 +106,8 @@ impl TextEdit {
             cursor_col: 0,
             selection_anchor: None,
             multiline: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -379,6 +393,7 @@ impl TextEdit {
 
     /// Delete selection and return the deleted text
     pub fn delete_selection(&mut self) -> Option<String> {
+        self.push_undo_checkpoint();
         let ((start_row, start_col), (end_row, end_col)) = self.selection_range()?;
         let deleted = self.selected_text()?;
 
@@ -480,7 +495,59 @@ impl TextEdit {
     // ========================================================================
 
     /// Insert a character at cursor position
+    /// Capture the current `(value, cursor)` for undo and drop redo
+    /// history. Every mutating edit below calls this first; hosts that
+    /// replace the value wholesale (history navigation) call it
+    /// explicitly before `set_value`, which itself never checkpoints —
+    /// programmatic syncs (suggestion navigation re-filling a field on
+    /// every arrow) must not flood the history.
+    pub fn push_undo_checkpoint(&mut self) {
+        let value = self.value();
+        if self
+            .undo_stack
+            .last()
+            .is_some_and(|(text, _)| *text == value)
+        {
+            return;
+        }
+        // Bound the history so a very long editing session can't grow
+        // it without limit.
+        const MAX_UNDO: usize = 500;
+        if self.undo_stack.len() >= MAX_UNDO {
+            self.undo_stack.remove(0);
+        }
+        self.undo_stack.push((value, self.flat_cursor_byte()));
+        self.redo_stack.clear();
+    }
+
+    /// Undo the last edit. Returns true if the value/cursor changed.
+    pub fn undo(&mut self) -> bool {
+        if let Some((text, cursor)) = self.undo_stack.pop() {
+            self.redo_stack
+                .push((self.value(), self.flat_cursor_byte()));
+            self.set_value(&text);
+            self.set_cursor_from_flat(cursor);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Redo the last undone edit. Returns true if applied.
+    pub fn redo(&mut self) -> bool {
+        if let Some((text, cursor)) = self.redo_stack.pop() {
+            self.undo_stack
+                .push((self.value(), self.flat_cursor_byte()));
+            self.set_value(&text);
+            self.set_cursor_from_flat(cursor);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn insert_char(&mut self, c: char) {
+        self.push_undo_checkpoint();
         // Delete selection first if any
         if self.has_selection() {
             self.delete_selection();
@@ -516,6 +583,7 @@ impl TextEdit {
     /// field" workflow. The space preserves token boundaries and
     /// matches what every other GUI text input does on paste.
     pub fn insert_str(&mut self, text: &str) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
         }
@@ -530,6 +598,7 @@ impl TextEdit {
 
     /// Delete character before cursor (backspace)
     pub fn backspace(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -555,6 +624,7 @@ impl TextEdit {
 
     /// Delete character at cursor (delete key)
     pub fn delete(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -584,6 +654,7 @@ impl TextEdit {
 
     /// Delete from cursor to end of word (Ctrl+Delete)
     pub fn delete_word_forward(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -603,6 +674,7 @@ impl TextEdit {
 
     /// Delete from start of word to cursor (Ctrl+Backspace)
     pub fn delete_word_backward(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -627,6 +699,7 @@ impl TextEdit {
     /// kill-to-start, so a field can be cleared without holding
     /// Backspace.
     pub fn delete_to_start(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -641,6 +714,7 @@ impl TextEdit {
 
     /// Delete from cursor to end of line (Ctrl+K)
     pub fn delete_to_end(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -653,6 +727,7 @@ impl TextEdit {
 
     /// Clear all text
     pub fn clear(&mut self) {
+        self.push_undo_checkpoint();
         self.lines = vec![String::new()];
         self.cursor_row = 0;
         self.cursor_col = 0;
