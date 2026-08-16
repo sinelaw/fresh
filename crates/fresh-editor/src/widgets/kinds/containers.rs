@@ -588,6 +588,49 @@ fn collect_col(
         }
     }
 
+    // Vertical flex — the Row flex model turned 90°: with a height
+    // budget, `Spacer { flex: true }` children absorb the leftover
+    // rows (split evenly, remainder to the first), so "pin the hint
+    // bar to the panel bottom" is a flex spacer instead of the
+    // plugin counting chrome rows and emitting blank Raw padding.
+    // Runs after the single-fill pass: a resolved auto-sized
+    // List/Tree consumes the leftover first, and flex spacers then
+    // see none — the two interact by documented precedence instead
+    // of fighting.
+    if let Some(budget) = ctx.avail_height {
+        let flex_idx: Vec<usize> = children
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| matches!(c, WidgetSpec::Spacer { flex: true, .. }))
+            .map(|(i, _)| i)
+            .collect();
+        if !flex_idx.is_empty() {
+            let used: u32 = child_outs
+                .iter()
+                .zip(children.iter())
+                .filter(|(_, c)| !matches!(c, WidgetSpec::Overlay { .. }))
+                .map(|(o, _)| o.entries.len() as u32)
+                .sum();
+            let leftover = budget.saturating_sub(used);
+            let each = leftover / flex_idx.len() as u32;
+            let extra = leftover % flex_idx.len() as u32;
+            for (n, &i) in flex_idx.iter().enumerate() {
+                let rows = each + if (n as u32) < extra { 1 } else { 0 };
+                for _ in 0..rows {
+                    let mut entry = TextPropertyEntry::text("");
+                    ensure_trailing_newline(&mut entry);
+                    child_outs[i].entries.push(entry);
+                }
+                // The spacer's own box was capped before the stretch;
+                // keep its rectangle honest.
+                let stretched = child_outs[i].entries.len() as u32;
+                if let Some(b) = child_outs[i].boxes.last_mut() {
+                    b.height = stretched;
+                }
+            }
+        }
+    }
+
     // Fold every child in through the one shift point — a Col cannot
     // shift some geometry channels and forget others. Overlay children
     // occupy no column height; their subtree is promoted a stacking

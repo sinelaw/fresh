@@ -819,8 +819,14 @@ contract, mid-chain guards included as explicit entries. Adding a
 surface is a variant + a table position + a dispatch arm; the
 ordering no longer lives in control flow. What the tables are *not*
 yet: a real hit-test — containment still lives inside each surface's
-handler because non-widget chrome has no boxes. Still open, in plan
-order: vertical flex/justify (3), chrome boxes + true hit-tested
+handler because non-widget chrome has no boxes. Since then: the
+`ScrollRegion` channel is deleted — the scroll payload rides the
+scrollable widget's own box (one object, one shift path; the
+scrollbar painters and drag read the box tree) — and vertical flex
+shipped: `Spacer { flex }` inside a height-budgeted `Col` absorbs the
+leftover rows (the single-fill pass takes precedence), so
+bottom-pinned chrome needs no plugin row arithmetic. Still open, in
+plan order: chrome boxes + true hit-tested
 capture/bubble replacing the tables and the `*Layout` caches, and the
 short gesture-scoped double-/right-click chains (4), the app-level
 focus unification — `FocusManager`,

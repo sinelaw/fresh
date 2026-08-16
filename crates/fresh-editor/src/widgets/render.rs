@@ -7386,4 +7386,54 @@ pub(crate) mod tests {
             vec!["outside", "ok", "cancel"]
         );
     }
+    #[test]
+    fn col_flex_spacer_absorbs_leftover_height() {
+        // col(button, flexSpacer, button) with a 6-row budget: the
+        // spacer stretches so the second button lands on the last row
+        // — the "pin to bottom" pattern without plugin arithmetic.
+        let btn = |k: &str| WidgetSpec::Button {
+            label: k.to_uppercase(),
+            focused: false,
+            intent: ButtonKind::Normal,
+            key: Some(k.into()),
+            disabled: false,
+            focusable: true,
+            bare: false,
+            full_width: false,
+            hover_style: None,
+        };
+        let spec = WidgetSpec::Col {
+            key: None,
+            children: vec![
+                btn("top"),
+                WidgetSpec::Spacer {
+                    cols: 0,
+                    flex: true,
+                    key: None,
+                },
+                btn("bottom"),
+            ],
+        };
+        let out = render_spec_with_options(
+            &spec,
+            &HashMap::new(),
+            40,
+            RenderOptions {
+                avail_height: Some(6),
+                ..Default::default()
+            },
+        );
+        assert_eq!(out.entries.len(), 6, "col fills its budget");
+        assert!(
+            out.entries[5].text.contains("BOTTOM"),
+            "second button pinned to the last row: {:?}",
+            out.entries
+                .iter()
+                .map(|e| e.text.as_str())
+                .collect::<Vec<_>>()
+        );
+        // Without a budget the spacer stays its natural 1-row self.
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        assert_eq!(out.entries.len(), 3);
+    }
 }
