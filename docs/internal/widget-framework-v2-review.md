@@ -945,14 +945,29 @@ container merges don't drift them. The internal producers
 (dropdown pop-over — already riding it — and the completion popup)
 migrating onto the `Popup` node is what lets the `overlays` channel
 and `HitArea::overlay` close in a later slice.
-Still open, in plan order: chrome geometry produced by layout rather
-than recorded by paint (which is what retires the `*Layout` caches),
-then true registration + bubble dispatch over one shared chrome tree
-replacing the five per-gesture walks and the pre-walk ladders (4) —
-designed in detail in `chrome-event-model-plan.md` (slices 0-7:
-ChromeComponent trait + per-component collect, hit_stack scan,
-guards as backdrop/observer boxes, modal band, minimal keyboard
-slice, geometry-from-layout last), the rest of the app-level focus
+The chrome registration arc (`chrome-event-model-plan.md`) has since
+executed its dispatch half — slices 0 through 4: chrome surfaces
+REGISTER (a `ChromeComponent` per surface, one `components()`
+registry — the app-level `kinds::behavior()`), every per-gesture
+handler arm lives with its component (the central
+`hover_chrome_target`/`rclick_chrome_dispatch`/
+`click_surface_dispatch`/`wheel_chrome_scroll` matches are deleted),
+and ALL FIVE pointer gestures scan ONE tree in ONE order via
+`hit_stack` (effective-z bands, children above parents, document
+order within a band; `Consumed`/`PassAfter`/`Pass` dispositions
+preserve the act-then-continue guards). The per-gesture
+WHEEL_ORDER/CLICK_ORDER arrays are DELETED: their slots became
+stacking structure (z bands ×10; transient dismiss at 175; the
+overlay prompt's wheel/click asymmetry as two thin boxes — wheel
+modal 160 over suggestion capture 155, click scrim 15), so "one
+master z-order" is now true of every walk, not just three. The tree
+is still rebuilt per event from live state (the freshness ruling).
+Still open from that plan: the pre-walk ladders
+(`dispatch_modal_mouse`'s modal band, dock capture, the formal
+pointer-grab slot — slice 5), the minimal keyboard slice
+(`on_key`/`layer()`, context-menu rung — slice 6), and
+geometry-from-layout retiring the `*Layout` caches (slice 7).
+Also open, in overall plan order: the rest of the app-level focus
 unification — `FocusManager`, `Prompt.toolbar_focus`, dock focus
 (5), host-side editing keys (6 step 2), completion-popup migration +
 `overlays`/`overlay_hit_test` deletion (7 — plugin-visible wire
