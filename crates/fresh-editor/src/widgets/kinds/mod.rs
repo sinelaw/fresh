@@ -77,6 +77,11 @@ impl BoxMeta {
 #[derive(Debug, Default)]
 pub(crate) struct KeyFx {
     pub events: Vec<(String, serde_json::Value)>,
+    /// Move the panel's focus by this many ring positions after the
+    /// handler's state lands (Enter on a form-like widget committing
+    /// the field and advancing). Focus order is panel policy — the
+    /// kind only *requests* the move; the dispatcher walks the ring.
+    pub focus_advance: Option<i32>,
 }
 
 /// What the focused widget did with a key.

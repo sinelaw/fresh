@@ -29,6 +29,38 @@ impl WidgetImpl for DualList {
         }
         m
     }
+
+    /// The DualList's whole keyboard vocabulary is self-contained
+    /// state mutation, so it lives here: arrows drive the active
+    /// column's cursor, Left/Right switch columns, Space moves the
+    /// focused item across, PageUp/PageDown reorder within Included.
+    /// Enter commits form-like — the kind requests a focus advance
+    /// rather than reaching into panel policy.
+    fn on_key(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        key: &str,
+        fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        let op = match key {
+            "Up" => DualOp::CursorMove(-1),
+            "Down" => DualOp::CursorMove(1),
+            "PageUp" => DualOp::Reorder(-1),
+            "PageDown" => DualOp::Reorder(1),
+            "Left" => DualOp::SwitchColumn(false),
+            "Right" => DualOp::SwitchColumn(true),
+            "Space" => DualOp::MoveAcross,
+            "Enter" => {
+                fx.focus_advance = Some(1);
+                return super::KeyDisposition::Consumed;
+            }
+            _ => return super::KeyDisposition::Pass,
+        };
+        apply_op(spec, widget_key, panel, op, fx);
+        super::KeyDisposition::Consumed
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -72,6 +104,129 @@ impl WidgetImpl for DualList {
             ctx,
             panel_width,
         )
+    }
+}
+
+/// A `DualList` interaction, resolved from a keystroke by
+/// [`DualList::on_key`].
+enum DualOp {
+    /// Make the Included column active (`true`) or Available (`false`).
+    SwitchColumn(bool),
+    /// Move the active column's cursor by `delta`.
+    CursorMove(i32),
+    /// Move the focused item across columns (add if Available is
+    /// active, remove if Included is active).
+    MoveAcross,
+    /// Reorder the focused Included item by `delta` (no-op unless the
+    /// Included column is active).
+    Reorder(i32),
+}
+
+/// Step a column cursor by `delta`, clamped to `[0, len)`. Empty
+/// column stays at 0.
+fn step_cursor(cursor: usize, delta: i32, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let raw = cursor as i32 + delta;
+    raw.clamp(0, len as i32 - 1) as usize
+}
+
+/// Apply one op against the host-owned instance state: load (or seed
+/// from the spec), mutate, store back, and queue `change` with the
+/// new included set when it actually changed. The single mutation
+/// path for the DualList's keyboard model — the click path only syncs
+/// cursors (`handle_widget_dual_click`) and never changes the set.
+fn apply_op(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    op: DualOp,
+    fx: &mut super::KeyFx,
+) {
+    if widget_key.is_empty() {
+        return;
+    }
+    let WidgetSpec::DualList {
+        options,
+        excluded,
+        included: spec_included,
+        ..
+    } = spec
+    else {
+        return;
+    };
+    let (mut included, mut active_included, mut avail_cur, mut incl_cur) =
+        match panel.instance_states.get(widget_key) {
+            Some(WidgetInstanceState::DualList {
+                included,
+                active_included,
+                available_cursor,
+                included_cursor,
+            }) => (
+                included.clone(),
+                *active_included,
+                *available_cursor as usize,
+                *included_cursor as usize,
+            ),
+            _ => (spec_included.clone(), false, 0usize, 0usize),
+        };
+    included = dual_sanitize_included(options, &included);
+    let mut available = dual_available_values(options, &included, excluded);
+    let clamp = |c: usize, len: usize| if len == 0 { 0 } else { c.min(len - 1) };
+    avail_cur = clamp(avail_cur, available.len());
+    incl_cur = clamp(incl_cur, included.len());
+
+    let before = included.clone();
+    match op {
+        DualOp::SwitchColumn(to_included) => active_included = to_included,
+        DualOp::CursorMove(delta) => {
+            if active_included {
+                incl_cur = step_cursor(incl_cur, delta, included.len());
+            } else {
+                avail_cur = step_cursor(avail_cur, delta, available.len());
+            }
+        }
+        DualOp::MoveAcross => {
+            if active_included {
+                // Remove the focused included item back to Available.
+                if incl_cur < included.len() {
+                    included.remove(incl_cur);
+                    incl_cur = clamp(incl_cur, included.len());
+                }
+            } else {
+                // Add the focused available item to the Included list.
+                if avail_cur < available.len() {
+                    included.push(available[avail_cur].clone());
+                    available = dual_available_values(options, &included, excluded);
+                    avail_cur = clamp(avail_cur, available.len());
+                }
+            }
+        }
+        DualOp::Reorder(delta) => {
+            // Only meaningful in the Included column.
+            if active_included && !included.is_empty() {
+                let target = incl_cur as i32 + delta;
+                if target >= 0 && (target as usize) < included.len() {
+                    included.swap(incl_cur, target as usize);
+                    incl_cur = target as usize;
+                }
+            }
+        }
+    }
+    let changed = included != before;
+    panel.instance_states.insert(
+        widget_key.to_string(),
+        WidgetInstanceState::DualList {
+            included: included.clone(),
+            active_included,
+            available_cursor: avail_cur as u32,
+            included_cursor: incl_cur as u32,
+        },
+    );
+    if changed {
+        fx.events
+            .push(("change".into(), json!({ "included": included })));
     }
 }
 
