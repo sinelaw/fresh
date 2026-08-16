@@ -63,52 +63,6 @@ struct FloatingWidgetProbe {
 }
 
 impl Editor {
-    /// If any overlay layer captures mouse events, dispatch to its
-    /// dedicated handler and return its result; otherwise return `None`
-    /// so the caller continues with the normal click/wheel pipeline.
-    ///
-    /// This is the mouse counterpart of `resolve_focus_context` /
-    /// `presents_blocking_overlay`: precedence is the order of
-    /// `overlay_layers()`, top-first. Only the kinds whose modal
-    /// handlers exist need an arm here — non-capturing layers fall
-    /// through.
-    fn dispatch_modal_mouse(
-        &mut self,
-        mouse_event: crossterm::event::MouseEvent,
-        is_double_click: bool,
-    ) -> Option<AnyhowResult<bool>> {
-        use crate::app::overlay::LayerKind;
-
-        // Snapshot the capturing kinds first so the borrow ends before
-        // any `&mut self` handler runs.
-        let capturing_kind = self.overlay_layers().iter().find_map(|l| match l.kind {
-            LayerKind::Settings
-            | LayerKind::KeybindingEditor
-            | LayerKind::CalibrationWizard
-            | LayerKind::WorkspaceTrust
-            | LayerKind::FloatingModal => Some(l.kind),
-            _ => None,
-        })?;
-        Some(match capturing_kind {
-            LayerKind::KeybindingEditor => self.handle_keybinding_editor_mouse(mouse_event),
-            LayerKind::Settings => self.handle_settings_mouse(mouse_event, is_double_click),
-            // The calibration wizard owns the modal z-band but ignores
-            // every mouse event (its UI is keyboard-driven). Swallowing
-            // here matches the previous explicit `return Ok(false)`.
-            LayerKind::CalibrationWizard => Ok(false),
-            LayerKind::WorkspaceTrust => self.handle_workspace_trust_mouse(mouse_event),
-            // The centered widget modal (orchestrator control room /
-            // New-Session form) captures the whole mouse channel here —
-            // before the terminal-forward and the editor's buffer paths —
-            // so a click/double-click/scroll over the dialog never leaks to
-            // an alternate-screen terminal or the buffer it covers. Clicks
-            // route to the panel's own hit-test (focusing the clicked
-            // widget); everything else is swallowed.
-            LayerKind::FloatingModal => self.handle_floating_modal_mouse(mouse_event),
-            _ => unreachable!("find_map only returns capturing kinds"),
-        })
-    }
-
     /// Mouse handler for the centered widget modal (`floating_widget_panel`).
     /// The dialog is fully modal: presses hit-test the panel (focusing the
     /// clicked widget / placing the text cursor), wheel scrolls it, and a
@@ -116,7 +70,7 @@ impl Editor {
     /// that lands outside the panel box — is swallowed, so nothing reaches
     /// the buffer, terminal, or dock beneath. Always returns
     /// `Ok(true)` (a render is cheap and the modal just consumed an event).
-    fn handle_floating_modal_mouse(
+    pub(super) fn handle_floating_modal_mouse(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
     ) -> AnyhowResult<bool> {
@@ -195,13 +149,15 @@ impl Editor {
 
         let (is_double_click, is_triple_click) = self.detect_multi_click(&mouse_event, col, row);
 
-        // Modal mouse-capture: walk the overlay stack top-down (the same
-        // list `get_key_context` / `dispatch_terminal_input` consult) and
-        // dispatch to the first layer that captures mouse. This replaces
-        // a hand-listed ladder that had drifted out of order with the
-        // keyboard dispatcher.
-        if let Some(result) = self.dispatch_modal_mouse(mouse_event, is_double_click) {
-            return result;
+        // Modal mouse-capture: the first registered component whose
+        // modal surface is up claims the whole mouse channel (the
+        // registry ranks the modal band in `overlay_layers()` order).
+        // This dissolves the `dispatch_modal_mouse` LayerKind ladder —
+        // each modal's capture lives with its component.
+        for c in super::chrome::components() {
+            if let Some(result) = c.capture_mouse(self, mouse_event, is_double_click) {
+                return result;
+            }
         }
 
         // Cancel LSP rename prompt on any mouse interaction
@@ -1805,7 +1761,7 @@ impl Editor {
     /// the current selection; the secondary button cancels or quits); the wheel
     /// scrolls an overflowing dialog. Everything else is absorbed so nothing
     /// reaches the buffer behind the modal.
-    fn handle_workspace_trust_mouse(
+    pub(super) fn handle_workspace_trust_mouse(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
     ) -> AnyhowResult<bool> {
