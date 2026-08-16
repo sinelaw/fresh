@@ -2122,12 +2122,22 @@ impl Editor {
                 if !self.overlay_prompt_active() {
                     return None;
                 }
+                // Hit-test the toolbar's box tree (screen click →
+                // toolbar-local row/col), innermost box first — the same
+                // walk panel clicks use. The deepest keyed focusable box
+                // under the pointer is the control.
                 let hit = self
                     .active_chrome()
-                    .prompt_toolbar_hits
-                    .iter()
-                    .find(|(_, r)| in_rect(col, row, *r))
-                    .map(|(k, _)| k.clone());
+                    .prompt_toolbar_origin
+                    .and_then(|(ox, oy)| {
+                        let (lrow, lcol) = (row.checked_sub(oy)?, col.checked_sub(ox)?);
+                        let boxes = &self.active_chrome().prompt_toolbar_boxes;
+                        crate::widgets::layout_box::hit_path(boxes, lrow as u32, lcol as u32)
+                            .into_iter()
+                            .rev()
+                            .filter(|&i| boxes[i].focusable)
+                            .find_map(|i| boxes[i].key.clone())
+                    });
                 if let Some(widget_key) = hit {
                     // Move keyboard focus to the clicked control so Tab
                     // continues from here, then flip it through the host
