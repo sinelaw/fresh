@@ -555,85 +555,22 @@ impl Editor {
         (is_double, is_triple)
     }
 
-    /// The wheel-scrollable chrome, as z-ordered BOXES built per event
-    /// from the geometry the paint pass already caches — the first
-    /// real slice of "chrome gets boxes" (widget-framework-v2 §4.2).
-    /// The old WHEEL_SURFACES table encoded precedence as data but
-    /// left containment inside each handler; here containment is the
-    /// box rectangle and precedence is `z`, so the dispatch below is
-    /// a pure geometric walk. Deliberately full-screen boxes encode
-    /// the mouse-modal captures (overlay prompt, bottom-anchored
-    /// suggestions, centered modal) that used to be position-blind
-    /// branch conditions.
-    fn wheel_chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
-        use crate::widgets::LayoutBox;
-        let frame = self.active_chrome().last_frame;
-        let full = |kind: &'static str, z: u8| {
-            let mut b = LayoutBox::plain(kind, 0, 0, frame.width as u32, frame.height as u32);
-            b.z = z;
-            b
-        };
-        let rect_box = |kind: &'static str, z: u8, r: ratatui::layout::Rect| {
-            let mut b = LayoutBox::plain(
-                kind,
-                r.y as u32,
-                r.x as u32,
-                r.width as u32,
-                r.height as u32,
-            );
-            b.z = z;
-            b
-        };
-        let mut boxes = Vec::new();
-        if self.overlay_prompt_active() {
-            // Preview pane wins over the result list under the pointer;
-            // the full-screen box beneath makes the overlay mouse-modal.
-            if let Some(r) = self.active_chrome().prompt_preview_area {
-                boxes.push(rect_box("overlay_prompt_preview", 9, r));
-            }
-            boxes.push(full("overlay_prompt", 8));
-        }
-        // Bottom-anchored prompt dropdown: position-blind capture while
-        // suggestions are showing (the handler re-checks and declines
-        // when they vanished mid-event).
-        boxes.push(full("prompt_suggestions", 7));
-        for (_, popup_rect, ..) in &self.active_chrome().global_popup_areas {
-            boxes.push(rect_box("popup", 6, *popup_rect));
-        }
-        if let Some(outer) = self.active_chrome().suggestions_outer_area {
-            boxes.push(rect_box("popup", 6, outer));
-        }
-        for area in &self.active_chrome().popup_areas {
-            boxes.push(rect_box("popup", 6, area.1));
-        }
-        if self.floating_widget_panel.is_some() {
-            // A centered modal consumes the wheel even on a miss.
-            boxes.push(full("floating_panel", 5));
-        }
-        if let Some(dock) = &self.dock {
-            if let Some(inner) = dock.last_inner_rect {
-                boxes.push(rect_box("dock", 4, inner));
-            }
-        }
-        for (_, buffer_id, content_rect, ..) in &self.active_layout().split_areas {
-            if !self
-                .widget_registry
-                .panels_for_buffer(*buffer_id)
-                .is_empty()
-            {
-                boxes.push(rect_box("split_widget_panel", 3, *content_rect));
-            }
-        }
-        // The permanent layout beneath everything: `wheel_surface_at`
-        // resolves pane / explorer / tab strip (or nothing) inside the
-        // handler, so one base box covers it.
-        boxes.push(full("base", 0));
-        boxes
-    }
+    /// Wheel precedence over the shared tree. Full-frame proxy boxes
+    /// make a single z-order gesture-specific for now — each gesture
+    /// ranks the surfaces it handles and skips the rest; the arrays
+    /// dissolve once surfaces carry real rects from the layout pass.
+    const WHEEL_ORDER: &'static [&'static str] = &[
+        "chrome:prompt_preview",
+        "chrome:overlay_prompt_modal",
+        "chrome:prompt_suggestions",
+        "chrome:popups",
+        "chrome:file_browser",
+        "chrome:floating_panel",
+        "chrome:dock",
+        "chrome:split_widget_panel",
+        "chrome:base",
+    ];
 
-    /// One chrome box's wheel handling, by its kind tag: true =
-    /// consumed. Handlers keep their internal gates (a surface whose
-    /// state vanished mid-event declines and the walk continues).
     fn wheel_chrome_scroll(
         &mut self,
         kind: &str,
@@ -642,11 +579,14 @@ impl Editor {
         delta: i32,
     ) -> AnyhowResult<bool> {
         Ok(match kind {
-            "overlay_prompt_preview" | "overlay_prompt" => {
+            "chrome:prompt_preview" | "chrome:overlay_prompt_modal" => {
+                if !self.overlay_prompt_active() {
+                    return Ok(false);
+                }
                 self.handle_overlay_prompt_scroll(col, row, delta)
             }
-            "prompt_suggestions" => self.handle_prompt_scroll(delta),
-            "popup" => {
+            "chrome:prompt_suggestions" => self.handle_prompt_scroll(delta),
+            "chrome:popups" | "chrome:file_browser" => {
                 // File browser popup scrolls its list; every other popup
                 // scrolls through the popup stack. Both consume.
                 if self.is_file_open_active()
@@ -661,7 +601,7 @@ impl Editor {
                 self.scroll_popup(delta);
                 true
             }
-            "floating_panel" => {
+            "chrome:floating_panel" => {
                 self.handle_floating_widget_panel_wheel(
                     super::PanelSlot::Floating,
                     col,
@@ -670,11 +610,11 @@ impl Editor {
                 );
                 true
             }
-            "dock" => {
+            "chrome:dock" => {
                 self.handle_floating_widget_panel_wheel(super::PanelSlot::Dock, col, row, delta)
             }
-            "split_widget_panel" => self.handle_split_widget_panel_wheel(col, row, delta),
-            "base" => {
+            "chrome:split_widget_panel" => self.handle_split_widget_panel_wheel(col, row, delta),
+            "chrome:base" => {
                 match self.active_window().wheel_surface_at(col, row) {
                     None => {}
                     Some(surface) => {
@@ -718,16 +658,18 @@ impl Editor {
             return Ok(());
         }
         // Candidates = every chrome box containing the pointer, walked
-        // top-down by z (ties: later box wins — it painted later). A
-        // handler that declines passes the wheel to the next surface
-        // down, which is what makes scroll chaining and stale-state
-        // races behave.
+        // in this gesture's precedence (see WHEEL_ORDER — the shared
+        // tree's full-frame proxies keep precedence gesture-specific
+        // until surfaces carry real rects). A handler that declines
+        // passes the wheel to the next surface down, which is what
+        // makes scroll chaining and stale-state races behave.
         let mut candidates: Vec<crate::widgets::LayoutBox> = self
-            .wheel_chrome_boxes()
+            .chrome_boxes()
             .into_iter()
             .filter(|b| b.contains(row as u32, col as u32))
+            .filter(|b| Self::WHEEL_ORDER.contains(&b.kind))
             .collect();
-        candidates.sort_by(|a, b| b.z.cmp(&a.z));
+        candidates.sort_by_key(|b| Self::WHEEL_ORDER.iter().position(|k| *k == b.kind));
         for b in candidates {
             if self.wheel_chrome_scroll(b.kind, col, row, delta)? {
                 return Ok(());
@@ -1229,27 +1171,72 @@ impl Editor {
         if self.active_window().context_menu_core().is_some() {
             boxes.push(full("chrome:context_menu", 18));
         }
-        if let Some((inner_rect, _, _, _)) = &self.active_chrome().suggestions_area {
+        let rect_box = |kind: &'static str, z: u8, r: ratatui::layout::Rect| {
             let mut b = LayoutBox::plain(
-                "chrome:suggestions",
-                inner_rect.y as u32,
-                inner_rect.x as u32,
-                inner_rect.width as u32,
-                inner_rect.height as u32,
+                kind,
+                r.y as u32,
+                r.x as u32,
+                r.width as u32,
+                r.height as u32,
             );
-            b.z = 17;
-            boxes.push(b);
+            b.z = z;
+            b
+        };
+        // The suggestions box spans the OUTER rect (click targets the
+        // scrollbar border too); handlers with inner-rect geometry
+        // (hover) re-check and decline.
+        if let Some(outer) = self.active_chrome().suggestions_outer_area {
+            boxes.push(rect_box("chrome:suggestions", 17, outer));
+        } else if let Some((inner_rect, _, _, _)) = &self.active_chrome().suggestions_area {
+            boxes.push(rect_box("chrome:suggestions", 17, *inner_rect));
         }
+        boxes.push(full("chrome:transient_guard", 17));
+        boxes.push(full("chrome:prompt_scrollbar", 17));
+        boxes.push(full("chrome:popup_scrollbar", 17));
+        if self.overlay_prompt_active() {
+            if let Some(r) = self.active_chrome().prompt_preview_area {
+                boxes.push(rect_box("chrome:prompt_preview", 17, r));
+            }
+        }
+        boxes.push(full("chrome:prompt_suggestions", 17));
         // The floating-overlay prompt as a mouse-modal surface (its own
         // result rows resolved above via the suggestions box).
         boxes.push(full("chrome:overlay_prompt_modal", 16));
-        if !self.active_chrome().popup_areas.is_empty() {
-            boxes.push(full("chrome:popups", 15));
+        // Popups are rect-bounded (a wheel or click outside every popup
+        // rect falls through); the absorb/dismiss guards below stay
+        // full-frame.
+        for (_, popup_rect, ..) in &self.active_chrome().global_popup_areas {
+            boxes.push(rect_box("chrome:popups", 15, *popup_rect));
         }
+        for area in &self.active_chrome().popup_areas {
+            boxes.push(rect_box("chrome:popups", 15, area.1));
+        }
+        boxes.push(full("chrome:popup_absorb", 14));
         // Block-or-dismiss guard for transient popups (double-click).
         boxes.push(full("chrome:popup_guard", 14));
         if self.is_file_open_active() {
             boxes.push(full("chrome:file_browser", 13));
+        }
+        if let Some(layout) = &self.active_window().file_browser_layout {
+            boxes.push(rect_box("chrome:file_browser_popup", 13, layout.popup_area));
+        }
+        if self.floating_widget_panel.is_some() {
+            // A centered modal consumes the wheel even on a miss.
+            boxes.push(full("chrome:floating_panel", 13));
+        }
+        if let Some(dock) = &self.dock {
+            if let Some(inner) = dock.last_inner_rect {
+                boxes.push(rect_box("chrome:dock", 13, inner));
+            }
+        }
+        for (_, buffer_id, content_rect, ..) in &self.active_layout().split_areas {
+            if !self
+                .widget_registry
+                .panels_for_buffer(*buffer_id)
+                .is_empty()
+            {
+                boxes.push(rect_box("chrome:split_widget_panel", 12, *content_rect));
+            }
         }
         if self.active_window().menu_bar_visible && self.active_chrome().menu_layout.is_some() {
             boxes.push(full("chrome:menu_bar", 12));
@@ -1276,14 +1263,19 @@ impl Editor {
         boxes.push(full("chrome:split_buttons", 7));
         boxes.push(full("chrome:tabs", 6));
         boxes.push(full("chrome:scrollbars", 5));
+        boxes.push(full("chrome:h_scrollbar", 5));
         if self.active_chrome().status_bar.area.is_some() {
             boxes.push(full("chrome:status_bar", 4));
         }
         if self.active_chrome().search_options_layout.is_some() {
             boxes.push(full("chrome:search_options", 3));
         }
+        for (_, _, content_rect, ..) in &self.active_layout().split_areas {
+            boxes.push(rect_box("chrome:editor", 1, *content_rect));
+        }
         // The base surface: splits / tab strip fallback (right-click's
-        // tab context menu, double-click's word select).
+        // tab context menu, double-click's word select, the wheel's
+        // wheel_surface_at resolution).
         boxes.push(full("chrome:base", 0));
         boxes
     }
@@ -2023,15 +2015,23 @@ impl Editor {
             }
         }
         // Candidates = every chrome box containing the click, walked
-        // top-down by z; a surface that declines passes the click to
-        // the next one beneath — same geometric walk as the wheel.
+        // in this gesture's precedence (see CLICK_ORDER); a surface
+        // that declines passes the click to the next one beneath —
+        // same geometric walk as the wheel.
         let mut candidates: Vec<crate::widgets::LayoutBox> = self
-            .click_chrome_boxes()
+            .chrome_boxes()
             .into_iter()
             .filter(|b| b.contains(row as u32, col as u32))
+            .filter(|b| Self::CLICK_ORDER.contains(&b.kind))
             .collect();
-        candidates.sort_by(|a, b| b.z.cmp(&a.z));
+        candidates.sort_by_key(|b| Self::CLICK_ORDER.iter().position(|k| *k == b.kind));
+        let mut seen = std::collections::HashSet::new();
         for b in candidates {
+            // Rect-bounded surfaces can contribute several boxes (one
+            // per popup); dispatch each surface once.
+            if !seen.insert(b.kind) {
+                continue;
+            }
             if let Some(r) = self.click_surface_dispatch(b.kind, col, row, modifiers) {
                 return r;
             }
@@ -2039,70 +2039,31 @@ impl Editor {
         Ok(())
     }
 
-    /// The click-routable chrome as z-ordered boxes — the click half
-    /// of "chrome gets boxes", sharing the wheel's model: containment
-    /// is the rectangle where the paint caches record one, and a
-    /// full-frame box + handler-decline everywhere the geometry is
-    /// derived (context menus, separators, controls). Precedence is
-    /// `z`, mirroring the old 20-step chain exactly; the two
-    /// mid-chain guards ride at their old positions as boxes whose
-    /// handlers side-effect / absorb.
-    fn click_chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
-        use crate::widgets::LayoutBox;
-        let frame = self.active_chrome().last_frame;
-        let full = |kind: &'static str, z: u8| {
-            let mut b = LayoutBox::plain(kind, 0, 0, frame.width as u32, frame.height as u32);
-            b.z = z;
-            b
-        };
-        let rect_box = |kind: &'static str, z: u8, r: ratatui::layout::Rect| {
-            let mut b = LayoutBox::plain(
-                kind,
-                r.y as u32,
-                r.x as u32,
-                r.width as u32,
-                r.height as u32,
-            );
-            b.z = z;
-            b
-        };
-        let mut boxes = Vec::new();
-        boxes.push(full("click:context_menus", 20));
-        boxes.push(full("click:transient_guard", 19));
-        if let Some(outer) = self.active_chrome().suggestions_outer_area {
-            boxes.push(rect_box("click:suggestions", 18, outer));
-        }
-        boxes.push(full("click:prompt_scrollbar", 17));
-        boxes.push(full("click:popup_scrollbar", 16));
-        for (_, popup_rect, ..) in &self.active_chrome().global_popup_areas {
-            boxes.push(rect_box("click:global_popups", 15, *popup_rect));
-        }
-        for area in &self.active_chrome().popup_areas {
-            boxes.push(rect_box("click:buffer_popups", 14, area.1));
-        }
-        boxes.push(full("click:popup_absorb", 13));
-        if let Some(layout) = &self.active_window().file_browser_layout {
-            boxes.push(rect_box("click:file_browser", 12, layout.popup_area));
-        }
-        boxes.push(full("click:menu_bar", 11));
-        if let Some(r) = self.active_layout().file_explorer_area {
-            boxes.push(rect_box("click:file_explorer", 10, r));
-        }
-        boxes.push(full("click:scrollbar", 9));
-        boxes.push(full("click:horizontal_scrollbar", 8));
-        boxes.push(full("click:status_bar", 7));
-        boxes.push(full("click:search_options", 6));
-        boxes.push(full("click:split_separator", 5));
-        boxes.push(full("click:split_controls", 4));
-        boxes.push(full("click:tab_bar", 3));
-        boxes.push(full("click:overlay_prompt", 2));
-        for (_, _, content_rect, ..) in &self.active_layout().split_areas {
-            boxes.push(rect_box("click:editor", 1, *content_rect));
-        }
-        boxes
-    }
+    /// Click precedence over the shared tree (see WHEEL_ORDER's note —
+    /// the arrays dissolve once surfaces carry real rects).
+    const CLICK_ORDER: &'static [&'static str] = &[
+        "chrome:context_menu",
+        "chrome:transient_guard",
+        "chrome:suggestions",
+        "chrome:prompt_scrollbar",
+        "chrome:popup_scrollbar",
+        "chrome:popups",
+        "chrome:popup_absorb",
+        "chrome:file_browser_popup",
+        "chrome:menu_bar",
+        "chrome:file_explorer",
+        "chrome:scrollbars",
+        "chrome:h_scrollbar",
+        "chrome:status_bar",
+        "chrome:search_options",
+        "chrome:split_separators",
+        "chrome:split_buttons",
+        "chrome:tabs",
+        "chrome:overlay_prompt_modal",
+        "chrome:editor",
+    ];
 
-    /// One surface's click handling:    /// One surface's click handling: `Some` = consumed (with the
+    /// One surface's click handling: `Some` = consumed (with the
     /// handler's result), `None` = not this surface, keep walking.
     fn click_surface_dispatch(
         &mut self,
@@ -2112,32 +2073,33 @@ impl Editor {
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<AnyhowResult<()>> {
         match surface {
-            "click:context_menus" => self.handle_click_context_menus(col, row),
-            "click:transient_guard" => {
+            "chrome:context_menu" => self.handle_click_context_menus(col, row),
+            "chrome:transient_guard" => {
                 if !self.is_mouse_over_any_popup(col, row) {
                     self.dismiss_transient_popups();
                 }
                 None
             }
-            "click:suggestions" => self.handle_click_suggestions(col, row),
-            "click:prompt_scrollbar" => self.handle_click_prompt_scrollbar(col, row),
-            "click:popup_scrollbar" => self.handle_click_popup_scrollbar(col, row),
-            "click:global_popups" => self.handle_click_global_popups(col, row),
-            "click:buffer_popups" => self.handle_click_buffer_popups(col, row),
-            "click:popup_absorb" => self.is_mouse_over_any_popup(col, row).then(|| Ok(())),
-            "click:file_browser" => (self.is_file_open_active()
+            "chrome:suggestions" => self.handle_click_suggestions(col, row),
+            "chrome:prompt_scrollbar" => self.handle_click_prompt_scrollbar(col, row),
+            "chrome:popup_scrollbar" => self.handle_click_popup_scrollbar(col, row),
+            "chrome:popups" => self
+                .handle_click_global_popups(col, row)
+                .or_else(|| self.handle_click_buffer_popups(col, row)),
+            "chrome:popup_absorb" => self.is_mouse_over_any_popup(col, row).then(|| Ok(())),
+            "chrome:file_browser_popup" => (self.is_file_open_active()
                 && self.handle_file_open_click(col, row))
             .then(|| Ok(())),
-            "click:menu_bar" => self.handle_click_menu_bar(col, row),
-            "click:file_explorer" => self.handle_click_file_explorer_area(col, row),
-            "click:scrollbar" => self.handle_click_scrollbar(col, row),
-            "click:horizontal_scrollbar" => self.handle_click_horizontal_scrollbar(col, row),
-            "click:status_bar" => self.handle_click_status_bar(col, row),
-            "click:search_options" => self.handle_click_search_options(col, row),
-            "click:split_separator" => self.handle_click_split_separator(col, row),
-            "click:split_controls" => self.handle_click_split_controls(col, row),
-            "click:tab_bar" => self.handle_click_tab_bar(col, row),
-            "click:overlay_prompt" => {
+            "chrome:menu_bar" => self.handle_click_menu_bar(col, row),
+            "chrome:file_explorer" => self.handle_click_file_explorer_area(col, row),
+            "chrome:scrollbars" => self.handle_click_scrollbar(col, row),
+            "chrome:h_scrollbar" => self.handle_click_horizontal_scrollbar(col, row),
+            "chrome:status_bar" => self.handle_click_status_bar(col, row),
+            "chrome:search_options" => self.handle_click_search_options(col, row),
+            "chrome:split_separators" => self.handle_click_split_separator(col, row),
+            "chrome:split_buttons" => self.handle_click_split_controls(col, row),
+            "chrome:tabs" => self.handle_click_tab_bar(col, row),
+            "chrome:overlay_prompt_modal" => {
                 // A floating-overlay prompt is mouse-modal: its own targets
                 // (result list, scrollbar) were handled above. A click on a
                 // toolbar control toggles it through the host (which emits a
