@@ -677,6 +677,28 @@ impl Prompt {
     }
 
     /// Get the final input (use selected suggestion if available, otherwise raw input)
+    /// The query text. Accessor for the §4.5 state collapse: external
+    /// readers go through this (not the field) so the storage can
+    /// become an embedded `TextEdit` without touching them again.
+    pub fn input_str(&self) -> &str {
+        &self.input
+    }
+
+    /// The caret's byte offset in the query text. Accessor twin of
+    /// [`Self::input_str`].
+    pub fn cursor_byte(&self) -> usize {
+        self.cursor_pos
+    }
+
+    /// Replace the query with `text`, caret at end, whole text
+    /// selected (anchor at 0) — the suggestion-navigation sync shape:
+    /// the synced value sits selected so typing replaces it.
+    pub fn set_input_selected(&mut self, text: String) {
+        self.cursor_pos = text.len();
+        self.input = text;
+        self.selection_anchor = Some(0);
+    }
+
     pub fn get_final_input(&self) -> String {
         self.selected_value().unwrap_or_else(|| self.input.clone())
     }
