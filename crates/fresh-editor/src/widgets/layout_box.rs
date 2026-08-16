@@ -179,6 +179,54 @@ pub fn hit_path(boxes: &[LayoutBox], row: u32, col: u32) -> Vec<usize> {
     }
 }
 
+/// Hit-test the tree at a point and return EVERY box containing it,
+/// ordered top-first — the walk order one linear consume-or-continue
+/// scan needs to be both bubble-up and cross-surface fall-through
+/// (chrome-event-model-plan.md):
+///
+/// - effective z descending, where a box's effective z is the max `z`
+///   along its ancestor chain — a stacking-context rule: a child of a
+///   z18 menu ranks in the z18 band even when its own `z` is 0, so a
+///   subtree's descendants are consulted while the tree is at its
+///   band, immediately followed by their ancestors (bubbling);
+/// - depth descending — children above their parents;
+/// - document order ascending — within a band, earlier-pushed boxes
+///   rank above later ones (chrome components push their specific
+///   targets before their guards).
+///
+/// [`hit_path`] (panels) is this stack truncated to the first
+/// root→target chain and stays separate; `screen_space` boxes never
+/// match (their rect is only knowable at paint — callers consult the
+/// paint-recorded rect before panel/chrome dispatch).
+///
+/// Generic over anything that borrows a `LayoutBox` so the chrome
+/// tree's owner-stamped sidecar boxes walk through the same
+/// primitive as the panels' plain arenas.
+pub fn hit_stack<B: std::borrow::Borrow<LayoutBox>>(boxes: &[B], row: u32, col: u32) -> Vec<usize> {
+    let lb = |i: usize| -> &LayoutBox { boxes[i].borrow() };
+    let mut hits: Vec<usize> = (0..boxes.len())
+        .filter(|&i| lb(i).contains(row, col))
+        .collect();
+    let rank = |i: usize| -> (u8, usize) {
+        let mut z = lb(i).z;
+        let mut d = 0usize;
+        let mut cur = i;
+        while let Some(p) = lb(cur).parent {
+            d += 1;
+            cur = p;
+            z = z.max(lb(cur).z);
+            debug_assert!(d <= boxes.len(), "parent cycle in layout-box arena");
+        }
+        (z, d)
+    };
+    hits.sort_by(|&a, &b| {
+        let (za, da) = rank(a);
+        let (zb, db) = rank(b);
+        zb.cmp(&za).then(db.cmp(&da)).then(a.cmp(&b))
+    });
+    hits
+}
+
 /// Indices of all boxes in document order (pre-order over the tree,
 /// siblings in insertion order). This is the order the focus ring uses.
 pub fn document_order(boxes: &[LayoutBox]) -> Vec<usize> {
@@ -326,6 +374,58 @@ mod tests {
         let boxes = sample();
         let order = document_order(&boxes);
         assert_eq!(order, vec![4, 0, 3, 1, 2]);
+    }
+
+    #[test]
+    fn hit_stack_orders_band_then_depth_then_doc() {
+        let boxes = sample();
+        // Point inside list_b: every container on the chain contains it,
+        // ordered deepest-first (all z 0): list_b, row, col.
+        assert_eq!(hit_stack(&boxes, 3, 25), vec![2, 3, 4]);
+        // Button row: button (depth 1) above col (root).
+        assert_eq!(hit_stack(&boxes, 0, 5), vec![0, 4]);
+        // Miss.
+        assert!(hit_stack(&boxes, 9, 5).is_empty());
+    }
+
+    #[test]
+    fn hit_stack_effective_z_lifts_children_into_their_band() {
+        let mut boxes = sample();
+        // A z=5 surface with a plain z=0 child (a menu and its item
+        // row): the child ranks in the parent's band, ABOVE it (depth),
+        // and the whole subtree ranks above the z=0 content beneath.
+        let mut menu = LayoutBox::plain("menu", 1, 0, 40, 4);
+        menu.z = 5;
+        let item = LayoutBox::plain("item", 2, 0, 40, 1);
+        boxes.push(menu); // 5
+        boxes.push(item); // 6
+        boxes[6].parent = Some(5);
+        let stack = hit_stack(&boxes, 2, 25);
+        assert_eq!(&stack[..2], &[6, 5], "item above menu, both above content");
+        assert_eq!(&stack[2..], &[2, 3, 4], "content beneath in tree order");
+    }
+
+    #[test]
+    fn hit_stack_same_band_keeps_document_order() {
+        // Two flat same-z boxes over the same point: the earlier-pushed
+        // one ranks first (chrome pushes specific targets before their
+        // guards).
+        let mut a = LayoutBox::plain("target", 0, 0, 10, 1);
+        a.z = 3;
+        let mut guard = LayoutBox::plain("guard", 0, 0, 10, 1);
+        guard.z = 3;
+        let boxes = vec![a, guard];
+        assert_eq!(hit_stack(&boxes, 0, 5), vec![0, 1]);
+    }
+
+    #[test]
+    fn hit_stack_skips_screen_space() {
+        let mut boxes = sample();
+        let mut pop = LayoutBox::plain("dropdown_popup", 0, 0, 40, 6);
+        pop.screen_space = true;
+        pop.z = 9;
+        boxes.push(pop);
+        assert!(!hit_stack(&boxes, 0, 5).contains(&5));
     }
 
     #[test]
