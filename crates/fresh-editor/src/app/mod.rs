@@ -13,6 +13,7 @@ mod buffer_groups;
 mod buffer_management;
 mod calibration_actions;
 pub mod calibration_wizard;
+pub(crate) mod chrome;
 mod click_geometry;
 mod click_handlers;
 mod clipboard;
