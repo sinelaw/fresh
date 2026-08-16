@@ -382,6 +382,7 @@ impl Editor {
                 &self.grammar_registry,
                 &self.config.languages,
                 self.config.default_language.as_deref(),
+                buffer.filesystem().as_ref(),
             );
 
         let mut state = EditorState::from_buffer_with_language(buffer, detected);
@@ -564,6 +565,7 @@ impl Editor {
                 &self.grammar_registry,
                 &self.config.languages,
                 self.config.default_language.as_deref(),
+                buffer.filesystem().as_ref(),
             );
 
         let mut state = EditorState::from_buffer_with_language(buffer, detected);
@@ -796,6 +798,9 @@ impl Editor {
         // Detect language from the container path (the basename's
         // extension is what matters; the directory tree is
         // container-side and won't match host-relative globs anyway).
+        // For the same reason the buffer's host filesystem can't see that
+        // tree, so the `.h` C++ probe finds nothing here and a container
+        // header stays C — the pre-existing behaviour for this path.
         let first_line = buffer.first_line_lossy();
         let detected =
             crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
@@ -804,6 +809,7 @@ impl Editor {
                 &self.grammar_registry,
                 &self.config.languages,
                 self.config.default_language.as_deref(),
+                buffer.filesystem().as_ref(),
             );
         let mut state = EditorState::from_buffer_with_language(buffer, detected);
         state.editing_disabled = true;
@@ -1189,6 +1195,7 @@ impl crate::app::window::Window {
                     &self.resources.grammar_registry,
                     &self.resources.config.languages,
                     self.resources.config.default_language.as_deref(),
+                    buffer.filesystem().as_ref(),
                 );
             EditorState::from_buffer_with_language(buffer, detected)
         } else {
