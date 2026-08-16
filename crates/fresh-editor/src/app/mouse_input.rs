@@ -195,10 +195,7 @@ impl Editor {
         // there both stalls the resize and eats the mouse-up that ends it,
         // leaving the drag stuck. Shrinking happened to work only because the
         // pointer stays left of the terminal the whole time.
-        let chrome_drag_active = self.dock_resizing || {
-            let ms = &self.active_window().mouse_state;
-            ms.dragging_separator.is_some() || ms.drag_start_explorer_width.is_some()
-        };
+        let chrome_drag_active = super::chrome::pointer_grab(self).is_some();
         // An open native context menu (tab / "+" new-tab / file-explorer)
         // takes mouse precedence over terminal forwarding. These menus render
         // on top of — and frequently overlap — an alternate-screen terminal
@@ -1479,65 +1476,11 @@ impl Editor {
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
-        // A centered modal takes click precedence over the dock: while
-        // the New-Session form is up over the dock, clicks hit-test the
-        // modal (clicks outside it are swallowed — it has Cancel / Esc).
-        if self.floating_widget_panel.is_some() {
-            self.handle_floating_widget_click(super::PanelSlot::Floating, col, row);
-            return Ok(());
-        }
-        // Dock resize: a press on the dock's right border (its rightmost
-        // column) starts a drag that resizes the dock width. Checked
-        // before the click-routing below so the border column is a
-        // resize handle, not a widget hit.
-        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-            self.dock.as_ref().map(|f| f.placement)
-        {
-            if col == width_cols.saturating_sub(1) {
-                self.dock_resizing = true;
-                return Ok(());
-            }
-        }
-        // Dock click routing (non-modal): clicks inside its column
-        // hit-test (and re-focus it if blurred); clicks in the editor
-        // blur the dock and fall through to normal editor handling.
-        if let Some((super::PanelPlacement::LeftDock { width_cols }, focused)) =
-            self.dock.as_ref().map(|f| (f.placement, f.focused))
-        {
-            if col < width_cols {
-                tracing::debug!(
-                    target: "fresh::dock",
-                    col,
-                    row,
-                    width_cols,
-                    focused,
-                    "handle_mouse_click: click in dock column"
-                );
-                if !focused {
-                    // Symmetric with `blur_floating_panel`: the un-blur
-                    // must notify the plugin via a `focus` widget_event
-                    // so any mirror of dock-focus state updates before
-                    // the click's row-select event fires its scheduling
-                    // logic. Without this, the orchestrator's
-                    // `dockBlurred` mirror stayed `true` and its
-                    // debounced live-switch aborted on the first
-                    // un-dive click.
-                    self.refocus_floating_panel(super::PanelSlot::Dock);
-                }
-                self.handle_floating_widget_click(super::PanelSlot::Dock, col, row);
-                return Ok(());
-            }
-            if focused {
-                tracing::debug!(
-                    target: "fresh::dock",
-                    col,
-                    row,
-                    width_cols,
-                    "handle_mouse_click: click outside dock — blurring"
-                );
-                self.blur_floating_panel(super::PanelSlot::Dock);
-            }
-        }
+        // (The centered modal's precedence over everything here is the
+        // FloatingModal component's whole-channel capture — this path
+        // is unreachable while it is up. Dock routing — column clicks,
+        // the resize-border grab, blur-on-outside — is the Dock
+        // component's boxes and arms in the scan below.)
         // The chrome tree scan, top-down: each box under the click is
         // offered to its owning component until one consumes.
         let tree = super::chrome::chrome_tree(self);
@@ -3127,23 +3070,6 @@ impl Editor {
         self.active_window_mut().new_tab_menu = None;
         self.active_window_mut().close_split_menu = None;
 
-        // Right-click inside the orchestrator dock column → let the plugin
-        // raise a per-session context menu. Mirrors the left-click path:
-        // re-focus the dock first (so the menu acts against a focused dock)
-        // and swallow the event so it never falls through to the editor or
-        // the file-explorer menu below.
-        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-            self.dock.as_ref().map(|f| f.placement)
-        {
-            if col < width_cols {
-                if self.dock.as_ref().map(|f| !f.focused).unwrap_or(false) {
-                    self.refocus_floating_panel(super::PanelSlot::Dock);
-                }
-                self.handle_floating_widget_context_click(super::PanelSlot::Dock, col, row);
-                return Ok(());
-            }
-        }
-
         // The routable surfaces, as chrome boxes — same geometric walk
         // as left-click/wheel. Ordering rides z; the mid-chain
         // clear-explorer-menu side effect is a guard box at its old
@@ -3957,7 +3883,7 @@ impl Editor {
     /// right-clicked row. Returns `true` when a context event fired (so the
     /// caller swallows the click). Clicks on non-list widgets, padding, or
     /// outside the inner rect return `false`.
-    fn handle_floating_widget_context_click(
+    pub(super) fn handle_floating_widget_context_click(
         &mut self,
         slot: super::PanelSlot,
         col: u16,
@@ -4247,7 +4173,12 @@ impl Editor {
         changed
     }
 
-    fn handle_floating_widget_click(&mut self, slot: super::PanelSlot, col: u16, row: u16) {
+    pub(super) fn handle_floating_widget_click(
+        &mut self,
+        slot: super::PanelSlot,
+        col: u16,
+        row: u16,
+    ) {
         // An open dropdown's option list floats as a screen-level pop-over
         // that extends PAST the panel/modal border, so a click on one of
         // its option rows lands outside the panel's inner rect and would be

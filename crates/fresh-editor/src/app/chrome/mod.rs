@@ -133,6 +133,12 @@ impl ChromeTreeBuilder {
         });
     }
 
+    /// Frame height in rows — for components whose box spans the
+    /// full column height (the dock column and its resize border).
+    pub(crate) fn frame_height(&self) -> u32 {
+        self.frame_height
+    }
+
     /// A full-frame surface — a guard/capture whose semantics ARE
     /// full-screen (close guards, absorb/dismiss, modal scrims,
     /// position-blind wheel capture), never a geometry proxy.
@@ -154,6 +160,37 @@ impl ChromeTreeBuilder {
         b.z = z;
         self.push(b);
     }
+}
+
+/// The active pointer GRAB, if any: press-established routing that
+/// owns the pointer until release (dock width resize, split-separator
+/// drag, explorer width drag). Grabs are NOT bubble dispatch — a drag
+/// must keep routing to its owner even when the pointer crosses an
+/// alternate-screen terminal or any other surface (the btop-resize
+/// bug). Derived from the live drag state; the per-event routing
+/// still lives in the Drag/Up arms — decomposing it per component is
+/// the recorded residue of slice 5.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PointerGrab {
+    DockResize,
+    SplitSeparator,
+    ExplorerWidth,
+}
+
+/// The grab in effect for the current event, if any. The terminal
+/// forward sink consults this instead of a hand-listed field check.
+pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
+    if ed.dock_resizing {
+        return Some(PointerGrab::DockResize);
+    }
+    let ms = &ed.active_window().mouse_state;
+    if ms.dragging_separator.is_some() {
+        return Some(PointerGrab::SplitSeparator);
+    }
+    if ms.drag_start_explorer_width.is_some() {
+        return Some(PointerGrab::ExplorerWidth);
+    }
+    None
 }
 
 /// One registered chrome surface: `collect` contributes its boxes for
