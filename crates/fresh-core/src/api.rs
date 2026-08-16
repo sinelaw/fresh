@@ -2774,15 +2774,15 @@ pub enum WidgetSpec {
         key: Option<String>,
     },
 
-    /// A popup layer: the child paints OVER the panel's rows like an
-    /// `Overlay`, but as a first-class tree node destined to replace
-    /// the render-output side channels (`overlays`, `popup`)
-    /// — a popup is part of the tree, hit-tests through the same
-    /// layout-box walk (its box is pointer-opaque), and will grow
-    /// screen-space anchoring so a popup near a panel edge is not
-    /// clipped. Introduced additively: the vocabulary change is
-    /// backward-compatible and frontends that predate it simply
-    /// don't receive it until plugins emit it.
+    /// A popup layer as a first-class tree node: the child either
+    /// paints OVER the panel's rows like an `Overlay` (the default)
+    /// or, with `screen_space`, escapes the panel's clipping and is
+    /// painted at screen level through the same host channel the
+    /// Dropdown pop-over uses. Either way the popup is part of the
+    /// tree and hit-tests through the same layout-box walk (its box
+    /// is pointer-opaque). Introduced additively: the vocabulary
+    /// change is backward-compatible and frontends that predate it
+    /// simply don't receive it until plugins emit it.
     Popup {
         child: Box<WidgetSpec>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
