@@ -933,14 +933,31 @@ surfaces — documented as semantics, not debt. The tree is built per
 event from the recorded layouts (cheap, always state-fresh);
 persisting it per render was evaluated and rejected as staleness
 risk without measured cost.
+Phase 7's popup channel has since generalized: the singleton
+`DropdownPopup` side channel is renamed `PanelPopup` (fields
+`popup`/`popups`/`popup_hits`/`popup_rect`) because it is no longer
+dropdown-specific — a plugin `Popup { screen_space: true }` node now
+renders its child subtree and projects the fully-rendered rows
+through the same channel (empty `row_indices`: generic rows are not
+option cells, so the host records no select hits and the box absorbs
+clicks), with `anchor_absolute` marking explicit anchors so
+container merges don't drift them. The internal producers
+(dropdown pop-over — already riding it — and the completion popup)
+migrating onto the `Popup` node is what lets the `overlays` channel
+and `HitArea::overlay` close in a later slice.
 Still open, in plan order: chrome geometry produced by layout rather
 than recorded by paint (which is what retires the `*Layout` caches),
-then true capture/bubble over one shared chrome tree replacing the
-five per-gesture builders (4), the rest of the app-level focus unification — `FocusManager`,
-`Prompt.toolbar_focus`, dock focus (5), host-side editing keys (6 step
-2), `WidgetSpec::Popup` + side-channel/`overlay_hit_test` deletion (7 —
-plugin-visible wire change, budget the web renderer mirror), Settings
-(8), and tokens/`Async` (9).
+then true registration + bubble dispatch over one shared chrome tree
+replacing the five per-gesture walks and the pre-walk ladders (4) —
+designed in detail in `chrome-event-model-plan.md` (slices 0-7:
+ChromeComponent trait + per-component collect, hit_stack scan,
+guards as backdrop/observer boxes, modal band, minimal keyboard
+slice, geometry-from-layout last), the rest of the app-level focus
+unification — `FocusManager`, `Prompt.toolbar_focus`, dock focus
+(5), host-side editing keys (6 step 2), completion-popup migration +
+`overlays`/`overlay_hit_test` deletion (7 — plugin-visible wire
+change, budget the web renderer mirror), Settings (8), and
+tokens/`Async` (9).
 
 Two standing costs every phase must budget for, found in review: (a) the **web widget
 renderer** (`web-ui/js/65-widgets.js`) hand-mirrors the spec vocabulary and must be

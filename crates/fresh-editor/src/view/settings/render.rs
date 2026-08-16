@@ -1550,7 +1550,7 @@ fn render_control(
             //
             // The shared widget framework (`collect_dropdown`) surfaces an
             // open dropdown's options as a *floating* screen-level pop-over
-            // (`RenderOutput::dropdown_popups`) for plugin panels, and
+            // (`RenderOutput::popups`) for plugin panels, and
             // discards `render_dropdown`'s inline `option_rows`. The Settings
             // modal does not draw those floating pop-overs — it reserves
             // inline rows for the open list via `SettingControl::height`. So

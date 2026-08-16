@@ -16,7 +16,7 @@ use crate::widgets::registry::{HitArea, WidgetInstanceState};
 use crate::widgets::render::{
     ensure_trailing_newline, pad_or_truncate_cols, render_collected, render_section_bottom_border,
     render_section_top_border, snap_down_to_char_boundary, strip_trailing_newline,
-    wrap_in_side_border, CollectedOutput, DropdownPopup, EmbedRect, FocusCursor, OverlayRow,
+    wrap_in_side_border, CollectedOutput, EmbedRect, FocusCursor, OverlayRow, PanelPopup,
     RenderContext, LEFT_BORDER_PREFIX,
 };
 
@@ -209,7 +209,7 @@ fn collect_row(
     let mut focus_cursor: Option<FocusCursor> = None;
     let mut embeds: Vec<EmbedRect> = Vec::new();
     let mut overlays: Vec<OverlayRow> = Vec::new();
-    let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
+    let mut popups: Vec<PanelPopup> = Vec::new();
     let mut boxes: Vec<LayoutBox> = Vec::new();
     let mut wants_fill = false;
     let mut effective_rows: HashMap<String, u32> = HashMap::new();
@@ -260,7 +260,7 @@ fn collect_row(
         // A Dropdown in a Row collapses onto the row's single line, so
         // its pop-over anchors at the row's `buffer_row` (row 0 here;
         // the caller shifts it up). Forward unshifted, like overlays.
-        dropdown_popups.extend(child_out.dropdown_popups);
+        popups.extend(child_out.popups);
         if child_out.entries.is_empty() {
             debug_assert!(child_out.hits.is_empty(), "empty children produce no hits");
             continue;
@@ -340,7 +340,7 @@ fn collect_row(
         embeds,
         overlays,
         self_scroll: None,
-        dropdown_popups,
+        popups,
         wants_fill,
         effective_rows,
         boxes,
@@ -539,7 +539,7 @@ fn collect_col(
     let focus_cursor: Option<FocusCursor> = None;
     let embeds: Vec<EmbedRect> = Vec::new();
     let overlays: Vec<OverlayRow> = Vec::new();
-    let dropdown_popups: Vec<DropdownPopup> = Vec::new();
+    let popups: Vec<PanelPopup> = Vec::new();
     let boxes: Vec<LayoutBox> = Vec::new();
     let wants_fill = false;
     let effective_rows: HashMap<String, u32> = HashMap::new();
@@ -645,7 +645,7 @@ fn collect_col(
         embeds,
         overlays,
         self_scroll: None,
-        dropdown_popups,
+        popups,
         wants_fill,
         effective_rows,
         boxes,
@@ -674,7 +674,7 @@ fn collect_labeled_section(
     let mut focus_cursor: Option<FocusCursor> = None;
     let mut embeds: Vec<EmbedRect> = Vec::new();
     let mut overlays: Vec<OverlayRow> = Vec::new();
-    let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
+    let mut popups: Vec<PanelPopup> = Vec::new();
 
     // Inner area: 1 column of border + 1 column of
     // padding on each side ⇒ 4 columns of chrome.
@@ -720,10 +720,14 @@ fn collect_labeled_section(
     }));
     // Same +1 shift for a Dropdown pop-over nested in a section: the top
     // border occupies row 0, so the child's row 0 (its trigger) is the
-    // section's row 1.
-    for mut dp in child_out.dropdown_popups {
-        dp.anchor_row += 1;
-        dropdown_popups.push(dp);
+    // section's row 1. An absolute-anchored popup (plugin `Popup` with
+    // an explicit anchor) already names its panel-inner row and must
+    // not drift with the flow.
+    for mut dp in child_out.popups {
+        if !dp.anchor_absolute {
+            dp.anchor_row += 1;
+        }
+        popups.push(dp);
     }
 
     // Render the top border with the label embedded as a
@@ -781,7 +785,7 @@ fn collect_labeled_section(
         embeds,
         overlays,
         self_scroll: None,
-        dropdown_popups,
+        popups,
         wants_fill,
         effective_rows,
         boxes,
@@ -812,7 +816,7 @@ pub(super) fn collect_overlay(
         embeds: child_out.embeds,
         overlays: child_out.overlays,
         self_scroll: None,
-        dropdown_popups: child_out.dropdown_popups,
+        popups: child_out.popups,
         boxes: child_out.boxes,
         // An Overlay occupies no column rows, so it never receives a
         // fill budget from `collect_col`; a fill request inside one

@@ -4801,13 +4801,13 @@ impl Editor {
     /// would; a click elsewhere inside the box (border) is swallowed so it
     /// neither selects nor dismisses the modal. Returns true when the click
     /// was inside the pop-over box (and thus consumed).
-    fn try_dropdown_popup_click(&mut self, slot: super::PanelSlot, col: u16, row: u16) -> bool {
+    fn try_panel_popup_click(&mut self, slot: super::PanelSlot, col: u16, row: u16) -> bool {
         let (panel_key, key, hits, popup_rect) = match self.panel(slot) {
             Some(f) => (
                 f.panel_key.clone(),
-                f.dropdown_popup.as_ref().map(|d| d.widget_key.clone()),
-                f.dropdown_popup_hits.clone(),
-                f.dropdown_popup_rect,
+                f.popup.as_ref().map(|d| d.widget_key.clone()),
+                f.popup_hits.clone(),
+                f.popup_rect,
             ),
             None => return false,
         };
@@ -4997,7 +4997,7 @@ impl Editor {
         // its option rows lands outside the panel's inner rect and would be
         // dropped by the gate below. Resolve it first, against the screen
         // rects recorded at draw time.
-        if self.try_dropdown_popup_click(slot, col, row) {
+        if self.try_panel_popup_click(slot, col, row) {
             return;
         }
         // Scrollbar press wins over row hit-testing (the bar overlaps

@@ -1552,25 +1552,25 @@ pub(crate) struct FloatingWidgetState {
     /// to the terminal so it extends past the panel/modal frame). `None`
     /// when no keyed Dropdown in this panel is open. Refreshed on every
     /// render alongside `entries`.
-    pub dropdown_popup: Option<crate::widgets::DropdownPopup>,
+    pub popup: Option<crate::widgets::PanelPopup>,
     /// Screen-space hit rectangles for the open dropdown pop-over's option
     /// rows, recomputed on every draw (like `close_button_rect`). Each maps
     /// a terminal rect to the absolute option index; the mouse hit-test
     /// checks these BEFORE the panel-inner gate so a click on an option
     /// below the modal border still selects it. Empty when no pop-over is
     /// drawn.
-    pub dropdown_popup_hits: Vec<DropdownPopupOptionHit>,
+    pub popup_hits: Vec<PanelPopupOptionHit>,
     /// Full screen rect of the drawn dropdown pop-over box (border
     /// included), so a click anywhere inside it is consumed rather than
     /// dismissing the modal. `None` when no pop-over is drawn.
-    pub dropdown_popup_rect: Option<ratatui::layout::Rect>,
+    pub popup_rect: Option<ratatui::layout::Rect>,
 }
 
 /// One option row of the open dropdown pop-over, captured at draw time as
 /// a screen rect → absolute option index, so the mouse hit-test can route
 /// a click on the (panel-escaping) pop-over back to `dropdown_select`.
 #[derive(Debug, Clone)]
-pub(crate) struct DropdownPopupOptionHit {
+pub(crate) struct PanelPopupOptionHit {
     pub rect: ratatui::layout::Rect,
     pub index: usize,
 }
@@ -2132,9 +2132,9 @@ mod tests {
             close_button_rect: None,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
-            dropdown_popup: None,
-            dropdown_popup_hits: Vec::new(),
-            dropdown_popup_rect: None,
+            popup: None,
+            popup_hits: Vec::new(),
+            popup_rect: None,
         }
     }
 

@@ -664,7 +664,7 @@ fn collect_list(
         embeds: Vec::new(),
         overlays: Vec::new(),
         self_scroll,
-        dropdown_popups: Vec::new(),
+        popups: Vec::new(),
         // List items are virtualized rows, not independently
         // addressable boxes — the List's own box (pushed by
         // `render_collected`) is the dispatch target; row-level

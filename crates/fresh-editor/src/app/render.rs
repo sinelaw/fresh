@@ -4723,7 +4723,7 @@ impl Editor {
             scrollbar_flash_until,
             title,
             closable,
-            dropdown_popup,
+            popup,
         ) = match self.panel(slot) {
             Some(fwp) => (
                 fwp.width_pct,
@@ -4739,7 +4739,7 @@ impl Editor {
                 fwp.scrollbar_flash_until,
                 fwp.title.clone(),
                 fwp.closable,
-                fwp.dropdown_popup.clone(),
+                fwp.popup.clone(),
             ),
             None => return,
         };
@@ -5153,9 +5153,9 @@ impl Editor {
         // the trigger when there's no room below. Each option's screen rect
         // is recorded so the mouse hit-test can route a click (which lands
         // outside the panel's inner rect) back to `dropdown_select`.
-        let mut dropdown_popup_hits: Vec<super::DropdownPopupOptionHit> = Vec::new();
-        let mut dropdown_popup_rect: Option<ratatui::layout::Rect> = None;
-        if let Some(dp) = dropdown_popup.as_ref() {
+        let mut popup_hits: Vec<super::PanelPopupOptionHit> = Vec::new();
+        let mut popup_rect: Option<ratatui::layout::Rect> = None;
+        if let Some(dp) = popup.as_ref() {
             use crate::primitives::display_width::str_width;
             // The renderer delivered fully-rendered rows (windowing,
             // padding, selection styling as theme-key overlays). The
@@ -5188,19 +5188,19 @@ impl Editor {
                 let anchor_screen_x = inner.x.saturating_add(dp.anchor_col as u16);
                 let x = anchor_screen_x.min(area.x + area.width.saturating_sub(w));
                 let y = y.clamp(area.y, area.y + area.height.saturating_sub(h));
-                let popup_rect = ratatui::layout::Rect {
+                let box_rect = ratatui::layout::Rect {
                     x,
                     y,
                     width: w,
                     height: h,
                 };
-                frame.render_widget(Clear, popup_rect);
+                frame.render_widget(Clear, box_rect);
                 let popup_block = Block::default()
                     .borders(Borders::ALL)
                     .border_style(ratatui::style::Style::default().fg(theme.popup_border_fg))
                     .style(ratatui::style::Style::default().bg(theme.popup_bg));
-                let popup_inner = popup_block.inner(popup_rect);
-                frame.render_widget(popup_block, popup_rect);
+                let popup_inner = popup_block.inner(box_rect);
+                frame.render_widget(popup_block, box_rect);
                 for (row_i, entry) in dp.entries.iter().enumerate() {
                     let ry = popup_inner.y + row_i as u16;
                     if ry >= popup_inner.y + popup_inner.height {
@@ -5216,7 +5216,7 @@ impl Editor {
                         None,
                     );
                     if let Some(idx) = dp.row_indices.get(row_i) {
-                        dropdown_popup_hits.push(super::DropdownPopupOptionHit {
+                        popup_hits.push(super::PanelPopupOptionHit {
                             rect: ratatui::layout::Rect {
                                 x: popup_inner.x,
                                 y: ry,
@@ -5227,7 +5227,7 @@ impl Editor {
                         });
                     }
                 }
-                dropdown_popup_rect = Some(popup_rect);
+                popup_rect = Some(box_rect);
             }
         }
 
@@ -5261,8 +5261,8 @@ impl Editor {
             fwp.close_button_rect = close_button_rect;
             fwp.scrollbar_tracks = scrollbar_tracks;
             fwp.scrollbar_hover_zones = scrollbar_hover_zones;
-            fwp.dropdown_popup_hits = dropdown_popup_hits;
-            fwp.dropdown_popup_rect = dropdown_popup_rect;
+            fwp.popup_hits = popup_hits;
+            fwp.popup_rect = popup_rect;
         }
     }
 

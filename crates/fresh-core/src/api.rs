@@ -2776,7 +2776,7 @@ pub enum WidgetSpec {
 
     /// A popup layer: the child paints OVER the panel's rows like an
     /// `Overlay`, but as a first-class tree node destined to replace
-    /// the render-output side channels (`overlays`, `dropdown_popup`)
+    /// the render-output side channels (`overlays`, `popup`)
     /// — a popup is part of the tree, hit-tests through the same
     /// layout-box walk (its box is pointer-opaque), and will grow
     /// screen-space anchoring so a popup near a panel edge is not

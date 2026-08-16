@@ -231,8 +231,8 @@ pub struct RenderOutput {
     /// compact `[value ▼]` trigger. The host draws this as a bordered box
     /// anchored to the trigger's screen row, clipped to the terminal (not
     /// the panel), so the list extends past the panel/modal frame. Only
-    /// one can be open at a time (the focused widget). See [`DropdownPopup`].
-    pub dropdown_popup: Option<DropdownPopup>,
+    /// one can be open at a time (the focused widget). See [`PanelPopup`].
+    pub popup: Option<PanelPopup>,
     /// Effective rows each keyed `List`/`Tree` actually windowed to
     /// this render — spec value, or the auto-size height budget, or
     /// the legacy fallback. Stored on the panel so key/mouse handlers
@@ -247,21 +247,26 @@ pub struct RenderOutput {
     pub boxes: Vec<LayoutBox>,
 }
 
-/// The open `Dropdown`'s option list, projected for a host-native
-/// floating pop-over. `anchor_row` is the 0-based row of the `[value ▼]`
-/// trigger within the panel's inner area (the host adds `inner.y` to get
-/// the screen row and draws the box one row below, flipping above when
-/// there's no room). `anchor_col` is the 0-based **display column** of the
-/// trigger's `[` bracket within the row (the host adds `inner.x` to get the
-/// screen column), so the box drops directly under the button instead of at
-/// the panel's left edge. `options`/`selected`/`scroll` mirror the inline
-/// list's model so the box renders and hit-tests identically — just at
-/// screen coordinates instead of panel-clipped ones.
+/// A panel's screen-level floating pop-over: the open `Dropdown`'s
+/// option list, or a plugin `Popup` node with `screen_space: true`.
+/// `anchor_row` is the 0-based row within the panel's inner area the
+/// box drops from (the host adds `inner.y` to get the screen row and
+/// draws the box one row below, flipping above when there's no room).
+/// `anchor_col` is the 0-based **display column** within that row (the
+/// host adds `inner.x`), so the box drops directly under its trigger
+/// instead of at the panel's left edge.
 #[derive(Debug, Clone)]
-pub struct DropdownPopup {
+pub struct PanelPopup {
     pub widget_key: String,
     pub anchor_row: u32,
     pub anchor_col: u32,
+    /// When true, `anchor_row`/`anchor_col` are already absolute
+    /// panel-inner coordinates (a plugin `Popup` with an explicit
+    /// `anchor`) and the container merges must NOT shift them by the
+    /// node's flow position; false means they're relative to the
+    /// producing node's own row (the Dropdown trigger) and shift
+    /// with it.
+    pub anchor_absolute: bool,
     /// The popup's rows, FULLY RENDERED by the widget renderer —
     /// text, padding, and styling (selection highlight included) as
     /// inline overlays over theme keys, exactly like every other
@@ -320,9 +325,9 @@ pub(crate) struct CollectedOutput {
     pub(crate) self_scroll: Option<crate::widgets::layout_box::BoxScroll>,
     /// Open-Dropdown pop-overs, each anchored to its trigger row. Shifted
     /// through Col/Row/Section collapse exactly like `overlays`'
-    /// `buffer_row`, then collapsed to `RenderOutput::dropdown_popup`
+    /// `buffer_row`, then collapsed to `RenderOutput::popup`
     /// (only one Dropdown is open at a time — the focused one).
-    pub(crate) dropdown_popups: Vec<DropdownPopup>,
+    pub(crate) popups: Vec<PanelPopup>,
     /// True when a descendant `List`/`Tree` omitted `visible_rows`
     /// (wants auto-sizing) but no height budget reached it. A `Col`
     /// with a real `avail_height` resolves this by re-rendering that
@@ -382,9 +387,11 @@ impl CollectedOutput {
             emb.buffer_row += row_offset;
             self.embeds.push(emb);
         }
-        for mut dp in child.dropdown_popups {
-            dp.anchor_row += row_offset;
-            self.dropdown_popups.push(dp);
+        for mut dp in child.popups {
+            if !dp.anchor_absolute {
+                dp.anchor_row += row_offset;
+            }
+            self.popups.push(dp);
         }
         if promote_overlay {
             for (i, e) in child.entries.into_iter().enumerate() {
@@ -609,7 +616,7 @@ pub fn render_spec_with_options(
         overlays: collected.overlays,
         // At most one Dropdown is open at a time (the focused one); take
         // the first if the spec somehow produced several.
-        dropdown_popup: collected.dropdown_popups.into_iter().next(),
+        popup: collected.popups.into_iter().next(),
         effective_rows: collected.effective_rows,
         boxes: collected.boxes,
     }
@@ -6759,7 +6766,7 @@ pub(crate) mod tests {
             "open dropdown must not emit inline option hits"
         );
         let dp = out
-            .dropdown_popup
+            .popup
             .expect("an open dropdown surfaces a floating pop-over");
         assert_eq!(dp.widget_key, "d");
         assert_eq!(
@@ -6829,7 +6836,7 @@ pub(crate) mod tests {
             !out.hits.iter().any(|h| h.event_type == "dropdown_select"),
             "options moved to the pop-over — no inline select hits"
         );
-        let dp = out.dropdown_popup.expect("open dropdown surfaces a popup");
+        let dp = out.popup.expect("open dropdown surfaces a popup");
         assert_eq!(
             dp.entries
                 .iter()
@@ -6851,7 +6858,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn dropdown_popup_closes_when_unfocused() {
+    fn popup_closes_when_unfocused() {
         let spec = make_dropdown(&["a", "b"], 0, Some("d"));
         let mut prev = HashMap::new();
         prev.insert(
@@ -6866,7 +6873,7 @@ pub(crate) mod tests {
         let out = render_spec_no_autofocus(&spec, &prev, "", u32::MAX);
         assert!(out.overlays.is_empty());
         assert!(
-            out.dropdown_popup.is_none(),
+            out.popup.is_none(),
             "an unfocused (closed) dropdown surfaces no pop-over"
         );
         match out.instance_states.get("d") {
@@ -7364,11 +7371,50 @@ pub(crate) mod tests {
             .expect("dropdown popup box");
         assert!(popup.screen_space);
         assert_eq!(popup.z, 2);
-        assert!(
-            out.dropdown_popup.is_some(),
-            "side channel still feeds paint"
-        );
+        assert!(out.popup.is_some(), "side channel still feeds paint");
         assert_eq!(out.boxes[popup.parent.unwrap()].kind, "dropdown");
+    }
+
+    #[test]
+    fn screen_space_popup_rides_the_popup_channel() {
+        // A plugin `Popup { screen_space: true }` contributes no inline
+        // rows; its child renders through the generalized PanelPopup
+        // channel (the one the Dropdown pop-over rides) with no
+        // click-routing indices, and an explicit anchor is absolute —
+        // the enclosing Col must not shift it with the flow.
+        let spec = WidgetSpec::Col {
+            key: None,
+            children: vec![
+                WidgetSpec::Raw {
+                    entries: vec![TextPropertyEntry::text("row0")],
+                    key: None,
+                },
+                WidgetSpec::Popup {
+                    child: Box::new(WidgetSpec::Raw {
+                        entries: vec![TextPropertyEntry::text("float me")],
+                        key: None,
+                    }),
+                    key: Some("pp".into()),
+                    anchor: Some([2, 3]),
+                    screen_space: true,
+                },
+            ],
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        let dp = out.popup.as_ref().expect("screen-space popup surfaces");
+        assert_eq!(dp.widget_key, "pp");
+        assert_eq!((dp.anchor_row, dp.anchor_col), (2, 3), "anchor absolute");
+        assert_eq!(dp.entries.len(), 1);
+        assert!(dp.entries[0].text.starts_with("float me"));
+        assert!(dp.row_indices.is_empty(), "generic rows get no select hits");
+        // Only the sibling Raw row flows inline.
+        assert_eq!(out.entries.len(), 1);
+        let pb = out
+            .boxes
+            .iter()
+            .find(|b| b.kind == "panel_popup")
+            .expect("screen-space popup box");
+        assert!(pb.screen_space);
     }
     #[test]
     fn component_is_a_transparent_focus_trap() {
