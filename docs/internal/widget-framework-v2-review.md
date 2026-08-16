@@ -962,11 +962,27 @@ overlay prompt's wheel/click asymmetry as two thin boxes — wheel
 modal 160 over suggestion capture 155, click scrim 15), so "one
 master z-order" is now true of every walk, not just three. The tree
 is still rebuilt per event from live state (the freshness ruling).
-Still open from that plan: the pre-walk ladders
-(`dispatch_modal_mouse`'s modal band, dock capture, the formal
-pointer-grab slot — slice 5), the minimal keyboard slice
-(`on_key`/`layer()`, context-menu rung — slice 6), and
-geometry-from-layout retiring the `*Layout` caches (slice 7).
+Since then the modal and keyboard slices landed too: the
+`dispatch_modal_mouse` LayerKind ladder is DELETED — each modal
+(Settings, keybinding editor, calibration wizard, workspace trust,
+floating modal) owns its whole-channel mouse capture as a registered
+component (`capture_mouse`, first-active in registry order, ranked
+as the layer stack ranks them); the hardcoded context-menu keyboard
+rung is a registry loop (`on_key` — the keyboard analogue of
+capture); and `overlay_layers()` — the single source of truth for
+keyboard focus, PTY gating, and modal precedence — is DERIVED from
+per-component `layers()` declarations with explicit ranks, so a new
+overlay surface registers a component and appears in every consumer
+for free. The four context-menu `LayerKind` variants collapsed to
+one (no consumer matched them individually). Still open from that
+plan, with the precedence caveats recorded in it: the dock
+click/right-click pre-walk captures and the formal pointer-grab
+slot (dock clicks today deliberately run AFTER terminal-forward and
+the LSP-rename-cancel hook — hoisting them into capture changes
+those interactions, so they move together with the grab slot, not
+before), per-gesture decomposition of the modal handlers plus the
+scan's opacity gate, and geometry-from-layout retiring the
+`*Layout` caches (slice 7).
 Also open, in overall plan order: the rest of the app-level focus
 unification — `FocusManager`, `Prompt.toolbar_focus`, dock focus
 (5), host-side editing keys (6 step 2), completion-popup migration +

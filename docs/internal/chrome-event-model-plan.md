@@ -201,6 +201,29 @@ detection, grab routing, the walk driver, and drag/up plumbing
 (~1,000 lines of dispatchers replaced by a ~150-line driver plus moved
 code).
 
+## Execution status
+
+Slices 0-4 (dispatch), 5a (modal capture through the registry —
+`dispatch_modal_mouse` deleted), and 6a/6b (keyboard grabs;
+`overlay_layers()` derived from per-component `layers()` with
+explicit `layer_rank`s; the four context-menu `LayerKind`s collapsed
+to one) are DONE. Remaining, in order:
+
+- **Dock captures + pointer-grab slot (5 residue).** Caveat found in
+  execution: the dock click capture today runs AFTER terminal-forward
+  and the LSP-rename-cancel hook inside the click path — hoisting it
+  into `capture_mouse` would skip rename-cancel for dock clicks and
+  reorder against the terminal sink. Move it together with the grab
+  slot and re-examine those two interactions explicitly; also decide
+  whether a centered popup overlapping the dock column should keep
+  losing to the dock (today's pre-walk behavior) or win by z (the
+  tree's answer).
+- **Modal per-gesture decomposition + opacity gate (5 residue).**
+  `capture_mouse` is whole-channel by design until the grab slot
+  exists; the scan does not yet honor `pointer_opaque`.
+- **Geometry-from-layout (7).** Per component, one cache per PR, the
+  only pixel-touching slice.
+
 ## What NOT to do
 
 - No persisted tree (freshness property).
