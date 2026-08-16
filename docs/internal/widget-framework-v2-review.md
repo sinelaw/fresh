@@ -848,10 +848,24 @@ kinds request host actions without reaching into the Editor.
 `handle_widget_key`'s match holds only genuine cross-widget panel
 policy: Tab ring cycling, picker forwarding to a sibling scrollable,
 and the single-line-Enter submit/advance fallback.
+The app-level focus unification (§4.4) has begun where it isn't
+gated on the big migrations: the overlay prompt's toolbar is fully
+on the shared model — ring derived from its layout-box tree
+(`focus_ring`, document order; any focusable kind joins), clicks
+hit-testing the same tree (`prompt_toolbar_hits` deleted), and
+activation dispatched through the kind's own `on_key` (the
+Toggle/Button match deleted). Riding on that, the Row paths now
+shift boxes/embeds by *display width* rather than byte length, so
+Row-hosted box geometry is hit-test-correct for non-ASCII labels.
+What remains of `toolbar_focus` is one `Option<String>` naming the
+focused control — collapsing it (and Settings' `FocusManager`, and
+the dock's `focused` flag) into the one `focused: Option<FocusId>`
+awaits the prompt-as-widgets migration (§4.5) and Settings (phase
+8) respectively.
 Still open, in plan order: chrome geometry produced by layout rather
 than recorded by paint (which is what retires the `*Layout` caches),
 then true capture/bubble over one shared chrome tree replacing the
-five per-gesture builders (4), the app-level focus unification — `FocusManager`,
+five per-gesture builders (4), the rest of the app-level focus unification — `FocusManager`,
 `Prompt.toolbar_focus`, dock focus (5), host-side editing keys (6 step
 2), `WidgetSpec::Popup` + side-channel/`overlay_hit_test` deletion (7 —
 plugin-visible wire change, budget the web renderer mirror), Settings
