@@ -1126,6 +1126,28 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Deliver a key **without** draining the async work it kicks off.
+    ///
+    /// [`Self::send_key`] settles all plugin work before returning, which is
+    /// what most tests want — but it also makes every plugin command look
+    /// atomic, so a test can never express "the user pressed the key again
+    /// before the first press finished". Real frames don't wait: the editor
+    /// pumps input and plugin completions on the same loop, so two presses a
+    /// few milliseconds apart both reach the plugin thread while the first
+    /// command is still awaiting a host round-trip.
+    ///
+    /// Use this to reproduce re-entrancy bugs (e.g. #2953, opening the
+    /// Search & Replace panel twice), then settle with `wait_until` /
+    /// `wait_for_async_quiescence` and assert on the rendered screen.
+    pub fn send_key_without_drain(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> AnyhowResult<()> {
+        self.editor.handle_key(code, modifiers)?;
+        Ok(())
+    }
+
     /// Send the same key press multiple times without rendering after each one
     /// This is optimized for tests that need to send many keys in a row (e.g., scrolling)
     /// Only renders once at the end, which is much faster than calling send_key() in a loop
