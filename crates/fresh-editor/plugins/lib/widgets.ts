@@ -367,7 +367,10 @@ export function spacer(cols: number, key?: string): WidgetSpec {
 
 /** Flex horizontal spacer — fills remaining row width
  * (`panel_width - sum(non-flex children)`). Use to right-align a
- * trailing widget: `row(label, flexSpacer(), button)`. With
+ * trailing widget: `row(label, flexSpacer(), button)`. Inside a
+ * `col` on a height-budgeted panel it absorbs leftover ROWS instead —
+ * `col(content, flexSpacer(), hintBar)` pins the hints to the panel
+ * bottom without counting chrome rows. With
  * multiple flex spacers in one row the leftover splits evenly. */
 export function flexSpacer(key?: string): WidgetSpec {
   return { kind: "spacer", cols: 0, flex: true, key };
