@@ -11,10 +11,10 @@ pub(crate) struct FileExplorer;
 impl ChromeComponent for FileExplorer {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
         if let Some(r) = ed.active_layout().file_explorer_area {
-            t.rect("chrome:file_explorer", 10, r);
+            t.rect("chrome:file_explorer", 100, r);
         }
         // Off-explorer right-click clears its menu (declining guard).
-        t.full("chrome:clear_explorer_menu", 9);
+        t.full("chrome:clear_explorer_menu", 90);
     }
 
     fn hover(&self, ed: &Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {

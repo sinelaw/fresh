@@ -14,10 +14,10 @@ impl ChromeComponent for ContextMenu {
         if let Some(core) = ed.active_window().context_menu_core() {
             let frame = ed.active_chrome().last_frame;
             let r = core.rect(frame.width, frame.height);
-            t.rect("chrome:context_menu", 18, r);
+            t.rect("chrome:context_menu", 180, r);
             // TRUE full-frame semantics: a click outside the menu box
             // dismisses it and is consumed.
-            t.full("chrome:context_menu_close_guard", 18);
+            t.full("chrome:context_menu_close_guard", 180);
         }
     }
 

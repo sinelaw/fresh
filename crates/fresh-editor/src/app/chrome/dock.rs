@@ -10,7 +10,7 @@ impl ChromeComponent for Dock {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
         if let Some(dock) = &ed.dock {
             if let Some(inner) = dock.last_inner_rect {
-                t.rect("chrome:dock", 13, inner);
+                t.rect("chrome:dock", 130, inner);
             }
         }
     }

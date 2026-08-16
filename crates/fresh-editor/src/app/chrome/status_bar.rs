@@ -17,7 +17,7 @@ impl ChromeComponent for StatusBar {
                 status_width as u32,
                 1,
             );
-            b.z = 4;
+            b.z = 40;
             t.push(b);
         }
     }

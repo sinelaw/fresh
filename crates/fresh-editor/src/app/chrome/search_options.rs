@@ -21,7 +21,7 @@ impl ChromeComponent for SearchOptions {
                     end.saturating_sub(start) as u32,
                     1,
                 );
-                b.z = 3;
+                b.z = 30;
                 t.push(b);
             }
         }

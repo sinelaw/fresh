@@ -178,14 +178,16 @@ pub(crate) trait ChromeComponent: Sync {
 
 /// The ONE chrome registry — every routable surface, once.
 ///
-/// Ordering: components are grouped (each pushes its boxes
-/// contiguously), which preserves the legacy `chrome_boxes()` PER-KIND
-/// push order exactly; cross-kind order within a z band differs from
-/// the legacy interleaving, which is behavior-neutral because every
-/// walk either orders by a per-gesture kind array (wheel/click) or
-/// sorts by z with at most one accepting surface per band
-/// (hover/right-click/double-click). `assert_parity` checks the
-/// per-kind invariant on every debug-build event.
+/// Ordering: every gesture scans the tree with
+/// [`crate::widgets::layout_box::hit_stack`] — effective-z bands,
+/// children above parents, and document order within a band. z bands
+/// ride a x10 scale (180 context menu … 10 editor, 0 base) so
+/// per-gesture guard/capture surfaces occupy their own slots
+/// (transient dismiss at 175 above the z170 prompt/popup targets, the
+/// overlay prompt's wheel modal at 160 above its position-blind
+/// suggestion capture at 155, its click scrim down at 15 just above
+/// the editor band). Within a band, registry order IS precedence:
+/// components push specific targets before guards.
 pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
     &[
         &context_menu::ContextMenu,
@@ -214,28 +216,4 @@ pub(crate) fn chrome_tree(ed: &Editor) -> Vec<ChromeBox> {
         c.collect(ed, &mut t);
     }
     t.boxes
-}
-
-/// Slice-0 tripwire: the component registry must reproduce the legacy
-/// enumeration's surface set — same kinds, and per kind the same boxes
-/// in the same order (rows/cols/extents/z). Runs on every event in
-/// debug builds (which is what the e2e suites run), then the legacy
-/// body is deleted with the parity check.
-#[cfg(debug_assertions)]
-pub(crate) fn assert_parity(new: &[LayoutBox], legacy: &[LayoutBox]) {
-    use std::collections::HashMap;
-    fn by_kind(list: &[LayoutBox]) -> HashMap<&'static str, Vec<(u32, u32, u32, u32, u8)>> {
-        let mut m: HashMap<&'static str, Vec<(u32, u32, u32, u32, u8)>> = HashMap::new();
-        for b in list {
-            m.entry(b.kind)
-                .or_default()
-                .push((b.row, b.col, b.width, b.height, b.z));
-        }
-        m
-    }
-    debug_assert_eq!(
-        by_kind(new),
-        by_kind(legacy),
-        "chrome component registry must reproduce the legacy chrome_boxes() surfaces"
-    );
 }
