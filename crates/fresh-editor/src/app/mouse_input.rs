@@ -1070,14 +1070,13 @@ impl Editor {
         // whose geometry is finer than their rectangle (context-menu
         // borders, tab-bar background) decline so the point falls
         // through to the boxes below.
-        let mut candidates: Vec<super::chrome::ChromeBox> = super::chrome::chrome_tree(self)
+        let tree = super::chrome::chrome_tree(self);
+        crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32)
             .into_iter()
-            .filter(|b| b.lb.contains(row as u32, col as u32))
-            .collect();
-        candidates.sort_by(|a, b| b.lb.z.cmp(&a.lb.z));
-        candidates
-            .into_iter()
-            .find_map(|b| super::chrome::components()[b.owner].hover(self, &b.lb, col, row))
+            .find_map(|i| {
+                let b = &tree[i];
+                super::chrome::components()[b.owner].hover(self, &b.lb, col, row)
+            })
     }
 
     /// The ONE chrome surface tree for every pointer gesture: each
@@ -1440,12 +1439,9 @@ impl Editor {
         // the mouse-modal overlay swallow, the popup block/dismiss
         // guard, the file-open dialog, the explorer body, then the
         // splits.
-        let mut candidates: Vec<super::chrome::ChromeBox> = super::chrome::chrome_tree(self)
-            .into_iter()
-            .filter(|b| b.lb.contains(row as u32, col as u32))
-            .collect();
-        candidates.sort_by(|a, b| b.lb.z.cmp(&a.lb.z));
-        for b in candidates {
+        let tree = super::chrome::chrome_tree(self);
+        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
+            let b = &tree[i];
             let ev = super::chrome::ChromePointer {
                 press: super::chrome::PointerPress::Double,
                 col,
@@ -3482,12 +3478,9 @@ impl Editor {
         // as left-click/wheel. Ordering rides z; the mid-chain
         // clear-explorer-menu side effect is a guard box at its old
         // position.
-        let mut candidates: Vec<super::chrome::ChromeBox> = super::chrome::chrome_tree(self)
-            .into_iter()
-            .filter(|b| b.lb.contains(row as u32, col as u32))
-            .collect();
-        candidates.sort_by(|a, b| b.lb.z.cmp(&a.lb.z));
-        for b in candidates {
+        let tree = super::chrome::chrome_tree(self);
+        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
+            let b = &tree[i];
             let ev = super::chrome::ChromePointer {
                 press: super::chrome::PointerPress::Right,
                 col,

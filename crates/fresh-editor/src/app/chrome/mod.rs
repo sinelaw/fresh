@@ -41,6 +41,12 @@ pub(crate) struct ChromeBox {
     pub owner: usize,
 }
 
+impl std::borrow::Borrow<LayoutBox> for ChromeBox {
+    fn borrow(&self) -> &LayoutBox {
+        &self.lb
+    }
+}
+
 /// What a component did with a pointer gesture on one of its boxes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Disposition {
