@@ -825,8 +825,16 @@ scrollable widget's own box (one object, one shift path; the
 scrollbar painters and drag read the box tree) — and vertical flex
 shipped: `Spacer { flex }` inside a height-budgeted `Col` absorbs the
 leftover rows (the single-fill pass takes precedence), so
-bottom-pinned chrome needs no plugin row arithmetic. Still open, in
-plan order: chrome boxes + true hit-tested
+bottom-pinned chrome needs no plugin row arithmetic. Chrome boxes have since begun in earnest: BOTH the wheel and the
+click chains dispatch over z-ordered boxes built per event from the
+cached chrome geometry (`wheel_chrome_boxes` / `click_chrome_boxes`)
+— containment is a rectangle wherever the paint caches record one, a
+full-frame box + handler-decline where geometry is derived, and the
+two mid-chain click guards ride at their old positions as boxes. The
+WHEEL_SURFACES/CLICK_SURFACES tables and their enums are deleted.
+Still open, in plan order: hover/double-/right-click onto the same
+builders, chrome geometry produced by layout rather than recorded by
+paint (which is what retires the `*Layout` caches), then true
 capture/bubble replacing the tables and the `*Layout` caches, and the
 short gesture-scoped double-/right-click chains (4), the app-level
 focus unification — `FocusManager`,
