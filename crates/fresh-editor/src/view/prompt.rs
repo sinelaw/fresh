@@ -699,6 +699,22 @@ impl Prompt {
         self.selection_anchor = Some(0);
     }
 
+    /// Replace the query with `text`, caret at end, no selection and
+    /// no undo snapshot — the programmatic sync shape (click-on-
+    /// suggestion, encoding pre-fill, dialog resets).
+    pub fn set_input_plain(&mut self, text: String) {
+        self.cursor_pos = text.len();
+        self.input = text;
+        self.selection_anchor = None;
+    }
+
+    /// Place the caret at `byte` (clamped into the text). Accessor
+    /// twin of [`Self::cursor_byte`] for callers that position the
+    /// caret directly (mouse placement, tests).
+    pub fn set_cursor_byte(&mut self, byte: usize) {
+        self.cursor_pos = byte.min(self.input.len());
+    }
+
     pub fn get_final_input(&self) -> String {
         self.selected_value().unwrap_or_else(|| self.input.clone())
     }

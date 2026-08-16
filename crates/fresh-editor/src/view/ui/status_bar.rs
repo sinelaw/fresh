@@ -830,7 +830,7 @@ impl StatusBarRenderer {
 
         // If there's a selection, split the input into parts
         if let Some((sel_start, sel_end)) = prompt.selection_range() {
-            let input = &prompt.input;
+            let input = prompt.input_str();
 
             // Text before selection
             if sel_start > 0 {
@@ -855,7 +855,7 @@ impl StatusBarRenderer {
             }
         } else {
             // No selection, render entire input normally
-            spans.push(Span::styled(prompt.input.clone(), base_style));
+            spans.push(Span::styled(prompt.input_str().to_string(), base_style));
         }
 
         Self::render_prompt_label_and_input(
@@ -864,7 +864,7 @@ impl StatusBarRenderer {
             vec![Span::styled(prompt.message.clone(), base_style)],
             spans,
             base_style,
-            str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]),
+            str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]),
         );
     }
 
@@ -953,7 +953,7 @@ impl StatusBarRenderer {
         let prefix_len = str_width(&open_prompt);
         let dir_path = file_open_state.current_dir.to_string_lossy();
         let dir_path_len = dir_path.len() + 1; // +1 for trailing slash
-        let input_len = prompt.input.len();
+        let input_len = prompt.input_str().len();
         let total_len = prefix_len + dir_path_len + input_len;
         let threshold = (area.width as usize * 90) / 100;
 
@@ -1003,14 +1003,14 @@ impl StatusBarRenderer {
         // The label here is the whole prefix (message + colorized dir path);
         // the user input (the filename part) scrolls after it so the cursor
         // stays visible even when the typed name overflows the line.
-        let input_spans = vec![Span::styled(prompt.input.clone(), base_style)];
+        let input_spans = vec![Span::styled(prompt.input_str().to_string(), base_style)];
         Self::render_prompt_label_and_input(
             frame,
             area,
             spans,
             input_spans,
             base_style,
-            str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]),
+            str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]),
         );
     }
 
@@ -3056,8 +3056,7 @@ mod tests {
         );
         // 100 chars in an 80-column line: 8 label cols + 72 input cols.
         let input: String = ('a'..='z').cycle().take(100).collect();
-        prompt.input = input.clone();
-        prompt.cursor_pos = prompt.input.len();
+        prompt.set_input_plain(input.clone());
 
         let width: u16 = 80;
         let backend = TestBackend::new(width, 1);
@@ -3089,7 +3088,7 @@ mod tests {
 
         // Move the cursor 15 chars left: still visible (pinned to the last
         // column), and the window follows it leftward.
-        prompt.cursor_pos -= 15;
+        prompt.set_cursor_byte(prompt.cursor_byte() - 15);
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, width, 1);
@@ -3108,8 +3107,8 @@ mod tests {
 
         // With a short input nothing scrolls and the cursor sits right
         // after the typed text.
-        prompt.input = "abc".to_string();
-        prompt.cursor_pos = 3;
+        prompt.set_input_plain("abc".to_string());
+        prompt.set_cursor_byte(3);
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, width, 1);

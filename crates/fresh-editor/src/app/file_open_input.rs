@@ -113,8 +113,7 @@ impl Editor {
                     } else {
                         // Just autocomplete the filename
                         if let Some(prompt) = &mut self.active_window_mut().prompt {
-                            prompt.input = name;
-                            prompt.cursor_pos = prompt.input.len();
+                            prompt.set_input_plain(name);
                         }
                         // Update the filter to match
                         self.update_file_open_filter();
@@ -135,7 +134,7 @@ impl Editor {
                     .active_window()
                     .prompt
                     .as_ref()
-                    .map(|p| p.input.is_empty())
+                    .map(|p| p.input_str().is_empty())
                     .unwrap_or(true);
 
                 if filter_empty && prompt_empty {
@@ -179,7 +178,7 @@ impl Editor {
             .active_window()
             .prompt
             .as_ref()
-            .map(|p| p.input.clone())
+            .map(|p| p.input_str().to_string())
             .unwrap_or_default();
         let (path_input, line, column) = parse_path_line_col(&prompt_input);
 
@@ -305,8 +304,7 @@ impl Editor {
     fn file_open_navigate_to(&mut self, path: std::path::PathBuf) {
         // Clear prompt input
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-            prompt.input.clear();
-            prompt.cursor_pos = 0;
+            prompt.set_input_plain(String::new());
         }
 
         // Load the new directory
@@ -478,8 +476,7 @@ impl Editor {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(0); // UTF-8 is first
                 let enc = Encoding::Utf8;
-                prompt.input = format!("{} ({})", enc.display_name(), enc.description());
-                prompt.cursor_pos = prompt.input.len();
+                prompt.set_input_plain(format!("{} ({})", enc.display_name(), enc.description()));
             }
         }
     }
@@ -556,7 +553,7 @@ impl Editor {
             .active_window()
             .prompt
             .as_ref()
-            .map(|p| p.input.clone())
+            .map(|p| p.input_str().to_string())
             .unwrap_or_default();
 
         // Check if user typed/pasted a path containing directory separators
@@ -599,8 +596,7 @@ impl Editor {
             if target_dir.is_dir() && target_dir != current_dir {
                 // Update prompt to only show the filename (directory is shown separately)
                 if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.input = filename.clone();
-                    prompt.cursor_pos = prompt.input.len();
+                    prompt.set_input_plain(filename.clone());
                 }
                 self.load_file_open_directory(target_dir);
 
@@ -738,8 +734,7 @@ impl Editor {
                 // Update prompt text to show the selected entry name
                 if let Some(name) = entry_name {
                     if let Some(prompt) = &mut self.active_window_mut().prompt {
-                        prompt.input = name;
-                        prompt.cursor_pos = prompt.input.len();
+                        prompt.set_input_plain(name);
                     }
                 }
             }

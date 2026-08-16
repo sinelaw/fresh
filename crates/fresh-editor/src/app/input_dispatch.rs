@@ -374,7 +374,7 @@ impl Editor {
                         prompt.prompt_type,
                         crate::view::prompt::PromptType::SelectTheme { .. }
                     ) {
-                        let theme_name = prompt.input.clone();
+                        let theme_name = prompt.input_str().to_string();
                         self.preview_theme(&theme_name);
                     }
                 }
@@ -577,7 +577,7 @@ impl Editor {
             .active_window()
             .prompt
             .as_ref()
-            .map(|p| (p.prompt_type.clone(), p.input.clone()));
+            .map(|p| (p.prompt_type.clone(), p.input_str().to_string()));
 
         if let Some((prompt_type, current_input)) = prompt_info {
             // Get the history key for this prompt type

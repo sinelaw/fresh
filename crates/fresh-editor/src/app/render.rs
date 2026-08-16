@@ -141,7 +141,7 @@ impl Editor {
                 .active_window()
                 .prompt
                 .as_ref()
-                .map(|p| p.input.clone())
+                .map(|p| p.input_str().to_string())
                 .unwrap_or_default();
             self.update_search_highlights(&query);
         }
@@ -3267,7 +3267,7 @@ impl Editor {
             .active_window()
             .prompt
             .as_ref()
-            .map(|p| p.input.clone())
+            .map(|p| p.input_str().to_string())
             .unwrap_or_default();
         let (search_fg, search_bg) = {
             let theme = self.theme.read().unwrap();
@@ -3735,7 +3735,7 @@ impl Editor {
         // focus indicator and the input caret would be misleading.
         let input_focused = prompt.toolbar_focus.is_none();
         let cursor_x = (str_width(&prompt.message)
-            + str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]))
+            + str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]))
             as u16;
         if draw && input_focused && cursor_x < input_row.width {
             frame.set_cursor_position((input_row.x + cursor_x, input_row.y));
