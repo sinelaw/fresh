@@ -37,6 +37,19 @@ impl WidgetImpl for Button {
         super::KeyDisposition::Consumed
     }
 
+    /// `WidgetAction::Activate` (a plugin mode binding's Enter) on a
+    /// focused Button fires `activate` — unless disabled: the
+    /// renderer excludes disabled buttons from the tab cycle, so a
+    /// focus key still pointing at one is a stale-focus race and the
+    /// event is dropped.
+    fn activate_event(&self, spec: &WidgetSpec) -> Option<(&'static str, serde_json::Value)> {
+        match spec {
+            WidgetSpec::Button { disabled: true, .. } => None,
+            WidgetSpec::Button { .. } => Some(("activate", serde_json::json!({}))),
+            _ => None,
+        }
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("button");
         if let WidgetSpec::Button {
@@ -126,6 +139,7 @@ impl WidgetImpl for Button {
                 byte_end,
                 payload: json!({}),
                 event_type: "activate",
+                owner_key: None,
             });
         }
         ensure_trailing_newline(&mut entry);

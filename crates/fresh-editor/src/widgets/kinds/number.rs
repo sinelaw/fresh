@@ -34,6 +34,27 @@ impl WidgetImpl for Number {
         super::KeyDisposition::Consumed
     }
 
+    /// Pointer model: a value-cell click is only a focus move (which
+    /// already happened before this runs) — the value changes by
+    /// typing or arrow keys on the focused widget — so the recorded
+    /// `number_value` hit event is swallowed rather than surfaced to
+    /// the plugin.
+    fn on_pointer(
+        &self,
+        _spec: &WidgetSpec,
+        _widget_key: &str,
+        _panel: &mut crate::widgets::WidgetPanelState,
+        event_type: &str,
+        _payload: &serde_json::Value,
+        _fx: &mut super::PointerFx,
+    ) -> super::PointerDisposition {
+        if event_type == "number_value" {
+            super::PointerDisposition::Consumed
+        } else {
+            super::PointerDisposition::Default
+        }
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("number");
         if let WidgetSpec::Number { key: Some(k), .. } = spec {
@@ -160,6 +181,7 @@ fn collect_number(
         byte_end: value_range.1,
         payload: json!({}),
         event_type: "number_value",
+        owner_key: None,
     });
     ensure_trailing_newline(&mut entry);
     out.entries.push(entry);

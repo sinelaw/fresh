@@ -34,6 +34,18 @@ impl WidgetImpl for Toggle {
         super::KeyDisposition::Consumed
     }
 
+    /// `WidgetAction::Activate` (a plugin mode binding's Enter) on a
+    /// focused Toggle fires `toggle` with the flipped value — the
+    /// spec's `checked` is the plugin's pushed truth, so the new
+    /// value is computed here, never trusted from the caller.
+    fn activate_event(&self, spec: &WidgetSpec) -> Option<(&'static str, serde_json::Value)> {
+        if let WidgetSpec::Toggle { checked, .. } = spec {
+            Some(("toggle", serde_json::json!({ "checked": !checked })))
+        } else {
+            None
+        }
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("toggle");
         if let WidgetSpec::Toggle { key: Some(k), .. } = spec {
@@ -113,6 +125,7 @@ impl WidgetImpl for Toggle {
             byte_end: chip_range.1,
             payload: json!({ "checked": !checked }),
             event_type: "toggle",
+            owner_key: None,
         });
         ensure_trailing_newline(&mut entry);
         out.entries.push(entry);

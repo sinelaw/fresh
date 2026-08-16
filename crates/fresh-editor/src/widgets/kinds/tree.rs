@@ -177,6 +177,86 @@ impl WidgetImpl for Tree {
         }
         super::KeyDisposition::Consumed
     }
+
+    /// Pointer model: a disclosure-column click toggles the row's
+    /// expansion (the host owns the expanded-keys set) and fires its
+    /// own `expand` event with the post-toggle state — the recorded
+    /// hit event is suppressed. A row-body click syncs the host-owned
+    /// selection to the clicked index and then lets the recorded
+    /// `select` fire, mirroring the List path — without the sync a
+    /// click would leave the highlight where it was. Checkbox
+    /// `toggle` and right-click `context` hits pass through.
+    fn on_pointer(
+        &self,
+        _spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        event_type: &str,
+        payload: &serde_json::Value,
+        fx: &mut super::PointerFx,
+    ) -> super::PointerDisposition {
+        match event_type {
+            "expand" => {
+                let Some(item_key) = payload.get("key").and_then(|v| v.as_str()) else {
+                    // Keyless row: nothing to toggle, and the recorded
+                    // event would name no row — swallow, as the old
+                    // central handler did.
+                    return super::PointerDisposition::Consumed;
+                };
+                let (cur_scroll, cur_sel, mut expanded, cur_user_scrolled) =
+                    match panel.instance_states.get(widget_key) {
+                        Some(WidgetInstanceState::Tree {
+                            scroll_offset,
+                            selected_index,
+                            expanded_keys,
+                            user_scrolled,
+                        }) => (
+                            *scroll_offset,
+                            *selected_index,
+                            expanded_keys.clone(),
+                            *user_scrolled,
+                        ),
+                        _ => (
+                            0u32,
+                            -1i32,
+                            std::collections::HashSet::<String>::new(),
+                            false,
+                        ),
+                    };
+                let now_expanded = if expanded.contains(item_key) {
+                    expanded.remove(item_key);
+                    false
+                } else {
+                    expanded.insert(item_key.to_string());
+                    true
+                };
+                panel.instance_states.insert(
+                    widget_key.to_string(),
+                    WidgetInstanceState::Tree {
+                        scroll_offset: cur_scroll,
+                        selected_index: cur_sel,
+                        expanded_keys: expanded,
+                        // A disclosure click doesn't move the selection —
+                        // keep the user's scroll suppression as-is.
+                        user_scrolled: cur_user_scrolled,
+                    },
+                );
+                fx.key.events.push((
+                    "expand".to_string(),
+                    serde_json::json!({ "key": item_key, "expanded": now_expanded }),
+                ));
+                super::PointerDisposition::Consumed
+            }
+            "select" => {
+                if let Some(idx) = payload.get("index").and_then(|v| v.as_i64()) {
+                    panel.set_selected_index(widget_key, idx as i32);
+                }
+                super::PointerDisposition::Default
+            }
+            _ => super::PointerDisposition::Default,
+        }
+    }
+
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -767,6 +847,7 @@ fn render_widget_tree(
                         "key": item_key.clone(),
                     }),
                     event_type: "select",
+                    owner_key: None,
                 });
             }
         }
@@ -789,6 +870,7 @@ fn render_widget_tree(
                     "expanded": !is_expanded,
                 }),
                 event_type: "expand",
+                owner_key: None,
             });
         }
         // Checkbox hit (when the parent Tree is checkable
@@ -812,6 +894,7 @@ fn render_widget_tree(
                     "checked": new_checked,
                 }),
                 event_type: "toggle",
+                owner_key: None,
             });
         }
         // Row body hit — fires `select`. Spans whatever's
@@ -835,6 +918,7 @@ fn render_widget_tree(
                     "key": item_key.clone(),
                 }),
                 event_type: "select",
+                owner_key: None,
             });
         }
 

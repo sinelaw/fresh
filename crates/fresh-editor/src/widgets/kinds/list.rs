@@ -137,6 +137,46 @@ impl WidgetImpl for List {
         }
         super::KeyDisposition::Consumed
     }
+    /// Pointer model: a row click syncs the host-owned selection to
+    /// the clicked index — preserving scroll, re-arming
+    /// scroll-follows-selection (a deliberate selection snaps a
+    /// scrolled-away view back) — then lets the recorded `select`
+    /// event fire against the List's own key, identical to keyboard
+    /// nav plus the `via: "click"` marker. Right-click `context`
+    /// hits pass through untouched.
+    fn on_pointer(
+        &self,
+        _spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        event_type: &str,
+        payload: &serde_json::Value,
+        _fx: &mut super::PointerFx,
+    ) -> super::PointerDisposition {
+        if event_type == "select" {
+            if let Some(idx) = payload.get("index").and_then(|v| v.as_i64()) {
+                let (prev_scroll, prev_item_height) = match panel.instance_states.get(widget_key) {
+                    Some(WidgetInstanceState::List {
+                        scroll_offset,
+                        item_height,
+                        ..
+                    }) => (*scroll_offset, *item_height),
+                    _ => (0, 1),
+                };
+                panel.instance_states.insert(
+                    widget_key.to_string(),
+                    WidgetInstanceState::List {
+                        scroll_offset: prev_scroll,
+                        selected_index: idx as i32,
+                        item_height: prev_item_height,
+                        user_scrolled: false,
+                    },
+                );
+            }
+        }
+        super::PointerDisposition::Default
+    }
+
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -538,6 +578,11 @@ fn collect_list(
                         "list_key": list_key,
                     }),
                     event_type: "select",
+                    // The row's widget_key is the per-item key (hover
+                    // and pointer resolution use it); the List itself
+                    // owns the hit — focus, selection state, and the
+                    // fired event target it.
+                    owner_key: list_key.map(str::to_string),
                 });
                 emitted += 1;
             }
@@ -576,6 +621,7 @@ fn collect_list(
                     "list_key": list_key,
                 }),
                 event_type: "select",
+                owner_key: list_key.map(str::to_string),
             });
         }
         (end - start) as u32

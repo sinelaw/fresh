@@ -4815,6 +4815,7 @@ impl Editor {
                 byte_end: 0,
                 payload: serde_json::json!({ "index": hit.index }),
                 event_type: "dropdown_select",
+                owner_key: None,
             };
             self.deliver_widget_hit(&panel_key, &ha, None);
             return true;
@@ -4998,95 +4999,30 @@ impl Editor {
             None => return,
         };
         let (brow, bcol) = (probe.brow, probe.bcol);
-        let (mut hit_payload, hit_event, hit_key, hit_kind, hit_byte_start) = match probe.hit {
-            Some(hit) => (
-                hit.payload,
-                hit.event_type.to_string(),
-                hit.widget_key,
-                hit.widget_kind,
-                hit.byte_start,
-            ),
-            None => {
-                tracing::debug!(
-                    target: "fresh::dock",
-                    ?slot, col, row, brow, bcol,
-                    "handle_floating_widget_click: hit_test found no widget"
-                );
-                return;
-            }
-        };
-        if !hit_key.is_empty() {
-            let tabbable = self
-                .widget_registry
-                .get(&panel_key)
-                .map(|p| p.tabbable.iter().any(|k| k == &hit_key))
-                .unwrap_or(false);
+        let Some(hit) = probe.hit else {
             tracing::debug!(
                 target: "fresh::dock",
-                hit_key = %hit_key,
-                hit_kind,
-                hit_event = %hit_event,
-                tabbable,
-                "handle_floating_widget_click: hit"
+                ?slot, col, row, brow, bcol,
+                "handle_floating_widget_click: hit_test found no widget"
             );
-            if tabbable {
-                self.set_panel_focus_and_notify(&panel_key, hit_key.clone());
-            }
-            self.rerender_widget_panel(&panel_key);
-        } else {
-            tracing::debug!(
-                target: "fresh::dock",
-                hit_kind,
-                hit_event = %hit_event,
-                "handle_floating_widget_click: hit with empty key (not focusable)"
-            );
-        }
-        // Click-to-position-cursor: a click inside a text field moves the
-        // caret to the clicked column, matching every GUI text input
-        // (#2573). Focus was set just above, so the field is now the
-        // panel's focused widget; the helper maps `bcol` → value byte and
-        // fires `change` so the plugin's cursor mirror follows.
-        if hit_kind == "text" && hit_event == "focus" {
-            self.reposition_widget_text_cursor_from_click(
-                &panel_key,
-                &hit_key,
-                bcol,
-                hit_byte_start,
-                &hit_payload,
-            );
-        }
-        let handled_specially = if hit_kind == "tree" && hit_event == "expand" {
-            if let Some(item_key) = hit_payload.get("key").and_then(|v| v.as_str()) {
-                self.handle_widget_tree_expand_toggle(&panel_key, &hit_key, item_key);
-                true
-            } else {
-                false
-            }
-        } else if hit_kind == "dropdown" && hit_event == "dropdown_toggle" {
-            // Clicking the `[value ▼]` trigger toggles the option list open.
-            // Focus moved to this dropdown just above, so `focused_dropdown_open`
-            // reads *this* widget's state. Without this the click only focused
-            // the dropdown and fired the event to the plugin, never opening the
-            // list (the shared `deliver_widget_hit` path handled this; this
-            // TUI-native click path did not).
-            let now_open = !self.focused_dropdown_open(&panel_key);
-            self.set_dropdown_open(&panel_key, &hit_key, now_open);
-            true
-        } else {
-            false
+            return;
         };
-        if !handled_specially {
-            // Tag the event as mouse-originated. Keyboard nav (arrows)
-            // fires `select` through `handle_widget_command` *without* this
-            // marker, so a plugin can tell a click apart from an arrow-move
-            // that happens to emit the same event/payload — e.g. the
-            // orchestrator dock opens an inactive on-disk worktree on
-            // *click* but not when you merely arrow past it.
-            if let Some(obj) = hit_payload.as_object_mut() {
-                obj.insert("via".to_string(), serde_json::json!("click"));
-            }
-            self.fire_widget_event(&panel_key, hit_key, hit_event, hit_payload);
-        }
+        tracing::debug!(
+            target: "fresh::dock",
+            hit_key = %hit.widget_key,
+            hit_kind = hit.widget_kind,
+            hit_event = %hit.event_type,
+            "handle_floating_widget_click: hit"
+        );
+        // The shared pointer dispatch — identical to a buffer-cell or
+        // native-frontend click: focus the hit's owner, run the kind's
+        // own `on_pointer`, place a text caret from the clicked byte
+        // column (`bcol`), fire the recorded event unless consumed.
+        // This TUI-native path used to hand-copy a subset of that
+        // ladder and drifted (no list-selection sync, no dual-list
+        // cursor move); delegating is what keeps the three frontends
+        // behaving identically.
+        self.deliver_widget_hit(&panel_key, &hit, Some(bcol));
     }
 
     /// Clear all in-progress drag state on the active window's mouse state.

@@ -76,6 +76,15 @@ pub struct HitArea {
     /// Event type to deliver with the `widget_event` hook
     /// (`"toggle"` or `"activate"`).
     pub event_type: &'static str,
+    /// The spec key of the widget that OWNS this hit — where focus
+    /// moves, whose instance state a click mutates, and the key the
+    /// default event fires against. `None` means `widget_key` is
+    /// already the owner, which is every kind except `List`: a list
+    /// row's `widget_key` is the per-item key (row hover and pointer
+    /// resolution key off it), so the row's hit names its List here.
+    /// Set by the kind's own `collect` — the pointer dispatcher never
+    /// inspects kinds to find the owner.
+    pub owner_key: Option<String>,
     /// True when this hit came from an `Overlay` child — a popup the
     /// renderer paints *over* the rows beneath it without reflowing
     /// them (the dock's "New Task… ▾" and "Move to Folder…" dropdowns).
@@ -85,6 +94,14 @@ pub struct HitArea {
     /// a parameter, decided by the panel's layout-box tree (a z>0 box
     /// covers the base rows beneath it).
     pub overlay: bool,
+}
+
+impl HitArea {
+    /// The owning widget's spec key: `owner_key` when the kind set
+    /// one, otherwise `widget_key`.
+    pub fn owner(&self) -> &str {
+        self.owner_key.as_deref().unwrap_or(&self.widget_key)
+    }
 }
 
 /// Widget instance state retained across spec updates, keyed by
@@ -285,6 +302,66 @@ impl WidgetPanelState {
             .copied()
             .or(spec_visible)
             .unwrap_or(fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
+    }
+
+    /// Set the host-owned selected index for a `List` or `Tree`
+    /// instance, dispatching on the *existing* instance variant so a
+    /// Tree keeps its scroll + expanded-keys set (and a List keeps
+    /// its item height / user-scroll flag). Shared by the pointer
+    /// select path (`Tree::on_pointer`) and the `SetSelectedIndex`
+    /// mutation in the plugin dispatcher so both move Tree
+    /// selections, not just List ones. Does not re-render; callers
+    /// decide when to repaint.
+    pub fn set_selected_index(&mut self, widget_key: &str, index: i32) {
+        let new_state = match self.instance_states.get(widget_key) {
+            Some(WidgetInstanceState::Tree {
+                scroll_offset,
+                selected_index,
+                expanded_keys,
+                user_scrolled,
+            }) => WidgetInstanceState::Tree {
+                scroll_offset: *scroll_offset,
+                expanded_keys: expanded_keys.clone(),
+                // Re-pinning the *same* index (which the orchestrator
+                // dock's `refreshOpenDialog` does on every probe-poll
+                // repaint) must preserve a user scroll — otherwise the
+                // refresh would snap the view back to the selection a
+                // beat after a mouse scroll. Only an actual selection
+                // change re-arms scroll-follows-selection. Mirrors the
+                // List branch below.
+                user_scrolled: *user_scrolled && index == *selected_index,
+                selected_index: index,
+            },
+            other => {
+                let (prev_scroll, prev_index, prev_item_height, prev_user_scrolled) = match other {
+                    Some(WidgetInstanceState::List {
+                        scroll_offset,
+                        selected_index,
+                        item_height,
+                        user_scrolled,
+                    }) => (
+                        *scroll_offset,
+                        *selected_index,
+                        *item_height,
+                        *user_scrolled,
+                    ),
+                    _ => (0, -1, 1, false),
+                };
+                // Re-pinning the *same* index (which `refreshOpenDialog`
+                // does on every repaint) must preserve a user scroll —
+                // otherwise a probe-poll refresh would snap the view back
+                // to the selection a beat after a mouse scroll. Only an
+                // actual selection change re-arms scroll-follows-selection.
+                WidgetInstanceState::List {
+                    scroll_offset: prev_scroll,
+                    selected_index: index,
+                    item_height: prev_item_height,
+                    user_scrolled: prev_user_scrolled && index == prev_index,
+                }
+            }
+        };
+        self.instance_states
+            .insert(widget_key.to_string(), new_state);
     }
 }
 
@@ -703,6 +780,7 @@ mod tests {
             byte_end,
             payload: json!({}),
             event_type: "activate",
+            owner_key: None,
         }
     }
 
@@ -758,6 +836,7 @@ mod tests {
             byte_end,
             payload: json!({ "index": row as i64 }),
             event_type: "select",
+            owner_key: None,
         }
     }
 

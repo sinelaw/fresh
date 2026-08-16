@@ -95,6 +95,32 @@ pub(crate) struct KeyFx {
     pub clipboard_copy: Option<String>,
 }
 
+/// Effects a pointer handler requests beyond mutating panel state:
+/// the shared [`KeyFx`] channel (deferred events, focus advance,
+/// scrollbar flash, clipboard) plus the one pointer-only host action.
+#[derive(Debug, Default)]
+pub(crate) struct PointerFx {
+    pub key: KeyFx,
+    /// Text: place the caret at the clicked byte. The mapping from
+    /// click cell to value byte (and the markdown-document row
+    /// variant) is click-path knowledge the panel doesn't have, so
+    /// the kind requests it and the dispatcher runs the host helper.
+    pub place_caret: bool,
+}
+
+/// What a widget kind did with a resolved pointer hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PointerDisposition {
+    /// Fire the hit's default event (its recorded payload, tagged
+    /// `via: "click"`) against the owning widget's key. This is the
+    /// no-override behaviour — a plain Button click fires `activate`
+    /// this way.
+    Default,
+    /// The handler did everything (state mutation + any `fx` events);
+    /// the recorded default event must NOT fire.
+    Consumed,
+}
+
 /// What the focused widget did with a key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyDisposition {
@@ -153,6 +179,37 @@ pub(crate) trait WidgetImpl: Sync {
         _fx: &mut KeyFx,
     ) -> KeyDisposition {
         KeyDisposition::Pass
+    }
+
+    /// A pointer hit resolved to this widget (the hit's OWNER — for
+    /// a List row that is the List, not the row). This is what
+    /// dissolved `deliver_widget_hit`'s string-kind ladder: the state
+    /// a click mutates (tree expansion, list/tree selection, dropdown
+    /// open flag, dual-list cursors) is mutated here by the kind that
+    /// owns it, and the dispatcher only applies `fx` and — on
+    /// [`PointerDisposition::Default`] — fires the hit's recorded
+    /// event. Focus already moved to the owner before this runs (when
+    /// tabbable), matching click-to-focus everywhere.
+    fn on_pointer(
+        &self,
+        _spec: &WidgetSpec,
+        _widget_key: &str,
+        _panel: &mut crate::widgets::WidgetPanelState,
+        _event_type: &str,
+        _payload: &serde_json::Value,
+        _fx: &mut PointerFx,
+    ) -> PointerDisposition {
+        PointerDisposition::Default
+    }
+
+    /// The semantic event the plugin-facing `WidgetAction::Activate`
+    /// (a mode binding's Enter) fires against this kind when focused.
+    /// `None` = activation is a no-op for this kind — deliberately
+    /// NOT wired for List (plugins drive list activation through
+    /// `select`/`activate_event` on the smart-key path instead), so
+    /// only Button and Toggle answer.
+    fn activate_event(&self, _spec: &WidgetSpec) -> Option<(&'static str, serde_json::Value)> {
+        None
     }
 
     /// A wheel delta bubbling through this widget's box. Return true

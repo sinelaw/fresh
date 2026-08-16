@@ -5346,7 +5346,7 @@ impl Editor {
                 // of clobbering it with a List state (which drops the
                 // expanded-keys set and never moves the highlight).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    Self::set_widget_selected_index_state(panel, &widget_key, index);
+                    panel.set_selected_index(&widget_key, index);
                 }
             }
             WidgetMutation::SetNumber { widget_key, value } => {

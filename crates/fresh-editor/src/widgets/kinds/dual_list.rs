@@ -61,6 +61,30 @@ impl WidgetImpl for DualList {
         apply_op(spec, widget_key, panel, op, fx);
         super::KeyDisposition::Consumed
     }
+
+    /// Pointer model: a cell click makes the clicked column active
+    /// and moves its cursor to the clicked row — cursor/active state
+    /// only, no `change` (the included set is unchanged), and the
+    /// recorded hit event is swallowed. The set itself moves through
+    /// the keyboard vocabulary (`apply_op`).
+    fn on_pointer(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        event_type: &str,
+        payload: &serde_json::Value,
+        _fx: &mut super::PointerFx,
+    ) -> super::PointerDisposition {
+        if event_type != "dual_focus" {
+            return super::PointerDisposition::Default;
+        }
+        let to_included = payload.get("column").and_then(|v| v.as_str()) == Some("included");
+        let index = payload.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+        pointer_focus_cell(spec, widget_key, panel, to_included, index);
+        super::PointerDisposition::Consumed
+    }
+
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -120,6 +144,55 @@ enum DualOp {
     /// Reorder the focused Included item by `delta` (no-op unless the
     /// Included column is active).
     Reorder(i32),
+}
+
+/// Click on a cell: make the clicked column active and move its
+/// cursor to the clicked row, re-deriving the live column contents
+/// from the spec so cursor clamping matches what's on screen.
+fn pointer_focus_cell(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    to_included: bool,
+    index: usize,
+) {
+    let WidgetSpec::DualList {
+        options, excluded, ..
+    } = spec
+    else {
+        return;
+    };
+    let (mut included, mut avail_cur, mut incl_cur) = match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::DualList {
+            included,
+            available_cursor,
+            included_cursor,
+            ..
+        }) => (
+            included.clone(),
+            *available_cursor as usize,
+            *included_cursor as usize,
+        ),
+        _ => (Vec::new(), 0, 0),
+    };
+    included = dual_sanitize_included(options, &included);
+    let available = dual_available_values(options, &included, excluded);
+    if to_included {
+        if index < included.len() {
+            incl_cur = index;
+        }
+    } else if index < available.len() {
+        avail_cur = index;
+    }
+    panel.instance_states.insert(
+        widget_key.to_string(),
+        WidgetInstanceState::DualList {
+            included,
+            active_included: to_included,
+            available_cursor: avail_cur as u32,
+            included_cursor: incl_cur as u32,
+        },
+    );
 }
 
 /// Step a column cursor by `delta`, clamped to `[0, len)`. Empty
@@ -470,6 +543,7 @@ fn collect_dual_list(
                 byte_end: left_end,
                 payload: json!({ "column": "available", "index": i }),
                 event_type: "dual_focus",
+                owner_key: None,
             });
         }
         if right_val.is_some() {
@@ -482,6 +556,7 @@ fn collect_dual_list(
                 byte_end: right_end,
                 payload: json!({ "column": "included", "index": i }),
                 event_type: "dual_focus",
+                owner_key: None,
             });
         }
         out.entries.push(entry);

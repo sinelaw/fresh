@@ -170,6 +170,28 @@ impl WidgetImpl for Text {
         }
     }
 
+    /// Pointer model: a click in the field's editable area moves the
+    /// caret to the clicked byte, matching every GUI text input
+    /// (#2573). The click-cell → value-byte mapping (and the
+    /// markdown-document row variant) is click-path knowledge the
+    /// panel doesn't have, so the kind *requests* the placement and
+    /// the dispatcher runs the host helper. The recorded `focus`
+    /// event still fires — plugins mirror the caret from it.
+    fn on_pointer(
+        &self,
+        _spec: &WidgetSpec,
+        _widget_key: &str,
+        _panel: &mut crate::widgets::WidgetPanelState,
+        event_type: &str,
+        _payload: &serde_json::Value,
+        fx: &mut super::PointerFx,
+    ) -> super::PointerDisposition {
+        if event_type == "focus" {
+            fx.place_caret = true;
+        }
+        super::PointerDisposition::Default
+    }
+
     fn on_wheel(
         &self,
         spec: &WidgetSpec,
@@ -661,6 +683,7 @@ fn render_markdown_text_area(
                 byte_end: entry.text.len() + width,
                 payload: json!({ "mdLine": idx }),
                 event_type: "focus",
+                owner_key: None,
             });
         }
         ensure_trailing_newline(&mut entry);
@@ -905,6 +928,7 @@ fn render_widget_text(
                     byte_end: e.text.len(),
                     payload: json!({}),
                     event_type: "focus",
+                    owner_key: None,
                 });
             }
             // Modal surfaces paint the caret as a REVERSED cell in the
@@ -994,6 +1018,7 @@ fn render_widget_text(
                     "valueLen": rendered.value_len,
                 }),
                 event_type: "focus",
+                owner_key: None,
             });
         }
         ensure_trailing_newline(&mut entry);
