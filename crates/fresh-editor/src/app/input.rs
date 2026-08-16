@@ -261,13 +261,17 @@ impl Editor {
             self.active_window_mut().theme_info_popup = None;
         }
 
-        // The native context menus (file-explorer / tab / "+" new-tab) are
-        // modal: while one is open it owns the keyboard so navigation and
-        // selection work and every other key is filtered out instead of
-        // leaking into the active buffer or the explorer's type-ahead find
-        // underneath. One handler covers all three.
-        if let Some(result) = self.handle_context_menu_key(code, modifiers) {
-            return result;
+        // Chrome keyboard grabs: the first registered component whose
+        // open surface owns the keyboard with a custom dispatcher
+        // claims the key (today: the native context menus — navigation
+        // drives the menu, every other key is swallowed instead of
+        // leaking into the buffer or the explorer's type-ahead find
+        // underneath). The chrome keyboard analogue of the modal
+        // mouse-capture rung above `handle_mouse`'s walks.
+        for c in super::chrome::components() {
+            if let Some(result) = c.on_key(self, code, modifiers) {
+                return result;
+            }
         }
 
         // Determine the current context first
