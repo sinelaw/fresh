@@ -82,4 +82,18 @@ impl ChromeComponent for ContextMenu {
         }
         Ok(Disposition::Pass)
     }
+
+    /// The open native context menu (tab / "+" new-tab /
+    /// file-explorer / close-split) grabs the keyboard: navigation
+    /// and activation on unmodified keys, everything else swallowed
+    /// (#2587). One handler covers all of them via the shared
+    /// geometry core.
+    fn on_key(
+        &self,
+        ed: &mut Editor,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> Option<AnyhowResult<()>> {
+        ed.handle_context_menu_key(code, modifiers)
+    }
 }

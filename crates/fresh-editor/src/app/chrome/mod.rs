@@ -187,6 +187,26 @@ pub(crate) trait ChromeComponent: Sync {
         None
     }
 
+    /// Keyboard grab for a component whose open surface owns the
+    /// keyboard with a custom dispatcher (the native context menus:
+    /// navigation keys drive the menu, everything else is swallowed
+    /// so it can't leak into the buffer beneath). `Some` = the key is
+    /// consumed with the handler's result; `None` = not grabbing,
+    /// normal dispatch continues. Offered by `handle_key` ahead of
+    /// `KeyContext` resolution, first grabbing component in registry
+    /// order wins — the chrome keyboard analogue of `capture_mouse`.
+    /// This is the plan's minimal keyboard slice: the broader
+    /// focused-chrome-ring model stays gated on the prompt-as-widgets
+    /// and Settings migrations.
+    fn on_key(
+        &self,
+        _ed: &mut Editor,
+        _code: crossterm::event::KeyCode,
+        _modifiers: crossterm::event::KeyModifiers,
+    ) -> Option<AnyhowResult<()>> {
+        None
+    }
+
     /// A wheel delta over one of this component's boxes. `Consumed`
     /// stops the walk; a scroll surface already at its bound (or a
     /// box whose real target the pointer missed) returns `Pass` so
