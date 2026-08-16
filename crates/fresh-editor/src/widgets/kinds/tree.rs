@@ -106,6 +106,77 @@ impl WidgetImpl for Tree {
         }
         m
     }
+
+    /// Keyboard model: arrows walk the visible-flat order (skipping
+    /// descendants of collapsed nodes), Page keys jump by a viewport
+    /// page in *nodes*, Right expands / Left collapses-or-parents,
+    /// Enter activates, Space toggles a checkable row's checkbox
+    /// (falling back to activate). Self-contained state + events, so
+    /// it lives with the kind.
+    fn on_key(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        key: &str,
+        fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        match key {
+            "Up" | "Down" => {
+                let delta = if key == "Up" { -1 } else { 1 };
+                select_move(spec, widget_key, panel, delta, fx);
+            }
+            "PageUp" | "PageDown" => {
+                let WidgetSpec::Tree {
+                    visible_rows,
+                    item_height,
+                    card_borders,
+                    ..
+                } = spec
+                else {
+                    return super::KeyDisposition::Pass;
+                };
+                // A Tree paces in *nodes*, so a multi-row card tree
+                // divides the row budget by its fixed item height
+                // first. Bordered cards take two extra rows each;
+                // dividing by the card height is a conservative page
+                // estimate (never overshoots). The row window comes
+                // from the panel's last render (`effective_rows`).
+                let per_node = if *card_borders && *item_height > 1 {
+                    *item_height + 2
+                } else {
+                    (*item_height).max(1)
+                };
+                let nodes_per_page =
+                    panel.effective_visible_rows(widget_key, *visible_rows) / per_node;
+                let page = nodes_per_page.saturating_sub(1).max(1) as i32;
+                let delta = if key == "PageUp" { -page } else { page };
+                select_move(spec, widget_key, panel, delta, fx);
+            }
+            "Left" | "Right" => {
+                lateral(spec, widget_key, panel, key == "Right", fx);
+            }
+            "Enter" => {
+                if let Some(ev) = activate_event(spec, widget_key, panel) {
+                    fx.events.push(ev);
+                }
+            }
+            "Space" => {
+                // On a checkable Tree, Space is the conventional
+                // checkbox key — toggle the focused row (matching what
+                // a click on its `[v]`/`[ ]` glyph would do). Falls
+                // back to `activate` for trees that aren't checkable,
+                // or rows without a checkbox glyph (`checked: None`).
+                if let Some(ev) = toggle_if_checkable_event(spec, widget_key, panel) {
+                    fx.events.push(ev);
+                } else if let Some(ev) = activate_event(spec, widget_key, panel) {
+                    fx.events.push(ev);
+                }
+            }
+            _ => return super::KeyDisposition::Pass,
+        }
+        super::KeyDisposition::Consumed
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -146,6 +217,249 @@ impl WidgetImpl for Tree {
             panel_width,
         )
     }
+}
+
+/// Move the host-owned selection by `delta` along the visible-flat
+/// order (descendants of collapsed nodes are skipped — selection is
+/// the *absolute* `nodes` index, so we walk the visible order to
+/// find the neighbour), re-arming scroll-follows-selection, and
+/// queue `select`. Also requests the host's scrollbar flash so
+/// keyboard nav in an overflowing dock list stays oriented.
+pub(crate) fn select_move(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    delta: i32,
+    fx: &mut super::KeyFx,
+) {
+    let WidgetSpec::Tree {
+        selected_index,
+        nodes,
+        item_keys,
+        ..
+    } = spec
+    else {
+        return;
+    };
+    if nodes.is_empty() {
+        return;
+    }
+    let (cur_sel, cur_scroll, expanded) = match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::Tree {
+            selected_index,
+            scroll_offset,
+            expanded_keys,
+            ..
+        }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
+        _ => (*selected_index, 0u32, HashSet::new()),
+    };
+    let visible_indices = collect_visible_tree_indices(nodes, item_keys, &expanded);
+    if visible_indices.is_empty() {
+        return;
+    }
+    let cur_pos = if cur_sel < 0 {
+        if delta > 0 {
+            -1
+        } else {
+            visible_indices.len() as i32
+        }
+    } else {
+        visible_indices
+            .iter()
+            .position(|&v| v as i32 == cur_sel)
+            .map(|p| p as i32)
+            .unwrap_or(-1)
+    };
+    let new_pos = (cur_pos + delta).clamp(0, (visible_indices.len() as i32) - 1);
+    let new_abs = visible_indices[new_pos as usize];
+    let new_key = item_keys.get(new_abs).cloned().unwrap_or_default();
+    panel.instance_states.insert(
+        widget_key.to_string(),
+        WidgetInstanceState::Tree {
+            scroll_offset: cur_scroll,
+            selected_index: new_abs as i32,
+            expanded_keys: expanded,
+            // Keyboard nav is a deliberate selection move —
+            // re-arm scroll-follows-selection.
+            user_scrolled: false,
+        },
+    );
+    fx.flash_scrollbar = true;
+    fx.events.push((
+        "select".into(),
+        json!({ "index": new_abs as i64, "key": new_key }),
+    ));
+}
+
+/// Right/Left arrow.
+///
+/// * Right: if the selected node has children and is collapsed,
+///   expand it. Else no-op.
+/// * Left: if the selected node has children and is expanded,
+///   collapse it. Else move selection up to the parent.
+///
+/// Updates host instance state and (when a change happened) queues
+/// `expand` or `select`.
+pub(crate) fn lateral(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    is_right: bool,
+    fx: &mut super::KeyFx,
+) {
+    let WidgetSpec::Tree {
+        selected_index,
+        nodes,
+        item_keys,
+        ..
+    } = spec
+    else {
+        return;
+    };
+    if nodes.is_empty() {
+        return;
+    }
+    let (cur_sel, cur_scroll, mut expanded, cur_user_scrolled) =
+        match panel.instance_states.get(widget_key) {
+            Some(WidgetInstanceState::Tree {
+                selected_index,
+                scroll_offset,
+                expanded_keys,
+                user_scrolled,
+            }) => (
+                *selected_index,
+                *scroll_offset,
+                expanded_keys.clone(),
+                *user_scrolled,
+            ),
+            _ => (*selected_index, 0u32, HashSet::new(), false),
+        };
+    if cur_sel < 0 {
+        return;
+    }
+    let sel_idx = cur_sel as usize;
+    let Some(node) = nodes.get(sel_idx) else {
+        return;
+    };
+    let key = item_keys.get(sel_idx).cloned().unwrap_or_default();
+    let was_expanded = !key.is_empty() && expanded.contains(&key);
+
+    let mut new_sel = cur_sel;
+    let mut expansion_changed: Option<bool> = None; // Some(new_state)
+    if is_right {
+        if node.has_children && !was_expanded && !key.is_empty() {
+            expanded.insert(key.clone());
+            expansion_changed = Some(true);
+        }
+    } else if node.has_children && was_expanded && !key.is_empty() {
+        expanded.remove(&key);
+        expansion_changed = Some(false);
+    } else if let Some(parent_idx) = crate::widgets::tree_parent_index(nodes, sel_idx) {
+        new_sel = parent_idx as i32;
+    }
+    // No change → bail (don't fire spurious select/expand).
+    if expansion_changed.is_none() && new_sel == cur_sel {
+        return;
+    }
+    let final_key = item_keys.get(new_sel as usize).cloned().unwrap_or_default();
+    panel.instance_states.insert(
+        widget_key.to_string(),
+        WidgetInstanceState::Tree {
+            scroll_offset: cur_scroll,
+            selected_index: new_sel,
+            expanded_keys: expanded,
+            // Jumping to the parent is a deliberate selection
+            // move (re-arm follow); a pure expansion flip keeps
+            // the user's scroll intact.
+            user_scrolled: cur_user_scrolled && new_sel == cur_sel,
+        },
+    );
+    if let Some(now_expanded) = expansion_changed {
+        fx.events.push((
+            "expand".into(),
+            json!({
+                "index": cur_sel as i64,
+                "key": key,
+                "expanded": now_expanded,
+            }),
+        ));
+    } else if new_sel != cur_sel {
+        fx.events.push((
+            "select".into(),
+            json!({
+                "index": new_sel as i64,
+                "key": final_key,
+            }),
+        ));
+    }
+}
+
+/// The `activate` event for the currently-selected node, if any.
+/// Shared by Enter in [`Tree::on_key`] and the panel-level picker
+/// forwarding — the plugin's handler decides what "activate" means
+/// (open the file, run an action, etc.).
+pub(crate) fn activate_event(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &crate::widgets::WidgetPanelState,
+) -> Option<(String, serde_json::Value)> {
+    let WidgetSpec::Tree {
+        selected_index,
+        item_keys,
+        ..
+    } = spec
+    else {
+        return None;
+    };
+    let sel = match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::Tree { selected_index, .. }) => *selected_index,
+        _ => *selected_index,
+    };
+    if sel < 0 {
+        return None;
+    }
+    let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
+    Some(("activate".into(), json!({ "index": sel, "key": item_key, })))
+}
+
+/// If the focused row is checkable (parent tree has `checkable:
+/// true` *and* the row's `checked` is `Some(_)`), the `toggle` event
+/// with the inverted value — mirroring what a click on the row's
+/// `[v]`/`[ ]` glyph would do. `None` lets the caller fall back to
+/// `activate`.
+fn toggle_if_checkable_event(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &crate::widgets::WidgetPanelState,
+) -> Option<(String, serde_json::Value)> {
+    let WidgetSpec::Tree {
+        selected_index,
+        nodes,
+        item_keys,
+        checkable,
+        ..
+    } = spec
+    else {
+        return None;
+    };
+    if !checkable {
+        return None;
+    }
+    let sel = match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::Tree { selected_index, .. }) => *selected_index,
+        _ => *selected_index,
+    };
+    if sel < 0 {
+        return None;
+    }
+    // No checkbox glyph on this row — let activate fire.
+    let cur_checked = nodes.get(sel as usize).and_then(|n| n.checked)?;
+    let new_checked = !cur_checked;
+    let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
+    Some((
+        "toggle".into(),
+        json!({ "index": sel, "key": item_key, "checked": new_checked, }),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
