@@ -1808,7 +1808,8 @@ fn handle_insert_tab(
 ///
 /// When `extend_selection` is false (MoveUp): collapses any selection to the top edge first
 /// (VSCode/Sublime behavior, issue #1566), then respects Emacs mark mode via deselect_on_move.
-/// When `extend_selection` is true (SelectUp): keeps the existing anchor fixed and extends it.
+/// When `extend_selection` is true (SelectUp): keeps the existing anchor fixed and extends it,
+/// and on the first line extends the head to the buffer start instead of doing nothing.
 fn handle_vertical_up(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -1874,13 +1875,30 @@ fn handle_vertical_up(
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: Some(goal_visual_column),
             });
+        } else if extend_selection && cursor.position > 0 {
+            // No line above: the cursor sits on the first line. Shift+Up still
+            // extends the selection head to the very start of the buffer
+            // (VSCode/Sublime behaviour, issue #3006). The goal column is kept
+            // so a later Shift+Down returns to the original column.
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: 0,
+                old_anchor: cursor.anchor,
+                new_anchor: Some(cursor.anchor.unwrap_or(cursor.position)),
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: Some(goal_visual_column),
+            });
         }
+        // Extending with the head already at the buffer start emits nothing, so
+        // the sticky column and any existing anchor survive untouched.
     }
 }
 
 /// Move or extend selection down by one line, using visual columns for wide-character accuracy.
 ///
-/// See [`handle_vertical_up`] for the `extend_selection` contract.
+/// See [`handle_vertical_up`] for the `extend_selection` contract; on the last line an extending
+/// move takes the head to the buffer end.
 fn handle_vertical_down(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -1928,6 +1946,21 @@ fn handle_vertical_down(
                 new_position: new_pos,
                 old_anchor: cursor.anchor,
                 new_anchor,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: Some(goal_visual_column),
+            });
+        } else if extend_selection && cursor.position < state.buffer.len() {
+            // No line below: the cursor sits on the last line. Shift+Down still
+            // extends the selection head to the end of the buffer
+            // (VSCode/Sublime behaviour, issue #3006). Once the head is already
+            // there nothing is emitted, so the sticky column and any existing
+            // anchor survive untouched.
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: state.buffer.len(),
+                old_anchor: cursor.anchor,
+                new_anchor: Some(cursor.anchor.unwrap_or(cursor.position)),
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: Some(goal_visual_column),
             });
