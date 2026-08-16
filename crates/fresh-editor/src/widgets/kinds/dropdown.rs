@@ -231,13 +231,26 @@ fn collect_dropdown(
             .get(..button_range.0)
             .map(|prefix| str_width(prefix) as u32)
             .unwrap_or(0);
+        // Windowing lives here with the rest of the render: clamp the
+        // scroll, slice the visible rows, and hand the host display
+        // text + absolute indices only.
+        let visible = options.len().min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
+        let max_scroll = options.len().saturating_sub(visible);
+        let scroll = scroll_offset.min(max_scroll);
+        let rows: Vec<(String, usize)> = options
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(visible)
+            .map(|(idx, o)| (o.clone(), idx))
+            .collect();
+        let selected_row = rows.iter().position(|(_, idx)| *idx == cur as usize);
         out.dropdown_popups.push(DropdownPopup {
             widget_key,
             anchor_row: 0,
             anchor_col,
-            options: options.to_vec(),
-            selected: cur as usize,
-            scroll: scroll_offset,
+            rows,
+            selected_row,
         });
         // The pop-over as a box: screen-space (its final rectangle is
         // resolved at paint, flipping above the anchor near the frame
