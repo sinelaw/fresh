@@ -486,8 +486,18 @@ impl Prompt {
     fn apply_edit(&mut self, op: impl FnOnce(&mut crate::primitives::text_edit::TextEdit)) {
         let mut e = crate::primitives::text_edit::TextEdit::single_line_with_text(&self.input);
         e.set_cursor_from_flat(self.cursor_pos.min(self.input.len()));
+        // Only a *real* selection syncs in. The prompt's fields may
+        // carry a degenerate anchor (anchor == cursor — e.g. left
+        // behind by `clear()`), which Prompt::has_selection treats as
+        // "no selection"; the engine's invariant is that an anchor
+        // exists only while selecting, so handing it a degenerate one
+        // would make the very next cursor move look like a live
+        // selection and eat a character.
         if let Some(a) = self.selection_anchor {
-            e.selection_anchor = Some((0, a.min(self.input.len())));
+            let a = a.min(self.input.len());
+            if a != self.cursor_pos.min(self.input.len()) {
+                e.selection_anchor = Some((0, a));
+            }
         }
         op(&mut e);
         self.input = e.value();
