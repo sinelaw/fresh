@@ -108,8 +108,15 @@ pub(crate) struct ChromeLayout {
     /// Hit rects for the floating-overlay prompt's widget toolbar, as
     /// (widget_key, screen_rect) pairs. Populated when the prompt carries a
     /// `toolbar_widget`; a click inside one fires the matching
-    /// `live_grep_toggle_<key>` action. Empty otherwise.
+    /// `live_grep_toggle_<key>` action. Empty otherwise. Kept for click
+    /// geometry only (display-column rects) — the focus ring derives from
+    /// `prompt_toolbar_boxes` instead.
     pub prompt_toolbar_hits: Vec<(String, Rect)>,
+    /// The toolbar's layout-box tree from its most recent render. The
+    /// overlay focus ring derives from this (document order of focusable
+    /// boxes — any focusable kind the plugin puts in the toolbar joins the
+    /// ring), the same way panel focus rings derive from their box trees.
+    pub prompt_toolbar_boxes: Vec<crate::widgets::LayoutBox>,
     /// Screen rect of the floating-overlay prompt's results list (issue
     /// #2119). `None` when no overlay is open. The mouse-wheel handler reads
     /// this to scroll the result list (without moving the selection) when the

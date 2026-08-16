@@ -3748,6 +3748,10 @@ impl Editor {
         // under what they're typing — not on the frame border
         // where shortcut hints get visually lost.
         self.active_chrome_mut().prompt_toolbar_hits.clear();
+        self.active_chrome_mut().prompt_toolbar_boxes = toolbar_widget_out
+            .as_ref()
+            .map(|out| out.boxes.clone())
+            .unwrap_or_default();
         if let Some(out) = &toolbar_widget_out {
             // Widget toolbar: paint each rendered row across the full width
             // and record screen-space hit rects (key → rect) for click
