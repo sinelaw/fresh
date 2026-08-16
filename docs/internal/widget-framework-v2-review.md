@@ -862,6 +862,20 @@ focused control — collapsing it (and Settings' `FocusManager`, and
 the dock's `focused` flag) into the one `focused: Option<FocusId>`
 awaits the prompt-as-widgets migration (§4.5) and Settings (phase
 8) respectively.
+§4.5 step 1 has begun at the engine level: the prompt's private
+editing implementations are deleted — every mutation and
+selection-move runs through the shared `TextEdit` via a sync shim
+(`Prompt::apply_edit`), so boundary walks, drains, and anchor
+bookkeeping exist once. `TextEdit` grew `delete_to_start` (Ctrl+U)
+and a grapheme-correct forward-delete in the process, improving
+widget Text fields too. Deliberately retained prompt-side: the
+undo/redo stacks (engine undo is the recorded §4.5 follow-up), the
+word-motion *policy* (buffer-style next-word-start /
+select-to-word-end, which differs from the engine's word hops), and
+the `(input, cursor_pos, selection_anchor)` field surface (~140
+read sites; collapsing state into an embedded `TextEdit` is the
+next slice, followed by the `prompt_input.rs` key ladder moving
+onto the shared text-key table).
 Still open, in plan order: chrome geometry produced by layout rather
 than recorded by paint (which is what retires the `*Layout` caches),
 then true capture/bubble over one shared chrome tree replacing the
