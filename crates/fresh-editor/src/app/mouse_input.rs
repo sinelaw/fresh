@@ -51,41 +51,6 @@ fn prompt_scrollbar_offset_for_row(
         .offset_for_thumb_top(sb_rect.height as usize, track_row)
 }
 
-/// A layered surface a left-click can land on, for the precedence
-/// table in `Editor::CLICK_SURFACES`. Like `WheelDispatchSurface`,
-/// this only names the surfaces so their precedence can be data; each
-/// surface's containment and behaviour live with its own handler.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ClickDispatchSurface {
-    ContextMenus,
-    /// Guard, not a target: clicking anywhere off-popup dismisses
-    /// transient popups before routing continues. Never consumes.
-    TransientPopupGuard,
-    Suggestions,
-    PromptScrollbar,
-    PopupScrollbar,
-    GlobalPopups,
-    BufferPopups,
-    /// Guard: a click over any popup that none of the popup targets
-    /// above claimed stops here — it must not leak to the chrome or
-    /// buffer beneath.
-    PopupAbsorb,
-    FileBrowser,
-    MenuBar,
-    FileExplorer,
-    Scrollbar,
-    HorizontalScrollbar,
-    StatusBar,
-    SearchOptions,
-    SplitSeparator,
-    SplitControls,
-    TabBar,
-    /// The mouse-modal floating overlay prompt: toolbar toggles,
-    /// everything else swallowed.
-    OverlayPrompt,
-    EditorContent,
-}
-
 /// Where a screen cell lands inside a floating widget panel. See
 /// [`Editor::probe_floating_widget`].
 struct FloatingWidgetProbe {
@@ -1928,86 +1893,122 @@ impl Editor {
                 self.blur_floating_panel(super::PanelSlot::Dock);
             }
         }
-        for surface in Self::CLICK_SURFACES {
-            if let Some(r) = self.click_surface_dispatch(surface, col, row, modifiers) {
+        // Candidates = every chrome box containing the click, walked
+        // top-down by z; a surface that declines passes the click to
+        // the next one beneath — same geometric walk as the wheel.
+        let mut candidates: Vec<crate::widgets::LayoutBox> = self
+            .click_chrome_boxes()
+            .into_iter()
+            .filter(|b| b.contains(row as u32, col as u32))
+            .collect();
+        candidates.sort_by(|a, b| b.z.cmp(&a.z));
+        for b in candidates {
+            if let Some(r) = self.click_surface_dispatch(b.kind, col, row, modifiers) {
                 return r;
             }
         }
         Ok(())
     }
 
-    /// The click-routable surfaces, in precedence order — the old
-    /// 18-step else-if chain of `handle_mouse_click` as DATA, walked
-    /// with a uniform contract: `Some(result)` consumes the click,
-    /// `None` passes it down. The two mid-chain guards ride in the
-    /// same table at their exact old positions: the transient-popup
-    /// dismissal (a side effect that never consumes) and the popup
-    /// absorb (anything over a popup that no popup target claimed
-    /// stops there). Adding a click surface = one variant, one table
-    /// position, one dispatch arm.
-    const CLICK_SURFACES: [ClickDispatchSurface; 20] = [
-        ClickDispatchSurface::ContextMenus,
-        ClickDispatchSurface::TransientPopupGuard,
-        ClickDispatchSurface::Suggestions,
-        ClickDispatchSurface::PromptScrollbar,
-        ClickDispatchSurface::PopupScrollbar,
-        ClickDispatchSurface::GlobalPopups,
-        ClickDispatchSurface::BufferPopups,
-        ClickDispatchSurface::PopupAbsorb,
-        ClickDispatchSurface::FileBrowser,
-        ClickDispatchSurface::MenuBar,
-        ClickDispatchSurface::FileExplorer,
-        ClickDispatchSurface::Scrollbar,
-        ClickDispatchSurface::HorizontalScrollbar,
-        ClickDispatchSurface::StatusBar,
-        ClickDispatchSurface::SearchOptions,
-        ClickDispatchSurface::SplitSeparator,
-        ClickDispatchSurface::SplitControls,
-        ClickDispatchSurface::TabBar,
-        ClickDispatchSurface::OverlayPrompt,
-        ClickDispatchSurface::EditorContent,
-    ];
+    /// The click-routable chrome as z-ordered boxes — the click half
+    /// of "chrome gets boxes", sharing the wheel's model: containment
+    /// is the rectangle where the paint caches record one, and a
+    /// full-frame box + handler-decline everywhere the geometry is
+    /// derived (context menus, separators, controls). Precedence is
+    /// `z`, mirroring the old 20-step chain exactly; the two
+    /// mid-chain guards ride at their old positions as boxes whose
+    /// handlers side-effect / absorb.
+    fn click_chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
+        use crate::widgets::LayoutBox;
+        let frame = self.active_chrome().last_frame;
+        let full = |kind: &'static str, z: u8| {
+            let mut b = LayoutBox::plain(kind, 0, 0, frame.width as u32, frame.height as u32);
+            b.z = z;
+            b
+        };
+        let rect_box = |kind: &'static str, z: u8, r: ratatui::layout::Rect| {
+            let mut b = LayoutBox::plain(
+                kind,
+                r.y as u32,
+                r.x as u32,
+                r.width as u32,
+                r.height as u32,
+            );
+            b.z = z;
+            b
+        };
+        let mut boxes = Vec::new();
+        boxes.push(full("click:context_menus", 20));
+        boxes.push(full("click:transient_guard", 19));
+        if let Some(outer) = self.active_chrome().suggestions_outer_area {
+            boxes.push(rect_box("click:suggestions", 18, outer));
+        }
+        boxes.push(full("click:prompt_scrollbar", 17));
+        boxes.push(full("click:popup_scrollbar", 16));
+        for (_, popup_rect, ..) in &self.active_chrome().global_popup_areas {
+            boxes.push(rect_box("click:global_popups", 15, *popup_rect));
+        }
+        for area in &self.active_chrome().popup_areas {
+            boxes.push(rect_box("click:buffer_popups", 14, area.1));
+        }
+        boxes.push(full("click:popup_absorb", 13));
+        if let Some(layout) = &self.active_window().file_browser_layout {
+            boxes.push(rect_box("click:file_browser", 12, layout.popup_area));
+        }
+        boxes.push(full("click:menu_bar", 11));
+        if let Some(r) = self.active_layout().file_explorer_area {
+            boxes.push(rect_box("click:file_explorer", 10, r));
+        }
+        boxes.push(full("click:scrollbar", 9));
+        boxes.push(full("click:horizontal_scrollbar", 8));
+        boxes.push(full("click:status_bar", 7));
+        boxes.push(full("click:search_options", 6));
+        boxes.push(full("click:split_separator", 5));
+        boxes.push(full("click:split_controls", 4));
+        boxes.push(full("click:tab_bar", 3));
+        boxes.push(full("click:overlay_prompt", 2));
+        for (_, _, content_rect, ..) in &self.active_layout().split_areas {
+            boxes.push(rect_box("click:editor", 1, *content_rect));
+        }
+        boxes
+    }
 
-    /// One surface's click handling: `Some` = consumed (with the
+    /// One surface's click handling:    /// One surface's click handling: `Some` = consumed (with the
     /// handler's result), `None` = not this surface, keep walking.
     fn click_surface_dispatch(
         &mut self,
-        surface: ClickDispatchSurface,
+        surface: &str,
         col: u16,
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<AnyhowResult<()>> {
         match surface {
-            ClickDispatchSurface::ContextMenus => self.handle_click_context_menus(col, row),
-            ClickDispatchSurface::TransientPopupGuard => {
+            "click:context_menus" => self.handle_click_context_menus(col, row),
+            "click:transient_guard" => {
                 if !self.is_mouse_over_any_popup(col, row) {
                     self.dismiss_transient_popups();
                 }
                 None
             }
-            ClickDispatchSurface::Suggestions => self.handle_click_suggestions(col, row),
-            ClickDispatchSurface::PromptScrollbar => self.handle_click_prompt_scrollbar(col, row),
-            ClickDispatchSurface::PopupScrollbar => self.handle_click_popup_scrollbar(col, row),
-            ClickDispatchSurface::GlobalPopups => self.handle_click_global_popups(col, row),
-            ClickDispatchSurface::BufferPopups => self.handle_click_buffer_popups(col, row),
-            ClickDispatchSurface::PopupAbsorb => {
-                self.is_mouse_over_any_popup(col, row).then(|| Ok(()))
-            }
-            ClickDispatchSurface::FileBrowser => (self.is_file_open_active()
+            "click:suggestions" => self.handle_click_suggestions(col, row),
+            "click:prompt_scrollbar" => self.handle_click_prompt_scrollbar(col, row),
+            "click:popup_scrollbar" => self.handle_click_popup_scrollbar(col, row),
+            "click:global_popups" => self.handle_click_global_popups(col, row),
+            "click:buffer_popups" => self.handle_click_buffer_popups(col, row),
+            "click:popup_absorb" => self.is_mouse_over_any_popup(col, row).then(|| Ok(())),
+            "click:file_browser" => (self.is_file_open_active()
                 && self.handle_file_open_click(col, row))
             .then(|| Ok(())),
-            ClickDispatchSurface::MenuBar => self.handle_click_menu_bar(col, row),
-            ClickDispatchSurface::FileExplorer => self.handle_click_file_explorer_area(col, row),
-            ClickDispatchSurface::Scrollbar => self.handle_click_scrollbar(col, row),
-            ClickDispatchSurface::HorizontalScrollbar => {
-                self.handle_click_horizontal_scrollbar(col, row)
-            }
-            ClickDispatchSurface::StatusBar => self.handle_click_status_bar(col, row),
-            ClickDispatchSurface::SearchOptions => self.handle_click_search_options(col, row),
-            ClickDispatchSurface::SplitSeparator => self.handle_click_split_separator(col, row),
-            ClickDispatchSurface::SplitControls => self.handle_click_split_controls(col, row),
-            ClickDispatchSurface::TabBar => self.handle_click_tab_bar(col, row),
-            ClickDispatchSurface::OverlayPrompt => {
+            "click:menu_bar" => self.handle_click_menu_bar(col, row),
+            "click:file_explorer" => self.handle_click_file_explorer_area(col, row),
+            "click:scrollbar" => self.handle_click_scrollbar(col, row),
+            "click:horizontal_scrollbar" => self.handle_click_horizontal_scrollbar(col, row),
+            "click:status_bar" => self.handle_click_status_bar(col, row),
+            "click:search_options" => self.handle_click_search_options(col, row),
+            "click:split_separator" => self.handle_click_split_separator(col, row),
+            "click:split_controls" => self.handle_click_split_controls(col, row),
+            "click:tab_bar" => self.handle_click_tab_bar(col, row),
+            "click:overlay_prompt" => {
                 // A floating-overlay prompt is mouse-modal: its own targets
                 // (result list, scrollbar) were handled above. A click on a
                 // toolbar control toggles it through the host (which emits a
@@ -2035,7 +2036,7 @@ impl Editor {
                 }
                 Some(Ok(()))
             }
-            ClickDispatchSurface::EditorContent => {
+            "click:editor" => {
                 let areas: Vec<_> = self
                     .active_layout()
                     .split_areas
@@ -2058,6 +2059,7 @@ impl Editor {
                 }
                 None
             }
+            _ => None,
         }
     }
 
