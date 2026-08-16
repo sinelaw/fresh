@@ -789,7 +789,7 @@ fn collect_labeled_section(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn collect_overlay(
+pub(super) fn collect_overlay(
     child: &WidgetSpec,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,

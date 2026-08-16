@@ -812,6 +812,22 @@ export function overlay(
  * component instead of the whole panel, so a picker or dialog subtree
  * keeps its own ring without hand-written focus code. Give it a `key`
  * for stable identity (keyed reconciliation, targeted swaps). */
+/** A popup layer: the child paints OVER the panel's rows (like
+ * `overlay`) as a first-class tree node — part of the layout-box
+ * tree, pointer-opaque, and slated to grow screen-space anchoring
+ * so a popup near a panel edge is not clipped. Prefer this over
+ * `overlay` for new popup UI. */
+export function popup(
+  child: WidgetSpec,
+  options?: { key?: string },
+): WidgetSpec {
+  return {
+    kind: "popup",
+    child,
+    key: options?.key,
+  };
+}
+
 export function component(
   child: WidgetSpec,
   options?: { key?: string },
