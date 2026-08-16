@@ -29,6 +29,28 @@ mod status_bar;
 
 use super::types::HoverTarget;
 use super::Editor;
+
+/// Overlay-layer ranks, DESCENDING = higher keyboard/modal precedence.
+/// Deliberately independent of both registry order and box z: the menu
+/// LAYER outranks the prompt's and the popups' (an open menu owns the
+/// keyboard over them) while its boxes sit in a lower pointer band,
+/// and the native context menus rank BELOW the popup layer (the
+/// unfocused-popup guard's `take_while` must not see them) while their
+/// boxes sit at the very top. Event-debug (1000) is hardcoded in
+/// `overlay_layers` — a debugging instrument, not a component.
+pub(crate) mod layer_rank {
+    pub(crate) const SETTINGS: u16 = 900;
+    pub(crate) const KEYBINDING_EDITOR: u16 = 890;
+    pub(crate) const CALIBRATION_WIZARD: u16 = 880;
+    pub(crate) const WORKSPACE_TRUST: u16 = 870;
+    pub(crate) const MENU: u16 = 860;
+    pub(crate) const PROMPT: u16 = 850;
+    pub(crate) const POPUP: u16 = 840;
+    pub(crate) const CONTEXT_MENU: u16 = 830;
+    pub(crate) const FLOATING_MODAL: u16 = 820;
+    pub(crate) const DOCK: u16 = 810;
+    pub(crate) const EDITOR_BASE: u16 = 0;
+}
 use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 
@@ -186,6 +208,15 @@ pub(crate) trait ChromeComponent: Sync {
     ) -> Option<AnyhowResult<bool>> {
         None
     }
+
+    /// This component's overlay-layer contributions, from live state:
+    /// `(rank, Layer)` pairs pushed into `out` (see [`layer_rank`]).
+    /// `Editor::overlay_layers()` concatenates every component's
+    /// contributions and sorts by rank descending — the layer stack is
+    /// DERIVED from the registry, so a surface's presence, keyboard
+    /// ownership, `KeyContext`, and PTY blocking are declared by its
+    /// component instead of a central conditional ladder.
+    fn layers(&self, _ed: &Editor, _out: &mut Vec<(u16, crate::app::overlay::Layer)>) {}
 
     /// Keyboard grab for a component whose open surface owns the
     /// keyboard with a custom dispatcher (the native context menus:

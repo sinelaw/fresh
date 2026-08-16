@@ -82,4 +82,19 @@ impl ChromeComponent for Menu {
             _ => Ok(Disposition::Pass),
         }
     }
+
+    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
+        use crate::app::overlay::{Layer, LayerKind};
+        if ed.menu_state.active_menu.is_some() {
+            out.push((
+                super::layer_rank::MENU,
+                Layer {
+                    kind: LayerKind::Menu,
+                    owns_keyboard: true,
+                    key_context: Some(crate::input::keybindings::KeyContext::Menu),
+                    blocks_terminal_input: true,
+                },
+            ));
+        }
+    }
 }

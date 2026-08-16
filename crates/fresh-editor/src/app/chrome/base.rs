@@ -76,4 +76,24 @@ impl ChromeComponent for Base {
         }
         Ok(super::Disposition::Consumed)
     }
+
+    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
+        use crate::app::overlay::{Layer, LayerKind};
+        use crate::input::keybindings::KeyContext;
+        // The editor content is the keyboard owner of last resort.
+        let base_context = if ed.active_window().is_composite_buffer(ed.active_buffer()) {
+            KeyContext::CompositeBuffer
+        } else {
+            ed.active_window().key_context.clone()
+        };
+        out.push((
+            super::layer_rank::EDITOR_BASE,
+            Layer {
+                kind: LayerKind::Editor,
+                owns_keyboard: true,
+                key_context: Some(base_context),
+                blocks_terminal_input: false,
+            },
+        ));
+    }
 }

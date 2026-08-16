@@ -96,4 +96,26 @@ impl ChromeComponent for ContextMenu {
     ) -> Option<AnyhowResult<()>> {
         ed.handle_context_menu_key(code, modifiers)
     }
+
+    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
+        use crate::app::overlay::{Layer, LayerKind};
+        // The native context menus are modal chrome: while one is open
+        // it owns the keyboard via the custom dispatcher (`on_key`
+        // above), so no `KeyContext` is exposed. Like any covering
+        // overlay it blocks PTY routing. Ranked below `Popup` so the
+        // unfocused-popup `take_while` guard is unaffected. One entry
+        // covers all four menus — they share the geometry core and are
+        // mutually exclusive (opening one closes the others).
+        if ed.active_window().open_context_menu().is_some() {
+            out.push((
+                super::layer_rank::CONTEXT_MENU,
+                Layer {
+                    kind: LayerKind::ContextMenu,
+                    owns_keyboard: true,
+                    key_context: None,
+                    blocks_terminal_input: true,
+                },
+            ));
+        }
+    }
 }
