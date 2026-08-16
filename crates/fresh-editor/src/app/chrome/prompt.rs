@@ -17,19 +17,38 @@ pub(crate) struct Prompt;
 
 impl ChromeComponent for Prompt {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
-        // The suggestions box spans the OUTER rect (click targets the
-        // scrollbar border too); handlers with inner-rect geometry
-        // (hover) re-check and decline.
-        if let Some(outer) = ed.active_chrome().suggestions_outer_area {
-            t.rect("chrome:suggestions", 170, outer);
-        } else if let Some((inner_rect, _, _, _)) = &ed.active_chrome().suggestions_area {
-            t.rect("chrome:suggestions", 170, *inner_rect);
-        }
         // The suggestion list's scrollbar track at its painted rect
         // (shared by the floating-overlay prompt and the
         // bottom-anchored dropdown). No box when none was painted.
+        // Pushed BEFORE the opaque suggestions box: within a band the
+        // earlier-pushed box is consulted first, and a specific target
+        // must resolve before the opaque surface absorbs the click.
         if let Some(r) = ed.active_chrome().suggestions_scrollbar_rect {
             t.rect("chrome:prompt_scrollbar", 170, r);
+        }
+        // The suggestions box spans the OUTER rect (click targets the
+        // scrollbar border too); handlers with inner-rect geometry
+        // (hover) re-check and decline. OPAQUE: a click on the popup's
+        // chrome (border cells) that no handler claims is absorbed by
+        // the scan's opacity gate — it must not fall through and move
+        // the buffer cursor beneath (the deleted popup_absorb guard
+        // covered this rect; the box's own opacity replaces it).
+        let opaque_rect = |t: &mut ChromeTreeBuilder, r: ratatui::layout::Rect| {
+            let mut b = crate::widgets::LayoutBox::plain(
+                "chrome:suggestions",
+                r.y as u32,
+                r.x as u32,
+                r.width as u32,
+                r.height as u32,
+            );
+            b.z = 170;
+            b.pointer_opaque = true;
+            t.push(b);
+        };
+        if let Some(outer) = ed.active_chrome().suggestions_outer_area {
+            opaque_rect(t, outer);
+        } else if let Some((inner_rect, _, _, _)) = &ed.active_chrome().suggestions_area {
+            opaque_rect(t, *inner_rect);
         }
         if ed.overlay_prompt_active() {
             if let Some(r) = ed.active_chrome().prompt_preview_area {
