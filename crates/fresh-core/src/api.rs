@@ -2773,6 +2773,21 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+
+    /// A popup layer: the child paints OVER the panel's rows like an
+    /// `Overlay`, but as a first-class tree node destined to replace
+    /// the render-output side channels (`overlays`, `dropdown_popup`)
+    /// — a popup is part of the tree, hit-tests through the same
+    /// layout-box walk (its box is pointer-opaque), and will grow
+    /// screen-space anchoring so a popup near a panel edge is not
+    /// clipped. Introduced additively: the vocabulary change is
+    /// backward-compatible and frontends that predate it simply
+    /// don't receive it until plugins emit it.
+    Popup {
+        child: Box<WidgetSpec>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
 }
 
 impl WidgetSpec {
@@ -2796,7 +2811,8 @@ impl WidgetSpec {
             }
             WidgetSpec::LabeledSection { child, .. }
             | WidgetSpec::Overlay { child, .. }
-            | WidgetSpec::Component { child, .. } => Box::new(std::iter::once(child.as_ref())),
+            | WidgetSpec::Component { child, .. }
+            | WidgetSpec::Popup { child, .. } => Box::new(std::iter::once(child.as_ref())),
             _ => Box::new(std::iter::empty()),
         }
     }
@@ -2812,7 +2828,8 @@ impl WidgetSpec {
             }
             WidgetSpec::LabeledSection { child, .. }
             | WidgetSpec::Overlay { child, .. }
-            | WidgetSpec::Component { child, .. } => Box::new(std::iter::once(child.as_mut())),
+            | WidgetSpec::Component { child, .. }
+            | WidgetSpec::Popup { child, .. } => Box::new(std::iter::once(child.as_mut())),
             _ => Box::new(std::iter::empty()),
         }
     }

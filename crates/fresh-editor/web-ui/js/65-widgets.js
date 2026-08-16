@@ -512,6 +512,13 @@ function widgetEl(spec, ctx){
     if(spec.child) el.appendChild(widgetEl(spec.child, ctx));
     return el;
   }
+  if(kind==="popup"){
+    // A popup layer — renders like overlay here (raised card in flow);
+    // the TUI floats it over the panel rows.
+    const el=div("w-overlay");
+    if(spec.child) el.appendChild(widgetEl(spec.child, ctx));
+    return el;
+  }
   if(kind==="component"){
     // A focus/event scope — purely behavioural in the TUI; renders its
     // child transparently here.

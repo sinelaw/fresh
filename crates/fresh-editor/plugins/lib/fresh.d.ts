@@ -2039,6 +2039,10 @@ type WidgetSpec = {
 	"kind": "component";
 	child: WidgetSpec;
 	key?: string | null;
+} | {
+	"kind": "popup";
+	child: WidgetSpec;
+	key?: string | null;
 };
 type WidgetAction = {
 	"kind": "focusAdvance";

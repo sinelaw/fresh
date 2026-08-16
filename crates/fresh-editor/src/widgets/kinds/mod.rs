@@ -22,6 +22,7 @@
 
 mod button;
 mod component;
+mod popup;
 mod containers;
 mod divider;
 pub(crate) mod dropdown;
@@ -193,5 +194,6 @@ pub(crate) fn behavior(spec: &WidgetSpec) -> &'static dyn WidgetImpl {
         WidgetSpec::LabeledSection { .. } => &containers::LabeledSection,
         WidgetSpec::Overlay { .. } => &containers::Overlay,
         WidgetSpec::Component { .. } => &component::Component,
+        WidgetSpec::Popup { .. } => &popup::Popup,
     }
 }
