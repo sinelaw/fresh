@@ -209,28 +209,41 @@ Slices 0-4 (dispatch), 5a (modal capture through the registry —
 explicit `layer_rank`s; the four context-menu `LayerKind`s collapsed
 to one) are DONE. Remaining, in order:
 
-- **Dock captures + pointer-grab slot (5 residue).** Caveat found in
-  execution: the dock click capture today runs AFTER terminal-forward
-  and the LSP-rename-cancel hook inside the click path — hoisting it
-  into `capture_mouse` would skip rename-cancel for dock clicks and
-  reorder against the terminal sink. Move it together with the grab
-  slot and re-examine those two interactions explicitly; also decide
-  whether a centered popup overlapping the dock column should keep
-  losing to the dock (today's pre-walk behavior) or win by z (the
-  tree's answer).
-- **Modal per-gesture decomposition (5 residue).** `capture_mouse`
-  is whole-channel by design until the grab slot exists. The scan's
-  OPACITY GATE has landed for the pointer gestures (hover, click,
-  right-click, double-click stop at a declining `pointer_opaque` box;
-  the wheel deliberately keeps falling — scroll chaining), and the
-  popup rects exercise it: `chrome:popup_absorb` is deleted, absorb
-  is the popups' own opacity. Two recorded subtleties: the wheel
-  exemption, and double-click's post-walk split scan (the popup box
-  must CONSUME double-clicks — a gate break would also skip the
-  popup_guard below it and let the split scan select through the
-  popup).
+- **DONE — dock captures + grab slot + opacity gate.** The dock's
+  click/right-click routing is the Dock component's boxes and arms
+  (`chrome:dock_border` starts the width-resize grab,
+  `chrome:dock_column` clicks/context, `chrome:dock_blur` PassAfter
+  observer at 195); the three precedence caveats resolved — the walk
+  already runs after the LSP-rename-cancel hook and terminal-forward
+  sink, and a centered popup over the dock column now wins by z
+  (deliberate fix). `chrome::PointerGrab`/`pointer_grab()` names the
+  press-to-release drags; the terminal-forward suppression consults
+  it. The scan's opacity gate covers the pointer gestures (wheel
+  exempt for scroll chaining); `chrome:popup_absorb` is deleted —
+  absorb is the popups' own `pointer_opaque`.
+- **Modal per-gesture decomposition — DESIGN-INTERMEDIATE, not
+  debt.** `capture_mouse` stays whole-channel: the modal interiors
+  are bespoke by ruling (the component is the dispatch slot), and
+  their drag/release handling would need the full drag-routing
+  decomposition first. Revisit only if a modal ever needs to share
+  its surface with chrome beneath.
 - **Geometry-from-layout (7).** Per component, one cache per PR, the
-  only pixel-touching slice.
+  only pixel-touching slice. Findings from the first scoping pass:
+  `render_search_options`' geometry is checked-state-independent
+  ("[x]"/"[ ]" same width) — it depends on area, confirm_each
+  presence, locale labels, and keybinding hint strings, so a pure
+  `SearchOptionsLayout::compute(area, confirm_shown, keybindings)`
+  is extractable with paint consuming it; BUT every cache retirement
+  also needs its AREA derivation hoisted (the bar's rect comes from
+  the frame-layout decisions in `render`), which is the real
+  per-cache cost. The status bar's `clickable` segments are
+  content-dependent (rendered label widths: encoding, LSP state) —
+  middle difficulty, not cheap. The menu's geometry is interleaved
+  through `MenuRenderer::render` + `render_dropdown_chain` +
+  `render_dropdown_level` (~800 lines) — the largest single hoist.
+  `ContextMenuCore::rect` is already pure (the model). Order the
+  series: search_options → tabs/status bar → menu →
+  suggestions/popups.
 
 ## What NOT to do
 
