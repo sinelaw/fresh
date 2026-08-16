@@ -26,15 +26,62 @@ mod search_options;
 mod splits;
 mod status_bar;
 
+use super::types::HoverTarget;
 use super::Editor;
 use crate::widgets::LayoutBox;
+use anyhow::Result as AnyhowResult;
+
+/// One box in the per-event chrome tree: the geometry (the SAME
+/// `LayoutBox` type the panel model uses, so hit math and flags are
+/// shared) plus which registered component owns it — dispatch calls
+/// the owner's handlers instead of matching kind strings.
+pub(crate) struct ChromeBox {
+    pub lb: LayoutBox,
+    /// Index into [`components`].
+    pub owner: usize,
+}
+
+/// What a component did with a pointer gesture on one of its boxes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Disposition {
+    /// Handled — the walk stops.
+    Consumed,
+    /// Side effects applied, but the event must keep routing — the
+    /// act-then-continue guards (transient dismiss, explorer menu
+    /// clear). Distinct from `Pass` so the contract is visible even
+    /// though today's flat walk treats both as "continue".
+    PassAfter,
+    /// Not this surface's event — the walk continues to the next box.
+    Pass,
+}
+
+/// Which press gesture a pointer event carries. Left-click joins in
+/// slice 2 (its arms still ride `CLICK_ORDER`); triple-click stays a
+/// buffer-selection concern outside chrome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PointerPress {
+    Right,
+    Double,
+}
+
+/// One pointer gesture offered to a component's box, press kind
+/// included — per-gesture behavior lives in the handler (the way
+/// `WidgetImpl::on_pointer` takes `event_type`), not in one trait
+/// method per press.
+pub(crate) struct ChromePointer {
+    pub press: PointerPress,
+    pub col: u16,
+    pub row: u16,
+}
 
 /// Per-event sink the components push their boxes into. Wraps the
-/// frame dimensions so full-frame guards don't each re-read them.
+/// frame dimensions so full-frame guards don't each re-read them, and
+/// stamps each box with the collecting component's registry index.
 pub(crate) struct ChromeTreeBuilder {
     frame_width: u32,
     frame_height: u32,
-    boxes: Vec<LayoutBox>,
+    current_owner: usize,
+    boxes: Vec<ChromeBox>,
 }
 
 impl ChromeTreeBuilder {
@@ -42,8 +89,16 @@ impl ChromeTreeBuilder {
         ChromeTreeBuilder {
             frame_width,
             frame_height,
+            current_owner: 0,
             boxes: Vec::new(),
         }
+    }
+
+    pub(crate) fn push(&mut self, lb: LayoutBox) {
+        self.boxes.push(ChromeBox {
+            lb,
+            owner: self.current_owner,
+        });
     }
 
     /// A full-frame surface — a guard/capture whose semantics ARE
@@ -52,7 +107,7 @@ impl ChromeTreeBuilder {
     pub(crate) fn full(&mut self, kind: &'static str, z: u8) {
         let mut b = LayoutBox::plain(kind, 0, 0, self.frame_width, self.frame_height);
         b.z = z;
-        self.boxes.push(b);
+        self.push(b);
     }
 
     /// A surface at its painted rectangle.
@@ -65,18 +120,36 @@ impl ChromeTreeBuilder {
             r.height as u32,
         );
         b.z = z;
-        self.boxes.push(b);
+        self.push(b);
     }
 }
 
-/// One registered chrome surface. Slice 0 registers GEOMETRY only —
-/// `collect` contributes this component's boxes for THIS event, read
-/// from the live state/caches the surface owns. The per-gesture
-/// handlers join the trait in later slices, dissolving the central
-/// dispatch matches the same way `WidgetImpl` dissolved the widget
-/// ones.
+/// One registered chrome surface: `collect` contributes its boxes for
+/// THIS event from the live state/caches the surface owns, and the
+/// per-gesture handlers own its behavior (slice 1: hover, right-click,
+/// double-click — left-click and wheel still ride the central kind
+/// arrays until slice 2). Handlers receive the box they were offered
+/// and decline (`None`/`Pass`) where its geometry is coarser than
+/// their real target, exactly as the central match arms did.
 pub(crate) trait ChromeComponent: Sync {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder);
+
+    /// Name the hover target under the pointer, or decline so the walk
+    /// falls through to the next surface down.
+    fn hover(&self, _ed: &Editor, _bx: &LayoutBox, _col: u16, _row: u16) -> Option<HoverTarget> {
+        None
+    }
+
+    /// A pointer press (right / double, per `ev.press`) on one of this
+    /// component's boxes.
+    fn on_pointer(
+        &self,
+        _ed: &mut Editor,
+        _bx: &LayoutBox,
+        _ev: &ChromePointer,
+    ) -> AnyhowResult<Disposition> {
+        Ok(Disposition::Pass)
+    }
 }
 
 /// The ONE chrome registry — every routable surface, once.
@@ -107,11 +180,13 @@ pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
 }
 
 /// Build the chrome surface tree for one event: every component
-/// contributes its live boxes. Replaces the monolithic enumeration.
-pub(crate) fn chrome_tree(ed: &Editor) -> Vec<LayoutBox> {
+/// contributes its live boxes, each stamped with its owner. Replaces
+/// the monolithic enumeration.
+pub(crate) fn chrome_tree(ed: &Editor) -> Vec<ChromeBox> {
     let frame = ed.active_chrome().last_frame;
     let mut t = ChromeTreeBuilder::new(frame.width as u32, frame.height as u32);
-    for c in components() {
+    for (i, c) in components().iter().enumerate() {
+        t.current_owner = i;
         c.collect(ed, &mut t);
     }
     t.boxes

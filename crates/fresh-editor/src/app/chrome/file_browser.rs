@@ -1,6 +1,10 @@
 //! The file-open browser dialog.
 
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use crate::app::types::HoverTarget;
+use crate::widgets::LayoutBox;
+use anyhow::Result as AnyhowResult;
+
+use super::{ChromeComponent, ChromePointer, ChromeTreeBuilder, Disposition, Editor, PointerPress};
 
 pub(crate) struct FileBrowser;
 
@@ -15,5 +19,24 @@ impl ChromeComponent for FileBrowser {
                 t.full("chrome:file_browser", 13);
             }
         }
+    }
+
+    fn hover(&self, ed: &Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+        ed.compute_file_browser_hover(col, row)
+    }
+
+    fn on_pointer(
+        &self,
+        ed: &mut Editor,
+        _bx: &LayoutBox,
+        ev: &ChromePointer,
+    ) -> AnyhowResult<Disposition> {
+        if ev.press != PointerPress::Double {
+            return Ok(Disposition::Pass);
+        }
+        if ed.handle_file_open_double_click(ev.col, ev.row) {
+            return Ok(Disposition::Consumed);
+        }
+        Ok(Disposition::Pass)
     }
 }

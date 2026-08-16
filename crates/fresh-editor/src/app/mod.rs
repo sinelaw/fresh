@@ -215,8 +215,7 @@ pub(crate) use path_utils::{
 };
 
 use self::types::{
-    LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, TabContextMenu,
-    DEFAULT_BACKGROUND_FILE,
+    LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
 use crate::config_io::DirectoryContext;

@@ -1,5 +1,6 @@
 //! The status bar row.
 
+use crate::app::types::HoverTarget;
 use crate::widgets::LayoutBox;
 
 use super::{ChromeComponent, ChromeTreeBuilder, Editor};
@@ -17,7 +18,22 @@ impl ChromeComponent for StatusBar {
                 1,
             );
             b.z = 4;
-            t.boxes.push(b);
+            t.push(b);
         }
+    }
+
+    fn hover(&self, ed: &Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+        // One generic hit-test over every clickable segment recorded
+        // last frame (encoding, LSP, remote, ...).
+        if let Some((status_row, _status_x, _status_width)) = ed.active_chrome().status_bar.area {
+            if row == status_row {
+                for (id, indicator_row, start, end) in &ed.active_chrome().status_bar.clickable {
+                    if row == *indicator_row && col >= *start && col < *end {
+                        return Some(HoverTarget::StatusBarClickable(*id));
+                    }
+                }
+            }
+        }
+        None
     }
 }
