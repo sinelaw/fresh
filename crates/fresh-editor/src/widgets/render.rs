@@ -225,10 +225,6 @@ pub struct RenderOutput {
     /// widget without reflowing the rest of the layout when it
     /// shows or hides.
     pub overlays: Vec<OverlayRow>,
-    /// Scrollable `List` widgets that overflowed their visible height,
-    /// with the geometry + state the host needs to paint and drag a
-    /// scrollbar. Empty for lists that fit.
-    pub scroll_regions: Vec<ScrollRegion>,
     /// The open `Dropdown`'s option list, surfaced for a screen-level
     /// floating pop-over instead of inline panel rows. `Some` only when a
     /// keyed Dropdown is open; the panel `entries` then hold just the
@@ -297,26 +293,6 @@ pub struct EmbedRect {
     pub height_rows: u32,
 }
 
-/// A scrollable `List` widget's geometry + scroll state, surfaced so
-/// the host can paint a draggable scrollbar over the list's rightmost
-/// column and hit-test mouse press/drag against it. Threaded through
-/// the compositor (Row/Col/Section) identically to [`EmbedRect`] —
-/// `buffer_row`/`col_in_row` are panel-relative display coordinates.
-/// `width_cols` spans the list's column so `col_in_row + width_cols -
-/// 1` is the scrollbar column; `height_rows` is the visible track
-/// height. `total`/`visible`/`scroll` feed `ScrollbarState`.
-#[derive(Debug, Clone)]
-pub struct ScrollRegion {
-    pub list_key: String,
-    pub buffer_row: u32,
-    pub col_in_row: u32,
-    pub width_cols: u32,
-    pub height_rows: u32,
-    pub total: usize,
-    pub visible: usize,
-    pub scroll: usize,
-}
-
 /// Output of a single [`render_collected`] call (or one of the
 /// standalone arm helpers). Replaces the six-element tuple that was
 /// the previous return type, giving call sites named fields instead
@@ -328,7 +304,10 @@ pub(crate) struct CollectedOutput {
     pub(crate) focus_cursor: Option<FocusCursor>,
     pub(crate) embeds: Vec<EmbedRect>,
     pub(crate) overlays: Vec<OverlayRow>,
-    pub(crate) scroll_regions: Vec<ScrollRegion>,
+    /// Scroll payload for THIS node's own box (a keyed List/Tree or
+    /// multi-line Text writes it in `collect`); `push_self_box` moves
+    /// it onto the box. Never set by containers.
+    pub(crate) self_scroll: Option<crate::widgets::layout_box::BoxScroll>,
     /// Open-Dropdown pop-overs, each anchored to its trigger row. Shifted
     /// through Col/Row/Section collapse exactly like `overlays`'
     /// `buffer_row`, then collapsed to `RenderOutput::dropdown_popup`
@@ -393,10 +372,6 @@ impl CollectedOutput {
             emb.buffer_row += row_offset;
             self.embeds.push(emb);
         }
-        for mut sr in child.scroll_regions {
-            sr.buffer_row += row_offset;
-            self.scroll_regions.push(sr);
-        }
         for mut dp in child.dropdown_popups {
             dp.anchor_row += row_offset;
             self.dropdown_popups.push(dp);
@@ -439,6 +414,7 @@ impl CollectedOutput {
     pub(crate) fn push_self_box(&mut self, mut own: LayoutBox, panel_width: u32) {
         own.width = panel_width;
         own.height = self.entries.len() as u32;
+        own.scroll = self.self_scroll.take();
         let idx = self.boxes.len();
         for b in &mut self.boxes {
             if b.parent.is_none() {
@@ -621,7 +597,6 @@ pub fn render_spec_with_options(
         focus_cursor: collected.focus_cursor,
         embeds: collected.embeds,
         overlays: collected.overlays,
-        scroll_regions: collected.scroll_regions,
         // At most one Dropdown is open at a time (the focused one); take
         // the first if the spec somehow produced several.
         dropdown_popup: collected.dropdown_popups.into_iter().next(),
@@ -6360,10 +6335,15 @@ pub(crate) mod tests {
         let out = render_spec(&spec, &HashMap::new(), "", 30);
         assert_eq!(out.entries.len(), 3, "visible window is `rows` tall");
         assert!(out.entries[0].text.starts_with("alpha"));
-        // Region covers every rendered line, not just the window.
-        assert_eq!(out.scroll_regions.len(), 1);
-        let region = &out.scroll_regions[0];
-        assert_eq!((region.total, region.visible), (5, 3));
+        // The widget's box carries the scroll payload: every content
+        // line counted, not just the window.
+        let sc = out
+            .boxes
+            .iter()
+            .find(|b| b.key.as_deref() == Some("doc"))
+            .and_then(|b| b.scroll)
+            .expect("scroll payload on the doc box");
+        assert_eq!((sc.total, sc.visible), (5, 3));
         // The shadow editor holds the rendered plain text.
         match out.instance_states.get("doc") {
             Some(WidgetInstanceState::Text { editor, .. }) => {
@@ -6430,9 +6410,13 @@ pub(crate) mod tests {
         };
         let out = render_spec(&spec, &HashMap::new(), "", 40);
         let keys: Vec<(&str, bool)> = out
-            .scroll_regions
+            .boxes
             .iter()
-            .map(|r| (r.list_key.as_str(), r.total > r.visible))
+            .filter(|b| b.scroll.is_some())
+            .map(|b| {
+                let sc = b.scroll.unwrap();
+                (b.key.as_deref().unwrap_or(""), sc.total > sc.visible)
+            })
             .collect();
         assert_eq!(
             keys,
@@ -7252,7 +7236,6 @@ pub(crate) mod tests {
             instance_states: out.instance_states,
             focus_key: out.focus_key,
             tabbable: out.tabbable,
-            scroll_regions: out.scroll_regions,
             effective_rows: out.effective_rows,
             boxes: out.boxes,
         }

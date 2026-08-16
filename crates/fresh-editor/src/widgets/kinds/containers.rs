@@ -17,7 +17,7 @@ use crate::widgets::render::{
     ensure_trailing_newline, pad_or_truncate_cols, render_collected, render_section_bottom_border,
     render_section_top_border, snap_down_to_char_boundary, strip_trailing_newline,
     wrap_in_side_border, CollectedOutput, DropdownPopup, EmbedRect, FocusCursor, OverlayRow,
-    RenderContext, ScrollRegion, LEFT_BORDER_PREFIX,
+    RenderContext, LEFT_BORDER_PREFIX,
 };
 
 pub(crate) struct Row;
@@ -168,8 +168,6 @@ enum RowPiece {
         /// pinned to that row. Rare but worth carrying through
         /// rather than dropping.
         embeds: Vec<EmbedRect>,
-        /// Scroll regions propagated up from this inline child.
-        scroll_regions: Vec<ScrollRegion>,
         /// Layout boxes from this inline child's subtree; the collapse
         /// pass shifts their columns by the merged inline_shift, the
         /// same (byte≈column for ASCII inline content) approximation
@@ -190,9 +188,6 @@ enum RowPiece {
         /// own row 0; the zip pass shifts row by `starting_row`
         /// and byte_in_row by the block's `byte_shift`.
         embeds: Vec<EmbedRect>,
-        /// Scroll regions propagated up from this block child,
-        /// shifted by the zip pass identically to `embeds`.
-        scroll_regions: Vec<ScrollRegion>,
         /// Layout boxes from this block child's subtree, shifted by the
         /// zip pass identically to `scroll_regions`.
         boxes: Vec<LayoutBox>,
@@ -214,7 +209,6 @@ fn collect_row(
     let mut focus_cursor: Option<FocusCursor> = None;
     let mut embeds: Vec<EmbedRect> = Vec::new();
     let mut overlays: Vec<OverlayRow> = Vec::new();
-    let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
     let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
     let mut boxes: Vec<LayoutBox> = Vec::new();
     let mut wants_fill = false;
@@ -284,7 +278,6 @@ fn collect_row(
                 hits: child_out.hits,
                 focus_cursor: child_out.focus_cursor,
                 embeds: child_out.embeds,
-                scroll_regions: child_out.scroll_regions,
                 boxes: child_boxes,
             });
         } else {
@@ -294,7 +287,6 @@ fn collect_row(
                 hits: child_out.hits,
                 focus_cursor: child_out.focus_cursor,
                 embeds: child_out.embeds,
-                scroll_regions: child_out.scroll_regions,
                 boxes: child_boxes,
             });
         }
@@ -313,7 +305,6 @@ fn collect_row(
             &mut hits,
             &mut focus_cursor,
             &mut embeds,
-            &mut scroll_regions,
             &mut boxes,
         );
     } else if wrap {
@@ -338,7 +329,6 @@ fn collect_row(
             &mut hits,
             &mut focus_cursor,
             &mut embeds,
-            &mut scroll_regions,
             &mut boxes,
         );
     }
@@ -349,7 +339,7 @@ fn collect_row(
         focus_cursor,
         embeds,
         overlays,
-        scroll_regions,
+        self_scroll: None,
         dropdown_popups,
         wants_fill,
         effective_rows,
@@ -412,7 +402,6 @@ fn assemble_inline_row(
     hits: &mut Vec<HitArea>,
     focus_cursor: &mut Option<FocusCursor>,
     embeds: &mut Vec<EmbedRect>,
-    scroll_regions: &mut Vec<ScrollRegion>,
     out_boxes: &mut Vec<LayoutBox>,
 ) {
     // Compute flex sizing. Width is measured in display columns
@@ -455,7 +444,6 @@ fn assemble_inline_row(
                 hits: child_hits,
                 focus_cursor: child_focus,
                 embeds: child_embeds,
-                scroll_regions: child_scroll,
                 boxes: child_boxes,
             } => {
                 let inline_shift = match acc.as_ref() {
@@ -489,10 +477,6 @@ fn assemble_inline_row(
                     // rare).
                     emb.col_in_row += inline_shift as u32;
                     embeds.push(emb);
-                }
-                for mut sr in child_scroll {
-                    sr.col_in_row += inline_shift as u32;
-                    scroll_regions.push(sr);
                 }
                 match acc.as_mut() {
                     Some(merged) => merge_inline(merged, &mut entry),
@@ -547,16 +531,15 @@ fn collect_col(
     ctx: RenderContext<'_>,
     panel_width: u32,
 ) -> CollectedOutput {
-    let mut entries: Vec<TextPropertyEntry> = Vec::new();
-    let mut hits: Vec<HitArea> = Vec::new();
-    let mut focus_cursor: Option<FocusCursor> = None;
-    let mut embeds: Vec<EmbedRect> = Vec::new();
-    let mut overlays: Vec<OverlayRow> = Vec::new();
-    let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
-    let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
-    let mut boxes: Vec<LayoutBox> = Vec::new();
-    let mut wants_fill = false;
-    let mut effective_rows: HashMap<String, u32> = HashMap::new();
+    let entries: Vec<TextPropertyEntry> = Vec::new();
+    let hits: Vec<HitArea> = Vec::new();
+    let focus_cursor: Option<FocusCursor> = None;
+    let embeds: Vec<EmbedRect> = Vec::new();
+    let overlays: Vec<OverlayRow> = Vec::new();
+    let dropdown_popups: Vec<DropdownPopup> = Vec::new();
+    let boxes: Vec<LayoutBox> = Vec::new();
+    let wants_fill = false;
+    let effective_rows: HashMap<String, u32> = HashMap::new();
 
     // Pass 1 — render every child with NO height budget, so an
     // auto-sized List/Tree in a subtree reports `wants_fill` instead
@@ -615,7 +598,7 @@ fn collect_col(
         focus_cursor,
         embeds,
         overlays,
-        scroll_regions,
+        self_scroll: None,
         dropdown_popups,
         wants_fill,
         effective_rows,
@@ -645,7 +628,6 @@ fn collect_labeled_section(
     let mut focus_cursor: Option<FocusCursor> = None;
     let mut embeds: Vec<EmbedRect> = Vec::new();
     let mut overlays: Vec<OverlayRow> = Vec::new();
-    let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
     let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
 
     // Inner area: 1 column of border + 1 column of
@@ -743,18 +725,6 @@ fn collect_labeled_section(
         emb.col_in_row += prefix_cols;
         embeds.push(emb);
     }
-    for mut sr in child_out.scroll_regions {
-        sr.buffer_row += 1;
-        sr.col_in_row += prefix_cols;
-        // The section padded the child to `inner_width`; extend the
-        // region two more columns — through the right padding onto the
-        // `│` border — so a scrollbar painted at the region's right
-        // edge lands ON the section border (not floating one column
-        // inboard with the selection band leaking past it), and a
-        // wheel over the border still scrolls this widget.
-        sr.width_cols = inner_width + 2;
-        scroll_regions.push(sr);
-    }
 
     entries.push(render_section_bottom_border(total_cols));
 
@@ -764,7 +734,7 @@ fn collect_labeled_section(
         focus_cursor,
         embeds,
         overlays,
-        scroll_regions,
+        self_scroll: None,
         dropdown_popups,
         wants_fill,
         effective_rows,
@@ -795,7 +765,7 @@ fn collect_overlay(
         focus_cursor: child_out.focus_cursor,
         embeds: child_out.embeds,
         overlays: child_out.overlays,
-        scroll_regions: child_out.scroll_regions,
+        self_scroll: None,
         dropdown_popups: child_out.dropdown_popups,
         boxes: child_out.boxes,
         // An Overlay occupies no column rows, so it never receives a
@@ -942,7 +912,6 @@ fn zip_row_blocks(
     out_hits: &mut Vec<HitArea>,
     out_focus_cursor: &mut Option<FocusCursor>,
     out_embeds: &mut Vec<EmbedRect>,
-    out_scroll: &mut Vec<ScrollRegion>,
     out_boxes: &mut Vec<LayoutBox>,
 ) {
     let starting_row = out_entries.len() as u32;
@@ -971,7 +940,6 @@ fn zip_row_blocks(
                     hits,
                     focus_cursor,
                     embeds: inline_embeds,
-                    scroll_regions: inline_scroll,
                     boxes: piece_boxes,
                 } => {
                     let inline_cols = entry.text.chars().count();
@@ -990,12 +958,6 @@ fn zip_row_blocks(
                                 width_cols: emb.width_cols,
                                 height_rows: emb.height_rows,
                             });
-                        }
-                        for sr in inline_scroll {
-                            let mut sr = sr.clone();
-                            sr.buffer_row += starting_row;
-                            sr.col_in_row += col_shift;
-                            out_scroll.push(sr);
                         }
                         let base = out_boxes.len();
                         for b in piece_boxes {
@@ -1042,7 +1004,6 @@ fn zip_row_blocks(
                     hits,
                     focus_cursor,
                     embeds: block_embeds,
-                    scroll_regions: block_scroll,
                     boxes: piece_boxes,
                 } => {
                     let block_w = *column_width as usize;
@@ -1063,12 +1024,6 @@ fn zip_row_blocks(
                                 width_cols: emb.width_cols,
                                 height_rows: emb.height_rows,
                             });
-                        }
-                        for sr in block_scroll {
-                            let mut sr = sr.clone();
-                            sr.buffer_row += starting_row;
-                            sr.col_in_row += col_shift;
-                            out_scroll.push(sr);
                         }
                         let base = out_boxes.len();
                         for b in piece_boxes {

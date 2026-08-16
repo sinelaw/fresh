@@ -4646,13 +4646,14 @@ impl Editor {
                 let Some(panel) = self.widget_registry.get(&panel_key) else {
                     continue;
                 };
-                for region in &panel.scroll_regions {
-                    // Geometry regions cover every keyed list; only
+                for b in &panel.boxes {
+                    // Scroll payloads ride every scrollable box; only
                     // overflowing ones earn a scrollbar.
-                    if region.total <= region.visible {
+                    let Some(sc) = b.scroll else { continue };
+                    if sc.total <= sc.visible {
                         continue;
                     }
-                    let Some(rel_row) = (region.buffer_row as usize).checked_sub(top_line) else {
+                    let Some(rel_row) = (b.row as usize).checked_sub(top_line) else {
                         continue;
                     };
                     let y = content_rect.y as usize + rel_row;
@@ -4660,7 +4661,7 @@ impl Editor {
                     if y >= bottom {
                         continue;
                     }
-                    let h = (region.height_rows as usize).min(bottom - y);
+                    let h = (b.height as usize).min(bottom - y);
                     if h == 0 {
                         continue;
                     }
@@ -4683,10 +4684,10 @@ impl Editor {
                     let region_right = content_rect
                         .x
                         .saturating_add(gutter)
-                        .saturating_add(region.col_in_row as u16)
-                        .saturating_add(region.width_cols.saturating_sub(1) as u16);
+                        .saturating_add(b.col as u16)
+                        .saturating_add(b.width.saturating_sub(1) as u16);
                     let panel_right = content_rect.x + content_rect.width.saturating_sub(1);
-                    let sb_x = if region.col_in_row != 0 {
+                    let sb_x = if b.col != 0 {
                         region_right.min(panel_right)
                     } else if self.config.editor.show_vertical_scrollbar {
                         content_rect.x + content_rect.width
@@ -4700,7 +4701,7 @@ impl Editor {
                             width: 1,
                             height: h as u16,
                         },
-                        ScrollbarState::new(region.total, region.visible, region.scroll),
+                        ScrollbarState::new(sc.total, sc.visible, sc.offset),
                     ));
                 }
             }
@@ -4748,7 +4749,7 @@ impl Editor {
                 fwp.focus_cursor,
                 fwp.embeds.clone(),
                 fwp.overlays.clone(),
-                fwp.scroll_regions.clone(),
+                fwp.boxes.clone(),
                 fwp.placement,
                 fwp.focused,
                 fwp.scrollbar_zone_hovered,
@@ -5042,10 +5043,11 @@ impl Editor {
         {
             use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
             let colors = ScrollbarColors::from_theme(&theme);
-            for region in &scroll_regions {
-                // Regions are emitted for every keyed list (wheel routing
-                // hit-tests them); only overflowing ones get a scrollbar.
-                if region.total <= region.visible {
+            for b in &scroll_regions {
+                // Scroll payloads ride every scrollable box; only
+                // overflowing ones get a scrollbar.
+                let Some(sc) = b.scroll else { continue };
+                if sc.total <= sc.visible {
                     continue;
                 }
                 // Scrollbar column = right edge of the list's column,
@@ -5053,8 +5055,8 @@ impl Editor {
                 // clamped to the panel bottom.
                 let mut sb_x = inner
                     .x
-                    .saturating_add(region.col_in_row as u16)
-                    .saturating_add((region.width_cols.saturating_sub(1)) as u16)
+                    .saturating_add(b.col as u16)
+                    .saturating_add((b.width.saturating_sub(1)) as u16)
                     .min(inner.x + inner.width.saturating_sub(1));
                 // The dock reserves an editor-side gutter between the list and
                 // its divider; nudge its scrollbar one column right into that
@@ -5065,12 +5067,12 @@ impl Editor {
                         .saturating_add(1)
                         .min(inner.x + inner.width.saturating_sub(1));
                 }
-                let sb_y = inner.y.saturating_add(region.buffer_row as u16);
+                let sb_y = inner.y.saturating_add(b.row as u16);
                 if sb_y >= inner.y + inner.height {
                     continue;
                 }
                 let max_h = inner.y + inner.height - sb_y;
-                let sb_h = (region.height_rows as u16).min(max_h);
+                let sb_h = (b.height as u16).min(max_h);
                 if sb_h == 0 {
                     continue;
                 }
@@ -5099,14 +5101,14 @@ impl Editor {
                     // visible bar is always available before a press lands.)
                     continue;
                 }
-                let state = ScrollbarState::new(region.total, region.visible, region.scroll);
+                let state = ScrollbarState::new(sc.total, sc.visible, sc.offset);
                 render_scrollbar(frame, sb_rect, &state, &colors);
                 scrollbar_tracks.push(super::WidgetScrollbarTrack {
-                    list_key: region.list_key.clone(),
+                    list_key: b.key.clone().unwrap_or_default(),
                     rect: sb_rect,
-                    total: region.total,
-                    visible: region.visible,
-                    scroll: region.scroll,
+                    total: sc.total,
+                    visible: sc.visible,
+                    scroll: sc.offset,
                 });
             }
         }

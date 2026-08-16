@@ -1778,7 +1778,6 @@ mod wave_dismiss_tests {
             HashMap::new(),
             "field".to_string(),
             vec!["field".to_string()],
-            Vec::new(),
             HashMap::new(),
             Vec::new(),
         );
@@ -1792,7 +1791,7 @@ mod wave_dismiss_tests {
             focus_cursor: None,
             embeds: Vec::new(),
             overlays: Vec::new(),
-            scroll_regions: Vec::new(),
+            boxes: Vec::new(),
             scrollbar_tracks: Vec::new(),
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,

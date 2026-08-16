@@ -1465,7 +1465,10 @@ pub(crate) struct FloatingWidgetState {
     /// Scrollable `List` widgets that overflowed, with the geometry
     /// the draw pass uses to paint a scrollbar. Refreshed on every
     /// render alongside `entries`/`embeds`.
-    pub scroll_regions: Vec<crate::widgets::ScrollRegion>,
+    /// The panel's layout-box tree from its most recent render — the
+    /// paint pass reads scrollable boxes (rect + scroll payload) from
+    /// it to draw overlay scrollbars.
+    pub boxes: Vec<crate::widgets::LayoutBox>,
     /// Screen-space scrollbar tracks computed at the last draw — used
     /// by the mouse hit-test to start/continue a scrollbar drag. One
     /// per overflowing list.
@@ -2122,7 +2125,7 @@ mod tests {
             focus_cursor: None,
             embeds: Vec::new(),
             overlays: Vec::new(),
-            scroll_regions: Vec::new(),
+            boxes: Vec::new(),
             scrollbar_tracks: Vec::new(),
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,

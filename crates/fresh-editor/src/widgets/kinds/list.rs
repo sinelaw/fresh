@@ -10,7 +10,7 @@ use super::WidgetImpl;
 use crate::widgets::registry::{HitArea, WidgetInstanceState};
 use crate::widgets::render::{
     apply_hover_band, blank_list_row, ensure_trailing_newline, mark_list_card_selected,
-    mark_list_row_selected, render_collected, CollectedOutput, RenderContext, ScrollRegion,
+    mark_list_row_selected, render_collected, CollectedOutput, RenderContext,
 };
 
 pub(crate) struct List;
@@ -292,7 +292,7 @@ fn collect_list(
 ) -> CollectedOutput {
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
     let mut hits: Vec<HitArea> = Vec::new();
-    let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
+    let mut self_scroll: Option<crate::widgets::layout_box::BoxScroll> = None;
     // Resolve the row window: an explicit spec value pins it exactly
     // as before; an omitted one auto-sizes from the host's height
     // budget (threaded down like `panel_width`, resolved to leftover
@@ -460,15 +460,11 @@ fn collect_list(
     // sibling list elsewhere on the panel. Totals are in items;
     // height_rows is the painted band so the thumb spans it.
     if let Some(k) = list_key {
-        scroll_regions.push(ScrollRegion {
-            list_key: k.to_string(),
-            buffer_row: 0,
-            col_in_row: 0,
-            width_cols: panel_width,
-            height_rows: avail_rows,
+        let _ = k;
+        self_scroll = Some(crate::widgets::layout_box::BoxScroll {
             total: total as usize,
             visible: visible_items as usize,
-            scroll: scroll as usize,
+            offset: scroll as usize,
         });
     }
 
@@ -486,7 +482,7 @@ fn collect_list(
         focus_cursor: None,
         embeds: Vec::new(),
         overlays: Vec::new(),
-        scroll_regions,
+        self_scroll,
         dropdown_popups: Vec::new(),
         // List items are virtualized rows, not independently
         // addressable boxes — the List's own box (pushed by

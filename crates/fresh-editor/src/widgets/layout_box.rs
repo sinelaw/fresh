@@ -31,6 +31,21 @@
 //! length, the same ASCII-inline approximation the embed channel has
 //! always used; the box inherits, not worsens, that approximation.
 
+/// Scroll state a scrollable box carries out of the render: the item
+/// totals and window the scrollbar paints from and the wheel/drag
+/// handlers clamp against. This used to be a separate `ScrollRegion`
+/// side channel duplicating the box's rectangle; the payload now rides
+/// the box itself — one geometry, one shift path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoxScroll {
+    /// Total items (list/tree) or content lines (multi-line text).
+    pub total: usize,
+    /// Items/lines visible in the window.
+    pub visible: usize,
+    /// First visible item/line index.
+    pub offset: usize,
+}
+
 /// One node in the panel's layout-box tree.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutBox {
@@ -74,6 +89,11 @@ pub struct LayoutBox {
     /// A focus scope boundary: Tab cycles among focusables inside the
     /// nearest enclosing trap instead of the whole panel.
     pub focus_trap: bool,
+    /// Scroll window state, present on a scrollable box whose content
+    /// overflows bookkeeping (always written by List/Tree/multi-line
+    /// Text renders). The scrollbar painter and drag handlers read it
+    /// with the box's own rectangle.
+    pub scroll: Option<BoxScroll>,
 }
 
 impl LayoutBox {
@@ -93,6 +113,7 @@ impl LayoutBox {
             scrollable: false,
             pointer_opaque: false,
             focus_trap: false,
+            scroll: None,
         }
     }
 

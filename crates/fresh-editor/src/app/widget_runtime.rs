@@ -1053,7 +1053,7 @@ impl Editor {
         let entries = out_pieces.entries;
         let embeds = out_pieces.embeds;
         let overlays = out_pieces.overlays;
-        let scroll_regions = out_pieces.scroll_regions;
+        let panel_boxes = out_pieces.boxes.clone();
         let dropdown_popup = out_pieces.dropdown_popup;
         if self
             .widget_registry
@@ -1063,7 +1063,6 @@ impl Editor {
                 out_pieces.instance_states,
                 out_pieces.focus_key,
                 out_pieces.tabbable,
-                scroll_regions.clone(),
                 out_pieces.effective_rows,
                 out_pieces.boxes,
             )
@@ -1079,7 +1078,7 @@ impl Editor {
                     fwp.focus_cursor = focus_cursor;
                     fwp.embeds = embeds;
                     fwp.overlays = overlays;
-                    fwp.scroll_regions = scroll_regions;
+                    fwp.boxes = panel_boxes;
                     fwp.dropdown_popup = dropdown_popup;
                 }
             }

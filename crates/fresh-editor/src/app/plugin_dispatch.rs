@@ -5151,7 +5151,6 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
-            out.scroll_regions,
             out.effective_rows,
             out.boxes,
         );
@@ -5221,7 +5220,6 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
-            out.scroll_regions,
             out.effective_rows,
             out.boxes,
         ) {
@@ -5644,7 +5642,7 @@ impl Editor {
             focus_cursor: None,
             embeds: Vec::new(),
             overlays: Vec::new(),
-            scroll_regions: Vec::new(),
+            boxes: Vec::new(),
             scrollbar_tracks: Vec::new(),
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
@@ -5693,7 +5691,7 @@ impl Editor {
         let entries = out.entries;
         let embeds = out.embeds;
         let overlays = out.overlays;
-        let scroll_regions = out.scroll_regions;
+        let panel_boxes = out.boxes.clone();
         let dropdown_popup = out.dropdown_popup;
         self.widget_registry.mount(
             panel_key.clone(),
@@ -5703,7 +5701,6 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
-            scroll_regions.clone(),
             out.effective_rows,
             out.boxes,
         );
@@ -5712,7 +5709,7 @@ impl Editor {
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
             fwp.overlays = overlays;
-            fwp.scroll_regions = scroll_regions;
+            fwp.boxes = panel_boxes;
             fwp.dropdown_popup = dropdown_popup;
         }
         tracing::debug!(
@@ -5786,7 +5783,7 @@ impl Editor {
         let entries = out.entries;
         let embeds = out.embeds;
         let overlays = out.overlays;
-        let scroll_regions = out.scroll_regions;
+        let panel_boxes = out.boxes.clone();
         let dropdown_popup = out.dropdown_popup;
         if self
             .widget_registry
@@ -5797,7 +5794,6 @@ impl Editor {
                 out.instance_states,
                 out.focus_key,
                 out.tabbable,
-                scroll_regions.clone(),
                 out.effective_rows,
                 out.boxes,
             )
@@ -5814,7 +5810,7 @@ impl Editor {
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
             fwp.overlays = overlays;
-            fwp.scroll_regions = scroll_regions;
+            fwp.boxes = panel_boxes;
             fwp.dropdown_popup = dropdown_popup;
         }
     }
