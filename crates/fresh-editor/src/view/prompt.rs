@@ -505,6 +505,39 @@ impl Prompt {
         self.selection_anchor = e.selection_anchor.map(|(_, col)| col);
     }
 
+    /// Route one editing key through the shared text-key table — the
+    /// same `apply_text_key` mapping the Settings fields and widget
+    /// Text use — via [`Self::apply_edit`]. Returns true when the
+    /// table handled the key. Deliberately NOT routed here: Ctrl+
+    /// word-motion (the prompt keeps buffer-style next-word-start /
+    /// select-to-word-end policy), printable chars (the input ladder
+    /// keeps its shift-uppercase compensation and suggestion-refresh
+    /// policy), and every chrome key the table ignores by contract.
+    pub(crate) fn handle_text_key(&mut self, event: &crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
+        let covered = matches!(event.code, KeyCode::Backspace | KeyCode::Delete)
+            || (!ctrl
+                && matches!(
+                    event.code,
+                    KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End
+                ));
+        if !covered {
+            return false;
+        }
+        if matches!(event.code, KeyCode::Backspace | KeyCode::Delete) {
+            self.push_undo_snapshot();
+        }
+        self.apply_edit(|e| {
+            crate::primitives::text_key::apply_text_key(
+                e,
+                event,
+                crate::primitives::text_key::TextKeyContext::multiline(false),
+            );
+        });
+        true
+    }
+
     /// Undo the last input edit. Returns true if the input changed.
     pub fn undo_input(&mut self) -> bool {
         if let Some((text, cursor)) = self.undo_stack.pop() {
