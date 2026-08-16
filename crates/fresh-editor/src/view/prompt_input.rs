@@ -102,9 +102,7 @@ impl InputHandler for Prompt {
                             );
                         if should_sync {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
-                                self.input = suggestion.get_value().to_string();
-                                self.cursor_pos = self.input.len();
-                                self.selection_anchor = Some(0);
+                                self.set_input_selected(suggestion.get_value().to_string());
                             }
                         }
                         // For theme selection, trigger live preview
@@ -148,9 +146,7 @@ impl InputHandler for Prompt {
                             );
                         if should_sync {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
-                                self.input = suggestion.get_value().to_string();
-                                self.cursor_pos = self.input.len();
-                                self.selection_anchor = Some(0);
+                                self.set_input_selected(suggestion.get_value().to_string());
                             }
                         }
                         // For theme selection, trigger live preview
@@ -209,25 +205,23 @@ impl InputHandler for Prompt {
                         if !suggestion.disabled {
                             let value = suggestion.get_value().to_string();
                             // For QuickOpen mode, preserve the prefix character
-                            if matches!(
+                            let accepted = if matches!(
                                 self.prompt_type,
                                 crate::view::prompt::PromptType::QuickOpen
                             ) {
-                                let prefix = self
-                                    .input
+                                match self
+                                    .input_str()
                                     .chars()
                                     .next()
-                                    .filter(|c| *c == '>' || *c == '#' || *c == ':');
-                                if let Some(p) = prefix {
-                                    self.input = format!("{}{}", p, value);
-                                } else {
-                                    self.input = value;
+                                    .filter(|c| *c == '>' || *c == '#' || *c == ':')
+                                {
+                                    Some(p) => format!("{}{}", p, value),
+                                    None => value,
                                 }
                             } else {
-                                self.input = value;
-                            }
-                            self.cursor_pos = self.input.len();
-                            self.clear_selection();
+                                value
+                            };
+                            self.set_input(accepted);
                         }
                     }
                 }
@@ -255,9 +249,9 @@ impl Prompt {
     fn handle_ctrl_key(&mut self, c: char, ctx: &mut InputContext) -> InputResult {
         match c {
             'a' => {
-                // Select all
-                self.selection_anchor = Some(0);
-                self.cursor_pos = self.input.len();
+                // Select all: caret to end, anchor at start.
+                let text = self.input_str().to_string();
+                self.set_input_selected(text);
                 InputResult::Consumed
             }
             'c' => {
