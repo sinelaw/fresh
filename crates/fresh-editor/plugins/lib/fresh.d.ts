@@ -2043,6 +2043,20 @@ type WidgetSpec = {
 	"kind": "popup";
 	child: WidgetSpec;
 	key?: string | null;
+	/**
+	* Anchor `[row, col]` in the panel's inner coordinates the
+	* popup drops from (the host resolves the final screen rect
+	* — opening below the anchor, flipping above near the frame
+	* edge, clamped on screen). `None` anchors at the popup's
+	* own position in the tree.
+	*/
+	anchor?: [number, number] | null;
+	/**
+	* When true, the popup escapes the panel's clipping and is
+	* painted at screen level (what the dropdown pop-over does);
+	* false keeps it panel-clipped like `Overlay`.
+	*/
+	screenSpace: boolean;
 };
 type WidgetAction = {
 	"kind": "focusAdvance";

@@ -262,17 +262,19 @@ pub struct DropdownPopup {
     pub widget_key: String,
     pub anchor_row: u32,
     pub anchor_col: u32,
-    /// The VISIBLE option rows, windowing and scroll already applied
-    /// by the renderer (which owns `DROPDOWN_VISIBLE_OPTIONS`): the
-    /// row's display text plus its absolute option index (what a
-    /// click on the row selects). The host consumer keeps only
-    /// screen geometry (anchor flip/clamp), paint, and hit
-    /// recording — it no longer knows the option list or its
-    /// scroll model.
-    pub rows: Vec<(String, usize)>,
-    /// Which visible row (index into `rows`) is the selected option,
-    /// if it is scrolled into view.
-    pub selected_row: Option<usize>,
+    /// The popup's rows, FULLY RENDERED by the widget renderer —
+    /// text, padding, and styling (selection highlight included) as
+    /// inline overlays over theme keys, exactly like every other
+    /// widget row. The host consumer keeps only screen geometry
+    /// (anchor flip/clamp), the border, and painting these entries
+    /// verbatim: it knows nothing about options, windows, or
+    /// selection.
+    pub entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+    /// Per-entry click payload: `row_indices[i]` is the absolute
+    /// option index a click on row `i` selects. Rows without a
+    /// payload (a generic `Popup` child) leave this empty and get no
+    /// select hits.
+    pub row_indices: Vec<usize>,
 }
 
 /// One row produced by an `Overlay` widget. `buffer_row` is the
@@ -6761,10 +6763,14 @@ pub(crate) mod tests {
             .expect("an open dropdown surfaces a floating pop-over");
         assert_eq!(dp.widget_key, "d");
         assert_eq!(
-            dp.rows,
-            vec![("a".to_string(), 0), ("b".to_string(), 1)],
-            "visible rows carry display text + absolute option index"
+            dp.entries
+                .iter()
+                .map(|e| e.text.as_str())
+                .collect::<Vec<_>>(),
+            vec![" a", " b"],
+            "rows arrive fully rendered (padded) with their indices"
         );
+        assert_eq!(dp.row_indices, vec![0, 1]);
         assert_eq!(dp.anchor_row, 0, "trigger is the panel's row 0");
     }
 
@@ -6825,14 +6831,22 @@ pub(crate) mod tests {
         );
         let dp = out.dropdown_popup.expect("open dropdown surfaces a popup");
         assert_eq!(
-            dp.rows,
-            vec![
-                ("a".to_string(), 0),
-                ("b".to_string(), 1),
-                ("c".to_string(), 2)
-            ]
+            dp.entries
+                .iter()
+                .map(|e| e.text.as_str())
+                .collect::<Vec<_>>(),
+            vec![" a", " b", " c"]
         );
-        assert_eq!(dp.selected_row, Some(1));
+        assert_eq!(dp.row_indices, vec![0, 1, 2]);
+        // The selected row carries its highlight as a rendered overlay
+        // (bg set); unselected rows have fg-only styling.
+        let has_bg = |i: usize| {
+            dp.entries[i]
+                .inline_overlays
+                .iter()
+                .any(|o| o.style.bg.is_some())
+        };
+        assert!(!has_bg(0) && has_bg(1) && !has_bg(2));
         assert_eq!(dp.anchor_row, 0);
     }
 

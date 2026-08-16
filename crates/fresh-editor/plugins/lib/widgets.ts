@@ -819,12 +819,23 @@ export function overlay(
  * `overlay` for new popup UI. */
 export function popup(
   child: WidgetSpec,
-  options?: { key?: string },
+  options?: {
+    key?: string;
+    /** Anchor [row, col] in panel-inner coordinates the popup drops
+     * from (host resolves the final rect: below the anchor, flipping
+     * above near the frame edge, clamped on screen). */
+    anchor?: [number, number];
+    /** Escape the panel's clipping and paint at screen level (what
+     * the dropdown pop-over does). Default: panel-clipped. */
+    screenSpace?: boolean;
+  },
 ): WidgetSpec {
   return {
     kind: "popup",
     child,
     key: options?.key,
+    anchor: options?.anchor,
+    screenSpace: options?.screenSpace ?? false,
   };
 }
 

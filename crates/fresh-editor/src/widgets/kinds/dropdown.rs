@@ -237,20 +237,47 @@ fn collect_dropdown(
         let visible = options.len().min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
         let max_scroll = options.len().saturating_sub(visible);
         let scroll = scroll_offset.min(max_scroll);
-        let rows: Vec<(String, usize)> = options
-            .iter()
-            .enumerate()
-            .skip(scroll)
-            .take(visible)
-            .map(|(idx, o)| (o.clone(), idx))
-            .collect();
-        let selected_row = rows.iter().position(|(_, idx)| *idx == cur as usize);
+        // Rows render HERE, like every other widget row: one column
+        // of left padding, popup-family theme keys, the selected row
+        // highlighted with the same keys the completion popup uses
+        // (this also normalizes the pop-over's colors with the rest
+        // of the popup family).
+        let mut popup_entries = Vec::new();
+        let mut row_indices = Vec::new();
+        for (idx, opt) in options.iter().enumerate().skip(scroll).take(visible) {
+            use crate::widgets::render::{
+                KEY_COMPLETION_FG, KEY_COMPLETION_SEL_BG, KEY_COMPLETION_SEL_FG,
+            };
+            use fresh_core::api::{OverlayColorSpec, OverlayOptions};
+            use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
+            let text = format!(" {opt}");
+            let mut e = TextPropertyEntry::text(&text);
+            let selected = idx == cur as usize;
+            e.inline_overlays.push(InlineOverlay {
+                start: 0,
+                end: text.len(),
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(if selected {
+                        KEY_COMPLETION_SEL_FG
+                    } else {
+                        KEY_COMPLETION_FG
+                    })),
+                    bg: selected.then(|| OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_BG)),
+                    bold: selected,
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+            popup_entries.push(e);
+            row_indices.push(idx);
+        }
         out.dropdown_popups.push(DropdownPopup {
             widget_key,
             anchor_row: 0,
             anchor_col,
-            rows,
-            selected_row,
+            entries: popup_entries,
+            row_indices,
         });
         // The pop-over as a box: screen-space (its final rectangle is
         // resolved at paint, flipping above the anchor near the frame
