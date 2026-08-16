@@ -105,18 +105,17 @@ pub(crate) struct ChromeLayout {
     /// list fits in the visible window. Click/drag handlers in
     /// `mouse_input.rs` read this to update `prompt.scroll_offset`.
     pub suggestions_scrollbar_rect: Option<Rect>,
-    /// Hit rects for the floating-overlay prompt's widget toolbar, as
-    /// (widget_key, screen_rect) pairs. Populated when the prompt carries a
-    /// `toolbar_widget`; a click inside one fires the matching
-    /// `live_grep_toggle_<key>` action. Empty otherwise. Kept for click
-    /// geometry only (display-column rects) — the focus ring derives from
-    /// `prompt_toolbar_boxes` instead.
-    pub prompt_toolbar_hits: Vec<(String, Rect)>,
-    /// The toolbar's layout-box tree from its most recent render. The
-    /// overlay focus ring derives from this (document order of focusable
-    /// boxes — any focusable kind the plugin puts in the toolbar joins the
-    /// ring), the same way panel focus rings derive from their box trees.
+    /// The toolbar's layout-box tree from its most recent render, plus
+    /// the screen position of the toolbar band's top-left cell. The
+    /// overlay focus ring derives from the tree (document order of
+    /// focusable boxes — any focusable kind the plugin puts in the
+    /// toolbar joins the ring) and clicks hit-test it, the same way
+    /// panel rings and clicks work — no paint-recorded rect list.
     pub prompt_toolbar_boxes: Vec<crate::widgets::LayoutBox>,
+    /// `(x, y)` of the toolbar band's origin on screen, translating
+    /// clicks into the box tree's (row, col) space. `None` when no
+    /// toolbar is showing.
+    pub prompt_toolbar_origin: Option<(u16, u16)>,
     /// Screen rect of the floating-overlay prompt's results list (issue
     /// #2119). `None` when no overlay is open. The mouse-wheel handler reads
     /// this to scroll the result list (without moving the selection) when the

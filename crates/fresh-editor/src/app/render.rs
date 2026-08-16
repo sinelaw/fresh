@@ -3747,17 +3747,17 @@ impl Editor {
         // separator so the user sees feature-scoped controls right
         // under what they're typing — not on the frame border
         // where shortcut hints get visually lost.
-        self.active_chrome_mut().prompt_toolbar_hits.clear();
         self.active_chrome_mut().prompt_toolbar_boxes = toolbar_widget_out
             .as_ref()
             .map(|out| out.boxes.clone())
             .unwrap_or_default();
+        self.active_chrome_mut().prompt_toolbar_origin =
+            toolbar_widget_out.as_ref().map(|_| (inner.x, inner.y + 1));
         if let Some(out) = &toolbar_widget_out {
-            // Widget toolbar: paint each rendered row across the full width
-            // and record screen-space hit rects (key → rect) for click
-            // routing. `HitArea` carries byte offsets within the row's text;
-            // convert to display columns so the rect lines up with the glyphs.
-            use crate::primitives::display_width::str_width;
+            // Widget toolbar: paint each rendered row across the full
+            // width. Click routing needs no recorded rects — the box tree
+            // stored above carries the geometry (display columns, same
+            // metric the paint uses).
             let band_y = inner.y + 1;
             if draw {
                 for (i, entry) in out.entries.iter().enumerate() {
@@ -3767,27 +3767,6 @@ impl Editor {
                     }
                     paint_text_property_entry(frame, entry, inner.x, y, inner.width, &theme, None);
                 }
-            }
-            for hit in &out.hits {
-                if hit.widget_key.is_empty() {
-                    continue;
-                }
-                let Some(entry) = out.entries.get(hit.buffer_row as usize) else {
-                    continue;
-                };
-                let text = &entry.text;
-                let start_col = str_width(text.get(..hit.byte_start).unwrap_or(""));
-                let end_col = str_width(text.get(..hit.byte_end).unwrap_or(text));
-                let y = band_y + hit.buffer_row as u16;
-                let rect = Rect {
-                    x: inner.x + start_col as u16,
-                    y,
-                    width: (end_col.saturating_sub(start_col)) as u16,
-                    height: 1,
-                };
-                self.active_chrome_mut()
-                    .prompt_toolbar_hits
-                    .push((hit.widget_key.clone(), rect));
             }
         } else if draw && !prompt.title.is_empty() && inner.height >= 2 {
             let toolbar = Rect {
