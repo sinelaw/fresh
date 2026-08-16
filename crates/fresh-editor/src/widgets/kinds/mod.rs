@@ -27,7 +27,7 @@ mod divider;
 pub(crate) mod dropdown;
 mod dual_list;
 mod hint_bar;
-mod list;
+pub(crate) mod list;
 pub(crate) mod number;
 mod raw;
 mod spacer;
@@ -82,6 +82,12 @@ pub(crate) struct KeyFx {
     /// the field and advancing). Focus order is panel policy — the
     /// kind only *requests* the move; the dispatcher walks the ring.
     pub focus_advance: Option<i32>,
+    /// Ask the host to flash the panel's overlay scrollbar (keyboard
+    /// nav in the dock moves the selection without the pointer, so
+    /// the hover-revealed bar needs an explicit blink to show where
+    /// the selection sits). Which panels *have* such a bar is host
+    /// policy — a no-op elsewhere.
+    pub flash_scrollbar: bool,
 }
 
 /// What the focused widget did with a key.

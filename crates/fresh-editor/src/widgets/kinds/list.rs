@@ -93,6 +93,50 @@ impl WidgetImpl for List {
         }
         m
     }
+
+    /// Keyboard model: arrows move the host-owned selection, Page
+    /// keys jump by a viewport page (one row of overlap so the user
+    /// keeps a visual anchor), Enter and Space activate the selected
+    /// item. All self-contained state + events, so it lives with the
+    /// kind; the panel-level picker forwarding (arrows on a sibling
+    /// filter input) reuses [`select_move`] through the host shell.
+    fn on_key(
+        &self,
+        spec: &WidgetSpec,
+        widget_key: &str,
+        panel: &mut crate::widgets::WidgetPanelState,
+        key: &str,
+        fx: &mut super::KeyFx,
+    ) -> super::KeyDisposition {
+        match key {
+            "Up" | "Down" => {
+                let delta = if key == "Up" { -1 } else { 1 };
+                select_move(spec, widget_key, panel, delta, fx);
+            }
+            "PageUp" | "PageDown" => {
+                let WidgetSpec::List { visible_rows, .. } = spec else {
+                    return super::KeyDisposition::Pass;
+                };
+                // The row window comes from the panel's last render
+                // (`effective_rows`) — an auto-sized list's spec
+                // carries no number, and even an explicit one can be
+                // superseded only there.
+                let page = panel
+                    .effective_visible_rows(widget_key, *visible_rows)
+                    .saturating_sub(1)
+                    .max(1) as i32;
+                let delta = if key == "PageUp" { -page } else { page };
+                select_move(spec, widget_key, panel, delta, fx);
+            }
+            "Enter" | "Space" => {
+                if let Some(ev) = activate_event(spec, widget_key, panel) {
+                    fx.events.push(ev);
+                }
+            }
+            _ => return super::KeyDisposition::Pass,
+        }
+        super::KeyDisposition::Consumed
+    }
     fn collect(
         &self,
         spec: &WidgetSpec,
@@ -126,6 +170,97 @@ impl WidgetImpl for List {
             panel_width,
         )
     }
+}
+
+/// Move the host-owned selection by `delta` (clamped to the item
+/// range), re-arming scroll-follows-selection, and queue `select` —
+/// but only when the index actually moved: a clamped move at the
+/// list's top/bottom edge still repaints (re-arming `user_scrolled`
+/// snaps a scrolled-away view back to the selection) but must not
+/// spam the plugin with same-index selections — each one re-runs the
+/// plugin's preview / live-switch work.
+pub(crate) fn select_move(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &mut crate::widgets::WidgetPanelState,
+    delta: i32,
+    fx: &mut super::KeyFx,
+) {
+    let WidgetSpec::List {
+        selected_index,
+        items,
+        item_specs,
+        item_keys,
+        ..
+    } = spec
+    else {
+        return;
+    };
+    // Item count is in *items* (cards override the plain `items`
+    // rows; see `WidgetSpec::List::item_specs`).
+    let total = if item_specs.is_empty() {
+        items.len()
+    } else {
+        item_specs.len()
+    } as i32;
+    if total == 0 {
+        return;
+    }
+    let (cur_sel, cur_scroll, cur_item_height) = match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::List {
+            selected_index,
+            scroll_offset,
+            item_height,
+            ..
+        }) => (*selected_index, *scroll_offset, *item_height),
+        _ => (*selected_index, 0, 1),
+    };
+    let raw = if cur_sel < 0 { 0 } else { cur_sel + delta };
+    let new_sel = raw.clamp(0, total - 1);
+    let new_key = item_keys.get(new_sel as usize).cloned().unwrap_or_default();
+    panel.instance_states.insert(
+        widget_key.to_string(),
+        WidgetInstanceState::List {
+            scroll_offset: cur_scroll,
+            selected_index: new_sel,
+            item_height: cur_item_height,
+            // Keyboard nav re-arms scroll-follows-selection so the
+            // renderer brings the new selection back into view.
+            user_scrolled: false,
+        },
+    );
+    if new_sel != cur_sel {
+        fx.events
+            .push(("select".into(), json!({ "index": new_sel, "key": new_key })));
+    }
+}
+
+/// The `activate` event for the currently-selected item, if any.
+/// Shared by Enter/Space in [`List::on_key`] and the panel-level
+/// picker forwarding (Enter on a sibling filter input activates the
+/// list without moving focus).
+pub(crate) fn activate_event(
+    spec: &WidgetSpec,
+    widget_key: &str,
+    panel: &crate::widgets::WidgetPanelState,
+) -> Option<(String, serde_json::Value)> {
+    let WidgetSpec::List {
+        selected_index,
+        item_keys,
+        ..
+    } = spec
+    else {
+        return None;
+    };
+    let sel = match panel.instance_states.get(widget_key) {
+        Some(WidgetInstanceState::List { selected_index, .. }) => *selected_index,
+        _ => *selected_index,
+    };
+    if sel < 0 {
+        return None;
+    }
+    let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
+    Some(("activate".into(), json!({ "index": sel, "key": item_key, })))
 }
 
 /// Pre-render every card item-spec into its own block of entries at the
