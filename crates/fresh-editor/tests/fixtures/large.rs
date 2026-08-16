@@ -3625,8 +3625,8 @@ impl Editor {
         if let Some(text) = default_text {
             if let Some(ref mut prompt) = self.prompt {
                 prompt.set_input(text.clone());
-                prompt.selection_anchor = Some(0);
-                prompt.cursor_pos = text.len();
+                prompt.select_range(0, prompt.cursor_byte());
+                prompt.set_cursor_byte(text.len());
             }
             if from_history {
                 self.get_or_create_prompt_history("search").init_at_last();
@@ -3698,8 +3698,8 @@ impl Editor {
 
         // Start with ">" prefix for command mode by default
         let mut prompt = Prompt::with_suggestions(String::new(), PromptType::QuickOpen, vec![]);
-        prompt.input = ">".to_string();
-        prompt.cursor_pos = 1;
+        prompt.set_input_plain(">".to_string());
+        prompt.set_cursor_byte(1);
         self.prompt = Some(prompt);
 
         // Load initial command suggestions
@@ -3903,13 +3903,13 @@ impl Editor {
     /// Pre-fill the Open File prompt input with the current buffer directory
     fn prefill_open_file_prompt(&mut self) {
         // With the native file browser, the directory is shown from file_open_state.current_dir
-        // in the prompt rendering. The prompt.input is just the filter/filename, so we
+        // in the prompt rendering. The prompt.input_str() is just the filter/filename, so we
         // start with an empty input.
         if let Some(prompt) = self.prompt.as_mut() {
             if prompt.prompt_type == PromptType::OpenFile {
-                prompt.input.clear();
-                prompt.cursor_pos = 0;
-                prompt.selection_anchor = None;
+                prompt.input_str().clear();
+                prompt.set_cursor_byte(0);
+                prompt.clear_selection();
             }
         }
     }
@@ -4119,7 +4119,7 @@ impl Editor {
                         "prompt_cancelled",
                         HookArgs::PromptCancelled {
                             prompt_type: custom_type.clone(),
-                            input: prompt.input.clone(),
+                            input: prompt.input_str().to_string(),
                         },
                     );
                 }
@@ -4181,8 +4181,8 @@ impl Editor {
             // Update input to match selected suggestion for non-plugin prompts
             if !matches!(prompt.prompt_type, PromptType::Plugin { .. }) {
                 if let Some(suggestion) = prompt.suggestions.get(new_selected) {
-                    prompt.input = suggestion.get_value().to_string();
-                    prompt.cursor_pos = prompt.input.len();
+                    prompt.set_input_plain(suggestion.get_value().to_string());
+                    prompt.set_cursor_byte(prompt.input_str().len());
                 }
             }
 
@@ -4202,7 +4202,7 @@ impl Editor {
             let mut final_input = if prompt.sync_input_on_navigate {
                 // When sync_input_on_navigate is set, the input field is kept in sync
                 // with the selected suggestion, so always use the input value
-                prompt.input.clone()
+                prompt.input_str().to_string()
             } else if matches!(
                 prompt.prompt_type,
                 PromptType::Command
@@ -4243,13 +4243,13 @@ impl Editor {
                         // Use the selected suggestion value
                         suggestion.get_value().to_string()
                     } else {
-                        prompt.input.clone()
+                        prompt.input_str().to_string()
                     }
                 } else {
-                    prompt.input.clone()
+                    prompt.input_str().to_string()
                 }
             } else {
-                prompt.input.clone()
+                prompt.input_str().to_string()
             };
 
             // For StopLspServer/RestartLspServer, validate that the input matches a suggestion
@@ -4275,7 +4275,7 @@ impl Editor {
             // If the user typed text, it must match a suggestion value to be accepted.
             // If the input is empty, the pre-selected suggestion is used.
             if matches!(prompt.prompt_type, PromptType::RemoveRuler) {
-                if prompt.input.is_empty() {
+                if prompt.input_str().is_empty() {
                     // No typed text — use the selected suggestion
                     if let Some(selected_idx) = prompt.selected_suggestion {
                         if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
@@ -4287,7 +4287,7 @@ impl Editor {
                     }
                 } else {
                     // User typed text — it must match a suggestion value
-                    let typed = prompt.input.trim().to_string();
+                    let typed = prompt.input_str().trim().to_string();
                     let matched = prompt.suggestions.iter().find(|s| s.get_value() == typed);
                     if let Some(suggestion) = matched {
                         final_input = suggestion.get_value().to_string();
@@ -4416,7 +4416,7 @@ impl Editor {
     pub fn update_prompt_suggestions(&mut self) {
         // Extract prompt type and input to avoid borrow checker issues
         let (prompt_type, input) = if let Some(prompt) = &self.prompt {
-            (prompt.prompt_type.clone(), prompt.input.clone())
+            (prompt.prompt_type.clone(), prompt.input_str().to_string())
         } else {
             return;
         };
