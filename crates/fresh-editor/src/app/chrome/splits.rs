@@ -150,4 +150,72 @@ impl ChromeComponent for Splits {
             _ => None,
         }
     }
+
+    fn on_pointer(
+        &self,
+        ed: &mut Editor,
+        bx: &LayoutBox,
+        ev: &super::ChromePointer,
+    ) -> anyhow::Result<super::Disposition> {
+        use super::{Disposition, PointerPress};
+        if ev.press != PointerPress::Left {
+            return Ok(Disposition::Pass);
+        }
+        let consumed = match bx.kind {
+            "chrome:scrollbars" => ed.handle_click_scrollbar(ev.col, ev.row),
+            "chrome:h_scrollbar" => ed.handle_click_horizontal_scrollbar(ev.col, ev.row),
+            "chrome:split_separators" => ed.handle_click_split_separator(ev.col, ev.row),
+            "chrome:split_buttons" => ed.handle_click_split_controls(ev.col, ev.row),
+            "chrome:tabs" => ed.handle_click_tab_bar(ev.col, ev.row),
+            "chrome:editor" => {
+                let areas: Vec<_> = ed
+                    .active_layout()
+                    .split_areas
+                    .iter()
+                    .map(|(split_id, buffer_id, content_rect, _, _, _)| {
+                        (*split_id, *buffer_id, *content_rect)
+                    })
+                    .collect();
+                for (split_id, buffer_id, content_rect) in areas {
+                    if in_rect(ev.col, ev.row, content_rect) {
+                        ed.handle_editor_click(
+                            ev.col,
+                            ev.row,
+                            split_id,
+                            buffer_id,
+                            content_rect,
+                            ev.modifiers,
+                        )?;
+                        return Ok(Disposition::Consumed);
+                    }
+                }
+                None
+            }
+            _ => None,
+        };
+        if let Some(r) = consumed {
+            r?;
+            return Ok(Disposition::Consumed);
+        }
+        Ok(Disposition::Pass)
+    }
+
+    fn on_wheel(
+        &self,
+        ed: &mut Editor,
+        bx: &LayoutBox,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> anyhow::Result<super::Disposition> {
+        use super::Disposition;
+        if bx.kind != "chrome:split_widget_panel" {
+            return Ok(Disposition::Pass);
+        }
+        if ed.handle_split_widget_panel_wheel(col, row, delta) {
+            Ok(Disposition::Consumed)
+        } else {
+            Ok(Disposition::Pass)
+        }
+    }
 }

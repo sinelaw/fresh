@@ -55,11 +55,11 @@ pub(crate) enum Disposition {
     Pass,
 }
 
-/// Which press gesture a pointer event carries. Left-click joins in
-/// slice 2 (its arms still ride `CLICK_ORDER`); triple-click stays a
+/// Which press gesture a pointer event carries. Triple-click stays a
 /// buffer-selection concern outside chrome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PointerPress {
+    Left,
     Right,
     Double,
 }
@@ -67,11 +67,14 @@ pub(crate) enum PointerPress {
 /// One pointer gesture offered to a component's box, press kind
 /// included — per-gesture behavior lives in the handler (the way
 /// `WidgetImpl::on_pointer` takes `event_type`), not in one trait
-/// method per press.
+/// method per press. `modifiers` matter only to the editor surface
+/// (Ctrl+click follows links); guards and chrome controls ignore
+/// them.
 pub(crate) struct ChromePointer {
     pub press: PointerPress,
     pub col: u16,
     pub row: u16,
+    pub modifiers: crossterm::event::KeyModifiers,
 }
 
 /// Per-event sink the components push their boxes into. Wraps the
@@ -140,13 +143,28 @@ pub(crate) trait ChromeComponent: Sync {
         None
     }
 
-    /// A pointer press (right / double, per `ev.press`) on one of this
-    /// component's boxes.
+    /// A pointer press (left / right / double, per `ev.press`) on one
+    /// of this component's boxes.
     fn on_pointer(
         &self,
         _ed: &mut Editor,
         _bx: &LayoutBox,
         _ev: &ChromePointer,
+    ) -> AnyhowResult<Disposition> {
+        Ok(Disposition::Pass)
+    }
+
+    /// A wheel delta over one of this component's boxes. `Consumed`
+    /// stops the walk; a scroll surface already at its bound (or a
+    /// box whose real target the pointer missed) returns `Pass` so
+    /// the wheel keeps falling — scroll chaining.
+    fn on_wheel(
+        &self,
+        _ed: &mut Editor,
+        _bx: &LayoutBox,
+        _col: u16,
+        _row: u16,
+        _delta: i32,
     ) -> AnyhowResult<Disposition> {
         Ok(Disposition::Pass)
     }

@@ -45,4 +45,35 @@ impl ChromeComponent for Base {
         }
         Ok(Disposition::Consumed)
     }
+
+    fn on_wheel(
+        &self,
+        ed: &mut Editor,
+        _bx: &LayoutBox,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> anyhow::Result<super::Disposition> {
+        use crate::app::scrollbar_input::WheelSurface;
+        match ed.active_window().wheel_surface_at(col, row) {
+            None => {}
+            Some(surface) => {
+                // Only a wheel over a pane changes that terminal's
+                // live/scrollback state; panning the tab strip or the
+                // explorer leaves a live terminal streaming.
+                if let WheelSurface::Split(split_id, buffer_id) = surface {
+                    if ed.active_window().focused_terminal_live() {
+                        ed.enter_terminal_scrollback();
+                    } else {
+                        ed.active_window_mut()
+                            .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
+                    }
+                }
+                ed.dismiss_transient_popups();
+                ed.active_window_mut()
+                    .handle_mouse_scroll(col, row, delta)?;
+            }
+        }
+        Ok(super::Disposition::Consumed)
+    }
 }

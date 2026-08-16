@@ -47,8 +47,25 @@ impl ChromeComponent for ContextMenu {
         bx: &LayoutBox,
         ev: &ChromePointer,
     ) -> AnyhowResult<Disposition> {
-        if ev.press != PointerPress::Right || bx.kind != "chrome:context_menu" {
-            return Ok(Disposition::Pass);
+        match (ev.press, bx.kind) {
+            (PointerPress::Left, "chrome:context_menu") => {
+                if let Some(r) = ed.handle_click_context_menus(ev.col, ev.row) {
+                    r?;
+                    return Ok(Disposition::Consumed);
+                }
+                return Ok(Disposition::Pass);
+            }
+            (PointerPress::Left, "chrome:context_menu_close_guard") => {
+                // Outside the menu's rect (which claimed inside clicks
+                // above): dismiss and consume.
+                if ed.active_window().open_context_menu().is_some() {
+                    ed.active_window_mut().close_context_menus();
+                    return Ok(Disposition::Consumed);
+                }
+                return Ok(Disposition::Pass);
+            }
+            (PointerPress::Right, "chrome:context_menu") => {}
+            _ => return Ok(Disposition::Pass),
         }
         // A right-click inside an already-open native context menu
         // (file-explorer or tab) is swallowed so the menu stays put

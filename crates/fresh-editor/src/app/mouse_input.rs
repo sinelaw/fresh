@@ -7,7 +7,6 @@
 //! - Split separator dragging
 //! - Text selection via mouse
 
-use super::scrollbar_input::WheelSurface;
 use super::*;
 use crate::input::keybindings::Action;
 use crate::model::event::{ContainerId, CursorId, LeafId, SplitDirection};
@@ -577,75 +576,6 @@ impl Editor {
         "chrome:base",
     ];
 
-    fn wheel_chrome_scroll(
-        &mut self,
-        kind: &str,
-        col: u16,
-        row: u16,
-        delta: i32,
-    ) -> AnyhowResult<bool> {
-        Ok(match kind {
-            "chrome:prompt_preview" | "chrome:overlay_prompt_modal" => {
-                if !self.overlay_prompt_active() {
-                    return Ok(false);
-                }
-                self.handle_overlay_prompt_scroll(col, row, delta)
-            }
-            "chrome:prompt_suggestions" => self.handle_prompt_scroll(delta),
-            "chrome:popups" | "chrome:file_browser" => {
-                // File browser popup scrolls its list; every other popup
-                // scrolls through the popup stack. Both consume.
-                if self.is_file_open_active()
-                    && self.is_mouse_over_file_browser(col, row)
-                    && self.handle_file_open_scroll(delta)
-                {
-                    return Ok(true);
-                }
-                if !self.is_mouse_over_any_popup(col, row) {
-                    return Ok(false);
-                }
-                self.scroll_popup(delta);
-                true
-            }
-            "chrome:floating_panel" => {
-                self.handle_floating_widget_panel_wheel(
-                    super::PanelSlot::Floating,
-                    col,
-                    row,
-                    delta,
-                );
-                true
-            }
-            "chrome:dock" => {
-                self.handle_floating_widget_panel_wheel(super::PanelSlot::Dock, col, row, delta)
-            }
-            "chrome:split_widget_panel" => self.handle_split_widget_panel_wheel(col, row, delta),
-            "chrome:base" => {
-                match self.active_window().wheel_surface_at(col, row) {
-                    None => {}
-                    Some(surface) => {
-                        // Only a wheel over a pane changes that terminal's
-                        // live/scrollback state; panning the tab strip or
-                        // the explorer leaves a live terminal streaming.
-                        if let WheelSurface::Split(split_id, buffer_id) = surface {
-                            if self.active_window().focused_terminal_live() {
-                                self.enter_terminal_scrollback();
-                            } else {
-                                self.active_window_mut()
-                                    .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
-                            }
-                        }
-                        self.dismiss_transient_popups();
-                        self.active_window_mut()
-                            .handle_mouse_scroll(col, row, delta)?;
-                    }
-                }
-                true
-            }
-            _ => false,
-        })
-    }
-
     /// Dispatch a vertical scroll event (ScrollUp/ScrollDown): Shift
     /// pans horizontally; otherwise the wheel walks the shared
     /// `chrome_boxes()` tree in `WHEEL_ORDER` precedence until one
@@ -671,16 +601,16 @@ impl Editor {
         // proxies). A handler that declines passes the wheel to the
         // next surface down, which is what makes scroll chaining and
         // stale-state races behave.
-        let mut candidates: Vec<crate::widgets::LayoutBox> = self
-            .chrome_boxes()
+        let mut candidates: Vec<super::chrome::ChromeBox> = super::chrome::chrome_tree(self)
             .into_iter()
-            .filter(|b| b.contains(row as u32, col as u32))
-            .filter(|b| Self::WHEEL_ORDER.contains(&b.kind))
+            .filter(|b| b.lb.contains(row as u32, col as u32))
+            .filter(|b| Self::WHEEL_ORDER.contains(&b.lb.kind))
             .collect();
-        candidates.sort_by_key(|b| Self::WHEEL_ORDER.iter().position(|k| *k == b.kind));
+        candidates.sort_by_key(|b| Self::WHEEL_ORDER.iter().position(|k| *k == b.lb.kind));
         for b in candidates {
-            if self.wheel_chrome_scroll(b.kind, col, row, delta)? {
-                return Ok(());
+            match super::chrome::components()[b.owner].on_wheel(self, &b.lb, col, row, delta)? {
+                super::chrome::Disposition::Consumed => return Ok(()),
+                super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
             }
         }
         Ok(())
@@ -697,7 +627,7 @@ impl Editor {
     /// Bottom-anchored prompts (command palette, file finder) are left to
     /// `handle_prompt_scroll`, which scrolls their dropdown the same
     /// selection-preserving way.
-    fn handle_overlay_prompt_scroll(&mut self, col: u16, row: u16, delta: i32) -> bool {
+    pub(super) fn handle_overlay_prompt_scroll(&mut self, col: u16, row: u16, delta: i32) -> bool {
         if !self.overlay_prompt_active() {
             return false;
         }
@@ -1122,7 +1052,7 @@ impl Editor {
     }
 
     /// Check if mouse position is over the file browser popup
-    fn is_mouse_over_file_browser(&self, col: u16, row: u16) -> bool {
+    pub(super) fn is_mouse_over_file_browser(&self, col: u16, row: u16) -> bool {
         self.active_window()
             .file_browser_layout
             .as_ref()
@@ -1520,6 +1450,7 @@ impl Editor {
                 press: super::chrome::PointerPress::Double,
                 col,
                 row,
+                modifiers: crossterm::event::KeyModifiers::empty(),
             };
             match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
                 super::chrome::Disposition::Consumed => return Ok(()),
@@ -1921,22 +1852,28 @@ impl Editor {
         // in this gesture's precedence (see CLICK_ORDER); a surface
         // that declines passes the click to the next one beneath —
         // same geometric walk as the wheel.
-        let mut candidates: Vec<crate::widgets::LayoutBox> = self
-            .chrome_boxes()
+        let mut candidates: Vec<super::chrome::ChromeBox> = super::chrome::chrome_tree(self)
             .into_iter()
-            .filter(|b| b.contains(row as u32, col as u32))
-            .filter(|b| Self::CLICK_ORDER.contains(&b.kind))
+            .filter(|b| b.lb.contains(row as u32, col as u32))
+            .filter(|b| Self::CLICK_ORDER.contains(&b.lb.kind))
             .collect();
-        candidates.sort_by_key(|b| Self::CLICK_ORDER.iter().position(|k| *k == b.kind));
+        candidates.sort_by_key(|b| Self::CLICK_ORDER.iter().position(|k| *k == b.lb.kind));
         let mut seen = std::collections::HashSet::new();
         for b in candidates {
             // Rect-bounded surfaces can contribute several boxes (one
             // per popup); dispatch each surface once.
-            if !seen.insert(b.kind) {
+            if !seen.insert(b.lb.kind) {
                 continue;
             }
-            if let Some(r) = self.click_surface_dispatch(b.kind, col, row, modifiers) {
-                return r;
+            let ev = super::chrome::ChromePointer {
+                press: super::chrome::PointerPress::Left,
+                col,
+                row,
+                modifiers,
+            };
+            match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
+                super::chrome::Disposition::Consumed => return Ok(()),
+                super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
             }
         }
         Ok(())
@@ -1969,127 +1906,6 @@ impl Editor {
         "chrome:editor",
     ];
 
-    /// One surface's click handling: `Some` = consumed (with the
-    /// handler's result), `None` = not this surface, keep walking.
-    fn click_surface_dispatch(
-        &mut self,
-        surface: &str,
-        col: u16,
-        row: u16,
-        modifiers: crossterm::event::KeyModifiers,
-    ) -> Option<AnyhowResult<()>> {
-        match surface {
-            "chrome:context_menu" => self.handle_click_context_menus(col, row),
-            "chrome:context_menu_close_guard" => {
-                // Outside the menu's rect (which claimed inside clicks
-                // above): dismiss and consume.
-                if self.active_window().open_context_menu().is_some() {
-                    self.active_window_mut().close_context_menus();
-                    return Some(Ok(()));
-                }
-                None
-            }
-            "chrome:transient_guard" => {
-                if !self.is_mouse_over_any_popup(col, row) {
-                    self.dismiss_transient_popups();
-                }
-                None
-            }
-            "chrome:suggestions" => self.handle_click_suggestions(col, row),
-            "chrome:prompt_scrollbar" => self.handle_click_prompt_scrollbar(col, row),
-            "chrome:popup_scrollbar" => self.handle_click_popup_scrollbar(col, row),
-            "chrome:popups" => self
-                .handle_click_global_popups(col, row)
-                .or_else(|| self.handle_click_buffer_popups(col, row)),
-            "chrome:popup_absorb" => self.is_mouse_over_any_popup(col, row).then(|| Ok(())),
-            "chrome:file_browser" => (self.is_file_open_active()
-                && self.handle_file_open_click(col, row))
-            .then(|| Ok(())),
-            "chrome:menu_bar" => self.handle_click_menu_bar(col, row),
-            "chrome:menu_dropdown" => self.handle_click_menu_dropdown_surface(col, row),
-            "chrome:menu_close_guard" => {
-                // Any click outside the open menu's boxes closes it and
-                // is consumed (the rect surfaces above claimed inside
-                // clicks first).
-                if self.menu_state.active_menu.is_some() {
-                    self.close_menu_with_auto_hide();
-                    return Some(Ok(()));
-                }
-                None
-            }
-            "chrome:file_explorer" => self.handle_click_file_explorer_area(col, row),
-            "chrome:scrollbars" => self.handle_click_scrollbar(col, row),
-            "chrome:h_scrollbar" => self.handle_click_horizontal_scrollbar(col, row),
-            "chrome:status_bar" => self.handle_click_status_bar(col, row),
-            "chrome:search_options" => self.handle_click_search_options(col, row),
-            "chrome:split_separators" => self.handle_click_split_separator(col, row),
-            "chrome:split_buttons" => self.handle_click_split_controls(col, row),
-            "chrome:tabs" => self.handle_click_tab_bar(col, row),
-            "chrome:overlay_prompt_modal" => {
-                // A floating-overlay prompt is mouse-modal: its own targets
-                // (result list, scrollbar) were handled above. A click on a
-                // toolbar control toggles it through the host (which emits a
-                // widget_event); anything else — the input row, separator,
-                // preview pane, empty space, or a click outside the frame —
-                // is swallowed here so it never reaches the buffer and moves
-                // its cursor.
-                if !self.overlay_prompt_active() {
-                    return None;
-                }
-                // Hit-test the toolbar's box tree (screen click →
-                // toolbar-local row/col), innermost box first — the same
-                // walk panel clicks use. The deepest keyed focusable box
-                // under the pointer is the control.
-                let hit = self
-                    .active_chrome()
-                    .prompt_toolbar_origin
-                    .and_then(|(ox, oy)| {
-                        let (lrow, lcol) = (row.checked_sub(oy)?, col.checked_sub(ox)?);
-                        let boxes = &self.active_chrome().prompt_toolbar_boxes;
-                        crate::widgets::layout_box::hit_path(boxes, lrow as u32, lcol as u32)
-                            .into_iter()
-                            .rev()
-                            .filter(|&i| boxes[i].focusable)
-                            .find_map(|i| boxes[i].key.clone())
-                    });
-                if let Some(widget_key) = hit {
-                    // Move keyboard focus to the clicked control so Tab
-                    // continues from here, then flip it through the host
-                    // (which emits a widget_event for the plugin).
-                    if let Some(p) = self.active_window_mut().prompt.as_mut() {
-                        p.toolbar_focus = Some(widget_key.clone());
-                    }
-                    self.toggle_overlay_toolbar_widget(&widget_key);
-                }
-                Some(Ok(()))
-            }
-            "chrome:editor" => {
-                let areas: Vec<_> = self
-                    .active_layout()
-                    .split_areas
-                    .iter()
-                    .map(|(split_id, buffer_id, content_rect, _, _, _)| {
-                        (*split_id, *buffer_id, *content_rect)
-                    })
-                    .collect();
-                for (split_id, buffer_id, content_rect) in areas {
-                    if in_rect(col, row, content_rect) {
-                        return Some(self.handle_editor_click(
-                            col,
-                            row,
-                            split_id,
-                            buffer_id,
-                            content_rect,
-                            modifiers,
-                        ));
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
     // ── handle_mouse_click helpers ──────────────────────────────────────────
     // Each returns Some(result) if the click was consumed, None to fall through.
 
@@ -2101,7 +1917,11 @@ impl Editor {
     /// selected item differs per menu, so that is the one part that branches
     /// on [`ContextMenuKind`]. Click-outside dismisses; border rows are inert;
     /// an item click closes the menu and runs its `execute_*` action.
-    fn handle_click_context_menus(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_context_menus(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         use super::types::ContextMenuHit;
 
         let (kind, core) = self.active_window().open_context_menu()?;
@@ -2152,7 +1972,11 @@ impl Editor {
         }
     }
 
-    fn handle_click_suggestions(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_suggestions(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         let item_idx = self.suggestion_at(col, row)?;
         let prompt = self.active_window_mut().prompt.as_mut()?;
         prompt.selected_suggestion = Some(item_idx);
@@ -2191,7 +2015,11 @@ impl Editor {
     /// Click/drag on a suggestion-list scrollbar: the floating-overlay
     /// prompt's (issue #1796) and the bottom-anchored dropdown's
     /// (issues #623 / #1593), which share `suggestions_scrollbar_rect`.
-    fn handle_click_prompt_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_prompt_scrollbar(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         let sb_rect = self.active_chrome().suggestions_scrollbar_rect?;
         if col < sb_rect.x
             || col >= sb_rect.x + sb_rect.width
@@ -2234,7 +2062,11 @@ impl Editor {
         Some(Ok(()))
     }
 
-    fn handle_click_popup_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_popup_scrollbar(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         // Collect all needed data before mutating self.
         let scrollbar_info: Option<(usize, i32)> =
             self.active_chrome().popup_areas.iter().rev().find_map(
@@ -2340,7 +2172,11 @@ impl Editor {
         Ok(true)
     }
 
-    fn handle_click_global_popups(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_global_popups(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         for (popup_idx, popup_rect, inner_rect, scroll_offset, num_items) in self
             .active_chrome()
             .global_popup_areas
@@ -2372,7 +2208,11 @@ impl Editor {
         None
     }
 
-    fn handle_click_buffer_popups(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_buffer_popups(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         // Check close-button overlay ("[×]") on each popup.
         let close_hit = self.active_chrome().popup_areas.iter().rev().find_map(
             |(_idx, popup_rect, _inner, _scroll, _n, _sb, _tl)| {
@@ -2458,7 +2298,7 @@ impl Editor {
         None
     }
 
-    fn handle_click_menu_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_menu_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         if self.active_window_mut().menu_bar_visible {
             // Resolve the hit before any &mut operations to avoid borrow conflicts.
             let hit = self
@@ -2489,7 +2329,7 @@ impl Editor {
     /// A click inside the open menu's dropdown / submenu boxes (the
     /// chrome:menu_dropdown rect surfaces). Outside clicks never reach
     /// here — chrome:menu_close_guard owns those.
-    fn handle_click_menu_dropdown_surface(
+    pub(super) fn handle_click_menu_dropdown_surface(
         &mut self,
         col: u16,
         row: u16,
@@ -2516,7 +2356,11 @@ impl Editor {
         Some(Ok(()))
     }
 
-    fn handle_click_file_explorer_area(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_file_explorer_area(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         let explorer_area = self.active_layout().file_explorer_area?;
         let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
         if col == border_x && row >= explorer_area.y && row < explorer_area.y + explorer_area.height
@@ -2534,7 +2378,11 @@ impl Editor {
         None
     }
 
-    fn handle_click_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_scrollbar(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         let (split_id, buffer_id, scrollbar_rect, is_on_thumb) =
             self.active_layout().split_areas.iter().find_map(
                 |(split_id, buffer_id, _content, scrollbar_rect, thumb_start, thumb_end)| {
@@ -2599,7 +2447,7 @@ impl Editor {
         Some(Ok(()))
     }
 
-    fn handle_click_horizontal_scrollbar(
+    pub(super) fn handle_click_horizontal_scrollbar(
         &mut self,
         col: u16,
         row: u16,
@@ -2736,7 +2584,11 @@ impl Editor {
         }
     }
 
-    fn handle_click_status_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_status_bar(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         let (status_row, _status_x, _status_width) = self.active_chrome().status_bar.area?;
         if row != status_row {
             return None;
@@ -2776,7 +2628,11 @@ impl Editor {
         None
     }
 
-    fn handle_click_search_options(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_search_options(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         use crate::view::ui::status_bar::SearchOptionsHover;
         let layout = self.active_chrome().search_options_layout.clone()?;
         match layout.checkbox_at(col, row)? {
@@ -2794,7 +2650,11 @@ impl Editor {
         }
     }
 
-    fn handle_click_split_separator(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_split_separator(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         let separator_areas = self.active_layout().separator_areas.clone();
         for (split_id, direction, sep_x, sep_y, sep_length) in &separator_areas {
             let is_on_separator = match direction {
@@ -2822,7 +2682,11 @@ impl Editor {
         None
     }
 
-    fn handle_click_split_controls(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_split_controls(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         let close_split_hit = self
             .active_layout()
             .close_split_areas
@@ -2907,7 +2771,7 @@ impl Editor {
         None
     }
 
-    fn handle_click_tab_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_tab_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         for (split_id, tab_layout) in &self.active_layout().tab_layouts {
             tracing::debug!(
                 "Tab layout for split {:?}: bar_area={:?}, left_scroll={:?}, right_scroll={:?}",
@@ -3628,6 +3492,7 @@ impl Editor {
                 press: super::chrome::PointerPress::Right,
                 col,
                 row,
+                modifiers: crossterm::event::KeyModifiers::empty(),
             };
             match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
                 super::chrome::Disposition::Consumed => return Ok(()),
@@ -4151,7 +4016,7 @@ impl Editor {
     /// is active AND the mouse is inside its inner rect (so the
     /// caller knows the wheel was consumed and shouldn't fall
     /// through to buffer scrolling).
-    fn handle_floating_widget_panel_wheel(
+    pub(super) fn handle_floating_widget_panel_wheel(
         &mut self,
         slot: super::PanelSlot,
         col: u16,
@@ -4195,7 +4060,12 @@ impl Editor {
     /// so the wheel scrolls the list the pointer is actually over —
     /// not the first list in the spec. Returns `true` when a panel
     /// consumed the scroll.
-    fn handle_split_widget_panel_wheel(&mut self, col: u16, row: u16, delta: i32) -> bool {
+    pub(super) fn handle_split_widget_panel_wheel(
+        &mut self,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> bool {
         let Some((split_id, buffer_id)) = self.active_window().split_at_position(col, row) else {
             return false;
         };

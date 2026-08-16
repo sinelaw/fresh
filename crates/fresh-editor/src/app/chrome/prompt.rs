@@ -70,6 +70,63 @@ impl ChromeComponent for Prompt {
         bx: &LayoutBox,
         ev: &ChromePointer,
     ) -> AnyhowResult<Disposition> {
+        if ev.press == PointerPress::Left {
+            return match bx.kind {
+                "chrome:suggestions" => {
+                    if let Some(r) = ed.handle_click_suggestions(ev.col, ev.row) {
+                        r?;
+                        return Ok(Disposition::Consumed);
+                    }
+                    Ok(Disposition::Pass)
+                }
+                "chrome:prompt_scrollbar" => {
+                    if let Some(r) = ed.handle_click_prompt_scrollbar(ev.col, ev.row) {
+                        r?;
+                        return Ok(Disposition::Consumed);
+                    }
+                    Ok(Disposition::Pass)
+                }
+                // A floating-overlay prompt is mouse-modal: its own
+                // targets (result list, scrollbar) were handled above.
+                // A click on a toolbar control toggles it through the
+                // host (which emits a widget_event); anything else —
+                // the input row, separator, preview pane, empty space,
+                // or a click outside the frame — is swallowed here so
+                // it never reaches the buffer and moves its cursor.
+                "chrome:overlay_prompt_modal" => {
+                    if !ed.overlay_prompt_active() {
+                        return Ok(Disposition::Pass);
+                    }
+                    // Hit-test the toolbar's box tree (screen click →
+                    // toolbar-local row/col), innermost box first — the
+                    // same walk panel clicks use. The deepest keyed
+                    // focusable box under the pointer is the control.
+                    let hit = ed
+                        .active_chrome()
+                        .prompt_toolbar_origin
+                        .and_then(|(ox, oy)| {
+                            let (lrow, lcol) = (ev.row.checked_sub(oy)?, ev.col.checked_sub(ox)?);
+                            let boxes = &ed.active_chrome().prompt_toolbar_boxes;
+                            crate::widgets::layout_box::hit_path(boxes, lrow as u32, lcol as u32)
+                                .into_iter()
+                                .rev()
+                                .filter(|&i| boxes[i].focusable)
+                                .find_map(|i| boxes[i].key.clone())
+                        });
+                    if let Some(widget_key) = hit {
+                        // Move keyboard focus to the clicked control so
+                        // Tab continues from here, then flip it through
+                        // the host (which emits a widget_event).
+                        if let Some(p) = ed.active_window_mut().prompt.as_mut() {
+                            p.toolbar_focus = Some(widget_key.clone());
+                        }
+                        ed.toggle_overlay_toolbar_widget(&widget_key);
+                    }
+                    Ok(Disposition::Consumed)
+                }
+                _ => Ok(Disposition::Pass),
+            };
+        }
         if ev.press != PointerPress::Double {
             return Ok(Disposition::Pass);
         }
@@ -89,6 +146,36 @@ impl ChromeComponent for Prompt {
                     return Ok(Disposition::Consumed);
                 }
                 Ok(Disposition::Pass)
+            }
+            _ => Ok(Disposition::Pass),
+        }
+    }
+
+    fn on_wheel(
+        &self,
+        ed: &mut Editor,
+        bx: &LayoutBox,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> AnyhowResult<Disposition> {
+        match bx.kind {
+            "chrome:prompt_preview" | "chrome:overlay_prompt_modal" => {
+                if !ed.overlay_prompt_active() {
+                    return Ok(Disposition::Pass);
+                }
+                if ed.handle_overlay_prompt_scroll(col, row, delta) {
+                    Ok(Disposition::Consumed)
+                } else {
+                    Ok(Disposition::Pass)
+                }
+            }
+            "chrome:prompt_suggestions" => {
+                if ed.handle_prompt_scroll(delta) {
+                    Ok(Disposition::Consumed)
+                } else {
+                    Ok(Disposition::Pass)
+                }
             }
             _ => Ok(Disposition::Pass),
         }
