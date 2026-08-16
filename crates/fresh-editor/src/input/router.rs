@@ -500,8 +500,11 @@ pub enum ModeKeyDisposition {
     Run(Action),
     /// The key extends a pending chord — push it and wait.
     ChordPending,
-    /// A text-input mode captures this character
-    /// (`mode_text_input@<mode>:<ch>` plugin action).
+    /// A text-input mode captures this character. Dispatched through
+    /// the typed `dispatch_mode_text_input` lane (mode + char as
+    /// structured fields); the legacy `mode_text_input@<mode>:<ch>`
+    /// action-name encoding survives only for user keymaps that bound
+    /// the string form, behind a deprecation warning.
     TextInput(char),
     /// Clipboard / select-all chord forwarded despite the text-input
     /// mode block — it belongs to the focused widget Text input.
