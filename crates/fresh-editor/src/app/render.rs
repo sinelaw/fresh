@@ -5158,21 +5158,16 @@ impl Editor {
         if let Some(dp) = dropdown_popup.as_ref() {
             use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
             use ratatui::style::{Modifier, Style};
-            let visible = dp
-                .options
-                .len()
-                .min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
+            // The renderer already applied windowing + scroll: `rows`
+            // is exactly what shows. The host owns geometry and paint.
+            let visible = dp.rows.len();
             if visible > 0 {
-                let max_scroll = dp.options.len().saturating_sub(visible);
-                let scroll = dp.scroll.min(max_scroll);
                 // Box width = widest visible option + 1 col of left padding,
                 // + 2 for the borders; clamped to the frame.
                 let content_w = dp
-                    .options
+                    .rows
                     .iter()
-                    .skip(scroll)
-                    .take(visible)
-                    .map(|o| str_width(o) as u16)
+                    .map(|(o, _)| str_width(o) as u16)
                     .max()
                     .unwrap_or(0);
                 let w = content_w
@@ -5210,7 +5205,8 @@ impl Editor {
                     .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
                 let popup_inner = popup_block.inner(popup_rect);
                 frame.render_widget(popup_block, popup_rect);
-                for (row_i, idx) in (scroll..scroll + visible).enumerate() {
+                for (row_i, (opt, idx)) in dp.rows.iter().enumerate() {
+                    let idx = *idx;
                     let ry = popup_inner.y + row_i as u16;
                     if ry >= popup_inner.y + popup_inner.height {
                         break;
@@ -5221,7 +5217,7 @@ impl Editor {
                         width: popup_inner.width,
                         height: 1,
                     };
-                    let selected = idx == dp.selected;
+                    let selected = dp.selected_row == Some(row_i);
                     let row_bg = if selected {
                         theme.suggestion_selected_bg
                     } else {
@@ -5233,7 +5229,7 @@ impl Editor {
                     );
                     // One col of left padding, truncated to the interior.
                     let avail = popup_inner.width.saturating_sub(1) as usize;
-                    let opt = dp.options.get(idx).map(|s| s.as_str()).unwrap_or("");
+                    let opt = opt.as_str();
                     let cut = byte_offset_at_visual_column(opt, avail);
                     let text = &opt[..cut];
                     let mut style = Style::default().fg(theme.suggestion_fg).bg(row_bg);

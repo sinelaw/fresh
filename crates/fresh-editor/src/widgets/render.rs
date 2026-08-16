@@ -262,9 +262,17 @@ pub struct DropdownPopup {
     pub widget_key: String,
     pub anchor_row: u32,
     pub anchor_col: u32,
-    pub options: Vec<String>,
-    pub selected: usize,
-    pub scroll: usize,
+    /// The VISIBLE option rows, windowing and scroll already applied
+    /// by the renderer (which owns `DROPDOWN_VISIBLE_OPTIONS`): the
+    /// row's display text plus its absolute option index (what a
+    /// click on the row selects). The host consumer keeps only
+    /// screen geometry (anchor flip/clamp), paint, and hit
+    /// recording — it no longer knows the option list or its
+    /// scroll model.
+    pub rows: Vec<(String, usize)>,
+    /// Which visible row (index into `rows`) is the selected option,
+    /// if it is scrolled into view.
+    pub selected_row: Option<usize>,
 }
 
 /// One row produced by an `Overlay` widget. `buffer_row` is the
@@ -6752,7 +6760,11 @@ pub(crate) mod tests {
             .dropdown_popup
             .expect("an open dropdown surfaces a floating pop-over");
         assert_eq!(dp.widget_key, "d");
-        assert_eq!(dp.options, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            dp.rows,
+            vec![("a".to_string(), 0), ("b".to_string(), 1)],
+            "visible rows carry display text + absolute option index"
+        );
         assert_eq!(dp.anchor_row, 0, "trigger is the panel's row 0");
     }
 
@@ -6813,10 +6825,14 @@ pub(crate) mod tests {
         );
         let dp = out.dropdown_popup.expect("open dropdown surfaces a popup");
         assert_eq!(
-            dp.options,
-            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+            dp.rows,
+            vec![
+                ("a".to_string(), 0),
+                ("b".to_string(), 1),
+                ("c".to_string(), 2)
+            ]
         );
-        assert_eq!(dp.selected, 1);
+        assert_eq!(dp.selected_row, Some(1));
         assert_eq!(dp.anchor_row, 0);
     }
 
