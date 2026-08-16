@@ -647,10 +647,11 @@ impl Editor {
     }
 
     /// Dispatch a vertical scroll event (ScrollUp/ScrollDown): Shift
-    /// pans horizontally; otherwise the wheel walks WHEEL_SURFACES
-    /// top-down until one consumes it, then falls to the permanent
-    /// layout (pane / file explorer / tab strip) via
-    /// `wheel_surface_at`.
+    /// pans horizontally; otherwise the wheel walks the shared
+    /// `chrome_boxes()` tree in `WHEEL_ORDER` precedence until one
+    /// surface consumes it — the tree's own low-z entries
+    /// (`chrome:editor`, `chrome:file_explorer`, `chrome:tabs`) are
+    /// the permanent-layout fallback.
     fn handle_vertical_scroll(
         &mut self,
         col: u16,
@@ -664,11 +665,12 @@ impl Editor {
             return Ok(());
         }
         // Candidates = every chrome box containing the pointer, walked
-        // in this gesture's precedence (see WHEEL_ORDER — the shared
-        // tree's full-frame proxies keep precedence gesture-specific
-        // until surfaces carry real rects). A handler that declines
-        // passes the wheel to the next surface down, which is what
-        // makes scroll chaining and stale-state races behave.
+        // in this gesture's precedence (WHEEL_ORDER — per-gesture
+        // because guard/capture surfaces slot differently for a wheel
+        // than for a click, and two surfaces are still full-frame
+        // proxies). A handler that declines passes the wheel to the
+        // next surface down, which is what makes scroll chaining and
+        // stale-state races behave.
         let mut candidates: Vec<crate::widgets::LayoutBox> = self
             .chrome_boxes()
             .into_iter()

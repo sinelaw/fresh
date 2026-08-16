@@ -837,8 +837,12 @@ double-click converted their short chains (`rclick_chrome_boxes` /
 `dblclick_chrome_boxes`, guards as declining boxes), and hover — the
 last hand-ordered ladder — became the same walk in query form
 (`hover_chrome_boxes` + `hover_chrome_target`: 13 z-ordered surfaces,
-handlers decline where geometry is finer than their rect). No gesture
-in the codebase resolves its target through an if/else chain anymore.
+handlers decline where geometry is finer than their rect). The
+*surface-selection* if/else chains are gone; what survives ahead of
+each walk is a small set of pre-walk short-circuits (the `LayerKind`
+overlay ladder, dock capture, modal gating) that decide whether
+chrome dispatch runs at all — those are the app-level keyboard/layer
+model's territory and fall with it, not with the pointer arc.
 Key ownership is now complete on the same model: every kind's whole
 keyboard vocabulary lives in its `on_key` (DualList's column/cursor
 ops, List/Tree selection + paging + activate, Text's caret motion,
@@ -893,20 +897,31 @@ step 1 including "with undo" is complete. Still prompt-side: the
 buffer-style word-motion policy, computed over the engine's value.
 The chrome-geometry arc (phase 4's last piece) has begun: ONE
 `chrome_boxes()` surface tree — every routable chrome surface
-once, surface-named kinds, one master z-order — now serves hover,
+once, surface-named kinds, one z-order — now serves hover,
 right-click, and double-click, whose per-gesture builders are
 deleted; each gesture's dispatch declines surfaces it has no
-handler for. Since then the arc completed: wheel and left-click joined
-(all five gestures, one tree, four more builders deleted), and the
-proxy retirement ran to the end — every geometric surface carries
-its real rect (menu bar/dropdowns via MenuLayout, context menus via
+handler for. Since then the arc advanced: wheel and left-click joined
+(all five gestures, one tree, four more builders deleted — though
+only hover/right-click/double-click sort by the tree's z; wheel and
+click order the same boxes by their own `WHEEL_ORDER`/`CLICK_ORDER`
+precedence, so "one z-order" holds for the tree, not yet for every
+walk), and proxy retirement covered the geometric bulk — menu
+bar/dropdowns via MenuLayout, context menus via
 ContextMenuCore::rect, tabs via TabLayout.bar_area, search options,
-file browser, per-split/per-item scrollbars, separators, buttons,
-status bar), full-frame survives only as named guards whose
-semantics ARE full-screen (menu/context-menu close guards, popup
-absorb/dismiss, overlay-prompt modal), and the dropdown pop-over's
-windowing moved into the renderer (the host paints visible rows +
-indices — the "hardcoded 8-row window" is gone). The per-gesture
+file explorer, per-split/per-item editor scrollbars, separators,
+buttons, status bar all carry real rects. NOT yet retired:
+`chrome:prompt_scrollbar` and `chrome:popup_scrollbar` are still
+full-frame proxies whose real rects exist in the paint caches
+(`suggestions_scrollbar_rect`, per-popup `scrollbar_rect`), and
+`chrome:prompt_suggestions` plus the file-browser no-popup-area
+fallback are full-frame with handler-decline. Full-frame is
+otherwise named guards whose semantics ARE full-screen
+(menu/context-menu close guards, popup absorb/dismiss,
+overlay-prompt modal). The dropdown pop-over's windowing moved into
+the widget renderer — the host paints handed-down rows + indices and
+no longer windows — but the window itself (the
+`DROPDOWN_VISIBLE_OPTIONS = 8` constant) lives on in the renderer;
+it moved, it did not disappear. The per-gesture
 WHEEL_ORDER/CLICK_ORDER arrays were evaluated for collapse: with
 rects disjoint they are mostly order-agnostic, and what remains in
 them is the irreducibly per-gesture slotting of guard/capture
