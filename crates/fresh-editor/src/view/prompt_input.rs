@@ -43,52 +43,15 @@ impl InputHandler for Prompt {
             }
             KeyCode::Char(c) if ctrl => self.handle_ctrl_key(c, ctx),
 
-            // Deletion
-            KeyCode::Backspace if ctrl => {
-                self.delete_word_backward();
-                ctx.defer(DeferredAction::UpdatePromptSuggestions);
-                InputResult::Consumed
-            }
-            KeyCode::Backspace => {
-                if self.has_selection() {
-                    self.delete_selection();
-                } else {
-                    self.backspace();
-                }
-                ctx.defer(DeferredAction::UpdatePromptSuggestions);
-                InputResult::Consumed
-            }
-            KeyCode::Delete if ctrl => {
-                self.delete_word_forward();
-                ctx.defer(DeferredAction::UpdatePromptSuggestions);
-                InputResult::Consumed
-            }
-            KeyCode::Delete => {
-                if self.has_selection() {
-                    self.delete_selection();
-                } else {
-                    self.delete();
-                }
-                ctx.defer(DeferredAction::UpdatePromptSuggestions);
-                InputResult::Consumed
-            }
-
-            // Cursor movement
+            // Word motion stays prompt policy (buffer-style
+            // next-word-start / select-to-word-end — deliberately
+            // different from the engine's word hops).
             KeyCode::Left if ctrl && shift => {
                 self.move_word_left_selecting();
                 InputResult::Consumed
             }
             KeyCode::Left if ctrl => {
                 self.move_word_left();
-                InputResult::Consumed
-            }
-            KeyCode::Left if shift => {
-                self.move_left_selecting();
-                InputResult::Consumed
-            }
-            KeyCode::Left => {
-                self.clear_selection();
-                self.cursor_left();
                 InputResult::Consumed
             }
             KeyCode::Right if ctrl && shift => {
@@ -99,31 +62,18 @@ impl InputHandler for Prompt {
                 self.move_word_right();
                 InputResult::Consumed
             }
-            KeyCode::Right if shift => {
-                self.move_right_selecting();
+
+            // Every remaining editing key rides the shared text-key
+            // table (one `key → op` mapping with the Settings fields
+            // and widget Text): Backspace/Delete (word variants via
+            // Ctrl), and plain/Shift arrows and Home/End.
+            KeyCode::Backspace | KeyCode::Delete => {
+                self.handle_text_key(event);
+                ctx.defer(DeferredAction::UpdatePromptSuggestions);
                 InputResult::Consumed
             }
-            KeyCode::Right => {
-                self.clear_selection();
-                self.cursor_right();
-                InputResult::Consumed
-            }
-            KeyCode::Home if shift => {
-                self.move_home_selecting();
-                InputResult::Consumed
-            }
-            KeyCode::Home => {
-                self.clear_selection();
-                self.move_to_start();
-                InputResult::Consumed
-            }
-            KeyCode::End if shift => {
-                self.move_end_selecting();
-                InputResult::Consumed
-            }
-            KeyCode::End => {
-                self.clear_selection();
-                self.move_to_end();
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
+                self.handle_text_key(event);
                 InputResult::Consumed
             }
 
