@@ -44,4 +44,24 @@ impl ChromeComponent for FloatingModal {
         ed.handle_floating_widget_panel_wheel(crate::app::PanelSlot::Floating, col, row, delta);
         Ok(super::Disposition::Consumed)
     }
+
+    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
+        use crate::app::overlay::{Layer, LayerKind};
+        // Owns the keyboard when focused; resolves as `Normal`
+        // regardless of the underlying buffer's (possibly stale)
+        // context so mode-keybinding lookups still fire for the
+        // panel's own chords. Blocks PTY routing whenever present —
+        // it sits on top of (and obscures) the active terminal.
+        if let Some(f) = ed.floating_widget_panel.as_ref() {
+            out.push((
+                super::layer_rank::FLOATING_MODAL,
+                Layer {
+                    kind: LayerKind::FloatingModal,
+                    owns_keyboard: f.focused,
+                    key_context: Some(crate::input::keybindings::KeyContext::Normal),
+                    blocks_terminal_input: true,
+                },
+            ));
+        }
+    }
 }

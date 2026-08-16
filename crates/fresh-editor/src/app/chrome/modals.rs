@@ -10,7 +10,14 @@
 
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use crate::app::overlay::{Layer, LayerKind};
+use crate::input::keybindings::KeyContext;
+
+use super::{layer_rank, ChromeComponent, ChromeTreeBuilder, Editor};
+
+fn settings_up(ed: &Editor) -> bool {
+    ed.settings_state.as_ref().is_some_and(|s| s.visible)
+}
 
 pub(crate) struct Settings;
 
@@ -23,10 +30,25 @@ impl ChromeComponent for Settings {
         ev: crossterm::event::MouseEvent,
         is_double_click: bool,
     ) -> Option<AnyhowResult<bool>> {
-        if ed.settings_state.as_ref().is_some_and(|s| s.visible) {
+        if settings_up(ed) {
             return Some(ed.handle_settings_mouse(ev, is_double_click));
         }
         None
+    }
+
+    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, Layer)>) {
+        // Full-screen modal: owns the keyboard whenever present.
+        if settings_up(ed) {
+            out.push((
+                layer_rank::SETTINGS,
+                Layer {
+                    kind: LayerKind::Settings,
+                    owns_keyboard: true,
+                    key_context: Some(KeyContext::Settings),
+                    blocks_terminal_input: true,
+                },
+            ));
+        }
     }
 }
 
@@ -45,6 +67,23 @@ impl ChromeComponent for KeybindingEditor {
             return Some(ed.handle_keybinding_editor_mouse(ev));
         }
         None
+    }
+
+    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, Layer)>) {
+        // Installs its own input dispatcher, so it is transparent to
+        // `KeyContext`-driven resolution (`key_context: None`) but
+        // fully owns the keyboard while present and blocks PTY routing.
+        if ed.keybinding_editor.is_some() {
+            out.push((
+                layer_rank::KEYBINDING_EDITOR,
+                Layer {
+                    kind: LayerKind::KeybindingEditor,
+                    owns_keyboard: true,
+                    key_context: None,
+                    blocks_terminal_input: true,
+                },
+            ));
+        }
     }
 }
 
@@ -66,6 +105,21 @@ impl ChromeComponent for CalibrationWizard {
             return Some(Ok(false));
         }
         None
+    }
+
+    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, Layer)>) {
+        // Same custom-dispatcher treatment as the keybinding editor.
+        if ed.calibration_wizard.is_some() {
+            out.push((
+                layer_rank::CALIBRATION_WIZARD,
+                Layer {
+                    kind: LayerKind::CalibrationWizard,
+                    owns_keyboard: true,
+                    key_context: None,
+                    blocks_terminal_input: true,
+                },
+            ));
+        }
     }
 }
 

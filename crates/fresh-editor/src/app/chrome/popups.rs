@@ -141,4 +141,27 @@ impl ChromeComponent for Popups {
         ed.scroll_popup(delta);
         Ok(Disposition::Consumed)
     }
+
+    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
+        use crate::app::overlay::{Layer, LayerKind};
+        // A non-trust popup is *present* whenever visible, but only
+        // *owns* the keyboard while capturing; a merely-visible
+        // unfocused popup falls through. Either way a visible popup
+        // blocks PTY routing — it covers the active buffer. While the
+        // workspace-trust prompt tops the global stack, its dedicated
+        // layer (the modals component) takes this one's place.
+        if !ed.workspace_trust_on_top()
+            && (ed.global_popups.is_visible() || ed.active_state().popups.is_visible())
+        {
+            out.push((
+                super::layer_rank::POPUP,
+                Layer {
+                    kind: LayerKind::Popup,
+                    owns_keyboard: ed.popups_capture_keys(),
+                    key_context: Some(crate::input::keybindings::KeyContext::Popup),
+                    blocks_terminal_input: true,
+                },
+            ));
+        }
+    }
 }

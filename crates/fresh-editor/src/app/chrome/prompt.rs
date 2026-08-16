@@ -191,4 +191,29 @@ impl ChromeComponent for Prompt {
             _ => Ok(Disposition::Pass),
         }
     }
+
+    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
+        use crate::app::overlay::{Layer, LayerKind};
+        use crate::input::keybindings::KeyContext;
+        if ed.is_prompting() {
+            // Find/replace prompts resolve in the narrower
+            // `SearchPrompt` context, which owns the match-mode
+            // toggles and otherwise falls through to `Prompt` — so the
+            // toggle keys (Alt+W etc.) never fire outside a search.
+            let key_context = if ed.active_prompt_has_search_options() {
+                KeyContext::SearchPrompt
+            } else {
+                KeyContext::Prompt
+            };
+            out.push((
+                super::layer_rank::PROMPT,
+                Layer {
+                    kind: LayerKind::Prompt,
+                    owns_keyboard: true,
+                    key_context: Some(key_context),
+                    blocks_terminal_input: true,
+                },
+            ));
+        }
+    }
 }
