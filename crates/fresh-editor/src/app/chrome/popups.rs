@@ -62,6 +62,45 @@ impl ChromeComponent for Popups {
         bx: &LayoutBox,
         ev: &ChromePointer,
     ) -> AnyhowResult<Disposition> {
+        if ev.press == PointerPress::Left {
+            return match bx.kind {
+                // Outside every popup: dismiss transients, keep
+                // routing (act-then-continue guard).
+                "chrome:transient_guard" => {
+                    if !ed.is_mouse_over_any_popup(ev.col, ev.row) {
+                        ed.dismiss_transient_popups();
+                        return Ok(Disposition::PassAfter);
+                    }
+                    Ok(Disposition::Pass)
+                }
+                "chrome:popup_scrollbar" => {
+                    if let Some(r) = ed.handle_click_popup_scrollbar(ev.col, ev.row) {
+                        r?;
+                        return Ok(Disposition::Consumed);
+                    }
+                    Ok(Disposition::Pass)
+                }
+                "chrome:popups" => {
+                    if let Some(r) = ed
+                        .handle_click_global_popups(ev.col, ev.row)
+                        .or_else(|| ed.handle_click_buffer_popups(ev.col, ev.row))
+                    {
+                        r?;
+                        return Ok(Disposition::Consumed);
+                    }
+                    Ok(Disposition::Pass)
+                }
+                // Inside a popup rect that nothing above claimed:
+                // absorb so the click can't fall to content beneath.
+                "chrome:popup_absorb" => {
+                    if ed.is_mouse_over_any_popup(ev.col, ev.row) {
+                        return Ok(Disposition::Consumed);
+                    }
+                    Ok(Disposition::Pass)
+                }
+                _ => Ok(Disposition::Pass),
+            };
+        }
         if ev.press != PointerPress::Double || bx.kind != "chrome:popup_guard" {
             return Ok(Disposition::Pass);
         }
@@ -72,5 +111,34 @@ impl ChromeComponent for Popups {
         }
         ed.dismiss_transient_popups();
         Ok(Disposition::PassAfter)
+    }
+
+    fn on_wheel(
+        &self,
+        ed: &mut Editor,
+        bx: &LayoutBox,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> AnyhowResult<Disposition> {
+        if bx.kind != "chrome:popups" {
+            return Ok(Disposition::Pass);
+        }
+        // File browser popup scrolls its list; every other popup
+        // scrolls through the popup stack. Both consume. (The file
+        // browser check rides here too because historically the two
+        // surfaces shared one arm — the file_browser component runs
+        // the same logic for its own box.)
+        if ed.is_file_open_active()
+            && ed.is_mouse_over_file_browser(col, row)
+            && ed.handle_file_open_scroll(delta)
+        {
+            return Ok(Disposition::Consumed);
+        }
+        if !ed.is_mouse_over_any_popup(col, row) {
+            return Ok(Disposition::Pass);
+        }
+        ed.scroll_popup(delta);
+        Ok(Disposition::Consumed)
     }
 }

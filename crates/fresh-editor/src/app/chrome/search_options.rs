@@ -42,4 +42,21 @@ impl ChromeComponent for SearchOptions {
         }
         None
     }
+
+    fn on_pointer(
+        &self,
+        ed: &mut Editor,
+        _bx: &LayoutBox,
+        ev: &super::ChromePointer,
+    ) -> anyhow::Result<super::Disposition> {
+        use super::{Disposition, PointerPress};
+        if ev.press != PointerPress::Left {
+            return Ok(Disposition::Pass);
+        }
+        if let Some(r) = ed.handle_click_search_options(ev.col, ev.row) {
+            r?;
+            return Ok(Disposition::Consumed);
+        }
+        Ok(Disposition::Pass)
+    }
 }

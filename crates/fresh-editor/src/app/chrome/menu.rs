@@ -43,4 +43,43 @@ impl ChromeComponent for Menu {
             _ => None,
         }
     }
+
+    fn on_pointer(
+        &self,
+        ed: &mut Editor,
+        bx: &LayoutBox,
+        ev: &super::ChromePointer,
+    ) -> anyhow::Result<super::Disposition> {
+        use super::{Disposition, PointerPress};
+        if ev.press != PointerPress::Left {
+            return Ok(Disposition::Pass);
+        }
+        match bx.kind {
+            "chrome:menu_bar" => {
+                if let Some(r) = ed.handle_click_menu_bar(ev.col, ev.row) {
+                    r?;
+                    return Ok(Disposition::Consumed);
+                }
+                Ok(Disposition::Pass)
+            }
+            "chrome:menu_dropdown" => {
+                if let Some(r) = ed.handle_click_menu_dropdown_surface(ev.col, ev.row) {
+                    r?;
+                    return Ok(Disposition::Consumed);
+                }
+                Ok(Disposition::Pass)
+            }
+            // Any click outside the open menu's boxes closes it and is
+            // consumed (the rect surfaces above claimed inside clicks
+            // first).
+            "chrome:menu_close_guard" => {
+                if ed.menu_state.active_menu.is_some() {
+                    ed.close_menu_with_auto_hide();
+                    return Ok(Disposition::Consumed);
+                }
+                Ok(Disposition::Pass)
+            }
+            _ => Ok(Disposition::Pass),
+        }
+    }
 }

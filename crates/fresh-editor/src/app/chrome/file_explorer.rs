@@ -31,6 +31,13 @@ impl ChromeComponent for FileExplorer {
         ev: &ChromePointer,
     ) -> AnyhowResult<Disposition> {
         match (ev.press, bx.kind) {
+            (PointerPress::Left, "chrome:file_explorer") => {
+                if let Some(r) = ed.handle_click_file_explorer_area(ev.col, ev.row) {
+                    r?;
+                    return Ok(Disposition::Consumed);
+                }
+                Ok(Disposition::Pass)
+            }
             (PointerPress::Right, "chrome:file_explorer") => {
                 let Some(explorer_area) = ed.active_layout().file_explorer_area else {
                     return Ok(Disposition::Pass);
