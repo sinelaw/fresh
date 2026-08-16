@@ -135,18 +135,29 @@ impl ChromeComponent for WorkspaceTrust {
         _is_double_click: bool,
     ) -> Option<AnyhowResult<bool>> {
         // Capturing only while the trust prompt is the TOP of the
-        // global popup stack, mirroring its `overlay_layers()` entry —
-        // beneath another popup its dedicated handlers must not
-        // swallow events aimed at the one above.
-        let trust_on_top = ed.global_popups.top().is_some_and(|p| {
-            matches!(
-                p.resolver,
-                crate::view::popup::PopupResolver::WorkspaceTrust
-            )
-        });
-        if trust_on_top {
+        // global popup stack — beneath another popup its dedicated
+        // handlers must not swallow events aimed at the one above.
+        if ed.workspace_trust_on_top() {
             return Some(ed.handle_workspace_trust_mouse(ev));
         }
         None
+    }
+
+    fn layers(&self, ed: &Editor, out: &mut Vec<(u16, Layer)>) {
+        // When it's the top of the global stack it takes the place of
+        // the generic `Popup` layer (the popups component skips its
+        // own entry) so the dedicated handlers can be reached by
+        // top-down kind dispatch.
+        if ed.workspace_trust_on_top() {
+            out.push((
+                layer_rank::WORKSPACE_TRUST,
+                Layer {
+                    kind: LayerKind::WorkspaceTrust,
+                    owns_keyboard: ed.popups_capture_keys(),
+                    key_context: Some(KeyContext::Popup),
+                    blocks_terminal_input: true,
+                },
+            ));
+        }
     }
 }
