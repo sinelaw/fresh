@@ -1463,43 +1463,50 @@ impl Editor {
     pub(super) fn handle_mouse_double_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         tracing::debug!("handle_mouse_double_click at col={}, row={}", col, row);
 
-        // Double-click on a suggestion item commits the choice — even for
-        // prompts whose first click only previews. The first click already
-        // selected the row; the second confirms (#1660).
-        if let Some(r) = self.handle_click_suggestions_confirm(col, row) {
-            return r;
-        }
-
-        // Mouse-modal overlay: swallow any double-click that wasn't on a
-        // result row so it can't reach (and word-select in) the buffer below.
-        if self.overlay_prompt_active() {
-            return Ok(());
-        }
-
-        // Handle popups: dismiss if clicking outside, block if clicking inside
-        if self.is_mouse_over_any_popup(col, row) {
-            // Double-click inside popup - block from reaching editor
-            return Ok(());
-        } else {
-            // Double-click outside popup - dismiss transient popups
-            self.dismiss_transient_popups();
-        }
-
-        // Is it in the file open dialog?
-        if self.handle_file_open_double_click(col, row) {
-            return Ok(());
-        }
-
-        // Is it in the file explorer? Double-click opens file AND focuses editor
-        if let Some(explorer_area) = self.active_layout().file_explorer_area {
-            if col >= explorer_area.x
-                && col < explorer_area.x + explorer_area.width
-                && row > explorer_area.y // Skip title bar
-                && row < explorer_area.y + explorer_area.height
-            {
-                // Open file and focus editor (via file_explorer_open_file which calls focus_editor)
-                self.file_explorer_open_file()?;
-                return Ok(());
+        // The routable surfaces, as chrome boxes — same geometric walk
+        // as click/wheel/right-click: suggestion-confirm (#1660) over
+        // the mouse-modal overlay swallow, the popup block/dismiss
+        // guard, the file-open dialog, the explorer body, then the
+        // splits.
+        let mut candidates: Vec<crate::widgets::LayoutBox> = self
+            .dblclick_chrome_boxes()
+            .into_iter()
+            .filter(|b| b.contains(row as u32, col as u32))
+            .collect();
+        candidates.sort_by(|a, b| b.z.cmp(&a.z));
+        for b in candidates {
+            match b.kind {
+                "dblclick:suggestions" => {
+                    if let Some(r) = self.handle_click_suggestions_confirm(col, row) {
+                        return r;
+                    }
+                }
+                "dblclick:overlay_prompt" => {
+                    // Mouse-modal: swallow anything that wasn't a result
+                    // row so it can't word-select in the buffer below.
+                    if self.overlay_prompt_active() {
+                        return Ok(());
+                    }
+                }
+                "dblclick:popup_guard" => {
+                    // Inside a popup: block. Outside: dismiss transients
+                    // and keep routing.
+                    if self.is_mouse_over_any_popup(col, row) {
+                        return Ok(());
+                    }
+                    self.dismiss_transient_popups();
+                }
+                "dblclick:file_browser" => {
+                    if self.handle_file_open_double_click(col, row) {
+                        return Ok(());
+                    }
+                }
+                "dblclick:file_explorer" => {
+                    // Open file AND focus editor.
+                    self.file_explorer_open_file()?;
+                    return Ok(());
+                }
+                _ => break,
             }
         }
 
@@ -3574,28 +3581,106 @@ impl Editor {
             }
         }
 
-        // A right-click landing inside an already-open native context menu
-        // (file-explorer or tab — the "+" popup was dismissed above) is
-        // swallowed so the menu stays put rather than being re-opened /
-        // re-targeted. One shared hit-test covers both.
-        let frame_w = self.active_chrome().last_frame.width;
-        let frame_h = self.active_chrome().last_frame.height;
-        if let Some(core) = self.active_window().context_menu_core() {
-            if !matches!(
-                core.hit(col, row, frame_w, frame_h),
-                super::types::ContextMenuHit::Outside
-            ) {
+        // The routable surfaces, as chrome boxes — same geometric walk
+        // as left-click/wheel. Ordering rides z; the mid-chain
+        // clear-explorer-menu side effect is a guard box at its old
+        // position.
+        let mut candidates: Vec<crate::widgets::LayoutBox> = self
+            .rclick_chrome_boxes()
+            .into_iter()
+            .filter(|b| b.contains(row as u32, col as u32))
+            .collect();
+        candidates.sort_by(|a, b| b.z.cmp(&a.z));
+        for b in candidates {
+            if self.rclick_chrome_dispatch(b.kind, col, row)? {
                 return Ok(());
             }
         }
+        Ok(())
+    }
 
-        if let Some(explorer_area) = self.active_layout().file_explorer_area {
-            if col >= explorer_area.x
-                && col < explorer_area.x + explorer_area.width
-                && row < explorer_area.y + explorer_area.height
-                && row > explorer_area.y
-            // skip title row
-            {
+    /// Right-click chrome boxes, top-down: an open native context menu
+    /// swallows (full frame, handler declines when the point is
+    /// outside), the explorer body raises its menu, and the base
+    /// clears/raises the tab menu.
+    /// Double-click chrome boxes, top-down. Full-frame guards encode
+    /// the mouse-modal overlay and the popup block/dismiss step at
+    /// their old chain positions.
+    fn dblclick_chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
+        use crate::widgets::LayoutBox;
+        let frame = self.active_chrome().last_frame;
+        let full = |kind: &'static str, z: u8| {
+            let mut b = LayoutBox::plain(kind, 0, 0, frame.width as u32, frame.height as u32);
+            b.z = z;
+            b
+        };
+        let mut boxes = Vec::new();
+        boxes.push(full("dblclick:suggestions", 5));
+        boxes.push(full("dblclick:overlay_prompt", 4));
+        boxes.push(full("dblclick:popup_guard", 3));
+        boxes.push(full("dblclick:file_browser", 2));
+        if let Some(r) = self.active_layout().file_explorer_area {
+            let mut b = LayoutBox::plain(
+                "dblclick:file_explorer",
+                r.y as u32 + 1,
+                r.x as u32,
+                r.width as u32,
+                (r.height as u32).saturating_sub(1),
+            );
+            b.z = 1;
+            boxes.push(b);
+        }
+        boxes
+    }
+
+    fn rclick_chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
+        use crate::widgets::LayoutBox;
+        let frame = self.active_chrome().last_frame;
+        let full = |kind: &'static str, z: u8| {
+            let mut b = LayoutBox::plain(kind, 0, 0, frame.width as u32, frame.height as u32);
+            b.z = z;
+            b
+        };
+        let mut boxes = Vec::new();
+        boxes.push(full("rclick:context_menu_guard", 3));
+        if let Some(r) = self.active_layout().file_explorer_area {
+            // Skip the title row: the box starts one row down.
+            let mut b = LayoutBox::plain(
+                "rclick:file_explorer",
+                r.y as u32 + 1,
+                r.x as u32,
+                r.width as u32,
+                (r.height as u32).saturating_sub(1),
+            );
+            b.z = 2;
+            boxes.push(b);
+        }
+        boxes.push(full("rclick:clear_explorer_menu", 1));
+        boxes.push(full("rclick:base", 0));
+        boxes
+    }
+
+    fn rclick_chrome_dispatch(&mut self, kind: &str, col: u16, row: u16) -> AnyhowResult<bool> {
+        Ok(match kind {
+            "rclick:context_menu_guard" => {
+                // A right-click inside an already-open native context menu
+                // (file-explorer or tab) is swallowed so the menu stays put
+                // rather than being re-opened / re-targeted.
+                let frame_w = self.active_chrome().last_frame.width;
+                let frame_h = self.active_chrome().last_frame.height;
+                if let Some(core) = self.active_window().context_menu_core() {
+                    !matches!(
+                        core.hit(col, row, frame_w, frame_h),
+                        super::types::ContextMenuHit::Outside
+                    )
+                } else {
+                    false
+                }
+            }
+            "rclick:file_explorer" => {
+                let Some(explorer_area) = self.active_layout().file_explorer_area else {
+                    return Ok(false);
+                };
                 let relative_row = row.saturating_sub(explorer_area.y + 1);
                 let (is_multi, is_root_selected) =
                     if let Some(explorer) = self.file_explorer_mut().as_mut() {
@@ -3620,38 +3705,39 @@ impl Editor {
                         is_multi,
                         is_root_selected,
                     ));
-                return Ok(());
+                true
             }
-        }
-
-        self.active_window_mut().file_explorer_context_menu = None;
-
-        // Check if right-click is on a tab
-        let tab_hit = self
-            .active_layout()
-            .tab_layouts
-            .iter()
-            .find_map(
-                |(split_id, tab_layout)| match tab_layout.hit_test(col, row) {
-                    Some(TabHit::TabName(target) | TabHit::CloseButton(target)) => {
-                        // Context menu only makes sense for buffer tabs; groups are
-                        // plugin-managed and closed via the close button.
-                        target.as_buffer().map(|bid| (*split_id, bid))
-                    }
-                    _ => None,
-                },
-            );
-
-        if let Some((split_id, buffer_id)) = tab_hit {
-            // Open tab context menu
-            self.active_window_mut().tab_context_menu =
-                Some(TabContextMenu::new(buffer_id, split_id, col, row + 1));
-        } else {
-            // Click outside tab - close context menu if open
-            self.active_window_mut().tab_context_menu = None;
-        }
-
-        Ok(())
+            "rclick:clear_explorer_menu" => {
+                // Off-explorer right-click dismisses its menu, then routing
+                // continues (guard, never consumes).
+                self.active_window_mut().file_explorer_context_menu = None;
+                false
+            }
+            "rclick:base" => {
+                let tab_hit =
+                    self.active_layout()
+                        .tab_layouts
+                        .iter()
+                        .find_map(
+                            |(split_id, tab_layout)| match tab_layout.hit_test(col, row) {
+                                Some(TabHit::TabName(target) | TabHit::CloseButton(target)) => {
+                                    // Context menu only makes sense for buffer tabs;
+                                    // groups are plugin-managed.
+                                    target.as_buffer().map(|bid| (*split_id, bid))
+                                }
+                                _ => None,
+                            },
+                        );
+                if let Some((split_id, buffer_id)) = tab_hit {
+                    self.active_window_mut().tab_context_menu =
+                        Some(TabContextMenu::new(buffer_id, split_id, col, row + 1));
+                } else {
+                    self.active_window_mut().tab_context_menu = None;
+                }
+                true
+            }
+            _ => false,
+        })
     }
 
     /// Execute a "+" new-tab popup menu action.
