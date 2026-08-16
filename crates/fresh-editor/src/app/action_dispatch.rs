@@ -1926,7 +1926,7 @@ impl Editor {
                 prompt.prompt_type,
                 PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
             ) {
-                let query = prompt.input.clone();
+                let query = prompt.input_str().to_string();
                 // Drop the committed matches: they were collected under the
                 // old flags, and F3/Shift+F3 now step through them while the
                 // bar is open (issue #2111). Clearing makes the next press

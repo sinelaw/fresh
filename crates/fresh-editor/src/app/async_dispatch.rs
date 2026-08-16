@@ -1670,7 +1670,7 @@ impl Editor {
         // Refresh the Quick Open suggestions if the prompt is open
         if let Some(prompt) = &self.active_window_mut().prompt {
             if prompt.prompt_type == PromptType::QuickOpen {
-                let input = prompt.input.clone();
+                let input = prompt.input_str().to_string();
                 self.update_quick_open_suggestions(&input);
             }
         }

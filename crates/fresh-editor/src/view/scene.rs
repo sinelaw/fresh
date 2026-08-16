@@ -546,7 +546,7 @@ impl Editor {
             }
         });
         Some(PaletteView {
-            query: p.input.clone(),
+            query: p.input_str().to_string(),
             message: p.message.clone(),
             prompt_type: prompt_type_tag(&p.prompt_type),
             overlay: p.overlay,

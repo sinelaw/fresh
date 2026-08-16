@@ -2248,8 +2248,7 @@ impl Editor {
             // to the selected suggestion so the prompt reflects
             // what Enter would commit.
             if let Some(suggestion) = prompt.suggestions.get(item_idx) {
-                prompt.input = suggestion.get_value().to_string();
-                prompt.cursor_pos = prompt.input.len();
+                prompt.set_input_plain(suggestion.get_value().to_string());
             }
         }
         if confirms {
@@ -2266,8 +2265,7 @@ impl Editor {
         let prompt = self.active_window_mut().prompt.as_mut()?;
         prompt.selected_suggestion = Some(item_idx);
         if let Some(suggestion) = prompt.suggestions.get(item_idx) {
-            prompt.input = suggestion.get_value().to_string();
-            prompt.cursor_pos = prompt.input.len();
+            prompt.set_input_plain(suggestion.get_value().to_string());
         }
         Some(self.handle_action(Action::PromptConfirm))
     }

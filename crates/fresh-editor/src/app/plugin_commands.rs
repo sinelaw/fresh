@@ -2504,7 +2504,7 @@ impl Editor {
             // Track that suggestions were set for this input value.
             // If filter_suggestions is called with the same input, we skip filtering
             // because the plugin has already provided filtered results.
-            prompt.suggestions_set_for_input = Some(prompt.input.clone());
+            prompt.suggestions_set_for_input = Some(prompt.input_str().to_string());
         }
     }
 

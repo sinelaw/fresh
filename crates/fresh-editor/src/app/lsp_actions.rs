@@ -334,8 +334,7 @@ impl Editor {
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if suggestions.len() == 1 {
                 // If only one entry, pre-fill the input with it
-                prompt.input = suggestions[0].text.clone();
-                prompt.cursor_pos = prompt.input.len();
+                prompt.set_input_plain(suggestions[0].text.clone());
                 prompt.selected_suggestion = Some(0);
             } else if !prompt.suggestions.is_empty() {
                 // Auto-select first suggestion

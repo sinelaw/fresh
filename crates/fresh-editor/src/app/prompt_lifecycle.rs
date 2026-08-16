@@ -73,9 +73,12 @@ impl Editor {
         // Pre-fill with default text if available
         if let Some(text) = default_text {
             if let Some(ref mut prompt) = self.active_window_mut().prompt {
+                // Pre-filled search text sits selected (caret at end,
+                // anchor at start) so typing replaces it; set_input takes
+                // the undo snapshot.
                 prompt.set_input(text.clone());
-                prompt.selection_anchor = Some(0);
-                prompt.cursor_pos = text.len();
+                let filled = prompt.input_str().to_string();
+                prompt.set_input_selected(filled);
             }
             if from_history {
                 self.get_or_create_prompt_history("search").init_at_last();
@@ -158,8 +161,7 @@ impl Editor {
         self.active_window_mut().goto_line_preview = None;
 
         let mut prompt = Prompt::with_suggestions(String::new(), PromptType::QuickOpen, vec![]);
-        prompt.input = prefix.to_string();
-        prompt.cursor_pos = prefix.len();
+        prompt.set_input_plain(prefix.to_string());
         self.active_window_mut().prompt = Some(prompt);
 
         self.update_quick_open_suggestions(prefix);
@@ -487,9 +489,7 @@ impl Editor {
         // start with an empty input.
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if prompt.prompt_type == PromptType::OpenFile {
-                prompt.input.clear();
-                prompt.cursor_pos = 0;
-                prompt.selection_anchor = None;
+                prompt.set_input_plain(String::new());
             }
         }
     }
@@ -709,7 +709,7 @@ impl Editor {
                     .active_window()
                     .prompt
                     .as_ref()
-                    .map(|p| p.input.clone())
+                    .map(|p| p.input_str().to_string())
                     .unwrap_or_default();
                 if !filter.is_empty() {
                     if let Some(state) = &mut self.active_window_mut().file_open_state {
@@ -874,7 +874,7 @@ impl Editor {
                         "prompt_cancelled",
                         HookArgs::PromptCancelled {
                             prompt_type: custom_type.clone(),
-                            input: prompt.input.clone(),
+                            input: prompt.input_str().to_string(),
                         },
                     );
                     // Capture Live Grep state on cancel for Resume
@@ -892,10 +892,10 @@ impl Editor {
                         // (empty Vec) and enters the restore branch
                         // with zero entries, producing an empty
                         // popup.
-                        if !prompt.input.is_empty() && !cached.is_empty() {
+                        if !prompt.input_str().is_empty() && !cached.is_empty() {
                             self.active_window_mut().live_grep_last_state =
                                 Some(crate::services::live_grep_state::LiveGrepLastState {
-                                    query: prompt.input.clone(),
+                                    query: prompt.input_str().to_string(),
                                     selected_index: prompt.selected_suggestion,
                                     cached_results: Some(cached),
                                     cached_at: Some(std::time::Instant::now()),
@@ -906,10 +906,10 @@ impl Editor {
                 }
                 PromptType::LiveGrep => {
                     let cached = self.snapshot_prompt_results_for_grep(prompt);
-                    if !prompt.input.is_empty() && !cached.is_empty() {
+                    if !prompt.input_str().is_empty() && !cached.is_empty() {
                         self.active_window_mut().live_grep_last_state =
                             Some(crate::services::live_grep_state::LiveGrepLastState {
-                                query: prompt.input.clone(),
+                                query: prompt.input_str().to_string(),
                                 selected_index: prompt.selected_suggestion,
                                 cached_results: Some(cached),
                                 cached_at: Some(std::time::Instant::now()),
@@ -1069,10 +1069,10 @@ impl Editor {
             };
             if is_live_grep {
                 let cached = self.snapshot_prompt_results_for_grep(&prompt);
-                if !prompt.input.is_empty() && !cached.is_empty() {
+                if !prompt.input_str().is_empty() && !cached.is_empty() {
                     self.active_window_mut().live_grep_last_state =
                         Some(crate::services::live_grep_state::LiveGrepLastState {
-                            query: prompt.input.clone(),
+                            query: prompt.input_str().to_string(),
                             selected_index: prompt.selected_suggestion,
                             cached_results: Some(cached),
                             cached_at: Some(std::time::Instant::now()),
@@ -1092,7 +1092,7 @@ impl Editor {
             let mut final_input = if prompt.sync_input_on_navigate {
                 // When sync_input_on_navigate is set, the input field is kept in sync
                 // with the selected suggestion, so always use the input value
-                prompt.input.clone()
+                prompt.input_str().to_string()
             } else if matches!(
                 prompt.prompt_type,
                 PromptType::OpenFile
@@ -1132,13 +1132,13 @@ impl Editor {
                         // Use the selected suggestion value
                         suggestion.get_value().to_string()
                     } else {
-                        prompt.input.clone()
+                        prompt.input_str().to_string()
                     }
                 } else {
-                    prompt.input.clone()
+                    prompt.input_str().to_string()
                 }
             } else {
-                prompt.input.clone()
+                prompt.input_str().to_string()
             };
 
             // For StopLspServer/RestartLspServer, validate that the input matches a suggestion
@@ -1164,7 +1164,7 @@ impl Editor {
             // If the user typed text, it must match a suggestion value to be accepted.
             // If the input is empty, the pre-selected suggestion is used.
             if matches!(prompt.prompt_type, PromptType::RemoveRuler) {
-                if prompt.input.is_empty() {
+                if prompt.input_str().is_empty() {
                     // No typed text — use the selected suggestion
                     if let Some(selected_idx) = prompt.selected_suggestion {
                         if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
@@ -1176,7 +1176,7 @@ impl Editor {
                     }
                 } else {
                     // User typed text — it must match a suggestion value
-                    let typed = prompt.input.trim().to_string();
+                    let typed = prompt.input_str().trim().to_string();
                     let matched = prompt.suggestions.iter().find(|s| s.get_value() == typed);
                     if let Some(suggestion) = matched {
                         final_input = suggestion.get_value().to_string();
@@ -1287,10 +1287,7 @@ impl Editor {
 
     /// Get current prompt input (for display)
     pub fn prompt_input(&self) -> Option<&str> {
-        self.active_window()
-            .prompt
-            .as_ref()
-            .map(|p| p.input.as_str())
+        self.active_window().prompt.as_ref().map(|p| p.input_str())
     }
 
     /// Check if the active cursor currently has a selection
@@ -1333,7 +1330,7 @@ impl Editor {
     pub fn update_prompt_suggestions(&mut self) {
         // Extract prompt type and input to avoid borrow checker issues
         let (prompt_type, input) = if let Some(prompt) = &self.active_window_mut().prompt {
-            (prompt.prompt_type.clone(), prompt.input.clone())
+            (prompt.prompt_type.clone(), prompt.input_str().to_string())
         } else {
             return;
         };
