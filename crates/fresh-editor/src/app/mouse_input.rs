@@ -1100,7 +1100,7 @@ impl Editor {
     }
 
     /// Check if mouse position is over any popup (including non-transient ones like completion)
-    fn is_mouse_over_any_popup(&self, col: u16, row: u16) -> bool {
+    pub(super) fn is_mouse_over_any_popup(&self, col: u16, row: u16) -> bool {
         // Editor-level popup overlays absorb every click within their outer
         // rect so the buffer below doesn't receive a stray cursor placement.
         for (_, popup_area, _, _, _) in &self.active_chrome().global_popup_areas {
@@ -1140,15 +1140,14 @@ impl Editor {
         // whose geometry is finer than their rectangle (context-menu
         // borders, tab-bar background) decline so the point falls
         // through to the boxes below.
-        let mut candidates: Vec<crate::widgets::LayoutBox> = self
-            .chrome_boxes()
+        let mut candidates: Vec<super::chrome::ChromeBox> = super::chrome::chrome_tree(self)
             .into_iter()
-            .filter(|b| b.contains(row as u32, col as u32))
+            .filter(|b| b.lb.contains(row as u32, col as u32))
             .collect();
-        candidates.sort_by(|a, b| b.z.cmp(&a.z));
+        candidates.sort_by(|a, b| b.lb.z.cmp(&a.lb.z));
         candidates
             .into_iter()
-            .find_map(|b| self.hover_chrome_target(b.kind, col, row))
+            .find_map(|b| super::chrome::components()[b.owner].hover(self, &b.lb, col, row))
     }
 
     /// The ONE chrome surface tree for every pointer gesture: each
@@ -1161,7 +1160,10 @@ impl Editor {
     /// DECLINES surfaces it has no handler for — same box tree,
     /// per-gesture behavior, exactly the panel model.
     fn chrome_boxes(&self) -> Vec<crate::widgets::LayoutBox> {
-        let tree = super::chrome::chrome_tree(self);
+        let tree: Vec<crate::widgets::LayoutBox> = super::chrome::chrome_tree(self)
+            .into_iter()
+            .map(|b| b.lb)
+            .collect();
         // Slice-0 tripwire (chrome-event-model-plan.md): the component
         // registry must reproduce the legacy enumeration per kind.
         // Deleted together with the legacy body next slice.
@@ -1394,191 +1396,10 @@ impl Editor {
         boxes
     }
 
-    /// Name the hover target for one chrome box, or decline (`None`)
-    /// so the walk falls through to the next box down.
-    fn hover_chrome_target(&self, kind: &str, col: u16, row: u16) -> Option<HoverTarget> {
-        match kind {
-            "chrome:context_menu" => {
-                // The native context menus (tab / "+" new-tab /
-                // file-explorer) share one geometry core, so a single
-                // hit-test over the open menu covers all three. An
-                // interior (item) row yields a hover target; border rows
-                // and outside positions fall through.
-                let core = self.active_window().context_menu_core()?;
-                if let super::types::ContextMenuHit::Item(item_idx) = core.hit(
-                    col,
-                    row,
-                    self.active_chrome().last_frame.width,
-                    self.active_chrome().last_frame.height,
-                ) {
-                    return Some(HoverTarget::ContextMenuItem(item_idx));
-                }
-                None
-            }
-            "chrome:suggestions" => {
-                // Command palette / autocomplete list.
-                let (inner_rect, start_idx, _visible_count, total_count) =
-                    self.active_chrome().suggestions_area.as_ref()?;
-                if in_rect(col, row, *inner_rect) {
-                    let relative_row = (row - inner_rect.y) as usize;
-                    let item_idx = start_idx + relative_row;
-                    if item_idx < *total_count {
-                        return Some(HoverTarget::SuggestionItem(item_idx));
-                    }
-                }
-                None
-            }
-            "chrome:popups" => {
-                // Check popups (they're rendered on top)
-                // Check from top to bottom (reverse order since last popup is on top)
-                for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
-                    self.active_chrome().popup_areas.iter().rev()
-                {
-                    if in_rect(col, row, *inner_rect) && *num_items > 0 {
-                        // Calculate which item is being hovered
-                        let relative_row = (row - inner_rect.y) as usize;
-                        let item_idx = scroll_offset + relative_row;
-
-                        if item_idx < *num_items {
-                            return Some(HoverTarget::PopupListItem(*popup_idx, item_idx));
-                        }
-                    }
-                }
-                None
-            }
-            "chrome:file_browser" => self.compute_file_browser_hover(col, row),
-            "chrome:menu_bar" => {
-                let menu_layout = self.active_chrome().menu_layout.as_ref()?;
-                menu_layout.menu_at(col, row).map(HoverTarget::MenuBarItem)
-            }
-            "chrome:menu_dropdown" => {
-                let active_idx = self.menu_state.active_menu?;
-                self.compute_menu_dropdown_hover(col, row, active_idx)
-            }
-            "chrome:file_explorer" => self.hover_target_in_file_explorer(col, row),
-            "chrome:split_separators" => {
-                // Check split separators
-                for (split_id, direction, sep_x, sep_y, sep_length) in
-                    &self.active_layout().separator_areas
-                {
-                    let is_on_separator = match direction {
-                        SplitDirection::Horizontal => {
-                            row == *sep_y && col >= *sep_x && col < sep_x + sep_length
-                        }
-                        SplitDirection::Vertical => {
-                            col == *sep_x && row >= *sep_y && row < sep_y + sep_length
-                        }
-                    };
-
-                    if is_on_separator {
-                        return Some(HoverTarget::SplitSeparator(*split_id, *direction));
-                    }
-                }
-                None
-            }
-            "chrome:split_buttons" => {
-                // Check tab areas using cached hit regions (computed during rendering)
-                // Check split control buttons first (they're on top of the tab row)
-                for (split_id, btn_row, start_col, end_col) in
-                    &self.active_layout().close_split_areas
-                {
-                    if row == *btn_row && col >= *start_col && col < *end_col {
-                        return Some(HoverTarget::CloseSplitButton(*split_id));
-                    }
-                }
-
-                for (split_id, btn_row, start_col, end_col) in
-                    &self.active_layout().maximize_split_areas
-                {
-                    if row == *btn_row && col >= *start_col && col < *end_col {
-                        return Some(HoverTarget::MaximizeSplitButton(*split_id));
-                    }
-                }
-                None
-            }
-            "chrome:tabs" => {
-                for (split_id, tab_layout) in &self.active_layout().tab_layouts {
-                    match tab_layout.hit_test(col, row) {
-                        Some(TabHit::CloseButton(target)) => {
-                            return Some(HoverTarget::TabCloseButton(target, *split_id));
-                        }
-                        Some(TabHit::TabName(target)) => {
-                            return Some(HoverTarget::TabName(target, *split_id));
-                        }
-                        Some(TabHit::ScrollLeft)
-                        | Some(TabHit::ScrollRight)
-                        | Some(TabHit::BarBackground)
-                        | Some(TabHit::NewTabButton)
-                        | None => {}
-                    }
-                }
-                None
-            }
-            "chrome:scrollbars" => {
-                // Check scrollbars
-                for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
-                    &self.active_layout().split_areas
-                {
-                    if in_rect(col, row, *scrollbar_rect) {
-                        let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
-                        let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
-
-                        if is_on_thumb {
-                            return Some(HoverTarget::ScrollbarThumb(*split_id));
-                        } else {
-                            return Some(HoverTarget::ScrollbarTrack(
-                                *split_id,
-                                relative_row as u16,
-                            ));
-                        }
-                    }
-                }
-                None
-            }
-            "chrome:status_bar" => {
-                // Check status bar indicators — one generic hit-test over every
-                // clickable segment recorded last frame (encoding, LSP, remote, …).
-                if let Some((status_row, _status_x, _status_width)) =
-                    self.active_chrome().status_bar.area
-                {
-                    if row == status_row {
-                        for (id, indicator_row, start, end) in
-                            &self.active_chrome().status_bar.clickable
-                        {
-                            if row == *indicator_row && col >= *start && col < *end {
-                                return Some(HoverTarget::StatusBarClickable(*id));
-                            }
-                        }
-                    }
-                }
-                None
-            }
-            "chrome:search_options" => {
-                // Check search options bar checkboxes
-                if let Some(ref layout) = self.active_chrome().search_options_layout {
-                    use crate::view::ui::status_bar::SearchOptionsHover;
-                    if let Some(hover) = layout.checkbox_at(col, row) {
-                        return Some(match hover {
-                            SearchOptionsHover::CaseSensitive => {
-                                HoverTarget::SearchOptionCaseSensitive
-                            }
-                            SearchOptionsHover::WholeWord => HoverTarget::SearchOptionWholeWord,
-                            SearchOptionsHover::Regex => HoverTarget::SearchOptionRegex,
-                            SearchOptionsHover::ConfirmEach => HoverTarget::SearchOptionConfirmEach,
-                            SearchOptionsHover::None => return None,
-                        });
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
     /// The `hover:file_explorer` box: the close button on the title
     /// row, per-item trailing status indicators, and the resize border
     /// on the rightmost column.
-    fn hover_target_in_file_explorer(&self, col: u16, row: u16) -> Option<HoverTarget> {
+    pub(super) fn hover_target_in_file_explorer(&self, col: u16, row: u16) -> Option<HoverTarget> {
         // Check file explorer close button and border (for resize)
         if let Some(explorer_area) = self.active_layout().file_explorer_area {
             // Close button is at position: explorer_area.x + explorer_area.width - 3 to -1
@@ -1689,52 +1510,20 @@ impl Editor {
         // the mouse-modal overlay swallow, the popup block/dismiss
         // guard, the file-open dialog, the explorer body, then the
         // splits.
-        let mut candidates: Vec<crate::widgets::LayoutBox> = self
-            .chrome_boxes()
+        let mut candidates: Vec<super::chrome::ChromeBox> = super::chrome::chrome_tree(self)
             .into_iter()
-            .filter(|b| b.contains(row as u32, col as u32))
+            .filter(|b| b.lb.contains(row as u32, col as u32))
             .collect();
-        candidates.sort_by(|a, b| b.z.cmp(&a.z));
+        candidates.sort_by(|a, b| b.lb.z.cmp(&a.lb.z));
         for b in candidates {
-            match b.kind {
-                "chrome:suggestions" => {
-                    if let Some(r) = self.handle_click_suggestions_confirm(col, row) {
-                        return r;
-                    }
-                }
-                "chrome:overlay_prompt_modal" => {
-                    // Mouse-modal: swallow anything that wasn't a result
-                    // row so it can't word-select in the buffer below.
-                    if self.overlay_prompt_active() {
-                        return Ok(());
-                    }
-                }
-                "chrome:popup_guard" => {
-                    // Inside a popup: block. Outside: dismiss transients
-                    // and keep routing.
-                    if self.is_mouse_over_any_popup(col, row) {
-                        return Ok(());
-                    }
-                    self.dismiss_transient_popups();
-                }
-                "chrome:file_browser" => {
-                    if self.handle_file_open_double_click(col, row) {
-                        return Ok(());
-                    }
-                }
-                "chrome:file_explorer" => {
-                    // Title row is not a double-click target (the union
-                    // box spans the whole explorer).
-                    if let Some(r) = self.active_layout().file_explorer_area {
-                        if row <= r.y {
-                            continue;
-                        }
-                    }
-                    // Open file AND focus editor.
-                    self.file_explorer_open_file()?;
-                    return Ok(());
-                }
-                _ => continue,
+            let ev = super::chrome::ChromePointer {
+                press: super::chrome::PointerPress::Double,
+                col,
+                row,
+            };
+            match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
+                super::chrome::Disposition::Consumed => return Ok(()),
+                super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
             }
         }
 
@@ -2385,7 +2174,11 @@ impl Editor {
     /// Click handler that always commits the suggestion under the cursor,
     /// regardless of `click_confirms`. Used for double-clicks so that
     /// preview-on-click prompts still have a mouse-only commit path.
-    fn handle_click_suggestions_confirm(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(super) fn handle_click_suggestions_confirm(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
         let item_idx = self.suggestion_at(col, row)?;
         let prompt = self.active_window_mut().prompt.as_mut()?;
         prompt.selected_suggestion = Some(item_idx);
@@ -3825,107 +3618,23 @@ impl Editor {
         // as left-click/wheel. Ordering rides z; the mid-chain
         // clear-explorer-menu side effect is a guard box at its old
         // position.
-        let mut candidates: Vec<crate::widgets::LayoutBox> = self
-            .chrome_boxes()
+        let mut candidates: Vec<super::chrome::ChromeBox> = super::chrome::chrome_tree(self)
             .into_iter()
-            .filter(|b| b.contains(row as u32, col as u32))
+            .filter(|b| b.lb.contains(row as u32, col as u32))
             .collect();
-        candidates.sort_by(|a, b| b.z.cmp(&a.z));
+        candidates.sort_by(|a, b| b.lb.z.cmp(&a.lb.z));
         for b in candidates {
-            if self.rclick_chrome_dispatch(b.kind, col, row)? {
-                return Ok(());
+            let ev = super::chrome::ChromePointer {
+                press: super::chrome::PointerPress::Right,
+                col,
+                row,
+            };
+            match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
+                super::chrome::Disposition::Consumed => return Ok(()),
+                super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
             }
         }
         Ok(())
-    }
-
-    /// Right-click chrome boxes, top-down: an open native context menu
-    /// swallows (full frame, handler declines when the point is
-    /// outside), the explorer body raises its menu, and the base
-    /// clears/raises the tab menu.
-    fn rclick_chrome_dispatch(&mut self, kind: &str, col: u16, row: u16) -> AnyhowResult<bool> {
-        Ok(match kind {
-            "chrome:context_menu" => {
-                // A right-click inside an already-open native context menu
-                // (file-explorer or tab) is swallowed so the menu stays put
-                // rather than being re-opened / re-targeted.
-                let frame_w = self.active_chrome().last_frame.width;
-                let frame_h = self.active_chrome().last_frame.height;
-                if let Some(core) = self.active_window().context_menu_core() {
-                    !matches!(
-                        core.hit(col, row, frame_w, frame_h),
-                        super::types::ContextMenuHit::Outside
-                    )
-                } else {
-                    false
-                }
-            }
-            "chrome:file_explorer" => {
-                let Some(explorer_area) = self.active_layout().file_explorer_area else {
-                    return Ok(false);
-                };
-                // The union box spans the whole explorer; the title row
-                // is not a right-click target.
-                if row <= explorer_area.y {
-                    return Ok(false);
-                }
-                let relative_row = row.saturating_sub(explorer_area.y + 1);
-                let (is_multi, is_root_selected) =
-                    if let Some(explorer) = self.file_explorer_mut().as_mut() {
-                        let mut clicked_is_root = false;
-                        if let Some((node_id, _)) =
-                            explorer.get_display_node_at_viewport_row(relative_row as usize)
-                        {
-                            explorer.set_selected(Some(node_id));
-                            clicked_is_root = node_id == explorer.tree().root_id();
-                        }
-                        (explorer.has_multi_selection(), clicked_is_root)
-                    } else {
-                        (false, false)
-                    };
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::FileExplorer;
-                self.active_window_mut().tab_context_menu = None;
-                self.active_window_mut().file_explorer_context_menu =
-                    Some(super::types::FileExplorerContextMenu::new(
-                        col,
-                        row + 1,
-                        is_multi,
-                        is_root_selected,
-                    ));
-                true
-            }
-            "chrome:clear_explorer_menu" => {
-                // Off-explorer right-click dismisses its menu, then routing
-                // continues (guard, never consumes).
-                self.active_window_mut().file_explorer_context_menu = None;
-                false
-            }
-            "chrome:base" => {
-                let tab_hit =
-                    self.active_layout()
-                        .tab_layouts
-                        .iter()
-                        .find_map(
-                            |(split_id, tab_layout)| match tab_layout.hit_test(col, row) {
-                                Some(TabHit::TabName(target) | TabHit::CloseButton(target)) => {
-                                    // Context menu only makes sense for buffer tabs;
-                                    // groups are plugin-managed.
-                                    target.as_buffer().map(|bid| (*split_id, bid))
-                                }
-                                _ => None,
-                            },
-                        );
-                if let Some((split_id, buffer_id)) = tab_hit {
-                    self.active_window_mut().tab_context_menu =
-                        Some(TabContextMenu::new(buffer_id, split_id, col, row + 1));
-                } else {
-                    self.active_window_mut().tab_context_menu = None;
-                }
-                true
-            }
-            _ => false,
-        })
     }
 
     /// Execute a "+" new-tab popup menu action.

@@ -1,5 +1,6 @@
 //! The search-prompt option checkboxes band.
 
+use crate::app::types::HoverTarget;
 use crate::widgets::LayoutBox;
 
 use super::{ChromeComponent, ChromeTreeBuilder, Editor};
@@ -21,8 +22,24 @@ impl ChromeComponent for SearchOptions {
                     1,
                 );
                 b.z = 3;
-                t.boxes.push(b);
+                t.push(b);
             }
         }
+    }
+
+    fn hover(&self, ed: &Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+        if let Some(ref layout) = ed.active_chrome().search_options_layout {
+            use crate::view::ui::status_bar::SearchOptionsHover;
+            if let Some(hover) = layout.checkbox_at(col, row) {
+                return Some(match hover {
+                    SearchOptionsHover::CaseSensitive => HoverTarget::SearchOptionCaseSensitive,
+                    SearchOptionsHover::WholeWord => HoverTarget::SearchOptionWholeWord,
+                    SearchOptionsHover::Regex => HoverTarget::SearchOptionRegex,
+                    SearchOptionsHover::ConfirmEach => HoverTarget::SearchOptionConfirmEach,
+                    SearchOptionsHover::None => return None,
+                });
+            }
+        }
+        None
     }
 }

@@ -3,7 +3,15 @@
 //! position-blind suggestion capture, and the overlay-prompt modal
 //! scrim.
 
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use crate::app::types::HoverTarget;
+use crate::widgets::LayoutBox;
+use anyhow::Result as AnyhowResult;
+
+use super::{ChromeComponent, ChromePointer, ChromeTreeBuilder, Disposition, Editor, PointerPress};
+
+fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
+    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+}
 
 pub(crate) struct Prompt;
 
@@ -37,5 +45,52 @@ impl ChromeComponent for Prompt {
         // The floating-overlay prompt as a mouse-modal surface (its own
         // result rows resolved above via the suggestions box).
         t.full("chrome:overlay_prompt_modal", 16);
+    }
+
+    fn hover(&self, ed: &Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+        if bx.kind != "chrome:suggestions" {
+            return None;
+        }
+        // Command palette / autocomplete list.
+        let (inner_rect, start_idx, _visible_count, total_count) =
+            ed.active_chrome().suggestions_area.as_ref()?;
+        if in_rect(col, row, *inner_rect) {
+            let relative_row = (row - inner_rect.y) as usize;
+            let item_idx = start_idx + relative_row;
+            if item_idx < *total_count {
+                return Some(HoverTarget::SuggestionItem(item_idx));
+            }
+        }
+        None
+    }
+
+    fn on_pointer(
+        &self,
+        ed: &mut Editor,
+        bx: &LayoutBox,
+        ev: &ChromePointer,
+    ) -> AnyhowResult<Disposition> {
+        if ev.press != PointerPress::Double {
+            return Ok(Disposition::Pass);
+        }
+        match bx.kind {
+            // Double-click on a suggestion row confirms it (#1660).
+            "chrome:suggestions" => {
+                if let Some(r) = ed.handle_click_suggestions_confirm(ev.col, ev.row) {
+                    r?;
+                    return Ok(Disposition::Consumed);
+                }
+                Ok(Disposition::Pass)
+            }
+            // Mouse-modal: swallow anything that wasn't a result row so
+            // it can't word-select in the buffer below.
+            "chrome:overlay_prompt_modal" => {
+                if ed.overlay_prompt_active() {
+                    return Ok(Disposition::Consumed);
+                }
+                Ok(Disposition::Pass)
+            }
+            _ => Ok(Disposition::Pass),
+        }
     }
 }
