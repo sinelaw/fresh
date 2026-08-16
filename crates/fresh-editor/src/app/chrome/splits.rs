@@ -19,7 +19,7 @@ impl ChromeComponent for Splits {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
         for (_, buffer_id, content_rect, ..) in &ed.active_layout().split_areas {
             if !ed.widget_registry.panels_for_buffer(*buffer_id).is_empty() {
-                t.rect("chrome:split_widget_panel", 12, *content_rect);
+                t.rect("chrome:split_widget_panel", 120, *content_rect);
             }
         }
         for (_, direction, sep_x, sep_y, sep_len) in &ed.active_layout().separator_areas {
@@ -34,7 +34,7 @@ impl ChromeComponent for Splits {
                 w,
                 h,
             );
-            b.z = 8;
+            b.z = 80;
             t.push(b);
         }
         for (_, btn_row, start, end) in &ed.active_layout().close_split_areas {
@@ -45,7 +45,7 @@ impl ChromeComponent for Splits {
                 end.saturating_sub(*start) as u32,
                 1,
             );
-            b.z = 7;
+            b.z = 70;
             t.push(b);
         }
         for (_, btn_row, start, end) in &ed.active_layout().maximize_split_areas {
@@ -56,20 +56,20 @@ impl ChromeComponent for Splits {
                 end.saturating_sub(*start) as u32,
                 1,
             );
-            b.z = 7;
+            b.z = 70;
             t.push(b);
         }
         for (_, tl) in &ed.active_layout().tab_layouts {
-            t.rect("chrome:tabs", 6, tl.bar_area);
+            t.rect("chrome:tabs", 60, tl.bar_area);
         }
         for (_, _, _, scrollbar_rect, _, _) in &ed.active_layout().split_areas {
-            t.rect("chrome:scrollbars", 5, *scrollbar_rect);
+            t.rect("chrome:scrollbars", 50, *scrollbar_rect);
         }
         for (_, _, r, _, _, _) in &ed.active_layout().horizontal_scrollbar_areas {
-            t.rect("chrome:h_scrollbar", 5, *r);
+            t.rect("chrome:h_scrollbar", 50, *r);
         }
         for (_, _, content_rect, ..) in &ed.active_layout().split_areas {
-            t.rect("chrome:editor", 1, *content_rect);
+            t.rect("chrome:editor", 10, *content_rect);
         }
     }
 

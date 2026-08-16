@@ -21,30 +21,41 @@ impl ChromeComponent for Prompt {
         // scrollbar border too); handlers with inner-rect geometry
         // (hover) re-check and decline.
         if let Some(outer) = ed.active_chrome().suggestions_outer_area {
-            t.rect("chrome:suggestions", 17, outer);
+            t.rect("chrome:suggestions", 170, outer);
         } else if let Some((inner_rect, _, _, _)) = &ed.active_chrome().suggestions_area {
-            t.rect("chrome:suggestions", 17, *inner_rect);
+            t.rect("chrome:suggestions", 170, *inner_rect);
         }
         // The suggestion list's scrollbar track at its painted rect
         // (shared by the floating-overlay prompt and the
         // bottom-anchored dropdown). No box when none was painted.
         if let Some(r) = ed.active_chrome().suggestions_scrollbar_rect {
-            t.rect("chrome:prompt_scrollbar", 17, r);
+            t.rect("chrome:prompt_scrollbar", 170, r);
         }
         if ed.overlay_prompt_active() {
             if let Some(r) = ed.active_chrome().prompt_preview_area {
-                t.rect("chrome:prompt_preview", 17, r);
+                t.rect("chrome:prompt_preview", 170, r);
             }
         }
+        // The floating-overlay prompt as a mouse-modal surface for the
+        // wheel and double-click (its own result rows resolved above
+        // via the suggestions box). Sits ABOVE the suggestion capture:
+        // while the overlay is up, its own scroll model wins.
+        t.full("chrome:overlay_prompt_modal", 160);
         // DELIBERATE full-frame capture, not a geometry proxy: while a
         // prompt with suggestions is open, the wheel scrolls that list
         // wherever the pointer sits (position-blind capture for the
-        // bottom-anchored dropdown — see WHEEL_ORDER's doc). Other
-        // gestures have no handler for it and skip it.
-        t.full("chrome:prompt_suggestions", 17);
-        // The floating-overlay prompt as a mouse-modal surface (its own
-        // result rows resolved above via the suggestions box).
-        t.full("chrome:overlay_prompt_modal", 16);
+        // bottom-anchored dropdown). Other gestures have no handler
+        // for it and fall through.
+        t.full("chrome:prompt_suggestions", 155);
+        // The overlay prompt's CLICK scrim rides low — just above the
+        // editor content band — so chrome controls that peek out from
+        // under the overlay (tabs, scrollbars, status bar) still take
+        // their clicks; anything that reaches the scrim is swallowed
+        // so it can't move the buffer cursor. The wheel/double-click
+        // modal above and this click scrim are the same surface's two
+        // per-gesture bands, encoded as two thin boxes instead of two
+        // hand-ordered arrays.
+        t.full("chrome:overlay_prompt_scrim", 15);
     }
 
     fn hover(&self, ed: &Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
@@ -93,7 +104,7 @@ impl ChromeComponent for Prompt {
                 // the input row, separator, preview pane, empty space,
                 // or a click outside the frame — is swallowed here so
                 // it never reaches the buffer and moves its cursor.
-                "chrome:overlay_prompt_modal" => {
+                "chrome:overlay_prompt_scrim" => {
                     if !ed.overlay_prompt_active() {
                         return Ok(Disposition::Pass);
                     }
