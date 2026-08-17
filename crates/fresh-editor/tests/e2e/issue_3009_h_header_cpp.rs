@@ -122,8 +122,51 @@ fn test_h_header_in_pure_c_project_stays_c() {
     );
 }
 
+/// The directory name the fake host serves its C++ tree from. Only the
+/// leaf name is a literal — the root it hangs off is discovered at runtime
+/// (see [`fake_remote_root`]).
+const REMOTE_PROJECT_DIR: &str = "remote-cpp-project";
+
+/// An absolute path that exists on no machine: the filesystem root the test
+/// process is already running on, plus a directory name nobody creates.
+///
+/// The root component is *discovered* rather than written down, because an
+/// absolute path is not a portable literal. `"/remote-cpp-project"` is
+/// absolute on Unix, but on Windows `Path::is_absolute` requires a prefix
+/// (a drive letter or UNC share) in addition to the root, so the same
+/// literal is a *relative* path there. `Window::open_file_no_focus_inner`
+/// re-anchors relative paths to the session's base directory, so on Windows
+/// the header opened as `C:\…\remote-cpp-project\widget.h`, `RemoteTreeFs`
+/// no longer recognised the prefix, the tree was never served, and the
+/// buffer came up as a brand-new empty file instead of a C++ header.
+///
+/// Taking the leading `Prefix`/`RootDir` components of a path the platform
+/// itself produced yields `/` on Unix and `C:\` on Windows, so the result is
+/// absolute under either convention by construction rather than by guess.
+fn fake_remote_root() -> PathBuf {
+    let anchor = std::env::temp_dir();
+    let mut root = PathBuf::new();
+    for component in anchor.components() {
+        match component {
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => {
+                root.push(component.as_os_str())
+            }
+            _ => break,
+        }
+    }
+    let root = root.join(REMOTE_PROJECT_DIR);
+    assert!(
+        root.is_absolute(),
+        "the fake remote root must be absolute on this platform, else the \
+         editor re-anchors it to the working directory and the fake tree is \
+         never consulted. Got: {}",
+        root.display()
+    );
+    root
+}
+
 /// A filesystem that behaves like an SSH host: the tree it serves lives under
-/// `/remote-cpp-project`, a path that does **not** exist on the machine
+/// [`fake_remote_root`], a path that does **not** exist on the machine
 /// running the test, and every operation is translated to a real temporary
 /// directory before being delegated to `StdFileSystem`.
 ///
@@ -138,17 +181,17 @@ fn test_h_header_in_pure_c_project_stays_c() {
 /// marks the backend as one whose sync calls are blocking round trips.
 struct RemoteTreeFs {
     inner: StdFileSystem,
+    /// Path prefix that exists only on the "remote host".
+    remote_root: PathBuf,
     /// The real directory backing the fake remote root.
     local_root: PathBuf,
 }
 
 impl RemoteTreeFs {
-    /// Path prefix that exists only on the "remote host".
-    const REMOTE_ROOT: &'static str = "/remote-cpp-project";
-
     fn new(local_root: PathBuf) -> Self {
         Self {
             inner: StdFileSystem,
+            remote_root: fake_remote_root(),
             local_root,
         }
     }
@@ -157,15 +200,15 @@ impl RemoteTreeFs {
     /// outside the fake root pass through unchanged, so the harness's own
     /// config and scratch files keep working.
     fn map(&self, path: &Path) -> PathBuf {
-        match path.strip_prefix(Self::REMOTE_ROOT) {
+        match path.strip_prefix(&self.remote_root) {
             Ok(rest) => self.local_root.join(rest),
             Err(_) => path.to_path_buf(),
         }
     }
 
     /// A path under the fake remote root for `name`.
-    fn remote_path(name: &str) -> PathBuf {
-        Path::new(Self::REMOTE_ROOT).join(name)
+    fn remote_path(&self, name: &str) -> PathBuf {
+        self.remote_root.join(name)
     }
 }
 
@@ -290,7 +333,7 @@ impl FileSystem for RemoteTreeFs {
 ///
 /// Before the `FileSystem` trait was threaded through language detection this
 /// rendered as C — the promotion probe read the local disk, which has no
-/// `/remote-cpp-project` at all, so it found no C++ sibling and quietly
+/// `<root>/remote-cpp-project` at all, so it found no C++ sibling and quietly
 /// declined to promote.
 #[test]
 fn test_remote_h_header_beside_cpp_source_highlights_as_cpp() {
@@ -300,6 +343,16 @@ fn test_remote_h_header_beside_cpp_source_highlights_as_cpp() {
     std::fs::write(backing.path().join("widget.cpp"), "#include \"widget.h\"\n").unwrap();
 
     let fs = Arc::new(RemoteTreeFs::new(backing.path().to_path_buf()));
+    let header = fs.remote_path("widget.h");
+    // The header exists only on the fake host: if `std::fs` can see it, the
+    // test would no longer be proving that detection went through the
+    // injected filesystem.
+    assert!(
+        !header.exists(),
+        "{} must not exist locally",
+        header.display()
+    );
+
     let mut harness = EditorTestHarness::create(
         120,
         30,
@@ -309,9 +362,7 @@ fn test_remote_h_header_beside_cpp_source_highlights_as_cpp() {
     )
     .unwrap();
 
-    harness
-        .open_file(&RemoteTreeFs::remote_path("widget.h"))
-        .unwrap();
+    harness.open_file(&header).unwrap();
     harness.render().unwrap();
 
     let status_bar = harness.get_status_bar();
