@@ -269,6 +269,31 @@ fixed:
   `PassAfter`-vs-opacity contract, and the stale
   "Settings/Menu/Prompt" trio enumerations.
 
+- **R7 — dead old-model code deleted; paint gates derived.** A
+  zero-caller audit of the whole event surface found and deleted the
+  survivors: `popup_mouse.rs`'s click/hover/drag dispatch half
+  (`PopupClickResult`, `hit_test_click`, `hover_target`,
+  `content_position`, `handle_popup_selection_drag` — already
+  diverged from the chrome Popups handlers that replaced them; only
+  the acknowledged `is_over_*` rect predicates survive),
+  `ScrollbarState::click_to_offset` (documented-buggy, zero
+  production callers), the `InputHandler` hierarchy half
+  (`focused_child*`, the no-op child-first dispatch branch,
+  `InputResult::or`, the four `is_key*` helpers — no handler ever had
+  a child; the module doc now describes the real model: flat
+  per-surface interiors invoked from components, routing in the layer
+  walk), and the write-only `drag_start_popup_scroll` field. The
+  LSP-rename cancel got its pre-band whole-channel-observer ruling.
+  `cursor_suppressed_by_late_overlay` is DERIVED from the overlay
+  stack (its seven-item hand list had drifted from `hide_cursor`'s,
+  which now consumes it — fixing both lists' omissions: the caret no
+  longer blinks through the calibration wizard, trust prompt, context
+  menus, or the centered modal), and the inline WorkspaceTrust
+  resolver matches collapsed onto `workspace_trust_on_top()`. Stale
+  docs fixed: `capture_mouse` (rank-order offering, post-R3),
+  `StatusBarClickable` (retired cache reference), the
+  `overlay_hit_test` ghost.
+
 Remaining recorded residue after R: the widget_runtime central kind
 policies (compile-checked enum matches; candidate `arrow_peek` /
 `activate_on_picker_enter` capabilities if drift bites),

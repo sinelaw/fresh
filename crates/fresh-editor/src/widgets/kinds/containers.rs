@@ -90,7 +90,8 @@ impl WidgetImpl for Overlay {
         let mut m = super::BoxMeta::plain("overlay");
         // Promoted overlay content is an opaque surface: a click inside
         // it that nothing consumes must not fall through to the rows
-        // beneath (mirrors `WidgetRegistry::overlay_hit_test`).
+        // beneath — the box tree's opacity gate enforces what the
+        // long-deleted `overlay_hit_test` entry point used to.
         m.pointer_opaque = true;
         m
     }

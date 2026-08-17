@@ -462,21 +462,22 @@ impl Editor {
                 .pending_goto_definition_request
                 .is_some();
 
-        // Hide the hardware cursor when menu is open, file explorer is focused, terminal mode,
-        // or settings UI is open
-        // (the file explorer will set its own cursor position when focused)
-        // (terminal mode renders its own cursor via the terminal emulator)
-        // (settings UI is a modal that doesn't need the editor cursor)
+        // Hide the hardware cursor when a covering overlay owns the
+        // screen or another surface places its own cursor. The overlay
+        // half is DERIVED (`cursor_suppressed_by_late_overlay`, the
+        // same set the chrome-caret gate uses — the two hand lists
+        // this replaces disagreed about the calibration wizard, and
+        // neither hid the caret under the centered modal); the named
+        // extras are the non-layer states:
+        // (the file explorer sets its own cursor position when focused)
+        // (terminal mode renders its own cursor via the emulator)
+        // (a dormant remote session's shell renders as a placeholder
+        //  page — no editable buffer, so no text cursor)
         // This also causes visual cursor indicators in the editor to be dimmed
-        let settings_visible = self.settings_state.as_ref().is_some_and(|s| s.visible);
-        let hide_cursor = self.menu_state.active_menu.is_some()
+        let hide_cursor = self.cursor_suppressed_by_late_overlay()
             || self.active_window_mut().key_context == KeyContext::FileExplorer
             || self.active_window().focused_terminal_live()
             || self.dock.as_ref().is_some_and(|d| d.focused)
-            || settings_visible
-            || self.keybinding_editor.is_some()
-            // A dormant remote session's shell renders as a placeholder
-            // page (no editable buffer), so no text cursor either.
             || self.dormant_remote.contains_key(&self.active_window);
 
         // Convert HoverTarget to tab hover info for rendering
@@ -935,12 +936,7 @@ impl Editor {
         // the dedicated modal z-band (alongside settings / wizard) on a dimmed
         // backdrop, so it can't be lost amongst dashboard/explorer chrome.
         // Everything else on the global stack renders here, above buffer content.
-        let top_is_trust_modal = self.global_popups.top().is_some_and(|p| {
-            matches!(
-                p.resolver,
-                crate::view::popup::PopupResolver::WorkspaceTrust
-            )
-        });
+        let top_is_trust_modal = self.workspace_trust_on_top();
         if !top_is_trust_modal {
             // Global popups render within the chrome area (right of a
             // left dock) so corner/centred popups don't overrun it.
@@ -2840,19 +2836,22 @@ impl Editor {
     /// `hide_cursor`; this is the equivalent gate for chrome carets that are
     /// painted before the overlays exist (today: the file explorer's).
     fn cursor_suppressed_by_late_overlay(&self) -> bool {
-        self.menu_state.active_menu.is_some()
-            || self.active_window().open_context_menu().is_some()
-            || self.settings_state.as_ref().is_some_and(|s| s.visible)
-            || self.keybinding_editor.is_some()
-            || self.calibration_wizard.is_some()
-            || self.active_window().event_debug.is_some()
-            || self.floating_widget_panel.is_some()
-            || self.global_popups.top().is_some_and(|p| {
-                matches!(
-                    p.resolver,
-                    crate::view::popup::PopupResolver::WorkspaceTrust
-                )
-            })
+        use crate::app::overlay::LayerKind;
+        // DERIVED from the overlay stack (this used to be a seven-item
+        // hand list that had already drifted from `hide_cursor`'s):
+        // every present layer suppresses EXCEPT the ones that don't
+        // paint over a chrome caret's cell — the bottom-row Prompt
+        // (which places its own cursor), the popup band (accounted for
+        // by `cursor_obscured_by_overlay`'s rect math), the dock
+        // (beside the chrome, not over it), and the editor base. A new
+        // modal surface registers a layer and is suppressed here with
+        // no edit.
+        self.overlay_layers().iter().any(|l| {
+            !matches!(
+                l.kind,
+                LayerKind::Popup | LayerKind::Dock | LayerKind::Editor | LayerKind::Prompt
+            )
+        })
     }
 
     /// Render the Quick Open hints line showing available mode prefixes

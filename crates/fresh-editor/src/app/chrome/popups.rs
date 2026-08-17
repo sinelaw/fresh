@@ -338,7 +338,6 @@ impl Editor {
             .get(popup_idx)
             .map(|p| p.scroll_offset)
             .unwrap_or(0);
-        self.active_window_mut().mouse_state.drag_start_popup_scroll = Some(current_scroll);
         let state = self.active_state_mut();
         if let Some(popup) = state.popups.get_mut(popup_idx) {
             popup.scroll_by(target_scroll - current_scroll as i32);

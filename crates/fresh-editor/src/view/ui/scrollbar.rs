@@ -63,31 +63,6 @@ impl ScrollbarState {
         (thumb_start, thumb_size)
     }
 
-    /// Convert a click position on the track to a scroll offset
-    ///
-    /// # Arguments
-    /// * `track_height` - Height of the scrollbar track in rows
-    /// * `click_row` - Row within the track that was clicked (0-indexed)
-    ///
-    /// # Returns
-    /// The scroll offset that would position the thumb at the click location
-    pub fn click_to_offset(&self, track_height: usize, click_row: usize) -> usize {
-        if track_height == 0 || self.total_items == 0 {
-            return 0;
-        }
-
-        let max_scroll = self.total_items.saturating_sub(self.visible_items);
-        if max_scroll == 0 {
-            return 0;
-        }
-
-        // Map click position to scroll offset
-        let click_ratio = click_row as f64 / track_height as f64;
-        let offset = (click_ratio * max_scroll as f64) as usize;
-
-        offset.min(max_scroll)
-    }
-
     /// Check if a row is within the thumb area
     pub fn is_thumb_row(&self, track_height: usize, row: usize) -> bool {
         let (thumb_start, thumb_size) = self.thumb_geometry(track_height);
@@ -96,12 +71,12 @@ impl ScrollbarState {
 
     /// Inverse of [`thumb_geometry`]: compute the scroll offset that
     /// places the thumb's top at (or as close as possible to)
-    /// `target_thumb_top`. Use this — not `click_to_offset` — when a
-    /// caller needs the thumb to land at a specific row on the track
-    /// (e.g. press on the track to recentre the thumb under the cursor):
-    /// `click_to_offset` divides by `track_height` rather than the actual
-    /// `max_thumb_top`, so its result drifts above the intended row by a
-    /// factor of `thumb_size / track_height`.
+    /// `target_thumb_top` — the ONE track-click/drag mapping. (A
+    /// `click_to_offset` sibling that divided by `track_height` rather
+    /// than the actual `max_thumb_top` — drifting the thumb above the
+    /// intended row by `thumb_size / track_height` — sat here unused
+    /// after every caller migrated; deleted rather than kept as a
+    /// documented-buggy trap.)
     pub fn offset_for_thumb_top(&self, track_height: usize, target_thumb_top: usize) -> usize {
         let max_scroll = self.total_items.saturating_sub(self.visible_items);
         if track_height == 0 || max_scroll == 0 {
@@ -420,27 +395,6 @@ mod tests {
         // Thumb should be roughly in the middle
         assert!(start > 0);
         assert!(start + size < 10);
-    }
-
-    #[test]
-    fn test_click_to_offset_top() {
-        let state = ScrollbarState::new(100, 20, 0);
-        let offset = state.click_to_offset(10, 0);
-        assert_eq!(offset, 0);
-    }
-
-    #[test]
-    fn test_click_to_offset_bottom() {
-        let state = ScrollbarState::new(100, 20, 0);
-        let offset = state.click_to_offset(10, 10);
-        assert_eq!(offset, 80); // max scroll
-    }
-
-    #[test]
-    fn test_click_to_offset_middle() {
-        let state = ScrollbarState::new(100, 20, 0);
-        let offset = state.click_to_offset(10, 5);
-        assert_eq!(offset, 40); // Half of max scroll (80)
     }
 
     #[test]
