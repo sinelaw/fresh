@@ -335,11 +335,11 @@ pub(crate) trait ChromeComponent: Sync {
     /// gesture walk runs, exactly the contract the deleted
     /// `dispatch_modal_mouse` ladder enforced: nothing may leak to a
     /// terminal, buffer, or surface beneath a modal. `None` = not
-    /// capturing. The first capturing component in registry order
-    /// wins, so the registry lists the modal band first, in the same
-    /// relative order `overlay_layers()` ranks those layers (slice 6
-    /// derives `overlay_layers` from the components, collapsing the
-    /// duplicated activity predicates).
+    /// capturing. Offered in RANK order over the owner-stamped
+    /// `overlay_stack()` (every capturing component declares a layer
+    /// from the same activity predicate its capture gates on), so the
+    /// `layer_rank` consts are the ONE precedence source for capture
+    /// and keyboard alike — registry order no longer encodes it.
     ///
     /// Whole-event capture (rather than per-gesture boxes) is the
     /// honest intermediate: the modal handlers own presses, drags,

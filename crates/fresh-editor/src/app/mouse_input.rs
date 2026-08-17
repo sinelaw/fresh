@@ -20,12 +20,9 @@ use ratatui::layout::Rect;
 /// scroll offset that puts the thumb's top on exactly that row.
 ///
 /// Shared by the press and the drag-follow-up so the thumb tracks the cursor
-/// identically in both. `ScrollbarState::click_to_offset` is deliberately
-/// *not* used here: it divides by the whole track height instead of by the
-/// thumb's actual travel, so it lands the thumb a row above the row the user
-/// pointed at and can never reach the bottom of the track.
-/// [`ScrollbarState::offset_for_thumb_top`] is the real inverse of the thumb
-/// geometry the renderer draws.
+/// identically in both. [`ScrollbarState::offset_for_thumb_top`] is the real
+/// inverse of the thumb geometry the renderer draws — the ONE track mapping
+/// (its off-by-a-row `click_to_offset` sibling is deleted).
 ///
 /// Rows above/below the track clamp to its ends rather than being rejected,
 /// so a fast drag doesn't drop the thumb.
@@ -87,7 +84,15 @@ impl Editor {
             }
         }
 
-        // Cancel LSP rename prompt on any mouse interaction
+        // Cancel the LSP-rename prompt on ANY mouse interaction.
+        // RULING — pre-band whole-channel observer, the mouse analogue
+        // of the keyboard's transient-popup dismissal: it must fire on
+        // every event kind (click, wheel, even bare motion) wherever it
+        // lands, which no box on the walk can express (a box fires only
+        // when hit, and only for gestures with arms). It acts then
+        // continues — routing proceeds to capture/walk as if it weren't
+        // here. The `prompt_type` match is the observer's own gate, not
+        // surface routing.
         let mut needs_render = false;
         if let Some(ref prompt) = self.active_window_mut().prompt {
             if matches!(prompt.prompt_type, PromptType::LspRename { .. }) {
@@ -1485,7 +1490,6 @@ impl Editor {
         ms.drag_selection_word_end = None;
         ms.terminal_drag_pending = None;
         ms.dragging_popup_scrollbar = None;
-        ms.drag_start_popup_scroll = None;
         ms.dragging_prompt_scrollbar = false;
         ms.selecting_in_popup = None;
     }

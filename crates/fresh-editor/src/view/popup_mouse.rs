@@ -1,37 +1,20 @@
-//! Popup mouse handling.
+//! Popup geometry predicates for the mouse pipeline.
 //!
-//! This module contains mouse event handling for popups including:
-//! - Hit testing (determining what was clicked)
-//! - Hover target computation
-//! - Layout info conversion
+//! What survives here is deliberately small: the cached-layout
+//! conversion and the two "is the pointer over a popup?" predicates
+//! that `Editor::is_mouse_over_any_popup` / the transient keep-alive
+//! consult (the plan-acknowledged parallel rect query — blocking-safe
+//! by construction). The old click/hover/drag dispatch half that used
+//! to live beside them (`PopupClickResult`, `hit_test_click`,
+//! `hover_target`, `content_position`, `handle_popup_selection_drag`)
+//! was replaced by the chrome Popups component's handlers and the
+//! `PopupSelect` pointer grab, and had already diverged from them (the
+//! component click path knows the `[×]` close button; the dead
+//! hit-test didn't) — deleted, not kept as a second encoding.
 
 use ratatui::layout::Rect;
 
-use super::popup::{Popup, PopupContent, PopupManager};
-
-/// Result of a popup click hit test
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PopupClickResult {
-    /// Clicked on a link in the popup content
-    Link { url: String },
-    /// Clicked on a list item (for list popups)
-    ListItem { popup_idx: usize, item_idx: usize },
-    /// Clicked on text content (for text/markdown popups) - start selection
-    TextContent {
-        popup_idx: usize,
-        line: usize,
-        col: usize,
-    },
-    /// Clicked on scrollbar
-    Scrollbar {
-        popup_idx: usize,
-        target_scroll: i32,
-    },
-    /// Click was inside popup but not on any interactive element
-    Background,
-    /// Click was outside all popups
-    Outside,
-}
+use super::popup::PopupManager;
 
 /// Cached layout information for a single popup used in hit testing
 #[derive(Debug, Clone)]
@@ -77,132 +60,6 @@ impl<'a> PopupHitTester<'a> {
         }
         self.is_over_popup(col, row)
     }
-
-    /// Perform hit test for a click at the given position
-    /// Returns what was clicked and any associated data
-    pub fn hit_test_click(&self, col: u16, row: u16) -> PopupClickResult {
-        // Check popups from top to bottom (reverse order)
-        for layout in self.layouts.iter().rev() {
-            // Check scrollbar first
-            if let Some(sb_rect) = &layout.scrollbar_rect {
-                if col >= sb_rect.x
-                    && col < sb_rect.x + sb_rect.width
-                    && row >= sb_rect.y
-                    && row < sb_rect.y + sb_rect.height
-                {
-                    let track_height = sb_rect.height as usize;
-                    let visible_lines = layout.inner_rect.height as usize;
-
-                    if track_height > 0 && layout.total_lines > visible_lines {
-                        let relative_row = (row - sb_rect.y) as usize;
-                        let max_scroll = layout.total_lines.saturating_sub(visible_lines);
-                        let target_scroll = if track_height > 1 {
-                            ((relative_row * max_scroll) / (track_height - 1)) as i32
-                        } else {
-                            0
-                        };
-                        return PopupClickResult::Scrollbar {
-                            popup_idx: layout.popup_idx,
-                            target_scroll,
-                        };
-                    }
-                }
-            }
-
-            // Check inner content area
-            if col >= layout.inner_rect.x
-                && col < layout.inner_rect.x + layout.inner_rect.width
-                && row >= layout.inner_rect.y
-                && row < layout.inner_rect.y + layout.inner_rect.height
-            {
-                let relative_col = (col - layout.inner_rect.x) as usize;
-                let relative_row = (row - layout.inner_rect.y) as usize;
-
-                // Check for link click in markdown popup
-                if let Some(popup) = self.popups.get(layout.popup_idx) {
-                    if let Some(url) = popup.link_at_position(relative_col, relative_row) {
-                        return PopupClickResult::Link { url };
-                    }
-                }
-
-                // Check for list item click
-                if layout.num_items > 0 {
-                    let item_idx = layout.scroll_offset + relative_row;
-                    if item_idx < layout.num_items {
-                        return PopupClickResult::ListItem {
-                            popup_idx: layout.popup_idx,
-                            item_idx,
-                        };
-                    }
-                }
-
-                // Check for text/markdown content click (for selection)
-                if let Some(popup) = self.popups.get(layout.popup_idx) {
-                    if matches!(
-                        popup.content,
-                        PopupContent::Text(_) | PopupContent::Markdown(_)
-                    ) {
-                        return PopupClickResult::TextContent {
-                            popup_idx: layout.popup_idx,
-                            line: layout.scroll_offset + relative_row,
-                            col: relative_col,
-                        };
-                    }
-                }
-
-                return PopupClickResult::Background;
-            }
-
-            // Check outer rect (borders, etc.)
-            if col >= layout.outer_rect.x
-                && col < layout.outer_rect.x + layout.outer_rect.width
-                && row >= layout.outer_rect.y
-                && row < layout.outer_rect.y + layout.outer_rect.height
-            {
-                return PopupClickResult::Background;
-            }
-        }
-
-        PopupClickResult::Outside
-    }
-
-    /// Get the hover target for a position (for list items)
-    /// Returns (popup_idx, item_idx) if hovering over a list item
-    pub fn hover_target(&self, col: u16, row: u16) -> Option<(usize, usize)> {
-        for layout in self.layouts.iter().rev() {
-            if col >= layout.inner_rect.x
-                && col < layout.inner_rect.x + layout.inner_rect.width
-                && row >= layout.inner_rect.y
-                && row < layout.inner_rect.y + layout.inner_rect.height
-                && layout.num_items > 0
-            {
-                let relative_row = (row - layout.inner_rect.y) as usize;
-                let item_idx = layout.scroll_offset + relative_row;
-                if item_idx < layout.num_items {
-                    return Some((layout.popup_idx, item_idx));
-                }
-            }
-        }
-        None
-    }
-
-    /// Get the position within a popup's content area
-    /// Returns (popup_idx, line, col) if the position is inside a popup's content
-    pub fn content_position(&self, col: u16, row: u16) -> Option<(usize, usize, usize)> {
-        for layout in self.layouts.iter().rev() {
-            if col >= layout.inner_rect.x
-                && col < layout.inner_rect.x + layout.inner_rect.width
-                && row >= layout.inner_rect.y
-                && row < layout.inner_rect.y + layout.inner_rect.height
-            {
-                let relative_col = (col - layout.inner_rect.x) as usize;
-                let relative_row = (row - layout.inner_rect.y) as usize;
-                let line = layout.scroll_offset + relative_row;
-                return Some((layout.popup_idx, line, relative_col));
-            }
-        }
-        None
-    }
 }
 
 /// Convert cached popup areas to PopupLayoutInfo for hit testing
@@ -235,24 +92,4 @@ pub fn popup_areas_to_layout_info(
             },
         )
         .collect()
-}
-
-/// Mouse drag handler for popup text selection
-pub fn handle_popup_selection_drag(
-    popup: &mut Popup,
-    layout: &PopupLayoutInfo,
-    col: u16,
-    row: u16,
-) {
-    // Check if mouse is within the popup inner area
-    if col >= layout.inner_rect.x
-        && col < layout.inner_rect.x + layout.inner_rect.width
-        && row >= layout.inner_rect.y
-        && row < layout.inner_rect.y + layout.inner_rect.height
-    {
-        let relative_col = (col - layout.inner_rect.x) as usize;
-        let relative_row = (row - layout.inner_rect.y) as usize;
-        let line = layout.scroll_offset + relative_row;
-        popup.extend_selection(line, relative_col);
-    }
 }
