@@ -229,6 +229,14 @@ pub fn widget_panel_key(
             .unwrap_or(false)
     };
 
+    // ACKNOWLEDGED RESIDUE (recorded in the v2 review doc): this dock
+    // branch hardcodes ONE plugin's widget-key conventions ("filter",
+    // "sessions", "project-pick:"/"menu-pick:" prefixes, dock_menu_*
+    // events) — orchestrator-specific panel semantics in host
+    // dispatch. The generalization (plugin-declared key policy, or
+    // these behaviors moving into kind/Component contracts) is part of
+    // the app-level focus-unification arc; until then this is the one
+    // deliberate plugin-shaped seam in the router.
     if view.is_left_dock {
         let on_filter = view.focus_key.as_deref() == Some("filter");
         // Any of the dock's inline dropdowns (project scope, the

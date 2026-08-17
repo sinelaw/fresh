@@ -235,6 +235,10 @@ impl Editor {
             // the row (see `hit_test_row_aware`) — the mounted panels
             // (Settings, Search & Replace) get the same full-width rows the
             // floating dock does, from the one shared resolver.
+            // `on_overlay=false` is a KNOWN LIMITATION, not an oversight:
+            // mounted panels drop the overlay/popup channels at mount
+            // (see `handle_mount_widget_panel`), so there is never an
+            // overlay surface to resolve against here.
             if let Some((panel_key, hit)) = self
                 .widget_registry
                 .hit_test_row_aware(buffer_id, brow, bcol, false)

@@ -96,34 +96,21 @@ pub(super) fn render_floating_spec(
 /// nodes that are currently visible — i.e. every ancestor is in
 /// `expanded`. Mirrors the renderer's filter so dispatcher and
 /// renderer agree on what's selectable.
-/// First `Tree` or `List` widget key in `spec`, scanning in
-/// declaration order. Used by mouse-wheel routing to pick which
-/// widget inside a panel absorbs the scroll.
+/// First widget in `spec` (declaration order) whose KIND declares the
+/// `picker_scroll_target` capability (`BoxMeta`) — List, Tree, and
+/// markdown document views. Used by picker forwarding and the
+/// positionless wheel to pick which widget inside a panel absorbs
+/// the scroll. No kind matching here: the capability is the kind's
+/// declaration.
 fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<String> {
-    use fresh_core::api::WidgetSpec;
-    match spec {
-        WidgetSpec::Tree { key: Some(k), .. } | WidgetSpec::List { key: Some(k), .. }
-            if !k.is_empty() =>
-        {
-            return Some(k.clone());
+    let meta = crate::widgets::kinds::behavior(spec).box_meta(spec);
+    if meta.picker_scroll_target {
+        if let Some(k) = meta.key {
+            return Some(k);
         }
-        // A markdown document view scrolls like a list; plain editable
-        // textareas stay excluded (they scroll with their caret and
-        // emit no region for the wheel to move).
-        WidgetSpec::Text {
-            key: Some(k),
-            rows,
-            markdown: true,
-            ..
-        } if !k.is_empty() && *rows > 1 => {
-            return Some(k.clone());
-        }
-        _ => {}
     }
     spec.children().find_map(find_scrollable_widget_key)
 }
-
-use crate::widgets::kinds::tree::collect_visible_tree_indices;
 
 /// Translate the plugin-facing animation description to the internal
 /// `AnimationKind` the runner consumes.
@@ -422,6 +409,8 @@ impl Editor {
             "select"
         };
         Some(crate::widgets::HitArea {
+            row_target: true,
+            context_click: true,
             overlay: false,
             widget_key: item_key.clone(),
             widget_kind: "list",
@@ -505,6 +494,8 @@ impl Editor {
             ),
         };
         Some(crate::widgets::HitArea {
+            row_target: true,
+            context_click: true,
             overlay: false,
             widget_key: widget_key.to_string(),
             widget_kind: "tree",
@@ -582,6 +573,8 @@ impl Editor {
             _ => return None,
         };
         Some(crate::widgets::HitArea {
+            row_target: false,
+            context_click: false,
             overlay: false,
             widget_key: widget_key.to_string(),
             widget_kind,
@@ -1164,12 +1157,12 @@ impl Editor {
         );
         self.widget_registry
             .set_focus_key(panel_key, new_key.clone());
-        // Keep exactly one focused element when focus crosses a Tree
-        // boundary: clear a blurred tree's selection and seed a newly
-        // focused tree's, so the tree's selected-row highlight never
-        // lingers next to another widget's focus ring (and Tab focus is
-        // never invisible).
-        self.sync_tree_focus_selection(panel_key, &old_key, &new_key);
+        // Offer the transition to the kinds: the widget losing focus
+        // and the one gaining it each get their `on_focus_change`
+        // hook (Tree keeps its selected-row highlight coherent with
+        // focus — exactly one focused element). Kind-blind: no Tree
+        // match here.
+        self.notify_widget_focus_change(panel_key, &old_key, &new_key);
         self.fire_widget_event(
             panel_key,
             new_key,
@@ -1178,90 +1171,36 @@ impl Editor {
         );
     }
 
-    /// Keep the single-focus invariant consistent when focus moves
-    /// between a `Tree` widget and other controls in the same panel.
-    ///
-    /// A Tree renders a highlight on its selected row independent of the
-    /// panel focus — that is deliberate, so editor-driven match
-    /// navigation (`search_replace_next_match`) can highlight a row while
-    /// the panel is unfocused. The cost is that focus moving *within* the
-    /// panel could leave a toolbar button's focus ring next to a
-    /// highlighted tree row (two focused elements), or Tab onto the tree
-    /// with no visible selection (invisible focus). To keep exactly one
-    /// focused element:
-    ///   * clear the previously focused Tree's selection on blur, and
-    ///   * seed the newly focused Tree's selection to its first visible
-    ///     row when it has none.
-    fn sync_tree_focus_selection(
+    /// Offer a panel-focus transition to the kinds: the widget losing
+    /// focus and the one gaining it each run their
+    /// `WidgetImpl::on_focus_change` hook against the panel state.
+    /// The per-kind policy (Tree's selection seeding/clearing) lives
+    /// with the kind, not here.
+    fn notify_widget_focus_change(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
         old_key: &str,
         new_key: &str,
     ) {
-        if old_key != new_key && !old_key.is_empty() && self.widget_key_is_tree(panel_key, old_key)
-        {
-            if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                panel.set_selected_index(old_key, -1);
-            }
+        if old_key == new_key {
+            return;
         }
-        if !new_key.is_empty() && self.widget_key_is_tree(panel_key, new_key) {
-            let cur_sel = match self
+        for (key, gained) in [(old_key, false), (new_key, true)] {
+            if key.is_empty() {
+                continue;
+            }
+            let Some(spec) = self
                 .widget_registry
                 .get(panel_key)
-                .and_then(|p| p.instance_states.get(new_key))
-            {
-                Some(crate::widgets::WidgetInstanceState::Tree { selected_index, .. }) => {
-                    *selected_index
-                }
-                _ => -1,
+                .and_then(|p| crate::widgets::find_widget_by_key(&p.spec, key))
+                .cloned()
+            else {
+                continue;
             };
-            if cur_sel < 0 {
-                if let Some(first) = self.first_visible_tree_index(panel_key, new_key) {
-                    if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                        panel.set_selected_index(new_key, first);
-                    }
-                }
+            if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+                crate::widgets::kinds::behavior(&spec).on_focus_change(panel, key, gained);
             }
         }
-    }
-
-    /// True when `key` names a `Tree` widget in `panel_key`'s spec.
-    fn widget_key_is_tree(&self, panel_key: &crate::widgets::PanelKey, key: &str) -> bool {
-        self.widget_registry
-            .get(panel_key)
-            .and_then(|p| crate::widgets::find_widget_by_key(&p.spec, key))
-            .map(|w| matches!(w, fresh_core::api::WidgetSpec::Tree { .. }))
-            .unwrap_or(false)
-    }
-
-    /// First visible (un-collapsed) absolute node index of the Tree at
-    /// `tree_key`, honoring the host's instance-state expansion set
-    /// (falling back to the spec's initial `expanded_keys`). `None` when
-    /// the widget isn't a Tree or has no visible rows.
-    fn first_visible_tree_index(
-        &self,
-        panel_key: &crate::widgets::PanelKey,
-        tree_key: &str,
-    ) -> Option<i32> {
-        let panel = self.widget_registry.get(panel_key)?;
-        let (nodes, item_keys, spec_expanded) =
-            match crate::widgets::find_widget_by_key(&panel.spec, tree_key)? {
-                fresh_core::api::WidgetSpec::Tree {
-                    nodes,
-                    item_keys,
-                    expanded_keys,
-                    ..
-                } => (nodes, item_keys, expanded_keys),
-                _ => return None,
-            };
-        let expanded = match panel.instance_states.get(tree_key) {
-            Some(crate::widgets::WidgetInstanceState::Tree { expanded_keys, .. }) => {
-                expanded_keys.clone()
-            }
-            _ => spec_expanded.iter().cloned().collect(),
-        };
-        let visible = collect_visible_tree_indices(nodes, item_keys, &expanded);
-        visible.first().map(|&i| i as i32)
     }
 
     fn handle_widget_activate(&mut self, panel_key: &crate::widgets::PanelKey) {
@@ -1539,66 +1478,42 @@ impl Editor {
     /// widget on the given panel, or `None` when nothing is
     /// selected (no anchor, or anchor == cursor). Used by the
     /// host-side Copy / Cut routing path.
-    pub(super) fn focused_widget_selected_text(
-        &self,
-        panel_key: &crate::widgets::PanelKey,
-    ) -> Option<String> {
-        let panel = self.widget_registry.get(panel_key)?;
-        if panel.focus_key.is_empty() {
-            return None;
-        }
-        match panel.instance_states.get(&panel.focus_key) {
-            Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => {
-                editor.selected_text()
-            }
-            _ => None,
-        }
-    }
-
-    /// Select-all in the focused widget Text. Returns true when
-    /// applied (focus was a Text widget). The op fires a `change`
-    /// event only if the selection range actually changed; an
-    /// already-fully-selected widget is a no-op.
+    /// Select-all in the focused widget. ONE owner for the behavior:
+    /// the kind's own `C-a` arm (`Text::on_key`) — this shell only
+    /// translates the host action into the kind vocabulary. Returns
+    /// true when a panel existed to receive it (the action is
+    /// consumed either way so it doesn't fall through to the buffer).
     pub(super) fn handle_widget_select_all(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
     ) -> bool {
-        // SelectAll moves the cursor to end-of-value and sets anchor
-        // at start — `with_focused_text_editor` will skip re-render
-        // when nothing changed, which is fine.
-        self.with_focused_text_editor(panel_key, |editor| editor.select_all())
+        if self.widget_registry.get(panel_key).is_none() {
+            return false;
+        }
+        self.handle_widget_key(panel_key, "C-a");
+        true
     }
 
-    /// Copy the focused widget Text's current selection to the
-    /// internal clipboard. Returns true when copy ran (even when
-    /// the selection was empty — the action is consumed either way
-    /// so it doesn't fall through to the buffer's copy path).
+    /// Copy in the focused widget — routed through the kind's `C-c`
+    /// arm (one owner; the kind decides what "copy" means, including
+    /// consuming with an empty selection so the action never falls
+    /// through to the buffer's copy path).
     pub(super) fn handle_widget_copy(&mut self, panel_key: &crate::widgets::PanelKey) -> bool {
         if self.widget_registry.get(panel_key).is_none() {
             return false;
         }
-        if let Some(text) = self.focused_widget_selected_text(panel_key) {
-            self.clipboard.copy(text);
-        }
+        self.handle_widget_key(panel_key, "C-c");
         true
     }
 
-    /// Cut the focused widget Text's current selection — copy then
-    /// delete. With no selection, this is a no-op consume.
+    /// Cut in the focused widget — routed through the kind's `C-x`
+    /// arm (one owner; the read-only/markdown cut-degrades-to-copy
+    /// policy lives there, once).
     pub(super) fn handle_widget_cut(&mut self, panel_key: &crate::widgets::PanelKey) -> bool {
         if self.widget_registry.get(panel_key).is_none() {
             return false;
         }
-        if let Some(text) = self.focused_widget_selected_text(panel_key) {
-            self.clipboard.copy(text);
-            // On a read-only / markdown document, Cut degrades to Copy:
-            // the selection reaches the clipboard, nothing is deleted.
-            if !self.focused_text_mode(panel_key).1 {
-                self.with_focused_text_editor(panel_key, |editor| {
-                    editor.delete_selection();
-                });
-            }
-        }
+        self.handle_widget_key(panel_key, "C-x");
         true
     }
 

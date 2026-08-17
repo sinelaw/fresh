@@ -173,6 +173,8 @@ fn collect_number(
     // A click on the value cell begins in-place editing host-side
     // (see `deliver_widget_hit`'s `number_value` special case).
     out.hits.push(HitArea {
+        row_target: false,
+        context_click: false,
         overlay: false,
         widget_key: key.unwrap_or("").to_string(),
         widget_kind: "number",

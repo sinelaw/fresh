@@ -2196,12 +2196,10 @@ impl Editor {
             Some(p) => p,
             None => return false,
         };
-        // Keep only list/tree hits: a right-click raises a menu for a
-        // session row, not for a button or empty padding.
-        let (mut payload, key, _kind) = match probe
-            .hit
-            .filter(|hit| hit.widget_kind == "list" || hit.widget_kind == "tree")
-        {
+        // Keep only hits whose kind declared the context-click
+        // capability (List/Tree rows): a right-click raises a menu for
+        // a session row, not for a button or empty padding.
+        let (mut payload, key, _kind) = match probe.hit.filter(|hit| hit.context_click) {
             Some(hit) => (hit.payload.clone(), hit.widget_key.clone(), hit.widget_kind),
             None => return false,
         };
@@ -2298,6 +2296,8 @@ impl Editor {
         if let Some(hit) = hits.iter().find(|h| in_rect(col, row, h.rect)) {
             let ha = crate::widgets::HitArea {
                 overlay: false,
+                row_target: false,
+                context_click: false,
                 widget_key: key,
                 widget_kind: "dropdown",
                 buffer_row: 0,

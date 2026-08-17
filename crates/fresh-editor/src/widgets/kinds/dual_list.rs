@@ -535,6 +535,8 @@ fn collect_dual_list(
         // cursor row.
         if left_val.is_some() {
             out.hits.push(HitArea {
+                row_target: false,
+                context_click: false,
                 overlay: false,
                 widget_key: widget_key.clone(),
                 widget_kind: "dual_list",
@@ -548,6 +550,8 @@ fn collect_dual_list(
         }
         if right_val.is_some() {
             out.hits.push(HitArea {
+                row_target: false,
+                context_click: false,
                 overlay: false,
                 widget_key: widget_key.clone(),
                 widget_kind: "dual_list",

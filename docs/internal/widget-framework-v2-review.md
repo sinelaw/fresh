@@ -1011,6 +1011,32 @@ before acting. Geometry is now produced by layout or recorded by
 ruling; never recorded by accident. Per-gesture decomposition of
 the modal handlers stays design-intermediate by ruling (modal
 interiors are bespoke until Settings migrates).
+A staff-level review pass then audited the arc against this doc's
+goal (verdict: the model is real; gap list in the PR ledger), and
+the REMEDIATION WAVES closed it out: the two confirmed bugs fixed
+with regression tests (TextEdit undo trailing-newline, prompt
+Ctrl+Home/End); the theme inspector registered as a component;
+hover reactions moved behind `on_hover_change`; horizontal scroll
+and triple-click routed through the one tree (`on_hwheel`,
+`PointerPress::Triple` — the `WheelSurface` ladder and the
+post-walk split scan are deleted); `PointerGrab` extended to all
+13 press-to-release drag classes with grab-keyed drag dispatch and
+complete terminal-forward suppression; FloatingModal/Dock keyboard
+claims moved onto the `on_key` registry (one precedence source);
+the `handle_click_*` bodies moved into their component files
+(mouse_input.rs 4,100 → 2,550 lines — the walk engines, grab
+routing, and shared geometry remain); Tree's focus↔selection sync
+moved into the kind behind a new `WidgetImpl::on_focus_change`
+hook; the capability-as-kind-string gates replaced by
+kind-declared capabilities (`HitArea.row_target` /
+`.context_click`, `BoxMeta.picker_scroll_target`); and the
+clipboard's host shells rerouted through the kind's own C-c/C-x/
+C-a vocabulary (one owner). Remaining acknowledged limitations,
+now documented at their sites: mounted (split-buffer) panels drop
+the overlay/popup channels (a renderer-compositing arc of its
+own — prefer floating slots for popup-bearing UI); the router's
+orchestrator-shaped dock branch awaits the focus-unification arc;
+panel hover runs beside (not inside) the chrome hover walk.
 Also open, in overall plan order: the rest of the app-level focus
 unification — `FocusManager`, `Prompt.toolbar_focus`, dock focus
 (5), host-side editing keys (6 step 2), completion-popup migration +

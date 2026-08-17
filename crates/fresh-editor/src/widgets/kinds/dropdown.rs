@@ -235,6 +235,8 @@ fn collect_dropdown(
     // A click on the `[value ▼]` button toggles the option list open
     // (see `deliver_widget_hit`'s `dropdown_toggle` special case).
     out.hits.push(HitArea {
+        row_target: false,
+        context_click: false,
         overlay: false,
         widget_key: widget_key.clone(),
         widget_kind: "dropdown",
