@@ -140,6 +140,13 @@ impl Editor {
     ) -> AnyhowResult<()> {
         let _t_total = std::time::Instant::now();
 
+        // Any keystroke may change routing-relevant UI state (open/close a
+        // popup, move focus, toggle a mode), so spoil the per-generation UI
+        // memos up front. Bumping on ENTRY (not exit) still lets the many
+        // overlay_stack/chrome-tree reads *within* this keystroke share one
+        // rebuild — the memo caches under the new generation on first use.
+        self.bump_ui_gen();
+
         tracing::trace!(
             "Editor.handle_key: code={:?}, modifiers={:?}",
             code,

@@ -42,7 +42,28 @@ pub(super) fn prompt_scrollbar_offset_for_row(
 impl Editor {
     /// Handle a mouse event.
     /// Returns true if a re-render is needed.
+    ///
+    /// Memo contract: unlike keys, mouse events spoil the per-generation UI
+    /// memos on EXIT, and only when the event changed something
+    /// (`needs_render`). A quiet mouse-motion stream — the highest-frequency
+    /// input the editor sees — then reuses one overlay stack / chrome tree
+    /// across MANY events, while any event that mutates state (click opens a
+    /// menu, drag moves a separator) invalidates for the next one. The debug
+    /// oracle in `overlay_stack`/`chrome_tree` cross-checks every memo hit
+    /// against a fresh rebuild, so a mutation this gate misses fails loudly
+    /// rather than routing stale.
     pub fn handle_mouse(
+        &mut self,
+        mouse_event: crossterm::event::MouseEvent,
+    ) -> AnyhowResult<bool> {
+        let result = self.handle_mouse_impl(mouse_event);
+        if matches!(result, Ok(true)) {
+            self.bump_ui_gen();
+        }
+        result
+    }
+
+    fn handle_mouse_impl(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
     ) -> AnyhowResult<bool> {
@@ -472,6 +493,16 @@ impl Editor {
         col: u16,
         row: u16,
     ) -> bool {
+        // Same cell, same generation → nothing below can produce a different
+        // answer: the tree is derived from unchanged state and the hover
+        // reactions already ran for this exact (col, row). Terminals emit
+        // Moved events far faster than the cell grid changes, so this collapses
+        // the common motion burst to one walk per cell. Stored with the
+        // PRE-bump generation on purpose: if a hover reaction mutates state,
+        // `handle_mouse` bumps on exit and this key misses next event.
+        if self.hover_cell_memo.get() == Some((self.ui_gen, col, row)) {
+            return false;
+        }
         let old_target = self.active_window_mut().mouse_state.hover_target.clone();
         let new_target = self.compute_hover_target(tree, col, row);
         let mut needs_render = old_target != new_target;
@@ -480,6 +511,7 @@ impl Editor {
             needs_render |=
                 c.on_hover_change(self, old_target.as_ref(), new_target.as_ref(), col, row);
         }
+        self.hover_cell_memo.set(Some((self.ui_gen, col, row)));
         needs_render
     }
 
