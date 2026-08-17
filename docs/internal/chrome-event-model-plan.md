@@ -302,6 +302,37 @@ to one) are DONE. Remaining, in order:
   suggestions/popups rects are the tail (their rects are
   paint-positioned popup geometry — screen_space class, may
   legitimately stay paint-recorded; decide when reached).
+- **7d: suggestions/popups rects — RULED paint-recorded, slice 7
+  CLOSED.** The remaining `ChromeLayout` rects (`popup_areas`,
+  `global_popup_areas`, `suggestions_area` / `suggestions_outer_area`
+  / `suggestions_scrollbar_rect`, `prompt_results_area` /
+  `prompt_preview_area`) stay paint captures, deliberately. The
+  distinction from the retired caches: search-options / status-bar /
+  menu geometry was derivable from live state WITHOUT paint (frame
+  split + content walks), so recording it created a second,
+  stale-able source. The popup channel's rects are anchored to
+  paint-produced text layout: buffer popups position at
+  `viewport.cursor_screen_position(&mut buffer, …)` offset by the
+  split's `content_rect` from `WindowLayoutCache.split_areas` — the
+  visual-row wrap maps and split rects that exist only as the paint
+  pass's output. An event-time derivation would still resolve
+  against those recordings, adding a second code path without
+  removing the paint dependency — exactly the `screen_space` class
+  the plan already rules on ("screen_space boxes keep resolving
+  against paint-recorded rects"). Global popups alone
+  (`calculate_area(size, None)` is pure) COULD derive live, but
+  splitting one channel across two geometry sources buys nothing:
+  every popup push/pop/scroll requests a repaint, and the pointer
+  handlers (`handle_click_global_popups`,
+  `is_mouse_over_any_popup`, the dismiss guards) re-check the LIVE
+  stacks before acting, so a stale rect can miss for at most one
+  pre-repaint event — it can never act on a vanished popup. The
+  suggestions rects are the same shape: geometry produced inside
+  `SuggestionsRenderer` interleaved with truncation/scroll state,
+  consumed by handlers that re-check the live prompt. Slice 7 (and
+  the chrome plan's execution arc) is complete: every retirable
+  geometry cache is retired, and what remains recorded is recorded
+  by ruling, not by accident.
 
 ## What NOT to do
 
