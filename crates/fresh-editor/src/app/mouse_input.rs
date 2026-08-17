@@ -84,15 +84,19 @@ impl Editor {
             }
         }
 
-        // Cancel the LSP-rename prompt on ANY mouse interaction.
-        // RULING — pre-band whole-channel observer, the mouse analogue
-        // of the keyboard's transient-popup dismissal: it must fire on
-        // every event kind (click, wheel, even bare motion) wherever it
-        // lands, which no box on the walk can express (a box fires only
-        // when hit, and only for gestures with arms). It acts then
-        // continues — routing proceeds to capture/walk as if it weren't
-        // here. The `prompt_type` match is the observer's own gate, not
-        // surface routing.
+        // Cancel the LSP-rename prompt on ANY mouse interaction that
+        // reaches normal routing. RULING — a pre-WALK observer of the
+        // non-modal channel: it fires on every event kind the capture
+        // band above lets through (click, wheel, even bare motion)
+        // wherever it lands, which no box on the walk can express (a
+        // box fires only when hit, and only for gestures with arms),
+        // then continues — the walk proceeds as if it weren't here.
+        // Deliberately BELOW the capture band, unlike the keyboard's
+        // transient-popup dismissal (which observes even under
+        // modals): a capturing modal owns its events wholly, and a
+        // click aimed at Settings must not reach through it to cancel
+        // a rename prompt the user cannot see. The `prompt_type`
+        // match is the observer's own gate, not surface routing.
         let mut needs_render = false;
         if let Some(ref prompt) = self.active_window_mut().prompt {
             if matches!(prompt.prompt_type, PromptType::LspRename { .. }) {
