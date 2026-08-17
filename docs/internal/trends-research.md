@@ -51,3 +51,20 @@ Relevant to `search-and-diff.md` and `live-diff-scalable-diff-design.md`:
 ### MCP
 
 No major protocol-level news in this window beyond continued adoption (10,000+ active MCP servers, virtually all major coding agents and IDEs support it). Security scrutiny is increasing (supply-chain and privilege-escalation reports) — worth keeping an eye on given Fresh's own plugin/marketplace surface, but nothing yet actionable.
+
+---
+
+## 2026-08-17
+
+Short window (2 days since the prior entry); only the items below rose to "essential."
+
+### Agent orchestrators & multi-agent terminal UIs
+
+- **DeepSeek Harness ("dsh")** — DeepSeek's open-source agent harness hit developer preview on 2026-08-13 and exploded to 90,000+ GitHub stars within two days (100k+ by 2026-08-17), among the fastest-growing repos anyone's tracked this year. The pitch directly relevant to Fresh's own plugin/marketplace design: **"everything is a plugin"** — model adapter, tool registry, session log, sandboxes, storage, scheduling, and even the agent loop itself are all swappable plugins mounted on a pre-existing kernel (Cordis), with no privileged core to patch. Also notable: "Programmatic Tool Calling," where the model emits one piece of code that sequences multiple tool calls instead of many separate tool-call round-trips. Still pre-1.0 (README warns of breaking changes and no session-format compatibility promise), but the architecture bet — a fully plugin-decomposed harness, not just a plugin *system bolted onto* a fixed core — is a data point worth weighing against Fresh's own extensibility model. ([GitHub](https://github.com/deepseek-ai/deepseek-harness), [The Register](https://www.theregister.com/ai-and-ml/2026/08/14/deepseeks-innovative-harness-treats-everything-as-a-plug-in/5288095), [The New Stack](https://thenewstack.io/deepseek-harness-open-source-plugins/), [Justin3go review](https://justin3go.com/en/posts/2026/08/15-deepseek-harness-review))
+- **Cursor "Builds" for Cloud Agents** — pre-warms cloud-agent dev environments in the background (clone/install/deps done ahead of time) so agents start up to 3x faster, and falls back to the last-known-good environment if a commit breaks the build instead of blocking the agent. Rolled out to all environments by default on 2026-08-17. Another instance of the "orchestrator manages agent infrastructure, not just agent turns" pattern showing up across tools. ([Cursor blog](https://cursor.com/blog/builds), [Cursor docs](https://cursor.com/docs/cloud-agent/builds))
+
+### Agent sandboxing & permissions
+
+- **GLM-5.3** (Z.ai, released 2026-08-14, open-weights) shipped with sharply improved offensive-security capabilities — CyberGym 84.5%, ExploitBench roughly doubled to 54.4% — and was reported to have found a "potentially serious vulnerability" in Cursor itself days after release. Doesn't change Fresh's threat model directly, but it's a concrete signal that AI-assisted vulnerability discovery against dev-tool codebases (editors, agent harnesses) is now fast enough to matter — relevant context for how much scrutiny Fresh's own Authority/Trust surface should expect. ([VentureBeat](https://venturebeat.com/technology/glm-5-3-is-here-with-advanced-cyber-capabilities-and-reportedly-already-found-a-serious-vulnerability-in-cursor), [CryptoBriefing](https://cryptobriefing.com/glm-5-3-cursor-vulnerability-cybersecurity/))
+
+No essential new items this window in TUI framework ecosystem or diff/review tooling specifically — see the 2026-08-15 entry above, still current.
