@@ -319,6 +319,7 @@ fn collect_row(
             &mut entries,
             &mut hits,
             &mut focus_cursor,
+            &mut embeds,
             &mut boxes,
         );
     } else {
@@ -578,7 +579,7 @@ fn collect_col(
                 .enumerate()
                 .filter(|(i, _)| *i != idx)
                 .zip(children.iter().enumerate().filter(|(i, _)| *i != idx))
-                .filter(|(_, (_, c))| !matches!(c, WidgetSpec::Overlay { .. }))
+                .filter(|(_, (_, c))| !promotes_as_overlay(c))
                 .map(|((_, o), _)| o.entries.len() as u32)
                 .sum();
             let child_budget = budget.saturating_sub(other_rows).max(1);
@@ -611,7 +612,7 @@ fn collect_col(
             let used: u32 = child_outs
                 .iter()
                 .zip(children.iter())
-                .filter(|(_, c)| !matches!(c, WidgetSpec::Overlay { .. }))
+                .filter(|(_, c)| !promotes_as_overlay(c))
                 .map(|(o, _)| o.entries.len() as u32)
                 .sum();
             let leftover = budget.saturating_sub(used);
@@ -652,8 +653,7 @@ fn collect_col(
     };
     for (child, child_out) in children.iter().zip(child_outs) {
         let row_offset = acc.entries.len() as u32;
-        let is_overlay = matches!(child, WidgetSpec::Overlay { .. });
-        acc.absorb_child(child_out, row_offset, is_overlay);
+        acc.absorb_child(child_out, row_offset, promotes_as_overlay(child));
     }
     // Resolved fill children re-rendered with a real budget no longer
     // set the flag; only an unresolved request bubbles.
@@ -689,46 +689,32 @@ fn collect_labeled_section(
     let mut child_out = render_collected(child, prev, next_state, section_ctx, inner_width);
     let wants_fill = child_out.wants_fill;
     let effective_rows = std::mem::take(&mut child_out.effective_rows);
-    // Child boxes shift down past the top border and right past the
-    // `│ ` prefix — the same (row +1, col +prefix_cols) shift the
-    // embed/scroll-region channels get below.
-    let mut boxes: Vec<LayoutBox> = Vec::new();
-    for mut b in std::mem::take(&mut child_out.boxes) {
-        b.row += 1;
-        b.col += LEFT_BORDER_PREFIX.chars().count() as u32;
+    // ONE translation for every geometry channel: +1 row (the top
+    // border this section emits — the child authored anchors relative
+    // to its own row 0, so the Text completion-popup overlay's anchor 1
+    // lands on the section's bottom border row, anchor 2+ below it;
+    // flow-anchored pop-overs shift the same way while absolute anchors
+    // stay put), plus the `│ ` prefix in display columns for the
+    // column-addressed channels and in bytes for the byte-addressed
+    // ones. `shift_channels` moves them all together — this used to be
+    // six hand-copied shifts synced by prose.
+    child_out.shift_channels(
+        1,
+        LEFT_BORDER_PREFIX.chars().count() as u32,
+        LEFT_BORDER_PREFIX.len(),
+    );
+    let mut boxes: Vec<LayoutBox> = std::mem::take(&mut child_out.boxes);
+    for b in &mut boxes {
         // Scrollable boxes widen two more columns — through the right
-        // padding onto the `│` border — matching the scroll-region
-        // widening below so a wheel over the section border still
-        // scrolls the widget inside it.
+        // padding onto the `│` border — so a wheel over the section
+        // border still scrolls the widget inside it (a section-specific
+        // tweak on top of the shared shift).
         if b.scrollable {
             b.width += 2;
         }
-        boxes.push(b);
     }
-    // Shift child overlays by 1 to account for the top
-    // border row this section emits — the child authored
-    // its anchors relative to its own row 0 (e.g. anchor 1
-    // = "one row below me"), so an unshifted forward
-    // would land them one row earlier than intended. The
-    // Text widget's completion-popup overlays rely on
-    // this: anchor 1 lands on the section's bottom
-    // border row (replacing it visually with the dim
-    // separator), anchor 2+ lands below the section.
-    overlays.extend(child_out.overlays.into_iter().map(|mut o| {
-        o.buffer_row += 1;
-        o
-    }));
-    // Same +1 shift for a Dropdown pop-over nested in a section: the top
-    // border occupies row 0, so the child's row 0 (its trigger) is the
-    // section's row 1. An absolute-anchored popup (plugin `Popup` with
-    // an explicit anchor) already names its panel-inner row and must
-    // not drift with the flow.
-    for mut dp in child_out.popups {
-        if !dp.anchor_absolute {
-            dp.anchor_row += 1;
-        }
-        popups.push(dp);
-    }
+    overlays.extend(std::mem::take(&mut child_out.overlays));
+    popups.extend(std::mem::take(&mut child_out.popups));
 
     // Render the top border with the label embedded as a
     // legend: `╭─ <label> ─...─╮`. When the label is empty,
@@ -752,29 +738,15 @@ fn collect_labeled_section(
         entries.push(wrapped);
     }
 
-    // The child's hit areas were rendered with row 0 at
-    // the *first child line*; shift them by 1 (top
-    // border) and by the left-border byte prefix.
-    let prefix_bytes = LEFT_BORDER_PREFIX.len();
-    for mut h in child_out.hits {
-        h.buffer_row += 1;
-        h.byte_start += prefix_bytes;
-        h.byte_end += prefix_bytes;
-        hits.push(h);
-    }
-    if let Some(mut fc) = child_out.focus_cursor {
-        fc.buffer_row += 1;
-        fc.byte_in_row += prefix_bytes as u32;
+    // Hits, focus cursor and embeds were already translated by the
+    // `shift_channels` call above (bytes for the byte-addressed
+    // channels, display columns for the embeds — the `│ ` prefix is
+    // 4 UTF-8 bytes but only 2 display columns wide).
+    hits.extend(std::mem::take(&mut child_out.hits));
+    if let Some(fc) = child_out.focus_cursor.take() {
         focus_cursor = Some(fc);
     }
-    // Embeds are column-addressed; the `│ ` prefix is
-    // 4 UTF-8 bytes but only 2 display columns wide.
-    let prefix_cols = LEFT_BORDER_PREFIX.chars().count() as u32;
-    for mut emb in child_out.embeds {
-        emb.buffer_row += 1;
-        emb.col_in_row += prefix_cols;
-        embeds.push(emb);
-    }
+    embeds.extend(std::mem::take(&mut child_out.embeds));
 
     entries.push(render_section_bottom_border(total_cols));
 
@@ -790,6 +762,26 @@ fn collect_labeled_section(
         effective_rows,
         boxes,
     }
+}
+
+/// Whether a Col child renders as a PROMOTED overlay — its rows float
+/// over the panel at bumped z instead of consuming column height. The
+/// `Overlay` wrapper, and the panel-clipped `Popup`
+/// (`screen_space: false`), which documents itself as riding the same
+/// promoted path (`popup.rs`) — matching only `Overlay` here left that
+/// popup's rows flowing inline with its `pointer_opaque` box stuck at
+/// z=0, where the panel opacity probe (which requires z > 0) never
+/// saw it. ONE predicate for every site that decides promotion: the
+/// absorb loop and both fill/flex row-budget filters.
+fn promotes_as_overlay(child: &WidgetSpec) -> bool {
+    matches!(child, WidgetSpec::Overlay { .. })
+        || matches!(
+            child,
+            WidgetSpec::Popup {
+                screen_space: false,
+                ..
+            }
+        )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -840,6 +832,7 @@ fn assemble_wrapped_row(
     entries: &mut Vec<TextPropertyEntry>,
     hits: &mut Vec<HitArea>,
     focus_cursor: &mut Option<FocusCursor>,
+    embeds: &mut Vec<EmbedRect>,
     out_boxes: &mut Vec<LayoutBox>,
 ) {
     use crate::primitives::display_width::str_width;
@@ -859,8 +852,8 @@ fn assemble_wrapped_row(
             mut entry,
             hits: child_hits,
             focus_cursor: piece_fc,
+            embeds: child_embeds,
             boxes: child_boxes,
-            ..
         } = piece
         else {
             // Flex / Block: ignored in the wrap path.
@@ -897,6 +890,14 @@ fn assemble_wrapped_row(
             b.row += row;
             b.col += shift_cols;
             out_boxes.push(b);
+        }
+        // Embeds ride the same column-addressed shift as boxes; the
+        // wrap path used to drop them silently (`..` in the
+        // destructure) while the inline and zip paths carried them.
+        for mut emb in child_embeds {
+            emb.buffer_row += row;
+            emb.col_in_row += shift_cols;
+            embeds.push(emb);
         }
         // A focused piece (e.g. the search TextInput) reports its caret;
         // shift it by the line-so-far and stamp the wrapped line index so

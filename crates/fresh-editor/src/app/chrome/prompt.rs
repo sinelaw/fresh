@@ -236,6 +236,46 @@ impl ChromeComponent for Prompt {
         }
     }
 
+    fn on_hwheel(
+        &self,
+        ed: &mut Editor,
+        bx: &LayoutBox,
+        _col: u16,
+        _row: u16,
+        _delta: i32,
+    ) -> AnyhowResult<Disposition> {
+        // The horizontal axis mirrors the vertical MODAL claims: none
+        // of these surfaces has horizontal content, so wherever the
+        // vertical wheel would be consumed, the horizontal delta is
+        // ABSORBED — Shift+wheel over the overlay prompt or the
+        // suggestions dropdown must not pan the buffer hidden beneath
+        // (the wheel walk deliberately skips the opacity gate for
+        // scroll chaining, so without these arms the delta fell all
+        // the way to the split's h-scroll).
+        match bx.kind {
+            "chrome:prompt_preview" | "chrome:overlay_prompt_modal" => {
+                if ed.overlay_prompt_active() {
+                    Ok(Disposition::Consumed)
+                } else {
+                    Ok(Disposition::Pass)
+                }
+            }
+            "chrome:prompt_suggestions" | "chrome:suggestions" | "chrome:prompt_scrollbar" => {
+                let suggestions_visible = ed
+                    .active_window()
+                    .prompt
+                    .as_ref()
+                    .is_some_and(|p| !p.suggestions.is_empty());
+                if suggestions_visible {
+                    Ok(Disposition::Consumed)
+                } else {
+                    Ok(Disposition::Pass)
+                }
+            }
+            _ => Ok(Disposition::Pass),
+        }
+    }
+
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
         use crate::app::overlay::{Layer, LayerKind};
         use crate::input::keybindings::KeyContext;

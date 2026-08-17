@@ -61,9 +61,12 @@ impl ChromeComponent for StatusBar {
 /// the handlers its arms dispatch to).
 impl Editor {
     /// Map a click on a status-bar segment to its editor `Action`. This is the
-    /// single id→action table for the generic click rail; adding a clickable
-    /// element means adding one arm here (plus listing it in
-    /// `StatusBarRenderer::clickable_for_kind`).
+    /// single id→action table for the generic click rail. The roster is
+    /// enforced by exhaustiveness at BOTH ends, not by this comment: a new
+    /// `StatusBarClickable` variant fails to compile here (no wildcard arm),
+    /// and a new `ElementKind` fails to compile in
+    /// `StatusBarRenderer::clickable_for_kind` (whose non-clickable kinds are
+    /// an explicit list, also wildcard-free).
     ///
     /// Most segments dismiss any open menu-style popup first (the #1941
     /// follow-up: otherwise a stale popup overlaps the new prompt). The LSP,

@@ -122,11 +122,15 @@ pub(crate) fn any_layer_blocks_terminal_input(layers: &[Layer]) -> bool {
 }
 
 /// True iff a layer ranked *above* the popup layer currently owns the
-/// keyboard. Used by the unfocused-popup key interception: any owning
-/// layer above `Popup` is exactly Settings / Menu / Prompt (the only
-/// layers ranked higher), and while one of those is up the popup must
-/// not intercept keys. Callers guarantee a `Popup` layer is present, so
-/// the `take_while` stops before the editor base layer.
+/// keyboard. Used by the unfocused-popup key interception: the layers
+/// ranked above `Popup` (840) are the capture-all modals (Settings /
+/// KeybindingEditor / CalibrationWizard 880-900), WorkspaceTrust
+/// (870), Menu (860), Prompt (850), and the hardcoded event-debug
+/// head — the walk derives the set from the real stack, so this list
+/// is documentation, not an encoding. While one of those owns the
+/// keyboard the popup must not intercept keys. Callers guarantee a
+/// `Popup` layer is present, so the `take_while` stops before the
+/// editor base layer.
 pub(crate) fn popup_blocked_by_higher_modal(layers: &[Layer]) -> bool {
     layers
         .iter()

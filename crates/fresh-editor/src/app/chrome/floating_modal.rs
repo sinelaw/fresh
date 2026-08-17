@@ -1,6 +1,5 @@
 //! The centered floating widget panel (modal dialogs).
 
-use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 
 use super::{in_rect, ChromeComponent, ChromeTreeBuilder, Editor};
@@ -26,45 +25,38 @@ impl ChromeComponent for FloatingModal {
         None
     }
 
-    fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
-        if ed.floating_widget_panel.is_some() {
-            // A centered modal consumes the wheel even on a miss.
-            t.full("chrome:floating_panel", 130);
-        }
-    }
+    // No boxes, no wheel arm: while the modal is up, `capture_mouse`
+    // claims EVERY mouse event before any walk runs, so a collected
+    // box (and any handler on it) would be dead in every reachable
+    // state — the modal band's no-dead-geometry ruling (`modals.rs`).
+    // The wheel is handled inside `handle_floating_modal_mouse`.
+    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
 
-    fn on_wheel(
+    fn on_layer_key(
         &self,
         ed: &mut Editor,
-        _bx: &LayoutBox,
-        col: u16,
-        row: u16,
-        delta: i32,
-    ) -> anyhow::Result<super::Disposition> {
-        // A centered modal consumes the wheel even on a miss.
-        ed.handle_floating_widget_panel_wheel(crate::app::PanelSlot::Floating, col, row, delta);
-        Ok(super::Disposition::Consumed)
-    }
-
-    fn on_key(
-        &self,
-        ed: &mut Editor,
-        code: crossterm::event::KeyCode,
-        modifiers: crossterm::event::KeyModifiers,
-    ) -> Option<anyhow::Result<()>> {
-        // The focused floating panel claims all keys while visible.
-        // Esc unmounts + fires a `widget_event` "cancel"; smart-key
-        // names (Tab/Return/Backspace/…/Up/Down) route through the
-        // widget command dispatcher; printable chars feed
-        // `textInputChar` to the focused TextInput. Registered before
-        // Dock, so a focused centered modal takes keyboard precedence
-        // over the dock (the New-Session form opened on top of it) —
-        // ONE precedence source: this registry order matches the
-        // `layers()` ranks (FLOATING_MODAL 820 > DOCK 810).
-        if ed.floating_widget_panel.as_ref().is_some_and(|f| f.focused)
-            && ed.dispatch_floating_widget_key(crate::app::PanelSlot::Floating, code, modifiers)
+        layer: &crate::app::overlay::Layer,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<anyhow::Result<crate::input::handler::InputResult>> {
+        // The focused floating panel claims all keys while its layer
+        // owns the keyboard. Esc unmounts + fires a `widget_event`
+        // "cancel"; smart-key names (Tab/Return/Backspace/…/Up/Down)
+        // route through the widget command dispatcher; printable chars
+        // feed `textInputChar` to the focused TextInput. Riding the
+        // walk at rank FLOATING_MODAL (820) — above DOCK (810), so a
+        // focused centered modal takes keyboard precedence over the
+        // dock beneath it (the New-Session form), and below the
+        // prompt/popup/menu layers, whose keys it can no longer
+        // preempt the way the old pre-band grab did. The ranks are
+        // now the ONE precedence source.
+        if layer.owns_keyboard
+            && ed.dispatch_floating_widget_key(
+                crate::app::PanelSlot::Floating,
+                event.code,
+                event.modifiers,
+            )
         {
-            return Some(Ok(()));
+            return Some(Ok(crate::input::handler::InputResult::Consumed));
         }
         None
     }

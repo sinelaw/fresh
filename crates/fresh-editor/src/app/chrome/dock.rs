@@ -41,9 +41,10 @@ impl ChromeComponent for Dock {
                 // click lands on — the pre-walk block's exact contract.
                 t.full("chrome:dock_blur", 195);
             }
-            if let Some(inner) = dock.last_inner_rect {
-                t.rect("chrome:dock", 130, inner);
-            }
+            // (No separate inner-rect box: no handler ever matched
+            // "chrome:dock", and the kind-blind wheel arm is already
+            // reachable through `chrome:dock_column`, which covers the
+            // inner rect at the same z and ranks first in the band.)
         }
     }
 
@@ -153,13 +154,22 @@ impl ChromeComponent for Dock {
         }
     }
 
-    fn on_key(
+    fn on_layer_key(
         &self,
         ed: &mut Editor,
-        code: crossterm::event::KeyCode,
-        modifiers: crossterm::event::KeyModifiers,
-    ) -> Option<anyhow::Result<()>> {
-        if !ed.dock.as_ref().is_some_and(|f| f.focused) {
+        layer: &crate::app::overlay::Layer,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<anyhow::Result<crate::input::handler::InputResult>> {
+        // Only while this layer owns the keyboard (a FOCUSED dock). A
+        // blurred dock's layer is still visited by the walk (it
+        // carries the Dock `KeyContext` for `get_key_context`) but
+        // never claims keys. Riding the walk at rank DOCK (810) —
+        // instead of the old pre-band `on_key` grab — means an open
+        // prompt (850), popup (840), menu (860) or modal (900s) now
+        // takes the key FIRST, exactly as `get_key_context` always
+        // resolved it: the grab's rank inversion (Esc aimed at a
+        // prompt blurring the dock instead) is gone.
+        if !layer.owns_keyboard {
             return None;
         }
         // A focused dock swallows keys in the dispatch below, so the
@@ -169,27 +179,23 @@ impl ChromeComponent for Dock {
         // symmetric (same key in and out). Only the blur-out
         // direction needs this — focusing a blurred dock is ordinary
         // keybinding resolution (the editor owns the keyboard then).
-        let key_event = crossterm::event::KeyEvent::new(code, modifiers);
         let ctx = ed.get_key_context();
-        let resolved = ed
-            .keybindings
-            .read()
-            .ok()
-            .map(|kb| kb.resolve(&key_event, ctx));
+        let resolved = ed.keybindings.read().ok().map(|kb| kb.resolve(event, ctx));
         if matches!(
             resolved,
             Some(crate::input::keybindings::Action::ToggleDockFocus)
         ) {
             return Some(
                 ed.handle_action(crate::input::keybindings::Action::ToggleDockFocus)
-                    .map(|_| ()),
+                    .map(|_| crate::input::handler::InputResult::Consumed),
             );
         }
-        // The focused dock claims every other key (registered after
-        // FloatingModal — one precedence source, matching the
-        // `layers()` ranks).
-        if ed.dispatch_floating_widget_key(crate::app::PanelSlot::Dock, code, modifiers) {
-            return Some(Ok(()));
+        // The focused dock claims every other key its widget dispatch
+        // consumes; anything it declines falls through the walk to the
+        // editor base.
+        if ed.dispatch_floating_widget_key(crate::app::PanelSlot::Dock, event.code, event.modifiers)
+        {
+            return Some(Ok(crate::input::handler::InputResult::Consumed));
         }
         None
     }

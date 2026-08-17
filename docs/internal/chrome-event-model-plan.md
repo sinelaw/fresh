@@ -211,6 +211,71 @@ ring (`focused: Option<FocusId>` unifying dock focus,
 carry `focusable`/`focus_trap`, so `focus_ring_scoped` works on the
 chrome tree the day a chrome focus id exists.
 
+## R wave — duplicate-mechanism / partial-migration fixes
+
+A three-lens adversarial audit (half-wired capability surface,
+duplicate encodings, partial migrations) of the completed arcs found
+the offense class of the mid-arc review surviving in new places. All
+fixed:
+
+- **R1 — grab-band rank inversion.** Dock and FloatingModal keyboard
+  grabs moved from the pre-band `on_key` loop onto `on_layer_key`,
+  gated on `layer.owns_keyboard`. The grab class outranks every
+  `layer_rank` by pipeline position, so their grabs beat an open
+  prompt/menu/popup while `get_key_context` said otherwise (dock
+  focused + prompt open: Esc blurred the dock instead of cancelling
+  the prompt). Pre-band membership is now restricted BY RULING (trait
+  doc) to whole-pipeline observers (ThemeInfo) and custom-dispatcher
+  modals (ContextMenu, whose rank is deliberately not its keyboard
+  precedence).
+- **R2 — modal surfaces claim the horizontal wheel.** Prompt (overlay
+  modal + suggestions), Popups, and FileBrowser gained `on_hwheel`
+  absorb arms mirroring their vertical modal claims — Shift+wheel no
+  longer pans the buffer beneath them. Fold-toggle double/triple-click
+  moved from `handle_mouse`'s pre-walk into `Splits::on_pointer`, so
+  popup opacity and the overlay swallow block it by construction.
+  Panel-clipped `Popup { screen_space: false }` now actually promotes
+  (`promotes_as_overlay`, one predicate for the absorb loop and both
+  row-budget filters) — its rows float, hits stamp overlay, boxes get
+  the z bump that arms `pointer_opaque`; regression test added.
+- **R3 — capture order derived from ranks.** The `capture_mouse` loop
+  walks the owner-stamped `overlay_stack()` instead of registry
+  order — the registry-order duplicate of the precedence (two
+  hand-synced encodings, comment-only sync) is deleted; rank is the
+  one source for keyboard and capture alike. FloatingModal's
+  unreachable box + `on_wheel` and the handler-less `chrome:dock` box
+  deleted (dead geometry).
+- **R4 — release grab-keyed; forward-sink derived.** Mouse-up
+  dispatches on `pointer_grab` with per-grab finalizers (dock width
+  persist, tab drop, separator relayout) + a blanket sweep, matching
+  the Drag arm. Terminal mouse-forwarding is additionally suppressed
+  by a DERIVED check — any `pointer_opaque` chrome box over the cell
+  (popups over an alt-screen terminal no longer leak clicks into the
+  PTY); the context-menu suppression stays a named check by ruling
+  (its boxes are deliberately non-opaque).
+- **R5 — one encoding per fact.** `bottom_row_flags` replaces four
+  hand-copied spellings of the bottom-row visibility conditions;
+  `context_menu_core_mut` derives WHICH menu from the immutable
+  walk's kind (one precedence encoding, exhaustive-match re-borrow);
+  the status-bar clickable roster documented as compile-checked at
+  both ends (exhaustive matches, no wildcards);
+  `CollectedOutput::shift_channels` moves all six geometry channels
+  in one call (labeled section), and `assemble_wrapped_row` now
+  threads embeds instead of silently dropping them.
+- **R6 — rulings written.** `update_lsp_hover_state` (content-tracker
+  beside the walk; redundant context-menu check deleted — its layer
+  already drives `modal_overlay_active`), terminal-link hover (same
+  seam), `HitArea.context_click` dock-only consumer scope,
+  `PassAfter`-vs-opacity contract, and the stale
+  "Settings/Menu/Prompt" trio enumerations.
+
+Remaining recorded residue after R: the widget_runtime central kind
+policies (compile-checked enum matches; candidate `arrow_peek` /
+`activate_on_picker_enter` capabilities if drift bites),
+`is_mouse_over_any_popup`'s parallel rect query (acknowledged
+in-tree, blocking-safe), and the federated widget/chrome trees seam +
+hand-ordered registry data (the two open structural items).
+
 ## Migration order (each slice green + shippable)
 
 0. `app/chrome/` scaffold: trait, builder, registry; split

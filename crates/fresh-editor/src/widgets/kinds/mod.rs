@@ -210,12 +210,6 @@ pub(crate) trait WidgetImpl: Sync {
         PointerDisposition::Default
     }
 
-    /// The semantic event the plugin-facing `WidgetAction::Activate`
-    /// (a mode binding's Enter) fires against this kind when focused.
-    /// `None` = activation is a no-op for this kind — deliberately
-    /// NOT wired for List (plugins drive list activation through
-    /// `select`/`activate_event` on the smart-key path instead), so
-    /// only Button and Toggle answer.
     /// Panel focus moved ONTO (`gained`) or OFF (`!gained`) this
     /// kind's widget — the kind's chance to keep its instance state
     /// coherent with focus. Tree clears a blurred tree's selection
@@ -229,6 +223,12 @@ pub(crate) trait WidgetImpl: Sync {
     ) {
     }
 
+    /// The semantic event the plugin-facing `WidgetAction::Activate`
+    /// (a mode binding's Enter) fires against this kind when focused.
+    /// `None` = activation is a no-op for this kind — deliberately
+    /// NOT wired for List (plugins drive list activation through
+    /// `select`/`activate_event` on the smart-key path instead), so
+    /// only Button and Toggle answer.
     fn activate_event(&self, _spec: &WidgetSpec) -> Option<(&'static str, serde_json::Value)> {
         None
     }

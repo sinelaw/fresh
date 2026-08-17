@@ -83,8 +83,12 @@ pub(crate) enum Disposition {
     Consumed,
     /// Side effects applied, but the event must keep routing — the
     /// act-then-continue guards (transient dismiss, explorer menu
-    /// clear). Distinct from `Pass` so the contract is visible even
-    /// though today's flat walk treats both as "continue".
+    /// clear). NOT interchangeable with `Pass`: on a `pointer_opaque`
+    /// box, `Pass` STOPS the walk (the opacity gate absorbs the
+    /// event) while `PassAfter` keeps walking — an observer's
+    /// continue must not be blocked by its own box's opacity. Today
+    /// every PassAfter producer is a non-opaque guard, so the two
+    /// only diverge if an opaque surface adopts observer semantics.
     PassAfter,
     /// Not this surface's event — the walk continues to the next box.
     Pass,
@@ -360,17 +364,27 @@ pub(crate) trait ChromeComponent: Sync {
     /// component instead of a central conditional ladder.
     fn layers(&self, _ed: &Editor, _out: &mut Vec<(u16, crate::app::overlay::Layer)>) {}
 
-    /// Keyboard grab for a component whose open surface owns the
-    /// keyboard with a custom dispatcher (the native context menus:
-    /// navigation keys drive the menu, everything else is swallowed
-    /// so it can't leak into the buffer beneath). `Some` = the key is
-    /// consumed with the handler's result; `None` = not grabbing,
-    /// normal dispatch continues. Offered by `handle_key` ahead of
-    /// `KeyContext` resolution, first grabbing component in registry
-    /// order wins — the chrome keyboard analogue of `capture_mouse`.
-    /// This is the plan's minimal keyboard slice: the broader
-    /// focused-chrome-ring model stays gated on the prompt-as-widgets
-    /// and Settings migrations.
+    /// PRE-BAND keyboard grab. `Some` = the key is consumed with the
+    /// handler's result; `None` = not grabbing, dispatch continues.
+    /// Offered by `handle_key` BEFORE the `on_layer_key` walk, first
+    /// grabbing component in registry order wins — which means grabs
+    /// as a CLASS outrank every `layer_rank`, regardless of any layer
+    /// the component declares. Membership is therefore restricted, by
+    /// ruling, to the two shapes a rank cannot express:
+    ///
+    ///   - a whole-pipeline OBSERVER (ThemeInfo: dismiss-and-continue
+    ///     side effects then `None` — the keyboard PassAfter), which
+    ///     must see the key even when a higher surface consumes it;
+    ///   - a custom-dispatcher modal transparent to `KeyContext`
+    ///     resolution (ContextMenu: its layer exposes
+    ///     `key_context: None` and its rank is deliberately NOT its
+    ///     keyboard precedence — ruling at its site, #2587).
+    ///
+    /// Any surface whose precedence IS expressible as a rank belongs
+    /// on `on_layer_key` instead: the dock and the floating modal
+    /// started here and were moved when their grabs proved to invert
+    /// the declared ranks (a focused dock eating Esc ahead of an open
+    /// prompt while `get_key_context` said `Prompt`).
     fn on_key(
         &self,
         _ed: &mut Editor,

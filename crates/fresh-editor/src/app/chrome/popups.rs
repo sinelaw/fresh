@@ -152,6 +152,24 @@ impl ChromeComponent for Popups {
         Ok(Disposition::Consumed)
     }
 
+    fn on_hwheel(
+        &self,
+        ed: &mut Editor,
+        bx: &LayoutBox,
+        col: u16,
+        row: u16,
+        _delta: i32,
+    ) -> AnyhowResult<Disposition> {
+        // Popups have no horizontal axis: over a popup the horizontal
+        // delta is ABSORBED, mirroring the vertical arm's modal claim
+        // — it must not pan the buffer hidden beneath (the wheel walk
+        // has no opacity gate, so without this arm it did).
+        if bx.kind == "chrome:popups" && ed.is_mouse_over_any_popup(col, row) {
+            return Ok(Disposition::Consumed);
+        }
+        Ok(Disposition::Pass)
+    }
+
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
         use crate::app::overlay::{Layer, LayerKind};
         // A non-trust popup is *present* whenever visible, but only

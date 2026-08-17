@@ -361,6 +361,43 @@ impl CollectedOutput {
     /// entries become overlay rows anchored at the cursor (occupying
     /// no column height), its hits are stamped `overlay`, and its
     /// whole box subtree moves up one stacking level.
+    /// Translate EVERY geometry channel by one origin shift: `rows`
+    /// down, `display_cols` right for the column-addressed channels
+    /// (boxes, embeds), `bytes` right for the byte-addressed channels
+    /// (hits, the focus cursor). Flow-anchored popups ride the row
+    /// shift; absolute anchors name their own panel row and stay put.
+    /// ONE method so a container cannot shift some channels and forget
+    /// others — the labeled section used to spell this translation six
+    /// times, synced only by prose (the byte-vs-column unit split is
+    /// exactly where a hand-copied shift drifts).
+    pub(crate) fn shift_channels(&mut self, rows: u32, display_cols: u32, bytes: usize) {
+        for b in &mut self.boxes {
+            b.row += rows;
+            b.col += display_cols;
+        }
+        for o in &mut self.overlays {
+            o.buffer_row += rows;
+        }
+        for dp in &mut self.popups {
+            if !dp.anchor_absolute {
+                dp.anchor_row += rows;
+            }
+        }
+        for h in &mut self.hits {
+            h.buffer_row += rows;
+            h.byte_start += bytes;
+            h.byte_end += bytes;
+        }
+        if let Some(fc) = &mut self.focus_cursor {
+            fc.buffer_row += rows;
+            fc.byte_in_row += bytes as u32;
+        }
+        for emb in &mut self.embeds {
+            emb.buffer_row += rows;
+            emb.col_in_row += display_cols;
+        }
+    }
+
     pub(crate) fn absorb_child(
         &mut self,
         mut child: CollectedOutput,
@@ -7416,6 +7453,56 @@ pub(crate) mod tests {
             .expect("screen-space popup box");
         assert!(pb.screen_space);
     }
+
+    /// A plugin `Popup { screen_space: false }` documents itself as
+    /// riding the promoted-overlay path: its rows must FLOAT (overlay
+    /// channel, not inline column flow), its hits are stamped overlay,
+    /// and its boxes get the overlay z bump — which is what arms its
+    /// `pointer_opaque` box, since the panel opacity probe requires
+    /// z > 0. The Col promotion match once listed only `Overlay`,
+    /// leaving all three unwired for this kind.
+    #[test]
+    fn panel_clipped_popup_promotes_like_overlay() {
+        let spec = WidgetSpec::Col {
+            key: None,
+            children: vec![
+                WidgetSpec::Raw {
+                    entries: vec![TextPropertyEntry::text("row0")],
+                    key: None,
+                },
+                WidgetSpec::Popup {
+                    child: Box::new(WidgetSpec::Raw {
+                        entries: vec![TextPropertyEntry::text("float me")],
+                        key: None,
+                    }),
+                    key: Some("pp".into()),
+                    anchor: None,
+                    screen_space: false,
+                },
+            ],
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        // Only the sibling Raw row flows inline; the popup's row floats.
+        assert_eq!(
+            out.entries.len(),
+            1,
+            "panel-clipped popup rows must not consume column flow"
+        );
+        assert!(
+            out.overlays
+                .iter()
+                .any(|o| o.entry.text.starts_with("float me")),
+            "panel-clipped popup row rides the overlay channel"
+        );
+        let pb = out
+            .boxes
+            .iter()
+            .find(|b| b.kind == "popup")
+            .expect("panel-clipped popup box collected");
+        assert!(pb.pointer_opaque, "popup box is opaque");
+        assert!(pb.z > 0, "promotion bumps z so the opacity probe sees it");
+    }
+
     #[test]
     fn component_is_a_transparent_focus_trap() {
         use crate::widgets::layout_box::focus_ring_scoped;

@@ -72,4 +72,22 @@ impl ChromeComponent for FileBrowser {
         }
         Ok(Disposition::Pass)
     }
+
+    fn on_hwheel(
+        &self,
+        ed: &mut Editor,
+        _bx: &LayoutBox,
+        col: u16,
+        row: u16,
+        _delta: i32,
+    ) -> AnyhowResult<Disposition> {
+        // The browser list has no horizontal axis: over the dialog the
+        // horizontal delta is ABSORBED, mirroring the vertical arm —
+        // it must not pan the buffer hidden beneath (the wheel walk
+        // has no opacity gate).
+        if ed.is_file_open_active() && ed.is_mouse_over_file_browser(col, row) {
+            return Ok(Disposition::Consumed);
+        }
+        Ok(Disposition::Pass)
+    }
 }
