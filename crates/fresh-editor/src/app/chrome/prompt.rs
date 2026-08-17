@@ -543,4 +543,34 @@ impl Editor {
         }
         true
     }
+
+    /// Suggestion-list scrollbar drag (`PointerGrab::PromptScrollbar`,
+    /// issue #1796): update the prompt's scroll offset with the same
+    /// math as the press (`prompt_scrollbar_offset_for_row`).
+    pub(crate) fn handle_prompt_scrollbar_drag(&mut self, row: u16) {
+        // Snapshot chrome rects up front so the prompt borrow on
+        // active_window_mut() doesn't conflict.
+        let sb_rect = self.active_chrome().suggestions_scrollbar_rect;
+        let suggestions_area_visible = self.active_chrome().suggestions_area.map(|(_, _, v, _)| v);
+        let active_window_id = self.active_window;
+        if let (Some(sb_rect), Some(prompt)) = (
+            sb_rect,
+            self.windows
+                .get_mut(&active_window_id)
+                .and_then(|w| w.prompt.as_mut()),
+        ) {
+            let visible = suggestions_area_visible
+                .unwrap_or_else(|| prompt.suggestions.len().min(MAX_VISIBLE_SUGGESTIONS));
+            prompt.scroll_offset = prompt_scrollbar_offset_for_row(
+                prompt.suggestions.len(),
+                visible,
+                prompt.scroll_offset,
+                sb_rect,
+                row,
+            );
+            // Keep the manual-scroll latch through the drag so the
+            // renderer doesn't pull the offset back to the selection.
+            prompt.manual_scroll = true;
+        }
+    }
 }
