@@ -152,7 +152,7 @@ impl Editor {
     /// user across buffers.
     ///
     /// Single source of truth for both `get_key_context` (binding resolution)
-    /// and `dispatch_modal_input` (handler routing) so the two cannot drift.
+    /// and `dispatch_popup_keys` (handler routing) so the two cannot drift.
     /// True while the workspace-trust prompt is the TOP of the global
     /// popup stack — the state in which its dedicated mouse/key
     /// handlers (and its dedicated overlay layer) take over from the

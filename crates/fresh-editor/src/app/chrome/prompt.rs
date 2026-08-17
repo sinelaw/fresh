@@ -266,8 +266,8 @@ impl ChromeComponent for Prompt {
         ed: &mut Editor,
         _layer: &crate::app::overlay::Layer,
         event: &crossterm::event::KeyEvent,
-    ) -> Option<crate::input::handler::InputResult> {
-        ed.dispatch_prompt_key(event)
+    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
+        ed.dispatch_prompt_key(event).map(Ok)
     }
 }
 

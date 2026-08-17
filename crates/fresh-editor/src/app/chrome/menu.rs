@@ -121,7 +121,7 @@ impl ChromeComponent for Menu {
         ed: &mut Editor,
         _layer: &crate::app::overlay::Layer,
         event: &crossterm::event::KeyEvent,
-    ) -> Option<crate::input::handler::InputResult> {
+    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
         use crate::input::handler::{InputContext, InputHandler};
         // An open menu is capture-all: navigation, mnemonics and
         // dismissal all belong to `MenuInputHandler` while its layer
@@ -140,7 +140,7 @@ impl ChromeComponent for Menu {
             handler.dispatch_input(event, &mut ctx)
         };
         ed.process_deferred_actions(ctx);
-        Some(result)
+        Some(Ok(result))
     }
 }
 
