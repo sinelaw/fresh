@@ -984,15 +984,33 @@ keyboard focus, PTY gating, and modal precedence — is DERIVED from
 per-component `layers()` declarations with explicit ranks, so a new
 overlay surface registers a component and appears in every consumer
 for free. The four context-menu `LayerKind` variants collapsed to
-one (no consumer matched them individually). Still open from that
-plan, with the precedence caveats recorded in it: the dock
-click/right-click pre-walk captures and the formal pointer-grab
-slot (dock clicks today deliberately run AFTER terminal-forward and
-the LSP-rename-cancel hook — hoisting them into capture changes
-those interactions, so they move together with the grab slot, not
-before), per-gesture decomposition of the modal handlers plus the
-scan's opacity gate, and geometry-from-layout retiring the
-`*Layout` caches (slice 7).
+one (no consumer matched them individually). The chrome plan has since executed to COMPLETION: the dock
+click/right-click captures moved into the walk with the formal
+pointer-grab slot (`PointerGrab` derived from live drag state; the
+two precedence caveats resolved deliberately and documented), the
+scan gained its opacity gate (popups/suggestions absorb as a tree
+property — `pointer_opaque`, with the band rule that specific
+targets outrank their opaque backdrop), and geometry-from-layout
+(slice 7) retired every derivable `*Layout` cache:
+`search_options_layout` (7a), the status bar's
+`clickable`/`plugin_token_areas` (7b — `with_status_bar_ctx`
+shares the painter's own input gathering; `ChromeComponent::hover`
+takes `&mut Editor` since live geometry can lazily load buffer
+chunks), and `menu_layout` (7c — the renderer's walk runs
+frame-free; `chrome_rows_now()` derives the five chrome rows via
+the actual `Layout` split). Each retirement is pinned by
+debug-build parity oracles asserting event-time derivation ==
+paint walk. The remaining popup/suggestion rects
+(`popup_areas`, `global_popup_areas`, `suggestions_*`,
+`prompt_results/preview_area`) are RULED paint-recorded (7d):
+they anchor to paint-produced text layout (cursor screen position
+via the wrap maps, split `content_rect`), so an event-time
+derivation would still resolve against paint recordings — the
+`screen_space` class — and their handlers re-check live stacks
+before acting. Geometry is now produced by layout or recorded by
+ruling; never recorded by accident. Per-gesture decomposition of
+the modal handlers stays design-intermediate by ruling (modal
+interiors are bespoke until Settings migrates).
 Also open, in overall plan order: the rest of the app-level focus
 unification — `FocusManager`, `Prompt.toolbar_focus`, dock focus
 (5), host-side editing keys (6 step 2), completion-popup migration +
