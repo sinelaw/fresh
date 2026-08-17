@@ -7,8 +7,6 @@ use super::terminal_input::{should_enter_terminal_mode, TerminalModeInputHandler
 use super::Editor;
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
 use crate::input::keybindings::{Action, KeyContext};
-use crate::view::file_browser_input::FileBrowserInputHandler;
-use crate::view::query_replace_input::QueryReplaceConfirmInputHandler;
 use anyhow::Result as AnyhowResult;
 use crossterm::event::KeyEvent;
 use rust_i18n::t;
@@ -148,67 +146,13 @@ impl Editor {
             return Some(result);
         }
 
+        // The prompt block moved onto the walk (slice K2): the Prompt
+        // component's `on_layer_key` (chrome/prompt.rs,
+        // `dispatch_prompt_key`) now runs its rungs when the walk
+        // reaches the Prompt layer, in the exact position this block
+        // held — rank 850 sits below the capture-all modals and above
+        // the Popup layer, matching the old block order.
         let mut ctx = InputContext::new();
-
-        // Prompt is next
-        if self.active_window().prompt.is_some() {
-            // File browser prompts use FileBrowserInputHandler. Keys it
-            // ignores (Alt+letter) fall through to regular keybinding
-            // resolution, which resolves them in the Prompt context —
-            // context-specific bindings outrank global ones there, so the
-            // browser's Alt toggles (encoding, hidden files) win over e.g.
-            // the Alt+E menu mnemonic without any special-casing here.
-            if self.is_file_open_active() {
-                let active_window_id = self.active_window;
-                let __win = self
-                    .windows
-                    .get_mut(&active_window_id)
-                    .expect("active window present");
-                if let (Some(ref mut file_state), Some(ref mut prompt)) =
-                    (&mut __win.file_open_state, &mut __win.prompt)
-                {
-                    let mut handler = FileBrowserInputHandler::new(file_state, prompt);
-                    let result = handler.dispatch_input(event, &mut ctx);
-                    if result != InputResult::Ignored {
-                        self.process_deferred_actions(ctx);
-                        return Some(result);
-                    }
-                    ctx = InputContext::new();
-                }
-            }
-
-            // QueryReplaceConfirm prompts use QueryReplaceConfirmInputHandler
-            use crate::view::prompt::PromptType;
-            let is_query_replace_confirm = self
-                .active_window()
-                .prompt
-                .as_ref()
-                .is_some_and(|p| p.prompt_type == PromptType::QueryReplaceConfirm);
-            if is_query_replace_confirm {
-                let mut handler = QueryReplaceConfirmInputHandler::new();
-                let result = handler.dispatch_input(event, &mut ctx);
-                self.process_deferred_actions(ctx);
-                return Some(result);
-            }
-
-            // Universal Search overlay focus ring: Tab/Shift+Tab move focus
-            // between the query input and the scope toggles; Space/Enter
-            // activate the focused toggle. Intercepted before the prompt's own
-            // input handling so Tab doesn't fall through to other behaviour.
-            if let Some(result) = self.handle_overlay_toolbar_key(event) {
-                return Some(result);
-            }
-
-            if let Some(ref mut prompt) = self.active_window_mut().prompt {
-                let result = prompt.dispatch_input(event, &mut ctx);
-                // Only return and process deferred actions if the prompt handled the input
-                // If Ignored, fall through to check global keybindings
-                if result != InputResult::Ignored {
-                    self.process_deferred_actions(ctx);
-                    return Some(result);
-                }
-            }
-        }
 
         // Editor-pane popups (global + buffer) belong to the editor pane and
         // must not capture input when the file explorer is the focused pane.
@@ -754,7 +698,7 @@ impl Editor {
     /// `Some(Consumed)` when it owns the key, `None` to let normal prompt
     /// handling proceed (also resets focus to the input when the user starts
     /// typing, so typing always edits the query).
-    fn handle_overlay_toolbar_key(&mut self, event: &KeyEvent) -> Option<InputResult> {
+    pub(super) fn handle_overlay_toolbar_key(&mut self, event: &KeyEvent) -> Option<InputResult> {
         use crossterm::event::{KeyCode, KeyModifiers};
         if !self.overlay_prompt_active() {
             return None;

@@ -180,13 +180,26 @@ Slices, each green + shippable:
   KeybindingEditor / CalibrationWizard arms into `modals.rs`, Menu arm
   into `menu.rs`. EventDebug's hardcoded head has owner `None`
   (pre-band debugging instrument, unchanged).
-- **K2**: the popup block (completion resolver → workspace-trust keys
+- **K2**: the prompt block (file browser → query-replace confirm →
+  overlay toolbar focus ring → prompt) into `Prompt`'s
+  `on_layer_key`. Prompt-first because the block order (prompt before
+  popups) matches the rank order (850 > 840) — migrating top-down
+  keeps the walk sequence identical to the block sequence at every
+  intermediate step.
+- **K3**: the popup block (completion resolver → workspace-trust keys
   → global popups → buffer popups) into `Popups` / `WorkspaceTrust`
-  handlers; the transient-dismissal and unfocused-popup stages become
-  walk semantics.
-- **K3**: the prompt block (file browser → query-replace confirm →
-  overlay toolbar focus ring → prompt) into `Prompt` (+
-  `FileBrowser`).
+  handlers. Note: moving the WT rung to its 870-ranked layer makes WT
+  keys beat an open prompt (the block ran the prompt first) — that
+  ALIGNS dispatch with `get_key_context`, which already resolves WT
+  above Prompt; the old divergence between context and dispatch is
+  the bug class this arc exists to kill. The transient-dismissal
+  stage stays pre-walk BY RULING: it must observe every key even when
+  a higher modal consumes it (typing under Settings still dismisses a
+  hover popup), which no first-consumer walk can express — it is a
+  pre-band observer like event-debug. The unfocused-popup resolver
+  migrates into `Popups` (a non-owning layer still gets visited;
+  higher owners consuming replaces its hand-rolled
+  `popup_blocked_by_higher_modal` guard).
 - **K4**: the tail — mode bindings, composite router, chord/keybinding
   resolution — becomes `Base`'s `on_layer_key`; `handle_key` reduces
   to the pre-band (event-debug, terminal input, getNextKey capture,
