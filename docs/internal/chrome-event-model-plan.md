@@ -294,12 +294,43 @@ fixed:
   `StatusBarClickable` (retired cache reference), the
   `overlay_hit_test` ghost.
 
-Remaining recorded residue after R: the widget_runtime central kind
-policies (compile-checked enum matches; candidate `arrow_peek` /
-`activate_on_picker_enter` capabilities if drift bites),
-`is_mouse_over_any_popup`'s parallel rect query (acknowledged
-in-tree, blocking-safe), and the federated widget/chrome trees seam +
-hand-ordered registry data (the two open structural items).
+- **R8 — inline-review wave.** Drag-arm bodies moved to their owning
+  components (grab-keyed routing only in the walk file); dedup keyed
+  on `(owner, kind)`; ONE `chrome_tree` per mouse event; `handle_key`
+  degrades instead of panicking with the base-layer contract under
+  test; capture/layer gates paired on one activity predicate per
+  modal; first unit tests under `app/chrome/` (rank relations,
+  distinctness, base-layer tail).
+- **R9 — the must-land list (review issue-comment).** (1) RULING: the
+  chrome "tree" is currently FLAT — no component sets `parent`, the
+  full-frame guard boxes are the deliberate flat-world containment
+  encoding, and `parent`/`focusable`/`focus_trap`/`scroll` are
+  reserved-but-unset at chrome level (documented at
+  `ChromeTreeBuilder`; parent links + chrome focus are #3024). (2)
+  The per-kind key/value policies became CAPABILITIES:
+  `arrows_advance_focus` (Button/Toggle), `picker_nav` (List peeks,
+  Tree takes focus), `activates_on_picker_enter` +
+  `picker_activate_event` (List/Tree), and the plugin value-set
+  mutation arms delegate to kind fns (`number::set_value_state`,
+  `dropdown::set_index_state`, `dual_list::set_included_state`) —
+  the router and dispatch arms hold no kind matches. (3) Overstated
+  claims trimmed in the PR body. (4) Precedence GOLDEN tests
+  (`e2e/dispatch_precedence.rs`): wheel and horizontal wheel over a
+  popup never move the buffer; a click on popup chrome never moves
+  the buffer cursor; workspace-trust keys beat an open prompt. (5)
+  THE closed `screen_space` roster lives on `ChromeLayout`'s doc —
+  additions require a ruling here. (6) RULING: the keyboard walk
+  does NOT get one-stack-per-event — handlers may mutate then
+  decline, so the handler-level `get_key_context` rebuilds are
+  load-bearing freshness, not waste (documented at
+  `dispatch_layer_keyboard`; invalidation-aware derivation is
+  #3024). (7) The `PassAfter`-vs-opacity walk contract is code
+  (`pointer_walk_step`, unit-tested), not prose.
+
+Remaining recorded residue after R: `is_mouse_over_any_popup`'s
+parallel rect query (acknowledged in-tree, blocking-safe), and the
+federated widget/chrome trees seam + hand-ordered registry data (the
+two open structural items — the forward-design PR #3024).
 
 ## Migration order (each slice green + shippable)
 

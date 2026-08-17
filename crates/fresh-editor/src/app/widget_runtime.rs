@@ -1000,54 +1000,47 @@ impl Editor {
             "Shift+Tab" => self.handle_widget_focus_advance(panel_key, -1),
             "Up" | "Down" => {
                 let delta = if key == "Up" { -1 } else { 1 };
-                // Picker-style nav: when the focused widget
-                // doesn't have a meaningful Up/Down (single-
-                // line Text, Button, Toggle, or no focus),
-                // route the arrow to the first scrollable
-                // widget in the panel.
-                let on_button = matches!(
-                    widget,
-                    Some(fresh_core::api::WidgetSpec::Button { .. })
-                        | Some(fresh_core::api::WidgetSpec::Toggle { .. })
-                );
+                // Picker-style nav, capability-declared: the focused
+                // kind says whether panel arrows should walk the focus
+                // ring instead (`arrows_advance_focus` — Button/Toggle,
+                // no vertical axis of their own), and the panel's
+                // picker target says how an arrow reaches it
+                // (`picker_nav`: List peeks, Tree takes focus). No
+                // kind matching here — the capabilities are the kinds'
+                // declarations.
+                let arrows_advance = widget
+                    .map(|w| crate::widgets::kinds::behavior(w).arrows_advance_focus())
+                    .unwrap_or(false);
                 let scrollable = self
                     .widget_registry
                     .get(panel_key)
                     .and_then(|p| find_scrollable_widget_key(&p.spec));
-                if scrollable.is_none() && on_button {
+                if scrollable.is_none() && arrows_advance {
                     // Button-only popups (the dock's right-click
                     // context menu, confirm panes): arrows walk
                     // the controls like Tab / Shift+Tab, matching
-                    // every other menu in the dock. Previously
-                    // ↑/↓ were silently dropped here.
+                    // every other menu in the dock.
                     self.handle_widget_focus_advance(panel_key, delta);
                 }
                 if let Some(target_key) = scrollable {
-                    let target_kind = self.widget_registry.get(panel_key).and_then(|p| {
-                        crate::widgets::find_widget_by_key(&p.spec, &target_key).cloned()
-                    });
-                    match target_kind {
-                        Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                            // A List peek keeps the filter input
-                            // focused for typing while the arrow moves
-                            // the list selection.
+                    let nav = self
+                        .widget_registry
+                        .get(panel_key)
+                        .and_then(|p| crate::widgets::find_widget_by_key(&p.spec, &target_key))
+                        .map(|w| crate::widgets::kinds::behavior(w).picker_nav())
+                        .unwrap_or(crate::widgets::kinds::PickerNav::Skip);
+                    match nav {
+                        crate::widgets::kinds::PickerNav::Peek => {
                             self.handle_widget_select_move_for_key(panel_key, &target_key, delta);
                         }
-                        Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                            // A Tree is a real (tabbable) focus target.
-                            // Peek-forwarding here would move the tree's
-                            // selection while the previously focused
-                            // button/field keeps its focus ring — two
-                            // focused elements at once, and Enter would
-                            // still act on the button, not the
-                            // highlighted row. Move focus *into* the
-                            // tree so it becomes the single focused
-                            // element; set_panel_focus_and_notify seeds
-                            // its selection to the first visible row.
+                        crate::widgets::kinds::PickerNav::TakeFocus => {
+                            // set_panel_focus_and_notify seeds the
+                            // target's selection to the first visible
+                            // row (the kind's on_focus_change).
                             self.set_panel_focus_and_notify(panel_key, target_key.clone());
                             self.rerender_widget_panel(panel_key);
                         }
-                        _ => {}
+                        crate::widgets::kinds::PickerNav::Skip => {}
                     }
                 }
             }
@@ -1061,23 +1054,13 @@ impl Editor {
                         .get(panel_key)
                         .and_then(|p| find_scrollable_widget_key(&p.spec))
                     {
-                        // Picker-style activate: a single-line filter
-                        // input paired with a List/Tree fires that
-                        // scrollable's activate event on Enter, so the
-                        // user can type-then-Enter without tabbing
-                        // focus to the list.
-                        let kind = self.widget_registry.get(panel_key).and_then(|p| {
-                            crate::widgets::find_widget_by_key(&p.spec, &target_key).cloned()
-                        });
-                        match kind {
-                            Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                                self.fire_list_activate(panel_key, &target_key);
-                            }
-                            Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                                self.fire_tree_activate(panel_key, &target_key);
-                            }
-                            _ => {}
-                        }
+                        // Picker-style activate, capability-declared
+                        // (`activates_on_picker_enter` +
+                        // `picker_activate_event`): a single-line
+                        // filter input paired with a picker fires that
+                        // target's activation on Enter, so the user
+                        // can type-then-Enter without tabbing focus.
+                        self.fire_picker_activate(panel_key, &target_key);
                     } else {
                         // Form-like UX: Enter commits the field and
                         // moves to the next tabbable widget.
@@ -1224,10 +1207,19 @@ impl Editor {
         }
     }
 
-    fn fire_list_activate(&mut self, panel_key: &crate::widgets::PanelKey, focus_key: &str) {
+    /// Fire the picker target's activation event for its current
+    /// selection, capability-driven: the kind declares participation
+    /// (`activates_on_picker_enter`) and supplies the event
+    /// (`picker_activate_event`) — replaces the per-kind
+    /// fire_list_activate / fire_tree_activate pair.
+    fn fire_picker_activate(&mut self, panel_key: &crate::widgets::PanelKey, focus_key: &str) {
         let ev = self.widget_registry.get(panel_key).and_then(|panel| {
             let spec = crate::widgets::find_widget_by_key(&panel.spec, focus_key)?;
-            crate::widgets::kinds::list::activate_event(spec, focus_key, panel)
+            let b = crate::widgets::kinds::behavior(spec);
+            if !b.activates_on_picker_enter() {
+                return None;
+            }
+            b.picker_activate_event(spec, focus_key, panel)
         });
         if let Some((event_type, payload)) = ev {
             self.fire_widget_event(panel_key, focus_key.to_string(), event_type, payload);
@@ -1420,16 +1412,6 @@ impl Editor {
     /// Tree's currently-selected node. Mirrors `fire_list_activate`
     /// — the plugin's handler decides what "activate" means
     /// (open the file, run an action, etc.).
-    fn fire_tree_activate(&mut self, panel_key: &crate::widgets::PanelKey, focus_key: &str) {
-        let ev = self.widget_registry.get(panel_key).and_then(|panel| {
-            let spec = crate::widgets::find_widget_by_key(&panel.spec, focus_key)?;
-            crate::widgets::kinds::tree::activate_event(spec, focus_key, panel)
-        });
-        if let Some((event_type, payload)) = ev {
-            self.fire_widget_event(panel_key, focus_key.to_string(), event_type, payload);
-        }
-    }
-
     /// Walk every panel rendering into `buffer_id` and return the
     /// first one whose currently-focused widget is a `Text`.
     /// Returns `None` when no such panel exists (e.g. when the

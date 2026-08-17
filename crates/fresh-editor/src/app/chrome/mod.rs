@@ -122,6 +122,24 @@ pub(crate) struct ChromePointer {
 /// Per-event sink the components push their boxes into. Wraps the
 /// frame dimensions so full-frame guards don't each re-read them, and
 /// stamps each box with the collecting component's registry index.
+///
+/// ## RULING — the chrome "tree" is currently FLAT
+///
+/// No chrome component sets `LayoutBox.parent`: every box is a root,
+/// so `hit_stack`'s structural rules (effective z = max along the
+/// ancestor chain, children-above-parents) are inert at chrome level
+/// — ordering is purely the boxes' own z bands plus push order within
+/// a band. Nesting a box under another does NOT work here yet; the
+/// full-frame guard boxes (close guards, scrims, observers) are the
+/// deliberate flat-world encoding of containment ("anything outside
+/// my rect"), NOT a legacy pattern to copy around — a new surface
+/// should push its rects + at most one guard, and must not expect a
+/// parent link to clip or lift it. `LayoutBox.parent`, `focusable`,
+/// `focus_trap` and `scroll` are reserved-but-unset at chrome level
+/// (they are live in the panel-local tree); parent links and the
+/// chrome focus ring are the forward-design arc's work
+/// (sinelaw/fresh#3024), where the guard boxes dissolve into real
+/// containment.
 pub(crate) struct ChromeTreeBuilder {
     frame_width: u32,
     frame_height: u32,
@@ -173,6 +191,32 @@ impl ChromeTreeBuilder {
         b.z = z;
         self.push(b);
     }
+}
+
+/// What one press-walk step does to the walk, given the component's
+/// disposition and the box's opacity — the [`Disposition`] contract
+/// as CODE (pinned by the unit tests below) instead of prose:
+/// `PassAfter` continues even on an opaque box (an observer's
+/// continue must not be blocked by its own box's opacity), while a
+/// declined (`Pass`) opaque box absorbs the event.
+pub(crate) fn pointer_walk_step(disp: Disposition, pointer_opaque: bool) -> PointerWalkStep {
+    match disp {
+        Disposition::Consumed => PointerWalkStep::Stop,
+        Disposition::PassAfter => PointerWalkStep::Continue,
+        Disposition::Pass => {
+            if pointer_opaque {
+                PointerWalkStep::Stop
+            } else {
+                PointerWalkStep::Continue
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PointerWalkStep {
+    Stop,
+    Continue,
 }
 
 /// The active pointer GRAB, if any: press-established routing that
@@ -579,6 +623,33 @@ mod tests {
         ];
         let set: std::collections::HashSet<_> = ranks.iter().collect();
         assert_eq!(set.len(), ranks.len(), "two layers share a rank");
+    }
+
+    /// The `Disposition` contract as behavior, not prose: `PassAfter`
+    /// and `Pass` are NOT interchangeable on an opaque box — an
+    /// observer's continue survives its own box's opacity, a decline
+    /// does not. (Today every PassAfter producer is a non-opaque
+    /// guard; this pins the rule for the first opaque surface that
+    /// adopts observer semantics.)
+    #[test]
+    fn pass_after_is_not_pass_on_an_opaque_box() {
+        use super::{pointer_walk_step, Disposition, PointerWalkStep};
+        assert_eq!(
+            pointer_walk_step(Disposition::PassAfter, true),
+            PointerWalkStep::Continue,
+        );
+        assert_eq!(
+            pointer_walk_step(Disposition::Pass, true),
+            PointerWalkStep::Stop,
+        );
+        assert_eq!(
+            pointer_walk_step(Disposition::Pass, false),
+            PointerWalkStep::Continue,
+        );
+        assert_eq!(
+            pointer_walk_step(Disposition::Consumed, false),
+            PointerWalkStep::Stop,
+        );
     }
 
     /// The base-layer contract `handle_key` degrades on (and

@@ -472,3 +472,30 @@ pub(crate) fn set_open(
             .push(("dropdown_open".into(), serde_json::json!({ "open": open })));
     }
 }
+
+/// Kind policy for the plugin `SetDropdown` mutation: clamp the wire
+/// index into THIS spec's option set, preserving an open popup. The
+/// mutation arm in `plugin_dispatch` is a pure delegation.
+pub(crate) fn set_index_state(
+    spec: &WidgetSpec,
+    prev: Option<&crate::widgets::WidgetInstanceState>,
+    index: i32,
+) -> crate::widgets::WidgetInstanceState {
+    let len = match spec {
+        WidgetSpec::Dropdown { options, .. } => options.len(),
+        _ => 0,
+    };
+    let clamped = if len == 0 {
+        0
+    } else {
+        index.clamp(0, len as i32 - 1)
+    };
+    let open = matches!(
+        prev,
+        Some(crate::widgets::WidgetInstanceState::Dropdown { open: true, .. })
+    );
+    crate::widgets::WidgetInstanceState::Dropdown {
+        selected_index: clamped,
+        open,
+    }
+}

@@ -123,6 +123,20 @@ impl Editor {
     /// (`dispatch_popup_keys`) — each reached at its layer's declared
     /// rank, in the same stack `get_key_context()`, the
     /// terminal-input gate and the mouse modal-capture path read.
+    ///
+    /// RULING — why the keyboard side does NOT get the mouse side's
+    /// one-derived-structure-per-event treatment: the stack below is
+    /// built once for THE WALK's routing, but handlers may MUTATE
+    /// state and then decline (the popup rung processes a deferred
+    /// ClosePopup and falls through), so a lower handler's
+    /// `get_key_context()` must re-derive against post-mutation
+    /// state — a pre-walk snapshot would hand it a stale context.
+    /// Same-event is not same-state mid-walk here, unlike the pointer
+    /// walks (whose handlers consume whenever they mutate). The
+    /// handler-level rebuilds (`chrome/base.rs`, `chrome/dock.rs`)
+    /// are therefore load-bearing, not waste; folding them away needs
+    /// the invalidation-aware derivation recorded for the
+    /// forward-design arc (sinelaw/fresh#3024).
     pub(super) fn dispatch_layer_keyboard(
         &mut self,
         event: &KeyEvent,
