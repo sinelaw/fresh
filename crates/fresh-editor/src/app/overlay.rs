@@ -67,7 +67,7 @@ pub(crate) enum LayerKind {
 
 /// One entry in the overlay stack: a present overlay (or the always-present
 /// editor base), with the per-layer flags the dispatchers need.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Layer {
     pub kind: LayerKind,
     /// Whether this layer currently owns the keyboard. Modal layers set
@@ -95,6 +95,7 @@ pub(crate) struct Layer {
 /// (`Editor::dispatch_layer_keyboard`) dispatches each layer to its
 /// owner's `on_layer_key`. `owner` is `None` only for the hardcoded
 /// event-debug head, which is a pre-walk intercept, not a component.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct OwnedLayer {
     pub owner: Option<usize>,
     pub layer: Layer,
@@ -233,6 +234,28 @@ impl Editor {
     /// and the key walk reaches its `on_layer_key` with no edit to
     /// any dispatcher.
     pub(crate) fn overlay_stack(&self) -> Vec<crate::app::overlay::OwnedLayer> {
+        // GENERATION MEMO: valid while `ui_gen` is unchanged (bumped
+        // at every mutation funnel — see the field's doc). A hit is
+        // oracle-checked against a fresh build in debug, so a missed
+        // bump site fails loudly instead of routing against a stale
+        // stack.
+        if let Some((gen, cached)) = self.overlay_stack_memo.borrow().as_ref() {
+            if *gen == self.ui_gen {
+                debug_assert_eq!(
+                    cached,
+                    &self.overlay_stack_uncached(),
+                    "overlay_stack memo hit diverges from live state — a mutation \
+                     path is missing its bump_ui_gen()"
+                );
+                return cached.clone();
+            }
+        }
+        let fresh = self.overlay_stack_uncached();
+        *self.overlay_stack_memo.borrow_mut() = Some((self.ui_gen, fresh.clone()));
+        fresh
+    }
+
+    fn overlay_stack_uncached(&self) -> Vec<crate::app::overlay::OwnedLayer> {
         let mut ranked: Vec<(u16, Layer)> = Vec::new();
         let mut owners: Vec<Option<usize>> = Vec::new();
         // Event-debug intercepts every key ahead of every other path

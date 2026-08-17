@@ -327,6 +327,29 @@ fixed:
   #3024). (7) The `PassAfter`-vs-opacity walk contract is code
   (`pointer_walk_step`, unit-tested), not prose.
 
+- **R10 — generation-counter memo (perf slice).** The per-event
+  derivation cost (`overlay_stack` + `chrome_tree` rebuilt on every
+  mouse/key event) is amortized by a `ui_gen: u64` counter on
+  `Editor`: both derivations cache their last result keyed by the
+  generation and reuse it while the generation is unchanged. Every
+  mutation funnel bumps: `handle_key` on ENTRY (one rebuild shared by
+  all of a keystroke's queries), `handle_mouse` on EXIT only when the
+  event reported `needs_render` (a quiet motion stream reuses one
+  tree across MANY events — the case this slice exists for),
+  `handle_action`, `process_deferred_actions`, `relayout`,
+  `show_popup`/`hide_popup`, `editor_tick` when it did work, and
+  `render` at its end (paint-side caches refresh there).
+  Over-invalidation is fine and expected; staleness is not — so in
+  debug builds every memo HIT is oracle-checked (`debug_assert_eq!`)
+  against a fresh rebuild, converting the bump roster from a
+  hand-maintained convention into a checked invariant. The same
+  counter keys a hover-cell memo in `update_hover_target`: same
+  `(generation, col, row)` → the whole hover walk is skipped, which
+  collapses terminal motion bursts to one walk per cell. The keyboard
+  walk's handler-level rebuilds stay UNTOUCHED per the R9 ruling
+  (mutate-then-decline), but they now hit the memo when nothing
+  bumped in between.
+
 Remaining recorded residue after R: `is_mouse_over_any_popup`'s
 parallel rect query (acknowledged in-tree, blocking-safe), and the
 federated widget/chrome trees seam + hand-ordered registry data (the

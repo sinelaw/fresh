@@ -70,6 +70,10 @@ impl Editor {
 
     /// Show a popup window
     pub fn show_popup(&mut self, popup: crate::model::event::PopupData) {
+        // A popup changes both the overlay stack and the chrome tree; spoil
+        // the per-generation UI memos (covers show_popup_with_resolver too,
+        // which funnels through here).
+        self.bump_ui_gen();
         let event = Event::ShowPopup { popup };
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
@@ -114,6 +118,9 @@ impl Editor {
 
     /// Hide the topmost popup
     pub fn hide_popup(&mut self) {
+        // Popup dismissal changes overlay/chrome derivation; spoil the
+        // per-generation UI memos.
+        self.bump_ui_gen();
         // Editor-level popups take precedence: dismiss them first if any are
         // visible. This avoids leaking a popup-stack pop event into the
         // active buffer's event log when the popup we're closing is global.

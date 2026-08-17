@@ -9,9 +9,15 @@
 //! trait (per-gesture handlers, `hit_stack` dispatch, parent links,
 //! keyboard) without moving this code again.
 //!
-//! The tree is rebuilt per event from live state — deliberately never
-//! persisted (per-event freshness is what keeps stale-geometry races
-//! impossible; see the plan's "what NOT to do").
+//! The tree is DERIVED from live state — never hand-maintained (derivation
+//! is what keeps stale-geometry races impossible; see the plan's "what NOT
+//! to do"). It IS memoized, though: [`Editor::chrome_tree`] caches the last
+//! build keyed by the editor's `ui_gen` generation counter, which every
+//! state-mutation funnel bumps (`bump_ui_gen` in `app/mod.rs` lists them).
+//! A memo hit is therefore an equality claim about state, not a persistence
+//! of geometry — and in debug builds every hit is oracle-checked against a
+//! fresh rebuild, so a missing bump fails an assertion instead of routing
+//! an event through a stale tree.
 
 mod base;
 mod context_menu;
@@ -64,6 +70,7 @@ pub(crate) fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
 /// `LayoutBox` type the panel model uses, so hit math and flags are
 /// shared) plus which registered component owns it — dispatch calls
 /// the owner's handlers instead of matching kind strings.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ChromeBox {
     pub lb: LayoutBox,
     /// Index into [`components`].
@@ -539,6 +546,27 @@ pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
 /// contributes its live boxes, each stamped with its owner. Replaces
 /// the monolithic enumeration.
 pub(crate) fn chrome_tree(ed: &Editor) -> Vec<ChromeBox> {
+    // GENERATION MEMO, same contract as `overlay_stack`'s: valid
+    // while `ui_gen` is unchanged; `render` bumps at its end because
+    // the paint caches `collect` reads update there; debug oracle on
+    // every hit.
+    if let Some((gen, cached)) = ed.chrome_tree_memo.borrow().as_ref() {
+        if *gen == ed.ui_gen {
+            debug_assert_eq!(
+                cached,
+                &chrome_tree_uncached(ed),
+                "chrome_tree memo hit diverges from live state — a mutation \
+                 path is missing its bump_ui_gen()"
+            );
+            return cached.clone();
+        }
+    }
+    let fresh = chrome_tree_uncached(ed);
+    *ed.chrome_tree_memo.borrow_mut() = Some((ed.ui_gen, fresh.clone()));
+    fresh
+}
+
+fn chrome_tree_uncached(ed: &Editor) -> Vec<ChromeBox> {
     let frame = ed.active_chrome().last_frame;
     let mut t = ChromeTreeBuilder::new(frame.width as u32, frame.height as u32);
     for (i, c) in components().iter().enumerate() {

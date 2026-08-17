@@ -113,6 +113,14 @@ use rust_i18n::t;
 /// Returns true if a render is needed. The `clear_terminal` callback handles full-redraw
 /// requests (terminal clears the screen; GUI can ignore or handle differently).
 /// Used by both the terminal event loop and the GUI event loop.
+impl Editor {
+    /// Invalidate the derived-structure memos (see `ui_gen`).
+    #[inline]
+    pub(crate) fn bump_ui_gen(&mut self) {
+        self.ui_gen = self.ui_gen.wrapping_add(1);
+    }
+}
+
 pub fn editor_tick(
     editor: &mut Editor,
     mut clear_terminal: impl FnMut() -> AnyhowResult<()>,
@@ -205,6 +213,15 @@ pub fn editor_tick(
     if editor.take_full_redraw_request() {
         clear_terminal()?;
         needs_render = true;
+    }
+
+    // A tick that did work (timers fired, async results landed, plugin
+    // callbacks ran) may have changed routing-relevant UI state; spoil the
+    // per-generation UI memos. An idle tick keeps the generation — that is
+    // what lets a quiet mouse-motion stream reuse one chrome tree across
+    // events.
+    if needs_render {
+        editor.bump_ui_gen();
     }
 
     Ok(needs_render)
@@ -1333,6 +1350,27 @@ pub struct Editor {
     /// shown. Independent of `floating_widget_panel` so the dock persists
     /// while a centered modal is open. Always rendered as a `LeftDock`.
     pub(crate) dock: Option<FloatingWidgetState>,
+    /// Monotonic UI-STATE GENERATION for the derived-structure memos
+    /// (`overlay_stack`, `chrome_tree`, the hover cell). Bumped at the
+    /// mutation funnels (`handle_action`, `process_deferred_actions`,
+    /// `relayout`, popup show/hide, `handle_key` entry, `handle_mouse`
+    /// exit-when-rendering, `editor_tick` when it did work, `render`
+    /// end) — a memo is valid only while the generation is unchanged,
+    /// so it can OVER-invalidate but never go stale. Every memo HIT is
+    /// oracle-checked against a fresh rebuild in debug builds: a
+    /// mutation path missing its bump trips every debug/e2e run
+    /// instead of shipping as stale routing.
+    pub(crate) ui_gen: u64,
+    /// Memoized `overlay_stack()` for the current generation.
+    pub(crate) overlay_stack_memo:
+        std::cell::RefCell<Option<(u64, Vec<crate::app::overlay::OwnedLayer>)>>,
+    /// Memoized `chrome_tree()` for the current generation.
+    pub(crate) chrome_tree_memo:
+        std::cell::RefCell<Option<(u64, Vec<crate::app::chrome::ChromeBox>)>>,
+    /// The (generation, col, row) of the last completed hover pass:
+    /// an identical triple means the walk and every `on_hover_change`
+    /// reaction would see identical inputs, so the pass is skipped.
+    pub(crate) hover_cell_memo: std::cell::Cell<Option<(u64, u16, u16)>>,
 
     /// Persisted width (columns) of the orchestrator left dock after the
     /// user drags its right border. `None` until first resized; when set,

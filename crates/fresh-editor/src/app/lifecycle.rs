@@ -384,6 +384,9 @@ impl Editor {
     /// plugin hook is signature-deduped, so callers never need to decide
     /// "did this actually change the layout?" — they just call `relayout`.
     pub fn relayout(&mut self) {
+        // Geometry moved: every chrome box the tree would derive may have a
+        // different rect now, so spoil the per-generation UI memos.
+        self.bump_ui_gen();
         self.push_layout_geometry();
         self.notify_layout_changed();
     }
