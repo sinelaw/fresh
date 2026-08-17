@@ -408,6 +408,19 @@ fn test_quick_open_goto_line_live_preview_mouse_click_commits() {
     // met the condition mid-transition while a late async suggestion
     // refresh was still reshaping the popup; the panic paths below all
     // dump the screen so a fourth failure explains itself.
+    // Drain the background Quick Open file scan BEFORE reading click
+    // coordinates: on slow CI runners (the strike-4 evidence — Windows,
+    // screen showing the restored pre-preview `Ln 1` after Esc) the
+    // scan's `files_loaded` delivery lands seconds after Ctrl+P, inside
+    // the click window, and its suggestion refresh re-enters
+    // `apply_goto_line_preview` between the observed frame and the
+    // click's hit-test. Locally the scan completes in milliseconds,
+    // which is why this never reproduced (25/25 under load). Quiescence
+    // first makes the interleaving impossible rather than unlikely.
+    harness
+        .wait_for_async_quiescence(3)
+        .expect("async pipeline should go quiet after the file scan");
+
     if let Err(e) = harness.wait_until_stable(|h| {
         let s = h.screen_to_string();
         s.contains(" 78 │ LINE78") && s.contains("Go to line 80")
@@ -440,6 +453,20 @@ fn test_quick_open_goto_line_live_preview_mouse_click_commits() {
             harness.screen_to_string()
         );
     }
+
+    // Post-click evidence for any future failure (nextest surfaces
+    // captured stderr only when the test fails): the byte position
+    // tells whether the click committed (line 78 ≈ byte 540) or was
+    // absorbed (still at the preview target, line 80), and the frame
+    // shows the popup/viewport state the click was hit-tested against.
+    if let Err(e) = harness.render() {
+        panic!("post-click render errored: {e:#}");
+    }
+    eprintln!(
+        "post-click: cursor_byte={} screen:\n{}",
+        harness.cursor_position(),
+        harness.screen_to_string()
+    );
 
     if let Err(e) = harness.send_key(KeyCode::Esc, KeyModifiers::NONE) {
         panic!(
