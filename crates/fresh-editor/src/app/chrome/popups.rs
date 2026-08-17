@@ -7,11 +7,9 @@ use crate::input::keybindings::Action;
 use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, ChromePointer, ChromeTreeBuilder, Disposition, Editor, PointerPress};
-
-fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
-    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
-}
+use super::{
+    in_rect, ChromeComponent, ChromePointer, ChromeTreeBuilder, Disposition, Editor, PointerPress,
+};
 
 pub(crate) struct Popups;
 

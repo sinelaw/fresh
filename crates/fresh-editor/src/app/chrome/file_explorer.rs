@@ -4,11 +4,9 @@ use crate::app::types::HoverTarget;
 use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, ChromePointer, ChromeTreeBuilder, Disposition, Editor, PointerPress};
-
-fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
-    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
-}
+use super::{
+    in_rect, ChromeComponent, ChromePointer, ChromeTreeBuilder, Disposition, Editor, PointerPress,
+};
 
 pub(crate) struct FileExplorer;
 
@@ -526,5 +524,109 @@ impl Editor {
             .direct_paths_under(dir_path);
 
         (!modified_files.is_empty()).then_some(modified_files)
+    }
+    pub(super) fn execute_file_explorer_context_menu_action(
+        &mut self,
+        item: crate::app::types::FileExplorerContextMenuItem,
+    ) {
+        use crate::app::types::FileExplorerContextMenuItem;
+        match item {
+            FileExplorerContextMenuItem::NewFile => self.file_explorer_new_file(),
+            FileExplorerContextMenuItem::NewDirectory => self.file_explorer_new_directory(),
+            FileExplorerContextMenuItem::Rename => self.file_explorer_rename(),
+            FileExplorerContextMenuItem::Cut => self.active_window_mut().file_explorer_cut(),
+            FileExplorerContextMenuItem::Copy => self.active_window_mut().file_explorer_copy(),
+            FileExplorerContextMenuItem::Paste => self.file_explorer_paste(),
+            FileExplorerContextMenuItem::Duplicate => self.file_explorer_duplicate(),
+            FileExplorerContextMenuItem::Delete => self.file_explorer_delete(),
+            FileExplorerContextMenuItem::CopyFullPath => self.file_explorer_copy_path(false),
+            FileExplorerContextMenuItem::CopyRelativePath => self.file_explorer_copy_path(true),
+        }
+    }
+
+    /// Handle click in file explorer
+    pub(super) fn handle_file_explorer_click(
+        &mut self,
+        col: u16,
+        row: u16,
+        explorer_area: ratatui::layout::Rect,
+    ) -> AnyhowResult<()> {
+        // Check if click is on the title bar (first row)
+        if row == explorer_area.y {
+            // Check if click is on close button (× at right side of title bar)
+            // Close button is at position: explorer_area.x + explorer_area.width - 3 to -1
+            let close_button_x = explorer_area.x + explorer_area.width.saturating_sub(3);
+            if col >= close_button_x && col < explorer_area.x + explorer_area.width {
+                self.toggle_file_explorer();
+                return Ok(());
+            }
+        }
+
+        // Focus file explorer. `open_file_preview` below routes through
+        // `set_active_buffer`, which detects "leaving a terminal buffer
+        // while terminal_mode is on" and resets `key_context = Normal`
+        // (active_focus.rs:103-107) — clobbering our FileExplorer write
+        // and stealing focus to the previewed editor buffer (issue
+        // #2029, sub-issue 1b). Use `take_focus_for_file_explorer` so
+        // terminal_mode is cleared *before* the preview opens; then
+        // re-assert `key_context = FileExplorer` after the preview in
+        // case `set_active_buffer` reset it via one of its other
+        // branches (e.g. switching to a regular file buffer).
+        self.take_focus_for_file_explorer();
+
+        // Calculate which item was clicked (accounting for border and title)
+        // The file explorer has a 1-line border at top and bottom
+        let relative_row = row.saturating_sub(explorer_area.y + 1); // +1 for top border
+
+        if let Some(explorer) = self.file_explorer_mut().as_mut() {
+            if let Some((node_id, _indent)) =
+                explorer.get_display_node_at_viewport_row(relative_row as usize)
+            {
+                // Select this node
+                explorer.set_selected(Some(node_id));
+
+                // Check if it's a file or directory
+                let node = explorer.tree().get_node(node_id);
+                if let Some(node) = node {
+                    if node.is_dir() {
+                        // Toggle expand/collapse using the existing method
+                        self.file_explorer_toggle_expand();
+                    } else if node.is_file() {
+                        // Open the file but keep focus on file explorer (single click).
+                        // Double-click or Enter will focus the editor and promote to
+                        // a permanent tab. Single-click opens in "preview" mode so a
+                        // string of exploratory clicks doesn't accumulate tabs.
+                        let path = node.entry.path.clone();
+                        let name = node.entry.name.clone();
+                        match self.open_file_preview(&path) {
+                            Ok(_) => {
+                                self.set_status_message(
+                                    rust_i18n::t!("explorer.opened_file", name = &name).to_string(),
+                                );
+                            }
+                            Err(e) => {
+                                // Check if this is a large file encoding confirmation error
+                                if let Some(confirmation) = e.downcast_ref::<
+                                    crate::model::buffer::LargeFileEncodingConfirmation,
+                                >() {
+                                    self.start_large_file_encoding_confirmation(confirmation);
+                                } else {
+                                    self.set_status_message(
+                                        rust_i18n::t!("file.error_opening", error = e.to_string())
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                        }
+                        // `set_active_buffer` may have flipped key_context
+                        // back to Normal during the preview open; restore it.
+                        self.active_window_mut().key_context =
+                            crate::input::keybindings::KeyContext::FileExplorer;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }

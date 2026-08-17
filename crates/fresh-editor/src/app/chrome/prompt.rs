@@ -10,11 +10,9 @@ use crate::view::prompt::MAX_VISIBLE_SUGGESTIONS;
 use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, ChromePointer, ChromeTreeBuilder, Disposition, Editor, PointerPress};
-
-fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
-    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
-}
+use super::{
+    in_rect, ChromeComponent, ChromePointer, ChromeTreeBuilder, Disposition, Editor, PointerPress,
+};
 
 pub(crate) struct Prompt;
 
@@ -377,5 +375,38 @@ impl Editor {
             .mouse_state
             .dragging_prompt_scrollbar = true;
         Some(Ok(()))
+    }
+    /// Route a wheel event inside the floating-overlay prompt (Live Grep).
+    ///
+    /// The overlay is mouse-modal, so it always consumes the wheel (returns
+    /// true) when active — the event must never leak to the buffer below.
+    /// * Over the preview pane → scroll the preview.
+    /// * Anywhere else (result list, input, toolbar, frame) → scroll the
+    ///   result list *without* moving the selection.
+    ///
+    /// Bottom-anchored prompts (command palette, file finder) are left to
+    /// `handle_prompt_scroll`, which scrolls their dropdown the same
+    /// selection-preserving way.
+    pub(super) fn handle_overlay_prompt_scroll(&mut self, col: u16, row: u16, delta: i32) -> bool {
+        if !self.overlay_prompt_active() {
+            return false;
+        }
+        let preview_area = self.active_chrome().prompt_preview_area;
+        let results_visible = self
+            .active_chrome()
+            .prompt_results_area
+            .map(|r| r.height as usize)
+            .unwrap_or(0);
+        if let Some(preview) = preview_area {
+            if in_rect(col, row, preview) {
+                self.active_window_mut()
+                    .scroll_overlay_preview_by_lines(delta);
+                return true;
+            }
+        }
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
+            prompt.scroll_results(delta, results_visible);
+        }
+        true
     }
 }

@@ -13,7 +13,7 @@ use anyhow::Result as AnyhowResult;
 use crate::app::overlay::{Layer, LayerKind};
 use crate::input::keybindings::KeyContext;
 
-use super::{layer_rank, ChromeComponent, ChromeTreeBuilder, Editor};
+use super::{in_rect, layer_rank, ChromeComponent, ChromeTreeBuilder, Editor};
 
 fn settings_up(ed: &Editor) -> bool {
     ed.settings_state.as_ref().is_some_and(|s| s.visible)
@@ -159,5 +159,66 @@ impl ChromeComponent for WorkspaceTrust {
                 },
             ));
         }
+    }
+}
+
+/// Behavior owned by this component (moved from mouse_input.rs —
+/// the handlers its arms dispatch to).
+impl Editor {
+    /// Handle every mouse event while the workspace-trust modal is up. Left
+    /// clicks act on its controls (radio rows select + confirm; [ OK ] confirms
+    /// the current selection; the secondary button cancels or quits); the wheel
+    /// scrolls an overflowing dialog. Everything else is absorbed so nothing
+    /// reaches the buffer behind the modal.
+    pub(super) fn handle_workspace_trust_mouse(
+        &mut self,
+        mouse_event: crossterm::event::MouseEvent,
+    ) -> AnyhowResult<bool> {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        let col = mouse_event.column;
+        let row = mouse_event.row;
+        let layout = self.active_chrome().workspace_trust_dialog.clone();
+
+        match mouse_event.kind {
+            MouseEventKind::ScrollUp => {
+                self.workspace_trust_scroll = self.workspace_trust_scroll.saturating_sub(2);
+            }
+            MouseEventKind::ScrollDown => {
+                let max = layout.as_ref().map(|l| l.max_scroll).unwrap_or(0);
+                self.workspace_trust_scroll = (self.workspace_trust_scroll + 2).min(max);
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(layout) = layout {
+                    let hit = |r: ratatui::layout::Rect| in_rect(col, row, r);
+                    if hit(layout.ok) {
+                        let idx = self.current_workspace_trust_selection();
+                        self.confirm_workspace_trust(idx);
+                    } else if hit(layout.quit) {
+                        // Secondary: Cancel (close) when voluntarily opened,
+                        // Quit (exit the editor) for the mandatory open-time gate.
+                        self.hide_popup();
+                        if !self.workspace_trust_prompt_cancellable {
+                            self.should_quit = true;
+                        }
+                    } else if let Some(i) = layout.radios.iter().position(|r| hit(*r)) {
+                        // Selecting a radio is NOT consent. A click moves the
+                        // selection and leaves the dialog up; [ OK ] commits
+                        // it — the same two-step the keyboard already used
+                        // (`T`/`K`/`B` select, Enter/`O` confirm). Accepting
+                        // on click made "Trust folder & Allow Tooling" a
+                        // one-click grant of full execution rights on a
+                        // security prompt, with no chance to reconsider and
+                        // no way to read the option before committing to it.
+                        // The web UI forwards its radio clicks to this same
+                        // hit-test, so both frontends inherit the fix.
+                        self.set_workspace_trust_selection(i);
+                    }
+                    // else: click on the dialog body or dimmed backdrop — absorb.
+                }
+            }
+            // Drag / move / release / right-click / horizontal scroll: absorb.
+            _ => {}
+        }
+        Ok(true)
     }
 }

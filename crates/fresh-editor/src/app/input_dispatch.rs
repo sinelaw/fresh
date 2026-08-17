@@ -110,7 +110,8 @@ impl Editor {
     /// through to the Prompt / Popup blocks (which have their own
     /// fall-through semantics that don't fit a top-down kind-walk).
     ///
-    /// The mouse counterpart is `Editor::dispatch_modal_mouse`.
+    /// The mouse counterpart is the chrome components' `capture_mouse`
+    /// band (see `app::chrome`).
     fn dispatch_modal_keyboard(&mut self, event: &KeyEvent) -> Option<InputResult> {
         use crate::app::overlay::LayerKind;
 

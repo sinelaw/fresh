@@ -2404,9 +2404,10 @@ impl Editor {
         if settings_visible {
             // Dim everything behind the settings modal — the editor chrome
             // *and* the dock. The dock is input-inaccessible while the modal
-            // is up (`dispatch_modal_mouse` routes every click to settings),
-            // so leaving it at full brightness read as if it were still live
-            // beside a dialog that had already swallowed its input.
+            // is up (the Settings component's `capture_mouse` claims every
+            // click), so leaving it at full brightness read as if it were
+            // still live beside a dialog that had already swallowed its
+            // input.
             crate::view::dimming::apply_dimming(frame, area);
         }
         if let Some(ref mut settings_state) = self.settings_state {
@@ -4139,7 +4140,7 @@ impl Editor {
                     );
                 }
                 // Cache the rect for mouse hit testing in
-                // `mouse_input.rs::handle_click_prompt_scrollbar`.
+                // `chrome/prompt.rs::handle_click_prompt_scrollbar`.
                 self.active_chrome_mut().suggestions_scrollbar_rect = Some(scrollbar_rect);
             } else {
                 self.active_chrome_mut().suggestions_scrollbar_rect = None;

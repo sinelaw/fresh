@@ -333,6 +333,18 @@ to one) are DONE. Remaining, in order:
   the chrome plan's execution arc) is complete: every retirable
   geometry cache is retired, and what remains recorded is recorded
   by ruling, not by accident.
+  The re-audit sweep named three more members of this ruled class
+  that the list above omitted — same reasoning applies to each:
+  `workspace_trust_dialog` (paint-recorded dialog layout; the modal
+  band's handlers re-read the live dialog state before acting, so a
+  stale rect can misplace at most one pre-repaint click),
+  `prompt_toolbar_boxes`/`prompt_toolbar_origin` (a paint-recorded
+  `LayoutBox` tree — literally the `screen_space` clause), and
+  `Window.file_browser_layout` (paint-recorded dialog layout; the
+  FileBrowser component's no-layout-yet full-frame absorb fallback
+  is the staleness class handled explicitly). Also in this class by
+  construction: the floating panels' paint fields (`last_inner_rect`,
+  `scrollbar_tracks`, `popup_rect`/`popup_hits`, entries/overlays).
 
 ## What NOT to do
 

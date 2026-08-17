@@ -8,8 +8,9 @@
 //!   `super::click_geometry`).
 //! - `handle_editor_click`: dispatches mouse clicks to gutter / scrollbar
 //!   / cursor placement / multi-cursor add depending on modifiers.
-//! - `handle_file_explorer_click`: file-browser entry selection and
-//!   expand/collapse.
+//!
+//! (`handle_file_explorer_click` lives with its component in
+//! `chrome/file_explorer.rs`.)
 
 use anyhow::Result as AnyhowResult;
 
@@ -622,92 +623,6 @@ impl Editor {
         self.active_window_mut().mouse_state.drag_selection_split = Some(split_id);
         self.active_window_mut().mouse_state.drag_selection_anchor =
             Some(new_anchor.unwrap_or(target_position));
-
-        Ok(())
-    }
-
-    /// Handle click in file explorer
-    pub(super) fn handle_file_explorer_click(
-        &mut self,
-        col: u16,
-        row: u16,
-        explorer_area: ratatui::layout::Rect,
-    ) -> AnyhowResult<()> {
-        // Check if click is on the title bar (first row)
-        if row == explorer_area.y {
-            // Check if click is on close button (× at right side of title bar)
-            // Close button is at position: explorer_area.x + explorer_area.width - 3 to -1
-            let close_button_x = explorer_area.x + explorer_area.width.saturating_sub(3);
-            if col >= close_button_x && col < explorer_area.x + explorer_area.width {
-                self.toggle_file_explorer();
-                return Ok(());
-            }
-        }
-
-        // Focus file explorer. `open_file_preview` below routes through
-        // `set_active_buffer`, which detects "leaving a terminal buffer
-        // while terminal_mode is on" and resets `key_context = Normal`
-        // (active_focus.rs:103-107) — clobbering our FileExplorer write
-        // and stealing focus to the previewed editor buffer (issue
-        // #2029, sub-issue 1b). Use `take_focus_for_file_explorer` so
-        // terminal_mode is cleared *before* the preview opens; then
-        // re-assert `key_context = FileExplorer` after the preview in
-        // case `set_active_buffer` reset it via one of its other
-        // branches (e.g. switching to a regular file buffer).
-        self.take_focus_for_file_explorer();
-
-        // Calculate which item was clicked (accounting for border and title)
-        // The file explorer has a 1-line border at top and bottom
-        let relative_row = row.saturating_sub(explorer_area.y + 1); // +1 for top border
-
-        if let Some(explorer) = self.file_explorer_mut().as_mut() {
-            if let Some((node_id, _indent)) =
-                explorer.get_display_node_at_viewport_row(relative_row as usize)
-            {
-                // Select this node
-                explorer.set_selected(Some(node_id));
-
-                // Check if it's a file or directory
-                let node = explorer.tree().get_node(node_id);
-                if let Some(node) = node {
-                    if node.is_dir() {
-                        // Toggle expand/collapse using the existing method
-                        self.file_explorer_toggle_expand();
-                    } else if node.is_file() {
-                        // Open the file but keep focus on file explorer (single click).
-                        // Double-click or Enter will focus the editor and promote to
-                        // a permanent tab. Single-click opens in "preview" mode so a
-                        // string of exploratory clicks doesn't accumulate tabs.
-                        let path = node.entry.path.clone();
-                        let name = node.entry.name.clone();
-                        match self.open_file_preview(&path) {
-                            Ok(_) => {
-                                self.set_status_message(
-                                    rust_i18n::t!("explorer.opened_file", name = &name).to_string(),
-                                );
-                            }
-                            Err(e) => {
-                                // Check if this is a large file encoding confirmation error
-                                if let Some(confirmation) = e.downcast_ref::<
-                                    crate::model::buffer::LargeFileEncodingConfirmation,
-                                >() {
-                                    self.start_large_file_encoding_confirmation(confirmation);
-                                } else {
-                                    self.set_status_message(
-                                        rust_i18n::t!("file.error_opening", error = e.to_string())
-                                            .to_string(),
-                                    );
-                                }
-                            }
-                        }
-                        // `set_active_buffer` may have flipped key_context
-                        // back to Normal during the preview open; restore it.
-                        self.active_window_mut().key_context =
-                            crate::input::keybindings::KeyContext::FileExplorer;
-                    }
-                }
-            }
-        }
 
         Ok(())
     }

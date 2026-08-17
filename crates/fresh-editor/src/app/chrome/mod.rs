@@ -55,6 +55,11 @@ pub(crate) mod layer_rank {
 use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 
+/// Shared cell-in-rect test for component geometry.
+pub(crate) fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
+    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+}
+
 /// One box in the per-event chrome tree: the geometry (the SAME
 /// `LayoutBox` type the panel model uses, so hit math and flags are
 /// shared) plus which registered component owns it — dispatch calls

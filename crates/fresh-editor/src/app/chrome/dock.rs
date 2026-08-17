@@ -1,5 +1,6 @@
 //! The left dock column (orchestrator sessions panel).
 
+use crate::app::types::HoverTarget;
 use crate::widgets::LayoutBox;
 
 use super::{ChromeComponent, ChromeTreeBuilder, Editor};
@@ -101,6 +102,40 @@ impl ChromeComponent for Dock {
             }
             _ => Ok(Disposition::Pass),
         }
+    }
+
+    fn on_hover_change(
+        &self,
+        ed: &mut Editor,
+        _old: Option<&HoverTarget>,
+        _new: Option<&HoverTarget>,
+        col: u16,
+        row: u16,
+    ) -> bool {
+        // The dock's overlay scrollbar follows the pointer: reveal it
+        // while the mouse is over the sessions list, hide it otherwise.
+        // Tracked off the actual motion events we receive (not gated on
+        // `mouse_hover_enabled`, which only governs terminal-level mode
+        // 1003 — and is off by default on Windows): if a Moved event
+        // arrives, use it. Keyed on col/row, not the target diff.
+        // Re-render only on the enter/leave transition (not every
+        // motion) so it fades in/out without churn.
+        let now_over = ed
+            .dock
+            .as_ref()
+            .map(|d| {
+                d.scrollbar_hover_zones.iter().any(|z| {
+                    col >= z.x && col < z.x + z.width && row >= z.y && row < z.y + z.height
+                })
+            })
+            .unwrap_or(false);
+        if let Some(d) = ed.dock.as_mut() {
+            if d.scrollbar_zone_hovered != now_over {
+                d.scrollbar_zone_hovered = now_over;
+                return true;
+            }
+        }
+        false
     }
 
     fn on_wheel(
