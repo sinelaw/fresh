@@ -141,3 +141,48 @@ impl ChromeComponent for ContextMenu {
         }
     }
 }
+
+/// Behavior owned by this component (moved from mouse_input.rs —
+/// the handlers its arms dispatch to).
+impl Editor {
+    /// Route a left-click to whichever native context menu is open (tab /
+    /// "+" new-tab / file-explorer). Returns `None` when no menu is open so
+    /// the caller continues the normal click pipeline.
+    ///
+    /// The shared geometry core does the hit-test; only the *activation* of a
+    /// selected item differs per menu, so that is the one part that branches
+    /// on [`ContextMenuKind`]. Click-outside dismisses; border rows are inert;
+    /// an item click closes the menu and runs its `execute_*` action.
+    pub(super) fn handle_click_context_menus(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
+        use crate::app::types::ContextMenuHit;
+
+        let (kind, core) = self.active_window().open_context_menu()?;
+        let hit = core.hit(
+            col,
+            row,
+            self.active_chrome().last_frame.width,
+            self.active_chrome().last_frame.height,
+        );
+        match hit {
+            // Click outside the box dismisses the menu.
+            ContextMenuHit::Outside => {
+                self.active_window_mut().close_context_menus();
+                Some(Ok(()))
+            }
+            // Border rows are inert — swallow without acting or closing.
+            ContextMenuHit::Border => Some(Ok(())),
+            // An item click moves the highlight to it and activates through
+            // the same path as a keyboard Enter.
+            ContextMenuHit::Item(idx) => {
+                if let Some(core) = self.active_window_mut().context_menu_core_mut() {
+                    core.highlighted = idx;
+                }
+                Some(self.activate_highlighted_context_menu(kind))
+            }
+        }
+    }
+}
