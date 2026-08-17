@@ -477,12 +477,6 @@ function getViewportWidth(): number {
   return DEFAULT_WIDTH;
 }
 
-function getViewportHeight(): number {
-  const vp = editor.getViewport();
-  if (vp && vp.height > 0) return vp.height;
-  return 30;
-}
-
 // =============================================================================
 // Panel content builder — compact two-line control bar + match tree
 // =============================================================================
@@ -823,17 +817,15 @@ function buildMatchListSpec(): WidgetSpec {
   const itemKeys = flatItems.map(flatItemKey);
   const nodes = flatItemsToTreeNodes(flatItems, itemKeys, W);
   const selectedIndex = panel.focusPanel === "matches" ? panel.matchIndex : -1;
-  // Tree visible rows = panel viewport height minus the chrome
-  // (line 1 + options row + separator + footer = 4 rows) — same
-  // calculation that sized the previous List.
-  const fixedRows = 5;
-  const visibleRows = Math.max(3, getViewportHeight() - fixedRows);
 
+  // No `visibleRows`: the host auto-sizes the tree to the panel height
+  // minus whatever rows the surrounding chrome occupies. (This used to
+  // be `getViewportHeight() - fixedRows` with a hand-counted chrome
+  // constant that had already drifted from its own comment.)
   return tree({
     nodes,
     itemKeys,
     selectedIndex,
-    visibleRows,
     expandedKeys: [...panel.expandedFileKeys],
     checkable: true,
     key: "matchTree",

@@ -1778,6 +1778,7 @@ mod wave_dismiss_tests {
             HashMap::new(),
             "field".to_string(),
             vec!["field".to_string()],
+            HashMap::new(),
             Vec::new(),
         );
         editor.floating_widget_panel = Some(crate::app::FloatingWidgetState {
@@ -1790,7 +1791,7 @@ mod wave_dismiss_tests {
             focus_cursor: None,
             embeds: Vec::new(),
             overlays: Vec::new(),
-            scroll_regions: Vec::new(),
+            boxes: Vec::new(),
             scrollbar_tracks: Vec::new(),
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
@@ -1805,9 +1806,9 @@ mod wave_dismiss_tests {
             close_button_rect: None,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
-            dropdown_popup: None,
-            dropdown_popup_hits: Vec::new(),
-            dropdown_popup_rect: None,
+            popup: None,
+            popup_hits: Vec::new(),
+            popup_rect: None,
         });
 
         let consumed = server

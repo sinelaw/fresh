@@ -26,7 +26,6 @@ impl Editor {
             self.active_window_mut().theme_info_popup = Some(ThemeInfoPopup {
                 position: (popup_x, popup_y),
                 info,
-                button_highlighted: false,
             });
         }
         Ok(())
@@ -242,7 +241,13 @@ impl Editor {
         }
 
         lines.push(Line::from(""));
-        let button_style = if popup.button_highlighted {
+        // Highlight derived from the chrome hover walk's target — the
+        // ThemeInfo component names the button row; no per-move state.
+        let button_hovered = matches!(
+            self.active_window().mouse_state.hover_target,
+            Some(crate::app::types::HoverTarget::ThemeInfoButton)
+        );
+        let button_style = if button_hovered {
             Style::default()
                 .fg(theme.popup_selection_fg)
                 .bg(theme.popup_selection_bg)

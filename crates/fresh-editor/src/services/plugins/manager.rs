@@ -398,6 +398,21 @@ impl PluginManager {
             .map(|m| m.execute_action_async(action_name, args_json, request_id))
     }
 
+    /// Typed fast lane for a text-input mode's printable characters —
+    /// see `PluginThread::mode_text_input_async`. FIFO with
+    /// `execute_action_async`.
+    #[cfg(feature = "plugins")]
+    pub fn mode_text_input_async(
+        &self,
+        mode: Option<&str>,
+        text: &str,
+    ) -> Option<anyhow::Result<fresh_plugin_runtime::thread::oneshot::Receiver<anyhow::Result<()>>>>
+    {
+        self.inner
+            .as_ref()
+            .map(|m| m.mode_text_input_async(mode, text))
+    }
+
     /// List all loaded plugins.
     #[cfg(feature = "plugins")]
     pub fn list_plugins(

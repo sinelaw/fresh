@@ -29,7 +29,7 @@ impl Editor {
     /// first, and the wrong branch would claim the key.
     ///
     /// Global popups shadow buffer popups for keyboard focus (see
-    /// `input_dispatch::dispatch_modal_input`), so the confirm path
+    /// the Popups component's `dispatch_popup_keys`), so the confirm path
     /// picks the same popup: global first, then the active buffer.
     pub fn handle_popup_confirm(&mut self) -> PopupConfirmResult {
         use crate::view::popup::PopupResolver;
@@ -482,7 +482,7 @@ impl Editor {
     /// events route into the popup's input handler.
     ///
     /// Editor-level (global) popups shadow buffer popups for keyboard
-    /// focus, mirroring the priority encoded in `dispatch_modal_input`,
+    /// focus, mirroring the priority encoded in `dispatch_popup_keys`,
     /// so we focus whichever popup the user actually sees.
     ///
     /// No-op when no popup is visible — the user pressing the

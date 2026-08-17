@@ -5140,8 +5140,19 @@ impl Editor {
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.widget_panel_width(buffer_id);
-        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width);
+        let avail_height = self.widget_panel_height(buffer_id);
+        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
         let focus_cursor = out.focus_cursor;
+        // KNOWN LIMITATION (deliberate, recorded in the v2 review doc):
+        // buffer-mounted panels consume only the base rows + hits —
+        // `out.overlays` and `out.popup` are DROPPED, and the click
+        // path resolves with `on_overlay=false`. The popup/overlay
+        // channels (Overlay children, open Dropdown pop-overs, Text
+        // completions) work only in the floating/dock slots today;
+        // wiring them for mounted panels needs paint-time compositing
+        // over split content — a renderer arc of its own. A mounted
+        // panel using those channels will neither paint nor click them:
+        // prefer a floating slot for popup-bearing UI until that lands.
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
@@ -5150,7 +5161,8 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
-            out.scroll_regions,
+            out.effective_rows,
+            out.boxes,
         );
         // Mark the buffer as hosting an interactive widget panel so the
         // focus/click paths keep routing focus to it even when it opts out
@@ -5207,7 +5219,8 @@ impl Editor {
             .map(|(b, _)| b)
             .unwrap_or(BufferId(0));
         let panel_width = self.widget_panel_width(buffer_id_for_width);
-        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width);
+        let avail_height = self.widget_panel_height(buffer_id_for_width);
+        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         match self.widget_registry.update(
@@ -5217,7 +5230,8 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
-            out.scroll_regions,
+            out.effective_rows,
+            out.boxes,
         ) {
             Ok(buffer_id) => {
                 if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
@@ -5342,7 +5356,7 @@ impl Editor {
                 // of clobbering it with a List state (which drops the
                 // expanded-keys set and never moves the highlight).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    Self::set_widget_selected_index_state(panel, &widget_key, index);
+                    panel.set_selected_index(&widget_key, index);
                 }
             }
             WidgetMutation::SetNumber { widget_key, value } => {
@@ -5351,18 +5365,11 @@ impl Editor {
                 // rerender repaints. No `change` event — a plugin-driven
                 // set is not a user edit (matches SetValue).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let (min, max) =
-                        match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
-                            Some(fresh_core::api::WidgetSpec::Number { min, max, .. }) => {
-                                (*min, *max)
-                            }
-                            _ => (None, None),
-                        };
-                    let clamped = crate::widgets::clamp_number(value, min, max);
-                    panel.instance_states.insert(
-                        widget_key.clone(),
-                        crate::widgets::WidgetInstanceState::Number { value: clamped },
-                    );
+                    if let Some(spec) = crate::widgets::find_widget_by_key(&panel.spec, &widget_key)
+                    {
+                        let state = crate::widgets::kinds::number::set_value_state(spec, value);
+                        panel.instance_states.insert(widget_key.clone(), state);
+                    }
                 }
             }
             WidgetMutation::SetDropdown { widget_key, index } => {
@@ -5370,28 +5377,15 @@ impl Editor {
                 // clamp to the option set and write it. The trailing
                 // rerender repaints. No `change` event (matches SetValue).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let len = match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
-                        Some(fresh_core::api::WidgetSpec::Dropdown { options, .. }) => {
-                            options.len()
-                        }
-                        _ => 0,
-                    };
-                    let clamped = if len == 0 {
-                        0
-                    } else {
-                        index.clamp(0, len as i32 - 1)
-                    };
-                    let open = matches!(
-                        panel.instance_states.get(&widget_key),
-                        Some(crate::widgets::WidgetInstanceState::Dropdown { open: true, .. })
-                    );
-                    panel.instance_states.insert(
-                        widget_key.clone(),
-                        crate::widgets::WidgetInstanceState::Dropdown {
-                            selected_index: clamped,
-                            open,
-                        },
-                    );
+                    if let Some(spec) = crate::widgets::find_widget_by_key(&panel.spec, &widget_key)
+                    {
+                        let state = crate::widgets::kinds::dropdown::set_index_state(
+                            spec,
+                            panel.instance_states.get(&widget_key),
+                            index,
+                        );
+                        panel.instance_states.insert(widget_key.clone(), state);
+                    }
                 }
             }
             WidgetMutation::SetDualIncluded {
@@ -5402,32 +5396,15 @@ impl Editor {
                 // drop unknown values and preserve/reset cursors. The
                 // trailing rerender repaints. No `change` event.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let sanitized =
-                        match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
-                            Some(fresh_core::api::WidgetSpec::DualList { options, .. }) => {
-                                crate::widgets::dual_sanitize_included(options, &included)
-                            }
-                            _ => included.clone(),
-                        };
-                    let (active, avail_cur, incl_cur) = match panel.instance_states.get(&widget_key)
+                    if let Some(spec) = crate::widgets::find_widget_by_key(&panel.spec, &widget_key)
                     {
-                        Some(crate::widgets::WidgetInstanceState::DualList {
-                            active_included,
-                            available_cursor,
-                            included_cursor,
-                            ..
-                        }) => (*active_included, *available_cursor, *included_cursor),
-                        _ => (false, 0, 0),
-                    };
-                    panel.instance_states.insert(
-                        widget_key.clone(),
-                        crate::widgets::WidgetInstanceState::DualList {
-                            included: sanitized,
-                            active_included: active,
-                            available_cursor: avail_cur,
-                            included_cursor: incl_cur,
-                        },
-                    );
+                        let state = crate::widgets::kinds::dual_list::set_included_state(
+                            spec,
+                            panel.instance_states.get(&widget_key),
+                            &included,
+                        );
+                        panel.instance_states.insert(widget_key.clone(), state);
+                    }
                 }
             }
             WidgetMutation::SetCompletions { widget_key, items } => {
@@ -5638,7 +5615,7 @@ impl Editor {
             focus_cursor: None,
             embeds: Vec::new(),
             overlays: Vec::new(),
-            scroll_regions: Vec::new(),
+            boxes: Vec::new(),
             scrollbar_tracks: Vec::new(),
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
@@ -5656,9 +5633,9 @@ impl Editor {
             close_button_rect: None,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
-            dropdown_popup: None,
-            dropdown_popup_hits: Vec::new(),
-            dropdown_popup_rect: None,
+            popup: None,
+            popup_hits: Vec::new(),
+            popup_rect: None,
         });
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
@@ -5674,6 +5651,7 @@ impl Editor {
                 &prev,
                 &prev_focus,
                 panel_width,
+                self.floating_panel_inner_height(slot),
                 "",
                 "",
                 Some(crate::widgets::MarkdownCtx {
@@ -5686,8 +5664,8 @@ impl Editor {
         let entries = out.entries;
         let embeds = out.embeds;
         let overlays = out.overlays;
-        let scroll_regions = out.scroll_regions;
-        let dropdown_popup = out.dropdown_popup;
+        let panel_boxes = out.boxes.clone();
+        let popup = out.popup;
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
@@ -5696,15 +5674,16 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
-            scroll_regions.clone(),
+            out.effective_rows,
+            out.boxes,
         );
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
             fwp.overlays = overlays;
-            fwp.scroll_regions = scroll_regions;
-            fwp.dropdown_popup = dropdown_popup;
+            fwp.boxes = panel_boxes;
+            fwp.popup = popup;
         }
         tracing::debug!(
             "Mounted floating widget panel {} ({}%x{}%)",
@@ -5764,6 +5743,7 @@ impl Editor {
                 &prev,
                 &prev_focus,
                 panel_width,
+                self.floating_panel_inner_height(slot),
                 &hover_key,
                 &hover_item_key,
                 Some(crate::widgets::MarkdownCtx {
@@ -5776,8 +5756,8 @@ impl Editor {
         let entries = out.entries;
         let embeds = out.embeds;
         let overlays = out.overlays;
-        let scroll_regions = out.scroll_regions;
-        let dropdown_popup = out.dropdown_popup;
+        let panel_boxes = out.boxes.clone();
+        let popup = out.popup;
         if self
             .widget_registry
             .update(
@@ -5787,7 +5767,8 @@ impl Editor {
                 out.instance_states,
                 out.focus_key,
                 out.tabbable,
-                scroll_regions.clone(),
+                out.effective_rows,
+                out.boxes,
             )
             .is_err()
         {
@@ -5802,8 +5783,8 @@ impl Editor {
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
             fwp.overlays = overlays;
-            fwp.scroll_regions = scroll_regions;
-            fwp.dropdown_popup = dropdown_popup;
+            fwp.boxes = panel_boxes;
+            fwp.popup = popup;
         }
     }
 

@@ -46,7 +46,7 @@ fresh-input-parser = { version = "0.4.9", path = "crates/fresh-input-parser" }
 fresh-update = { version = "0.4.9", path = "crates/fresh-update" }
 
 # External crates
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 jsonc-parser = { version = "0.32", features = ["serde", "serde_json", "cst"] }
 anyhow = { version = "1.0.100", default-features = false }

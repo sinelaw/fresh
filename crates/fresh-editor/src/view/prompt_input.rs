@@ -43,52 +43,15 @@ impl InputHandler for Prompt {
             }
             KeyCode::Char(c) if ctrl => self.handle_ctrl_key(c, ctx),
 
-            // Deletion
-            KeyCode::Backspace if ctrl => {
-                self.delete_word_backward();
-                ctx.defer(DeferredAction::UpdatePromptSuggestions);
-                InputResult::Consumed
-            }
-            KeyCode::Backspace => {
-                if self.has_selection() {
-                    self.delete_selection();
-                } else {
-                    self.backspace();
-                }
-                ctx.defer(DeferredAction::UpdatePromptSuggestions);
-                InputResult::Consumed
-            }
-            KeyCode::Delete if ctrl => {
-                self.delete_word_forward();
-                ctx.defer(DeferredAction::UpdatePromptSuggestions);
-                InputResult::Consumed
-            }
-            KeyCode::Delete => {
-                if self.has_selection() {
-                    self.delete_selection();
-                } else {
-                    self.delete();
-                }
-                ctx.defer(DeferredAction::UpdatePromptSuggestions);
-                InputResult::Consumed
-            }
-
-            // Cursor movement
+            // Word motion stays prompt policy (buffer-style
+            // next-word-start / select-to-word-end — deliberately
+            // different from the engine's word hops).
             KeyCode::Left if ctrl && shift => {
                 self.move_word_left_selecting();
                 InputResult::Consumed
             }
             KeyCode::Left if ctrl => {
                 self.move_word_left();
-                InputResult::Consumed
-            }
-            KeyCode::Left if shift => {
-                self.move_left_selecting();
-                InputResult::Consumed
-            }
-            KeyCode::Left => {
-                self.clear_selection();
-                self.cursor_left();
                 InputResult::Consumed
             }
             KeyCode::Right if ctrl && shift => {
@@ -99,31 +62,18 @@ impl InputHandler for Prompt {
                 self.move_word_right();
                 InputResult::Consumed
             }
-            KeyCode::Right if shift => {
-                self.move_right_selecting();
+
+            // Every remaining editing key rides the shared text-key
+            // table (one `key → op` mapping with the Settings fields
+            // and widget Text): Backspace/Delete (word variants via
+            // Ctrl), and plain/Shift arrows and Home/End.
+            KeyCode::Backspace | KeyCode::Delete => {
+                self.handle_text_key(event);
+                ctx.defer(DeferredAction::UpdatePromptSuggestions);
                 InputResult::Consumed
             }
-            KeyCode::Right => {
-                self.clear_selection();
-                self.cursor_right();
-                InputResult::Consumed
-            }
-            KeyCode::Home if shift => {
-                self.move_home_selecting();
-                InputResult::Consumed
-            }
-            KeyCode::Home => {
-                self.clear_selection();
-                self.move_to_start();
-                InputResult::Consumed
-            }
-            KeyCode::End if shift => {
-                self.move_end_selecting();
-                InputResult::Consumed
-            }
-            KeyCode::End => {
-                self.clear_selection();
-                self.move_to_end();
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
+                self.handle_text_key(event);
                 InputResult::Consumed
             }
 
@@ -152,9 +102,7 @@ impl InputHandler for Prompt {
                             );
                         if should_sync {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
-                                self.input = suggestion.get_value().to_string();
-                                self.cursor_pos = self.input.len();
-                                self.selection_anchor = Some(0);
+                                self.set_input_selected(suggestion.get_value().to_string());
                             }
                         }
                         // For theme selection, trigger live preview
@@ -198,9 +146,7 @@ impl InputHandler for Prompt {
                             );
                         if should_sync {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
-                                self.input = suggestion.get_value().to_string();
-                                self.cursor_pos = self.input.len();
-                                self.selection_anchor = Some(0);
+                                self.set_input_selected(suggestion.get_value().to_string());
                             }
                         }
                         // For theme selection, trigger live preview
@@ -259,25 +205,23 @@ impl InputHandler for Prompt {
                         if !suggestion.disabled {
                             let value = suggestion.get_value().to_string();
                             // For QuickOpen mode, preserve the prefix character
-                            if matches!(
+                            let accepted = if matches!(
                                 self.prompt_type,
                                 crate::view::prompt::PromptType::QuickOpen
                             ) {
-                                let prefix = self
-                                    .input
+                                match self
+                                    .input_str()
                                     .chars()
                                     .next()
-                                    .filter(|c| *c == '>' || *c == '#' || *c == ':');
-                                if let Some(p) = prefix {
-                                    self.input = format!("{}{}", p, value);
-                                } else {
-                                    self.input = value;
+                                    .filter(|c| *c == '>' || *c == '#' || *c == ':')
+                                {
+                                    Some(p) => format!("{}{}", p, value),
+                                    None => value,
                                 }
                             } else {
-                                self.input = value;
-                            }
-                            self.cursor_pos = self.input.len();
-                            self.clear_selection();
+                                value
+                            };
+                            self.set_input(accepted);
                         }
                     }
                 }
@@ -305,9 +249,9 @@ impl Prompt {
     fn handle_ctrl_key(&mut self, c: char, ctx: &mut InputContext) -> InputResult {
         match c {
             'a' => {
-                // Select all
-                self.selection_anchor = Some(0);
-                self.cursor_pos = self.input.len();
+                // Select all: caret to end, anchor at start.
+                let text = self.input_str().to_string();
+                self.set_input_selected(text);
                 InputResult::Consumed
             }
             'c' => {
@@ -401,51 +345,51 @@ mod tests {
             &mut ctx,
         );
 
-        assert_eq!(prompt.input, "hi");
-        assert_eq!(prompt.cursor_pos, 2);
+        assert_eq!(prompt.input_str(), "hi");
+        assert_eq!(prompt.cursor_byte(), 2);
     }
 
     #[test]
     fn test_prompt_backspace() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello".to_string();
-        prompt.cursor_pos = 5;
+        prompt.set_input_plain("hello".to_string());
+        prompt.set_cursor_byte(5);
         let mut ctx = InputContext::new();
 
         prompt.handle_key_event(&key(KeyCode::Backspace), &mut ctx);
-        assert_eq!(prompt.input, "hell");
-        assert_eq!(prompt.cursor_pos, 4);
+        assert_eq!(prompt.input_str(), "hell");
+        assert_eq!(prompt.cursor_byte(), 4);
     }
 
     #[test]
     fn test_prompt_cursor_movement() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello".to_string();
-        prompt.cursor_pos = 5;
+        prompt.set_input_plain("hello".to_string());
+        prompt.set_cursor_byte(5);
         let mut ctx = InputContext::new();
 
         // Move to start
         prompt.handle_key_event(&key(KeyCode::Home), &mut ctx);
-        assert_eq!(prompt.cursor_pos, 0);
+        assert_eq!(prompt.cursor_byte(), 0);
 
         // Move to end
         prompt.handle_key_event(&key(KeyCode::End), &mut ctx);
-        assert_eq!(prompt.cursor_pos, 5);
+        assert_eq!(prompt.cursor_byte(), 5);
 
         // Move left
         prompt.handle_key_event(&key(KeyCode::Left), &mut ctx);
-        assert_eq!(prompt.cursor_pos, 4);
+        assert_eq!(prompt.cursor_byte(), 4);
 
         // Move right
         prompt.handle_key_event(&key(KeyCode::Right), &mut ctx);
-        assert_eq!(prompt.cursor_pos, 5);
+        assert_eq!(prompt.cursor_byte(), 5);
     }
 
     #[test]
     fn test_prompt_selection() {
         let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
-        prompt.input = "hello world".to_string();
-        prompt.cursor_pos = 0;
+        prompt.set_input_plain("hello world".to_string());
+        prompt.set_cursor_byte(0);
         let mut ctx = InputContext::new();
 
         // Select with Shift+Right

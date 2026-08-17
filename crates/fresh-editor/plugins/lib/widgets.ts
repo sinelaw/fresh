@@ -367,7 +367,10 @@ export function spacer(cols: number, key?: string): WidgetSpec {
 
 /** Flex horizontal spacer — fills remaining row width
  * (`panel_width - sum(non-flex children)`). Use to right-align a
- * trailing widget: `row(label, flexSpacer(), button)`. With
+ * trailing widget: `row(label, flexSpacer(), button)`. Inside a
+ * `col` on a height-budgeted panel it absorbs leftover ROWS instead —
+ * `col(content, flexSpacer(), hintBar)` pins the hints to the panel
+ * bottom without counting chrome rows. With
  * multiple flex spacers in one row the leftover splits evenly. */
 export function flexSpacer(key?: string): WidgetSpec {
   return { kind: "spacer", cols: 0, flex: true, key };
@@ -394,10 +397,15 @@ export function divider(
 
 /** Vertical list of pre-rendered rows with host-managed selection
  * styling, click routing, and **virtual scrolling**. Plugin passes
- * the full dataset of items + a `visibleRows` count; the widget
- * owns scroll offset as instance state (keyed by `key`) and
- * auto-clamps it to keep `selectedIndex` in view. Plugins never
- * compute scroll math.
+ * the full dataset of items; the widget owns scroll offset as
+ * instance state (keyed by `key`) and auto-clamps it to keep
+ * `selectedIndex` in view. Plugins never compute scroll math.
+ *
+ * Omit `visibleRows` to auto-size: the host windows the list to the
+ * panel height it already knows, minus the rows the list's Col
+ * siblings occupy — so a panel with a header and footer never needs
+ * `getViewportHeight()` arithmetic. Pass an explicit count only to
+ * pin the window (at most one auto-sized list/tree per Col).
  *
  * Click on a row fires `widget_event` with `eventType: "select"` and
  * `payload: { index, key }` where `index` is the *absolute* index
@@ -417,7 +425,10 @@ export function list(options: {
   itemSpecs?: WidgetSpec[];
   itemKeys?: string[];
   selectedIndex?: number;
-  visibleRows: number;
+  /** Rows this widget windows to. Omit to auto-size from the
+   * host-known panel height (recommended); an explicit value pins
+   * the window. */
+  visibleRows?: number;
   /** Whether Tab / Shift+Tab lands focus on this list. Default
    * true (matches other tabbable widgets). Set to false in
    * picker-style layouts where the filter input stays focused
@@ -503,7 +514,10 @@ export function tree(options: {
   nodes: TreeNode[];
   itemKeys?: string[];
   selectedIndex?: number;
-  visibleRows: number;
+  /** Rows this widget windows to. Omit to auto-size from the
+   * host-known panel height (recommended); an explicit value pins
+   * the window. */
+  visibleRows?: number;
   /** Initial expanded keys; subsequent expansion changes are
    * host-owned and don't read this field. Use
    * `panel.setExpandedKeys(...)` to override host state after
@@ -787,6 +801,50 @@ export function overlay(
 ): WidgetSpec {
   return {
     kind: "overlay",
+    child,
+    key: options?.key,
+  };
+}
+
+/** A popup layer: the child paints OVER the panel's rows (like
+ * `overlay`) as a first-class tree node — part of the layout-box
+ * tree, pointer-opaque, and slated to grow screen-space anchoring
+ * so a popup near a panel edge is not clipped. Prefer this over
+ * `overlay` for new popup UI. */
+export function popup(
+  child: WidgetSpec,
+  options?: {
+    key?: string;
+    /** Anchor [row, col] in panel-inner coordinates the popup drops
+     * from (host resolves the final rect: below the anchor, flipping
+     * above near the frame edge, clamped on screen). */
+    anchor?: [number, number];
+    /** Escape the panel's clipping and paint at screen level (what
+     * the dropdown pop-over does). Default: panel-clipped. */
+    screenSpace?: boolean;
+  },
+): WidgetSpec {
+  return {
+    kind: "popup",
+    child,
+    key: options?.key,
+    anchor: options?.anchor,
+    screenSpace: options?.screenSpace ?? false,
+  };
+}
+
+/** A focus and event scope around a subtree — the unit for composing
+ * reusable pieces. Renders its child transparently (no chrome of its
+ * own); Tab / Shift+Tab cycle among the focusable widgets INSIDE the
+ * component instead of the whole panel, so a picker or dialog subtree
+ * keeps its own ring without hand-written focus code. Give it a `key`
+ * for stable identity (keyed reconciliation, targeted swaps). */
+export function component(
+  child: WidgetSpec,
+  options?: { key?: string },
+): WidgetSpec {
+  return {
+    kind: "component",
     child,
     key: options?.key,
   };

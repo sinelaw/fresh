@@ -188,12 +188,13 @@ impl Editor {
     /// structure, enabled/checked state and accelerators are derived; the TUI
     /// renderer and the web bridge both consume this rather than recomputing it.
     ///
-    /// Geometry (`x`/`w`, dropdown rects) comes from the pipeline's `MenuLayout`,
-    /// which is populated during render — so this reflects the most recent frame.
+    /// Geometry (`x`/`w`, dropdown rects) comes from `menu_layout_now` — the
+    /// same live-state layout walk the TUI paints from.
     pub fn menu_view(&self) -> MenuView {
-        let chrome = self.active_chrome();
-        let menu_areas: HashMap<usize, Rect> = chrome
-            .menu_layout
+        // Geometry derived from live state — the same layout walk the TUI
+        // paints from (`menu_layout_now`), not a paint recording.
+        let menu_layout = self.menu_layout_now();
+        let menu_areas: HashMap<usize, Rect> = menu_layout
             .as_ref()
             .map(|m| m.menu_areas.iter().cloned().collect())
             .unwrap_or_default();
@@ -213,7 +214,7 @@ impl Editor {
             })
             .collect();
 
-        let dropdown = chrome.menu_layout.as_ref().and_then(|ml| {
+        let dropdown = menu_layout.as_ref().and_then(|ml| {
             if ml.item_areas.is_empty() {
                 return None;
             }
@@ -480,11 +481,11 @@ impl Editor {
             p.suggestions.len(),
             p.suggestions.len(),
         ));
-        // Search-option toggles: mirror the TUI's options row from the layout
-        // the renderer recorded (`search_options_layout`) — same cell spans the
-        // TUI hit-tests — plus the live state and the same label/shortcut
+        // Search-option toggles: mirror the TUI's options row from the same
+        // derived layout the TUI hit-tests (`search_options_layout_now`) —
+        // same cell spans — plus the live state and the same label/shortcut
         // derivation `StatusBarRenderer::render_search_options` uses.
-        let search_options = chrome.search_options_layout.as_ref().map(|lo| {
+        let search_options = self.search_options_layout_now().map(|lo| {
             use crate::input::keybindings::{Action, KeyContext};
             use rust_i18n::t;
             let win = self.active_window();
@@ -546,7 +547,7 @@ impl Editor {
             }
         });
         Some(PaletteView {
-            query: p.input.clone(),
+            query: p.input_str().to_string(),
             message: p.message.clone(),
             prompt_type: prompt_type_tag(&p.prompt_type),
             overlay: p.overlay,

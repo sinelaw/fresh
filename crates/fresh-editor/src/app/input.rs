@@ -22,6 +22,49 @@ use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 impl Editor {
+    /// Dispatch a text-input mode's typed character to its plugin
+    /// through the typed fast lane (`PluginRequest::ModeTextInput`) —
+    /// same ordered queue as every other dispatched plugin action, so
+    /// the mode's own bindings (Backspace, Space, …) and plain
+    /// characters cannot reorder. Replaces the legacy
+    /// `PluginAction("mode_text_input@<mode>:<char>")` string encoding.
+    pub(crate) fn dispatch_mode_text_input(&mut self, mode: Option<&str>, ch: char) {
+        #[cfg(feature = "plugins")]
+        {
+            let text = ch.to_string();
+            let result = self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .mode_text_input_async(mode, &text);
+            match result {
+                Some(Ok(receiver)) => {
+                    // Same pending-action bookkeeping as the
+                    // `Action::PluginAction` arm; the label is for
+                    // logging only.
+                    let label = match mode {
+                        Some(m) => format!("mode_text_input@{}", m),
+                        None => "mode_text_input".to_string(),
+                    };
+                    self.pending_plugin_actions.push((label, receiver));
+                }
+                Some(Err(e)) => {
+                    self.set_status_message(
+                        t!("view.plugin_error", error = e.to_string()).to_string(),
+                    );
+                    tracing::error!("mode text-input dispatch error: {}", e);
+                }
+                None => {
+                    self.set_status_message(t!("status.plugin_manager_unavailable").to_string());
+                }
+            }
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            let _ = (mode, ch);
+        }
+    }
+
     /// If a plugin is awaiting the next keypress (via
     /// `editor.getNextKey()`), resolve the front-most pending
     /// callback with this key and return `true` so the caller can
@@ -95,9 +138,16 @@ impl Editor {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
-        use crate::input::keybindings::Action;
-
         let _t_total = std::time::Instant::now();
+
+        // Any keystroke may change routing-relevant UI state (open/close a
+        // popup, move focus, toggle a mode), so advance the coarse UI
+        // generation up front. Bumping on ENTRY (not exit) still lets the
+        // chrome-tree reads *within* this keystroke share one rebuild — the
+        // memo caches under the new generation on first use, and a mid-
+        // keystroke surface change is caught by the memo's overlay-stack
+        // equality check, not by this bump.
+        self.bump_ui_gen();
 
         tracing::trace!(
             "Editor.handle_key: code={:?}, modifiers={:?}",
@@ -112,7 +162,8 @@ impl Editor {
         // (#2234, item 4): while the dock is mounted, record its host-side focus
         // plus the active window's key context for *every* key, before any
         // routing. If a repro shows `dock_focused=true` for keys the user aimed
-        // at the buffer, the dock is swallowing them (line ~492) — a
+        // at the buffer, the dock is swallowing them (`chrome/dock.rs`'s
+        // `on_key`) — a
         // host-focus / plugin-`dockBlurred` desync; if `dock_focused=false`,
         // the keys reached the window and the issue is in key-context routing.
         if let Some(focused) = self.dock.as_ref().map(|d| d.focused) {
@@ -153,47 +204,6 @@ impl Editor {
             return Ok(());
         }
 
-        // Floating widget panel claims all keys while visible. Esc
-        // unmounts + fires a `widget_event` "cancel"; smart-key names
-        // (Tab/Return/Backspace/…/Up/Down) route through the widget
-        // command dispatcher; printable chars feed `textInputChar` to
-        // the focused TextInput. Mouse clicks outside the panel are
-        // swallowed (handled in `mouse_input`).
-        // A focused centered modal takes keyboard precedence over the
-        // dock (e.g. the New-Session form opened on top of the dock).
-        if self
-            .floating_widget_panel
-            .as_ref()
-            .is_some_and(|f| f.focused)
-            && self.dispatch_floating_widget_key(super::PanelSlot::Floating, code, modifiers)
-        {
-            return Ok(());
-        }
-        // A focused dock swallows keys in the dispatch below, so the global
-        // focus-toggle (default Alt+O) would never be able to hand focus back
-        // to the editor once you've dived in. Resolve it here, ahead of the
-        // dock's own key handling, so the toggle is symmetric (same key in and
-        // out). Only the blur-out direction needs this early hook — focusing a
-        // blurred/hidden dock is handled by ordinary keybinding resolution
-        // since the editor owns the keyboard in that state.
-        if self.dock.as_ref().is_some_and(|f| f.focused) {
-            let ctx = self.get_key_context();
-            let resolved = self
-                .keybindings
-                .read()
-                .ok()
-                .map(|kb| kb.resolve(&key_event, ctx));
-            if matches!(resolved, Some(Action::ToggleDockFocus)) {
-                self.handle_action(Action::ToggleDockFocus)?;
-                return Ok(());
-            }
-        }
-        if self.dock.as_ref().is_some_and(|f| f.focused)
-            && self.dispatch_floating_widget_key(super::PanelSlot::Dock, code, modifiers)
-        {
-            return Ok(());
-        }
-
         // Clear skip_ensure_visible flag so cursor becomes visible after key press
         // (scroll actions will set it again if needed). Use the *effective*
         // active split so this clears the flag on a focused buffer-group
@@ -213,22 +223,23 @@ impl Editor {
             view_state.viewport.clear_skip_ensure_visible();
         }
 
-        // Dismiss theme info popup on any key press
-        if self.active_window_mut().theme_info_popup.is_some() {
-            self.active_window_mut().theme_info_popup = None;
+        // Chrome keyboard grabs — the pre-band's LAST stage, now only
+        // two components: the theme inspector's dismiss-and-continue
+        // observer (a keyboard PassAfter, not a claim) and the native
+        // context menus' navigation grab (a custom-dispatcher modal
+        // whose layer deliberately exposes no `KeyContext`; ruling at
+        // its site, #2587). Grabs as a CLASS outrank every layer rank
+        // by pipeline position — that is exactly why membership is
+        // restricted to whole-pipeline observers and custom-dispatch
+        // modals: any surface whose precedence is expressible as a
+        // rank rides the walk below instead (the dock and the
+        // floating modal moved there when their grabs were found
+        // inverting the ranks against an open prompt).
+        for c in super::chrome::components() {
+            if let Some(result) = c.on_key(self, code, modifiers) {
+                return result;
+            }
         }
-
-        // The native context menus (file-explorer / tab / "+" new-tab) are
-        // modal: while one is open it owns the keyboard so navigation and
-        // selection work and every other key is filtered out instead of
-        // leaking into the active buffer or the explorer's type-ahead find
-        // underneath. One handler covers all three.
-        if let Some(result) = self.handle_context_menu_key(code, modifiers) {
-            return result;
-        }
-
-        // Determine the current context first
-        let mut context = self.get_key_context();
 
         // Transient popups (Hover, Signature Help) are dismissed on any
         // key press — for both focused and unfocused popups: an unfocused
@@ -238,9 +249,14 @@ impl Editor {
         // ([`router::should_dismiss_transient_popup`]); this shell
         // supplies the topmost popup's state. Editor-level popups always
         // take precedence over buffer popups when both are visible.
+        // Deliberately PRE-WALK: an observer that must see the key even
+        // when a higher modal will consume it (typing under Settings
+        // still dismisses a hover popup) — no first-consumer walk can
+        // express that, so it stays a pre-band stage like event-debug.
         let popup_visible_on_screen =
             self.global_popups.is_visible() || self.active_state().popups.is_visible();
         if popup_visible_on_screen {
+            let context = self.get_key_context();
             let view = {
                 let popup = self
                     .global_popups
@@ -252,126 +268,44 @@ impl Editor {
                 }
             };
             let dismiss = self.keybindings.read().is_ok_and(|kb| {
-                router::should_dismiss_transient_popup(&view, &kb, context.clone(), &key_event)
+                router::should_dismiss_transient_popup(&view, &kb, context, &key_event)
             });
             if dismiss {
                 self.hide_popup();
                 tracing::debug!("Dismissed transient popup on key press");
-                // Recalculate context now that popup is gone
-                context = self.get_key_context();
+                // No context recalc needed here: every stage below
+                // derives its context fresh from the layer stack.
             }
         }
 
-        // Unfocused popup control: even though an unfocused popup
-        // doesn't claim the keyboard, the user's bound popup-cancel
-        // (default Esc) and popup-focus (default Alt+T) keys must
-        // still affect it. Resolved here, *before* the modal
-        // dispatcher routes the key to the buffer/explorer/etc.
-        if let Some(action) = self.resolve_unfocused_popup_action(&key_event) {
-            self.handle_action(action)?;
-            return Ok(());
-        }
-
-        // Try hierarchical modal input dispatch first (Settings, Menu, Prompt, Popup)
-        if self.dispatch_modal_input(&key_event).is_some() {
-            return Ok(());
-        }
-
-        // If a modal was dismissed (e.g., completion popup closed and returned Ignored),
-        // recalculate the context so the key is processed in the correct context.
-        if context != self.get_key_context() {
-            context = self.get_key_context();
-        }
-
-        // Only check buffer mode keybindings when the editor buffer has focus.
-        // FileExplorer, Menu, Prompt, Popup contexts should not trigger mode bindings
-        // (e.g. markdown-source's Enter handler should not fire while the explorer is focused).
-        //
-        // CompositeBuffer is included so a composite buffer's plugin-defined
-        // mode (e.g. the review-diff `diff-view` mode) can bind keys the core
-        // composite handling leaves free — like Enter / Alt+O to open the file
-        // under the cursor. Keys the mode does not bind fall through unchanged
-        // to the composite router and the CompositeBuffer keymap below, so
-        // built-in hunk navigation (n/p/]/[) and close (q) are unaffected.
-        let should_check_mode_bindings = matches!(
-            context,
-            crate::input::keybindings::KeyContext::Normal
-                | crate::input::keybindings::KeyContext::CompositeBuffer
+        // THE derived key walk: every registered overlay layer —
+        // capture-all modals, workspace trust, the prompt rungs, the
+        // popup rungs (including the unfocused popup-cancel/-focus
+        // interception), down to the editor base, whose handler is the
+        // pipeline tail (mode bindings, composite routing,
+        // chord/keybinding resolution — see `dispatch_base_key` in
+        // `chrome/base.rs`) — offered the key top-down in declared
+        // rank order. See `dispatch_layer_keyboard`.
+        let result = self.dispatch_layer_keyboard(&key_event);
+        // The base layer answers every key by contract (`Base::layers`
+        // pushes EDITOR_BASE unconditionally and `Base::on_layer_key`
+        // always returns `Some` — both commented as load-bearing at
+        // their sites, and pinned by `overlay_stack` unit tests). If
+        // that contract ever breaks anyway, an unhandled key is a far
+        // better failure mode on the main input path than a panic:
+        // degrade to Ignored in release, scream in debug.
+        debug_assert!(
+            result.is_some(),
+            "editor base layer must answer every key — a walk fell past Base \
+             (did Base::layers grow a gate, or Base::on_layer_key a None path?)"
         );
-
-        if should_check_mode_bindings {
-            if let Some(result) = self.dispatch_mode_bindings(&key_event, code, modifiers) {
-                return result;
+        match result {
+            Some(r) => {
+                r?;
             }
+            None => {}
         }
-
-        // --- Composite buffer input routing ---
-        // If the active buffer is a composite buffer (side-by-side diff),
-        // route remaining composite-specific keys (scroll, pane switch, close)
-        // through CompositeInputRouter before falling through to regular
-        // keybinding resolution. Hunk navigation (n/p/]/[) is handled by the
-        // Action system via CompositeBuffer context bindings.
-        {
-            let active_buf = self.active_buffer();
-            let active_split = self.effective_active_split();
-            if self.active_window().is_composite_buffer(active_buf) {
-                if let Some(handled) =
-                    self.try_route_composite_key(active_split, active_buf, &key_event)
-                {
-                    return handled;
-                }
-            }
-        }
-
-        // Resolve the key against the current context, chords first —
-        // the decision is [`router::chord_or_key`]. An abandoned chord
-        // prefix is cleared so it can't poison the next key.
-        let key_event = crossterm::event::KeyEvent::new(code, modifiers);
-        let disposition = {
-            let keybindings = self.keybindings.read().unwrap();
-            router::chord_or_key(
-                &self.active_window().chord_state,
-                &keybindings,
-                &key_event,
-                context.clone(),
-            )
-        };
-        match disposition {
-            router::ChordDisposition::Chord(action) => {
-                // Complete chord match - execute action and clear chord state
-                tracing::debug!("Complete chord match -> Action: {:?}", action);
-                self.active_window_mut().chord_state.clear();
-                self.handle_action(action)
-            }
-            router::ChordDisposition::Pending => {
-                // Partial match - add to chord state and wait for more keys
-                tracing::debug!("Partial chord match - waiting for next key");
-                self.active_window_mut().chord_state.push((code, modifiers));
-                Ok(())
-            }
-            router::ChordDisposition::Resolved(action) => {
-                self.active_window_mut().chord_state.clear();
-                tracing::trace!("Context: {:?} -> Action: {:?}", context, action);
-                // Cancel pending LSP requests on user actions (except LSP
-                // actions themselves) so stale completions don't show up
-                // after the user has moved on.
-                if router::cancels_pending_lsp(&action) {
-                    self.active_window_mut().cancel_pending_lsp_requests();
-                }
-                // Keys the file browser ignores (its Alt+letter toggles) resolve
-                // here in the Prompt context; the resulting prompt/file-browser
-                // actions belong to the browser's state machine, not the generic
-                // handler.
-                if self.is_file_open_active() && self.handle_file_open_action(&action) {
-                    return Ok(());
-                }
-                // Note: Modal components (Settings, Menu, Prompt, Popup, File
-                // Browser) are handled by dispatch_modal_input using the
-                // InputHandler system. All remaining actions delegate to
-                // handle_action.
-                self.handle_action(action)
-            }
-        }
+        Ok(())
     }
 
     /// Mode-binding stage of the pipeline: while the editor buffer has
@@ -382,7 +316,7 @@ impl Editor {
     /// [`router::ModeKeyView`] from live state and applies the
     /// disposition. Returns `None` when no mode claims the key and the
     /// pipeline should continue.
-    fn dispatch_mode_bindings(
+    pub(super) fn dispatch_mode_bindings(
         &mut self,
         key_event: &crossterm::event::KeyEvent,
         code: crossterm::event::KeyCode,
@@ -434,21 +368,20 @@ impl Editor {
                 Some(Ok(()))
             }
             ModeKeyDisposition::TextInput(ch) => {
-                // Qualify the dispatch with the mode that claimed the key
-                // so it reaches the plugin that *defined* that mode.
-                // `mode_text_input` alone is one global name, so several
-                // text-input modes would otherwise fight over it and the
-                // last plugin to call `defineMode` would swallow everyone
-                // else's typing. Deliberately still an async plugin
-                // action: a mode's other bindings (Space, Backspace, …)
-                // edit the same field through the same queue, and taking
-                // a host-side shortcut here would let plain characters
-                // overtake them and scramble the typed text.
-                let action_name = match view.effective_mode.as_deref() {
-                    Some(mode) => format!("mode_text_input@{}:{}", mode, ch),
-                    None => format!("mode_text_input:{}", ch),
-                };
-                Some(self.handle_action(Action::PluginAction(action_name)))
+                // Typed fast lane: the mode and character travel as
+                // structured fields, not spliced into an action-name
+                // string. The dispatch stays mode-qualified so it
+                // reaches the plugin that *defined* the mode —
+                // `mode_text_input` alone is one global name, and
+                // several text-input modes would otherwise fight over
+                // it. Deliberately still asynchronous through the same
+                // ordered plugin queue: a mode's other bindings (Space,
+                // Backspace, …) edit the same field through that queue,
+                // and taking a host-side shortcut here would let plain
+                // characters overtake them and scramble the typed text.
+                let mode = view.effective_mode.clone();
+                self.dispatch_mode_text_input(mode.as_deref(), ch);
+                Some(Ok(()))
             }
             ModeKeyDisposition::Forward(action) => Some(self.handle_action(action)),
             ModeKeyDisposition::WidgetSelection(mv) => {
@@ -560,7 +493,7 @@ impl Editor {
     /// [`router::widget_panel_key`], which is pure and Editor-free. This
     /// shell builds the [`router::WidgetPanelView`] from live state and
     /// executes the outcome it names.
-    fn dispatch_floating_widget_key(
+    pub(super) fn dispatch_floating_widget_key(
         &mut self,
         slot: super::PanelSlot,
         code: crossterm::event::KeyCode,

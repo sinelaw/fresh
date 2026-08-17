@@ -384,6 +384,9 @@ impl Editor {
     /// plugin hook is signature-deduped, so callers never need to decide
     /// "did this actually change the layout?" — they just call `relayout`.
     pub fn relayout(&mut self) {
+        // Geometry moved: every chrome box the tree would derive may have a
+        // different rect now, so spoil the per-generation UI memos.
+        self.bump_ui_gen();
         self.push_layout_geometry();
         self.notify_layout_changed();
     }
@@ -500,6 +503,17 @@ impl Editor {
         .into_iter()
         .flatten()
         {
+            self.rerender_widget_panel(&panel_key);
+        }
+
+        // Buffer-mounted (split) panels too: their auto-sized lists/trees
+        // window against the split viewport height the renderer captured,
+        // so a resize must re-run the layout even when the plugin never
+        // re-emits its spec. The dock / floating panels handled above are
+        // also in the registry, so they render twice on a resize — a
+        // benign cost on an event this rare, kept for the explicit
+        // ordering the Bug-13 fix established.
+        for panel_key in self.widget_registry.panel_keys() {
             self.rerender_widget_panel(&panel_key);
         }
     }

@@ -13,6 +13,7 @@ mod buffer_groups;
 mod buffer_management;
 mod calibration_actions;
 pub mod calibration_wizard;
+pub(crate) mod chrome;
 mod click_geometry;
 mod click_handlers;
 mod clipboard;
@@ -112,6 +113,14 @@ use rust_i18n::t;
 /// Returns true if a render is needed. The `clear_terminal` callback handles full-redraw
 /// requests (terminal clears the screen; GUI can ignore or handle differently).
 /// Used by both the terminal event loop and the GUI event loop.
+impl Editor {
+    /// Invalidate the derived-structure memos (see `ui_gen`).
+    #[inline]
+    pub(crate) fn bump_ui_gen(&mut self) {
+        self.ui_gen = self.ui_gen.wrapping_add(1);
+    }
+}
+
 pub fn editor_tick(
     editor: &mut Editor,
     mut clear_terminal: impl FnMut() -> AnyhowResult<()>,
@@ -206,6 +215,15 @@ pub fn editor_tick(
         needs_render = true;
     }
 
+    // A tick that did work (timers fired, async results landed, plugin
+    // callbacks ran) may have changed routing-relevant UI state; spoil the
+    // per-generation UI memos. An idle tick keeps the generation — that is
+    // what lets a quiet mouse-motion stream reuse one chrome tree across
+    // events.
+    if needs_render {
+        editor.bump_ui_gen();
+    }
+
     Ok(needs_render)
 }
 
@@ -214,8 +232,7 @@ pub(crate) use path_utils::{
 };
 
 use self::types::{
-    LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, TabContextMenu,
-    DEFAULT_BACKGROUND_FILE,
+    LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
 use crate::config_io::DirectoryContext;
@@ -1341,6 +1358,43 @@ pub struct Editor {
     /// shown. Independent of `floating_widget_panel` so the dock persists
     /// while a centered modal is open. Always rendered as a `LeftDock`.
     pub(crate) dock: Option<FloatingWidgetState>,
+    /// Coarse UI-STATE GENERATION — the GEOMETRY/EPOCH half of the
+    /// `chrome_tree` memo key. Bumped at the event funnels
+    /// (`handle_key` entry, `handle_mouse` exit-when-rendering,
+    /// `handle_action`, `process_deferred_actions`, `relayout`, popup
+    /// show/hide, `editor_tick` when it did work, `render` end). The
+    /// counter is deliberately NOT trusted as a full invalidation
+    /// story: surface presence/claim changes are caught by comparing
+    /// the freshly built `overlay_stack` against the memo's snapshot
+    /// (see `chrome_tree`), because the set of Editor APIs that can
+    /// flip a layer predicate is unbounded and a hand-maintained bump
+    /// roster there was proven incomplete by CI. Over-invalidation is
+    /// fine; a validated hit can never be stale, and debug builds
+    /// oracle-check every hit against a fresh rebuild anyway.
+    pub(crate) ui_gen: u64,
+    /// Memoized `chrome_tree()`: (generation, the `overlay_stack`
+    /// snapshot the tree was built from, the tree). A hit requires the
+    /// generation to match AND a fresh stack build to equal the
+    /// snapshot.
+    pub(crate) chrome_tree_memo: std::cell::RefCell<
+        Option<(
+            u64,
+            Vec<crate::app::overlay::OwnedLayer>,
+            Vec<crate::app::chrome::ChromeBox>,
+        )>,
+    >,
+    /// Monotonic count of ACTUAL `chrome_tree` rebuilds (memo misses).
+    /// An unchanged value between two queries proves the tree — and the
+    /// validated inputs it derives from — did not change in between;
+    /// downstream per-event memos (the hover cell) key on this instead
+    /// of `ui_gen` so they inherit the stack-equality validation.
+    pub(crate) ui_tree_seq: std::cell::Cell<u64>,
+    /// The (tree seq, col, row) of the last completed hover pass: an
+    /// identical triple means the tree provably didn't change and the
+    /// cursor is on the same cell, so the walk and every
+    /// `on_hover_change` reaction would see identical inputs and the
+    /// pass is skipped.
+    pub(crate) hover_cell_memo: std::cell::Cell<Option<(u64, u16, u16)>>,
 
     /// Persisted width (columns) of the orchestrator left dock after the
     /// user drags its right border. `None` until first resized; when set,
@@ -1465,7 +1519,10 @@ pub(crate) struct FloatingWidgetState {
     /// Scrollable `List` widgets that overflowed, with the geometry
     /// the draw pass uses to paint a scrollbar. Refreshed on every
     /// render alongside `entries`/`embeds`.
-    pub scroll_regions: Vec<crate::widgets::ScrollRegion>,
+    /// The panel's layout-box tree from its most recent render — the
+    /// paint pass reads scrollable boxes (rect + scroll payload) from
+    /// it to draw overlay scrollbars.
+    pub boxes: Vec<crate::widgets::LayoutBox>,
     /// Screen-space scrollbar tracks computed at the last draw — used
     /// by the mouse hit-test to start/continue a scrollbar drag. One
     /// per overflowing list.
@@ -1557,25 +1614,25 @@ pub(crate) struct FloatingWidgetState {
     /// to the terminal so it extends past the panel/modal frame). `None`
     /// when no keyed Dropdown in this panel is open. Refreshed on every
     /// render alongside `entries`.
-    pub dropdown_popup: Option<crate::widgets::DropdownPopup>,
+    pub popup: Option<crate::widgets::PanelPopup>,
     /// Screen-space hit rectangles for the open dropdown pop-over's option
     /// rows, recomputed on every draw (like `close_button_rect`). Each maps
     /// a terminal rect to the absolute option index; the mouse hit-test
     /// checks these BEFORE the panel-inner gate so a click on an option
     /// below the modal border still selects it. Empty when no pop-over is
     /// drawn.
-    pub dropdown_popup_hits: Vec<DropdownPopupOptionHit>,
+    pub popup_hits: Vec<PanelPopupOptionHit>,
     /// Full screen rect of the drawn dropdown pop-over box (border
     /// included), so a click anywhere inside it is consumed rather than
     /// dismissing the modal. `None` when no pop-over is drawn.
-    pub dropdown_popup_rect: Option<ratatui::layout::Rect>,
+    pub popup_rect: Option<ratatui::layout::Rect>,
 }
 
 /// One option row of the open dropdown pop-over, captured at draw time as
 /// a screen rect → absolute option index, so the mouse hit-test can route
 /// a click on the (panel-escaping) pop-over back to `dropdown_select`.
 #[derive(Debug, Clone)]
-pub(crate) struct DropdownPopupOptionHit {
+pub(crate) struct PanelPopupOptionHit {
     pub rect: ratatui::layout::Rect,
     pub index: usize,
 }
@@ -2122,7 +2179,7 @@ mod tests {
             focus_cursor: None,
             embeds: Vec::new(),
             overlays: Vec::new(),
-            scroll_regions: Vec::new(),
+            boxes: Vec::new(),
             scrollbar_tracks: Vec::new(),
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
@@ -2137,9 +2194,9 @@ mod tests {
             close_button_rect: None,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
-            dropdown_popup: None,
-            dropdown_popup_hits: Vec::new(),
-            dropdown_popup_rect: None,
+            popup: None,
+            popup_hits: Vec::new(),
+            popup_rect: None,
         }
     }
 

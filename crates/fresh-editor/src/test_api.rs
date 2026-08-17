@@ -586,8 +586,8 @@ impl EditorTestApi for crate::app::Editor {
         // Lives on `active_window().prompt`, not on the popup stacks.
         let prompt = self.active_window().prompt.as_ref().map(|p| PromptView {
             prompt_type: format!("{:?}", p.prompt_type),
-            input: p.input.clone(),
-            cursor_pos: p.cursor_pos,
+            input: p.input_str().to_string(),
+            cursor_pos: p.cursor_byte(),
             suggestions: p.suggestions.iter().map(|s| s.text.clone()).collect(),
             selected_suggestion: p.selected_suggestion,
         });

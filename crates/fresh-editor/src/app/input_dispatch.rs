@@ -7,9 +7,6 @@ use super::terminal_input::{should_enter_terminal_mode, TerminalModeInputHandler
 use super::Editor;
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
 use crate::input::keybindings::{Action, KeyContext};
-use crate::view::file_browser_input::FileBrowserInputHandler;
-use crate::view::query_replace_input::QueryReplaceConfirmInputHandler;
-use crate::view::ui::MenuInputHandler;
 use anyhow::Result as AnyhowResult;
 use crossterm::event::KeyEvent;
 use rust_i18n::t;
@@ -103,206 +100,68 @@ impl Editor {
         None
     }
 
-    /// Walk the overlay stack top-down and, if a *capture-all* modal
-    /// (Settings / KeybindingEditor / CalibrationWizard / Menu) is the
-    /// keyboard owner, dispatch to its handler and return its result.
-    /// Returns `None` when no such modal is up, letting the caller fall
-    /// through to the Prompt / Popup blocks (which have their own
-    /// fall-through semantics that don't fit a top-down kind-walk).
+    /// THE key walk: iterate the owner-stamped overlay stack
+    /// ([`Editor::overlay_stack`]) top-down, offering the key to each
+    /// layer's declaring component through
+    /// [`crate::app::chrome::ChromeComponent::on_layer_key`] — the
+    /// keyboard analogue of `dispatch_pointer` walking `hit_stack`
+    /// over owner-stamped boxes. A component consuming stops the
+    /// walk; a declining layer (`None`) falls through to the next
+    /// layer down. Routing is DERIVED from the registered layers —
+    /// no kind ladder; a new surface registers a component and its
+    /// keys route with no edit here.
     ///
-    /// The mouse counterpart is `Editor::dispatch_modal_mouse`.
-    fn dispatch_modal_keyboard(&mut self, event: &KeyEvent) -> Option<InputResult> {
-        use crate::app::overlay::LayerKind;
-
-        // Snapshot the capturing kind first so the stack borrow ends
-        // before any `&mut self` handler runs.
-        let kind = self.overlay_layers().iter().find_map(|l| match l.kind {
-            LayerKind::Settings
-            | LayerKind::KeybindingEditor
-            | LayerKind::CalibrationWizard
-            | LayerKind::Menu => Some(l.kind),
-            _ => None,
-        })?;
-        let mut ctx = InputContext::new();
-        Some(match kind {
-            LayerKind::Settings => {
-                let result = {
-                    let settings = self
-                        .settings_state
-                        .as_mut()
-                        .expect("Settings layer implies settings_state present");
-                    settings.dispatch_input(event, &mut ctx)
-                };
-                self.process_deferred_actions(ctx);
-                result
-            }
-            LayerKind::KeybindingEditor => self.handle_keybinding_editor_input(event),
-            LayerKind::CalibrationWizard => self.handle_calibration_input(event),
-            LayerKind::Menu => {
-                let all_menus: Vec<crate::config::Menu> = self
-                    .menus
-                    .menus
-                    .iter()
-                    .chain(self.menu_state.plugin_menus.iter())
-                    .cloned()
-                    .collect();
-                let result = {
-                    let mut handler = MenuInputHandler::new(&mut self.menu_state, &all_menus);
-                    handler.dispatch_input(event, &mut ctx)
-                };
-                self.process_deferred_actions(ctx);
-                result
-            }
-            _ => unreachable!("find_map only returns the four capture-all kinds"),
-        })
-    }
-
-    /// Dispatch input to the appropriate modal handler.
+    /// Returns `None` when no layer claims the key, letting
+    /// `handle_key` fall through to the pipeline tail (mode bindings,
+    /// the composite router, chord/keybinding resolution — slice K4's
+    /// migration target).
     ///
-    /// Returns `Some(InputResult)` if a modal handled the input,
-    /// `None` if no modal is active and input should be handled normally.
-    pub fn dispatch_modal_input(&mut self, event: &KeyEvent) -> Option<InputResult> {
-        // Always-early-return modals (Settings, KeybindingEditor,
-        // CalibrationWizard, Menu) dispatch through the overlay stack so
-        // their precedence matches `get_key_context()`, the terminal-input
-        // gate and the mouse modal-capture path. The Prompt and Popup
-        // blocks below have fall-through (`Ignored`) semantics and
-        // multi-arm internal logic, so they stay as explicit blocks.
-        if let Some(result) = self.dispatch_modal_keyboard(event) {
-            return Some(result);
-        }
-
-        let mut ctx = InputContext::new();
-
-        // Prompt is next
-        if self.active_window().prompt.is_some() {
-            // File browser prompts use FileBrowserInputHandler. Keys it
-            // ignores (Alt+letter) fall through to regular keybinding
-            // resolution, which resolves them in the Prompt context —
-            // context-specific bindings outrank global ones there, so the
-            // browser's Alt toggles (encoding, hidden files) win over e.g.
-            // the Alt+E menu mnemonic without any special-casing here.
-            if self.is_file_open_active() {
-                let active_window_id = self.active_window;
-                let __win = self
-                    .windows
-                    .get_mut(&active_window_id)
-                    .expect("active window present");
-                if let (Some(ref mut file_state), Some(ref mut prompt)) =
-                    (&mut __win.file_open_state, &mut __win.prompt)
-                {
-                    let mut handler = FileBrowserInputHandler::new(file_state, prompt);
-                    let result = handler.dispatch_input(event, &mut ctx);
-                    if result != InputResult::Ignored {
-                        self.process_deferred_actions(ctx);
-                        return Some(result);
-                    }
-                    ctx = InputContext::new();
-                }
-            }
-
-            // QueryReplaceConfirm prompts use QueryReplaceConfirmInputHandler
-            use crate::view::prompt::PromptType;
-            let is_query_replace_confirm = self
-                .active_window()
-                .prompt
-                .as_ref()
-                .is_some_and(|p| p.prompt_type == PromptType::QueryReplaceConfirm);
-            if is_query_replace_confirm {
-                let mut handler = QueryReplaceConfirmInputHandler::new();
-                let result = handler.dispatch_input(event, &mut ctx);
-                self.process_deferred_actions(ctx);
+    /// Every modal band routes through this walk: the capture-all
+    /// modals (Settings, KeybindingEditor, CalibrationWizard, Menu),
+    /// the workspace-trust prompt, the prompt rungs
+    /// (`dispatch_prompt_key`), and the popup rungs
+    /// (`dispatch_popup_keys`) — each reached at its layer's declared
+    /// rank, in the same stack `get_key_context()`, the
+    /// terminal-input gate and the mouse modal-capture path read.
+    ///
+    /// RULING — why the keyboard side does NOT get the mouse side's
+    /// one-derived-structure-per-event treatment: the stack below is
+    /// built once for THE WALK's routing, but handlers may MUTATE
+    /// state and then decline (the popup rung processes a deferred
+    /// ClosePopup and falls through), so a lower handler's
+    /// `get_key_context()` must re-derive against post-mutation
+    /// state — a pre-walk snapshot would hand it a stale context.
+    /// Same-event is not same-state mid-walk here, unlike the pointer
+    /// walks (whose handlers consume whenever they mutate). The
+    /// handler-level rebuilds (`chrome/base.rs`, `chrome/dock.rs`)
+    /// are therefore load-bearing, not waste; folding them away needs
+    /// the invalidation-aware derivation recorded for the
+    /// forward-design arc (sinelaw/fresh#3024).
+    pub(super) fn dispatch_layer_keyboard(
+        &mut self,
+        event: &KeyEvent,
+    ) -> Option<AnyhowResult<InputResult>> {
+        let stack = self.overlay_stack();
+        for entry in &stack {
+            // `owner: None` is the hardcoded event-debug head — a
+            // pre-walk intercept (`handle_key` handled it already).
+            let Some(owner) = entry.owner else { continue };
+            if let Some(result) =
+                crate::app::chrome::components()[owner].on_layer_key(self, &entry.layer, event)
+            {
                 return Some(result);
             }
-
-            // Universal Search overlay focus ring: Tab/Shift+Tab move focus
-            // between the query input and the scope toggles; Space/Enter
-            // activate the focused toggle. Intercepted before the prompt's own
-            // input handling so Tab doesn't fall through to other behaviour.
-            if let Some(result) = self.handle_overlay_toolbar_key(event) {
-                return Some(result);
-            }
-
-            if let Some(ref mut prompt) = self.active_window_mut().prompt {
-                let result = prompt.dispatch_input(event, &mut ctx);
-                // Only return and process deferred actions if the prompt handled the input
-                // If Ignored, fall through to check global keybindings
-                if result != InputResult::Ignored {
-                    self.process_deferred_actions(ctx);
-                    return Some(result);
-                }
-            }
         }
-
-        // Editor-pane popups (global + buffer) belong to the editor pane and
-        // must not capture input when the file explorer is the focused pane.
-        // Mirrors the priority encoded in `get_key_context()` via the same
-        // `popups_capture_keys()` predicate so the two paths cannot drift —
-        // one source of truth for "is the popup eligible to eat this key?".
-        if self.popups_capture_keys() {
-            // Completion popups consult the keybinding resolver in the
-            // `Completion` context first, so accept/dismiss can be remapped
-            // via the keybinding editor. Falls through to the popup's own
-            // handler for everything else (type-to-filter, navigation, etc.).
-            if let Some(action) = self.resolve_completion_popup_action(event) {
-                self.process_deferred_actions(ctx);
-                if let Err(e) = self.handle_action(action) {
-                    tracing::warn!("Completion popup action failed: {}", e);
-                }
-                return Some(InputResult::Consumed);
-            }
-
-            // The workspace-trust prompt is a bespoke modal with its own keys
-            // (mnemonics select-and-confirm, Q quits, Esc is inert). Intercept
-            // before the generic popup handler so list type-to-filter etc.
-            // never swallow them.
-            if self.global_popups.top().is_some_and(|p| {
-                matches!(
-                    p.resolver,
-                    crate::view::popup::PopupResolver::WorkspaceTrust
-                )
-            }) {
-                if let Some(result) = self.handle_workspace_trust_key(event) {
-                    return Some(result);
-                }
-            }
-
-            // Editor-level (global) popups take precedence over buffer popups
-            // so that plugin notifications stay focused even when the active
-            // buffer owns its own popup stack.
-            if self.global_popups.is_visible() {
-                let result = self.global_popups.dispatch_input(event, &mut ctx);
-                self.process_deferred_actions(ctx);
-                if result != InputResult::Ignored {
-                    return Some(result);
-                }
-                // Re-check visibility — the dispatch may have queued a
-                // ClosePopup that the deferred-action processor has now fired.
-                return None;
-            }
-
-            // Popup is next
-            if self.active_state().popups.is_visible() {
-                let result = self
-                    .active_state_mut()
-                    .popups
-                    .dispatch_input(event, &mut ctx);
-                self.process_deferred_actions(ctx);
-                // If the popup handler returned Ignored (e.g., non-word
-                // character, Ctrl+key, arrow keys), fall through to normal
-                // input handling. The deferred ClosePopup action was already
-                // processed above.
-                if result != InputResult::Ignored {
-                    return Some(result);
-                }
-            }
-        }
-
         None
     }
 
     /// Process deferred actions collected during input handling.
     pub fn process_deferred_actions(&mut self, ctx: InputContext) {
+        // Deferred actions mutate UI state outside the handle_key/handle_action
+        // funnels (they run from the event loop after a handler returns), so
+        // spoil the per-generation UI memos here too.
+        self.bump_ui_gen();
+
         // Set status message if provided
         if let Some(msg) = ctx.status_message {
             self.set_status_message(msg);
@@ -374,7 +233,7 @@ impl Editor {
                         prompt.prompt_type,
                         crate::view::prompt::PromptType::SelectTheme { .. }
                     ) {
-                        let theme_name = prompt.input.clone();
+                        let theme_name = prompt.input_str().to_string();
                         self.preview_theme(&theme_name);
                     }
                 }
@@ -577,7 +436,7 @@ impl Editor {
             .active_window()
             .prompt
             .as_ref()
-            .map(|p| (p.prompt_type.clone(), p.input.clone()));
+            .map(|p| (p.prompt_type.clone(), p.input_str().to_string()));
 
         if let Some((prompt_type, current_input)) = prompt_info {
             // Get the history key for this prompt type
@@ -615,14 +474,13 @@ impl Editor {
         }
     }
 
-    /// Ordered toggle keys of the active overlay's widget toolbar (render
-    /// order). Drives the focus ring. Empty when there's no toolbar.
+    /// The active overlay toolbar's focus ring, derived from its
+    /// layout-box tree exactly the way panel rings are: document order
+    /// of focusable boxes. Any focusable kind the plugin puts in the
+    /// toolbar joins the ring — nothing here knows which kinds those
+    /// are. Empty when there's no toolbar.
     fn overlay_toolbar_keys(&self) -> Vec<String> {
-        self.active_chrome()
-            .prompt_toolbar_hits
-            .iter()
-            .map(|(k, _)| k.clone())
-            .collect()
+        crate::widgets::layout_box::focus_ring(&self.active_chrome().prompt_toolbar_boxes)
     }
 
     /// Advance (or retreat) the overlay focus ring: input → toggle0 → … →
@@ -688,61 +546,90 @@ impl Editor {
         }
     }
 
-    /// Activate the overlay toolbar control with `key` and emit a
-    /// `widget_event` so the plugin can react. For a `Toggle` the host owns
-    /// the checked state — it flips it in place and emits `toggle`
-    /// (`{checked}`). For a `Button` it emits `activate` (`{}`). Shared by
-    /// mouse clicks, Space/Enter on the focused control, and the
-    /// `toggleOverlayToolbarWidget` plugin API — one host path for every way
-    /// a control can be triggered.
+    /// Activate the overlay toolbar control with `key` and emit the
+    /// resulting `widget_event`s so the plugin can react. Shared by mouse
+    /// clicks, Space/Enter on the focused control, and the
+    /// `toggleOverlayToolbarWidget` plugin API — one host path for every
+    /// way a control can be triggered.
+    ///
+    /// Dispatch is generic: the control's kind answers the activation
+    /// through the same `on_key` machinery registry panels use, queueing
+    /// its events on `KeyFx` (a `Toggle` queues `toggle` with the flipped
+    /// value, a `Button` queues `activate` — no per-kind match here, and a
+    /// future focusable kind participates for free). Toolbar policy is
+    /// what stays host-side: the toolbar spec is host-held, so a queued
+    /// `toggle` is applied back to it (the host owns the checked state),
+    /// and events broadcast with `panel_id: 0` — the toolbar isn't a
+    /// registry panel, so there's no owner to target. (Kinds with
+    /// per-instance state — open dropdowns, text editors — need the real
+    /// registry mount, a recorded later arc; the ephemeral panel here
+    /// carries no instance state across events.)
     pub(crate) fn toggle_overlay_toolbar_widget(&mut self, key: &str) {
         if key.is_empty() {
             return;
         }
-        // Resolve what event to emit, flipping a toggle's checked state in
-        // place. `None` → the key isn't a toggle/button (no-op).
-        let event: Option<(&'static str, serde_json::Value)> = {
-            let Some(prompt) = self.active_window_mut().prompt.as_mut() else {
-                return;
-            };
-            let Some(spec) = prompt.toolbar_widget.as_mut() else {
-                return;
-            };
-            match crate::widgets::find_widget_by_key(spec, key) {
-                Some(fresh_core::api::WidgetSpec::Toggle { checked, .. }) => {
-                    let nv = !*checked;
-                    crate::widgets::set_toggle_checked_in_spec(spec, key, nv);
-                    Some(("toggle", serde_json::json!({ "checked": nv })))
-                }
-                Some(fresh_core::api::WidgetSpec::Button { .. }) => {
-                    Some(("activate", serde_json::json!({})))
-                }
-                _ => None,
-            }
-        };
-        let Some((event_type, payload)) = event else {
+        let Some(spec_node) = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .and_then(|p| p.toolbar_widget.as_ref())
+            .and_then(|s| crate::widgets::find_widget_by_key(s, key))
+            .cloned()
+        else {
             return;
         };
-        #[cfg(feature = "plugins")]
-        {
-            // The overlay toolbar isn't a registry panel — it has no
-            // owner to target, so this broadcasts with panel_id 0.
-            let pm = self.plugin_manager.read().unwrap();
-            if pm.has_hook_handlers("widget_event") {
-                pm.run_hook(
-                    "widget_event",
-                    crate::services::plugins::hooks::HookArgs::WidgetEvent {
-                        panel_id: 0,
-                        widget_key: key.to_string(),
-                        event_type: event_type.to_string(),
-                        payload,
-                    },
-                );
+        let mut fx = crate::widgets::kinds::KeyFx::default();
+        let mut scratch = crate::widgets::WidgetPanelState {
+            buffer_id: crate::model::event::BufferId(0),
+            spec: spec_node.clone(),
+            hits: Vec::new(),
+            instance_states: std::collections::HashMap::new(),
+            focus_key: key.to_string(),
+            tabbable: Vec::new(),
+            effective_rows: std::collections::HashMap::new(),
+            boxes: Vec::new(),
+        };
+        // Every trigger converges on the kind's activation key; Toggle and
+        // Button treat Space and Enter identically.
+        let _ = crate::widgets::kinds::behavior(&spec_node).on_key(
+            &spec_node,
+            key,
+            &mut scratch,
+            "Space",
+            &mut fx,
+        );
+        for (event_type, payload) in fx.events {
+            if event_type == "toggle" {
+                if let Some(nv) = payload.get("checked").and_then(|v| v.as_bool()) {
+                    if let Some(spec) = self
+                        .active_window_mut()
+                        .prompt
+                        .as_mut()
+                        .and_then(|p| p.toolbar_widget.as_mut())
+                    {
+                        crate::widgets::set_toggle_checked_in_spec(spec, key, nv);
+                    }
+                }
             }
-        }
-        #[cfg(not(feature = "plugins"))]
-        {
-            let _ = (event_type, payload);
+            #[cfg(feature = "plugins")]
+            {
+                let pm = self.plugin_manager.read().unwrap();
+                if pm.has_hook_handlers("widget_event") {
+                    pm.run_hook(
+                        "widget_event",
+                        crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                            panel_id: 0,
+                            widget_key: key.to_string(),
+                            event_type,
+                            payload,
+                        },
+                    );
+                }
+            }
+            #[cfg(not(feature = "plugins"))]
+            {
+                let _ = (event_type, payload);
+            }
         }
     }
 
@@ -750,7 +637,7 @@ impl Editor {
     /// `Some(Consumed)` when it owns the key, `None` to let normal prompt
     /// handling proceed (also resets focus to the input when the user starts
     /// typing, so typing always edits the query).
-    fn handle_overlay_toolbar_key(&mut self, event: &KeyEvent) -> Option<InputResult> {
+    pub(super) fn handle_overlay_toolbar_key(&mut self, event: &KeyEvent) -> Option<InputResult> {
         use crossterm::event::{KeyCode, KeyModifiers};
         if !self.overlay_prompt_active() {
             return None;

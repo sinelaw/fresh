@@ -413,7 +413,7 @@ pub enum SearchOptionsHover {
 }
 
 /// Layout information for search options bar hit testing
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchOptionsLayout {
     /// Row where the search options are rendered
     pub row: u16,
@@ -428,6 +428,89 @@ pub struct SearchOptionsLayout {
 }
 
 impl SearchOptionsLayout {
+    /// Compute the bar's checkbox spans from live state — the SAME
+    /// width math the paint pass walks (`render_search_options`
+    /// asserts the two agree in debug builds). Geometry depends on
+    /// the area, the locale labels, the keybinding hint strings,
+    /// whether the Confirm option is shown (replace modes), and —
+    /// via the `$1,$2,…` capture-group hint that precedes Confirm —
+    /// whether regex is on; the CHECKED states never move anything
+    /// ("[x]" and "[ ]" share a width). This is the per-event
+    /// geometry source (chrome hit-testing, click resolution, the
+    /// web projection): geometry produced by layout, not recorded by
+    /// paint.
+    pub fn compute(
+        area: ratatui::layout::Rect,
+        use_regex: bool,
+        confirm_shown: bool,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+    ) -> SearchOptionsLayout {
+        use crate::primitives::display_width::str_width;
+        let mut layout = SearchOptionsLayout {
+            row: area.y,
+            ..Default::default()
+        };
+        let get_shortcut = |action: &crate::input::keybindings::Action| -> Option<String> {
+            keybindings
+                .get_keybinding_for_action(
+                    action,
+                    crate::input::keybindings::KeyContext::SearchPrompt,
+                )
+                .or_else(|| {
+                    keybindings.get_keybinding_for_action(
+                        action,
+                        crate::input::keybindings::KeyContext::Prompt,
+                    )
+                })
+                .or_else(|| {
+                    keybindings.get_keybinding_for_action(
+                        action,
+                        crate::input::keybindings::KeyContext::Global,
+                    )
+                })
+        };
+        let shortcut_width = |action: &crate::input::keybindings::Action| -> usize {
+            get_shortcut(action)
+                .map(|s| str_width(&format!(" ({})", s)))
+                .unwrap_or(0)
+        };
+        // "[x]" and "[ ]" are the same width; use the unchecked glyph.
+        let item_width = |label: String, action: &crate::input::keybindings::Action| -> u16 {
+            (str_width(&format!("[ ] {}", label)) + shortcut_width(action)) as u16
+        };
+        let mut col = area.x + 1; // left padding
+        let w = item_width(
+            t!("search.case_sensitive").to_string(),
+            &crate::input::keybindings::Action::ToggleSearchCaseSensitive,
+        );
+        layout.case_sensitive = Some((col, col + w));
+        col += w + 3;
+        let w = item_width(
+            t!("search.whole_word").to_string(),
+            &crate::input::keybindings::Action::ToggleSearchWholeWord,
+        );
+        layout.whole_word = Some((col, col + w));
+        col += w + 3;
+        let w = item_width(
+            t!("search.regex").to_string(),
+            &crate::input::keybindings::Action::ToggleSearchRegex,
+        );
+        layout.regex = Some((col, col + w));
+        col += w;
+        if confirm_shown {
+            if use_regex {
+                col += str_width(" \u{2502} $1,$2,\u{2026}") as u16;
+            }
+            col += 3;
+            let w = item_width(
+                t!("search.confirm_each").to_string(),
+                &crate::input::keybindings::Action::ToggleSearchConfirmEach,
+            );
+            layout.confirm_each = Some((col, col + w));
+        }
+        layout
+    }
+
     /// Check which search option checkbox (if any) is at the given position
     pub fn checkbox_at(&self, x: u16, y: u16) -> Option<SearchOptionsHover> {
         if y != self.row {
@@ -812,7 +895,24 @@ impl StatusBarRenderer {
         // natively from `status_view`. The TUI always passes `true`.
         draw: bool,
     ) -> StatusBarLayout {
-        Self::render_status(frame, area, ctx, config, rec, draw)
+        Self::render_status(Some(frame), area, ctx, config, rec, draw)
+    }
+
+    /// Compute the bar's layout (clickable segments + plugin token areas +
+    /// semantic segments) from live state without painting a cell — the SAME
+    /// element/width/placement walk the paint pass runs
+    /// (`render_status_bar_row` asserts the two agree in debug builds).
+    /// Geometry is content-dependent (rendered label widths: encoding, LSP
+    /// state, cursor position, messages), so it is derived from the same
+    /// `StatusBarContext` the painter consumes. This is the per-event
+    /// geometry source (chrome hit-testing, click resolution, popup
+    /// anchoring): geometry produced by layout, not recorded by paint.
+    pub fn compute_status_layout(
+        area: Rect,
+        ctx: &mut StatusBarContext<'_>,
+        config: &StatusBarConfig,
+    ) -> StatusBarLayout {
+        Self::render_status(None, area, ctx, config, None, false)
     }
 
     /// Render the prompt/minibuffer
@@ -830,7 +930,7 @@ impl StatusBarRenderer {
 
         // If there's a selection, split the input into parts
         if let Some((sel_start, sel_end)) = prompt.selection_range() {
-            let input = &prompt.input;
+            let input = prompt.input_str();
 
             // Text before selection
             if sel_start > 0 {
@@ -855,7 +955,7 @@ impl StatusBarRenderer {
             }
         } else {
             // No selection, render entire input normally
-            spans.push(Span::styled(prompt.input.clone(), base_style));
+            spans.push(Span::styled(prompt.input_str().to_string(), base_style));
         }
 
         Self::render_prompt_label_and_input(
@@ -864,7 +964,7 @@ impl StatusBarRenderer {
             vec![Span::styled(prompt.message.clone(), base_style)],
             spans,
             base_style,
-            str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]),
+            str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]),
         );
     }
 
@@ -953,7 +1053,7 @@ impl StatusBarRenderer {
         let prefix_len = str_width(&open_prompt);
         let dir_path = file_open_state.current_dir.to_string_lossy();
         let dir_path_len = dir_path.len() + 1; // +1 for trailing slash
-        let input_len = prompt.input.len();
+        let input_len = prompt.input_str().len();
         let total_len = prefix_len + dir_path_len + input_len;
         let threshold = (area.width as usize * 90) / 100;
 
@@ -1003,14 +1103,14 @@ impl StatusBarRenderer {
         // The label here is the whole prefix (message + colorized dir path);
         // the user input (the filename part) scrolls after it so the cursor
         // stays visible even when the typed name overflows the line.
-        let input_spans = vec![Span::styled(prompt.input.clone(), base_style)];
+        let input_spans = vec![Span::styled(prompt.input_str().to_string(), base_style)];
         Self::render_prompt_label_and_input(
             frame,
             area,
             spans,
             input_spans,
             base_style,
-            str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]),
+            str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]),
         );
     }
 
@@ -1867,7 +1967,9 @@ impl StatusBarRenderer {
 
     /// Render the normal status bar (config-driven).
     fn render_status(
-        frame: &mut Frame,
+        // `None` on the event-time layout path (`compute_status_layout`),
+        // which never paints; always `Some` when `draw` is true.
+        mut frame: Option<&mut Frame>,
         area: Rect,
         ctx: &mut StatusBarContext<'_>,
         config: &StatusBarConfig,
@@ -2097,7 +2199,9 @@ impl StatusBarRenderer {
                 ));
             }
             if draw {
-                frame.render_widget(Paragraph::new(Line::from(spans)), area);
+                if let Some(frame) = frame.as_deref_mut() {
+                    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+                }
             }
             return layout;
         }
@@ -2164,7 +2268,9 @@ impl StatusBarRenderer {
         }
 
         if draw {
-            frame.render_widget(Paragraph::new(Line::from(spans)), area);
+            if let Some(frame) = frame {
+                frame.render_widget(Paragraph::new(Line::from(spans)), area);
+            }
         }
         layout
     }
@@ -2417,6 +2523,16 @@ impl StatusBarRenderer {
             layout.confirm_each = Some((confirm_start, current_col));
         }
 
+        // The paint walk above and `SearchOptionsLayout::compute` are
+        // two spellings of the same geometry; the per-event consumers
+        // (chrome hit-testing, click resolution, web projection) use
+        // `compute`, so any drift between them is a real bug — trip it
+        // in every debug/e2e run.
+        debug_assert_eq!(
+            layout,
+            SearchOptionsLayout::compute(area, use_regex, confirm_each.is_some(), keybindings),
+            "search-options paint walk and compute() must agree"
+        );
         // Fill remaining space
         let current_width = (current_col - area.x) as usize;
         let available_width = area.width as usize;
@@ -3056,8 +3172,7 @@ mod tests {
         );
         // 100 chars in an 80-column line: 8 label cols + 72 input cols.
         let input: String = ('a'..='z').cycle().take(100).collect();
-        prompt.input = input.clone();
-        prompt.cursor_pos = prompt.input.len();
+        prompt.set_input_plain(input.clone());
 
         let width: u16 = 80;
         let backend = TestBackend::new(width, 1);
@@ -3089,7 +3204,7 @@ mod tests {
 
         // Move the cursor 15 chars left: still visible (pinned to the last
         // column), and the window follows it leftward.
-        prompt.cursor_pos -= 15;
+        prompt.set_cursor_byte(prompt.cursor_byte() - 15);
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, width, 1);
@@ -3108,8 +3223,8 @@ mod tests {
 
         // With a short input nothing scrolls and the cursor sits right
         // after the typed text.
-        prompt.input = "abc".to_string();
-        prompt.cursor_pos = 3;
+        prompt.set_input_plain("abc".to_string());
+        prompt.set_cursor_byte(3);
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, width, 1);

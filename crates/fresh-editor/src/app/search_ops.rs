@@ -473,7 +473,7 @@ impl Editor {
                 p.prompt_type,
                 PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
             )
-            .then(|| p.input.clone())
+            .then(|| p.input_str().to_string())
         })
     }
 
@@ -1353,8 +1353,7 @@ impl Editor {
         if let Some(ref mut prompt) = self.active_window_mut().prompt {
             if prompt.prompt_type == PromptType::QueryReplaceConfirm {
                 prompt.message = msg;
-                prompt.input.clear();
-                prompt.cursor_pos = 0;
+                prompt.set_input_plain(String::new());
             }
         }
     }
