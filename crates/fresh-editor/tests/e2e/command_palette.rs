@@ -400,28 +400,53 @@ fn test_quick_open_goto_line_live_preview_mouse_click_commits() {
     // the popup's outer rect absorbs clicks across its full chrome, so
     // reading coordinates on a transient taller-popup frame would have
     // the click silently no-op against the wrong layout.
-    harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains(" 78 │ LINE78") && s.contains("Go to line 80")
-        })
-        .expect("Goto-line preview popup should be fully rendered with LINE78 visible");
+    //
+    // `wait_until_stable` (not plain `wait_until`): on slow CI runners
+    // this test failed fast three times (macOS ×1, Windows ×2 — never
+    // reproduced locally, 25/25 green under load) with no diagnostic
+    // output. The stability phase rules out clicking on a frame that
+    // met the condition mid-transition while a late async suggestion
+    // refresh was still reshaping the popup; the panic paths below all
+    // dump the screen so a fourth failure explains itself.
+    if let Err(e) = harness.wait_until_stable(|h| {
+        let s = h.screen_to_string();
+        s.contains(" 78 │ LINE78") && s.contains("Go to line 80")
+    }) {
+        panic!(
+            "Goto-line preview wait errored: {e:#}\nscreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
 
     // Locate the click target by the unique editor-body pattern
     // "│ LINE78": the `│` gutter separator only appears in the editor
     // body, never in popup chrome or hint bars. Click in the LINE78 text
     // (skip past "│ ") so the coordinate is unambiguously over editor
     // content rather than gutter or popup.
-    let (anchor_col, target_row) = harness
-        .find_text_on_screen("│ LINE78")
-        .expect("Editor row containing LINE78 should be visible");
+    let (anchor_col, target_row) = match harness.find_text_on_screen("│ LINE78") {
+        Some(hit) => hit,
+        None => panic!(
+            "LINE78 row vanished between the stable wait and the click — screen:\n{}",
+            harness.screen_to_string()
+        ),
+    };
     // find_text_on_screen returns the column of the matched substring's
     // first byte ('│', 1 cell wide). "LINE78" starts 2 columns to the
     // right of the separator (`│ LINE78`).
     let click_col = anchor_col + 2;
-    harness.mouse_click(click_col, target_row).unwrap();
+    if let Err(e) = harness.mouse_click(click_col, target_row) {
+        panic!(
+            "mouse_click({click_col},{target_row}) errored: {e:#}\nscreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
 
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    if let Err(e) = harness.send_key(KeyCode::Esc, KeyModifiers::NONE) {
+        panic!(
+            "Esc after click errored: {e:#}\nscreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
 
     // The pre-preview snapshot (line 1) must NOT overwrite the click target
     // (line 78) — status bar must report line 78 after the prompt closes.
