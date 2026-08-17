@@ -277,10 +277,25 @@ impl Editor {
         // chord/keybinding resolution — see `dispatch_base_key` in
         // `chrome/base.rs`) — offered the key top-down in declared
         // rank order. See `dispatch_layer_keyboard`.
-        let result = self
-            .dispatch_layer_keyboard(&key_event)
-            .expect("editor base layer answers every key");
-        result?;
+        let result = self.dispatch_layer_keyboard(&key_event);
+        // The base layer answers every key by contract (`Base::layers`
+        // pushes EDITOR_BASE unconditionally and `Base::on_layer_key`
+        // always returns `Some` — both commented as load-bearing at
+        // their sites, and pinned by `overlay_stack` unit tests). If
+        // that contract ever breaks anyway, an unhandled key is a far
+        // better failure mode on the main input path than a panic:
+        // degrade to Ignored in release, scream in debug.
+        debug_assert!(
+            result.is_some(),
+            "editor base layer must answer every key — a walk fell past Base \
+             (did Base::layers grow a gate, or Base::on_layer_key a None path?)"
+        );
+        match result {
+            Some(r) => {
+                r?;
+            }
+            None => {}
+        }
         Ok(())
     }
 

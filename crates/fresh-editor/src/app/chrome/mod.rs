@@ -503,3 +503,120 @@ pub(crate) fn chrome_tree(ed: &Editor) -> Vec<ChromeBox> {
     }
     t.boxes
 }
+
+#[cfg(test)]
+mod tests {
+    use super::layer_rank::*;
+
+    /// The rank block is the ONE precedence source for the keyboard
+    /// walk, the mouse capture band, the PTY gate, `get_key_context`,
+    /// and `popup_blocked_by_higher_modal` — a one-character edit here
+    /// changes behavior in five places, so the deliberate relations
+    /// are pinned. Each assert names the behavior that regresses if it
+    /// flips.
+    #[test]
+    fn deliberate_rank_relations_are_pinned() {
+        // The capture-all modal band outranks everything routable.
+        for modal in [SETTINGS, KEYBINDING_EDITOR, CALIBRATION_WIZARD] {
+            for below in [WORKSPACE_TRUST, MENU, PROMPT, POPUP] {
+                assert!(modal > below, "modal band must own the keyboard first");
+            }
+        }
+        // Workspace-trust keys beat an open prompt — the deliberate
+        // convergence fix of the K arc (dispatch now agrees with
+        // `get_key_context`, which always ranked WT higher).
+        assert!(WORKSPACE_TRUST > PROMPT);
+        // An open menu owns the keyboard over the prompt and popups.
+        assert!(MENU > PROMPT && MENU > POPUP);
+        // The prompt outranks the popup band (block order of the old
+        // dispatch_modal_input, preserved as ranks).
+        assert!(PROMPT > POPUP);
+        // Context menus rank BELOW the popup layer — the
+        // `popup_blocked_by_higher_modal` take_while must not see
+        // them (their keyboard precedence is the pre-band grab, by
+        // ruling; the rank is deliberately NOT it).
+        assert!(CONTEXT_MENU < POPUP);
+        // A focused centered modal takes keys over the dock beneath
+        // it (the New-Session form on top of the sessions dock).
+        assert!(FLOATING_MODAL > DOCK);
+        // Prompt/popup/menu take keys before a focused dock or
+        // centered modal — the R1 rank-inversion fix.
+        assert!(POPUP > FLOATING_MODAL);
+        // The editor base is the floor.
+        for r in [
+            SETTINGS,
+            KEYBINDING_EDITOR,
+            CALIBRATION_WIZARD,
+            WORKSPACE_TRUST,
+            MENU,
+            PROMPT,
+            POPUP,
+            CONTEXT_MENU,
+            FLOATING_MODAL,
+            DOCK,
+        ] {
+            assert!(r > EDITOR_BASE);
+        }
+    }
+
+    /// Every rank is distinct: intra-rank ordering falls back to the
+    /// stable sort's declaration order, and nothing today relies on
+    /// that — keep it that way by construction.
+    #[test]
+    fn ranks_are_distinct() {
+        let ranks = [
+            SETTINGS,
+            KEYBINDING_EDITOR,
+            CALIBRATION_WIZARD,
+            WORKSPACE_TRUST,
+            MENU,
+            PROMPT,
+            POPUP,
+            CONTEXT_MENU,
+            FLOATING_MODAL,
+            DOCK,
+            EDITOR_BASE,
+        ];
+        let set: std::collections::HashSet<_> = ranks.iter().collect();
+        assert_eq!(set.len(), ranks.len(), "two layers share a rank");
+    }
+
+    /// The base-layer contract `handle_key` degrades on (and
+    /// `dispatch_layer_keyboard` terminates through): the stack of a
+    /// live editor ALWAYS ends with the editor base layer, owned by a
+    /// registered component, owning the keyboard. `Base::layers` must
+    /// never grow a state gate.
+    #[test]
+    fn overlay_stack_always_ends_with_an_owning_base_layer() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir_context = crate::config_io::DirectoryContext::for_testing(temp.path());
+        let ed = crate::app::Editor::for_test(
+            crate::config::Config::default(),
+            80,
+            24,
+            None,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+            None,
+            None,
+            false,
+            false,
+        )
+        .unwrap();
+        let stack = ed.overlay_stack();
+        let last = stack.last().expect("stack never empty");
+        assert!(
+            matches!(last.layer.kind, crate::app::overlay::LayerKind::Editor),
+            "the editor base terminates the stack"
+        );
+        assert!(
+            last.layer.owns_keyboard,
+            "the base always owns the keyboard"
+        );
+        assert!(
+            last.owner.is_some(),
+            "the base is a registered component (the walk can dispatch to it)"
+        );
+    }
+}

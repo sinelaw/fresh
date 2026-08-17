@@ -19,6 +19,19 @@ fn settings_up(ed: &Editor) -> bool {
     ed.settings_state.as_ref().is_some_and(|s| s.visible)
 }
 
+/// ONE activity predicate per modal, consulted by BOTH `capture_mouse`
+/// and `layers()`. The R3 capture band walks the derived overlay stack,
+/// so a component whose capture gate is true while its layer gate is
+/// false is never offered the capture at all — pairing the two gates on
+/// a single fn makes that impossible to drift instead of a convention.
+fn kb_editor_up(ed: &Editor) -> bool {
+    ed.keybinding_editor.is_some()
+}
+
+fn calibration_up(ed: &Editor) -> bool {
+    ed.calibration_wizard.is_some()
+}
+
 pub(crate) struct Settings;
 
 impl ChromeComponent for Settings {
@@ -83,7 +96,7 @@ impl ChromeComponent for KeybindingEditor {
         ev: crossterm::event::MouseEvent,
         _is_double_click: bool,
     ) -> Option<AnyhowResult<bool>> {
-        if ed.keybinding_editor.is_some() {
+        if kb_editor_up(ed) {
             return Some(ed.handle_keybinding_editor_mouse(ev));
         }
         None
@@ -93,7 +106,7 @@ impl ChromeComponent for KeybindingEditor {
         // Installs its own input dispatcher, so it is transparent to
         // `KeyContext`-driven resolution (`key_context: None`) but
         // fully owns the keyboard while present and blocks PTY routing.
-        if ed.keybinding_editor.is_some() {
+        if kb_editor_up(ed) {
             out.push((
                 layer_rank::KEYBINDING_EDITOR,
                 Layer {
@@ -131,7 +144,7 @@ impl ChromeComponent for CalibrationWizard {
         // The wizard owns the modal z-band but ignores every mouse
         // event (its UI is keyboard-driven). Swallowing matches the
         // previous explicit `return Ok(false)`.
-        if ed.calibration_wizard.is_some() {
+        if calibration_up(ed) {
             return Some(Ok(false));
         }
         None
@@ -139,7 +152,7 @@ impl ChromeComponent for CalibrationWizard {
 
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, Layer)>) {
         // Same custom-dispatcher treatment as the keybinding editor.
-        if ed.calibration_wizard.is_some() {
+        if calibration_up(ed) {
             out.push((
                 layer_rank::CALIBRATION_WIZARD,
                 Layer {

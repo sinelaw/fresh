@@ -6,6 +6,14 @@ use super::{in_rect, ChromeComponent, ChromeTreeBuilder, Editor};
 
 pub(crate) struct FloatingModal;
 
+/// ONE activity predicate, consulted by BOTH `capture_mouse` and
+/// `layers()` — see `modals.rs` for why the pairing must be a single
+/// fn (the rank-ordered capture band only offers capture to components
+/// with a live layer).
+fn panel_up(ed: &Editor) -> bool {
+    ed.floating_widget_panel.is_some()
+}
+
 impl ChromeComponent for FloatingModal {
     /// The centered widget modal captures the whole mouse channel
     /// while mounted (see `handle_floating_modal_mouse`: clicks
@@ -19,7 +27,7 @@ impl ChromeComponent for FloatingModal {
         ev: crossterm::event::MouseEvent,
         _is_double_click: bool,
     ) -> Option<anyhow::Result<bool>> {
-        if ed.floating_widget_panel.is_some() {
+        if panel_up(ed) {
             return Some(ed.handle_floating_modal_mouse(ev));
         }
         None
@@ -68,6 +76,9 @@ impl ChromeComponent for FloatingModal {
         // context so mode-keybinding lookups still fire for the
         // panel's own chords. Blocks PTY routing whenever present —
         // it sits on top of (and obscures) the active terminal.
+        if !panel_up(ed) {
+            return;
+        }
         if let Some(f) = ed.floating_widget_panel.as_ref() {
             out.push((
                 super::layer_rank::FLOATING_MODAL,

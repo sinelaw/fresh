@@ -1128,4 +1128,356 @@ impl Editor {
         self.relayout();
         self.set_status_message(t!("split.closed").to_string());
     }
+
+    /// Vertical scrollbar drag (`PointerGrab::VScrollbar`): relative
+    /// thumb drag or track jump on the grabbed split.
+    pub(crate) fn handle_vscrollbar_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+        if let Some(dragging_split_id) = self.active_window_mut().mouse_state.dragging_scrollbar {
+            // Snapshot split_areas so we don't borrow `self.active_layout()` and
+            // `self.active_window_mut()` simultaneously below.
+            let split_areas = self.active_layout().split_areas.clone();
+            for (split_id, buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in
+                &split_areas
+            {
+                if *split_id == dragging_split_id {
+                    // Check if we started dragging from the thumb (have drag_start_row)
+                    if self.active_window().mouse_state.drag_start_row.is_some() {
+                        // Relative drag from thumb
+                        self.active_window_mut().handle_scrollbar_drag_relative(
+                            row,
+                            *split_id,
+                            *buffer_id,
+                            *scrollbar_rect,
+                        )?;
+                    } else {
+                        // Jump drag (started from track)
+                        self.active_window_mut().handle_scrollbar_jump(
+                            col,
+                            row,
+                            *split_id,
+                            *buffer_id,
+                            *scrollbar_rect,
+                        )?;
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Horizontal scrollbar drag (`PointerGrab::HScrollbar`): relative
+    /// thumb drag or track jump on the grabbed split.
+    pub(crate) fn handle_hscrollbar_drag(&mut self, col: u16, _row: u16) -> AnyhowResult<()> {
+        if let Some(dragging_split_id) = self
+            .active_window_mut()
+            .mouse_state
+            .dragging_horizontal_scrollbar
+        {
+            // Clone the scrollbar layout so the loop doesn't hold an
+            // immutable borrow on `self` while it mutates
+            // `self.split_view_states`. The active window's layout cache
+            // is repopulated each frame, so a one-frame snapshot is fine.
+            let hscrollbar_areas = self.active_layout().horizontal_scrollbar_areas.clone();
+            for (
+                split_id,
+                _buffer_id,
+                hscrollbar_rect,
+                max_content_width,
+                thumb_start,
+                thumb_end,
+            ) in &hscrollbar_areas
+            {
+                if *split_id == dragging_split_id {
+                    let track_width = hscrollbar_rect.width as f64;
+                    if track_width <= 1.0 {
+                        break;
+                    }
+
+                    if let (Some(drag_start_hcol), Some(drag_start_left_column)) = (
+                        self.active_window_mut().mouse_state.drag_start_hcol,
+                        self.active_window_mut().mouse_state.drag_start_left_column,
+                    ) {
+                        // Relative drag from thumb - move proportionally to mouse offset
+                        // Use thumb size to compute the correct ratio so thumb tracks with mouse
+                        let col_offset = (col as i32) - (drag_start_hcol as i32);
+                        if let Some(view_state) = self
+                            .windows
+                            .get_mut(&self.active_window)
+                            .and_then(|w| w.split_view_states_mut())
+                            .expect("active window must have a populated split layout")
+                            .get_mut(&dragging_split_id)
+                        {
+                            let visible_width = view_state.viewport.width as usize;
+                            let max_scroll = max_content_width.saturating_sub(visible_width);
+                            if max_scroll > 0 {
+                                let thumb_size = thumb_end.saturating_sub(*thumb_start).max(1);
+                                let track_travel = (track_width - thumb_size as f64).max(1.0);
+                                let scroll_per_pixel = max_scroll as f64 / track_travel;
+                                let scroll_offset =
+                                    (col_offset as f64 * scroll_per_pixel).round() as i64;
+                                let new_left =
+                                    (drag_start_left_column as i64 + scroll_offset).max(0) as usize;
+                                view_state.viewport.left_column = new_left.min(max_scroll);
+                                view_state.viewport.set_skip_ensure_visible();
+                            }
+                        }
+                    } else {
+                        // Jump drag (started from track) - jump to absolute position
+                        let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
+                        let ratio = (relative_col / (track_width - 1.0)).clamp(0.0, 1.0);
+
+                        if let Some(view_state) = self
+                            .windows
+                            .get_mut(&self.active_window)
+                            .and_then(|w| w.split_view_states_mut())
+                            .expect("active window must have a populated split layout")
+                            .get_mut(&dragging_split_id)
+                        {
+                            let visible_width = view_state.viewport.width as usize;
+                            let max_scroll = max_content_width.saturating_sub(visible_width);
+                            let target_col = (ratio * max_scroll as f64).round() as usize;
+                            view_state.viewport.left_column = target_col.min(max_scroll);
+                            view_state.viewport.set_skip_ensure_visible();
+                        }
+                    }
+
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle text selection drag - extends selection from anchor to current position
+    pub(crate) fn handle_text_selection_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+        use crate::model::event::Event;
+        use crate::primitives::word_navigation::{find_word_end, find_word_start};
+
+        let Some(split_id) = self.active_window_mut().mouse_state.drag_selection_split else {
+            return Ok(());
+        };
+        let Some(anchor_position) = self.active_window_mut().mouse_state.drag_selection_anchor
+        else {
+            return Ok(());
+        };
+
+        // Find the buffer and content rect for this split in one pass
+        let Some((buffer_id, content_rect)) = self
+            .active_layout()
+            .split_areas
+            .iter()
+            .find(|(sid, _, _, _, _, _)| *sid == split_id)
+            .map(|(_, bid, rect, _, _, _)| (*bid, *rect))
+        else {
+            return Ok(());
+        };
+
+        // Get cached view line mappings for this split
+        let cached_mappings = self
+            .active_layout()
+            .view_line_mappings
+            .get(&split_id)
+            .cloned();
+
+        let leaf_id = split_id;
+
+        // Get fallback from SplitViewState viewport
+        let fallback = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&leaf_id)
+            .map(|vs| vs.viewport.top_byte())
+            .unwrap_or(0);
+
+        // Get compose width for this split
+        let compose_width = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&leaf_id)
+            .and_then(|vs| vs.compose_width);
+
+        // Calculate the target position and selection geometry by
+        // reading buffer state directly, then dispatch the move via
+        // Window helpers.
+        let drag_by_words = self.active_window_mut().mouse_state.drag_selection_by_words;
+        let drag_word_end = self.active_window_mut().mouse_state.drag_selection_word_end;
+
+        // Terminal scrollback views are unwrapped and gutter-free, so a
+        // screen cell maps to a byte exactly (viewport top line + row).
+        // Resolve directly instead of through the render-cached view-line
+        // mappings: drag events processed after the live-grid→scrollback
+        // flip but before the next render would otherwise resolve against
+        // mappings cached from a *previous* buffer view of this split and
+        // land the selection head far from the pointer.
+        let terminal_grid_target = if self.active_window().is_terminal_buffer(buffer_id)
+            && self
+                .active_window()
+                .split_terminal_scrollback(leaf_id, buffer_id)
+        {
+            self.terminal_grid_byte_at(leaf_id, buffer_id, content_rect, col, row)
+        } else {
+            None
+        };
+
+        let Some((target_position, new_position, anchor_position, new_sticky_column)) = self
+            .active_window()
+            .buffers
+            .get(&buffer_id)
+            .and_then(|state| {
+                let gutter_width = state.margins.left_total_width() as u16;
+                let target_position = match terminal_grid_target {
+                    Some(pos) => pos,
+                    None => crate::app::click_geometry::screen_to_buffer_position(
+                        col,
+                        row,
+                        content_rect,
+                        gutter_width,
+                        &cached_mappings,
+                        fallback,
+                        true, // Allow gutter clicks for drag selection
+                        compose_width,
+                    )?,
+                };
+                let (new_position, anchor_pos) = if drag_by_words {
+                    if target_position >= anchor_position {
+                        (
+                            find_word_end(&state.buffer, target_position),
+                            anchor_position,
+                        )
+                    } else {
+                        let word_end = drag_word_end.unwrap_or(anchor_position);
+                        (find_word_start(&state.buffer, target_position), word_end)
+                    }
+                } else {
+                    (target_position, anchor_position)
+                };
+                // Visual column, not byte column — see `visual_column_of`.
+                let new_sticky_column =
+                    crate::primitives::display_width::visual_column_of(&state.buffer, new_position);
+                Some((target_position, new_position, anchor_pos, new_sticky_column))
+            })
+        else {
+            return Ok(());
+        };
+        let _ = target_position;
+
+        let (primary_cursor_id, old_position, old_anchor, old_sticky_column) = self
+            .active_window()
+            .buffers
+            .splits()
+            .and_then(|(_, vs)| vs.get(&leaf_id))
+            .map(|vs| {
+                let cursor = vs.cursors.primary();
+                (
+                    vs.cursors.primary_id(),
+                    cursor.position,
+                    cursor.anchor,
+                    cursor.sticky_column,
+                )
+            })
+            .unwrap_or((CursorId(0), 0, None, None));
+
+        let event = Event::MoveCursor {
+            cursor_id: primary_cursor_id,
+            old_position,
+            new_position,
+            old_anchor,
+            new_anchor: Some(anchor_position),
+            old_sticky_column,
+            new_sticky_column: new_sticky_column.or(old_sticky_column),
+        };
+
+        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
+            event_log.append(event.clone());
+        }
+        self.active_window_mut()
+            .apply_event_to_buffer(buffer_id, leaf_id, &event);
+
+        Ok(())
+    }
+
+    /// Handle separator drag for split resizing
+    pub(crate) fn handle_separator_drag(
+        &mut self,
+        col: u16,
+        row: u16,
+        split_id: crate::model::event::ContainerId,
+        direction: crate::model::event::SplitDirection,
+    ) -> AnyhowResult<()> {
+        let Some((start_col, start_row)) = self.active_window_mut().mouse_state.drag_start_position
+        else {
+            return Ok(());
+        };
+        let Some(start_ratio) = self.active_window_mut().mouse_state.drag_start_ratio else {
+            return Ok(());
+        };
+        let Some(editor_area) = self.active_layout().editor_content_area else {
+            return Ok(());
+        };
+
+        // Calculate the delta in screen space
+        let (delta, total_size) = match direction {
+            SplitDirection::Horizontal => {
+                // For horizontal splits, we move the separator up/down (row changes)
+                let delta = row as i32 - start_row as i32;
+                let total = editor_area.height as i32;
+                (delta, total)
+            }
+            SplitDirection::Vertical => {
+                // For vertical splits, we move the separator left/right (col changes)
+                let delta = col as i32 - start_col as i32;
+                let total = editor_area.width as i32;
+                (delta, total)
+            }
+        };
+
+        // Convert screen delta to ratio delta
+        // The ratio represents the fraction of space the first split gets
+        if total_size > 0 {
+            let ratio_delta = delta as f32 / total_size as f32;
+            // Store the raw fraction; the absolute minimum-pane-size guard is
+            // enforced at layout time, so dragging the separator toward the
+            // edge stops when the sibling would drop below the minimum size
+            // rather than at a fixed 10%/90%.
+            let new_ratio = (start_ratio + ratio_delta).clamp(0.0, 1.0);
+
+            // Update the split ratio. The container may live in the main
+            // split tree or inside a stashed Grouped subtree (buffer group
+            // panels like the theme editor); try the main tree first and
+            // fall back to the grouped subtrees.
+            if self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .get_ratio(split_id.into())
+                .is_some()
+            {
+                // Guarded by the `get_ratio(..).is_some()` check above, so
+                // this id resolves to a resizable Split; the bool result is
+                // not actionable here (the drag can only target a container).
+                let _resized = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_manager_mut())
+                    .expect("active window must have a populated split layout")
+                    .set_ratio(split_id, new_ratio);
+            } else {
+                self.set_grouped_split_ratio(split_id, new_ratio);
+            }
+            // Reflow live as the separator moves so terminals track the
+            // split sizes during the drag, not just on release.
+            self.relayout();
+        }
+
+        Ok(())
+    }
 }

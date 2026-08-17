@@ -470,4 +470,72 @@ impl Editor {
         }
         None
     }
+
+    /// Popup text-selection drag (`PointerGrab::PopupSelect`): extend
+    /// the selection to the pointer within the grabbed popup.
+    pub(crate) fn handle_popup_select_drag(&mut self, col: u16, row: u16) {
+        if let Some(popup_idx) = self.active_window_mut().mouse_state.selecting_in_popup {
+            // Find the popup area from cached layout
+            if let Some((_, _, inner_rect, scroll_offset, _, _, _)) = self
+                .active_chrome()
+                .popup_areas
+                .iter()
+                .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
+            {
+                // Check if mouse is within the popup inner area
+                if col >= inner_rect.x
+                    && col < inner_rect.x + inner_rect.width
+                    && row >= inner_rect.y
+                    && row < inner_rect.y + inner_rect.height
+                {
+                    let relative_col = (col - inner_rect.x) as usize;
+                    let relative_row = (row - inner_rect.y) as usize;
+                    let line = scroll_offset + relative_row;
+
+                    let state = self.active_state_mut();
+                    if let Some(popup) = state.popups.get_mut(popup_idx) {
+                        popup.extend_selection(line, relative_col);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Popup scrollbar drag (`PointerGrab::PopupScrollbar`): map the
+    /// track row to the grabbed popup's scroll position.
+    pub(crate) fn handle_popup_scrollbar_drag(&mut self, row: u16) {
+        if let Some(popup_idx) = self
+            .active_window_mut()
+            .mouse_state
+            .dragging_popup_scrollbar
+        {
+            // Find the popup's scrollbar rect from cached layout
+            if let Some((_, _, inner_rect, _, _, Some(sb_rect), total_lines)) = self
+                .active_chrome()
+                .popup_areas
+                .iter()
+                .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
+            {
+                let track_height = sb_rect.height as usize;
+                let visible_lines = inner_rect.height as usize;
+
+                if track_height > 0 && *total_lines > visible_lines {
+                    let relative_row = row.saturating_sub(sb_rect.y) as usize;
+                    let max_scroll = total_lines.saturating_sub(visible_lines);
+                    let target_scroll = if track_height > 1 {
+                        (relative_row * max_scroll) / (track_height.saturating_sub(1))
+                    } else {
+                        0
+                    };
+
+                    let state = self.active_state_mut();
+                    if let Some(popup) = state.popups.get_mut(popup_idx) {
+                        let current_scroll = popup.scroll_offset as i32;
+                        let delta = target_scroll as i32 - current_scroll;
+                        popup.scroll_by(delta);
+                    }
+                }
+            }
+        }
+    }
 }

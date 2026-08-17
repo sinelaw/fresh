@@ -629,4 +629,46 @@ impl Editor {
 
         Ok(())
     }
+
+    /// Handle file explorer border drag for resizing
+    pub(crate) fn handle_file_explorer_border_drag(&mut self, col: u16) -> AnyhowResult<()> {
+        let Some((start_col, _start_row)) =
+            self.active_window_mut().mouse_state.drag_start_position
+        else {
+            return Ok(());
+        };
+        let Some(start_width) = self
+            .active_window_mut()
+            .mouse_state
+            .drag_start_explorer_width
+        else {
+            return Ok(());
+        };
+
+        let delta = col as i32 - start_col as i32;
+        let total_width = self.terminal_width as i32;
+
+        // Drag preserves the variant the user chose. A user editing
+        // columns doesn't want their mode silently flipped to percent
+        // just because they grabbed the divider.
+        if total_width > 0 {
+            use crate::config::ExplorerWidth;
+            self.active_window_mut().file_explorer_width = match start_width {
+                ExplorerWidth::Percent(start_pct) => {
+                    let percent_delta = (delta * 100) / total_width;
+                    let new_pct = (start_pct as i32 + percent_delta).clamp(0, 100) as u8;
+                    ExplorerWidth::Percent(new_pct)
+                }
+                ExplorerWidth::Columns(start_cols) => {
+                    let new_cols = (start_cols as i32 + delta).clamp(0, total_width) as u16;
+                    ExplorerWidth::Columns(new_cols)
+                }
+            };
+            // The sidebar width changed: reflow terminals/viewports/panels
+            // through the single layout funnel.
+            self.relayout();
+        }
+
+        Ok(())
+    }
 }
