@@ -27,7 +27,7 @@ impl ChromeComponent for SearchOptions {
         }
     }
 
-    fn hover(&self, ed: &Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+    fn hover(&self, ed: &mut Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
         if let Some(layout) = ed.search_options_layout_now() {
             use crate::view::ui::status_bar::SearchOptionsHover;
             if let Some(hover) = layout.checkbox_at(col, row) {

@@ -77,7 +77,7 @@ impl ChromeComponent for Prompt {
         t.full("chrome:overlay_prompt_scrim", 15);
     }
 
-    fn hover(&self, ed: &Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+    fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
         if bx.kind != "chrome:suggestions" {
             return None;
         }

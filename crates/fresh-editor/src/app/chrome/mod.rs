@@ -204,8 +204,17 @@ pub(crate) trait ChromeComponent: Sync {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder);
 
     /// Name the hover target under the pointer, or decline so the walk
-    /// falls through to the next surface down.
-    fn hover(&self, _ed: &Editor, _bx: &LayoutBox, _col: u16, _row: u16) -> Option<HoverTarget> {
+    /// falls through to the next surface down. Takes `&mut Editor` like
+    /// the pointer handlers (not `&Editor` like `collect`): live-state
+    /// geometry derivation can lazily load buffer chunks (the status
+    /// bar's cursor-column segment), which needs the mutable borrow.
+    fn hover(
+        &self,
+        _ed: &mut Editor,
+        _bx: &LayoutBox,
+        _col: u16,
+        _row: u16,
+    ) -> Option<HoverTarget> {
         None
     }
 

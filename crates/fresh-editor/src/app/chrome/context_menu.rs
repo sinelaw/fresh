@@ -21,7 +21,7 @@ impl ChromeComponent for ContextMenu {
         }
     }
 
-    fn hover(&self, ed: &Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+    fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
         if bx.kind != "chrome:context_menu" {
             return None;
         }

@@ -255,6 +255,29 @@ to one) are DONE. Remaining, in order:
   `ChromeLayout.search_options_layout` deleted; consumers (chrome
   component collect+hover, `handle_click_search_options`, scene.rs
   web projection) all call `search_options_layout_now()`.
+- **7b: status bar — DONE.** The bar's geometry is content-dependent
+  (rendered label widths: encoding, LSP state, cursor position,
+  messages), so the hoist splits differently from 7a:
+  `Editor::with_status_bar_ctx` gathers every input from live state
+  (the ~100-line construction the paint pass used, now shared) and
+  `StatusBarRenderer::compute_status_layout` runs the painter's own
+  element/width/placement walk frame-free (`render_status` takes
+  `Option<&mut Frame>`); `status_bar_area_now()` (`&self`) re-runs
+  the actual vertical `Layout` split so small-terminal squeeze
+  behavior matches by construction. Two debug asserts pin paint ==
+  derivation (area, and clickable+plugin-token geometry).
+  `StatusBarChrome.clickable` / `.plugin_token_areas` deleted;
+  consumers (chrome component hover, `handle_click_status_bar`, the
+  four popup-anchor sites in popup_dialogs) call
+  `status_bar_layout_now()` / `status_bar_clickable_area_now()`.
+  `StatusBarChrome` keeps `area` + `segments` as the web's semantic
+  PAINT capture (`status_view` mirrors the painted frame — paint
+  output, not event geometry; same ruling as the overlays channel).
+  Trait ruling: `ChromeComponent::hover` now takes `&mut Editor`
+  like the pointer handlers — live-state geometry can lazily load
+  buffer chunks (the cursor-column segment) — while `collect` stays
+  `&Editor` (boxes need only `*_area_now()` rects, keeping tree
+  collection read-only).
 
 ## What NOT to do
 

@@ -9,29 +9,29 @@ pub(crate) struct StatusBar;
 
 impl ChromeComponent for StatusBar {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
-        if let Some((status_row, status_x, status_width)) = ed.active_chrome().status_bar.area {
+        if let Some(area) = ed.status_bar_area_now() {
             let mut b = LayoutBox::plain(
                 "chrome:status_bar",
-                status_row as u32,
-                status_x as u32,
-                status_width as u32,
-                1,
+                area.y as u32,
+                area.x as u32,
+                area.width as u32,
+                area.height as u32,
             );
             b.z = 40;
             t.push(b);
         }
     }
 
-    fn hover(&self, ed: &Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
-        // One generic hit-test over every clickable segment recorded
-        // last frame (encoding, LSP, remote, ...).
-        if let Some((status_row, _status_x, _status_width)) = ed.active_chrome().status_bar.area {
-            if row == status_row {
-                for (id, indicator_row, start, end) in &ed.active_chrome().status_bar.clickable {
-                    if row == *indicator_row && col >= *start && col < *end {
-                        return Some(HoverTarget::StatusBarClickable(*id));
-                    }
-                }
+    fn hover(&self, ed: &mut Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+        // One generic hit-test over every clickable segment, on geometry
+        // derived from live state (encoding, LSP, remote, ...).
+        let (area, layout) = ed.status_bar_layout_now()?;
+        if row != area.y {
+            return None;
+        }
+        for (id, indicator_row, start, end) in &layout.clickable {
+            if row == *indicator_row && col >= *start && col < *end {
+                return Some(HoverTarget::StatusBarClickable(*id));
             }
         }
         None

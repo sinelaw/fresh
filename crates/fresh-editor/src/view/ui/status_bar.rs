@@ -895,7 +895,24 @@ impl StatusBarRenderer {
         // natively from `status_view`. The TUI always passes `true`.
         draw: bool,
     ) -> StatusBarLayout {
-        Self::render_status(frame, area, ctx, config, rec, draw)
+        Self::render_status(Some(frame), area, ctx, config, rec, draw)
+    }
+
+    /// Compute the bar's layout (clickable segments + plugin token areas +
+    /// semantic segments) from live state without painting a cell — the SAME
+    /// element/width/placement walk the paint pass runs
+    /// (`render_status_bar_row` asserts the two agree in debug builds).
+    /// Geometry is content-dependent (rendered label widths: encoding, LSP
+    /// state, cursor position, messages), so it is derived from the same
+    /// `StatusBarContext` the painter consumes. This is the per-event
+    /// geometry source (chrome hit-testing, click resolution, popup
+    /// anchoring): geometry produced by layout, not recorded by paint.
+    pub fn compute_status_layout(
+        area: Rect,
+        ctx: &mut StatusBarContext<'_>,
+        config: &StatusBarConfig,
+    ) -> StatusBarLayout {
+        Self::render_status(None, area, ctx, config, None, false)
     }
 
     /// Render the prompt/minibuffer
@@ -1950,7 +1967,9 @@ impl StatusBarRenderer {
 
     /// Render the normal status bar (config-driven).
     fn render_status(
-        frame: &mut Frame,
+        // `None` on the event-time layout path (`compute_status_layout`),
+        // which never paints; always `Some` when `draw` is true.
+        mut frame: Option<&mut Frame>,
         area: Rect,
         ctx: &mut StatusBarContext<'_>,
         config: &StatusBarConfig,
@@ -2180,7 +2199,9 @@ impl StatusBarRenderer {
                 ));
             }
             if draw {
-                frame.render_widget(Paragraph::new(Line::from(spans)), area);
+                if let Some(frame) = frame.as_deref_mut() {
+                    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+                }
             }
             return layout;
         }
@@ -2247,7 +2268,9 @@ impl StatusBarRenderer {
         }
 
         if draw {
-            frame.render_widget(Paragraph::new(Line::from(spans)), area);
+            if let Some(frame) = frame {
+                frame.render_widget(Paragraph::new(Line::from(spans)), area);
+            }
         }
         layout
     }
