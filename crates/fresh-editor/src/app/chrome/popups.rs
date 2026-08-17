@@ -45,9 +45,8 @@ impl ChromeComponent for Popups {
         for area in &ed.active_chrome().popup_areas {
             opaque_popup(t, area.1);
         }
-        // Block-or-dismiss guard for transient popups (double-click's
-        // post-walk split scan runs unconditionally after the walk, so
-        // the block half must CONSUME — opacity alone can't stop it).
+        // Block-or-dismiss guard for transient popups on double/
+        // triple-click: outside every popup, dismiss and keep routing.
         t.full("chrome:popup_guard", 140);
     }
 
@@ -108,15 +107,15 @@ impl ChromeComponent for Popups {
                 _ => Ok(Disposition::Pass),
             };
         }
-        if ev.press != PointerPress::Double {
+        if !matches!(ev.press, PointerPress::Double | PointerPress::Triple) {
             return Ok(Disposition::Pass);
         }
         match bx.kind {
-            // Double-click inside a popup: BLOCK, as a consume — the
-            // double-click walk's post-walk split scan runs
-            // unconditionally after the loop, so the opaque box must
-            // consume rather than rely on the opacity gate (which
-            // would also skip the guard below it in the same scan).
+            // Double/triple-click inside a popup: BLOCK, as a consume
+            // (belt over the opacity gate's suspenders — the split
+            // select arms live in the walk now, so opacity alone
+            // would also stop them, but an explicit block keeps the
+            // guard's dismiss half unambiguous).
             "chrome:popups" => Ok(Disposition::Consumed),
             // Outside every popup: dismiss transients and keep
             // routing (act-then-continue guard).

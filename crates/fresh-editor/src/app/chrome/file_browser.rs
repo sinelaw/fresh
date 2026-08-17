@@ -44,7 +44,11 @@ impl ChromeComponent for FileBrowser {
                 }
                 Ok(Disposition::Pass)
             }
-            PointerPress::Right => Ok(Disposition::Pass),
+            // No right/triple semantics in the browser. Pass matches
+            // the old hand ladder exactly (the box is not opaque, so
+            // a triple falls through to the split beneath — the
+            // pre-existing quirk, preserved deliberately).
+            PointerPress::Right | PointerPress::Triple => Ok(Disposition::Pass),
         }
     }
 

@@ -172,7 +172,16 @@ impl ChromeComponent for Prompt {
             }
             return Ok(Disposition::Pass);
         }
-        if ev.press != PointerPress::Double {
+        if !matches!(ev.press, PointerPress::Double | PointerPress::Triple) {
+            return Ok(Disposition::Pass);
+        }
+        if ev.press == PointerPress::Triple {
+            // Mouse-modal overlay: a triple-click must never
+            // line-select in the buffer below (no triple semantics of
+            // its own — plain swallow).
+            if bx.kind == "chrome:overlay_prompt_modal" && ed.overlay_prompt_active() {
+                return Ok(Disposition::Consumed);
+            }
             return Ok(Disposition::Pass);
         }
         match bx.kind {

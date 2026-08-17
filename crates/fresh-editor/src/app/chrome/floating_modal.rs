@@ -45,6 +45,29 @@ impl ChromeComponent for FloatingModal {
         Ok(super::Disposition::Consumed)
     }
 
+    fn on_key(
+        &self,
+        ed: &mut Editor,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> Option<anyhow::Result<()>> {
+        // The focused floating panel claims all keys while visible.
+        // Esc unmounts + fires a `widget_event` "cancel"; smart-key
+        // names (Tab/Return/Backspace/…/Up/Down) route through the
+        // widget command dispatcher; printable chars feed
+        // `textInputChar` to the focused TextInput. Registered before
+        // Dock, so a focused centered modal takes keyboard precedence
+        // over the dock (the New-Session form opened on top of it) —
+        // ONE precedence source: this registry order matches the
+        // `layers()` ranks (FLOATING_MODAL 820 > DOCK 810).
+        if ed.floating_widget_panel.as_ref().is_some_and(|f| f.focused)
+            && ed.dispatch_floating_widget_key(crate::app::PanelSlot::Floating, code, modifiers)
+        {
+            return Some(Ok(()));
+        }
+        None
+    }
+
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
         use crate::app::overlay::{Layer, LayerKind};
         // Owns the keyboard when focused; resolves as `Normal`
