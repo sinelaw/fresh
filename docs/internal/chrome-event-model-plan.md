@@ -267,8 +267,16 @@ rung → `WorkspaceTrust::on_layer_key`; the unfocused-popup
 interception moved from `handle_key` into the popup rungs with its
 `popup_blocked_by_higher_modal` guard kept for byte-identical
 precedence; `dispatch_modal_input` deleted — `handle_key` calls the
-walk directly; `on_layer_key` gained the anyhow error channel).
-K4 (base fallback) remaining. Remaining, in order:
+walk directly; `on_layer_key` gained the anyhow error channel),
+**K4 DONE** (the pipeline tail — mode bindings, composite routing,
+chord/keybinding resolution — is `Base::on_layer_key` /
+`dispatch_base_key` in `chrome/base.rs`; the base layer always
+answers, so the walk always terminates; `handle_key` is the pre-band
+— event-debug, terminal input, getNextKey capture, `on_key` grabs,
+the pre-walk transient-dismissal observer — plus ONE walk call).
+The main key pipeline is now registration-based end to end: a new
+surface registers a component, declares a ranked layer, and its
+keyboard routing exists. Remaining, in order:
 
 - **DONE — dock captures + grab slot + opacity gate.** The dock's
   click/right-click routing is the Dock component's boxes and arms

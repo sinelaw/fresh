@@ -229,9 +229,6 @@ impl Editor {
             }
         }
 
-        // Determine the current context first
-        let mut context = self.get_key_context();
-
         // Transient popups (Hover, Signature Help) are dismissed on any
         // key press — for both focused and unfocused popups: an unfocused
         // hover popup that floats over the buffer must still vanish when
@@ -240,9 +237,14 @@ impl Editor {
         // ([`router::should_dismiss_transient_popup`]); this shell
         // supplies the topmost popup's state. Editor-level popups always
         // take precedence over buffer popups when both are visible.
+        // Deliberately PRE-WALK: an observer that must see the key even
+        // when a higher modal will consume it (typing under Settings
+        // still dismisses a hover popup) — no first-consumer walk can
+        // express that, so it stays a pre-band stage like event-debug.
         let popup_visible_on_screen =
             self.global_popups.is_visible() || self.active_state().popups.is_visible();
         if popup_visible_on_screen {
+            let context = self.get_key_context();
             let view = {
                 let popup = self
                     .global_popups
@@ -254,122 +256,29 @@ impl Editor {
                 }
             };
             let dismiss = self.keybindings.read().is_ok_and(|kb| {
-                router::should_dismiss_transient_popup(&view, &kb, context.clone(), &key_event)
+                router::should_dismiss_transient_popup(&view, &kb, context, &key_event)
             });
             if dismiss {
                 self.hide_popup();
                 tracing::debug!("Dismissed transient popup on key press");
-                // Recalculate context now that popup is gone
-                context = self.get_key_context();
+                // No context recalc needed here: every stage below
+                // derives its context fresh from the layer stack.
             }
         }
 
         // THE derived key walk: every registered overlay layer —
         // capture-all modals, workspace trust, the prompt rungs, the
         // popup rungs (including the unfocused popup-cancel/-focus
-        // interception, which lives with the Popups component now) —
-        // offered the key top-down in declared rank order. See
-        // `dispatch_layer_keyboard`.
-        if let Some(result) = self.dispatch_layer_keyboard(&key_event) {
-            result?;
-            return Ok(());
-        }
-
-        // If a modal was dismissed (e.g., completion popup closed and returned Ignored),
-        // recalculate the context so the key is processed in the correct context.
-        if context != self.get_key_context() {
-            context = self.get_key_context();
-        }
-
-        // Only check buffer mode keybindings when the editor buffer has focus.
-        // FileExplorer, Menu, Prompt, Popup contexts should not trigger mode bindings
-        // (e.g. markdown-source's Enter handler should not fire while the explorer is focused).
-        //
-        // CompositeBuffer is included so a composite buffer's plugin-defined
-        // mode (e.g. the review-diff `diff-view` mode) can bind keys the core
-        // composite handling leaves free — like Enter / Alt+O to open the file
-        // under the cursor. Keys the mode does not bind fall through unchanged
-        // to the composite router and the CompositeBuffer keymap below, so
-        // built-in hunk navigation (n/p/]/[) and close (q) are unaffected.
-        let should_check_mode_bindings = matches!(
-            context,
-            crate::input::keybindings::KeyContext::Normal
-                | crate::input::keybindings::KeyContext::CompositeBuffer
-        );
-
-        if should_check_mode_bindings {
-            if let Some(result) = self.dispatch_mode_bindings(&key_event, code, modifiers) {
-                return result;
-            }
-        }
-
-        // --- Composite buffer input routing ---
-        // If the active buffer is a composite buffer (side-by-side diff),
-        // route remaining composite-specific keys (scroll, pane switch, close)
-        // through CompositeInputRouter before falling through to regular
-        // keybinding resolution. Hunk navigation (n/p/]/[) is handled by the
-        // Action system via CompositeBuffer context bindings.
-        {
-            let active_buf = self.active_buffer();
-            let active_split = self.effective_active_split();
-            if self.active_window().is_composite_buffer(active_buf) {
-                if let Some(handled) =
-                    self.try_route_composite_key(active_split, active_buf, &key_event)
-                {
-                    return handled;
-                }
-            }
-        }
-
-        // Resolve the key against the current context, chords first —
-        // the decision is [`router::chord_or_key`]. An abandoned chord
-        // prefix is cleared so it can't poison the next key.
-        let key_event = crossterm::event::KeyEvent::new(code, modifiers);
-        let disposition = {
-            let keybindings = self.keybindings.read().unwrap();
-            router::chord_or_key(
-                &self.active_window().chord_state,
-                &keybindings,
-                &key_event,
-                context.clone(),
-            )
-        };
-        match disposition {
-            router::ChordDisposition::Chord(action) => {
-                // Complete chord match - execute action and clear chord state
-                tracing::debug!("Complete chord match -> Action: {:?}", action);
-                self.active_window_mut().chord_state.clear();
-                self.handle_action(action)
-            }
-            router::ChordDisposition::Pending => {
-                // Partial match - add to chord state and wait for more keys
-                tracing::debug!("Partial chord match - waiting for next key");
-                self.active_window_mut().chord_state.push((code, modifiers));
-                Ok(())
-            }
-            router::ChordDisposition::Resolved(action) => {
-                self.active_window_mut().chord_state.clear();
-                tracing::trace!("Context: {:?} -> Action: {:?}", context, action);
-                // Cancel pending LSP requests on user actions (except LSP
-                // actions themselves) so stale completions don't show up
-                // after the user has moved on.
-                if router::cancels_pending_lsp(&action) {
-                    self.active_window_mut().cancel_pending_lsp_requests();
-                }
-                // Keys the file browser ignores (its Alt+letter toggles) resolve
-                // here in the Prompt context; the resulting prompt/file-browser
-                // actions belong to the browser's state machine, not the generic
-                // handler.
-                if self.is_file_open_active() && self.handle_file_open_action(&action) {
-                    return Ok(());
-                }
-                // Note: Modal components (Settings, Menu, Prompt, Popup, File
-                // Browser) are handled by the layer walk (dispatch_layer_keyboard) using the
-                // InputHandler system. All remaining actions delegate to
-                // handle_action.
-                self.handle_action(action)
-            }
-        }
+        // interception), down to the editor base, whose handler is the
+        // pipeline tail (mode bindings, composite routing,
+        // chord/keybinding resolution — see `dispatch_base_key` in
+        // `chrome/base.rs`) — offered the key top-down in declared
+        // rank order. See `dispatch_layer_keyboard`.
+        let result = self
+            .dispatch_layer_keyboard(&key_event)
+            .expect("editor base layer answers every key");
+        result?;
+        Ok(())
     }
 
     /// Mode-binding stage of the pipeline: while the editor buffer has
@@ -380,7 +289,7 @@ impl Editor {
     /// [`router::ModeKeyView`] from live state and applies the
     /// disposition. Returns `None` when no mode claims the key and the
     /// pipeline should continue.
-    fn dispatch_mode_bindings(
+    pub(super) fn dispatch_mode_bindings(
         &mut self,
         key_event: &crossterm::event::KeyEvent,
         code: crossterm::event::KeyCode,
