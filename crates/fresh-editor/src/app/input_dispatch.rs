@@ -9,7 +9,6 @@ use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputRes
 use crate::input::keybindings::{Action, KeyContext};
 use crate::view::file_browser_input::FileBrowserInputHandler;
 use crate::view::query_replace_input::QueryReplaceConfirmInputHandler;
-use crate::view::ui::MenuInputHandler;
 use anyhow::Result as AnyhowResult;
 use crossterm::event::KeyEvent;
 use rust_i18n::t;
@@ -103,59 +102,34 @@ impl Editor {
         None
     }
 
-    /// Walk the overlay stack top-down and, if a *capture-all* modal
-    /// (Settings / KeybindingEditor / CalibrationWizard / Menu) is the
-    /// keyboard owner, dispatch to its handler and return its result.
-    /// Returns `None` when no such modal is up, letting the caller fall
-    /// through to the Prompt / Popup blocks (which have their own
-    /// fall-through semantics that don't fit a top-down kind-walk).
+    /// THE key walk: iterate the owner-stamped overlay stack
+    /// ([`Editor::overlay_stack`]) top-down, offering the key to each
+    /// layer's declaring component through
+    /// [`crate::app::chrome::ChromeComponent::on_layer_key`] — the
+    /// keyboard analogue of `dispatch_pointer` walking `hit_stack`
+    /// over owner-stamped boxes. A component consuming stops the
+    /// walk; a declining layer (`None`) falls through to the next
+    /// layer down. Routing is DERIVED from the registered layers —
+    /// no kind ladder; a new surface registers a component and its
+    /// keys route with no edit here.
     ///
-    /// The mouse counterpart is the chrome components' `capture_mouse`
-    /// band (see `app::chrome`).
-    fn dispatch_modal_keyboard(&mut self, event: &KeyEvent) -> Option<InputResult> {
-        use crate::app::overlay::LayerKind;
-
-        // Snapshot the capturing kind first so the stack borrow ends
-        // before any `&mut self` handler runs.
-        let kind = self.overlay_layers().iter().find_map(|l| match l.kind {
-            LayerKind::Settings
-            | LayerKind::KeybindingEditor
-            | LayerKind::CalibrationWizard
-            | LayerKind::Menu => Some(l.kind),
-            _ => None,
-        })?;
-        let mut ctx = InputContext::new();
-        Some(match kind {
-            LayerKind::Settings => {
-                let result = {
-                    let settings = self
-                        .settings_state
-                        .as_mut()
-                        .expect("Settings layer implies settings_state present");
-                    settings.dispatch_input(event, &mut ctx)
-                };
-                self.process_deferred_actions(ctx);
-                result
+    /// Returns `None` when no layer claims the key, letting the
+    /// caller fall through to the Prompt / Popup blocks (whose
+    /// `Ignored`-fall-through interiors migrate onto this walk in
+    /// slices K2/K3).
+    fn dispatch_layer_keyboard(&mut self, event: &KeyEvent) -> Option<InputResult> {
+        let stack = self.overlay_stack();
+        for entry in &stack {
+            // `owner: None` is the hardcoded event-debug head — a
+            // pre-walk intercept (`handle_key` handled it already).
+            let Some(owner) = entry.owner else { continue };
+            if let Some(result) =
+                crate::app::chrome::components()[owner].on_layer_key(self, &entry.layer, event)
+            {
+                return Some(result);
             }
-            LayerKind::KeybindingEditor => self.handle_keybinding_editor_input(event),
-            LayerKind::CalibrationWizard => self.handle_calibration_input(event),
-            LayerKind::Menu => {
-                let all_menus: Vec<crate::config::Menu> = self
-                    .menus
-                    .menus
-                    .iter()
-                    .chain(self.menu_state.plugin_menus.iter())
-                    .cloned()
-                    .collect();
-                let result = {
-                    let mut handler = MenuInputHandler::new(&mut self.menu_state, &all_menus);
-                    handler.dispatch_input(event, &mut ctx)
-                };
-                self.process_deferred_actions(ctx);
-                result
-            }
-            _ => unreachable!("find_map only returns the four capture-all kinds"),
-        })
+        }
+        None
     }
 
     /// Dispatch input to the appropriate modal handler.
@@ -163,13 +137,14 @@ impl Editor {
     /// Returns `Some(InputResult)` if a modal handled the input,
     /// `None` if no modal is active and input should be handled normally.
     pub fn dispatch_modal_input(&mut self, event: &KeyEvent) -> Option<InputResult> {
-        // Always-early-return modals (Settings, KeybindingEditor,
-        // CalibrationWizard, Menu) dispatch through the overlay stack so
-        // their precedence matches `get_key_context()`, the terminal-input
-        // gate and the mouse modal-capture path. The Prompt and Popup
-        // blocks below have fall-through (`Ignored`) semantics and
-        // multi-arm internal logic, so they stay as explicit blocks.
-        if let Some(result) = self.dispatch_modal_keyboard(event) {
+        // The derived layer walk first: capture-all surfaces (Settings,
+        // KeybindingEditor, CalibrationWizard, Menu) claim the key via
+        // their components' `on_layer_key`, in stack order — the same
+        // stack `get_key_context()`, the terminal-input gate and the
+        // mouse modal-capture path read. The Prompt and Popup blocks
+        // below have fall-through (`Ignored`) semantics and multi-arm
+        // internal logic; they migrate onto the walk in K2/K3.
+        if let Some(result) = self.dispatch_layer_keyboard(event) {
             return Some(result);
         }
 

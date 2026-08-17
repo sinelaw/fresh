@@ -148,19 +148,55 @@ staying pre-walk: the terminal mouse-forward sink and terminal-link
 Ctrl+click; the theme-info popup special case becomes a small
 component in slice 2.
 
-## Keyboard (minimal slice only, this arc)
+## Keyboard (full registration arc — K slices)
 
-1. `context_menu.on_key` replaces the `handle_context_menu_key` ladder
-   rung: "if the top of the tree's stack owns the keyboard, offer it
-   the key" — one rung dissolved, zero behavior change.
-2. `dispatch_modal_keyboard`'s find_map re-expressed over derived
-   `overlay_layers()`.
-3. STOP. Prompt/Popup key blocks have documented fall-through semantics
-   and the chrome-wide focus ring (`focused: Option<FocusId>` unifying
-   dock focus, `Prompt.toolbar_focus`, popup focus) is gated on
-   prompt-as-widgets + Settings. The slot exists: chrome boxes carry
-   `focusable`/`focus_trap`, so `focus_ring_scoped` works on the chrome
-   tree the day a chrome focus id exists.
+The original ruling here was "minimal slice only" (grabs + the modal
+find_map re-expressed over derived layers, then STOP). That ruling is
+SUPERSEDED by explicit direction: the main key pipeline must be
+registration-based, not a staged hand-ordered ladder. The design
+mirrors the pointer side exactly:
+
+- **Pointer**: components `collect()` boxes → `ChromeTreeBuilder`
+  stamps each box's owner → `dispatch_pointer` walks `hit_stack`
+  calling the owner's `on_pointer`.
+- **Keyboard**: components `layers()` declare ranked layers →
+  `overlay_stack()` stamps each layer's owner → ONE walk iterates the
+  stack top-down calling the owner's `on_layer_key`. Consumed stops
+  the walk; declined falls through to the next layer down; the base
+  layer terminates it. Interiors stay bespoke (the modal-mouse
+  precedent: the component is the dispatch slot); only ROUTING is
+  derived.
+
+`on_layer_key(ed, layer, event) -> Option<InputResult>` — `None` =
+this layer declines, keep walking; `Some(Ignored)` also keeps walking
+(the prompt/popup fall-through contract, preserved as a walk
+semantic); any other `Some` stops.
+
+Slices, each green + shippable:
+
+- **K1**: `overlay_stack()` (owner-stamped layers, `overlay_layers()`
+  derives from it); `on_layer_key` on the trait; the walk replaces
+  `dispatch_modal_keyboard`'s four-kind find_map ladder — Settings /
+  KeybindingEditor / CalibrationWizard arms into `modals.rs`, Menu arm
+  into `menu.rs`. EventDebug's hardcoded head has owner `None`
+  (pre-band debugging instrument, unchanged).
+- **K2**: the popup block (completion resolver → workspace-trust keys
+  → global popups → buffer popups) into `Popups` / `WorkspaceTrust`
+  handlers; the transient-dismissal and unfocused-popup stages become
+  walk semantics.
+- **K3**: the prompt block (file browser → query-replace confirm →
+  overlay toolbar focus ring → prompt) into `Prompt` (+
+  `FileBrowser`).
+- **K4**: the tail — mode bindings, composite router, chord/keybinding
+  resolution — becomes `Base`'s `on_layer_key`; `handle_key` reduces
+  to the pre-band (event-debug, terminal input, getNextKey capture,
+  `on_key` grabs) plus THE walk.
+
+Still gated on prompt-as-widgets + Settings: the chrome-wide focus
+ring (`focused: Option<FocusId>` unifying dock focus,
+`Prompt.toolbar_focus`, popup focus). The slot exists: chrome boxes
+carry `focusable`/`focus_trap`, so `focus_ring_scoped` works on the
+chrome tree the day a chrome focus id exists.
 
 ## Migration order (each slice green + shippable)
 

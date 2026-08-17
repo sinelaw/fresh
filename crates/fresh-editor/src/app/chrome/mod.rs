@@ -380,6 +380,28 @@ pub(crate) trait ChromeComponent: Sync {
         None
     }
 
+    /// Layer-targeted keyboard dispatch — THE key walk. After the
+    /// pre-band (event-debug, terminal input, getNextKey capture,
+    /// `on_key` grabs), `Editor::dispatch_layer_keyboard` walks the
+    /// owner-stamped `overlay_stack()` top-down, offering the key to
+    /// each layer's declaring component through this method — the
+    /// keyboard analogue of `dispatch_pointer` walking `hit_stack`
+    /// over owner-stamped boxes. `None` = this layer declines and the
+    /// walk continues to the next layer down; `Some` = this layer
+    /// dealt with the key, with the handler's result. (A returned
+    /// `InputResult::Ignored` still stops the walk in the K1 slice —
+    /// the fall-through blocks keep their own semantics until they
+    /// migrate.) Interiors stay bespoke, per the modal-mouse ruling:
+    /// the component is the dispatch slot, only ROUTING is derived.
+    fn on_layer_key(
+        &self,
+        _ed: &mut Editor,
+        _layer: &crate::app::overlay::Layer,
+        _event: &crossterm::event::KeyEvent,
+    ) -> Option<crate::input::handler::InputResult> {
+        None
+    }
+
     /// A wheel delta over one of this component's boxes. `Consumed`
     /// stops the walk; a scroll surface already at its bound (or a
     /// box whose real target the pointer missed) returns `Pass` so
