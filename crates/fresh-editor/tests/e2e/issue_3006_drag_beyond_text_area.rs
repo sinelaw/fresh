@@ -27,6 +27,14 @@
 //! test also drags to a row inside the text area and requires the viewport
 //! to stay put there, so a fix that simply scrolled on every drag event
 //! could not pass.
+//!
+//! What each drag past an edge has to move is therefore two rendered
+//! numbers: the top `LINE nnn` marker (the viewport) and the outermost
+//! `LINE nnn` still carrying selection background (the head). Neither is
+//! "the line drawn on the edge row itself" — after the scroll the
+//! scroll-off margin leaves the head `scroll_offset` lines inside the
+//! viewport, so with the default margin the edge row shows an unselected
+//! line while the selection is still growing every event.
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -80,8 +88,7 @@ fn top_line(harness: &EditorTestHarness) -> u32 {
 }
 
 /// How many cells of screen `row` are painted with the selection
-/// background. A fully selected `LINE nnn` contributes at least its eight
-/// characters.
+/// background.
 fn selected_cells_in_row(harness: &EditorTestHarness, row: u16) -> usize {
     let selection_bg = harness.editor().theme().selection_bg;
     let buffer = harness.buffer();
@@ -89,6 +96,39 @@ fn selected_cells_in_row(harness: &EditorTestHarness, row: u16) -> usize {
     (0..width)
         .filter(|col| buffer.content[buffer.index_of(*col, row)].bg == selection_bg)
         .count()
+}
+
+/// The `LINE nnn` marker rendered on screen `row`, or `None` for a row
+/// that carries no buffer line.
+fn line_number_at_row(harness: &EditorTestHarness, row: u16) -> Option<u32> {
+    let screen = harness.screen_to_string();
+    let rest = screen.lines().nth(row as usize)?.split("LINE ").nth(1)?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse::<u32>().ok()
+}
+
+/// The `LINE nnn` numbers of the topmost and bottom-most content rows that
+/// carry any selection background: the rendered extent of the selection.
+///
+/// This — not "is the row at the very edge of the screen selected" — is
+/// what a drag past an edge moves. The scroll-off margin keeps the head a
+/// few lines inside the viewport after the scroll, so with the default
+/// `scroll_offset` the edge row itself shows an *un*selected line while the
+/// selection is still growing; and the head's own line is only selected
+/// from (or up to) the pointer's column, so its cell count is a handful,
+/// not a whole `LINE nnn`.
+fn selected_line_extent(harness: &EditorTestHarness, first_row: u16, last_row: u16) -> (u32, u32) {
+    let selected: Vec<u32> = (first_row..=last_row)
+        .filter(|row| selected_cells_in_row(harness, *row) > 0)
+        .filter_map(|row| line_number_at_row(harness, row))
+        .collect();
+    match (selected.first(), selected.last()) {
+        (Some(first), Some(last)) => (*first, *last),
+        _ => panic!(
+            "no selected cell on any content row. Screen:\n{}",
+            harness.screen_to_string()
+        ),
+    }
 }
 
 /// Open a 200-line fixture in the harness's window and report its own temp
@@ -108,7 +148,8 @@ fn open_fixture(
 /// The issue's own repro: park the viewport in the middle of the file with
 /// the wheel, then press inside the text and drag up onto the menu bar and
 /// hold there. Every further motion event must keep pulling the viewport
-/// toward the buffer's start and keep the top visible line selected.
+/// toward the buffer's start and keep pushing the top of the selection up
+/// with it.
 ///
 /// Before the fix the wheel's `skip_ensure_visible` flag was still set, so
 /// the viewport was pinned and the selection froze — the issue's "six
@@ -116,7 +157,7 @@ fn open_fixture(
 #[test]
 fn drag_above_the_text_area_scrolls_up_after_a_wheel_scroll() {
     let mut harness = EditorTestHarness::new(100, 20).unwrap();
-    let (_fixture, first_row, _last_row) = open_fixture(&mut harness);
+    let (_fixture, first_row, last_row) = open_fixture(&mut harness);
 
     // Scroll with the wheel — the way a user gets to the middle of a file
     // with the mouse, and the input that leaves the viewport flagged.
@@ -144,24 +185,29 @@ fn drag_above_the_text_area_scrolls_up_after_a_wheel_scroll() {
     );
 
     // Now hold the pointer above the text area. Each motion event must move
-    // the viewport further toward the start of the buffer.
-    let mut previous = after_wheel;
+    // the viewport further toward the start of the buffer *and* carry the
+    // head of the selection with it.
+    let mut previous_top = after_wheel;
+    let (mut previous_head, _) = selected_line_extent(&harness, first_row, last_row);
     for step in 0..3 {
         drag_to(&mut harness, 10, 0);
         let now = top_line(&harness);
         assert!(
-            now < previous,
+            now < previous_top,
             "drag step {step} above the text area must scroll up \
-             (top line was {previous}, now {now}). Screen:\n{}",
+             (top line was {previous_top}, now {now}). Screen:\n{}",
             harness.screen_to_string()
         );
+        let (head, _) = selected_line_extent(&harness, first_row, last_row);
         assert!(
-            selected_cells_in_row(&harness, first_row) >= "LINE 001".len(),
-            "the top visible line must be selected after dragging above the \
-             text area. Screen:\n{}",
+            head < previous_head,
+            "drag step {step} above the text area must extend the selection \
+             upward (it reached LINE {previous_head}, now LINE {head}). \
+             Screen:\n{}",
             harness.screen_to_string()
         );
-        previous = now;
+        previous_top = now;
+        previous_head = head;
     }
 }
 
@@ -192,23 +238,27 @@ fn drag_below_the_text_area_scrolls_down_after_a_wheel_scroll() {
 
     // `last_row + 1` is the status bar: outside the text area, which is
     // where the pointer sits when a user drags past the bottom edge.
-    let mut previous = after_wheel;
+    let mut previous_top = after_wheel;
+    let (_, mut previous_tail) = selected_line_extent(&harness, first_row, last_row);
     for step in 0..3 {
         drag_to(&mut harness, 10, last_row + 1);
         let now = top_line(&harness);
         assert!(
-            now > previous,
+            now > previous_top,
             "drag step {step} below the text area must scroll down \
-             (top line was {previous}, now {now}). Screen:\n{}",
+             (top line was {previous_top}, now {now}). Screen:\n{}",
             harness.screen_to_string()
         );
+        let (_, tail) = selected_line_extent(&harness, first_row, last_row);
         assert!(
-            selected_cells_in_row(&harness, last_row) >= "LINE 001".len(),
-            "the bottom visible line must be selected after dragging below \
-             the text area. Screen:\n{}",
+            tail > previous_tail,
+            "drag step {step} below the text area must extend the selection \
+             downward (it reached LINE {previous_tail}, now LINE {tail}). \
+             Screen:\n{}",
             harness.screen_to_string()
         );
-        previous = now;
+        previous_top = now;
+        previous_tail = tail;
     }
 }
 
@@ -240,36 +290,70 @@ fn drag_past_the_edges_scrolls_with_scroll_off_disabled() {
 
     press(&mut harness, 10, first_row + 5);
 
-    let mut previous = start;
+    // Same guard as the other two: a drag that stays inside the text area
+    // must not scroll, margin or no margin.
+    drag_to(&mut harness, 10, first_row + 8);
+    assert_eq!(
+        top_line(&harness),
+        start,
+        "a drag inside the text area must not scroll the viewport. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    let mut previous_top = start;
+    let (mut previous_head, _) = selected_line_extent(&harness, first_row, last_row);
     for step in 0..3 {
         drag_to(&mut harness, 10, 0);
         let now = top_line(&harness);
         assert!(
-            now < previous,
+            now < previous_top,
             "with scroll_offset = 0, drag step {step} above the text area must \
-             still scroll up (top line was {previous}, now {now}). Screen:\n{}",
+             still scroll up (top line was {previous_top}, now {now}). Screen:\n{}",
             harness.screen_to_string()
         );
-        previous = now;
+        let (head, _) = selected_line_extent(&harness, first_row, last_row);
+        assert!(
+            head < previous_head,
+            "with scroll_offset = 0, drag step {step} above the text area must \
+             still extend the selection upward (it reached LINE {previous_head}, \
+             now LINE {head}). Screen:\n{}",
+            harness.screen_to_string()
+        );
+        previous_top = now;
+        previous_head = head;
     }
-    assert!(
-        selected_cells_in_row(&harness, first_row) >= "LINE 001".len(),
-        "the top visible line must be selected after dragging above the text \
-         area. Screen:\n{}",
+    // With no margin the head *is* the top visible line, so here — unlike
+    // the default-`scroll_offset` tests above — the very first row carries
+    // the selection.
+    assert_eq!(
+        selected_line_extent(&harness, first_row, last_row).0,
+        top_line(&harness),
+        "with scroll_offset = 0 the selection must reach the top visible \
+         line. Screen:\n{}",
         harness.screen_to_string()
     );
 
     // And back down past the bottom edge, from the same held button.
-    let mut previous = top_line(&harness);
+    let mut previous_top = top_line(&harness);
+    let (_, mut previous_tail) = selected_line_extent(&harness, first_row, last_row);
     for step in 0..3 {
         drag_to(&mut harness, 10, last_row + 1);
         let now = top_line(&harness);
         assert!(
-            now > previous,
+            now > previous_top,
             "with scroll_offset = 0, drag step {step} below the text area must \
-             still scroll down (top line was {previous}, now {now}). Screen:\n{}",
+             still scroll down (top line was {previous_top}, now {now}). Screen:\n{}",
             harness.screen_to_string()
         );
-        previous = now;
+        let (_, tail) = selected_line_extent(&harness, first_row, last_row);
+        assert!(
+            tail > previous_tail,
+            "with scroll_offset = 0, drag step {step} below the text area must \
+             still extend the selection downward (it reached LINE \
+             {previous_tail}, now LINE {tail}). Screen:\n{}",
+            harness.screen_to_string()
+        );
+        previous_top = now;
+        previous_tail = tail;
     }
 }
