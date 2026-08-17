@@ -1,7 +1,9 @@
 //! The search-prompt option checkboxes band.
 
 use crate::app::types::HoverTarget;
+use crate::input::keybindings::Action;
 use crate::widgets::LayoutBox;
+use anyhow::Result as AnyhowResult;
 
 use super::{ChromeComponent, ChromeTreeBuilder, Editor};
 
@@ -58,5 +60,31 @@ impl ChromeComponent for SearchOptions {
             return Ok(Disposition::Consumed);
         }
         Ok(Disposition::Pass)
+    }
+}
+
+/// Behavior owned by this component (moved from mouse_input.rs —
+/// the handlers its arms dispatch to).
+impl Editor {
+    pub(super) fn handle_click_search_options(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
+        use crate::view::ui::status_bar::SearchOptionsHover;
+        let layout = self.search_options_layout_now()?;
+        match layout.checkbox_at(col, row)? {
+            SearchOptionsHover::CaseSensitive => {
+                Some(self.handle_action(Action::ToggleSearchCaseSensitive))
+            }
+            SearchOptionsHover::WholeWord => {
+                Some(self.handle_action(Action::ToggleSearchWholeWord))
+            }
+            SearchOptionsHover::Regex => Some(self.handle_action(Action::ToggleSearchRegex)),
+            SearchOptionsHover::ConfirmEach => {
+                Some(self.handle_action(Action::ToggleSearchConfirmEach))
+            }
+            SearchOptionsHover::None => None,
+        }
     }
 }

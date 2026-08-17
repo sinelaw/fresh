@@ -3,6 +3,7 @@
 
 use crate::app::types::HoverTarget;
 use crate::widgets::LayoutBox;
+use anyhow::Result as AnyhowResult;
 
 use super::{ChromeComponent, ChromeTreeBuilder, Editor};
 
@@ -113,5 +114,64 @@ impl ChromeComponent for Menu {
                 },
             ));
         }
+    }
+}
+
+/// Behavior owned by this component (moved from mouse_input.rs —
+/// the handlers its arms dispatch to).
+impl Editor {
+    pub(super) fn handle_click_menu_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+        if self.active_window_mut().menu_bar_visible {
+            // Resolve the hit before any &mut operations to avoid borrow conflicts.
+            let layout = self.menu_layout_now();
+            let hit = layout.as_ref().and_then(|ml| ml.menu_at(col, row));
+            let layout_exists = layout.is_some();
+            if layout_exists {
+                if let Some(menu_idx) = hit {
+                    if self.menu_state.active_menu == Some(menu_idx) {
+                        self.close_menu_with_auto_hide();
+                    } else {
+                        self.active_window_mut().on_editor_focus_lost();
+                        self.menu_state.open_menu(menu_idx);
+                    }
+                    return Some(Ok(()));
+                } else if row == 0 {
+                    self.close_menu_with_auto_hide();
+                    return Some(Ok(()));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// A click inside the open menu's dropdown / submenu boxes (the
+    /// chrome:menu_dropdown rect surfaces). Outside clicks never reach
+    /// here — chrome:menu_close_guard owns those.
+    pub(super) fn handle_click_menu_dropdown_surface(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
+        let active_idx = self.menu_state.active_menu?;
+        let all_menus: Vec<crate::config::Menu> = self
+            .menus
+            .menus
+            .iter()
+            .chain(self.menu_state.plugin_menus.iter())
+            .cloned()
+            .collect();
+        if let Some(menu) = all_menus.get(active_idx) {
+            match self.handle_menu_dropdown_click(col, row, menu) {
+                Ok(Some(click_result)) => return Some(click_result),
+                Ok(None) => {}
+                Err(e) => return Some(Err(e)),
+            }
+        }
+        // Inside the dropdown box but not on an item (border / inert
+        // cell): close the menu and consume — the pre-split behavior
+        // for any non-item click while a menu is open.
+        self.close_menu_with_auto_hide();
+        Some(Ok(()))
     }
 }
