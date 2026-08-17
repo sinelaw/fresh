@@ -2,68 +2,108 @@
 
 > _AI-generated design doc. **Entirely PLANNED** — nothing here ships today._
 >
-> Target: one tree/layout/event/render library used by **both** the
-> plugin-facing widgets **and** all editor chrome (menus, prompt, popups,
-> context menus, dock, splits, modals, status bar).
->
-> Third doc in an arc. [`widget-framework-v2-review.md`](widget-framework-v2-review.md)
-> diagnosed the panel side and built the per-kind `WidgetImpl` dispatch, the
-> `LayoutBox` arena and hit-path propagation;
-> [`chrome-event-model-plan.md`](chrome-event-model-plan.md) registered the chrome
-> surfaces behind one pointer walk and one keyboard walk. This doc is where
-> those point. It assumes both arcs as its starting point rather than
-> restating them.
+> A UI library for Fresh: one tree, one layout model, one event model, one
+> paint output, used by both the plugin-facing widgets and all editor chrome.
 
 ---
 
-## 0. The commitment
+## 1. Goals
 
-**Separate the cheap description of the UI from the expensive thing that
-holds state.** Everything below follows from that; get it wrong and the
-project spends its life fighting symptoms.
+1. **One library for everything on screen.** Menus, prompt, popups, context
+   menus, dock, splits, modals, status bar, and plugin panels are all built
+   from the same primitives with the same event and layout rules. No
+   privileged internal surface.
+2. **Generic registration and propagation, with no hand-specified
+   exceptions.** Precedence, modality, dismissal and focus order are *derived*
+   from structure and declared properties — never from a central ordered list
+   that authors must edit to add a surface.
+3. **Rebuilding the UI description is free.** Describing what should be on
+   screen costs an allocation and nothing else, so nobody avoids rebuilding
+   and nobody mutates render state behind the framework's back.
+4. **Identity is explicit.** Which on-screen thing is "the same thing" as last
+   frame is answered by the tree and an author-supplied key, visible in a
+   debugger — never by hashing an identifier stack into a side table.
+5. **One source of geometry.** Layout computes rects; hit-testing, painting,
+   tests and the web projection all read them. Nothing derives geometry while
+   drawing.
+6. **Composition is the only extension mechanism.** Anything the library can
+   build, user code can build, from the same parts.
+7. **Backend independence.** Paint produces a display list; TUI cells, the web
+   DOM, and test assertions are three consumers of it, not three
+   implementations of the UI.
 
-Concretely, for Fresh: rebuilding a description is free and happens whenever
-state changes; layout, paint caches, focus registration and platform handles
-persist and are touched only where something actually changed.
+## 2. Non-goals
 
-This supersedes the "rebuild the whole tree every frame and look state up in
-a map keyed by widget key" model. That model is what Fresh has today
-(`WidgetInstanceState` keyed by `Key`), and it is the ID-side-table pattern —
-identity is implicit, collisions are silent, and a rename resets state with
-no diagnostic. A retained tree exists precisely to make identity explicit.
+- **Buffer and terminal text rendering.** The token IR → `ViewLine` pipeline,
+  syntax highlighting, folding, wrapping and PTY grids stay as they are,
+  reached through a `Host` leaf.
+- **A reactive dependency graph.** No observers, no signals, no automatic
+  invalidation tracking. State flows down through constructor arguments;
+  events flow up through explicit callbacks.
+- **Making update cycles impossible.** They are made *legible* instead — a
+  visible call chain in one place rather than an emergent property of an
+  invisible graph.
+- **Damage tracking / dirty rectangles at the cell level.** crossterm already
+  diffs the back buffer.
+- **An animation system.** The existing frame-buffer animation runner is
+  unchanged.
+- **Retained mutable widget objects at the description layer.** Descriptions
+  are values; only the framework holds anything durable.
 
 ---
 
-## 1. The three trees
+## 3. The model — three trees
 
-Conflating any two of these is the mistake that ends projects.
+The whole design rests on one commitment: **separate the cheap description of
+the UI from the expensive thing that holds state.**
 
 | | What it is | Lifetime | Holds |
 |---|---|---|---|
-| **1. Description** `Node<M>` | Immutable recipe. `Button { label, on_press }` describes a button; it is not one. | One rebuild. Garbage immediately. | Props supplied by the parent. Nothing durable. |
-| **2. Element** `Element` | Identity. Knows which description produced it, its children, its local state, its render object. | Lifetime of the logical component. | `(type, key)`, component state, child links, dirty flag, depth. |
-| **3. Render object** `dyn RenderObject` | The expensive thing. | Created rarely, mutated constantly. | Computed geometry, cached measurements, paint state, focus registration, host handles. |
+| **1. Description** `Node<M>` | An immutable recipe. `Button { label, on_press }` *describes* a button; it is not one. | One rebuild, then garbage. | Props supplied by the parent. Nothing durable. |
+| **2. Element** `Element` | Identity. Knows which description produced it, its children, its local state, its render object. | The lifetime of the logical component. | `(type, key)`, component state, child links, dirty flag, depth. |
+| **3. Render object** `dyn RenderObject` | The expensive thing. | Created rarely, mutated constantly, disposed when the component genuinely goes away. | Computed geometry, cached measurements, paint state, focus registration, host handles. |
 
-Sanity check: **if you want to read layout geometry off a description, layers
-1 and 3 have collapsed** and the design is already broken. Descriptions never
+The split exists so that rebuilding layer 1 — which happens freely and often —
+costs almost nothing, while layer 3, where the real cost lives, is touched
+only where something actually changed.
+
+**Sanity check:** if you want to read layout geometry off a description,
+layers 1 and 3 have collapsed and the design is broken. Descriptions never
 carry rects.
 
-### Where Fresh's current types land
+## 4. Data flow
 
-| Today | Layer | Note |
-|---|---|---|
-| `WidgetSpec`, chrome `collect()` boxes | 1 | Already description-shaped. `WidgetSpec` needs to shed nothing but optional keys (§3). |
-| `WidgetInstanceState` map, `PanelState` | 2 | Moves onto elements. The map goes away. |
-| `LayoutBox` arena, `ChromeLayout` caches, paint-recorded rects | 3 | Becomes render-object fields, computed by the layout pass. |
-| `WidgetImpl` | split | `collect` → layer-1 build or layer-3 paint depending on the kind; `on_*` → render-object event handling. |
+```
+   state
+     │  build (pure)
+     ▼
+  Node<M> descriptions ──reconcile──▶ Elements ──own──▶ Render objects
+     ▲                                   │                    │
+     │                              set_state            layout pass
+     │                                   │                    │  (constraints down,
+     │                                   ▼                    │   sizes up)
+     │                              dirty set                 ▼
+     │                                   │              geometry: rect, clip, scroll
+     │                          flush (depth-ordered)         │
+     └───────────────────────────────────┘                    ├──▶ paint pass ──▶ LayoutSpec ──▶ backend
+                                                              │                                  (TUI / web / tests)
+                                                              └──▶ hit-test ──▶ propagation path
+                                                                                      │
+   focus tree ◀──register── Focusable render objects                                  ▼
+        │                                                                     capture / target / bubble
+        └──▶ key events ──▶ Shortcuts ──▶ Intent ──▶ Actions ──▶ handlers ──▶ set_state / app messages
+```
+
+Four passes per flush, each tree-ordered with its own dirty flags: **build**,
+**layout**, **paint**, and (on input) **dispatch**.
 
 ---
 
-## 2. Layer 1 — Descriptions
+## 5. Descriptions
 
-A description tree is a pure function of state. Constructing one must have
-**no side effects**: no platform resources, no registration, no mutation of
-anything outside itself.
+A description tree is a pure function of state. Constructing one has **no side
+effects**: no platform resources, no registration, no mutation of anything
+outside itself.
 
 ```rust
 pub struct Node<M> {
@@ -73,46 +113,37 @@ pub struct Node<M> {
 }
 
 pub enum Desc<M> {
-    // primitives — the only things with render objects (§9)
-    Box(BoxProps),           // constraint layout: row/col/stack/pad/align
-    TextRun(TextProps),      // leaf paint
-    Viewport(ViewportProps), // clip + scroll offset
-    Gesture(GestureProps<M>),// pointer region + listeners
-    Focusable(FocusProps<M>),// focus registration + key listeners
-    Layer(LayerProps),       // out-of-flow, stacking context (§10)
-    Host(HostId),            // foreign content: buffer split, PTY grid
+    // primitives — the only descriptions with render objects (§11)
+    Box(BoxProps),            // constraint layout: row / col / stack / pad / align
+    TextRun(TextProps),       // leaf paint
+    Viewport(ViewportProps),  // clip + scroll offset
+    Gesture(GestureProps<M>), // pointer region + listeners
+    Focusable(FocusProps<M>), // focus registration + key listeners
+    Layer(LayerProps),        // out-of-flow, stacking context (§12)
+    Host(HostId),             // foreign content: buffer split, PTY grid
 
     // composition — builds a subtree from props (+ state)
     Component(Rc<dyn Component<M>>),
 }
 ```
 
-Rules that make this safe:
-
 - **Value types, constructor arguments only.** No post-construction setters.
 - **No durable references out.** If imperative code needs a handle (a scroll
   controller, a text-field handle), the *caller* creates it and passes it in.
-  A description never hands one back — that would smuggle a durable reference
-  into a disposable object.
-- **`M` is the message type.** Chrome uses in-process closures
+  A description never hands one back.
+- **`M` is the message type.** In-process code uses closures
   (`Handler<M> = Rc<dyn Fn(&Event) -> Option<M>>`); the plugin bridge uses
-  message *names* because it crosses a serialization boundary (§11). Both are
-  "events flow up through explicit callbacks"; only the encoding differs.
+  message *names*, because it crosses a serialization boundary (§13). Same
+  semantics, different encoding.
 
-The failure this prevents: descriptions that accumulate state, so rebuilding
-becomes destructive, so you avoid rebuilding, so you start mutating layer 3
-directly — and now there are two sources of truth.
-
----
-
-## 3. Layer 2 — Elements and reconciliation
+## 6. Elements and reconciliation
 
 ```rust
 pub struct Element<M> {
     key: Option<Key>,
     type_id: TypeId,              // of the description variant / component
     desc: Node<M>,                // the description that produced this
-    state: Option<Box<dyn Any>>,  // component-local state (§4)
+    state: Option<Box<dyn Any>>,  // component-local state (§7)
     children: Vec<ElementId>,
     render: Option<RenderId>,     // primitives only
     parent: Option<ElementId>,
@@ -120,8 +151,6 @@ pub struct Element<M> {
     needs_build: bool,
 }
 ```
-
-### The matching rule
 
 Reconciling a node's children against new descriptions, **position by
 position**:
@@ -131,43 +160,33 @@ same type AND same key  ->  same logical element; update in place
 otherwise               ->  unmount the old subtree, mount the new
 ```
 
-Position is the implicit key when none is given. Unkeyed static UI therefore
-works with zero ceremony and degrades correctly.
+Position is the implicit key when none is given, so unkeyed static UI works
+with zero ceremony and degrades correctly.
 
 Two derived behaviors, deliberate and documented:
 
-- **Changing a key forces a remount.** This is the sanctioned way to reset a
-  subtree — e.g. re-keying the prompt on `prompt_type` change clears its
-  editing state without a manual reset path.
-- **Type changes always remount.** No cleverness about "similar" types. If
-  the type changed, the author changed their mind about what this is.
+- **Changing a key remounts.** This is the sanctioned way to reset a subtree —
+  re-key the prompt on `prompt_type` and its editing state clears with no
+  manual reset path.
+- **Type changes always remount.** No cleverness about "similar" types. If the
+  type changed, the author changed their mind about what this is.
 
-### Keys are the author's job
-
-No algorithm can tell whether the third row is "the same item, moved" or "a
-different item in the same slot" — that lives only in the domain model. So
-**make forgetting visible**: keyed builders take a key function as a required
-argument, not an optional field.
+**Keys are the author's job and cannot be inferred.** No algorithm can tell
+whether the third row is "the same item, moved" or "a different item in the
+same slot" — that information exists only in the domain model. So the API makes
+forgetting visible: keyed builders take a key function as a *required*
+argument.
 
 ```rust
 List::keyed(items, |it| Key::from(it.id), |it| row(it))   // key fn required
 ```
 
-For Fresh this matters most in the plugin API, where `WidgetSpec.key` is
-optional today. Required-key list/tree builders are a breaking change to
-`widgets.ts` worth making before chrome depends on the framework.
+## 7. State and scheduling
 
----
-
-## 4. Local state lives on the element
-
-A component's private state — scroll offset, dropdown open flag, animation
-value, tree expansion, list selection — belongs to layer 2. The description
-carries only what the parent supplied. When reconciliation matches an element
-to a new description, it **keeps the state and swaps the description**.
-
-That single move is what makes "rebuild everything" cheap without losing
-anything.
+Private state — scroll offset, dropdown open flag, tree expansion, list
+selection, animation value — lives on the **element**. The description carries
+only what the parent supplied. Reconciliation keeps the state and swaps the
+description; that single move is what makes free rebuilds lossless.
 
 ```rust
 pub trait Component<M> {
@@ -176,29 +195,16 @@ pub trait Component<M> {
 }
 
 impl BuildCx<'_, M> {
-    fn set_state(&mut self, f: impl FnOnce(&mut S));  // mutate + mark dirty (§5)
+    fn set_state(&mut self, f: impl FnOnce(&mut S));  // mutate + mark dirty
 }
 ```
 
-Decide three things up front and the API writes itself: how state is
-allocated, how it is disposed, and what a component sees when it is
-remounted. Answers here: allocated on mount, dropped on unmount, and a
-remount is indistinguishable from a first mount (that is the point of key
-changes).
+State is allocated on mount, dropped on unmount, and a remount is
+indistinguishable from a first mount — that is what makes key changes a
+reliable reset.
 
-**This replaces Fresh's `WidgetInstanceState` map.** Today a widget's scroll
-offset is looked up by string key in a side table; after this it is a field on
-the element, visible in a debugger, disposed with the element, impossible to
-collide.
-
----
-
-## 5. Scheduling: mark, then flush once
-
-Updates do not propagate. They **mark**.
-
-`set_state` does exactly two things: mutate the element's state, and add the
-element to a dirty set. Nothing else happens synchronously.
+**Updates mark; they do not propagate.** `set_state` mutates the element's
+state and adds it to a dirty set. Nothing else happens synchronously.
 
 ```rust
 fn flush(&mut self) {
@@ -213,32 +219,15 @@ fn flush(&mut self) {
 }
 ```
 
-**Depth ordering matters more than it looks.** If a parent and child are both
-dirty, the parent rebuilds first and may reconcile the child anyway — so no
-element is rebuilt twice in a pass, and no element is rebuilt just before its
-parent disposes it.
+- **Depth ordering matters more than it looks.** If a parent and child are both
+  dirty, the parent rebuilds first and may reconcile the child anyway — so no
+  element rebuilds twice in a pass, and none rebuilds just before its parent
+  disposes it.
+- **Re-entrancy is a hard error.** `set_state` during build throws, naming the
+  offending element. This one assertion prevents an entire class of otherwise
+  nearly undebuggable bug.
 
-**No reactive graph.** No dependency tracking, no observer registration. State
-flows down through constructor arguments; events flow up through explicit
-callbacks. Everything that happens is a function call visible in a stack
-trace.
-
-Be honest about the limit: a callback can `set_state` on an ancestor, which
-rebuilds, which fires the callback again. This design does not make cycles
-impossible — it makes them **legible**: a visible call chain in one place
-rather than an emergent property of an invisible graph.
-
-**Guard the invariant loudly.** Reconciliation must not be re-entrant. A
-`set_state` during build throws, naming the offending element. That single
-assertion kills an entire class of otherwise-undebuggable bug.
-
-Fresh already has the right shape for the plugin half: plugin commands are
-queued and applied between frames (the documented one-frame lag), which is a
-flush boundary by construction.
-
----
-
-## 6. Layer 3 — Render objects and the pipeline
+## 8. Render objects and the pipeline
 
 Reconciliation decides **what exists**. It does not decide geometry.
 
@@ -251,36 +240,34 @@ pub trait RenderObject {
 }
 ```
 
-### 6.1 The constraint model — decide this first
+### 8.1 The constraint model
 
-**This is the least reversible decision in the framework.** Layout
-ergonomics, error messages and performance all descend from it.
+**The least reversible decision in the framework** — layout ergonomics, error
+messages and performance all descend from it.
 
-Choice: **box constraints, Flutter-style, in integer cells.** Constraints
-(`min_w`, `max_w`, `min_h`, `max_h`) propagate down; sizes come back up;
-parents position children. One pass, no solver, no fractional-cell rounding
-bugs.
+Choice: **box constraints in integer cells.** Constraints (`min_w`, `max_w`,
+`min_h`, `max_h`) propagate down; sizes come back up; parents position
+children. One pass, no solver, no fractional-cell rounding.
 
 - `Sizing::{Cells(n), Flex(w), Pct(p), Auto}` resolve into constraints.
-- **Intrinsic sizing is opt-in and documented as expensive** (a second
-  measurement of a subtree). `Auto` on a large subtree is the trap; name it.
-- If you find yourself needing a second layout pass for a normal case, that is
-  a defect in the constraint model, not a performance problem.
+- **Intrinsic sizing is opt-in and documented as expensive** (it measures a
+  subtree twice). `Auto` on a large subtree is the trap; name it in the docs.
+- If a normal case needs a second layout pass, that is a defect in the
+  constraint model, not a performance problem.
 
-### 6.2 Layout pass
+### 8.2 Layout pass
 
 Walks the render tree in tree order, honoring dirty flags. `needs_layout`
-propagates **up to the nearest relayout boundary** — a node whose size cannot
-change as a result (fixed-size box, viewport with a fixed rect). A status-bar
-text change then relayouts the status bar, not the split grid.
+propagates **up to the nearest relayout boundary** — a node whose own size
+cannot change as a result (a fixed-size box, a viewport with a fixed rect). A
+status-bar text change then relayouts the status bar, not the split grid.
 
 Output per node: `rect`, `clip`, `scroll window`. This is the **only** source
-of geometry — hit-testing, the display list, the Scene projection and tests
-all read it, and nothing reads geometry recorded during paint.
+of geometry.
 
-### 6.3 Paint pass and the display list
+### 8.3 Paint pass and the display list
 
-Painting produces a flat, ordered, absolute, keyed display list rather than
+Paint produces a flat, ordered, absolute, keyed display list rather than
 touching cells:
 
 ```rust
@@ -295,62 +282,53 @@ pub struct Item {
     pub key: Option<Key>,
     pub rect: Rect,        // absolute
     pub clip: Rect,        // ancestor clips intersected
-    pub theme: ThemeKey,   // per-item provenance (theme inspector)
+    pub theme: ThemeKey,   // per-item provenance
     pub draw: Draw,        // Fill | Border | Scrim | Lines | Scrollbar | Host
 }
 ```
 
-Backends are folds over `items`: TUI writes a ratatui `Buffer`; the web
-backend patches DOM by `Key`; tests assert on `items`/`index` instead of
-scraping cells. TUI/web parity becomes one IR with two presenters rather than
-two implementations.
+Backends are folds over `items`: the TUI writes a ratatui `Buffer`; the web
+backend patches DOM by `Key`; tests assert on `items` / `index` rather than
+scraping cells.
 
-The paint walk skips work four ways — off-screen (`rect ∩ clip` empty),
-occluded (an opaque full-frame `Layer` above), scrolled out (a `Viewport`
-emits only `[offset, offset+visible)`), and absent (never built). Cost is
-**O(visible items)**, so a `List` over 100k rows emits a screenful.
+The walk skips work four ways — off-screen (`rect ∩ clip` empty), occluded (an
+opaque full-frame `Layer` above), scrolled out (a `Viewport` emits only
+`[offset, offset+visible)`), and absent (never built). Cost is **O(visible
+items)**: a list over 100k rows emits a screenful.
 
-### 6.4 Boundaries, and what Fresh actually needs
+### 8.4 Boundaries
 
-Keep dirty flags per pass and per node. But be honest about the terminal:
-crossterm already diffs cells, and a full display list for one screen is
-small. So **`needs_layout` boundaries are load-bearing; `needs_paint`
-boundaries are an optimization** that can land later. Do not build repaint
-boundaries before measuring.
+Keep dirty flags per pass and per node. For a terminal specifically:
+**`needs_layout` boundaries are load-bearing; repaint boundaries are an
+optimization to defer** — the display list for one screen is small and
+crossterm already diffs cells. Measure before building them.
 
----
-
-## 7. Hit-testing and pointer propagation
+## 9. Pointer: hit-testing and propagation
 
 Hit-testing walks the **render tree** back-to-front, collecting the path from
-the deepest hit node to the root. Because it is built from persisted
-geometry, it is correct for overlapping and transformed content in a way a
-description walk never could be.
+the deepest hit node to the root. Because it is built from persisted geometry,
+it is correct for overlapping and transformed content in a way a description
+walk never could be.
 
 ```
 path   = hit_test(point)          // deepest -> root
-capture: root -> target           // each node may claim
+capture: root   -> target         // each node may claim
 target
 bubble : target -> root           // each node may claim
 ```
 
-- `Flow::Stop` is the cancellation flag. There is no third disposition:
-  acting without claiming is simply not stopping.
-- `PointerMode::Opaque` is the default; `Transparent` passes through after its
-  own handlers; `Ignore` is not hittable.
-- **Pointer capture is per-node**: a press handler calls
-  `cx.capture_pointer()`, and subsequent moves/ups route there regardless of
-  position until release or unmount. That is the entire drag model — it
-  replaces a global grab enum and its ordered derivation.
-- Wheel bubbles; a `Viewport` claims it only if it actually moved, so scroll
-  chaining is structural.
+| Concern | Mechanism |
+|---|---|
+| claim | `Flow::Stop`. No third disposition — acting without claiming is simply not stopping. |
+| default behavior | `cx.prevent_default()`, orthogonal to claiming. |
+| opacity | `PointerMode::Opaque` is the default; `Transparent` passes through after its own handlers; `Ignore` is not hittable. |
+| drag | `cx.capture_pointer()` — per node. Moves and ups route there regardless of position until release or unmount. That is the entire drag model. |
+| scroll chaining | Wheel bubbles; a `Viewport` claims it only if it actually moved. |
 
----
+## 10. Focus
 
-## 8. Focus is a separate tree
-
-The design point most often missed. Focusable render objects register into a
-**focus tree** that mirrors — but is not identical to — the render tree.
+Focusable render objects register into a **focus tree** that mirrors — but is
+not identical to — the render tree.
 
 ```rust
 pub struct FocusNode { scope: bool, ordinal: Option<i32>, skip: bool }
@@ -361,43 +339,38 @@ pub trait TraversalPolicy {
 ```
 
 - **Scopes** group; a modal `Layer` opens one and traps traversal inside it.
-- **Policy is pluggable** and application-specific: reading order (default),
-  explicit ordinals, and directional 2D traversal are all legitimate. Fresh
-  wants reading order for forms and directional for the split grid.
+- **Policy is pluggable**: reading order (default), explicit ordinals, and
+  directional 2D traversal are all legitimate. Forms want reading order; the
+  split grid wants directional.
 - **Keyboard propagates along the focus chain, not the hit chain.** A key
-  pressed in the prompt input is offered to the input, then its focus
-  ancestors, up to the app root.
+  pressed in a text field is offered to the field, then its focus ancestors,
+  up to the app root.
 - **Focus survives reconciliation**, because registration lives on the render
-  object and reconciliation preserves matched elements. Write that test on
-  day one — it is the direct payoff of the three-tree split, and the thing
-  Fresh gets wrong today (a rebuild that re-seeds `focus_key` from a spec
-  walk).
+  object and reconciliation preserves matched elements. Worth a test on day
+  one — it is the direct payoff of the three-tree split.
 
 ### Shortcuts → Intents → Actions
 
-Worth adopting wholesale, because it is a better factoring than Fresh's
-current `KeyContext` enum:
-
 ```
-key chord --[Shortcuts map on the focus chain]--> Intent   (what the user meant)
-Intent    --[Actions map on the focus chain]---> handler  (how THIS part of the tree does it)
+key chord --[ Shortcuts map on the focus chain ]--> Intent   (what the user meant)
+Intent    --[ Actions   map on the focus chain ]--> handler  (how THIS part does it)
 ```
 
 The same `Intent::Cancel` is handled differently depending on where focus is —
-the prompt cancels itself, a modal closes, the buffer clears its selection —
-with no central context enum and no precedence table. `KeyContext` and
-`KeyScope` both dissolve into "where is focus".
+a prompt cancels itself, a modal closes, a buffer clears its selection — with
+no central context enum and no precedence table.
 
----
-
-## 9. Composition is the only extension mechanism
+## 11. Composition and primitives
 
 No second kind of thing. No privileged primitives with capabilities user code
 cannot have.
 
 **Primitives** (the only descriptions with render objects) are the ones that
-cannot be composed: `Box`, `TextRun`, `Viewport`, `Gesture`, `Focusable`,
-`Layer`, `Host`.
+cannot be composed:
+
+```
+Box   TextRun   Viewport   Gesture   Focusable   Layer   Host
+```
 
 **Everything else is a `Component`**, including things that feel built-in:
 
@@ -410,14 +383,11 @@ Dropdown = Component { Button, and a Layer when open }
 
 The cost is verbosity — deeply nested descriptions are the known complaint
 about this style. Mitigate with convenience constructors and good defaults,
-**never** with a privileged escape hatch. `Host` is the one exception and it
-is justified: buffer text and PTY grids have their own renderers, and the
-primitive is "a render object with custom layout/paint/hit", which user code
-can also implement.
+**never** with a privileged escape hatch. `Host` is the one exception, and it
+is the same escape hatch user code has: a render object with custom layout,
+paint and hit-testing.
 
----
-
-## 10. Floating: `Layer`
+## 12. Layers
 
 A `Layer` is a normal child in the description tree — so it inherits
 containment, focus scoping, propagation and its owner's identity — but its
@@ -435,39 +405,37 @@ pub struct LayerProps {
 ```
 
 - **Stacking**: a `Layer` opens a stacking context, so its descendants never
-  interleave with content outside it. No global z scale to co-ordinate.
+  interleave with content outside it. There is no global z scale to
+  co-ordinate.
 - **Modality**: `Inert` marks everything outside the subtree non-interactive;
   `Exclusive` additionally cuts host raw input (PTY). Pointer, keyboard, focus
   traversal, hover and cursor visibility all derive from `inert` — one
-  property replacing five encodings.
-- **Dismissal is declarative**, and `OUTSIDE_POINTER` is an ancestor test the
-  reconciler tree already supports. This is what replaces full-frame guard
-  boxes.
+  property, not five encodings.
+- **Dismissal is declarative.** `OUTSIDE_POINTER` is an ancestor test the tree
+  already supports.
 
----
+## 13. The plugin boundary
 
-## 11. The plugin boundary
+A plugin sends a whole description tree and the host applies it between
+frames. That *is* layer 1 crossing a wire.
 
-The bridge is a natural fit: a plugin already sends a whole `WidgetSpec` tree
-and the host applies it between frames. That *is* layer 1 crossing a wire.
-
-- **The reconciler lives host-side.** The plugin sends descriptions; the host
-  reconciles them against persistent elements. Plugin-visible state (list
-  scroll, tree expansion, selection) stops living in a host side table keyed
-  by widget key and becomes element state.
+- **The reconciler lives host-side.** Plugins send descriptions; the host
+  reconciles them against persistent elements, so plugin-visible state (list
+  scroll, tree expansion, selection) lives on elements rather than in a host
+  side table.
 - **Callbacks are by name** across the wire (`on: { activate: "open" }`)
-  rather than by reference. Same semantics, different encoding.
-- **Keys become required** for keyed builders in `widgets.ts` (§3).
-- **`WidgetSpec` stays a stable subset** of the internal description
-  vocabulary. It is versioned public API with a `.d.ts`; chrome's vocabulary
-  must be able to grow without ratcheting it. Not exposed: `Host`,
-  `Modality::Exclusive`, focus policies, arbitrary `M`.
+  rather than by reference.
+- **Keys are required** for keyed builders in the TypeScript API.
+- **The plugin vocabulary is a stable subset** of the internal one. It is
+  versioned public API with a `.d.ts`, so the internal vocabulary must be able
+  to grow without ratcheting it. Not exposed: `Host`, `Modality::Exclusive`,
+  focus policies, arbitrary `M`.
 
 ---
 
-## 12. Examples
+## 14. Examples
 
-### 12.1 Menu bar and dropdown
+### 14.1 Menu bar and dropdown
 
 ```rust
 struct MenuBar { menus: Rc<[Menu]> }
@@ -479,7 +447,7 @@ impl Component<Action> for MenuBar {
         Box::row().h(1).children(self.menus.iter().enumerate().map(|(i, m)| {
             Focusable::new(Gesture::new(Box::pad(1, 0).child(TextRun::new(&m.title)))
                 .on_click(cx.handler(move |_| Msg::Toggle(i)))
-                .on_enter(cx.handler(move |_| Msg::Hover(i))))     // auto-switch
+                .on_enter(cx.handler(move |_| Msg::Hover(i))))   // auto-switch while open
                 .key(Key::from(("menu", i)))
                 .child_if(s.open == Some(i), || dropdown(m, i, cx))
         }))
@@ -491,18 +459,17 @@ fn dropdown(m: &Menu, i: usize, cx: &mut BuildCx<Action>) -> Node<Action> {
         .anchor(Anchor::Parent).place(Place::Below).fit(FLIP | CLAMP)
         .modality(Modality::Inert)
         .dismiss(OUTSIDE_POINTER | ESCAPE)
-        .child(List::keyed(m.items, |it| Key::from(it.id), |it| item_row(it))
+        .child(List::keyed(m.items, |it| Key::from(it.id), item_row)
             .autofocus()
             .on_activate(cx.emit(move |e| Action::RunMenuItem(i, e.index))))
 }
 ```
 
-Gone: the close-guard box (`dismiss`), the z number (stacking context), the
-rank entry (tree position + `Modality`), the central hover machine (a
-listener), the menu's key dispatcher (focus chain + intents). Open state is
-element state, so a rebuild does not close the menu.
+Which menu is open is element state, so a rebuild does not close it. Submenus
+nest as further layers anchored to their row, arbitrarily deep, with no new
+precedence rules.
 
-### 12.2 Split grid
+### 14.2 Split grid
 
 ```rust
 fn splits(t: &SplitTree) -> Node<Action> {
@@ -529,11 +496,11 @@ fn splits(t: &SplitTree) -> Node<Action> {
 }
 ```
 
-`capture_pointer` is the whole btop-resize fix, from the primitive. The buffer
-is a `Host` leaf keeping the token-IR pipeline. Wheel over the buffer scrolls
-it; at its bound it bubbles and dies at the root.
+The separator captures the pointer on press, so the drag keeps routing to it
+even when the cursor crosses a full-screen terminal. Buffer content is a
+`Host` leaf on its own renderer.
 
-### 12.3 Context menu
+### 14.3 Context menu
 
 ```rust
 Gesture::new(tab_button(tab))
@@ -550,11 +517,11 @@ Gesture::new(tab_button(tab))
     })
 ```
 
-The menu is a *child of what it acts on*, so its target is structural rather
-than carried in menu state. All four native context menus are this, with
-different item lists.
+The menu is a child of the thing it acts on, so its target is structural
+rather than carried in menu state. Every context menu in the app is this
+shape with a different item list.
 
-### 12.4 Command palette
+### 14.4 Command palette
 
 ```rust
 impl Component<Action> for Prompt {
@@ -586,12 +553,10 @@ impl Component<Action> for Prompt {
 }
 ```
 
-`FocusScope` is the overlay toolbar ring. The scrim replaces the click-scrim
-box. Re-keying on `prompt_type` is the reset path. Query and selection are
-element state, so a results refresh does not disturb them — which is the bug
-class the current prompt works around with `manual_scroll` latches.
+`FocusScope` contains Tab cycling to the prompt. Query and selection are
+element state, so refreshing the result list does not disturb them.
 
-### 12.5 Transient popup
+### 14.5 Transient popup
 
 ```rust
 Layer::new()
@@ -600,11 +565,11 @@ Layer::new()
     .child(Viewport::new(TextRun::markdown(&h.body)).selectable().max_h(20))
 ```
 
-Non-modal, so the buffer keeps focus; `ANY_KEY` dismissal is a root-level
-observer installed by the layer while mounted, which is the "must see the key
-even when a modal above consumes it" requirement without a pipeline stage.
+Non-modal, so the buffer keeps focus and keeps receiving keys; `ANY_KEY`
+dismissal is a root-level observer installed by the layer while it is mounted,
+so it fires even when a modal above consumes the key.
 
-### 12.6 Modal dialog
+### 14.6 Modal dialog
 
 ```rust
 Layer::new()
@@ -621,73 +586,126 @@ Layer::new()
     ])))
 ```
 
-`Modality::Exclusive` is today's whole-channel mouse capture, keyboard
-capture, PTY block, hover suppression and cursor suppression — one property.
+`Modality::Exclusive` covers pointer, keyboard, hover, cursor and host raw
+input in one property.
 
 ---
 
-## 13. What this changes in Fresh
+## 15. Build order
 
-| Today | Here |
-|---|---|
-| `WidgetInstanceState` map keyed by widget key | element state (§4) |
-| focus re-seeded from a spec walk each render | focus registration on the render object, surviving reconciliation |
-| optional `key` on `WidgetSpec` | required key functions on keyed builders |
-| full-frame guard boxes | `Layer.dismiss` + ancestor test |
-| `layer_rank`, hand-assigned box `z` | tree position + stacking contexts + `Modality` |
-| `KeyContext` / `KeyScope` | focus chain + Shortcuts→Intents→Actions |
-| `PointerGrab` enum + grab-keyed routing | per-node `capture_pointer` |
-| `Disposition::{Consumed, PassAfter, Pass}` | `Flow` + not-stopping |
-| `pointer_opaque` opt-in | `PointerMode::Opaque` default |
-| pre-band stages | root-scope listeners / layer-declared observers |
-| chrome layout cache written during paint | layout-pass output, single geometry source |
-| `Scene`'s hand-written `*_view` methods | `LayoutSpec` |
-| residual per-kind matches | composition + capabilities on render objects |
-| rebuild-everything-per-frame | mark dirty, flush once, depth-ordered |
+Not negotiable: steps 1–2 define the framework's semantics and every later
+decision is downstream. A mistake in the renderer is a rewrite of one module;
+a mistake in the reconciler is a rewrite of everything.
 
----
-
-## 14. Build order
-
-The order is not negotiable, because steps 1–2 define the semantics and
-everything later is downstream. A mistake in the renderer is one module; a
-mistake in the reconciler is everything.
-
-1. **The reconciler against a fake renderer** that logs create/update/dispose.
-   Get keying and remount semantics right before any pixels exist.
+1. **The reconciler, against a fake renderer** that logs create / update /
+   dispose. Get keying and remount semantics right before any pixels exist.
 2. **The dirty-marking scheduler**, with the re-entrancy assertion. Test:
-   dirty a parent and child in one tick, assert exactly one build each.
-3. **Layout**, once the constraint model (§6.1) is settled on paper.
+   dirty a parent and a child in one tick, assert exactly one build each.
+3. **Layout**, once the constraint model (§8.1) is settled on paper, with the
+   awkward cases written out (a list with `Auto` height inside a flex column
+   inside a modal).
 4. **Hit-testing and propagation.**
 5. **Focus, last** — it depends on everything above, and it is where you find
    out whether the retained tree really persists the way you think it does.
 
-Then adopt surface by surface, cheapest first: context menus → menu dropdowns
-→ info popups → file browser → status bar → prompt. Splits and terminals stay
-`Host` leaves permanently. Settings and the keybinding editor last.
+## 16. Risks and open decisions
+
+1. **The constraint model** (§8.1) is the least reversible choice here. Settle
+   it before step 3.
+2. **Paint-time compositing** — layers over host content need clipping and z
+   in the paint backend; nothing visual works without it.
+3. **Disposal discipline.** Every element and render object needs a defined
+   disposal path: focus deregistration, host handles, captured pointers. Leaks
+   are invisible until they are a bug report about a ghost focus target.
+4. **Intrinsic sizing cost.** `Auto` is the ergonomic default people will
+   reach for; make the expensive cases loud.
+5. **Verbosity of composition-only** (§11). Budget for a convenience layer, and
+   hold the line against privileged primitives when it gets tempting.
 
 ---
 
-## 15. Risks and prerequisites
+# Appendix A — What this replaces in Fresh today
 
-1. **The constraint model is the least reversible decision.** Settle §6.1
-   before step 3, on paper, with the awkward cases written out (a `List` with
-   `Auto` height inside a flex column inside a modal).
-2. **Paint-time compositing gates chrome layers.** Layers over host content
-   need clipping and z — the same gap that makes buffer-mounted panels drop
-   their overlay/popup channels today.
-3. **The geometry inversion is the risky refactor**, not the tree. Moving from
-   paint-recorded to layout-recorded rects touches every hit-test and the
-   Scene projection; keep the existing parity oracle running through it.
-4. **Freeze the plugin-visible subset** before chrome depends on internal
-   vocabulary.
-5. **Retained-tree memory and disposal.** Every element and render object must
-   have a defined disposal path (focus deregistration, host handles, captured
-   pointers). Leaks here are invisible until they are a bug report about a
-   ghost focus target.
-6. **Screen-scraping tests.** The e2e suite asserts on rendered cells; hold
-   cell output byte-identical through the layout/paint migration and add
-   `LayoutSpec`-level assertions as the *new* tests rather than rewriting the
-   old ones.
-7. **Do not build repaint boundaries early** (§6.4). Measure first; crossterm
-   already diffs cells.
+Mapping from current mechanisms to the primitive that subsumes them.
+
+| Today | Here |
+|---|---|
+| `WidgetInstanceState` map keyed by widget key | element state (§7) |
+| focus re-seeded from a spec walk each render | focus registration on the render object, surviving reconciliation |
+| optional `key` on `WidgetSpec` | required key functions on keyed builders |
+| full-frame guard boxes (close / dismiss / blur / clear) | `Layer.dismiss` + ancestor test |
+| `layer_rank` table, hand-assigned box `z` | tree position + stacking contexts + `Modality` |
+| `capture_mouse` | `Modality::Exclusive` |
+| `blocks_terminal_input`, `modal_overlay_active`, cursor suppression | derived from `inert` / `HostLeaf::raw_input` |
+| `KeyContext` / `KeyScope` | focus chain + Shortcuts → Intents → Actions |
+| `PointerGrab` enum + grab-keyed drag/release routing | per-node `capture_pointer` |
+| `Disposition::{Consumed, PassAfter, Pass}` | `Flow` + not-stopping |
+| `pointer_opaque` opt-in | `PointerMode::Opaque` default |
+| keyboard pre-band stages | root-scope listeners / layer-declared observers |
+| `HitArea` / `row_target` / `owner()` | `target` vs `currentTarget` on the propagation path |
+| `PanelPopup`, `screen_space` boxes, paint-recorded rects | `Layer` + layout-pass geometry |
+| chrome layout cache written during paint | layout-pass output, one geometry source |
+| `Scene`'s hand-written `*_view` methods | `LayoutSpec` |
+| residual per-kind matches | composition + render-object capabilities |
+| rebuild-everything-per-frame | mark dirty, flush once, depth-ordered |
+
+### Where today's types land in the three trees
+
+| Today | Layer | Note |
+|---|---|---|
+| `WidgetSpec`, chrome `collect()` boxes | 1 | Already description-shaped. |
+| `WidgetInstanceState` map, `PanelState` | 2 | Moves onto elements; the map goes away. |
+| `LayoutBox` arena, `ChromeLayout` caches, paint-recorded rects | 3 | Becomes render-object fields computed by the layout pass. |
+| `WidgetImpl` | split | `collect` → build or paint by kind; `on_*` → render-object event handling. |
+
+### The side-table problem specifically
+
+Fresh currently recovers per-widget persistence by looking up a widget key in
+a `HashMap`. That is the ID-side-table pattern: identity is implicit,
+collisions are silent, and renaming a key resets state with no diagnostic. A
+retained tree exists precisely to make identity explicit and inspectable —
+this is the single largest behavioral change the design buys, and §3 and §7
+are where it lands.
+
+### Per-surface
+
+- **Menu bar** — replaces the close-guard box, the dropdown's z number, the
+  rank-table entry, the central hover auto-switch machine and the menu's own
+  key dispatcher.
+- **Split grid** — replaces the 13-variant grab enum and its hand-ordered
+  derivation, plus the wheel "floor" arm (an unclaimed wheel just reaches the
+  root).
+- **Context menus** — replaces menu state carrying its own target, the
+  pre-band keyboard grab, and the "right-click inside an open menu" arm.
+- **Command palette** — replaces the overlay toolbar focus ring, the click
+  scrim box, the position-blind wheel box, the `SearchPrompt`-vs-`Prompt`
+  context switch, and the manual-scroll latch that exists to stop a result
+  refresh from disturbing scroll and selection.
+- **Transient popups** — replaces the transient-dismiss pre-band stage.
+- **Modals** — replaces whole-channel mouse capture, the rank entry,
+  `blocks_terminal_input`, the hover-suppression list and the
+  cursor-suppression list.
+
+# Appendix B — Adoption notes
+
+**Prerequisite work.** Paint-time compositing (layers over host content) gates
+anything visual. The constraint model must be settled before layout. Moving
+from paint-recorded to layout-recorded geometry is the risky refactor — it
+touches every hit-test and the Scene projection; keep the existing parity
+oracle running through it. Freeze the plugin-visible subset before internal
+vocabulary spreads into it.
+
+**Adoption order**, cheapest first: context menus → menu dropdowns → info
+popups → file browser → status bar → prompt. Splits and terminals stay `Host`
+leaves permanently. Settings and the keybinding editor last.
+
+**Tests.** The e2e suite asserts on rendered cells, so hold cell output
+byte-identical through the layout/paint migration and add `LayoutSpec`-level
+assertions as the *new* tests rather than rewriting the old ones.
+
+**Context.** This doc follows
+[`widget-framework-v2-review.md`](widget-framework-v2-review.md) (the panel
+side: per-kind dispatch, the `LayoutBox` arena, hit-path propagation) and
+[`chrome-event-model-plan.md`](chrome-event-model-plan.md) (chrome surfaces
+behind one pointer walk and one keyboard walk). Both are prerequisites in
+understanding, not in code.
