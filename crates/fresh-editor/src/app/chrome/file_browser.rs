@@ -56,18 +56,16 @@ impl ChromeComponent for FileBrowser {
         row: u16,
         delta: i32,
     ) -> AnyhowResult<Disposition> {
-        // Mirrors the popups arm (the two surfaces historically shared
-        // one): browser list first, then the popup stack.
+        // The browser list scrolls under the wheel. (A popup OVER the
+        // browser ranks above this box by z and takes the wheel first
+        // — the historically shared popup-stack fallback is un-shared;
+        // the z bands own the disambiguation.)
         if ed.is_file_open_active()
             && ed.is_mouse_over_file_browser(col, row)
             && ed.handle_file_open_scroll(delta)
         {
             return Ok(Disposition::Consumed);
         }
-        if !ed.is_mouse_over_any_popup(col, row) {
-            return Ok(Disposition::Pass);
-        }
-        ed.scroll_popup(delta);
-        Ok(Disposition::Consumed)
+        Ok(Disposition::Pass)
     }
 }

@@ -442,23 +442,23 @@ impl Prompt {
     /// same `apply_text_key` mapping the Settings fields and widget
     /// Text use — via [`Self::apply_edit`]. Returns true when the
     /// table handled the key. Deliberately NOT routed here: Ctrl+
-    /// word-motion (the prompt keeps buffer-style next-word-start /
-    /// select-to-word-end policy), printable chars (the input ladder
-    /// keeps its shift-uppercase compensation and suggestion-refresh
-    /// policy), and every chrome key the table ignores by contract.
+    /// word-motion on Left/Right (the prompt keeps buffer-style
+    /// next-word-start / select-to-word-end policy), printable chars
+    /// (the input ladder keeps its shift-uppercase compensation and
+    /// suggestion-refresh policy), and every chrome key the table
+    /// ignores by contract. Home/End route regardless of Ctrl: on a
+    /// single-line prompt Ctrl+Home == Home, and excluding them here
+    /// silently ate the chord (the caller consumes unconditionally).
     pub(crate) fn handle_text_key(&mut self, event: &crossterm::event::KeyEvent) -> bool {
         use crossterm::event::{KeyCode, KeyModifiers};
         let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
-        let covered = matches!(event.code, KeyCode::Backspace | KeyCode::Delete)
-            || (!ctrl
-                && matches!(
-                    event.code,
-                    KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End
-                ));
+        let covered = matches!(
+            event.code,
+            KeyCode::Backspace | KeyCode::Delete | KeyCode::Home | KeyCode::End
+        ) || (!ctrl && matches!(event.code, KeyCode::Left | KeyCode::Right));
         if !covered {
             return false;
         }
-        if matches!(event.code, KeyCode::Backspace | KeyCode::Delete) {}
         self.apply_edit(|e| {
             crate::primitives::text_key::apply_text_key(
                 e,

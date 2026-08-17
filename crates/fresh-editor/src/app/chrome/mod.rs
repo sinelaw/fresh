@@ -26,6 +26,7 @@ mod prompt;
 mod search_options;
 mod splits;
 mod status_bar;
+mod theme_info;
 
 use super::types::HoverTarget;
 use super::Editor;
@@ -218,6 +219,27 @@ pub(crate) trait ChromeComponent: Sync {
         None
     }
 
+    /// React to a hover-target transition (enter / leave / move),
+    /// offered to EVERY component after the hover walk names the new
+    /// target — the reaction half of hover, living with the surface
+    /// it drives (the menu's auto-switch/submenu machine, the context
+    /// menu's highlight, the explorer's status tooltip). Components
+    /// key off the target variants they own; reactions are
+    /// independent — one surface reacting never suppresses another's
+    /// leave-reaction (the old central ladder's early returns did).
+    /// Return true to request a re-render beyond the target diff
+    /// itself.
+    fn on_hover_change(
+        &self,
+        _ed: &mut Editor,
+        _old: Option<&HoverTarget>,
+        _new: Option<&HoverTarget>,
+        _col: u16,
+        _row: u16,
+    ) -> bool {
+        false
+    }
+
     /// A pointer press (left / right / double, per `ev.press`) on one
     /// of this component's boxes.
     fn on_pointer(
@@ -298,6 +320,21 @@ pub(crate) trait ChromeComponent: Sync {
     ) -> AnyhowResult<Disposition> {
         Ok(Disposition::Pass)
     }
+
+    /// A HORIZONTAL wheel delta (Shift+wheel, or a native
+    /// ScrollLeft/ScrollRight) over one of this component's boxes —
+    /// same walk and chaining contract as [`Self::on_wheel`].
+    /// Surfaces with no horizontal axis simply decline.
+    fn on_hwheel(
+        &self,
+        _ed: &mut Editor,
+        _bx: &LayoutBox,
+        _col: u16,
+        _row: u16,
+        _delta: i32,
+    ) -> AnyhowResult<Disposition> {
+        Ok(Disposition::Pass)
+    }
 }
 
 /// The ONE chrome registry — every routable surface, once.
@@ -322,6 +359,11 @@ pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
         &modals::KeybindingEditor,
         &modals::CalibrationWizard,
         &modals::WorkspaceTrust,
+        // The theme inspector: its trigger and popup ride the very
+        // top of the routable bands (a debug instrument that must see
+        // Ctrl+Right-Click under any surface), and its key dismissal
+        // must run before the context menu's keyboard grab.
+        &theme_info::ThemeInfo,
         &context_menu::ContextMenu,
         &prompt::Prompt,
         &popups::Popups,

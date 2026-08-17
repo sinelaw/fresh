@@ -54,6 +54,12 @@ impl ChromeComponent for Prompt {
             if let Some(r) = ed.active_chrome().prompt_preview_area {
                 t.rect("chrome:prompt_preview", 170, r);
             }
+            // Mouse-modal overlay swallows EVERY right-click — plain
+            // and Ctrl+ alike — so neither the tab context menu nor
+            // the theme inspector (trigger at z190) fires, and the
+            // buffer below is untouched. Right-click-only band; other
+            // gestures have no arm here and fall through.
+            t.full("chrome:overlay_rclick_guard", 195);
         }
         // The floating-overlay prompt as a mouse-modal surface for the
         // wheel and double-click (its own result rows resolved above
@@ -156,6 +162,15 @@ impl ChromeComponent for Prompt {
                 }
                 _ => Ok(Disposition::Pass),
             };
+        }
+        if ev.press == PointerPress::Right {
+            // Mouse-modal overlay: swallow every right-click flavor
+            // (plain AND Ctrl+) so neither the tab context menu nor
+            // the theme inspector fires while the overlay is up.
+            if bx.kind == "chrome:overlay_rclick_guard" && ed.overlay_prompt_active() {
+                return Ok(Disposition::Consumed);
+            }
+            return Ok(Disposition::Pass);
         }
         if ev.press != PointerPress::Double {
             return Ok(Disposition::Pass);

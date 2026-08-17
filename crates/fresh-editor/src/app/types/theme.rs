@@ -113,13 +113,13 @@ pub struct ThemeKeyInfo {
     pub syntax_category: Option<String>,
 }
 
-/// State for the theme inspector popup (Ctrl+Right-Click)
+/// State for the theme inspector popup (Ctrl+Right-Click). The
+/// button-hover highlight is not state here — paint derives it from
+/// `HoverTarget::ThemeInfoButton` (the chrome hover walk's target).
 #[derive(Debug, Clone)]
 pub struct ThemeInfoPopup {
     /// Screen position where popup appears (x, y)
     pub position: (u16, u16),
     /// Resolved theme key information
     pub info: ThemeKeyInfo,
-    /// Whether the "Open in Theme Editor" button is highlighted (mouse hover)
-    pub button_highlighted: bool,
 }

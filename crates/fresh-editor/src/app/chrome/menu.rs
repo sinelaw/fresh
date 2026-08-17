@@ -10,23 +10,41 @@ pub(crate) struct Menu;
 
 impl ChromeComponent for Menu {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
-        // Geometry derived from live state (`None` when the bar is
-        // hidden); dropdown/submenu boxes are populated only while a
-        // menu is open.
-        if let Some(ml) = ed.menu_layout_now() {
-            t.rect("chrome:menu_bar", 120, ml.bar_area);
-            if let Some(r) = ml.dropdown_box {
-                t.rect("chrome:menu_dropdown", 120, r);
-            }
-            for (_, r) in &ml.submenu_boxes {
-                t.rect("chrome:menu_dropdown", 120, *r);
-            }
+        // The bar box needs only the row rect (cheap); the full
+        // label/dropdown layout walk (`menu_layout_now`) runs only
+        // while a menu is OPEN — collect fires on every pointer
+        // event, and recomputing dropdown geometry on every mouse
+        // move with no menu open would be pure waste.
+        if let Some(area) = ed.menu_bar_area_now() {
+            t.rect("chrome:menu_bar", 120, area);
         }
         if ed.menu_state.active_menu.is_some() {
+            if let Some(ml) = ed.menu_layout_now() {
+                if let Some(r) = ml.dropdown_box {
+                    t.rect("chrome:menu_dropdown", 120, r);
+                }
+                for (_, r) in &ml.submenu_boxes {
+                    t.rect("chrome:menu_dropdown", 120, *r);
+                }
+            }
             // TRUE full-frame semantics: any click outside the open
             // menu closes it and is consumed.
             t.full("chrome:menu_close_guard", 110);
         }
+    }
+
+    fn on_hover_change(
+        &self,
+        ed: &mut Editor,
+        _old: Option<&HoverTarget>,
+        new: Option<&HoverTarget>,
+        _col: u16,
+        _row: u16,
+    ) -> bool {
+        // An open menu follows the pointer (bar auto-switch, submenu
+        // open/close, highlight). The machine lives with the menu's
+        // other behavior in `menu_actions.rs`.
+        ed.menu_hover_reaction(new)
     }
 
     fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
