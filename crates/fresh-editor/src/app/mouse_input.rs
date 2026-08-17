@@ -933,7 +933,8 @@ impl Editor {
         // as click/wheel/right-click: suggestion-confirm (#1660) over
         // the mouse-modal overlay swallow, the popup block/dismiss
         // guard, the file-open dialog, the explorer body, then the
-        // splits.
+        // split word-select arm (Splits, `chrome:editor`). Pure walk —
+        // no post-walk scan.
         let tree = super::chrome::chrome_tree(self);
         for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
             let b = &tree[i];
@@ -947,11 +948,8 @@ impl Editor {
                 super::chrome::Disposition::Consumed => return Ok(()),
                 super::chrome::Disposition::PassAfter => {}
                 // Opacity gate: a declining opaque surface stops the
-                // walk (PassAfter guards acted and must keep routing;
-                // plain Pass on an opaque box means the event dies
-                // here rather than reaching content beneath). The
-                // post-walk split scan below still runs — the
-                // popup_guard consume covers that.
+                // walk — nothing beneath (the split arm included) can
+                // word-select through a popup.
                 super::chrome::Disposition::Pass => {
                     if b.lb.pointer_opaque {
                         break;
@@ -959,44 +957,42 @@ impl Editor {
                 }
             }
         }
+        Ok(())
+    }
 
-        // Find which split/buffer was clicked and handle double-click
-        let split_areas = self.active_layout().split_areas.clone();
-        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &split_areas
+    /// Double-click on a split's content rect: the Splits component's
+    /// `chrome:editor` arm (moved from the old post-walk scan).
+    pub(super) fn handle_split_double_click(
+        &mut self,
+        split_id: LeafId,
+        buffer_id: BufferId,
+        content_rect: ratatui::layout::Rect,
+        col: u16,
+        row: u16,
+    ) -> AnyhowResult<()> {
+        // Double-clicked on an editor split. A LIVE terminal grid has
+        // no selection model of its own — select the word through the
+        // same implicit-scrollback detour a drag uses (the first
+        // press of the pair already focused the split; with
+        // `mouse_drag_selects` off the grid stays inert). A terminal
+        // in read-only scrollback is an ordinary buffer view: fall
+        // through so double-click selects the word.
+        if self.active_window().is_terminal_buffer(buffer_id)
+            && !self
+                .active_window()
+                .split_terminal_scrollback(split_id, buffer_id)
         {
-            if in_rect(col, row, *content_rect) {
-                // Double-clicked on an editor split. A LIVE terminal grid has
-                // no selection model of its own — select the word through the
-                // same implicit-scrollback detour a drag uses (the first
-                // press of the pair already focused the split; with
-                // `mouse_drag_selects` off the grid stays inert). A terminal
-                // in read-only scrollback is an ordinary buffer view: fall
-                // through so double-click selects the word.
-                if self.active_window().is_terminal_buffer(*buffer_id)
-                    && !self
-                        .active_window()
-                        .split_terminal_scrollback(*split_id, *buffer_id)
-                {
-                    if self.config.terminal.mouse_drag_selects {
-                        return self
-                            .begin_terminal_grid_word_selection(*split_id, *buffer_id, col, row);
-                    }
-                    self.active_window_mut().key_context =
-                        crate::input::keybindings::KeyContext::Terminal;
-                    return Ok(());
-                }
-
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::Normal;
-
-                // Position cursor at click location and select word
-                self.handle_editor_double_click(col, row, *split_id, *buffer_id, *content_rect)?;
-                return Ok(());
+            if self.config.terminal.mouse_drag_selects {
+                return self.begin_terminal_grid_word_selection(split_id, buffer_id, col, row);
             }
+            self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
+            return Ok(());
         }
 
-        Ok(())
+        self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
+
+        // Position cursor at click location and select word
+        self.handle_editor_double_click(col, row, split_id, buffer_id, content_rect)
     }
 
     /// Handle double-click in editor content area - selects the word under cursor
@@ -1126,51 +1122,62 @@ impl Editor {
     pub(super) fn handle_mouse_triple_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         tracing::debug!("handle_mouse_triple_click at col={}, row={}", col, row);
 
-        // Mouse-modal overlay: never let a triple-click line-select in the
-        // buffer below the overlay.
-        if self.overlay_prompt_active() {
-            return Ok(());
-        }
-
-        // Handle popups: dismiss if clicking outside, block if clicking inside
-        if self.is_mouse_over_any_popup(col, row) {
-            return Ok(());
-        } else {
-            self.dismiss_transient_popups();
-        }
-
-        // Find which split/buffer was clicked
-        let split_areas = self.active_layout().split_areas.clone();
-        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &split_areas
-        {
-            if in_rect(col, row, *content_rect) {
-                // Live grid: select the line via the implicit-scrollback
-                // detour (see double-click above); scrollback view: ordinary
-                // buffer, select the line.
-                if self.active_window().is_terminal_buffer(*buffer_id)
-                    && !self
-                        .active_window()
-                        .split_terminal_scrollback(*split_id, *buffer_id)
-                {
-                    if self.config.terminal.mouse_drag_selects {
-                        return self
-                            .begin_terminal_grid_line_selection(*split_id, *buffer_id, col, row);
+        // The same tree walk as every other press: the overlay
+        // prompt's modal box swallows, the popup guard blocks or
+        // dismisses, and the split line-select arm (Splits,
+        // `chrome:editor`) takes what falls through. The old
+        // hand-ordered overlay/popup ladder is gone.
+        let tree = super::chrome::chrome_tree(self);
+        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
+            let b = &tree[i];
+            let ev = super::chrome::ChromePointer {
+                press: super::chrome::PointerPress::Triple,
+                col,
+                row,
+                modifiers: crossterm::event::KeyModifiers::empty(),
+            };
+            match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
+                super::chrome::Disposition::Consumed => return Ok(()),
+                super::chrome::Disposition::PassAfter => {}
+                super::chrome::Disposition::Pass => {
+                    if b.lb.pointer_opaque {
+                        break;
                     }
-                    return Ok(());
                 }
-
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::Normal;
-
-                // Use the same pattern as handle_editor_double_click:
-                // first focus and position cursor, then select line
-                self.handle_editor_triple_click(col, row, *split_id, *buffer_id, *content_rect)?;
-                return Ok(());
             }
         }
-
         Ok(())
+    }
+
+    /// Triple-click on a split's content rect: the Splits component's
+    /// `chrome:editor` arm (moved from the old hand-ordered ladder).
+    pub(super) fn handle_split_triple_click(
+        &mut self,
+        split_id: LeafId,
+        buffer_id: BufferId,
+        content_rect: ratatui::layout::Rect,
+        col: u16,
+        row: u16,
+    ) -> AnyhowResult<()> {
+        // Live grid: select the line via the implicit-scrollback
+        // detour (see double-click above); scrollback view: ordinary
+        // buffer, select the line.
+        if self.active_window().is_terminal_buffer(buffer_id)
+            && !self
+                .active_window()
+                .split_terminal_scrollback(split_id, buffer_id)
+        {
+            if self.config.terminal.mouse_drag_selects {
+                return self.begin_terminal_grid_line_selection(split_id, buffer_id, col, row);
+            }
+            return Ok(());
+        }
+
+        self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
+
+        // Use the same pattern as handle_editor_double_click:
+        // first focus and position cursor, then select line
+        self.handle_editor_triple_click(col, row, split_id, buffer_id, content_rect)
     }
 
     /// Handle triple-click in editor content area - selects the entire line under cursor
@@ -2293,307 +2300,326 @@ impl Editor {
 
     /// Handle mouse drag event
     pub(super) fn handle_mouse_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        // Dock resize drag: track the pointer column as the new dock
-        // width (the right border follows the cursor), clamped so it
-        // can't swallow the chrome.
-        if self.dock_resizing {
-            let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
-            let new_w = col.saturating_add(1).clamp(10, max_cols);
-            let mut changed = false;
-            if let Some(fwp) = self.dock.as_mut() {
-                if let super::PanelPlacement::LeftDock { width_cols } = &mut fwp.placement {
-                    changed = *width_cols != new_w;
-                    *width_cols = new_w;
-                }
-            }
-            if changed {
-                // Persist the live width *before* relaying out. `relayout`
-                // fires the `resize` hook, and the orchestrator answers it
-                // by re-issuing the dock's responsive `dock_width`, which
-                // `handle_floating_panel_control` clamps against the
-                // persisted `dock_width` override. Updating that override
-                // here (not only on mouse-up) lets the user's dragged width
-                // win the round-trip — otherwise the responsive re-issue
-                // snaps the dock straight back and the drag does nothing.
-                self.dock_width = Some(new_w);
-                // The dock got wider/narrower: reflow the chrome (terminals,
-                // viewports, panels) to the new dock width via the funnel.
-                self.relayout();
-            }
+        use super::chrome::PointerGrab;
+        // THE grab slot: the press-to-release owner derived from live
+        // drag state (`chrome::pointer_grab`) routes every motion —
+        // no re-hit-testing mid-drag (the btop-resize ruling), no
+        // hand-ordered flag ladder. `pointer_grab`'s check order
+        // preserves the old ladder's precedence.
+        let Some(grab) = super::chrome::pointer_grab(self) else {
             return Ok(());
-        }
-        // Drag-to-select on a widget markdown/text document: armed by the
-        // press that placed the caret; every Drag extends the selection to
-        // the pointer.
-        if self.widget_text_drag.is_some() {
-            self.handle_widget_text_selection_drag(col, row);
-            return Ok(());
-        }
-        // Floating-panel list scrollbar drag takes precedence — the
-        // modal panel owns the input channel while it's up.
-        if self.try_widget_scrollbar_drag(super::PanelSlot::Dock, row)
-            || self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row)
-        {
-            let _ = col;
-            return Ok(());
-        }
-        // Mouse-modal overlay: the only legitimate drag is on the overlay's
-        // own result-list scrollbar (its drag flag was set on mouse-down).
-        // Anything else — text-selection drag in the buffer, a buffer
-        // scrollbar behind the overlay — is swallowed so the buffer stays put.
+        };
+        // Mouse-modal overlay: the only legitimate drags are the
+        // overlay's own result-list scrollbar and the grabs the old
+        // ladder ran ahead of the swallow (dock resize, widget text,
+        // widget scrollbar). Anything else — text selection in the
+        // buffer, a buffer scrollbar behind the overlay — is
+        // swallowed so the buffer stays put.
         if self.overlay_prompt_active()
-            && !self.active_window().mouse_state.dragging_prompt_scrollbar
+            && !matches!(
+                grab,
+                PointerGrab::PromptScrollbar
+                    | PointerGrab::DockResize
+                    | PointerGrab::WidgetText
+                    | PointerGrab::WidgetScrollbar
+            )
         {
             return Ok(());
         }
-
-        // If dragging scrollbar, update scroll position
-        if let Some(dragging_split_id) = self.active_window_mut().mouse_state.dragging_scrollbar {
-            // Snapshot split_areas so we don't borrow `self.active_layout()` and
-            // `self.active_window_mut()` simultaneously below.
-            let split_areas = self.active_layout().split_areas.clone();
-            for (split_id, buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in
-                &split_areas
-            {
-                if *split_id == dragging_split_id {
-                    // Check if we started dragging from the thumb (have drag_start_row)
-                    if self.active_window().mouse_state.drag_start_row.is_some() {
-                        // Relative drag from thumb
-                        self.active_window_mut().handle_scrollbar_drag_relative(
-                            row,
-                            *split_id,
-                            *buffer_id,
-                            *scrollbar_rect,
-                        )?;
-                    } else {
-                        // Jump drag (started from track)
-                        self.active_window_mut().handle_scrollbar_jump(
-                            col,
-                            row,
-                            *split_id,
-                            *buffer_id,
-                            *scrollbar_rect,
-                        )?;
+        match grab {
+            // Dock resize drag: track the pointer column as the new dock
+            // width (the right border follows the cursor), clamped so it
+            // can't swallow the chrome.
+            PointerGrab::DockResize => {
+                let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
+                let new_w = col.saturating_add(1).clamp(10, max_cols);
+                let mut changed = false;
+                if let Some(fwp) = self.dock.as_mut() {
+                    if let super::PanelPlacement::LeftDock { width_cols } = &mut fwp.placement {
+                        changed = *width_cols != new_w;
+                        *width_cols = new_w;
                     }
-                    return Ok(());
+                }
+                if changed {
+                    // Persist the live width *before* relaying out. `relayout`
+                    // fires the `resize` hook, and the orchestrator answers it
+                    // by re-issuing the dock's responsive `dock_width`, which
+                    // `handle_floating_panel_control` clamps against the
+                    // persisted `dock_width` override. Updating that override
+                    // here (not only on mouse-up) lets the user's dragged width
+                    // win the round-trip — otherwise the responsive re-issue
+                    // snaps the dock straight back and the drag does nothing.
+                    self.dock_width = Some(new_w);
+                    // The dock got wider/narrower: reflow the chrome (terminals,
+                    // viewports, panels) to the new dock width via the funnel.
+                    self.relayout();
                 }
             }
-        }
-
-        // If dragging horizontal scrollbar, update horizontal scroll position
-        if let Some(dragging_split_id) = self
-            .active_window_mut()
-            .mouse_state
-            .dragging_horizontal_scrollbar
-        {
-            // Clone the scrollbar layout so the loop doesn't hold an
-            // immutable borrow on `self` while it mutates
-            // `self.split_view_states`. The active window's layout cache
-            // is repopulated each frame, so a one-frame snapshot is fine.
-            let hscrollbar_areas = self.active_layout().horizontal_scrollbar_areas.clone();
-            for (
-                split_id,
-                _buffer_id,
-                hscrollbar_rect,
-                max_content_width,
-                thumb_start,
-                thumb_end,
-            ) in &hscrollbar_areas
-            {
-                if *split_id == dragging_split_id {
-                    let track_width = hscrollbar_rect.width as f64;
-                    if track_width <= 1.0 {
-                        break;
+            // Drag-to-select on a widget markdown/text document: armed by the
+            // press that placed the caret; every Drag extends the selection to
+            // the pointer.
+            PointerGrab::WidgetText => {
+                self.handle_widget_text_selection_drag(col, row);
+            }
+            // Floating-panel list scrollbar drag — the modal panel
+            // owns the input channel while it's up.
+            PointerGrab::WidgetScrollbar => {
+                let _ = self.try_widget_scrollbar_drag(super::PanelSlot::Dock, row)
+                    || self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row);
+            }
+            // Vertical scrollbar drag: update scroll position.
+            PointerGrab::VScrollbar => {
+                if let Some(dragging_split_id) =
+                    self.active_window_mut().mouse_state.dragging_scrollbar
+                {
+                    // Snapshot split_areas so we don't borrow `self.active_layout()` and
+                    // `self.active_window_mut()` simultaneously below.
+                    let split_areas = self.active_layout().split_areas.clone();
+                    for (
+                        split_id,
+                        buffer_id,
+                        _content_rect,
+                        scrollbar_rect,
+                        _thumb_start,
+                        _thumb_end,
+                    ) in &split_areas
+                    {
+                        if *split_id == dragging_split_id {
+                            // Check if we started dragging from the thumb (have drag_start_row)
+                            if self.active_window().mouse_state.drag_start_row.is_some() {
+                                // Relative drag from thumb
+                                self.active_window_mut().handle_scrollbar_drag_relative(
+                                    row,
+                                    *split_id,
+                                    *buffer_id,
+                                    *scrollbar_rect,
+                                )?;
+                            } else {
+                                // Jump drag (started from track)
+                                self.active_window_mut().handle_scrollbar_jump(
+                                    col,
+                                    row,
+                                    *split_id,
+                                    *buffer_id,
+                                    *scrollbar_rect,
+                                )?;
+                            }
+                            return Ok(());
+                        }
                     }
+                }
+            }
+            // Horizontal scrollbar drag: update horizontal scroll position.
+            PointerGrab::HScrollbar => {
+                if let Some(dragging_split_id) = self
+                    .active_window_mut()
+                    .mouse_state
+                    .dragging_horizontal_scrollbar
+                {
+                    // Clone the scrollbar layout so the loop doesn't hold an
+                    // immutable borrow on `self` while it mutates
+                    // `self.split_view_states`. The active window's layout cache
+                    // is repopulated each frame, so a one-frame snapshot is fine.
+                    let hscrollbar_areas = self.active_layout().horizontal_scrollbar_areas.clone();
+                    for (
+                        split_id,
+                        _buffer_id,
+                        hscrollbar_rect,
+                        max_content_width,
+                        thumb_start,
+                        thumb_end,
+                    ) in &hscrollbar_areas
+                    {
+                        if *split_id == dragging_split_id {
+                            let track_width = hscrollbar_rect.width as f64;
+                            if track_width <= 1.0 {
+                                break;
+                            }
 
-                    if let (Some(drag_start_hcol), Some(drag_start_left_column)) = (
-                        self.active_window_mut().mouse_state.drag_start_hcol,
-                        self.active_window_mut().mouse_state.drag_start_left_column,
-                    ) {
-                        // Relative drag from thumb - move proportionally to mouse offset
-                        // Use thumb size to compute the correct ratio so thumb tracks with mouse
-                        let col_offset = (col as i32) - (drag_start_hcol as i32);
-                        if let Some(view_state) = self
-                            .windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_view_states_mut())
-                            .expect("active window must have a populated split layout")
-                            .get_mut(&dragging_split_id)
+                            if let (Some(drag_start_hcol), Some(drag_start_left_column)) = (
+                                self.active_window_mut().mouse_state.drag_start_hcol,
+                                self.active_window_mut().mouse_state.drag_start_left_column,
+                            ) {
+                                // Relative drag from thumb - move proportionally to mouse offset
+                                // Use thumb size to compute the correct ratio so thumb tracks with mouse
+                                let col_offset = (col as i32) - (drag_start_hcol as i32);
+                                if let Some(view_state) = self
+                                    .windows
+                                    .get_mut(&self.active_window)
+                                    .and_then(|w| w.split_view_states_mut())
+                                    .expect("active window must have a populated split layout")
+                                    .get_mut(&dragging_split_id)
+                                {
+                                    let visible_width = view_state.viewport.width as usize;
+                                    let max_scroll =
+                                        max_content_width.saturating_sub(visible_width);
+                                    if max_scroll > 0 {
+                                        let thumb_size =
+                                            thumb_end.saturating_sub(*thumb_start).max(1);
+                                        let track_travel =
+                                            (track_width - thumb_size as f64).max(1.0);
+                                        let scroll_per_pixel = max_scroll as f64 / track_travel;
+                                        let scroll_offset =
+                                            (col_offset as f64 * scroll_per_pixel).round() as i64;
+                                        let new_left =
+                                            (drag_start_left_column as i64 + scroll_offset).max(0)
+                                                as usize;
+                                        view_state.viewport.left_column = new_left.min(max_scroll);
+                                        view_state.viewport.set_skip_ensure_visible();
+                                    }
+                                }
+                            } else {
+                                // Jump drag (started from track) - jump to absolute position
+                                let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
+                                let ratio = (relative_col / (track_width - 1.0)).clamp(0.0, 1.0);
+
+                                if let Some(view_state) = self
+                                    .windows
+                                    .get_mut(&self.active_window)
+                                    .and_then(|w| w.split_view_states_mut())
+                                    .expect("active window must have a populated split layout")
+                                    .get_mut(&dragging_split_id)
+                                {
+                                    let visible_width = view_state.viewport.width as usize;
+                                    let max_scroll =
+                                        max_content_width.saturating_sub(visible_width);
+                                    let target_col = (ratio * max_scroll as f64).round() as usize;
+                                    view_state.viewport.left_column = target_col.min(max_scroll);
+                                    view_state.viewport.set_skip_ensure_visible();
+                                }
+                            }
+
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            // Selecting text in an info popup: extend the selection.
+            PointerGrab::PopupSelect => {
+                if let Some(popup_idx) = self.active_window_mut().mouse_state.selecting_in_popup {
+                    // Find the popup area from cached layout
+                    if let Some((_, _, inner_rect, scroll_offset, _, _, _)) = self
+                        .active_chrome()
+                        .popup_areas
+                        .iter()
+                        .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
+                    {
+                        // Check if mouse is within the popup inner area
+                        if col >= inner_rect.x
+                            && col < inner_rect.x + inner_rect.width
+                            && row >= inner_rect.y
+                            && row < inner_rect.y + inner_rect.height
                         {
-                            let visible_width = view_state.viewport.width as usize;
-                            let max_scroll = max_content_width.saturating_sub(visible_width);
-                            if max_scroll > 0 {
-                                let thumb_size = thumb_end.saturating_sub(*thumb_start).max(1);
-                                let track_travel = (track_width - thumb_size as f64).max(1.0);
-                                let scroll_per_pixel = max_scroll as f64 / track_travel;
-                                let scroll_offset =
-                                    (col_offset as f64 * scroll_per_pixel).round() as i64;
-                                let new_left =
-                                    (drag_start_left_column as i64 + scroll_offset).max(0) as usize;
-                                view_state.viewport.left_column = new_left.min(max_scroll);
-                                view_state.viewport.set_skip_ensure_visible();
+                            let relative_col = (col - inner_rect.x) as usize;
+                            let relative_row = (row - inner_rect.y) as usize;
+                            let line = scroll_offset + relative_row;
+
+                            let state = self.active_state_mut();
+                            if let Some(popup) = state.popups.get_mut(popup_idx) {
+                                popup.extend_selection(line, relative_col);
                             }
                         }
-                    } else {
-                        // Jump drag (started from track) - jump to absolute position
-                        let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
-                        let ratio = (relative_col / (track_width - 1.0)).clamp(0.0, 1.0);
+                    }
+                }
+            }
+            // The floating-overlay prompt's scrollbar (issue #1796):
+            // update its scroll_offset using the same math as the
+            // click handler. Same shared-widget logic the
+            // popup-scrollbar drag uses below.
+            PointerGrab::PromptScrollbar => {
+                // Snapshot chrome rects up front so the prompt borrow on
+                // active_window_mut() doesn't conflict.
+                let sb_rect = self.active_chrome().suggestions_scrollbar_rect;
+                let suggestions_area_visible =
+                    self.active_chrome().suggestions_area.map(|(_, _, v, _)| v);
+                let active_window_id = self.active_window;
+                if let (Some(sb_rect), Some(prompt)) = (
+                    sb_rect,
+                    self.windows
+                        .get_mut(&active_window_id)
+                        .and_then(|w| w.prompt.as_mut()),
+                ) {
+                    let visible = suggestions_area_visible
+                        .unwrap_or_else(|| prompt.suggestions.len().min(MAX_VISIBLE_SUGGESTIONS));
+                    prompt.scroll_offset = prompt_scrollbar_offset_for_row(
+                        prompt.suggestions.len(),
+                        visible,
+                        prompt.scroll_offset,
+                        sb_rect,
+                        row,
+                    );
+                    // Keep the manual-scroll latch through the drag so the
+                    // renderer doesn't pull the offset back to the selection.
+                    prompt.manual_scroll = true;
+                }
+            }
+            // A buffer popup's scrollbar: update its scroll position.
+            PointerGrab::PopupScrollbar => {
+                if let Some(popup_idx) = self
+                    .active_window_mut()
+                    .mouse_state
+                    .dragging_popup_scrollbar
+                {
+                    // Find the popup's scrollbar rect from cached layout
+                    if let Some((_, _, inner_rect, _, _, Some(sb_rect), total_lines)) = self
+                        .active_chrome()
+                        .popup_areas
+                        .iter()
+                        .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
+                    {
+                        let track_height = sb_rect.height as usize;
+                        let visible_lines = inner_rect.height as usize;
 
-                        if let Some(view_state) = self
-                            .windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_view_states_mut())
-                            .expect("active window must have a populated split layout")
-                            .get_mut(&dragging_split_id)
-                        {
-                            let visible_width = view_state.viewport.width as usize;
-                            let max_scroll = max_content_width.saturating_sub(visible_width);
-                            let target_col = (ratio * max_scroll as f64).round() as usize;
-                            view_state.viewport.left_column = target_col.min(max_scroll);
-                            view_state.viewport.set_skip_ensure_visible();
+                        if track_height > 0 && *total_lines > visible_lines {
+                            let relative_row = row.saturating_sub(sb_rect.y) as usize;
+                            let max_scroll = total_lines.saturating_sub(visible_lines);
+                            let target_scroll = if track_height > 1 {
+                                (relative_row * max_scroll) / (track_height.saturating_sub(1))
+                            } else {
+                                0
+                            };
+
+                            let state = self.active_state_mut();
+                            if let Some(popup) = state.popups.get_mut(popup_idx) {
+                                let current_scroll = popup.scroll_offset as i32;
+                                let delta = target_scroll as i32 - current_scroll;
+                                popup.scroll_by(delta);
+                            }
                         }
                     }
-
-                    return Ok(());
                 }
             }
-        }
-
-        // If selecting text in popup, extend selection
-        if let Some(popup_idx) = self.active_window_mut().mouse_state.selecting_in_popup {
-            // Find the popup area from cached layout
-            if let Some((_, _, inner_rect, scroll_offset, _, _, _)) = self
-                .active_chrome()
-                .popup_areas
-                .iter()
-                .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
-            {
-                // Check if mouse is within the popup inner area
-                if col >= inner_rect.x
-                    && col < inner_rect.x + inner_rect.width
-                    && row >= inner_rect.y
-                    && row < inner_rect.y + inner_rect.height
+            // Split-separator drag: update the split ratio.
+            PointerGrab::SplitSeparator => {
+                if let Some((split_id, direction)) =
+                    self.active_window_mut().mouse_state.dragging_separator
                 {
-                    let relative_col = (col - inner_rect.x) as usize;
-                    let relative_row = (row - inner_rect.y) as usize;
-                    let line = scroll_offset + relative_row;
-
-                    let state = self.active_state_mut();
-                    if let Some(popup) = state.popups.get_mut(popup_idx) {
-                        popup.extend_selection(line, relative_col);
-                    }
+                    self.handle_separator_drag(col, row, split_id, direction)?;
                 }
             }
-            return Ok(());
-        }
-
-        // If dragging the floating-overlay prompt's scrollbar
-        // (issue #1796), update its scroll_offset using the same
-        // math as the click handler. Same shared-widget logic the
-        // popup-scrollbar drag uses below.
-        if self
-            .active_window_mut()
-            .mouse_state
-            .dragging_prompt_scrollbar
-        {
-            // Snapshot chrome rects up front so the prompt borrow on
-            // active_window_mut() doesn't conflict.
-            let sb_rect = self.active_chrome().suggestions_scrollbar_rect;
-            let suggestions_area_visible =
-                self.active_chrome().suggestions_area.map(|(_, _, v, _)| v);
-            let active_window_id = self.active_window;
-            if let (Some(sb_rect), Some(prompt)) = (
-                sb_rect,
-                self.windows
-                    .get_mut(&active_window_id)
-                    .and_then(|w| w.prompt.as_mut()),
-            ) {
-                let visible = suggestions_area_visible
-                    .unwrap_or_else(|| prompt.suggestions.len().min(MAX_VISIBLE_SUGGESTIONS));
-                prompt.scroll_offset = prompt_scrollbar_offset_for_row(
-                    prompt.suggestions.len(),
-                    visible,
-                    prompt.scroll_offset,
-                    sb_rect,
-                    row,
-                );
-                // Keep the manual-scroll latch through the drag so the
-                // renderer doesn't pull the offset back to the selection.
-                prompt.manual_scroll = true;
+            // File-explorer border drag: update its width.
+            PointerGrab::ExplorerWidth => {
+                self.handle_file_explorer_border_drag(col)?;
             }
-            return Ok(());
-        }
-
-        // If dragging popup scrollbar, update popup scroll position
-        if let Some(popup_idx) = self
-            .active_window_mut()
-            .mouse_state
-            .dragging_popup_scrollbar
-        {
-            // Find the popup's scrollbar rect from cached layout
-            if let Some((_, _, inner_rect, _, _, Some(sb_rect), total_lines)) = self
-                .active_chrome()
-                .popup_areas
-                .iter()
-                .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
-            {
-                let track_height = sb_rect.height as usize;
-                let visible_lines = inner_rect.height as usize;
-
-                if track_height > 0 && *total_lines > visible_lines {
-                    let relative_row = row.saturating_sub(sb_rect.y) as usize;
-                    let max_scroll = total_lines.saturating_sub(visible_lines);
-                    let target_scroll = if track_height > 1 {
-                        (relative_row * max_scroll) / (track_height.saturating_sub(1))
-                    } else {
-                        0
-                    };
-
-                    let state = self.active_state_mut();
-                    if let Some(popup) = state.popups.get_mut(popup_idx) {
-                        let current_scroll = popup.scroll_offset as i32;
-                        let delta = target_scroll as i32 - current_scroll;
-                        popup.scroll_by(delta);
-                    }
+            // A drag whose press landed on a live terminal grid: this is
+            // selection intent (a bare click only focuses — see
+            // `handle_editor_click`). Drop the split into read-only scrollback
+            // and start a normal text-selection drag anchored at the press.
+            PointerGrab::TerminalSelectPending => {
+                if let Some((split_id, buffer_id, ocol, orow)) =
+                    self.active_window().mouse_state.terminal_drag_pending
+                {
+                    self.begin_terminal_grid_selection(split_id, buffer_id, ocol, orow, col, row)?;
                 }
             }
-            return Ok(());
-        }
-
-        // If dragging separator, update split ratio
-        if let Some((split_id, direction)) = self.active_window_mut().mouse_state.dragging_separator
-        {
-            self.handle_separator_drag(col, row, split_id, direction)?;
-            return Ok(());
-        }
-
-        // If dragging file explorer border, update width
-        if self.active_window_mut().mouse_state.dragging_file_explorer {
-            self.handle_file_explorer_border_drag(col)?;
-            return Ok(());
-        }
-
-        // A drag whose press landed on a live terminal grid: this is
-        // selection intent (a bare click only focuses — see
-        // `handle_editor_click`). Drop the split into read-only scrollback
-        // and start a normal text-selection drag anchored at the press.
-        if let Some((split_id, buffer_id, ocol, orow)) =
-            self.active_window().mouse_state.terminal_drag_pending
-        {
-            self.begin_terminal_grid_selection(split_id, buffer_id, ocol, orow, col, row)?;
-            return Ok(());
-        }
-
-        // If dragging to select text
-        if self.active_window_mut().mouse_state.dragging_text_selection {
-            self.handle_text_selection_drag(col, row)?;
-            return Ok(());
-        }
-
-        // If dragging a tab, update position and compute drop zone
-        if self.active_window_mut().mouse_state.dragging_tab.is_some() {
-            self.handle_tab_drag(col, row)?;
-            return Ok(());
+            // Text-selection drag: extend from the anchor.
+            PointerGrab::TextSelection => {
+                self.handle_text_selection_drag(col, row)?;
+            }
+            // Tab drag: update position and compute the drop zone.
+            PointerGrab::TabDrag => {
+                self.handle_tab_drag(col, row)?;
+            }
         }
 
         Ok(())
@@ -2880,13 +2906,10 @@ impl Editor {
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
-        // A right-click anywhere dismisses the left-click-only popups (the "+"
-        // new-tab menu and the close-split confirmation).
-        self.active_window_mut().new_tab_menu = None;
-        self.active_window_mut().close_split_menu = None;
-
         // The routable surfaces, as chrome boxes — same geometric walk
-        // as left-click/wheel. Ordering rides z; the mid-chain
+        // as left-click/wheel. Ordering rides z; the anywhere-clears
+        // (tab "+" menu, close-split confirm) are the Splits
+        // component's top-band PassAfter guard, and the mid-chain
         // clear-explorer-menu side effect is a guard box at its old
         // position.
         let tree = super::chrome::chrome_tree(self);

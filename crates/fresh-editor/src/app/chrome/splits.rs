@@ -71,6 +71,12 @@ impl ChromeComponent for Splits {
         for (_, _, content_rect, ..) in &ed.active_layout().split_areas {
             t.rect("chrome:editor", 10, *content_rect);
         }
+        // Right-click-only act-then-continue guard at the very top
+        // band: a right-click ANYWHERE clears the "+" new-tab menu and
+        // the close-split confirmation before routing — even when a
+        // higher surface then consumes the click (the old pre-walk
+        // clear's semantics, kept exactly).
+        t.full("chrome:tab_menu_clear_guard", 200);
     }
 
     fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
@@ -158,8 +164,60 @@ impl ChromeComponent for Splits {
         ev: &super::ChromePointer,
     ) -> anyhow::Result<super::Disposition> {
         use super::{Disposition, PointerPress};
-        if ev.press != PointerPress::Left {
-            return Ok(Disposition::Pass);
+        match ev.press {
+            PointerPress::Left => {}
+            // A right-click anywhere dismisses the left-click-only
+            // popups (the "+" new-tab menu and the close-split
+            // confirmation) and keeps routing — the pre-walk clear
+            // expressed as a top-band act-then-continue guard.
+            PointerPress::Right => {
+                if bx.kind == "chrome:tab_menu_clear_guard" {
+                    ed.active_window_mut().new_tab_menu = None;
+                    ed.active_window_mut().close_split_menu = None;
+                    return Ok(Disposition::PassAfter);
+                }
+                return Ok(Disposition::Pass);
+            }
+            // Double = word select, triple = line select, on the split
+            // under the pointer (moved from the old post-walk scan /
+            // hand-ordered ladder — a popup's opaque box above this
+            // band now blocks them by construction).
+            PointerPress::Double | PointerPress::Triple => {
+                if bx.kind != "chrome:editor" {
+                    return Ok(Disposition::Pass);
+                }
+                let areas: Vec<_> = ed
+                    .active_layout()
+                    .split_areas
+                    .iter()
+                    .map(|(split_id, buffer_id, content_rect, _, _, _)| {
+                        (*split_id, *buffer_id, *content_rect)
+                    })
+                    .collect();
+                for (split_id, buffer_id, content_rect) in areas {
+                    if in_rect(ev.col, ev.row, content_rect) {
+                        if ev.press == PointerPress::Double {
+                            ed.handle_split_double_click(
+                                split_id,
+                                buffer_id,
+                                content_rect,
+                                ev.col,
+                                ev.row,
+                            )?;
+                        } else {
+                            ed.handle_split_triple_click(
+                                split_id,
+                                buffer_id,
+                                content_rect,
+                                ev.col,
+                                ev.row,
+                            )?;
+                        }
+                        return Ok(Disposition::Consumed);
+                    }
+                }
+                return Ok(Disposition::Pass);
+            }
         }
         let consumed = match bx.kind {
             "chrome:scrollbars" => ed.handle_click_scrollbar(ev.col, ev.row),

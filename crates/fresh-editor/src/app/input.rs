@@ -138,8 +138,6 @@ impl Editor {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
-        use crate::input::keybindings::Action;
-
         let _t_total = std::time::Instant::now();
 
         tracing::trace!(
@@ -196,47 +194,6 @@ impl Editor {
             return Ok(());
         }
 
-        // Floating widget panel claims all keys while visible. Esc
-        // unmounts + fires a `widget_event` "cancel"; smart-key names
-        // (Tab/Return/Backspace/…/Up/Down) route through the widget
-        // command dispatcher; printable chars feed `textInputChar` to
-        // the focused TextInput. Mouse clicks outside the panel are
-        // swallowed (handled in `mouse_input`).
-        // A focused centered modal takes keyboard precedence over the
-        // dock (e.g. the New-Session form opened on top of the dock).
-        if self
-            .floating_widget_panel
-            .as_ref()
-            .is_some_and(|f| f.focused)
-            && self.dispatch_floating_widget_key(super::PanelSlot::Floating, code, modifiers)
-        {
-            return Ok(());
-        }
-        // A focused dock swallows keys in the dispatch below, so the global
-        // focus-toggle (default Alt+O) would never be able to hand focus back
-        // to the editor once you've dived in. Resolve it here, ahead of the
-        // dock's own key handling, so the toggle is symmetric (same key in and
-        // out). Only the blur-out direction needs this early hook — focusing a
-        // blurred/hidden dock is handled by ordinary keybinding resolution
-        // since the editor owns the keyboard in that state.
-        if self.dock.as_ref().is_some_and(|f| f.focused) {
-            let ctx = self.get_key_context();
-            let resolved = self
-                .keybindings
-                .read()
-                .ok()
-                .map(|kb| kb.resolve(&key_event, ctx));
-            if matches!(resolved, Some(Action::ToggleDockFocus)) {
-                self.handle_action(Action::ToggleDockFocus)?;
-                return Ok(());
-            }
-        }
-        if self.dock.as_ref().is_some_and(|f| f.focused)
-            && self.dispatch_floating_widget_key(super::PanelSlot::Dock, code, modifiers)
-        {
-            return Ok(());
-        }
-
         // Clear skip_ensure_visible flag so cursor becomes visible after key press
         // (scroll actions will set it again if needed). Use the *effective*
         // active split so this clears the flag on a focused buffer-group
@@ -258,10 +215,12 @@ impl Editor {
 
         // Chrome keyboard grabs: the first registered component whose
         // open surface owns the keyboard with a custom dispatcher
-        // claims the key (today: the native context menus — navigation
-        // drives the menu, every other key is swallowed instead of
-        // leaking into the buffer or the explorer's type-ahead find
-        // underneath). The chrome keyboard analogue of the modal
+        // claims the key — the theme inspector's dismiss-and-continue,
+        // the native context menus' navigation grab, the focused
+        // floating modal, then the focused dock (registry order IS
+        // the precedence, matching the layers() ranks — one source
+        // of truth instead of hardcoded early claims here). The
+        // chrome keyboard analogue of the modal
         // mouse-capture rung above `handle_mouse`'s walks.
         for c in super::chrome::components() {
             if let Some(result) = c.on_key(self, code, modifiers) {
@@ -601,7 +560,7 @@ impl Editor {
     /// [`router::widget_panel_key`], which is pure and Editor-free. This
     /// shell builds the [`router::WidgetPanelView`] from live state and
     /// executes the outcome it names.
-    fn dispatch_floating_widget_key(
+    pub(super) fn dispatch_floating_widget_key(
         &mut self,
         slot: super::PanelSlot,
         code: crossterm::event::KeyCode,

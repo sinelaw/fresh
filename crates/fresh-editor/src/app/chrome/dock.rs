@@ -118,6 +118,47 @@ impl ChromeComponent for Dock {
         }
     }
 
+    fn on_key(
+        &self,
+        ed: &mut Editor,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> Option<anyhow::Result<()>> {
+        if !ed.dock.as_ref().is_some_and(|f| f.focused) {
+            return None;
+        }
+        // A focused dock swallows keys in the dispatch below, so the
+        // global focus-toggle (default Alt+O) would never be able to
+        // hand focus back to the editor once you've dived in. Resolve
+        // it ahead of the dock's own key handling, so the toggle is
+        // symmetric (same key in and out). Only the blur-out
+        // direction needs this — focusing a blurred dock is ordinary
+        // keybinding resolution (the editor owns the keyboard then).
+        let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+        let ctx = ed.get_key_context();
+        let resolved = ed
+            .keybindings
+            .read()
+            .ok()
+            .map(|kb| kb.resolve(&key_event, ctx));
+        if matches!(
+            resolved,
+            Some(crate::input::keybindings::Action::ToggleDockFocus)
+        ) {
+            return Some(
+                ed.handle_action(crate::input::keybindings::Action::ToggleDockFocus)
+                    .map(|_| ()),
+            );
+        }
+        // The focused dock claims every other key (registered after
+        // FloatingModal — one precedence source, matching the
+        // `layers()` ranks).
+        if ed.dispatch_floating_widget_key(crate::app::PanelSlot::Dock, code, modifiers) {
+            return Some(Ok(()));
+        }
+        None
+    }
+
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
         use crate::app::overlay::{Layer, LayerKind};
         // Owns the keyboard only while focused; a blurred dock stays

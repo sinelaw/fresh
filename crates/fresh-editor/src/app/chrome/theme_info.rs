@@ -95,11 +95,11 @@ impl ChromeComponent for ThemeInfo {
                 // Inside the popup but not on the button: swallow.
                 Ok(Disposition::Consumed)
             }
-            // Double-click on the popup must CONSUME — the
-            // double-click walk's post-walk split scan runs
-            // unconditionally, so opacity alone can't stop a
-            // word-select through the popup.
-            ("chrome:theme_info", PointerPress::Double) => Ok(Disposition::Consumed),
+            // Double/triple-click on the popup: block (belt over
+            // the opacity gate's suspenders).
+            ("chrome:theme_info", PointerPress::Double | PointerPress::Triple) => {
+                Ok(Disposition::Consumed)
+            }
             ("chrome:theme_info_guard", PointerPress::Left) => {
                 ed.active_window_mut().theme_info_popup = None;
                 Ok(Disposition::PassAfter)

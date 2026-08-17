@@ -85,13 +85,16 @@ pub(crate) enum Disposition {
     Pass,
 }
 
-/// Which press gesture a pointer event carries. Triple-click stays a
-/// buffer-selection concern outside chrome.
+/// Which press gesture a pointer event carries. Triple-click ROUTES
+/// through the tree like every other press (overlay swallow, popup
+/// block/dismiss, then the split line-select arm); only the selection
+/// semantics themselves are a buffer concern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PointerPress {
     Left,
     Right,
     Double,
+    Triple,
 }
 
 /// One pointer gesture offered to a component's box, press kind
@@ -164,32 +167,98 @@ impl ChromeTreeBuilder {
 }
 
 /// The active pointer GRAB, if any: press-established routing that
-/// owns the pointer until release (dock width resize, split-separator
-/// drag, explorer width drag). Grabs are NOT bubble dispatch — a drag
-/// must keep routing to its owner even when the pointer crosses an
-/// alternate-screen terminal or any other surface (the btop-resize
-/// bug). Derived from the live drag state; the per-event routing
-/// still lives in the Drag/Up arms — decomposing it per component is
-/// the recorded residue of slice 5.
+/// owns the pointer until release. Grabs are NOT bubble dispatch — a
+/// drag must keep routing to its owner even when the pointer crosses
+/// an alternate-screen terminal or any other surface (the btop-resize
+/// bug). The FULL press-to-release roster lives here: the terminal
+/// forward sink suppresses forwarding for every grab, and
+/// `handle_mouse_drag` dispatches on the grab instead of a
+/// hand-ordered flag ladder. Derived from live drag state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PointerGrab {
+    /// Dock width resize from its right border.
     DockResize,
+    /// Drag-to-select in a widget markdown/text document.
+    WidgetText,
+    /// A floating/dock panel's list scrollbar drag.
+    WidgetScrollbar,
+    /// A split's vertical scrollbar (thumb-relative or track-jump).
+    VScrollbar,
+    /// A split's horizontal scrollbar.
+    HScrollbar,
+    /// Text selection inside an info popup.
+    PopupSelect,
+    /// The prompt's suggestion-list scrollbar (overlay and dropdown).
+    PromptScrollbar,
+    /// A buffer popup's scrollbar.
+    PopupScrollbar,
+    /// Split-separator resize.
     SplitSeparator,
+    /// File-explorer width resize from its border.
     ExplorerWidth,
+    /// A press on a live terminal grid whose first motion converts to
+    /// scrollback text selection (selection intent).
+    TerminalSelectPending,
+    /// Buffer text selection (the press placed the caret; drags
+    /// extend the selection).
+    TextSelection,
+    /// A tab being dragged toward a drop zone.
+    TabDrag,
 }
 
 /// The grab in effect for the current event, if any. The terminal
-/// forward sink consults this instead of a hand-listed field check.
+/// forward sink consults this instead of a hand-listed field check,
+/// and the Drag arm dispatches on it. Checked in the old drag
+/// ladder's order so precedence is unchanged when (rarely) two flags
+/// coexist.
 pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
     if ed.dock_resizing {
         return Some(PointerGrab::DockResize);
     }
+    if ed.widget_text_drag.is_some() {
+        return Some(PointerGrab::WidgetText);
+    }
+    if ed
+        .dock
+        .as_ref()
+        .is_some_and(|p| p.scrollbar_drag_key.is_some())
+        || ed
+            .floating_widget_panel
+            .as_ref()
+            .is_some_and(|p| p.scrollbar_drag_key.is_some())
+    {
+        return Some(PointerGrab::WidgetScrollbar);
+    }
     let ms = &ed.active_window().mouse_state;
+    if ms.dragging_scrollbar.is_some() {
+        return Some(PointerGrab::VScrollbar);
+    }
+    if ms.dragging_horizontal_scrollbar.is_some() {
+        return Some(PointerGrab::HScrollbar);
+    }
+    if ms.selecting_in_popup.is_some() {
+        return Some(PointerGrab::PopupSelect);
+    }
+    if ms.dragging_prompt_scrollbar {
+        return Some(PointerGrab::PromptScrollbar);
+    }
+    if ms.dragging_popup_scrollbar.is_some() {
+        return Some(PointerGrab::PopupScrollbar);
+    }
     if ms.dragging_separator.is_some() {
         return Some(PointerGrab::SplitSeparator);
     }
-    if ms.drag_start_explorer_width.is_some() {
+    if ms.dragging_file_explorer || ms.drag_start_explorer_width.is_some() {
         return Some(PointerGrab::ExplorerWidth);
+    }
+    if ms.terminal_drag_pending.is_some() {
+        return Some(PointerGrab::TerminalSelectPending);
+    }
+    if ms.dragging_text_selection {
+        return Some(PointerGrab::TextSelection);
+    }
+    if ms.dragging_tab.is_some() {
+        return Some(PointerGrab::TabDrag);
     }
     None
 }
