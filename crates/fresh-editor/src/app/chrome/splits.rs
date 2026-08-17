@@ -73,7 +73,7 @@ impl ChromeComponent for Splits {
         }
     }
 
-    fn hover(&self, ed: &Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+    fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
         match bx.kind {
             "chrome:split_separators" => {
                 for (split_id, direction, sep_x, sep_y, sep_length) in

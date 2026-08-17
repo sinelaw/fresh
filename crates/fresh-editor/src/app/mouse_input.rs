@@ -983,7 +983,7 @@ impl Editor {
     // `self.active_window().split_at_position(col, row)`.
 
     /// Compute what hover target is at the given position
-    fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
+    fn compute_hover_target(&mut self, col: u16, row: u16) -> Option<HoverTarget> {
         // The hover surfaces, as chrome boxes — the same geometric walk
         // as wheel/click/right-click/double-click, in query form: the
         // highest-z box whose handler names a target wins, and handlers
@@ -2198,26 +2198,24 @@ impl Editor {
         col: u16,
         row: u16,
     ) -> Option<AnyhowResult<()>> {
-        let (status_row, _status_x, _status_width) = self.active_chrome().status_bar.area?;
-        if row != status_row {
+        let (area, layout) = self.status_bar_layout_now()?;
+        if row != area.y {
             return None;
         }
-        // Generic click rail: one hit-test over every clickable segment drawn
-        // last frame. The id→Action mapping (and each element's popup-dismiss
-        // nuance) lives in `dispatch_status_bar_click`.
-        let clickables = self.active_chrome().status_bar.clickable.clone();
-        for (id, r, s, e) in clickables {
+        // Generic click rail: one hit-test over every clickable segment,
+        // on geometry derived from live state. The id→Action mapping (and
+        // each element's popup-dismiss nuance) lives in
+        // `dispatch_status_bar_click`.
+        for (id, r, s, e) in layout.clickable {
             if row == r && col >= s && col < e {
                 return Some(self.dispatch_status_bar_click(id));
             }
         }
-        // Plugin-registered tokens. Walk the per-frame map produced by
-        // `render_status_bar`; on a hit, fire `status_bar_token_clicked`
-        // so the registering plugin can react. We split the registry key
-        // (`"<plugin>:<token>"`) on the first colon — that's how
-        // `register_status_bar_element` builds it.
-        let plugin_areas = self.active_chrome().status_bar.plugin_token_areas.clone();
-        for (key, (r, s, e)) in plugin_areas {
+        // Plugin-registered tokens. On a hit, fire
+        // `status_bar_token_clicked` so the registering plugin can react.
+        // We split the registry key (`"<plugin>:<token>"`) on the first
+        // colon — that's how `register_status_bar_element` builds it.
+        for (key, (r, s, e)) in layout.plugin_token_areas {
             if row == r && col >= s && col < e {
                 let (plugin_name, token_name) = match key.split_once(':') {
                     Some((p, t)) => (p.to_string(), t.to_string()),

@@ -21,7 +21,7 @@ impl ChromeComponent for FileBrowser {
         }
     }
 
-    fn hover(&self, ed: &Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+    fn hover(&self, ed: &mut Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
         ed.compute_file_browser_hover(col, row)
     }
 

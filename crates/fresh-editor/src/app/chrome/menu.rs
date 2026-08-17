@@ -30,7 +30,7 @@ impl ChromeComponent for Menu {
         }
     }
 
-    fn hover(&self, ed: &Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
+    fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
         match bx.kind {
             "chrome:menu_bar" => {
                 let menu_layout = ed.active_chrome().menu_layout.as_ref()?;

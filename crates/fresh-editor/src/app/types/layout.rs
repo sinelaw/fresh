@@ -152,51 +152,20 @@ pub(crate) struct FrameDimensions {
     pub height: u16,
 }
 
-/// Status-bar hit-test layout captured each frame by `render_status_bar`.
-/// Grouped so the four related fields travel together rather than as loose
-/// `status_bar_*` members of [`ChromeLayout`].
+/// The status bar's semantic PAINT capture — what the renderer drew last
+/// frame, kept for `status_view` so the web mirrors the painted frame
+/// natively instead of scraping cells. This is paint OUTPUT, not event
+/// geometry: hit-testing, hover, and popup anchoring derive the segment
+/// rects from live state via `Editor::status_bar_layout_now` (the
+/// formerly-cached `clickable` / `plugin_token_areas` fields are retired).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StatusBarChrome {
-    /// Status bar area (row, x, width)
+    /// Status bar area (row, x, width) as painted.
     pub area: Option<(u16, u16, u16)>,
-    /// Every clickable built-in status-bar segment drawn last frame, as
-    /// `(id, row, start_col, end_col)`. One generic list (mirroring
-    /// `StatusBarLayout::clickable`) walked by both the hover hit-test and
-    /// `handle_click_status_bar` — no per-indicator field. See
-    /// `StatusBarClickable`.
-    pub clickable: Vec<(
-        crate::view::ui::status_bar::StatusBarClickable,
-        u16,
-        u16,
-        u16,
-    )>,
-    /// Plugin-registered status-bar token areas, keyed by
-    /// `"<plugin>:<token>"`. Populated by `render_status_bar`; consumed
-    /// by `handle_click_status_bar` which fires the
-    /// `status_bar_token_clicked` hook on a hit so the registering
-    /// plugin can react (typically by re-opening a deferred prompt).
-    /// See `docs/internal/trust-env-devcontainer-ux-plan.md` for the
-    /// design context.
-    pub plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
     /// Semantic status-bar model (rendered elements + text + positions), captured
     /// by the renderer so `status_view` derives the web status bar directly
     /// instead of scraping the drawn cells.
     pub segments: Vec<crate::view::ui::status_bar::StatusSegmentInfo>,
-}
-
-impl StatusBarChrome {
-    /// Screen area `(row, start_col, end_col)` of a given clickable status-bar
-    /// segment from the last frame, if it was drawn. Used to anchor popups to
-    /// their indicator (e.g. the LSP / remote / read-only menus).
-    pub fn clickable_area(
-        &self,
-        id: crate::view::ui::status_bar::StatusBarClickable,
-    ) -> Option<(u16, u16, u16)> {
-        self.clickable
-            .iter()
-            .find(|(cid, _, _, _)| *cid == id)
-            .map(|(_, row, start, end)| (*row, *start, *end))
-    }
 }
 
 impl ChromeLayout {
