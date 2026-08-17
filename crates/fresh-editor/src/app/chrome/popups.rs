@@ -174,11 +174,107 @@ impl ChromeComponent for Popups {
             ));
         }
     }
+
+    fn on_layer_key(
+        &self,
+        ed: &mut Editor,
+        _layer: &crate::app::overlay::Layer,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<anyhow::Result<crate::input::handler::InputResult>> {
+        ed.dispatch_popup_keys(event)
+    }
 }
 
 /// Behavior owned by this component (moved from mouse_input.rs —
 /// the handlers its arms dispatch to).
 impl Editor {
+    /// Keyboard for the popup layer (the rungs of
+    /// `dispatch_modal_input`'s popup block plus `handle_key`'s
+    /// unfocused-popup interception, moved here — offered by the
+    /// layer walk when it reaches the Popup layer).
+    ///
+    /// The unfocused rung runs first: a merely-visible popup doesn't
+    /// capture the keyboard, but the user's bound popup-cancel
+    /// (default Esc) and popup-focus (default Alt+T) keys must still
+    /// affect it. `resolve_unfocused_popup_action` keeps its internal
+    /// `popup_blocked_by_higher_modal` guard DELIBERATELY: the Prompt
+    /// layer above declines keys its handler ignores (walk
+    /// fall-through is broader than its `owns_keyboard` claim), and
+    /// the old pipeline ran this interception before the prompt block
+    /// only when no higher layer owned the keyboard — the guard is
+    /// what keeps that precedence byte-identical on the walk.
+    ///
+    /// The capturing rungs mirror the old block exactly: completion
+    /// resolver → global popups → buffer popups, with the global
+    /// rung's Ignored deliberately returning `None` without trying
+    /// buffer popups (its dispatch may have queued a ClosePopup that
+    /// the deferred-action processor has already fired).
+    pub(super) fn dispatch_popup_keys(
+        &mut self,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<anyhow::Result<crate::input::handler::InputResult>> {
+        use crate::input::handler::{InputContext, InputHandler, InputResult};
+
+        if let Some(action) = self.resolve_unfocused_popup_action(event) {
+            return Some(self.handle_action(action).map(|_| InputResult::Consumed));
+        }
+
+        if !self.popups_capture_keys() {
+            return None;
+        }
+
+        let mut ctx = InputContext::new();
+
+        // Completion popups consult the keybinding resolver in the
+        // `Completion` context first, so accept/dismiss can be remapped
+        // via the keybinding editor. Falls through to the popup's own
+        // handler for everything else (type-to-filter, navigation, etc.).
+        if let Some(action) = self.resolve_completion_popup_action(event) {
+            self.process_deferred_actions(ctx);
+            if let Err(e) = self.handle_action(action) {
+                tracing::warn!("Completion popup action failed: {}", e);
+            }
+            return Some(Ok(InputResult::Consumed));
+        }
+
+        // (The workspace-trust rung lives with the WorkspaceTrust
+        // component now — its 870-ranked layer replaces this one while
+        // the trust prompt tops the global stack, so the walk never
+        // reaches here in that state.)
+
+        // Editor-level (global) popups take precedence over buffer popups
+        // so that plugin notifications stay focused even when the active
+        // buffer owns its own popup stack.
+        if self.global_popups.is_visible() {
+            let result = self.global_popups.dispatch_input(event, &mut ctx);
+            self.process_deferred_actions(ctx);
+            if result != InputResult::Ignored {
+                return Some(Ok(result));
+            }
+            // Re-check visibility — the dispatch may have queued a
+            // ClosePopup that the deferred-action processor has now fired.
+            return None;
+        }
+
+        // Popup is next
+        if self.active_state().popups.is_visible() {
+            let result = self
+                .active_state_mut()
+                .popups
+                .dispatch_input(event, &mut ctx);
+            self.process_deferred_actions(ctx);
+            // If the popup handler returned Ignored (e.g., non-word
+            // character, Ctrl+key, arrow keys), fall through to normal
+            // input handling. The deferred ClosePopup action was already
+            // processed above.
+            if result != InputResult::Ignored {
+                return Some(Ok(result));
+            }
+        }
+
+        None
+    }
+
     pub(super) fn handle_click_popup_scrollbar(
         &mut self,
         col: u16,

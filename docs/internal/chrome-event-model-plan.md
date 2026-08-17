@@ -256,7 +256,19 @@ Slices 0-4 (dispatch), 5a (modal capture through the registry —
 `dispatch_modal_mouse` deleted), and 6a/6b (keyboard grabs;
 `overlay_layers()` derived from per-component `layers()` with
 explicit `layer_rank`s; the four context-menu `LayerKind`s collapsed
-to one) are DONE. Remaining, in order:
+to one) are DONE.
+
+Keyboard registration arc: **K1 DONE** (`overlay_stack()` owner
+stamping, `on_layer_key`, the walk replacing
+`dispatch_modal_keyboard`'s four-kind ladder), **K2 DONE** (prompt
+block → `Prompt::on_layer_key` / `dispatch_prompt_key`), **K3 DONE**
+(popup block → `Popups::on_layer_key` / `dispatch_popup_keys`; WT
+rung → `WorkspaceTrust::on_layer_key`; the unfocused-popup
+interception moved from `handle_key` into the popup rungs with its
+`popup_blocked_by_higher_modal` guard kept for byte-identical
+precedence; `dispatch_modal_input` deleted — `handle_key` calls the
+walk directly; `on_layer_key` gained the anyhow error channel).
+K4 (base fallback) remaining. Remaining, in order:
 
 - **DONE — dock captures + grab slot + opacity gate.** The dock's
   click/right-click routing is the Dock component's boxes and arms

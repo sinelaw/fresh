@@ -388,17 +388,19 @@ pub(crate) trait ChromeComponent: Sync {
     /// keyboard analogue of `dispatch_pointer` walking `hit_stack`
     /// over owner-stamped boxes. `None` = this layer declines and the
     /// walk continues to the next layer down; `Some` = this layer
-    /// dealt with the key, with the handler's result. (A returned
-    /// `InputResult::Ignored` still stops the walk in the K1 slice —
-    /// the fall-through blocks keep their own semantics until they
-    /// migrate.) Interiors stay bespoke, per the modal-mouse ruling:
-    /// the component is the dispatch slot, only ROUTING is derived.
+    /// dealt with the key, with the handler's result — including
+    /// `Some(Ok(Ignored))`, which still stops the walk (the
+    /// query-replace confirm prompt consumes every key that way).
+    /// The error channel carries `handle_action` failures up through
+    /// `handle_key`, matching the old staged pipeline's `?`s.
+    /// Interiors stay bespoke, per the modal-mouse ruling: the
+    /// component is the dispatch slot, only ROUTING is derived.
     fn on_layer_key(
         &self,
         _ed: &mut Editor,
         _layer: &crate::app::overlay::Layer,
         _event: &crossterm::event::KeyEvent,
-    ) -> Option<crate::input::handler::InputResult> {
+    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
         None
     }
 

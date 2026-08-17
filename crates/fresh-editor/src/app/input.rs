@@ -264,18 +264,14 @@ impl Editor {
             }
         }
 
-        // Unfocused popup control: even though an unfocused popup
-        // doesn't claim the keyboard, the user's bound popup-cancel
-        // (default Esc) and popup-focus (default Alt+T) keys must
-        // still affect it. Resolved here, *before* the modal
-        // dispatcher routes the key to the buffer/explorer/etc.
-        if let Some(action) = self.resolve_unfocused_popup_action(&key_event) {
-            self.handle_action(action)?;
-            return Ok(());
-        }
-
-        // Try hierarchical modal input dispatch first (Settings, Menu, Prompt, Popup)
-        if self.dispatch_modal_input(&key_event).is_some() {
+        // THE derived key walk: every registered overlay layer —
+        // capture-all modals, workspace trust, the prompt rungs, the
+        // popup rungs (including the unfocused popup-cancel/-focus
+        // interception, which lives with the Popups component now) —
+        // offered the key top-down in declared rank order. See
+        // `dispatch_layer_keyboard`.
+        if let Some(result) = self.dispatch_layer_keyboard(&key_event) {
+            result?;
             return Ok(());
         }
 
@@ -368,7 +364,7 @@ impl Editor {
                     return Ok(());
                 }
                 // Note: Modal components (Settings, Menu, Prompt, Popup, File
-                // Browser) are handled by dispatch_modal_input using the
+                // Browser) are handled by the layer walk (dispatch_layer_keyboard) using the
                 // InputHandler system. All remaining actions delegate to
                 // handle_action.
                 self.handle_action(action)

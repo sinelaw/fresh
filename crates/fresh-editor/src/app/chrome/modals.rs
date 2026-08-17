@@ -56,7 +56,7 @@ impl ChromeComponent for Settings {
         ed: &mut Editor,
         _layer: &Layer,
         event: &crossterm::event::KeyEvent,
-    ) -> Option<crate::input::handler::InputResult> {
+    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
         use crate::input::handler::{InputContext, InputHandler};
         // Capture-all: every key is this modal's while its layer is up.
         let mut ctx = InputContext::new();
@@ -68,7 +68,7 @@ impl ChromeComponent for Settings {
             settings.dispatch_input(event, &mut ctx)
         };
         ed.process_deferred_actions(ctx);
-        Some(result)
+        Some(Ok(result))
     }
 }
 
@@ -111,9 +111,9 @@ impl ChromeComponent for KeybindingEditor {
         ed: &mut Editor,
         _layer: &Layer,
         event: &crossterm::event::KeyEvent,
-    ) -> Option<crate::input::handler::InputResult> {
+    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
         // Capture-all with its own bespoke dispatcher.
-        Some(ed.handle_keybinding_editor_input(event))
+        Some(Ok(ed.handle_keybinding_editor_input(event)))
     }
 }
 
@@ -157,9 +157,9 @@ impl ChromeComponent for CalibrationWizard {
         ed: &mut Editor,
         _layer: &Layer,
         event: &crossterm::event::KeyEvent,
-    ) -> Option<crate::input::handler::InputResult> {
+    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
         // Capture-all with its own bespoke dispatcher.
-        Some(ed.handle_calibration_input(event))
+        Some(Ok(ed.handle_calibration_input(event)))
     }
 }
 
@@ -199,6 +199,25 @@ impl ChromeComponent for WorkspaceTrust {
                 },
             ));
         }
+    }
+
+    fn on_layer_key(
+        &self,
+        ed: &mut Editor,
+        _layer: &Layer,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
+        // Same gate the old popup block put around its trust rung: the
+        // prompt owns keys only while it captures (focused, or the
+        // editor-wide startup gate). `handle_workspace_trust_key`
+        // returns `Some(Consumed)` for every key — the modal swallows
+        // everything — so nothing falls past it to a generic popup
+        // treatment (the layer REPLACES the Popup layer while the
+        // trust prompt tops the global stack).
+        if !ed.popups_capture_keys() {
+            return None;
+        }
+        ed.handle_workspace_trust_key(event).map(Ok)
     }
 }
 

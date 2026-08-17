@@ -111,11 +111,22 @@ impl Editor {
     /// no kind ladder; a new surface registers a component and its
     /// keys route with no edit here.
     ///
-    /// Returns `None` when no layer claims the key, letting the
-    /// caller fall through to the Prompt / Popup blocks (whose
-    /// `Ignored`-fall-through interiors migrate onto this walk in
-    /// slices K2/K3).
-    fn dispatch_layer_keyboard(&mut self, event: &KeyEvent) -> Option<InputResult> {
+    /// Returns `None` when no layer claims the key, letting
+    /// `handle_key` fall through to the pipeline tail (mode bindings,
+    /// the composite router, chord/keybinding resolution — slice K4's
+    /// migration target).
+    ///
+    /// Every modal band routes through this walk: the capture-all
+    /// modals (Settings, KeybindingEditor, CalibrationWizard, Menu),
+    /// the workspace-trust prompt, the prompt rungs
+    /// (`dispatch_prompt_key`), and the popup rungs
+    /// (`dispatch_popup_keys`) — each reached at its layer's declared
+    /// rank, in the same stack `get_key_context()`, the
+    /// terminal-input gate and the mouse modal-capture path read.
+    pub(super) fn dispatch_layer_keyboard(
+        &mut self,
+        event: &KeyEvent,
+    ) -> Option<AnyhowResult<InputResult>> {
         let stack = self.overlay_stack();
         for entry in &stack {
             // `owner: None` is the hardcoded event-debug head — a
@@ -127,97 +138,6 @@ impl Editor {
                 return Some(result);
             }
         }
-        None
-    }
-
-    /// Dispatch input to the appropriate modal handler.
-    ///
-    /// Returns `Some(InputResult)` if a modal handled the input,
-    /// `None` if no modal is active and input should be handled normally.
-    pub fn dispatch_modal_input(&mut self, event: &KeyEvent) -> Option<InputResult> {
-        // The derived layer walk first: capture-all surfaces (Settings,
-        // KeybindingEditor, CalibrationWizard, Menu) claim the key via
-        // their components' `on_layer_key`, in stack order — the same
-        // stack `get_key_context()`, the terminal-input gate and the
-        // mouse modal-capture path read. The Prompt and Popup blocks
-        // below have fall-through (`Ignored`) semantics and multi-arm
-        // internal logic; they migrate onto the walk in K2/K3.
-        if let Some(result) = self.dispatch_layer_keyboard(event) {
-            return Some(result);
-        }
-
-        // The prompt block moved onto the walk (slice K2): the Prompt
-        // component's `on_layer_key` (chrome/prompt.rs,
-        // `dispatch_prompt_key`) now runs its rungs when the walk
-        // reaches the Prompt layer, in the exact position this block
-        // held — rank 850 sits below the capture-all modals and above
-        // the Popup layer, matching the old block order.
-        let mut ctx = InputContext::new();
-
-        // Editor-pane popups (global + buffer) belong to the editor pane and
-        // must not capture input when the file explorer is the focused pane.
-        // Mirrors the priority encoded in `get_key_context()` via the same
-        // `popups_capture_keys()` predicate so the two paths cannot drift —
-        // one source of truth for "is the popup eligible to eat this key?".
-        if self.popups_capture_keys() {
-            // Completion popups consult the keybinding resolver in the
-            // `Completion` context first, so accept/dismiss can be remapped
-            // via the keybinding editor. Falls through to the popup's own
-            // handler for everything else (type-to-filter, navigation, etc.).
-            if let Some(action) = self.resolve_completion_popup_action(event) {
-                self.process_deferred_actions(ctx);
-                if let Err(e) = self.handle_action(action) {
-                    tracing::warn!("Completion popup action failed: {}", e);
-                }
-                return Some(InputResult::Consumed);
-            }
-
-            // The workspace-trust prompt is a bespoke modal with its own keys
-            // (mnemonics select-and-confirm, Q quits, Esc is inert). Intercept
-            // before the generic popup handler so list type-to-filter etc.
-            // never swallow them.
-            if self.global_popups.top().is_some_and(|p| {
-                matches!(
-                    p.resolver,
-                    crate::view::popup::PopupResolver::WorkspaceTrust
-                )
-            }) {
-                if let Some(result) = self.handle_workspace_trust_key(event) {
-                    return Some(result);
-                }
-            }
-
-            // Editor-level (global) popups take precedence over buffer popups
-            // so that plugin notifications stay focused even when the active
-            // buffer owns its own popup stack.
-            if self.global_popups.is_visible() {
-                let result = self.global_popups.dispatch_input(event, &mut ctx);
-                self.process_deferred_actions(ctx);
-                if result != InputResult::Ignored {
-                    return Some(result);
-                }
-                // Re-check visibility — the dispatch may have queued a
-                // ClosePopup that the deferred-action processor has now fired.
-                return None;
-            }
-
-            // Popup is next
-            if self.active_state().popups.is_visible() {
-                let result = self
-                    .active_state_mut()
-                    .popups
-                    .dispatch_input(event, &mut ctx);
-                self.process_deferred_actions(ctx);
-                // If the popup handler returned Ignored (e.g., non-word
-                // character, Ctrl+key, arrow keys), fall through to normal
-                // input handling. The deferred ClosePopup action was already
-                // processed above.
-                if result != InputResult::Ignored {
-                    return Some(result);
-                }
-            }
-        }
-
         None
     }
 
