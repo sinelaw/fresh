@@ -188,12 +188,13 @@ impl Editor {
     /// structure, enabled/checked state and accelerators are derived; the TUI
     /// renderer and the web bridge both consume this rather than recomputing it.
     ///
-    /// Geometry (`x`/`w`, dropdown rects) comes from the pipeline's `MenuLayout`,
-    /// which is populated during render — so this reflects the most recent frame.
+    /// Geometry (`x`/`w`, dropdown rects) comes from `menu_layout_now` — the
+    /// same live-state layout walk the TUI paints from.
     pub fn menu_view(&self) -> MenuView {
-        let chrome = self.active_chrome();
-        let menu_areas: HashMap<usize, Rect> = chrome
-            .menu_layout
+        // Geometry derived from live state — the same layout walk the TUI
+        // paints from (`menu_layout_now`), not a paint recording.
+        let menu_layout = self.menu_layout_now();
+        let menu_areas: HashMap<usize, Rect> = menu_layout
             .as_ref()
             .map(|m| m.menu_areas.iter().cloned().collect())
             .unwrap_or_default();
@@ -213,7 +214,7 @@ impl Editor {
             })
             .collect();
 
-        let dropdown = chrome.menu_layout.as_ref().and_then(|ml| {
+        let dropdown = menu_layout.as_ref().and_then(|ml| {
             if ml.item_areas.is_empty() {
                 return None;
             }

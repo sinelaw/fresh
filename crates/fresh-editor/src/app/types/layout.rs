@@ -133,8 +133,6 @@ pub(crate) struct ChromeLayout {
     /// Status-bar hit-test layout (area, clickable segments, plugin token
     /// areas, semantic segment model). See [`StatusBarChrome`].
     pub status_bar: StatusBarChrome,
-    /// Menu bar layout for hit testing
-    pub menu_layout: Option<crate::view::ui::menu::MenuLayout>,
     /// Dimensions of the last rendered frame. See [`FrameDimensions`].
     pub last_frame: FrameDimensions,
     /// Per-cell theme key provenance recorded during rendering.

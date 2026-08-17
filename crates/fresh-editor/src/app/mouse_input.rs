@@ -1910,12 +1910,9 @@ impl Editor {
     pub(super) fn handle_click_menu_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         if self.active_window_mut().menu_bar_visible {
             // Resolve the hit before any &mut operations to avoid borrow conflicts.
-            let hit = self
-                .active_chrome()
-                .menu_layout
-                .as_ref()
-                .and_then(|ml| ml.menu_at(col, row));
-            let layout_exists = self.active_chrome().menu_layout.is_some();
+            let layout = self.menu_layout_now();
+            let hit = layout.as_ref().and_then(|ml| ml.menu_at(col, row));
+            let layout_exists = layout.is_some();
             if layout_exists {
                 if let Some(menu_idx) = hit {
                     if self.menu_state.active_menu == Some(menu_idx) {

@@ -2223,18 +2223,15 @@ impl Editor {
             })
     }
 
-    /// The status bar's screen area THIS instant, derived from live state:
-    /// the same visibility conditions and the same vertical frame split
-    /// `render` runs over the chrome column (running the actual
-    /// [`Layout`] keeps the small-terminal squeeze behavior identical by
-    /// construction; asserted against the paint pass in debug builds).
-    /// `None` when the bar is hidden (toggled off, or a suggestions /
-    /// file-browser popup takes the bottom rows).
-    pub(crate) fn status_bar_area_now(&self) -> Option<ratatui::layout::Rect> {
+    /// The chrome column's five rows THIS instant — the same vertical
+    /// [`Layout`] split `render` runs (menu bar, Min content, status bar,
+    /// search options, prompt line), with every row's constraint computed
+    /// from the same live-state conditions. Running the actual split
+    /// (rather than bottom-up row math) keeps small-terminal squeeze
+    /// behavior identical by construction; the per-row `*_area_now`
+    /// derivations gate on their row's visibility and pick their chunk.
+    fn chrome_rows_now(&self) -> [ratatui::layout::Rect; 5] {
         let win = self.active_window();
-        if !win.status_bar_visible {
-            return None;
-        }
         let prompt_is_overlay = win.prompt.as_ref().is_some_and(|p| p.overlay);
         let has_suggestions = win
             .prompt
@@ -2247,10 +2244,12 @@ impl Editor {
                 PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
             )
         }) && win.file_open_state.is_some();
-        if has_suggestions || has_file_browser {
-            return None;
-        }
         let menu_h: u16 = if win.menu_bar_visible { 1 } else { 0 };
+        let status_h: u16 = if !win.status_bar_visible || has_suggestions || has_file_browser {
+            0
+        } else {
+            1
+        };
         let prompt_h: u16 =
             if (win.prompt_line_visible || win.prompt.is_some()) && !prompt_is_overlay {
                 1
@@ -2270,15 +2269,80 @@ impl Editor {
             .constraints(vec![
                 Constraint::Length(menu_h),
                 Constraint::Min(0),
-                Constraint::Length(1), // status bar (visible per the checks above)
+                Constraint::Length(status_h),
                 Constraint::Length(search_h),
                 Constraint::Length(prompt_h),
             ])
             .split(chrome_area);
-        // No degenerate-rect guard: on a tiny terminal the paint pass runs
-        // over the same squeezed rect and records the same (empty) layout,
-        // so returning it keeps the parity oracle exact.
-        Some(chunks[2])
+        [chunks[0], chunks[1], chunks[2], chunks[3], chunks[4]]
+    }
+
+    /// The status bar's screen area THIS instant, derived from live state:
+    /// the same visibility conditions and vertical frame split `render`
+    /// uses ([`Self::chrome_rows_now`]; asserted against the paint pass in
+    /// debug builds). `None` when the bar is hidden (toggled off, or a
+    /// suggestions / file-browser popup takes the bottom rows) — gated on
+    /// the CONDITIONS, not the chunk height: on a tiny terminal the paint
+    /// pass runs over the same squeezed (possibly zero-height) rect and
+    /// records the same (empty) layout, so returning it keeps the parity
+    /// oracle exact.
+    pub(crate) fn status_bar_area_now(&self) -> Option<ratatui::layout::Rect> {
+        let win = self.active_window();
+        let prompt_is_overlay = win.prompt.as_ref().is_some_and(|p| p.overlay);
+        let has_suggestions = win
+            .prompt
+            .as_ref()
+            .is_some_and(|p| !p.suggestions.is_empty())
+            && !prompt_is_overlay;
+        let has_file_browser = win.prompt.as_ref().is_some_and(|p| {
+            matches!(
+                p.prompt_type,
+                PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
+            )
+        }) && win.file_open_state.is_some();
+        if !win.status_bar_visible || has_suggestions || has_file_browser {
+            return None;
+        }
+        Some(self.chrome_rows_now()[2])
+    }
+
+    /// The menu bar's screen area THIS instant (row 0 of the chrome
+    /// column). `None` when the menu bar is hidden. Same
+    /// conditions-not-height gating as [`Self::status_bar_area_now`].
+    pub(crate) fn menu_bar_area_now(&self) -> Option<ratatui::layout::Rect> {
+        if !self.active_window().menu_bar_visible {
+            return None;
+        }
+        Some(self.chrome_rows_now()[0])
+    }
+
+    /// The menu's layout THIS instant — bar label spans, open dropdown /
+    /// submenu boxes, and item rows — computed by the same label-width /
+    /// dropdown-placement walk the painter runs
+    /// ([`MenuRenderer::compute_layout`], asserted against the paint walk
+    /// in debug builds). This replaced the paint-recorded
+    /// `ChromeLayout.menu_layout` cache — geometry produced by layout, not
+    /// recorded by paint. Reads the expanded-menus cache refreshed by the
+    /// paint pass (the same content source the painter and `menu_view`
+    /// use). `None` when the menu bar is hidden.
+    pub(crate) fn menu_layout_now(&self) -> Option<crate::view::ui::menu::MenuLayout> {
+        let area = self.menu_bar_area_now()?;
+        let frame = self.active_chrome().last_frame;
+        let screen = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
+        let hover_target = self.active_window().mouse_state.hover_target.clone();
+        let all_menus = self.all_menus_expanded();
+        let keybindings = self.keybindings.read().unwrap();
+        let theme = self.theme.read().unwrap();
+        Some(crate::view::ui::MenuRenderer::compute_layout(
+            screen,
+            area,
+            &all_menus,
+            &self.menu_state,
+            &keybindings,
+            &theme,
+            hover_target.as_ref(),
+            self.config.editor.menu_bar_mnemonics,
+        ))
     }
 
     /// The status bar's layout THIS instant — area plus the content-derived
@@ -2414,14 +2478,17 @@ impl Editor {
         }
     }
 
-    /// Render the menu bar into `menu_bar_area`, or clear the cached layout
-    /// when the bar is hidden. Drawn late in `render` so its dropdowns sit
-    /// above all other content.
+    /// Render the menu bar into `menu_bar_area`. Drawn late in `render` so
+    /// its dropdowns sit above all other content. Hit-test geometry is NOT
+    /// recorded here — chrome hit-testing, click resolution, and the web
+    /// projection derive it live via [`Self::menu_layout_now`].
     fn render_menu_bar(&mut self, frame: &mut Frame, menu_bar_area: ratatui::layout::Rect) {
         if self.active_window().menu_bar_visible {
             // Pre-expand DynamicSubmenu items once per registry; without this
             // MenuRenderer::render rescans + reparses every theme JSON file
-            // on every frame.
+            // on every frame. `menu_layout_now` reads this same cache (its
+            // freshness rides on the paint pass, exactly as the retired
+            // paint-recorded layout's did).
             self.expanded_menus_cache.update(
                 &self.theme_registry,
                 &self.menus,
@@ -2450,10 +2517,15 @@ impl Editor {
                 draw_chrome,
             );
             drop(keybindings);
-            self.active_chrome_mut().menu_layout = Some(new_menu_layout);
             self.active_chrome_mut().apply_theme_runs(&menu_runs);
-        } else {
-            self.active_chrome_mut().menu_layout = None;
+            // Parity oracle: the event-time derivation must reproduce the
+            // area the frame layout chose (MenuLayout.bar_area carries it)
+            // and the exact bar/dropdown geometry this paint walk produced.
+            debug_assert_eq!(
+                self.menu_layout_now(),
+                Some(new_menu_layout),
+                "menu event-time layout and paint walk must agree"
+            );
         }
     }
 
