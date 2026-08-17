@@ -2243,7 +2243,7 @@ impl Editor {
         row: u16,
     ) -> Option<AnyhowResult<()>> {
         use crate::view::ui::status_bar::SearchOptionsHover;
-        let layout = self.active_chrome().search_options_layout.clone()?;
+        let layout = self.search_options_layout_now()?;
         match layout.checkbox_at(col, row)? {
             SearchOptionsHover::CaseSensitive => {
                 Some(self.handle_action(Action::ToggleSearchCaseSensitive))

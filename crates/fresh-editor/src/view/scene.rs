@@ -480,11 +480,11 @@ impl Editor {
             p.suggestions.len(),
             p.suggestions.len(),
         ));
-        // Search-option toggles: mirror the TUI's options row from the layout
-        // the renderer recorded (`search_options_layout`) — same cell spans the
-        // TUI hit-tests — plus the live state and the same label/shortcut
+        // Search-option toggles: mirror the TUI's options row from the same
+        // derived layout the TUI hit-tests (`search_options_layout_now`) —
+        // same cell spans — plus the live state and the same label/shortcut
         // derivation `StatusBarRenderer::render_search_options` uses.
-        let search_options = chrome.search_options_layout.as_ref().map(|lo| {
+        let search_options = self.search_options_layout_now().map(|lo| {
             use crate::input::keybindings::{Action, KeyContext};
             use rust_i18n::t;
             let win = self.active_window();

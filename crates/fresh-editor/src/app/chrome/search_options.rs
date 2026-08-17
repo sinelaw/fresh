@@ -9,7 +9,7 @@ pub(crate) struct SearchOptions;
 
 impl ChromeComponent for SearchOptions {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
-        if let Some(l) = &ed.active_chrome().search_options_layout {
+        if let Some(l) = ed.search_options_layout_now() {
             let spans = [l.case_sensitive, l.whole_word, l.regex, l.confirm_each];
             let start = spans.iter().flatten().map(|(s, _)| *s).min();
             let end = spans.iter().flatten().map(|(_, e)| *e).max();
@@ -28,7 +28,7 @@ impl ChromeComponent for SearchOptions {
     }
 
     fn hover(&self, ed: &Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
-        if let Some(ref layout) = ed.active_chrome().search_options_layout {
+        if let Some(layout) = ed.search_options_layout_now() {
             use crate::view::ui::status_bar::SearchOptionsHover;
             if let Some(hover) = layout.checkbox_at(col, row) {
                 return Some(match hover {
