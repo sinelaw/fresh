@@ -133,8 +133,6 @@ pub(crate) struct ChromeLayout {
     /// Status-bar hit-test layout (area, clickable segments, plugin token
     /// areas, semantic segment model). See [`StatusBarChrome`].
     pub status_bar: StatusBarChrome,
-    /// Search options layout for checkbox hit testing
-    pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
     /// Menu bar layout for hit testing
     pub menu_layout: Option<crate::view::ui::menu::MenuLayout>,
     /// Dimensions of the last rendered frame. See [`FrameDimensions`].

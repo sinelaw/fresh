@@ -413,7 +413,7 @@ pub enum SearchOptionsHover {
 }
 
 /// Layout information for search options bar hit testing
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchOptionsLayout {
     /// Row where the search options are rendered
     pub row: u16,
@@ -428,6 +428,89 @@ pub struct SearchOptionsLayout {
 }
 
 impl SearchOptionsLayout {
+    /// Compute the bar's checkbox spans from live state — the SAME
+    /// width math the paint pass walks (`render_search_options`
+    /// asserts the two agree in debug builds). Geometry depends on
+    /// the area, the locale labels, the keybinding hint strings,
+    /// whether the Confirm option is shown (replace modes), and —
+    /// via the `$1,$2,…` capture-group hint that precedes Confirm —
+    /// whether regex is on; the CHECKED states never move anything
+    /// ("[x]" and "[ ]" share a width). This is the per-event
+    /// geometry source (chrome hit-testing, click resolution, the
+    /// web projection): geometry produced by layout, not recorded by
+    /// paint.
+    pub fn compute(
+        area: ratatui::layout::Rect,
+        use_regex: bool,
+        confirm_shown: bool,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+    ) -> SearchOptionsLayout {
+        use crate::primitives::display_width::str_width;
+        let mut layout = SearchOptionsLayout {
+            row: area.y,
+            ..Default::default()
+        };
+        let get_shortcut = |action: &crate::input::keybindings::Action| -> Option<String> {
+            keybindings
+                .get_keybinding_for_action(
+                    action,
+                    crate::input::keybindings::KeyContext::SearchPrompt,
+                )
+                .or_else(|| {
+                    keybindings.get_keybinding_for_action(
+                        action,
+                        crate::input::keybindings::KeyContext::Prompt,
+                    )
+                })
+                .or_else(|| {
+                    keybindings.get_keybinding_for_action(
+                        action,
+                        crate::input::keybindings::KeyContext::Global,
+                    )
+                })
+        };
+        let shortcut_width = |action: &crate::input::keybindings::Action| -> usize {
+            get_shortcut(action)
+                .map(|s| str_width(&format!(" ({})", s)))
+                .unwrap_or(0)
+        };
+        // "[x]" and "[ ]" are the same width; use the unchecked glyph.
+        let item_width = |label: String, action: &crate::input::keybindings::Action| -> u16 {
+            (str_width(&format!("[ ] {}", label)) + shortcut_width(action)) as u16
+        };
+        let mut col = area.x + 1; // left padding
+        let w = item_width(
+            t!("search.case_sensitive").to_string(),
+            &crate::input::keybindings::Action::ToggleSearchCaseSensitive,
+        );
+        layout.case_sensitive = Some((col, col + w));
+        col += w + 3;
+        let w = item_width(
+            t!("search.whole_word").to_string(),
+            &crate::input::keybindings::Action::ToggleSearchWholeWord,
+        );
+        layout.whole_word = Some((col, col + w));
+        col += w + 3;
+        let w = item_width(
+            t!("search.regex").to_string(),
+            &crate::input::keybindings::Action::ToggleSearchRegex,
+        );
+        layout.regex = Some((col, col + w));
+        col += w;
+        if confirm_shown {
+            if use_regex {
+                col += str_width(" \u{2502} $1,$2,\u{2026}") as u16;
+            }
+            col += 3;
+            let w = item_width(
+                t!("search.confirm_each").to_string(),
+                &crate::input::keybindings::Action::ToggleSearchConfirmEach,
+            );
+            layout.confirm_each = Some((col, col + w));
+        }
+        layout
+    }
+
     /// Check which search option checkbox (if any) is at the given position
     pub fn checkbox_at(&self, x: u16, y: u16) -> Option<SearchOptionsHover> {
         if y != self.row {
@@ -2417,6 +2500,16 @@ impl StatusBarRenderer {
             layout.confirm_each = Some((confirm_start, current_col));
         }
 
+        // The paint walk above and `SearchOptionsLayout::compute` are
+        // two spellings of the same geometry; the per-event consumers
+        // (chrome hit-testing, click resolution, web projection) use
+        // `compute`, so any drift between them is a real bug — trip it
+        // in every debug/e2e run.
+        debug_assert_eq!(
+            layout,
+            SearchOptionsLayout::compute(area, use_regex, confirm_each.is_some(), keybindings),
+            "search-options paint walk and compute() must agree"
+        );
         // Fill remaining space
         let current_width = (current_col - area.x) as usize;
         let available_width = area.width as usize;

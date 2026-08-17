@@ -244,6 +244,17 @@ to one) are DONE. Remaining, in order:
   `ContextMenuCore::rect` is already pure (the model). Order the
   series: search_options → tabs/status bar → menu →
   suggestions/popups.
+- **7a: search_options — DONE.** `SearchOptionsLayout::compute(area,
+  use_regex, confirm_shown, keybindings)` is the pure span math;
+  `Editor::search_options_layout_now()` derives the AREA from live
+  state (`compute_dock_split` + the same bottom-up prompt-row math
+  `render` uses) and feeds it to `compute`. Two debug asserts pin
+  the derivation: the paint walk in `render_search_options` must
+  equal `compute()` on the same inputs, and the row `render` paints
+  at must equal the row `search_options_layout_now()` derives.
+  `ChromeLayout.search_options_layout` deleted; consumers (chrome
+  component collect+hover, `handle_click_search_options`, scene.rs
+  web projection) all call `search_options_layout_now()`.
 
 ## What NOT to do
 

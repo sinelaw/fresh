@@ -1064,9 +1064,76 @@ impl Editor {
         );
     }
 
+    /// The Confirm-each option's live value when it is shown (replace
+    /// modes only), `None` when hidden. Shared by the paint pass and
+    /// the per-event geometry (`search_options_layout_now`).
+    pub(crate) fn search_confirm_shown(&self) -> Option<bool> {
+        self.active_window().prompt.as_ref().and_then(|p| {
+            if matches!(
+                p.prompt_type,
+                PromptType::ReplaceSearch
+                    | PromptType::Replace { .. }
+                    | PromptType::QueryReplaceSearch
+                    | PromptType::QueryReplace { .. }
+            ) {
+                Some(self.active_window().search_confirm_each)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// The search-options bar's layout THIS instant, derived from live
+    /// state: the same visibility conditions and bottom-up row math the
+    /// paint layout uses (the bar sits on the row above the prompt line
+    /// at the chrome column's bottom), and the same span math the
+    /// painter draws ([`SearchOptionsLayout::compute`], asserted
+    /// against the paint walk in debug builds). This replaced the
+    /// paint-recorded `ChromeLayout.search_options_layout` cache —
+    /// geometry produced by layout, not recorded by paint. `None` when
+    /// the bar is hidden.
+    pub(crate) fn search_options_layout_now(
+        &self,
+    ) -> Option<crate::view::ui::status_bar::SearchOptionsLayout> {
+        if !self.active_prompt_has_search_options() {
+            return None;
+        }
+        let frame = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
+        let (_, chrome_area) = self.compute_dock_split(size);
+        let prompt_is_overlay = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.overlay);
+        let prompt_h: u16 = if (self.active_window().prompt_line_visible
+            || self.active_window().prompt.is_some())
+            && !prompt_is_overlay
+        {
+            1
+        } else {
+            0
+        };
+        if chrome_area.height < prompt_h + 1 {
+            return None;
+        }
+        let area = ratatui::layout::Rect::new(
+            chrome_area.x,
+            chrome_area.y + chrome_area.height - prompt_h - 1,
+            chrome_area.width,
+            1,
+        );
+        let keybindings = self.keybindings.read().unwrap();
+        Some(crate::view::ui::status_bar::SearchOptionsLayout::compute(
+            area,
+            self.active_window().search_use_regex,
+            self.search_confirm_shown().is_some(),
+            &keybindings,
+        ))
+    }
+
     /// Render the search-options bar into `area` when `show_search_options`
-    /// is set (a search-style prompt is active), or clear its cached layout
-    /// otherwise.
+    /// is set (a search-style prompt is active).
     fn render_search_options_bar(
         &mut self,
         frame: &mut Frame,
@@ -1076,20 +1143,7 @@ impl Editor {
         keybindings: &crate::input::keybindings::KeybindingResolver,
     ) {
         if show_search_options {
-            // Show "Confirm" option only in replace modes
-            let confirm_each = self.active_window().prompt.as_ref().and_then(|p| {
-                if matches!(
-                    p.prompt_type,
-                    PromptType::ReplaceSearch
-                        | PromptType::Replace { .. }
-                        | PromptType::QueryReplaceSearch
-                        | PromptType::QueryReplace { .. }
-                ) {
-                    Some(self.active_window().search_confirm_each)
-                } else {
-                    None
-                }
-            });
+            let confirm_each = self.search_confirm_shown();
 
             // Determine hover state for search options
             use crate::view::ui::status_bar::SearchOptionsHover;
@@ -1101,7 +1155,7 @@ impl Editor {
                 _ => SearchOptionsHover::None,
             };
 
-            let search_options_layout = StatusBarRenderer::render_search_options(
+            StatusBarRenderer::render_search_options(
                 frame,
                 area,
                 self.active_window().search_case_sensitive,
@@ -1112,9 +1166,14 @@ impl Editor {
                 keybindings,
                 search_options_hover,
             );
-            self.active_chrome_mut().search_options_layout = Some(search_options_layout);
-        } else {
-            self.active_chrome_mut().search_options_layout = None;
+            // The derived per-event geometry must name the same row the
+            // paint layout allocated — trips in every debug/e2e run if
+            // the bottom-up derivation drifts from the Layout::split.
+            debug_assert_eq!(
+                self.search_options_layout_now().map(|l| l.row),
+                Some(area.y),
+                "search-options area derivation must match the paint layout"
+            );
         }
     }
 
