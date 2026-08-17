@@ -233,29 +233,16 @@ impl Editor {
     /// new overlay surface registers a component and appears here,
     /// and the key walk reaches its `on_layer_key` with no edit to
     /// any dispatcher.
+    /// DELIBERATELY NOT MEMOIZED: this build is ~17 cheap activity
+    /// predicates and one small Vec — and it is the ground truth every
+    /// derived cache validates against. Any Editor API can flip a layer
+    /// predicate (plugin dispatch, tests driving methods directly), so a
+    /// counter-keyed memo here would need a bump at every such site — a
+    /// hand-maintained roster this model exists to avoid, and exactly
+    /// what CI's oracle caught when it was tried. The expensive
+    /// derivation (`chrome_tree`) memoizes by comparing THIS stack
+    /// instead: staleness is checked, not trusted.
     pub(crate) fn overlay_stack(&self) -> Vec<crate::app::overlay::OwnedLayer> {
-        // GENERATION MEMO: valid while `ui_gen` is unchanged (bumped
-        // at every mutation funnel — see the field's doc). A hit is
-        // oracle-checked against a fresh build in debug, so a missed
-        // bump site fails loudly instead of routing against a stale
-        // stack.
-        if let Some((gen, cached)) = self.overlay_stack_memo.borrow().as_ref() {
-            if *gen == self.ui_gen {
-                debug_assert_eq!(
-                    cached,
-                    &self.overlay_stack_uncached(),
-                    "overlay_stack memo hit diverges from live state — a mutation \
-                     path is missing its bump_ui_gen()"
-                );
-                return cached.clone();
-            }
-        }
-        let fresh = self.overlay_stack_uncached();
-        *self.overlay_stack_memo.borrow_mut() = Some((self.ui_gen, fresh.clone()));
-        fresh
-    }
-
-    fn overlay_stack_uncached(&self) -> Vec<crate::app::overlay::OwnedLayer> {
         let mut ranked: Vec<(u16, Layer)> = Vec::new();
         let mut owners: Vec<Option<usize>> = Vec::new();
         // Event-debug intercepts every key ahead of every other path

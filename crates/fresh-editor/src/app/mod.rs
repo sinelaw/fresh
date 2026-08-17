@@ -1358,26 +1358,42 @@ pub struct Editor {
     /// shown. Independent of `floating_widget_panel` so the dock persists
     /// while a centered modal is open. Always rendered as a `LeftDock`.
     pub(crate) dock: Option<FloatingWidgetState>,
-    /// Monotonic UI-STATE GENERATION for the derived-structure memos
-    /// (`overlay_stack`, `chrome_tree`, the hover cell). Bumped at the
-    /// mutation funnels (`handle_action`, `process_deferred_actions`,
-    /// `relayout`, popup show/hide, `handle_key` entry, `handle_mouse`
-    /// exit-when-rendering, `editor_tick` when it did work, `render`
-    /// end) — a memo is valid only while the generation is unchanged,
-    /// so it can OVER-invalidate but never go stale. Every memo HIT is
-    /// oracle-checked against a fresh rebuild in debug builds: a
-    /// mutation path missing its bump trips every debug/e2e run
-    /// instead of shipping as stale routing.
+    /// Coarse UI-STATE GENERATION — the GEOMETRY/EPOCH half of the
+    /// `chrome_tree` memo key. Bumped at the event funnels
+    /// (`handle_key` entry, `handle_mouse` exit-when-rendering,
+    /// `handle_action`, `process_deferred_actions`, `relayout`, popup
+    /// show/hide, `editor_tick` when it did work, `render` end). The
+    /// counter is deliberately NOT trusted as a full invalidation
+    /// story: surface presence/claim changes are caught by comparing
+    /// the freshly built `overlay_stack` against the memo's snapshot
+    /// (see `chrome_tree`), because the set of Editor APIs that can
+    /// flip a layer predicate is unbounded and a hand-maintained bump
+    /// roster there was proven incomplete by CI. Over-invalidation is
+    /// fine; a validated hit can never be stale, and debug builds
+    /// oracle-check every hit against a fresh rebuild anyway.
     pub(crate) ui_gen: u64,
-    /// Memoized `overlay_stack()` for the current generation.
-    pub(crate) overlay_stack_memo:
-        std::cell::RefCell<Option<(u64, Vec<crate::app::overlay::OwnedLayer>)>>,
-    /// Memoized `chrome_tree()` for the current generation.
-    pub(crate) chrome_tree_memo:
-        std::cell::RefCell<Option<(u64, Vec<crate::app::chrome::ChromeBox>)>>,
-    /// The (generation, col, row) of the last completed hover pass:
-    /// an identical triple means the walk and every `on_hover_change`
-    /// reaction would see identical inputs, so the pass is skipped.
+    /// Memoized `chrome_tree()`: (generation, the `overlay_stack`
+    /// snapshot the tree was built from, the tree). A hit requires the
+    /// generation to match AND a fresh stack build to equal the
+    /// snapshot.
+    pub(crate) chrome_tree_memo: std::cell::RefCell<
+        Option<(
+            u64,
+            Vec<crate::app::overlay::OwnedLayer>,
+            Vec<crate::app::chrome::ChromeBox>,
+        )>,
+    >,
+    /// Monotonic count of ACTUAL `chrome_tree` rebuilds (memo misses).
+    /// An unchanged value between two queries proves the tree — and the
+    /// validated inputs it derives from — did not change in between;
+    /// downstream per-event memos (the hover cell) key on this instead
+    /// of `ui_gen` so they inherit the stack-equality validation.
+    pub(crate) ui_tree_seq: std::cell::Cell<u64>,
+    /// The (tree seq, col, row) of the last completed hover pass: an
+    /// identical triple means the tree provably didn't change and the
+    /// cursor is on the same cell, so the walk and every
+    /// `on_hover_change` reaction would see identical inputs and the
+    /// pass is skipped.
     pub(crate) hover_cell_memo: std::cell::Cell<Option<(u64, u16, u16)>>,
 
     /// Persisted width (columns) of the orchestrator left dock after the

@@ -11,13 +11,13 @@
 //!
 //! The tree is DERIVED from live state — never hand-maintained (derivation
 //! is what keeps stale-geometry races impossible; see the plan's "what NOT
-//! to do"). It IS memoized, though: [`Editor::chrome_tree`] caches the last
-//! build keyed by the editor's `ui_gen` generation counter, which every
-//! state-mutation funnel bumps (`bump_ui_gen` in `app/mod.rs` lists them).
-//! A memo hit is therefore an equality claim about state, not a persistence
-//! of geometry — and in debug builds every hit is oracle-checked against a
-//! fresh rebuild, so a missing bump fails an assertion instead of routing
-//! an event through a stale tree.
+//! to do"). It IS memoized, though: [`chrome_tree`] caches the last build
+//! and reuses it only when a VALIDATED claim holds — the coarse `ui_gen`
+//! epoch matches AND a fresh (cheap, never-memoized) `overlay_stack` build
+//! equals the snapshot the cached tree was built from. Staleness is
+//! checked, not trusted: surface changes from any Editor API show up in
+//! the stack comparison without a hand-maintained bump roster, and debug
+//! builds oracle-check every hit against a full rebuild besides.
 
 mod base;
 mod context_menu;
@@ -546,23 +546,42 @@ pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
 /// contributes its live boxes, each stamped with its owner. Replaces
 /// the monolithic enumeration.
 pub(crate) fn chrome_tree(ed: &Editor) -> Vec<ChromeBox> {
-    // GENERATION MEMO, same contract as `overlay_stack`'s: valid
-    // while `ui_gen` is unchanged; `render` bumps at its end because
-    // the paint caches `collect` reads update there; debug oracle on
-    // every hit.
-    if let Some((gen, cached)) = ed.chrome_tree_memo.borrow().as_ref() {
-        if *gen == ed.ui_gen {
+    // VALIDATED MEMO — a hit is an equality claim that is CHECKED, not
+    // trusted. Two keys, covering the tree's two input classes:
+    //
+    // 1. `ui_gen` match — the geometry epoch. `collect` reads paint
+    //    caches (`last_frame`, per-component layout mirrors) that only
+    //    move under `render`/`relayout`, and both bump. The event
+    //    funnels bump too (see `bump_ui_gen`), coarsely and cheaply.
+    // 2. Overlay-stack equality — the presence epoch, DERIVED instead
+    //    of enumerated. `overlay_stack()` is a cheap always-fresh build
+    //    of every component's activity predicates and claims; comparing
+    //    it to the snapshot taken when the cached tree was built
+    //    catches surface open/close/focus changes from ANY path —
+    //    plugin dispatch, tests driving Editor APIs directly — without
+    //    a hand-maintained bump roster (which CI's oracle proved
+    //    incomplete when a counter alone was tried).
+    //
+    // A rebuild advances `ui_tree_seq`, giving downstream memos (the
+    // hover-cell skip) a "tree provably unchanged" token. Debug builds
+    // still oracle-check every hit against a fresh build, so any input
+    // this two-key scheme fails to cover dies as an assertion instead
+    // of routing an event through a stale tree.
+    let stack = ed.overlay_stack();
+    if let Some((gen, built_from, cached)) = ed.chrome_tree_memo.borrow().as_ref() {
+        if *gen == ed.ui_gen && *built_from == stack {
             debug_assert_eq!(
                 cached,
                 &chrome_tree_uncached(ed),
-                "chrome_tree memo hit diverges from live state — a mutation \
-                 path is missing its bump_ui_gen()"
+                "chrome_tree memo hit diverges from live state — an input \
+                 changed under an unchanged ui_gen + overlay stack"
             );
             return cached.clone();
         }
     }
     let fresh = chrome_tree_uncached(ed);
-    *ed.chrome_tree_memo.borrow_mut() = Some((ed.ui_gen, fresh.clone()));
+    *ed.chrome_tree_memo.borrow_mut() = Some((ed.ui_gen, stack, fresh.clone()));
+    ed.ui_tree_seq.set(ed.ui_tree_seq.get().wrapping_add(1));
     fresh
 }
 
