@@ -102,9 +102,69 @@ impl WidgetImpl for Tree {
                 m.key = Some(k.clone());
                 m.focusable = true;
                 m.scrollable = true;
+                m.picker_scroll_target = true;
             }
         }
         m
+    }
+
+    /// Keep the single-focus invariant when panel focus crosses a
+    /// Tree boundary. A Tree renders a highlight on its selected row
+    /// independent of panel focus — deliberate, so editor-driven
+    /// match navigation can highlight a row while the panel is
+    /// unfocused. The cost is that focus moving within the panel
+    /// could leave a toolbar button's focus ring next to a
+    /// highlighted tree row (two focused elements), or Tab onto the
+    /// tree with no visible selection (invisible focus). So: clear a
+    /// blurred tree's selection, and seed a newly focused tree's to
+    /// its first visible row when it has none. Kind-owned (moved from
+    /// the central focus-move path).
+    fn on_focus_change(
+        &self,
+        panel: &mut crate::widgets::WidgetPanelState,
+        key: &str,
+        gained: bool,
+    ) {
+        if !gained {
+            panel.set_selected_index(key, -1);
+            return;
+        }
+        let cur_sel = match panel.instance_states.get(key) {
+            Some(crate::widgets::WidgetInstanceState::Tree { selected_index, .. }) => {
+                *selected_index
+            }
+            _ => -1,
+        };
+        if cur_sel >= 0 {
+            return;
+        }
+        // First visible (un-collapsed) node, honoring the host's
+        // instance-state expansion set (falling back to the spec's
+        // initial `expanded_keys`). Computed in a scope so the spec
+        // borrow ends before the selection write.
+        let first = {
+            let Some(WidgetSpec::Tree {
+                nodes,
+                item_keys,
+                expanded_keys,
+                ..
+            }) = crate::widgets::find_widget_by_key(&panel.spec, key)
+            else {
+                return;
+            };
+            let expanded = match panel.instance_states.get(key) {
+                Some(crate::widgets::WidgetInstanceState::Tree { expanded_keys, .. }) => {
+                    expanded_keys.clone()
+                }
+                _ => expanded_keys.iter().cloned().collect(),
+            };
+            collect_visible_tree_indices(nodes, item_keys, &expanded)
+                .first()
+                .map(|&i| i as i32)
+        };
+        if let Some(first) = first {
+            panel.set_selected_index(key, first);
+        }
     }
 
     /// Keyboard model: arrows walk the visible-flat order (skipping
@@ -836,6 +896,8 @@ fn render_widget_tree(
             out.entries.push(extra);
             if extra_byte_end > 0 {
                 out.hits.push(HitArea {
+                    row_target: true,
+                    context_click: true,
                     overlay: false,
                     widget_key: tree_spec_key.clone(),
                     widget_kind: "tree",
@@ -858,6 +920,8 @@ fn render_widget_tree(
         // expansion changes.
         if let Some(disc_range) = rendered.disclosure_range {
             out.hits.push(HitArea {
+                row_target: false,
+                context_click: false,
                 overlay: false,
                 widget_key: tree_spec_key.clone(),
                 widget_kind: "tree",
@@ -882,6 +946,8 @@ fn render_widget_tree(
         if let Some(cb_range) = rendered.checkbox_range {
             let new_checked = !nodes[abs_idx].checked.unwrap_or(false);
             out.hits.push(HitArea {
+                row_target: false,
+                context_click: false,
                 overlay: false,
                 widget_key: tree_spec_key.clone(),
                 widget_kind: "tree",
@@ -907,6 +973,8 @@ fn render_widget_tree(
         };
         if body_start < row_byte_end {
             out.hits.push(HitArea {
+                row_target: true,
+                context_click: true,
                 overlay: false,
                 widget_key: tree_spec_key.clone(),
                 widget_kind: "tree",

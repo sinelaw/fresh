@@ -60,6 +60,14 @@ pub(crate) struct BoxMeta {
     pub scrollable: bool,
     pub pointer_opaque: bool,
     pub focus_trap: bool,
+    /// This widget is a panel's PRIMARY scroll surface for
+    /// picker-style forwarding: a typed-filter panel routes Up/Down/
+    /// Enter and the positionless wheel at the first widget declaring
+    /// this (List, Tree, and markdown document views — NOT plain
+    /// multi-row textareas, which scroll with their caret). Distinct
+    /// from `scrollable` (wheel-over-the-widget), which plain
+    /// textareas do have.
+    pub picker_scroll_target: bool,
 }
 
 impl BoxMeta {
@@ -208,6 +216,19 @@ pub(crate) trait WidgetImpl: Sync {
     /// NOT wired for List (plugins drive list activation through
     /// `select`/`activate_event` on the smart-key path instead), so
     /// only Button and Toggle answer.
+    /// Panel focus moved ONTO (`gained`) or OFF (`!gained`) this
+    /// kind's widget — the kind's chance to keep its instance state
+    /// coherent with focus. Tree clears a blurred tree's selection
+    /// and seeds a focused one's first visible row, so focus and the
+    /// selected-row highlight are always ONE element. Default: no-op.
+    fn on_focus_change(
+        &self,
+        _panel: &mut crate::widgets::WidgetPanelState,
+        _key: &str,
+        _gained: bool,
+    ) {
+    }
+
     fn activate_event(&self, _spec: &WidgetSpec) -> Option<(&'static str, serde_json::Value)> {
         None
     }

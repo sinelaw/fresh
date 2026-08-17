@@ -131,6 +131,8 @@ impl WidgetImpl for Button {
         if !disabled {
             let byte_end = entry.text.len();
             out.hits.push(HitArea {
+                row_target: false,
+                context_click: false,
                 overlay: false,
                 widget_key: key.unwrap_or("").to_string(),
                 widget_kind: "button",

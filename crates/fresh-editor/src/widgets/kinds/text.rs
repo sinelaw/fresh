@@ -272,13 +272,20 @@ impl WidgetImpl for Text {
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("text");
         if let WidgetSpec::Text {
-            key: Some(k), rows, ..
+            key: Some(k),
+            rows,
+            markdown,
+            ..
         } = spec
         {
             if !k.is_empty() {
                 m.key = Some(k.clone());
                 m.focusable = true;
                 m.scrollable = *rows > 1;
+                // A markdown document view scrolls like a list; plain
+                // editable textareas stay excluded (they scroll with
+                // their caret and are not picker targets).
+                m.picker_scroll_target = *markdown && *rows > 1;
             }
         }
         m
@@ -675,6 +682,8 @@ fn render_markdown_text_area(
         // past the text so clicks on the row's padding land at line-end.
         if let Some(k) = key.filter(|k| !k.is_empty()) {
             out.hits.push(HitArea {
+                row_target: true,
+                context_click: false,
                 overlay: false,
                 widget_key: k.to_string(),
                 widget_kind: "text",
@@ -920,6 +929,8 @@ fn render_widget_text(
             // (see the single-line branch / #2234 item 1).
             if let Some(k) = key.filter(|k| !k.is_empty()) {
                 out.hits.push(HitArea {
+                    row_target: false,
+                    context_click: false,
                     overlay: false,
                     widget_key: k.to_string(),
                     widget_kind: "text",
@@ -1005,6 +1016,8 @@ fn render_widget_text(
         if let Some(k) = key.filter(|k| !k.is_empty()) {
             let inner_start = marker_bytes + rendered.inner_byte_start;
             out.hits.push(HitArea {
+                row_target: false,
+                context_click: false,
                 overlay: false,
                 widget_key: k.to_string(),
                 widget_kind: "text",

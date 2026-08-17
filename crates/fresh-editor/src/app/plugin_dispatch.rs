@@ -5143,6 +5143,16 @@ impl Editor {
         let avail_height = self.widget_panel_height(buffer_id);
         let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
         let focus_cursor = out.focus_cursor;
+        // KNOWN LIMITATION (deliberate, recorded in the v2 review doc):
+        // buffer-mounted panels consume only the base rows + hits —
+        // `out.overlays` and `out.popup` are DROPPED, and the click
+        // path resolves with `on_overlay=false`. The popup/overlay
+        // channels (Overlay children, open Dropdown pop-overs, Text
+        // completions) work only in the floating/dock slots today;
+        // wiring them for mounted panels needs paint-time compositing
+        // over split content — a renderer arc of its own. A mounted
+        // panel using those channels will neither paint nor click them:
+        // prefer a floating slot for popup-bearing UI until that lands.
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,

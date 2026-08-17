@@ -27,9 +27,19 @@
 //! Coordinate space: `row`/`col` are panel-inner coordinates in rendered
 //! rows and **display columns** (matching `EmbedRect::col_in_row`, not
 //! `HitArea` byte offsets — byte offsets vary per row, columns do not).
-//! The inline Row collapse path shifts columns by accumulated byte
-//! length, the same ASCII-inline approximation the embed channel has
-//! always used; the box inherits, not worsens, that approximation.
+//! The inline Row collapse path shifts columns by accumulated DISPLAY
+//! width (the phase-3 column-justify work landed display-width-correct
+//! shifting in `containers.rs`; the historical byte-length
+//! approximation is gone).
+//!
+//! Tie-break note: this file carries TWO stacking scans with OPPOSITE
+//! document-order tie-breaks, each right for its consumer —
+//! [`hit_path`] (panel-local) breaks z/depth ties toward the LATER
+//! sibling (later paints over earlier within a panel row), while
+//! [`hit_stack`] (chrome arena) breaks toward the EARLIER box (within
+//! a band, registry/push order IS precedence: specific targets are
+//! pushed before their guards). Moving a surface between the two trees
+//! means re-checking which rule it renders under.
 
 /// Scroll state a scrollable box carries out of the render: the item
 /// totals and window the scrollbar paints from and the wheel/drag

@@ -89,6 +89,7 @@ impl WidgetImpl for List {
                 m.key = Some(k.clone());
                 m.focusable = *focusable;
                 m.scrollable = true;
+                m.picker_scroll_target = true;
             }
         }
         m
@@ -566,6 +567,8 @@ fn collect_list(
                 let hit_row = entries.len() as u32;
                 entries.push(entry);
                 hits.push(HitArea {
+                    row_target: true,
+                    context_click: true,
                     overlay: false,
                     widget_key: item_key.clone(),
                     widget_kind: "list",
@@ -605,6 +608,8 @@ fn collect_list(
             entries.push(entry);
             let hit_row = (entries.len() - 1) as u32;
             hits.push(HitArea {
+                row_target: true,
+                context_click: true,
                 overlay: false,
                 widget_key: item_key.clone(),
                 widget_kind: "list",

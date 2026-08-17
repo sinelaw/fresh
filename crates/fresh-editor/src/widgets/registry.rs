@@ -94,6 +94,18 @@ pub struct HitArea {
     /// a parameter, decided by the panel's layout-box tree (a z>0 box
     /// covers the base rows beneath it).
     pub overlay: bool,
+    /// Capability, DECLARED BY THE KIND at collect: this hit is a
+    /// row-wide gesture target — a click anywhere on its row resolves
+    /// to it even past the hit's own byte range (List/Tree row
+    /// `select` hits, markdown document line `focus` hits).
+    /// `row_select_hit` keys off this instead of matching kind
+    /// strings.
+    pub row_target: bool,
+    /// Capability, declared by the kind: a right-click on this hit
+    /// raises the plugin's context menu (fires a `context`
+    /// widget_event) — List/Tree row selects. The right-click seam
+    /// keys off this instead of matching kind strings.
+    pub context_click: bool,
 }
 
 impl HitArea {
@@ -727,17 +739,13 @@ impl WidgetRegistry {
                 continue;
             }
             for hit in &state.hits {
-                // Rows of a markdown text document compete too (their
-                // `focus` hit places the caret): without them, a click on
-                // the seam beside a document column would resolve to a
-                // *list* in the neighbouring column — the column the user
-                // visibly did not click.
-                let row_gesture = (hit.event_type == "select"
-                    && (hit.widget_kind == "list" || hit.widget_kind == "tree"))
-                    || (hit.event_type == "focus"
-                        && hit.widget_kind == "text"
-                        && hit.payload.get("mdLine").is_some());
-                if hit.buffer_row != row || !row_gesture {
+                // Row-wide targets are a capability the KIND declares
+                // on the hit (`row_target`): List/Tree row selects, and
+                // markdown document line `focus` hits (their caret
+                // placement competes too — without them, a click on the
+                // seam beside a document column would resolve to a
+                // *list* in the neighbouring column).
+                if hit.buffer_row != row || !hit.row_target {
                     continue;
                 }
                 let d = distance(hit, col);
@@ -773,6 +781,8 @@ mod tests {
     fn make_hit(row: u32, byte_start: usize, byte_end: usize, key: &str) -> HitArea {
         HitArea {
             overlay: false,
+            row_target: false,
+            context_click: false,
             widget_key: key.into(),
             widget_kind: "button",
             buffer_row: row,
@@ -829,6 +839,8 @@ mod tests {
     fn make_row_select_hit(row: u32, byte_end: usize, key: &str) -> HitArea {
         HitArea {
             overlay: false,
+            row_target: true,
+            context_click: true,
             widget_key: key.into(),
             widget_kind: "tree",
             buffer_row: row,

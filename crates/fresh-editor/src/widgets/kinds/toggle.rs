@@ -117,6 +117,8 @@ impl WidgetImpl for Toggle {
             apply_hover_band(&mut entry);
         }
         out.hits.push(HitArea {
+            row_target: false,
+            context_click: false,
             overlay: false,
             widget_key: key.unwrap_or("").to_string(),
             widget_kind: "toggle",
