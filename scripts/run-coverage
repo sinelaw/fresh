@@ -1,0 +1,126 @@
+#!/bin/bash
+# Build an instrumented `fresh`, run it, and turn the run into a coverage report.
+#
+#   scripts/run-coverage [OPTIONS] [-- EDITOR_ARGS...]
+#
+# The editor runs in the foreground on your terminal, so you drive it as usual.
+# Quit cleanly (Ctrl+Q) — profiles are flushed at process exit, so a SIGKILL
+# loses the run. Attaching to a daemon (`-a`) profiles the detached server too,
+# but that profile only lands when the server exits (`fresh daemon kill`).
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COV_DIR="$REPO_ROOT/target/coverage"
+PROFRAW_DIR="$COV_DIR/profraw"
+BIN="$COV_DIR/debug/fresh"
+
+BUILD=1
+KEEP=0
+REPORT_ONLY=0
+
+usage() {
+    cat <<'EOF'
+Usage: scripts/run-coverage [OPTIONS] [-- EDITOR_ARGS...]
+
+Options:
+  --no-build      Skip the instrumented build, reuse the existing binary
+  --keep          Accumulate with profiles from earlier runs (default: reset)
+  --report-only   Don't run the editor; just report on the profiles already collected
+  -h, --help      Show this help
+
+Everything after `--` is passed to the editor, e.g.
+  scripts/run-coverage -- --no-plugins src/main.rs
+EOF
+}
+
+EDITOR_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --no-build) BUILD=0; shift ;;
+        --keep) KEEP=1; shift ;;
+        --report-only) REPORT_ONLY=1; KEEP=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        --) shift; EDITOR_ARGS=("$@"); break ;;
+        *) EDITOR_ARGS+=("$1"); shift ;;
+    esac
+done
+
+# llvm-profdata/llvm-cov ship with the toolchain, not on PATH.
+LLVM_BIN="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+if [[ ! -x "$LLVM_BIN/llvm-profdata" ]]; then
+    echo "error: llvm-profdata not found in $LLVM_BIN" >&2
+    echo "  run: rustup component add llvm-tools-preview" >&2
+    exit 1
+fi
+
+mkdir -p "$PROFRAW_DIR"
+
+if [[ $BUILD -eq 1 && $REPORT_ONLY -eq 0 ]]; then
+    echo "==> building instrumented fresh (target/coverage)"
+    # A separate CARGO_TARGET_DIR keeps the normal target/ cache valid; the
+    # differing RUSTFLAGS would otherwise force a full rebuild on every switch.
+    # Build scripts and proc macros are instrumented too and dump a profile in
+    # their own cwd, so point them at target/ instead of littering the tree.
+    CARGO_TARGET_DIR="$COV_DIR" RUSTFLAGS="-C instrument-coverage" \
+        LLVM_PROFILE_FILE="$COV_DIR/build-%p-%m.profraw" \
+        cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --bin fresh
+fi
+
+if [[ ! -x "$BIN" ]]; then
+    echo "error: $BIN not found (run without --no-build)" >&2
+    exit 1
+fi
+
+if [[ $KEEP -eq 0 ]]; then
+    rm -f "$PROFRAW_DIR"/*.profraw
+fi
+
+if [[ $REPORT_ONLY -eq 0 ]]; then
+    echo "==> running the editor (quit with Ctrl+Q so the profile is written)"
+    set +e
+    LLVM_PROFILE_FILE="$PROFRAW_DIR/fresh-%p-%m.profraw" \
+        "$BIN" "${EDITOR_ARGS[@]}"
+    EDITOR_STATUS=$?
+    set -e
+    [[ $EDITOR_STATUS -ne 0 ]] && echo "note: editor exited with status $EDITOR_STATUS"
+fi
+
+shopt -s nullglob
+PROFRAWS=("$PROFRAW_DIR"/*.profraw)
+shopt -u nullglob
+if [[ ${#PROFRAWS[@]} -eq 0 ]]; then
+    echo "error: no .profraw files in $PROFRAW_DIR — was the editor killed?" >&2
+    exit 1
+fi
+
+echo "==> merging ${#PROFRAWS[@]} profile(s)"
+PROFDATA="$COV_DIR/fresh.profdata"
+"$LLVM_BIN/llvm-profdata" merge -sparse "${PROFRAWS[@]}" -o "$PROFDATA"
+
+# No source paths are passed: the profile already names every compiled file,
+# and a directory argument would make llvm-cov walk stray caches under crates/.
+IGNORE='/\.cargo/registry|/rustc/|/lib/rustlib/src/|/\.flatpak-builder/'
+HTML_DIR="$COV_DIR/html"
+REPORT_TXT="$COV_DIR/report.txt"
+rm -rf "$HTML_DIR"
+
+echo "==> generating report"
+"$LLVM_BIN/llvm-cov" report \
+    --instr-profile="$PROFDATA" \
+    --ignore-filename-regex="$IGNORE" \
+    "$BIN" > "$REPORT_TXT"
+
+"$LLVM_BIN/llvm-cov" show \
+    --instr-profile="$PROFDATA" \
+    --ignore-filename-regex="$IGNORE" \
+    --format=html --output-dir="$HTML_DIR" \
+    --show-line-counts-or-regions \
+    "$BIN"
+
+grep -E '^(Filename|TOTAL)' "$REPORT_TXT"
+
+echo
+echo "HTML report:    $HTML_DIR/index.html"
+echo "Text report:    $REPORT_TXT"
+echo "Merged profile: $PROFDATA"
