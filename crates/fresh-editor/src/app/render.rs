@@ -2,6 +2,16 @@ use super::lsp_status::compose_lsp_status;
 use super::*;
 use crate::config::FileExplorerSide;
 
+/// The bottom-row visibility facts (see [`Editor::bottom_row_flags`]):
+/// one computation consumed by the paint-time frame split and every
+/// event-time row derivation, instead of four hand-copied spellings.
+pub(crate) struct BottomRowFlags {
+    pub prompt_is_overlay: bool,
+    pub has_suggestions: bool,
+    pub has_file_browser: bool,
+    pub prompt_row_visible: bool,
+}
+
 impl Editor {
     /// Render the topmost global popup at its computed area and register its
     /// click region in `global_popup_areas`. Shared by the generic
@@ -158,23 +168,12 @@ impl Editor {
         // wrong. Floating-overlay prompts (Live Grep, issue #1796)
         // are exempt because their suggestions live inside the
         // centred frame, not above the bottom row.
-        let prompt_is_overlay = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .is_some_and(|p| p.overlay);
-        let has_suggestions = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .is_some_and(|p| !p.suggestions.is_empty())
-            && !prompt_is_overlay;
-        let has_file_browser = self.active_window().prompt.as_ref().is_some_and(|p| {
-            matches!(
-                p.prompt_type,
-                PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
-            )
-        }) && self.active_window_mut().file_open_state.is_some();
+        let BottomRowFlags {
+            prompt_is_overlay: _,
+            has_suggestions,
+            has_file_browser,
+            prompt_row_visible,
+        } = self.bottom_row_flags();
 
         // Build main vertical layout: [menu_bar, main_content, status_bar, search_options, prompt_line]
         // Status bar is hidden when suggestions popup is shown
@@ -205,14 +204,7 @@ impl Editor {
                     // input row inside the centred frame, so the
                     // bottom row stays available for editor content
                     // rather than being reserved as dead space.
-                    if (self.active_window_mut().prompt_line_visible
-                        || self.active_window().prompt.is_some())
-                        && !prompt_is_overlay
-                    {
-                        1
-                    } else {
-                        0
-                    },
+                    if prompt_row_visible { 1 } else { 0 },
                 ), // Prompt line
             ])
             .split(chrome_area);
@@ -911,12 +903,7 @@ impl Editor {
         // the file changed) and seed the phantom leaf's cursor before
         // the renderer reaches it. Done before render_prompt_popups
         // because that path immediately needs the leaf's view state.
-        if self
-            .active_window()
-            .prompt
-            .as_ref()
-            .is_some_and(|p| p.overlay)
-        {
+        if self.bottom_row_flags().prompt_is_overlay {
             self.prepare_overlay_preview();
         }
 
@@ -1098,15 +1085,7 @@ impl Editor {
         let frame = self.active_chrome().last_frame;
         let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
         let (_, chrome_area) = self.compute_dock_split(size);
-        let prompt_is_overlay = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .is_some_and(|p| p.overlay);
-        let prompt_h: u16 = if (self.active_window().prompt_line_visible
-            || self.active_window().prompt.is_some())
-            && !prompt_is_overlay
-        {
+        let prompt_h: u16 = if self.bottom_row_flags().prompt_row_visible {
             1
         } else {
             0
@@ -2223,14 +2202,16 @@ impl Editor {
             })
     }
 
-    /// The chrome column's five rows THIS instant — the same vertical
-    /// [`Layout`] split `render` runs (menu bar, Min content, status bar,
-    /// search options, prompt line), with every row's constraint computed
-    /// from the same live-state conditions. Running the actual split
-    /// (rather than bottom-up row math) keeps small-terminal squeeze
-    /// behavior identical by construction; the per-row `*_area_now`
-    /// derivations gate on their row's visibility and pick their chunk.
-    fn chrome_rows_now(&self) -> [ratatui::layout::Rect; 5] {
+    /// The bottom-row visibility facts, computed ONCE: whether the
+    /// active prompt is a floating overlay, whether a bottom-anchored
+    /// suggestions popup is up, whether the file-browser dialog is up,
+    /// and whether the prompt line reserves its row. The paint-time
+    /// `Layout` split (`render`), the event-time derivations
+    /// (`chrome_rows_now`, `status_bar_area_now`,
+    /// `search_options_layout_now`) all read THIS — these conditions
+    /// used to be hand-copied at four sites, three of them outside the
+    /// paint-vs-derived parity oracle's reach.
+    fn bottom_row_flags(&self) -> BottomRowFlags {
         let win = self.active_window();
         let prompt_is_overlay = win.prompt.as_ref().is_some_and(|p| p.overlay);
         let has_suggestions = win
@@ -2244,18 +2225,41 @@ impl Editor {
                 PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
             )
         }) && win.file_open_state.is_some();
+        let prompt_row_visible =
+            (win.prompt_line_visible || win.prompt.is_some()) && !prompt_is_overlay;
+        BottomRowFlags {
+            prompt_is_overlay,
+            has_suggestions,
+            has_file_browser,
+            prompt_row_visible,
+        }
+    }
+
+    /// The chrome column's five rows THIS instant — the same vertical
+    /// [`Layout`] split `render` runs (menu bar, Min content, status bar,
+    /// search options, prompt line), with every row's constraint computed
+    /// from the same live-state conditions. Running the actual split
+    /// (rather than bottom-up row math) keeps small-terminal squeeze
+    /// behavior identical by construction; the per-row `*_area_now`
+    /// derivations gate on their row's visibility and pick their chunk.
+    fn chrome_rows_now(&self) -> [ratatui::layout::Rect; 5] {
+        let win = self.active_window();
+        // ONE computation of the bottom-row facts (`bottom_row_flags`)
+        // shared with the paint-time split — this fn used to hand-copy
+        // all four conditions.
+        let BottomRowFlags {
+            prompt_is_overlay: _,
+            has_suggestions,
+            has_file_browser,
+            prompt_row_visible,
+        } = self.bottom_row_flags();
         let menu_h: u16 = if win.menu_bar_visible { 1 } else { 0 };
         let status_h: u16 = if !win.status_bar_visible || has_suggestions || has_file_browser {
             0
         } else {
             1
         };
-        let prompt_h: u16 =
-            if (win.prompt_line_visible || win.prompt.is_some()) && !prompt_is_overlay {
-                1
-            } else {
-                0
-            };
+        let prompt_h: u16 = if prompt_row_visible { 1 } else { 0 };
         let search_h: u16 = if self.active_prompt_has_search_options() {
             1
         } else {
@@ -2287,20 +2291,11 @@ impl Editor {
     /// records the same (empty) layout, so returning it keeps the parity
     /// oracle exact.
     pub(crate) fn status_bar_area_now(&self) -> Option<ratatui::layout::Rect> {
-        let win = self.active_window();
-        let prompt_is_overlay = win.prompt.as_ref().is_some_and(|p| p.overlay);
-        let has_suggestions = win
-            .prompt
-            .as_ref()
-            .is_some_and(|p| !p.suggestions.is_empty())
-            && !prompt_is_overlay;
-        let has_file_browser = win.prompt.as_ref().is_some_and(|p| {
-            matches!(
-                p.prompt_type,
-                PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
-            )
-        }) && win.file_open_state.is_some();
-        if !win.status_bar_visible || has_suggestions || has_file_browser {
+        let flags = self.bottom_row_flags();
+        if !self.active_window().status_bar_visible
+            || flags.has_suggestions
+            || flags.has_file_browser
+        {
             return None;
         }
         Some(self.chrome_rows_now()[2])

@@ -186,6 +186,21 @@ impl ChromeComponent for Splits {
                 if bx.kind != "chrome:editor" {
                     return Ok(Disposition::Pass);
                 }
+                // A double/triple press on a folded line's gutter
+                // indicator toggles the fold instead of selecting.
+                // Checked before word/line select (its historical
+                // pre-walk position), and INSIDE the walk since the
+                // move from `handle_mouse`'s pre-band: a popup's
+                // opaque box or the overlay prompt's double-click
+                // swallow above this band now blocks it by
+                // construction, like its select siblings.
+                if let Some((buffer_id, byte_pos)) =
+                    ed.fold_toggle_line_at_screen_position(ev.col, ev.row)
+                {
+                    ed.active_window_mut()
+                        .toggle_fold_at_byte(buffer_id, byte_pos);
+                    return Ok(Disposition::Consumed);
+                }
                 let areas: Vec<_> = ed
                     .active_layout()
                     .split_areas

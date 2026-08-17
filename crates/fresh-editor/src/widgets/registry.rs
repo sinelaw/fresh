@@ -105,6 +105,14 @@ pub struct HitArea {
     /// raises the plugin's context menu (fires a `context`
     /// widget_event) — List/Tree row selects. The right-click seam
     /// keys off this instead of matching kind strings.
+    ///
+    /// SCOPE: consumed today only by the DOCK slot's right-click arm
+    /// (`chrome/dock.rs` → `handle_floating_widget_context_click`).
+    /// Split-mounted panels have no right-click seam (Base's tab menu
+    /// takes the gesture), and the centered modal swallows right
+    /// -clicks whole — wiring those is part of the recorded
+    /// mounted-panel arc, not an oversight at the producer sites,
+    /// which declare the capability wherever a row select exists.
     pub context_click: bool,
 }
 

@@ -1295,22 +1295,25 @@ impl Window {
     }
 
     /// Mutable access to the currently-open native context menu's shared
-    /// geometry core (for highlight navigation from hover / keyboard). Uses
-    /// the same precedence order as [`Window::open_context_menu`].
+    /// geometry core (for highlight navigation from hover / keyboard).
+    /// WHICH menu is open is [`Window::open_context_menu`]'s decision —
+    /// the ONE precedence encoding; this only re-borrows that menu's
+    /// field mutably (the borrow checker rules out returning `&mut`
+    /// straight from the immutable walk, so the kind is resolved first
+    /// and matched exhaustively — a new menu kind fails to compile here
+    /// instead of silently missing from a second hand-copied ladder).
     pub(crate) fn context_menu_core_mut(&mut self) -> Option<&mut crate::app::types::ContextMenu> {
-        if let Some(m) = self.file_explorer_context_menu.as_mut() {
-            return Some(&mut m.menu);
+        use crate::app::types::ContextMenuKind;
+        let kind = self.open_context_menu()?.0;
+        match kind {
+            ContextMenuKind::FileExplorer => self
+                .file_explorer_context_menu
+                .as_mut()
+                .map(|m| &mut m.menu),
+            ContextMenuKind::NewTab => self.new_tab_menu.as_mut().map(|m| &mut m.menu),
+            ContextMenuKind::Tab => self.tab_context_menu.as_mut().map(|m| &mut m.menu),
+            ContextMenuKind::CloseSplit => self.close_split_menu.as_mut().map(|m| &mut m.menu),
         }
-        if let Some(m) = self.new_tab_menu.as_mut() {
-            return Some(&mut m.menu);
-        }
-        if let Some(m) = self.tab_context_menu.as_mut() {
-            return Some(&mut m.menu);
-        }
-        if let Some(m) = self.close_split_menu.as_mut() {
-            return Some(&mut m.menu);
-        }
-        None
     }
 
     /// Item labels of the currently-open native context menu, in display

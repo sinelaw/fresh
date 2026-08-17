@@ -214,15 +214,18 @@ impl Editor {
             view_state.viewport.clear_skip_ensure_visible();
         }
 
-        // Chrome keyboard grabs: the first registered component whose
-        // open surface owns the keyboard with a custom dispatcher
-        // claims the key — the theme inspector's dismiss-and-continue,
-        // the native context menus' navigation grab, the focused
-        // floating modal, then the focused dock (registry order IS
-        // the precedence, matching the layers() ranks — one source
-        // of truth instead of hardcoded early claims here). The
-        // chrome keyboard analogue of the modal
-        // mouse-capture rung above `handle_mouse`'s walks.
+        // Chrome keyboard grabs — the pre-band's LAST stage, now only
+        // two components: the theme inspector's dismiss-and-continue
+        // observer (a keyboard PassAfter, not a claim) and the native
+        // context menus' navigation grab (a custom-dispatcher modal
+        // whose layer deliberately exposes no `KeyContext`; ruling at
+        // its site, #2587). Grabs as a CLASS outrank every layer rank
+        // by pipeline position — that is exactly why membership is
+        // restricted to whole-pipeline observers and custom-dispatch
+        // modals: any surface whose precedence is expressible as a
+        // rank rides the walk below instead (the dock and the
+        // floating modal moved there when their grabs were found
+        // inverting the ranks against an open prompt).
         for c in super::chrome::components() {
             if let Some(result) = c.on_key(self, code, modifiers) {
                 return result;

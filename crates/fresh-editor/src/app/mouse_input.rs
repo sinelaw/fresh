@@ -57,14 +57,33 @@ impl Editor {
 
         let (is_double_click, is_triple_click) = self.detect_multi_click(&mouse_event, col, row);
 
-        // Modal mouse-capture: the first registered component whose
-        // modal surface is up claims the whole mouse channel (the
-        // registry ranks the modal band in `overlay_layers()` order).
-        // This dissolves the `dispatch_modal_mouse` LayerKind ladder —
-        // each modal's capture lives with its component.
-        for c in super::chrome::components() {
-            if let Some(result) = c.capture_mouse(self, mouse_event, is_double_click) {
-                return result;
+        // Modal mouse-capture, offered in RANK order over the derived
+        // overlay stack: the first component whose modal surface is up
+        // claims the whole mouse channel. Every capturing component
+        // declares a layer from the same activity predicate its
+        // capture gates on, so walking the owner-stamped stack visits
+        // exactly the capturing candidates — and deletes the old
+        // registry-order duplicate of the precedence (two hand-synced
+        // encodings, comment-only sync). Rank IS the one source now,
+        // for the keyboard walk and the capture band alike.
+        {
+            let stack = self.overlay_stack();
+            let mut seen = std::collections::HashSet::new();
+            for entry in &stack {
+                // The hardcoded event-debug head has no owner; a
+                // component contributing several layers is offered
+                // the capture once, at its highest rank.
+                let Some(owner) = entry.owner else { continue };
+                if !seen.insert(owner) {
+                    continue;
+                }
+                if let Some(result) = super::chrome::components()[owner].capture_mouse(
+                    self,
+                    mouse_event,
+                    is_double_click,
+                ) {
+                    return result;
+                }
             }
         }
 
@@ -119,7 +138,22 @@ impl Editor {
         // boxes ride the top routable band); this fork only keeps the PTY
         // from swallowing the events first.
         let context_menu_open = self.active_window().context_menu_core().is_some();
-        if !chrome_drag_active && !context_menu_open {
+        // DERIVED suppression for everything with opaque geometry: a
+        // pointer-opaque chrome box over the cell (an info popup, the
+        // suggestions dropdown, the theme-info popup) must take the
+        // event in the walk — forwarding it would inject mouse codes
+        // into the PTY *through* the popup. This replaces growing the
+        // hand list one surface at a time; the context-menu check
+        // above stays NAMED by ruling because its boxes are
+        // deliberately not opaque (its close-guard backdrop owns
+        // outside clicks), so opacity cannot express it.
+        let opaque_chrome_over_point = {
+            let tree = super::chrome::chrome_tree(self);
+            crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32)
+                .into_iter()
+                .any(|i| tree[i].lb.pointer_opaque)
+        };
+        if !chrome_drag_active && !context_menu_open && !opaque_chrome_over_point {
             let forwarding = self.config.terminal.mouse_forwarding;
             if let Some(result) = self.active_window_mut().try_forward_mouse_to_terminal(
                 col,
@@ -140,16 +174,12 @@ impl Editor {
 
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if is_double_click || is_triple_click {
-                    if let Some((buffer_id, byte_pos)) =
-                        self.fold_toggle_line_at_screen_position(col, row)
-                    {
-                        self.active_window_mut()
-                            .toggle_fold_at_byte(buffer_id, byte_pos);
-                        needs_render = true;
-                        return Ok(needs_render);
-                    }
-                }
+                // NOTE: the fold-toggle double/triple check lives in
+                // `Splits::on_pointer`'s Double/Triple arm — inside the
+                // walk, so a popup's opaque box or the overlay prompt's
+                // swallow blocks it by construction (it used to sit
+                // here pre-walk, hit-testing `split_areas` directly and
+                // bypassing every guard the walk enforces).
                 if is_triple_click {
                     // Triple click detected - select entire line
                     self.handle_mouse_triple_click(col, row)?;
@@ -170,45 +200,55 @@ impl Editor {
                 needs_render = true;
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                // End a dock-resize drag and persist the chosen width so
-                // it survives toggling the dock off/on.
-                if self.dock_resizing {
-                    self.dock_resizing = false;
-                    if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-                        self.dock.as_ref().map(|f| f.placement)
-                    {
-                        self.dock_width = Some(width_cols);
+                // Release is GRAB-KEYED like the Drag arm: the derived
+                // `pointer_grab` names which press-to-release routing is
+                // ending, and its arm runs that grab's finalizer — no
+                // more per-surface field-poke ladder that had to be kept
+                // in sync with the grab roster by hand. Grabs without a
+                // finalizer just fall to the blanket clear below.
+                let grab = super::chrome::pointer_grab(self);
+                match grab {
+                    // End a dock-resize drag and persist the chosen
+                    // width so it survives toggling the dock off/on.
+                    Some(super::chrome::PointerGrab::DockResize) => {
+                        self.dock_resizing = false;
+                        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
+                            self.dock.as_ref().map(|f| f.placement)
+                        {
+                            self.dock_width = Some(width_cols);
+                        }
+                        return Ok(true);
                     }
-                    return Ok(true);
-                }
-                // Check if we were dragging a separator to trigger terminal resize
-                let was_dragging_separator = self
-                    .active_window_mut()
-                    .mouse_state
-                    .dragging_separator
-                    .is_some();
-
-                // Check if we were dragging a tab and complete the drop
-                if let Some(drag_state) = self.active_window_mut().mouse_state.dragging_tab.take() {
-                    if drag_state.is_dragging() {
-                        if let Some(drop_zone) = drag_state.drop_zone {
-                            self.execute_tab_drop(
-                                drag_state.buffer_id,
-                                drag_state.source_split_id,
-                                drop_zone,
-                            );
+                    // Complete a tab drop before the drag state clears.
+                    Some(super::chrome::PointerGrab::TabDrag) => {
+                        if let Some(drag_state) =
+                            self.active_window_mut().mouse_state.dragging_tab.take()
+                        {
+                            if drag_state.is_dragging() {
+                                if let Some(drop_zone) = drag_state.drop_zone {
+                                    self.execute_tab_drop(
+                                        drag_state.buffer_id,
+                                        drag_state.source_split_id,
+                                        drop_zone,
+                                    );
+                                }
+                            }
                         }
                     }
+                    _ => {}
                 }
 
-                // Stop dragging and clear drag state
+                // Blanket sweep: every remaining drag flag drops here,
+                // so no grab can outlive its release even if its
+                // finalizer above was skipped.
                 self.release_widget_scrollbar();
                 self.widget_text_drag = None;
                 self.clear_active_window_drag_state();
 
-                // If we finished dragging a split separator, the split
-                // ratios changed: reflow through the single layout funnel.
-                if was_dragging_separator {
+                // A finished split-separator drag changed the ratios:
+                // reflow through the single layout funnel (after the
+                // sweep, as before).
+                if matches!(grab, Some(super::chrome::PointerGrab::SplitSeparator)) {
                     self.relayout();
                 }
 
@@ -244,7 +284,13 @@ impl Editor {
                 needs_render = needs_render || hover_changed;
 
                 // Ctrl+hover over a resolvable path in the live terminal
-                // underlines it to signal it's clickable.
+                // underlines it to signal it's clickable. RULING: stays
+                // beside (not inside) the `HoverTarget` walk, like its
+                // click half stays pre-walk — the tracker is a
+                // modifier-keyed regex probe over terminal-grid CONTENT,
+                // not a surface-naming question; the walk names chrome,
+                // content trackers own their reactions (the same seam as
+                // `update_lsp_hover_state` below).
                 let term_link_changed =
                     self.update_terminal_link_hover(col, row, mouse_event.modifiers);
                 needs_render = needs_render || term_link_changed;
@@ -423,18 +469,33 @@ impl Editor {
     /// - Mouse is within the hovered symbol range
     ///
     /// Hover is dismissed when mouse leaves the editor area entirely.
+    ///
+    /// RULING — this pipeline stays OUTSIDE the `HoverTarget` walk: it
+    /// is not a "name the surface under the pointer" question but a
+    /// debounced request state machine over BUFFER content (symbol
+    /// ranges, popup keep-alive, request dedup) whose transitions the
+    /// walk's enter/leave diff cannot express. It composes with the
+    /// walk the same way `update_terminal_link_hover` does: the walk
+    /// names chrome, these trackers own editor-content reactions.
+    /// Folding it in is recorded in the plan doc as part of the
+    /// mounted-panel/hover unification arc, not chrome registration.
     fn update_lsp_hover_state(&mut self, col: u16, row: u16) {
         tracing::trace!(col, row, "update_lsp_hover_state: raw mouse position");
 
-        // Suppress LSP hover when a popup is already visible (e.g. theme info popup,
-        // tab context menu, or the status-bar LSP status popup) to avoid hover
-        // tooltips overlapping other popups. Same for any modal overlay (Open
-        // File dialog, command palette, menu, …): mouse positions over the
-        // overlay map to the buffer *behind* it, so tracking them would fire
-        // hover requests for invisible content and render the popup on top of
-        // the dialog (sinelaw/fresh#2912).
+        // Suppress LSP hover when a popup is already visible (the theme
+        // info popup or the status-bar LSP status popup — both hand
+        // -listed because neither declares an overlay layer) to avoid
+        // hover tooltips overlapping other popups. Same for any modal
+        // overlay (Open File dialog, command palette, menu, native
+        // context menus, …), all DERIVED from `modal_overlay_active`:
+        // mouse positions over the overlay map to the buffer *behind*
+        // it, so tracking them would fire hover requests for invisible
+        // content and render the popup on top of the dialog
+        // (sinelaw/fresh#2912). (An open context menu used to be a
+        // third hand-listed check here; its ContextMenu layer already
+        // makes `modal_overlay_active` true, so the check was a
+        // redundant second encoding.)
         if self.active_window_mut().theme_info_popup.is_some()
-            || self.active_window().context_menu_core().is_some()
             || self.is_lsp_status_popup_open()
             || self.modal_overlay_active()
         {
