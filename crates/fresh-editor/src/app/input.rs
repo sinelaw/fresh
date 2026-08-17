@@ -153,7 +153,8 @@ impl Editor {
         // (#2234, item 4): while the dock is mounted, record its host-side focus
         // plus the active window's key context for *every* key, before any
         // routing. If a repro shows `dock_focused=true` for keys the user aimed
-        // at the buffer, the dock is swallowing them (line ~492) — a
+        // at the buffer, the dock is swallowing them (`chrome/dock.rs`'s
+        // `on_key`) — a
         // host-focus / plugin-`dockBlurred` desync; if `dock_focused=false`,
         // the keys reached the window and the issue is in key-context routing.
         if let Some(focused) = self.dock.as_ref().map(|d| d.focused) {

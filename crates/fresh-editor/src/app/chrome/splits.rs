@@ -11,11 +11,7 @@ use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
-
-fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
-    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
-}
+use super::{in_rect, ChromeComponent, ChromeTreeBuilder, Editor};
 
 pub(crate) struct Splits;
 
@@ -911,31 +907,15 @@ impl Editor {
     }
 
     pub(super) fn handle_click_tab_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        for (split_id, tab_layout) in &self.active_layout().tab_layouts {
-            tracing::debug!(
-                "Tab layout for split {:?}: bar_area={:?}, left_scroll={:?}, right_scroll={:?}",
-                split_id,
-                tab_layout.bar_area,
-                tab_layout.left_scroll_area,
-                tab_layout.right_scroll_area
-            );
-        }
         let tab_hit = self
             .active_layout()
             .tab_layouts
             .iter()
             .find_map(|(split_id, tab_layout)| {
-                let hit = tab_layout.hit_test(col, row);
-                tracing::debug!(
-                    "Tab hit_test at ({}, {}) for split {:?} returned {:?}",
-                    col,
-                    row,
-                    split_id,
-                    hit
-                );
-                hit.map(|h| (*split_id, h))
+                tab_layout.hit_test(col, row).map(|h| (*split_id, h))
             });
         let (split_id, hit) = tab_hit?;
+        tracing::trace!(?split_id, ?hit, col, row, "handle_click_tab_bar: hit");
         match hit {
             TabHit::CloseButton(target) => {
                 match target {
@@ -990,12 +970,10 @@ impl Editor {
             // helper, so a click and a wheel notch move it by the same step
             // and both stop at the last tab.
             TabHit::ScrollLeft => {
-                self.set_status_message("ScrollLeft clicked!".to_string());
                 self.active_window_mut().scroll_tab_strip(split_id, -1);
                 Some(Ok(()))
             }
             TabHit::ScrollRight => {
-                self.set_status_message("ScrollRight clicked!".to_string());
                 self.active_window_mut().scroll_tab_strip(split_id, 1);
                 Some(Ok(()))
             }
@@ -1009,5 +987,130 @@ impl Editor {
             }
             TabHit::BarBackground => None,
         }
+    }
+    /// Execute a "+" new-tab popup menu action.
+    pub(super) fn execute_new_tab_menu_action(
+        &mut self,
+        item: crate::app::types::NewTabMenuItem,
+        split_id: LeafId,
+    ) -> AnyhowResult<()> {
+        use crate::app::types::NewTabMenuItem;
+        // Ensure the new buffer/terminal lands in the split whose "+" was
+        // clicked: `open_terminal`/`new_buffer` act on the active split, so
+        // focus that split first (via the buffer it currently shows).
+        if let Some(buffer_id) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .and_then(|(mgr, _)| mgr.buffer_for_split(split_id))
+        {
+            self.focus_split(split_id, buffer_id);
+        }
+        match item {
+            NewTabMenuItem::NewTerminal => {
+                self.open_terminal();
+            }
+            NewTabMenuItem::NewFile => {
+                self.new_buffer();
+            }
+        }
+        Ok(())
+    }
+
+    /// Execute a tab context menu action
+    pub(super) fn execute_tab_context_menu_action(
+        &mut self,
+        item: crate::app::types::TabContextMenuItem,
+        buffer_id: BufferId,
+        leaf_id: LeafId,
+    ) -> AnyhowResult<()> {
+        use crate::app::types::TabContextMenuItem;
+        match item {
+            TabContextMenuItem::Close => {
+                self.close_tab_in_split(buffer_id, leaf_id);
+            }
+            TabContextMenuItem::CloseOthers => {
+                self.close_other_tabs_in_split(buffer_id, leaf_id);
+            }
+            TabContextMenuItem::CloseToRight => {
+                self.close_tabs_to_right_in_split(buffer_id, leaf_id);
+            }
+            TabContextMenuItem::CloseToLeft => {
+                self.close_tabs_to_left_in_split(buffer_id, leaf_id);
+            }
+            TabContextMenuItem::CloseAll => {
+                self.close_all_tabs_in_split(leaf_id);
+            }
+            TabContextMenuItem::CopyRelativePath => {
+                self.copy_buffer_path(buffer_id, true);
+            }
+            TabContextMenuItem::CopyFullPath => {
+                self.copy_buffer_path(buffer_id, false);
+            }
+            TabContextMenuItem::ExtractToNewWorkspace => {
+                self.extract_tab_to_new_workspace(buffer_id);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Execute a close-split confirmation choice. "Cancel" is a no-op (the menu
+    /// was already dismissed by the caller); "Close split" runs the actual
+    /// close.
+    pub(super) fn execute_close_split_menu_action(
+        &mut self,
+        item: crate::app::types::CloseSplitMenuItem,
+        split_id: LeafId,
+    ) {
+        use crate::app::types::CloseSplitMenuItem;
+        match item {
+            CloseSplitMenuItem::Cancel => {}
+            CloseSplitMenuItem::CloseSplit => self.close_split_confirmed(split_id),
+        }
+    }
+
+    /// Close a split for real (after the confirmation popup). Mirrors the
+    /// keyboard "Close Split" command: close the pane, forget its terminal
+    /// scrollback modes, and refocus whichever split becomes active.
+    fn close_split_confirmed(&mut self, split_id: LeafId) {
+        if let Err(e) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .close_split(split_id)
+        {
+            self.set_status_message(
+                t!("error.cannot_close_split", error = e.to_string()).to_string(),
+            );
+            return;
+        }
+        // Drop the closed split from every terminal's scrollback set.
+        self.active_window_mut()
+            .forget_split_terminal_modes(split_id);
+        let new_active = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(buffer_id) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .buffer_for_split(new_active)
+        {
+            self.set_active_buffer(buffer_id);
+        }
+        // Closing a split gives its space back to the surviving panes — the
+        // same reflow `close_active_split` runs. `set_active_buffer` above only
+        // resizes terminals when the *newly focused* buffer is one, so the
+        // other surviving panes need the funnel.
+        self.relayout();
+        self.set_status_message(t!("split.closed").to_string());
     }
 }
