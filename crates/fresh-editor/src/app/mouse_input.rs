@@ -338,20 +338,31 @@ impl Editor {
     /// component until one consumes — surfaces with no wheel handler
     /// decline, so the wheel keeps falling (scroll chaining) down to
     /// the `chrome:base` fallback.
-    fn handle_vertical_scroll(
+    /// THE wheel dispatch engine — one walk for both axes. Build the
+    /// per-event chrome tree, scan the boxes under the point top-down
+    /// (`hit_stack`), offer the delta to each box's owning component
+    /// (`on_wheel` / `on_hwheel` by axis) until one consumes.
+    /// Deliberately NO opacity gate: wheel chains through declining
+    /// surfaces (scroll chaining). Adding a scroll surface never
+    /// touches this — write a component, register it, contribute
+    /// boxes.
+    fn dispatch_wheel(
         &mut self,
+        horizontal: bool,
         col: u16,
         row: u16,
-        modifiers: crossterm::event::KeyModifiers,
         delta: i32,
     ) -> AnyhowResult<()> {
-        if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
-            return self.handle_horizontal_scroll(col, row, delta);
-        }
         let tree = super::chrome::chrome_tree(self);
         for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
             let b = &tree[i];
-            match super::chrome::components()[b.owner].on_wheel(self, &b.lb, col, row, delta)? {
+            let c = super::chrome::components()[b.owner];
+            let disp = if horizontal {
+                c.on_hwheel(self, &b.lb, col, row, delta)?
+            } else {
+                c.on_wheel(self, &b.lb, col, row, delta)?
+            };
+            match disp {
                 super::chrome::Disposition::Consumed => return Ok(()),
                 super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
             }
@@ -359,26 +370,30 @@ impl Editor {
         Ok(())
     }
 
+    fn handle_vertical_scroll(
+        &mut self,
+        col: u16,
+        row: u16,
+        modifiers: crossterm::event::KeyModifiers,
+        delta: i32,
+    ) -> AnyhowResult<()> {
+        // Shift turns the wheel horizontal (same engine, other axis).
+        let horizontal = modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
+        self.dispatch_wheel(horizontal, col, row, delta)
+    }
+
     /// Route a horizontal scroll (Shift+wheel, native ScrollLeft /
-    /// ScrollRight) through the SAME chrome tree as every other
-    /// gesture — surfaces with a horizontal axis (split panes, tab
-    /// strips) claim their boxes; everything else declines and the
-    /// base drops it.
+    /// ScrollRight) through the SAME engine as every other gesture —
+    /// surfaces with a horizontal axis (split panes, tab strips)
+    /// claim their boxes; everything else declines and the base
+    /// drops it.
     pub(super) fn handle_horizontal_scroll(
         &mut self,
         col: u16,
         row: u16,
         delta: i32,
     ) -> AnyhowResult<()> {
-        let tree = super::chrome::chrome_tree(self);
-        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
-            let b = &tree[i];
-            match super::chrome::components()[b.owner].on_hwheel(self, &b.lb, col, row, delta)? {
-                super::chrome::Disposition::Consumed => return Ok(()),
-                super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
-            }
-        }
-        Ok(())
+        self.dispatch_wheel(true, col, row, delta)
     }
 
     /// Update the current hover target based on mouse position.
@@ -673,74 +688,33 @@ impl Editor {
     }
 
     /// Handle mouse double click (down event)
-    /// Double-click in editor area selects the word under the cursor.
+    /// Double-click in editor area selects the word under the cursor:
+    /// the suggestion-confirm (#1660), overlay swallow, popup
+    /// block/dismiss guard, file-open dialog, explorer body, and the
+    /// split word-select arm are all component arms in the engine's
+    /// one scan — no post-walk special cases.
     pub(super) fn handle_mouse_double_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        tracing::debug!("handle_mouse_double_click at col={}, row={}", col, row);
-
-        // The routable surfaces, as chrome boxes — same geometric walk
-        // as click/wheel/right-click: suggestion-confirm (#1660) over
-        // the mouse-modal overlay swallow, the popup block/dismiss
-        // guard, the file-open dialog, the explorer body, then the
-        // split word-select arm (Splits, `chrome:editor`). Pure walk —
-        // no post-walk scan.
-        let tree = super::chrome::chrome_tree(self);
-        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
-            let b = &tree[i];
-            let ev = super::chrome::ChromePointer {
-                press: super::chrome::PointerPress::Double,
-                col,
-                row,
-                modifiers: crossterm::event::KeyModifiers::empty(),
-            };
-            match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
-                super::chrome::Disposition::Consumed => return Ok(()),
-                super::chrome::Disposition::PassAfter => {}
-                // Opacity gate: a declining opaque surface stops the
-                // walk — nothing beneath (the split arm included) can
-                // word-select through a popup.
-                super::chrome::Disposition::Pass => {
-                    if b.lb.pointer_opaque {
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(())
+        self.dispatch_pointer(
+            super::chrome::PointerPress::Double,
+            col,
+            row,
+            crossterm::event::KeyModifiers::empty(),
+        )
     }
 
     /// Handle mouse triple click (down event)
-    /// Triple-click in editor area selects the entire line under the cursor.
+    /// Triple-click in editor area selects the entire line under the
+    /// cursor — same engine, same arms (the Splits line-select arm
+    /// takes what the overlay/popup guards let through).
     pub(super) fn handle_mouse_triple_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        tracing::debug!("handle_mouse_triple_click at col={}, row={}", col, row);
-
-        // The same tree walk as every other press: the overlay
-        // prompt's modal box swallows, the popup guard blocks or
-        // dismisses, and the split line-select arm (Splits,
-        // `chrome:editor`) takes what falls through. The old
-        // hand-ordered overlay/popup ladder is gone.
-        let tree = super::chrome::chrome_tree(self);
-        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
-            let b = &tree[i];
-            let ev = super::chrome::ChromePointer {
-                press: super::chrome::PointerPress::Triple,
-                col,
-                row,
-                modifiers: crossterm::event::KeyModifiers::empty(),
-            };
-            match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
-                super::chrome::Disposition::Consumed => return Ok(()),
-                super::chrome::Disposition::PassAfter => {}
-                super::chrome::Disposition::Pass => {
-                    if b.lb.pointer_opaque {
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(())
+        self.dispatch_pointer(
+            super::chrome::PointerPress::Triple,
+            col,
+            row,
+            crossterm::event::KeyModifiers::empty(),
+        )
     }
 
-    /// Handle mouse click (down event)
     /// True while a floating-overlay prompt (e.g. Live Grep / Universal
     /// Search) owns the screen. Such overlays are **mouse-modal**: their own
     /// targets (result list, scrollbar, and — once wired — toolbar controls)
@@ -754,6 +728,50 @@ impl Editor {
             .is_some_and(|p| p.overlay)
     }
 
+    /// THE pointer dispatch engine — ONE walk for every press kind
+    /// (left, right, double, triple). Build the per-event chrome
+    /// tree, scan the boxes under the point top-down (`hit_stack`),
+    /// offer the press to each box's owning component, and honor the
+    /// dispositions: `Consumed` stops the walk, `PassAfter` acts then
+    /// continues (guards), and a DECLINED opaque box absorbs the
+    /// press (nothing routes through a popup). Multi-box surfaces
+    /// (one box per popup / dropdown level) are dispatched once per
+    /// surface kind — their handlers resolve by position over the
+    /// whole collection. Adding a chrome surface never touches this
+    /// engine: write a component, register it, contribute boxes.
+    fn dispatch_pointer(
+        &mut self,
+        press: super::chrome::PointerPress,
+        col: u16,
+        row: u16,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> AnyhowResult<()> {
+        let tree = super::chrome::chrome_tree(self);
+        let mut seen = std::collections::HashSet::new();
+        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
+            let b = &tree[i];
+            if !seen.insert(b.lb.kind) {
+                continue;
+            }
+            let ev = super::chrome::ChromePointer {
+                press,
+                col,
+                row,
+                modifiers,
+            };
+            match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
+                super::chrome::Disposition::Consumed => return Ok(()),
+                super::chrome::Disposition::PassAfter => {}
+                super::chrome::Disposition::Pass => {
+                    if b.lb.pointer_opaque {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn handle_mouse_click(
         &mut self,
         col: u16,
@@ -764,39 +782,8 @@ impl Editor {
         // FloatingModal component's whole-channel capture — this path
         // is unreachable while it is up. Dock routing — column clicks,
         // the resize-border grab, blur-on-outside — is the Dock
-        // component's boxes and arms in the scan below.)
-        // The chrome tree scan, top-down: each box under the click is
-        // offered to its owning component until one consumes.
-        let tree = super::chrome::chrome_tree(self);
-        let mut seen = std::collections::HashSet::new();
-        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
-            let b = &tree[i];
-            // Rect-bounded surfaces can contribute several boxes (one
-            // per popup); their handlers resolve by position over the
-            // whole collection, so dispatch each surface once.
-            if !seen.insert(b.lb.kind) {
-                continue;
-            }
-            let ev = super::chrome::ChromePointer {
-                press: super::chrome::PointerPress::Left,
-                col,
-                row,
-                modifiers,
-            };
-            match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
-                super::chrome::Disposition::Consumed => return Ok(()),
-                super::chrome::Disposition::PassAfter => {}
-                // Opacity gate: a click inside an opaque popup that no
-                // handler claims is ABSORBED here — the tree property
-                // that replaced the chrome:popup_absorb guard box.
-                super::chrome::Disposition::Pass => {
-                    if b.lb.pointer_opaque {
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(())
+        // component's boxes and arms in the engine's scan.)
+        self.dispatch_pointer(super::chrome::PointerPress::Left, col, row, modifiers)
     }
 
     /// Handle mouse drag event
@@ -1400,42 +1387,18 @@ impl Editor {
         Ok(())
     }
 
-    /// Handle right-click event
+    /// Handle right-click event — same engine. Ordering rides z; the
+    /// anywhere-clears (tab "+" menu, close-split confirm) are the
+    /// Splits component's top-band PassAfter guard, the overlay
+    /// prompt's swallow and the theme inspector's Ctrl+Right trigger
+    /// are boxes above the routable surfaces.
     pub(super) fn handle_right_click(
         &mut self,
         col: u16,
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
-        // The routable surfaces, as chrome boxes — same geometric walk
-        // as left-click/wheel. Ordering rides z; the anywhere-clears
-        // (tab "+" menu, close-split confirm) are the Splits
-        // component's top-band PassAfter guard, and the mid-chain
-        // clear-explorer-menu side effect is a guard box at its old
-        // position.
-        let tree = super::chrome::chrome_tree(self);
-        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
-            let b = &tree[i];
-            let ev = super::chrome::ChromePointer {
-                press: super::chrome::PointerPress::Right,
-                col,
-                row,
-                modifiers,
-            };
-            match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
-                super::chrome::Disposition::Consumed => return Ok(()),
-                super::chrome::Disposition::PassAfter => {}
-                // Opacity gate: a right-click inside an opaque popup
-                // that nothing claims dies there — it must not raise
-                // or clear the tab menu THROUGH the popup.
-                super::chrome::Disposition::Pass => {
-                    if b.lb.pointer_opaque {
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(())
+        self.dispatch_pointer(super::chrome::PointerPress::Right, col, row, modifiers)
     }
 
     /// Clear all in-progress drag state on the active window's mouse state.
