@@ -203,6 +203,32 @@ State is allocated on mount, dropped on unmount, and a remount is
 indistinguishable from a first mount — that is what makes key changes a
 reliable reset.
 
+### Controlled and uncontrolled
+
+"On the element" is the default, not the only option. Some state must outlive
+the element or be readable by something other than the widget that draws it:
+it is persisted, a command acts on it, or another subsystem mirrors it.
+
+- **Uncontrolled** — the element owns it; nothing outside ever sees it. A menu
+  highlight, a popup's scroll offset, a dropdown's open flag.
+- **Controlled** — the owner passes the value down as a prop and receives a
+  change event. The element holds only the *editing session* around it (caret,
+  selection, scroll within the field).
+
+The same widget supports both: `List::keyed(..).selected(s).on_select(..)` is
+controlled; omit `selected` and the list keeps its own selection.
+
+**The rule for deciding.** State is *not* element state if any of these is
+true — otherwise it is:
+
+1. it survives a restart (it is serialized somewhere);
+2. a command, action, or plugin can act on it from outside the widget;
+3. another subsystem reads it (persistence, the web projection, tests).
+
+Framework-owned state is a third home again: focus position, `Viewport` scroll,
+pointer capture and hover live on render objects, and neither the application
+nor the component declares them.
+
 **Updates mark; they do not propagate.** `set_state` mutates the element's
 state and adds it to a dirty set. Nothing else happens synchronously.
 

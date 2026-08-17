@@ -220,7 +220,56 @@ every plugin using `List`/`Tree` without keys.
 
 ---
 
-## 5. Verification
+## 5. State: where each field goes
+
+Most UI state today lives on `Editor` and `Window`. "It moves to the element"
+is true for a lot of it and wrong for the rest, so every wave starts by
+classifying the surface's fields into **four homes**.
+
+| Home | Owner | Test |
+|---|---|---|
+| **App state** | `Editor` / `Window`, passed down as props | Persisted, or a command / plugin / other subsystem acts on it |
+| **Element state** | the element, disposed with it | Lifetime is exactly the widget's; nothing outside rendering cares |
+| **Framework state** | render objects, owned by `fresh-ui` | Focus position, `Viewport` scroll, pointer capture, hover |
+| **Session state** | serialized, therefore app state by construction | It has to survive a restart |
+
+The classification for the real fields:
+
+| Today | Home | Note |
+|---|---|---|
+| `menu_state.active_menu` + highlight | element | Pure view state |
+| `tab_context_menu` / `new_tab_menu` / `file_explorer_context_menu` / `close_split_menu` `.highlighted` | element | The menu's *presence* is app state; its highlight is not |
+| `workspace_trust_scroll` | element | |
+| `theme_info_popup` | element | Debug instrument, no persistence |
+| `prompt.scroll_offset`, `manual_scroll`, completion popup | element | The editing session |
+| `prompt.input` | **controlled** | Committed by `PromptConfirm`, fed to `prompt_histories` — the value is app state, the caret/selection are not |
+| `file_explorer` expanded dirs | **controlled** | Serialized as `expanded_dirs`; app state that the tree renders |
+| per-split scroll, `tab_scroll_offset` | **controlled** | Serialized in `workspace.rs` |
+| `settings_state` | app | The config being edited; the form around it is element state |
+| `widget_registry` panel mounts | app | Which plugin, which spec |
+| `WidgetInstanceState` (list scroll, tree expansion, selection) | element, **controlled where a plugin drives it** | `set_list_scroll` and friends become props + change events (§M6) |
+| `mouse_state.*` drag flags, `dock_resizing`, `widget_text_drag` | framework | Pointer capture replaces the whole cluster |
+| `key_context`, `dock.focused`, `Prompt.toolbar_focus`, popup `focused` | framework | One focus position |
+| `previous_click_time` / `click_count` | framework | Multi-click detection |
+| `dock_width`, `menu_bar_visible` | app | Persisted / user setting |
+
+### Two consequences
+
+**`Editor` gets smaller, not bigger.** Most of its UI fields are view state
+today, so a wave mostly *deletes* fields and adds none. App state that stays
+does not move — the component just receives it as a prop.
+
+**Serialization is the tripwire.** Persisted view state must be app state,
+because elements are disposed on unmount and do not survive a restart. So:
+
+> If a wave changes `workspace.rs` serialization, something was misclassified.
+
+That is a cheap, checkable invariant, and the restore suites
+(`workspace_persistence_gates.rs`, `daemon_workspace_restore_parity.rs`, the
+`orchestrator_*_restore` tests) are its guard. Write the four-way
+classification into the wave's PR description before writing code.
+
+## 6. Verification
 
 The 312 e2e files are the safety net that makes a migration of this size
 feasible. The strategy is to lean on them, not rewrite them.
@@ -241,7 +290,7 @@ feasible. The strategy is to lean on them, not rewrite them.
 
 ---
 
-## 6. Deletion ledger
+## 7. Deletion ledger
 
 A wave is not done when the new surface works — it is done when the old one is
 gone. Each wave names what it deletes, and the PR is not complete until that
@@ -262,7 +311,7 @@ When M9 lands, `app/chrome/` and the `LayoutBox` arena no longer exist.
 
 ---
 
-## 7. Risks and stop points
+## 8. Risks and stop points
 
 1. **L1/L2 are load-bearing.** Everything downstream assumes their semantics.
    Budget for getting them wrong once and redoing them before L3.
@@ -281,7 +330,7 @@ When M9 lands, `app/chrome/` and the `LayoutBox` arena no longer exist.
    its predecessor, that is a signal the seam is wrong — stop and fix it rather
    than accumulating a second UI stack.
 
-## 8. Sequencing summary
+## 9. Sequencing summary
 
 ```
 L0 skeleton -> L1 reconciler -> L2 scheduler -> L3 layout -> L4 paint
