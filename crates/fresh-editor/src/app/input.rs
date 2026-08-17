@@ -256,11 +256,6 @@ impl Editor {
             view_state.viewport.clear_skip_ensure_visible();
         }
 
-        // Dismiss theme info popup on any key press
-        if self.active_window_mut().theme_info_popup.is_some() {
-            self.active_window_mut().theme_info_popup = None;
-        }
-
         // Chrome keyboard grabs: the first registered component whose
         // open surface owns the keyboard with a custom dispatcher
         // claims the key (today: the native context menus — navigation

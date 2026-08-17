@@ -15,51 +15,16 @@ use crate::model::event::{BufferId, LeafId};
 /// strip by the same amount.
 pub(crate) const TAB_SCROLL_STEP_COLUMNS: usize = 10;
 
-/// The scrollable surface a wheel event lands on.
-///
-/// There is deliberately no "whatever has focus" variant: the wheel moves what
-/// the pointer is over. Chrome that owns no scrollable content of its own —
-/// the menu bar, the status bar, split separators — hit-tests to `None` and
-/// the wheel is dropped there rather than being handed to the focused pane
-/// (sinelaw/fresh#2969).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WheelSurface {
-    /// The file explorer panel, which scrolls its own viewport rather than a
-    /// split's.
-    FileExplorer,
-    /// A split's tab strip, which pans horizontally through its tabs.
-    TabBar(LeafId),
-    /// An editor/terminal split, hit either in its content rect or in its
-    /// scrollbar gutter.
-    Split(LeafId, BufferId),
-}
-
 impl crate::app::window::Window {
-    /// Hit-test the scrollable surface under a screen cell for wheel routing.
-    ///
-    /// This is the single fork every wheel path shares, so "what is under the
-    /// pointer" is decided in one place rather than per call site. Overlays
-    /// and mounted widget panels are resolved *before* this by
-    /// [`Editor::handle_vertical_scroll`]; what reaches here is the permanent
-    /// layout.
-    pub(crate) fn wheel_surface_at(&self, col: u16, row: u16) -> Option<WheelSurface> {
-        if let Some(explorer_area) = self.layout_cache.file_explorer_area {
-            if col >= explorer_area.x
-                && col < explorer_area.x + explorer_area.width
-                && row >= explorer_area.y
-                && row < explorer_area.y + explorer_area.height
-            {
-                return Some(WheelSurface::FileExplorer);
-            }
-        }
-        if let Some((split_id, buffer_id)) = self.split_at_position(col, row) {
-            return Some(WheelSurface::Split(split_id, buffer_id));
-        }
-        // The tab strip is chrome, but chrome with content of its own: when
-        // the tabs overflow their bar it scrolls, so the wheel pans it instead
-        // of doing nothing. Checked after the splits because a split's content
-        // rect never overlaps its bar, so the order only decides which
-        // comparison runs first.
+    /// The split whose tab strip occupies the given cell, for the
+    /// wheel's tab-strip panning (the strip is chrome, but chrome with
+    /// content of its own: when the tabs overflow their bar it
+    /// scrolls). There is deliberately no "whatever has focus"
+    /// fallback anywhere in wheel routing: the wheel moves what the
+    /// pointer is over, and chrome that owns no scrollable content —
+    /// the menu bar, the status bar, separators — drops it
+    /// (sinelaw/fresh#2969, the base component's ruling).
+    pub(crate) fn tab_bar_split_at(&self, col: u16, row: u16) -> Option<LeafId> {
         self.layout_cache
             .tab_layouts
             .iter()
@@ -67,7 +32,7 @@ impl crate::app::window::Window {
                 let bar = layout.bar_area;
                 col >= bar.x && col < bar.x + bar.width && row >= bar.y && row < bar.y + bar.height
             })
-            .map(|(split_id, _)| WheelSurface::TabBar(*split_id))
+            .map(|(split_id, _)| *split_id)
     }
 
     /// Pan a split's tab strip by one scroll step: negative moves toward the
@@ -107,14 +72,11 @@ impl crate::app::window::Window {
         }
     }
 
-    /// Handle mouse wheel scroll event
-    pub(super) fn handle_mouse_scroll(
-        &mut self,
-        col: u16,
-        row: u16,
-        delta: i32,
-    ) -> AnyhowResult<()> {
-        // Notify plugins of mouse scroll so they can handle it for virtual buffers
+    /// Fire the `mouse_scroll` plugin hook — plugins can react to the
+    /// wheel for virtual buffers. Fired by every scroll-surface arm
+    /// (splits, tab strips, the file explorer) before acting, exactly
+    /// where the old central fork fired it.
+    pub(super) fn wheel_plugin_hook(&self, col: u16, row: u16, delta: i32) {
         let buffer_id = self.active_buffer();
         self.resources.plugin_manager.read().unwrap().run_hook(
             "mouse_scroll",
@@ -125,46 +87,41 @@ impl crate::app::window::Window {
                 row,
             },
         );
+    }
 
-        // Scroll the surface under the mouse pointer — not necessarily the
-        // focused one, and nothing at all when the pointer is over chrome.
-        let (target_split, buffer_id) = match self.wheel_surface_at(col, row) {
-            Some(WheelSurface::FileExplorer) => {
-                // Scroll the file explorer's viewport. The wheel moves the
-                // view, not the selection — moving the selected entry (and
-                // letting it drag the viewport) is jumpy and surprising.
-                if let Some(explorer) = self.file_explorer.as_mut() {
-                    let count = explorer.visible_count();
-                    if count == 0 {
-                        return Ok(());
-                    }
-
-                    let max_scroll = explorer.max_scroll_offset();
-                    let current_offset = explorer.get_scroll_offset();
-                    let new_offset = if delta < 0 {
-                        current_offset.saturating_sub(delta.unsigned_abs() as usize)
-                    } else {
-                        (current_offset + delta as usize).min(max_scroll)
-                    };
-                    explorer.set_scroll_offset(new_offset);
-                }
-                return Ok(());
+    /// Scroll the file explorer's viewport. The wheel moves the view,
+    /// not the selection — moving the selected entry (and letting it
+    /// drag the viewport) is jumpy and surprising.
+    pub(super) fn scroll_file_explorer_view(&mut self, delta: i32) {
+        if let Some(explorer) = self.file_explorer.as_mut() {
+            let count = explorer.visible_count();
+            if count == 0 {
+                return;
             }
-            Some(WheelSurface::TabBar(split_id)) => {
-                // A vertical wheel over a horizontal strip pans it: up walks
-                // toward the first tab, down toward the last.
-                self.scroll_tab_strip(split_id, delta);
-                return Ok(());
-            }
-            Some(WheelSurface::Split(split_id, buffer_id)) => (split_id, buffer_id),
-            None => return Ok(()),
-        };
+            let max_scroll = explorer.max_scroll_offset();
+            let current_offset = explorer.get_scroll_offset();
+            let new_offset = if delta < 0 {
+                current_offset.saturating_sub(delta.unsigned_abs() as usize)
+            } else {
+                (current_offset + delta as usize).min(max_scroll)
+            };
+            explorer.set_scroll_offset(new_offset);
+        }
+    }
 
+    /// Vertical-scroll one split surface (content or scrollbar gutter)
+    /// by `delta` lines: the tail of the old central wheel fork.
+    pub(super) fn scroll_split_surface(
+        &mut self,
+        target_split: LeafId,
+        buffer_id: BufferId,
+        delta: i32,
+    ) {
         // Panels marked non-scrollable (buffer-group toolbars/headers/footers
         // default to this) swallow the wheel event — their content is pinned
         // so scrolling would just shift the visible rows by one line.
         if self.is_non_scrollable_buffer(buffer_id) {
-            return Ok(());
+            return;
         }
 
         // Check if this is a composite buffer - if so, use composite scroll
@@ -180,38 +137,26 @@ impl crate::app::window::Window {
             {
                 view_state.scroll(delta as isize, max_row);
                 tracing::trace!(
-                    "handle_mouse_scroll (composite): delta={}, scroll_row={}",
+                    "scroll_split_surface (composite): delta={}, scroll_row={}",
                     delta,
                     view_state.scroll_row
                 );
             }
-            return Ok(());
+            return;
         }
 
         self.scroll_split_by_lines(buffer_id, target_split, delta);
-
-        Ok(())
     }
 
-    /// Handle horizontal scroll (Shift+ScrollWheel or native ScrollLeft/ScrollRight)
-    pub(super) fn handle_horizontal_scroll(
+    /// Horizontally pan one split surface by `delta` columns: the tail
+    /// of the old central horizontal fork (Shift+wheel / native
+    /// ScrollLeft/ScrollRight).
+    pub(super) fn pan_split_horizontal(
         &mut self,
-        col: u16,
-        row: u16,
+        target_split: LeafId,
+        buffer_id: BufferId,
         delta: i32,
     ) -> AnyhowResult<()> {
-        // Same fork as the vertical wheel: pan whatever is under the pointer.
-        // The file explorer has no horizontal viewport of its own, and chrome
-        // with no content stays put.
-        let (target_split, buffer_id) = match self.wheel_surface_at(col, row) {
-            Some(WheelSurface::TabBar(split_id)) => {
-                self.scroll_tab_strip(split_id, delta);
-                return Ok(());
-            }
-            Some(WheelSurface::Split(split_id, buffer_id)) => (split_id, buffer_id),
-            Some(WheelSurface::FileExplorer) | None => return Ok(()),
-        };
-
         if self.is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }

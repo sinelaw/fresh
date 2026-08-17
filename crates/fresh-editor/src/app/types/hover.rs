@@ -34,6 +34,10 @@ pub enum HoverTarget {
     FileBrowserShowHiddenCheckbox,
     /// Hovering over the file browser "Detect Encoding" checkbox
     FileBrowserDetectEncodingCheckbox,
+    /// Hovering over the theme-info popup's "Open in Theme Editor"
+    /// button row (Ctrl+Right-Click inspector). Paint derives the
+    /// button highlight from this target.
+    ThemeInfoButton,
     /// Hovering over a tab name (target, split_id) - for non-active tabs
     TabName(crate::view::split::TabTarget, LeafId),
     /// Hovering over a tab close button (target, split_id)

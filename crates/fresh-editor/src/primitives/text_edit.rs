@@ -119,10 +119,18 @@ impl TextEdit {
     /// Set the text value, resetting cursor to start
     pub fn set_value(&mut self, text: &str) {
         if self.multiline {
-            self.lines = text.lines().map(String::from).collect();
-            if self.lines.is_empty() {
-                self.lines.push(String::new());
-            }
+            // NOT `str::lines()`: that drops a trailing empty line
+            // ("a\n" -> ["a"]), which would delete a trailing newline
+            // on every undo/redo round-trip (snapshots restore through
+            // here and `value()` joins lines with '\n', so ["a", ""]
+            // must survive as "a\n" -> ["a", ""]). Split manually,
+            // keeping the trailing empty segment; tolerate CRLF input
+            // the way `lines()` does. `"".split('\n')` yields [""],
+            // so `lines` is never empty.
+            self.lines = text
+                .split('\n')
+                .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
+                .collect();
         } else {
             self.lines = vec![text.lines().next().unwrap_or("").to_string()];
         }
@@ -908,5 +916,45 @@ mod tests {
 
         edit.move_word_left();
         assert_eq!(edit.cursor_col, 4); // Start of "two"
+    }
+
+    #[test]
+    fn test_set_value_preserves_trailing_newline() {
+        // "a\n" must round-trip as lines ["a", ""] — `str::lines()`
+        // would drop the trailing empty line and every undo/redo
+        // restore goes through set_value.
+        let mut edit = TextEdit::new();
+        edit.set_value("a\n");
+        assert_eq!(edit.value(), "a\n");
+        edit.set_value("a\r\nb\r\n");
+        assert_eq!(edit.value(), "a\nb\n"); // CRLF tolerated like lines()
+        edit.set_value("");
+        assert_eq!(edit.value(), "");
+        assert!(!edit.lines.is_empty()); // lines invariant holds
+    }
+
+    #[test]
+    fn test_undo_restores_trailing_newline() {
+        // Type 'a', Enter, 'b' in a multiline field, then undo each
+        // step: the "a\n" intermediate state must be reachable — the
+        // regression was undo silently deleting the trailing newline
+        // (first undo gave "a", second was a visible no-op).
+        let mut edit = TextEdit::new();
+        edit.insert_char('a');
+        edit.insert_char('\n');
+        edit.insert_char('b');
+        assert_eq!(edit.value(), "a\nb");
+
+        assert!(edit.undo());
+        assert_eq!(edit.value(), "a\n", "first undo restores the newline");
+        assert!(edit.undo());
+        assert_eq!(edit.value(), "a", "second undo removes the newline");
+        assert!(edit.undo());
+        assert_eq!(edit.value(), "");
+
+        assert!(edit.redo());
+        assert!(edit.redo());
+        assert!(edit.redo());
+        assert_eq!(edit.value(), "a\nb", "redo chain recovers the final state");
     }
 }

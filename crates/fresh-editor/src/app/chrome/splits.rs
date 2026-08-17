@@ -209,13 +209,81 @@ impl ChromeComponent for Splits {
         delta: i32,
     ) -> anyhow::Result<super::Disposition> {
         use super::Disposition;
-        if bx.kind != "chrome:split_widget_panel" {
-            return Ok(Disposition::Pass);
+        match bx.kind {
+            "chrome:split_widget_panel" => {
+                if ed.handle_split_widget_panel_wheel(col, row, delta) {
+                    Ok(Disposition::Consumed)
+                } else {
+                    Ok(Disposition::Pass)
+                }
+            }
+            // A vertical wheel over a horizontal tab strip pans it: up
+            // walks toward the first tab, down toward the last.
+            "chrome:tabs" => {
+                let Some(split_id) = ed.active_window().tab_bar_split_at(col, row) else {
+                    return Ok(Disposition::Pass);
+                };
+                ed.dismiss_transient_popups();
+                ed.active_window().wheel_plugin_hook(col, row, delta);
+                ed.active_window_mut().scroll_tab_strip(split_id, delta);
+                Ok(Disposition::Consumed)
+            }
+            // A split pane, hit in its content rect or scrollbar
+            // gutter (moved from the old central `wheel_surface_at`
+            // fork — the surface's wheel lives with the surface).
+            "chrome:editor" | "chrome:scrollbars" | "chrome:h_scrollbar" => {
+                let Some((split_id, buffer_id)) = ed.active_window().split_at_position(col, row)
+                else {
+                    return Ok(Disposition::Pass);
+                };
+                // Only a wheel over a pane changes that terminal's
+                // live/scrollback state; panning the tab strip or the
+                // explorer leaves a live terminal streaming.
+                if ed.active_window().focused_terminal_live() {
+                    ed.enter_terminal_scrollback();
+                } else {
+                    ed.active_window_mut()
+                        .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
+                }
+                ed.dismiss_transient_popups();
+                ed.active_window().wheel_plugin_hook(col, row, delta);
+                ed.active_window_mut()
+                    .scroll_split_surface(split_id, buffer_id, delta);
+                Ok(Disposition::Consumed)
+            }
+            _ => Ok(Disposition::Pass),
         }
-        if ed.handle_split_widget_panel_wheel(col, row, delta) {
-            Ok(Disposition::Consumed)
-        } else {
-            Ok(Disposition::Pass)
+    }
+
+    fn on_hwheel(
+        &self,
+        ed: &mut Editor,
+        bx: &LayoutBox,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> anyhow::Result<super::Disposition> {
+        use super::Disposition;
+        match bx.kind {
+            // A horizontal wheel over the tab strip pans it the same
+            // way the vertical wheel does.
+            "chrome:tabs" => {
+                let Some(split_id) = ed.active_window().tab_bar_split_at(col, row) else {
+                    return Ok(Disposition::Pass);
+                };
+                ed.active_window_mut().scroll_tab_strip(split_id, delta);
+                Ok(Disposition::Consumed)
+            }
+            "chrome:editor" | "chrome:scrollbars" | "chrome:h_scrollbar" => {
+                let Some((split_id, buffer_id)) = ed.active_window().split_at_position(col, row)
+                else {
+                    return Ok(Disposition::Pass);
+                };
+                ed.active_window_mut()
+                    .pan_split_horizontal(split_id, buffer_id, delta)?;
+                Ok(Disposition::Consumed)
+            }
+            _ => Ok(Disposition::Pass),
         }
     }
 }

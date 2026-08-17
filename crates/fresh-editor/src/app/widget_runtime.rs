@@ -1006,62 +1006,54 @@ impl Editor {
             "Shift+Tab" => self.handle_widget_focus_advance(panel_key, -1),
             "Up" | "Down" => {
                 let delta = if key == "Up" { -1 } else { 1 };
-                match widget {
-                    _ => {
-                        // Picker-style nav: when the focused widget
-                        // doesn't have a meaningful Up/Down (single-
-                        // line Text, Button, Toggle, or no focus),
-                        // route the arrow to the first scrollable
-                        // widget in the panel.
-                        let on_button = matches!(
-                            widget,
-                            Some(fresh_core::api::WidgetSpec::Button { .. })
-                                | Some(fresh_core::api::WidgetSpec::Toggle { .. })
-                        );
-                        let scrollable = self
-                            .widget_registry
-                            .get(panel_key)
-                            .and_then(|p| find_scrollable_widget_key(&p.spec));
-                        if scrollable.is_none() && on_button {
-                            // Button-only popups (the dock's right-click
-                            // context menu, confirm panes): arrows walk
-                            // the controls like Tab / Shift+Tab, matching
-                            // every other menu in the dock. Previously
-                            // ↑/↓ were silently dropped here.
-                            self.handle_widget_focus_advance(panel_key, delta);
+                // Picker-style nav: when the focused widget
+                // doesn't have a meaningful Up/Down (single-
+                // line Text, Button, Toggle, or no focus),
+                // route the arrow to the first scrollable
+                // widget in the panel.
+                let on_button = matches!(
+                    widget,
+                    Some(fresh_core::api::WidgetSpec::Button { .. })
+                        | Some(fresh_core::api::WidgetSpec::Toggle { .. })
+                );
+                let scrollable = self
+                    .widget_registry
+                    .get(panel_key)
+                    .and_then(|p| find_scrollable_widget_key(&p.spec));
+                if scrollable.is_none() && on_button {
+                    // Button-only popups (the dock's right-click
+                    // context menu, confirm panes): arrows walk
+                    // the controls like Tab / Shift+Tab, matching
+                    // every other menu in the dock. Previously
+                    // ↑/↓ were silently dropped here.
+                    self.handle_widget_focus_advance(panel_key, delta);
+                }
+                if let Some(target_key) = scrollable {
+                    let target_kind = self.widget_registry.get(panel_key).and_then(|p| {
+                        crate::widgets::find_widget_by_key(&p.spec, &target_key).cloned()
+                    });
+                    match target_kind {
+                        Some(fresh_core::api::WidgetSpec::List { .. }) => {
+                            // A List peek keeps the filter input
+                            // focused for typing while the arrow moves
+                            // the list selection.
+                            self.handle_widget_select_move_for_key(panel_key, &target_key, delta);
                         }
-                        if let Some(target_key) = scrollable {
-                            let target_kind = self.widget_registry.get(panel_key).and_then(|p| {
-                                crate::widgets::find_widget_by_key(&p.spec, &target_key).cloned()
-                            });
-                            match target_kind {
-                                Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                                    // A List peek keeps the filter input
-                                    // focused for typing while the arrow moves
-                                    // the list selection.
-                                    self.handle_widget_select_move_for_key(
-                                        panel_key,
-                                        &target_key,
-                                        delta,
-                                    );
-                                }
-                                Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                                    // A Tree is a real (tabbable) focus target.
-                                    // Peek-forwarding here would move the tree's
-                                    // selection while the previously focused
-                                    // button/field keeps its focus ring — two
-                                    // focused elements at once, and Enter would
-                                    // still act on the button, not the
-                                    // highlighted row. Move focus *into* the
-                                    // tree so it becomes the single focused
-                                    // element; set_panel_focus_and_notify seeds
-                                    // its selection to the first visible row.
-                                    self.set_panel_focus_and_notify(panel_key, target_key.clone());
-                                    self.rerender_widget_panel(panel_key);
-                                }
-                                _ => {}
-                            }
+                        Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
+                            // A Tree is a real (tabbable) focus target.
+                            // Peek-forwarding here would move the tree's
+                            // selection while the previously focused
+                            // button/field keeps its focus ring — two
+                            // focused elements at once, and Enter would
+                            // still act on the button, not the
+                            // highlighted row. Move focus *into* the
+                            // tree so it becomes the single focused
+                            // element; set_panel_focus_and_notify seeds
+                            // its selection to the first visible row.
+                            self.set_panel_focus_and_notify(panel_key, target_key.clone());
+                            self.rerender_widget_panel(panel_key);
                         }
+                        _ => {}
                     }
                 }
             }

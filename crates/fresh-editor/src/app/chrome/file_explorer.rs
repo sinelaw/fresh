@@ -24,6 +24,51 @@ impl ChromeComponent for FileExplorer {
         ed.hover_target_in_file_explorer(col, row)
     }
 
+    fn on_hover_change(
+        &self,
+        ed: &mut Editor,
+        old: Option<&HoverTarget>,
+        new: Option<&HoverTarget>,
+        col: u16,
+        row: u16,
+    ) -> bool {
+        if old == new {
+            return false;
+        }
+        // Leaving a status indicator dismisses its tooltip; entering
+        // one shows it. Independent of any other surface's reaction —
+        // the old central ladder could skip the dismiss when a menu
+        // reaction returned early.
+        if matches!(old, Some(HoverTarget::FileExplorerStatusIndicator(_))) {
+            ed.dismiss_file_explorer_status_tooltip();
+        }
+        if let Some(HoverTarget::FileExplorerStatusIndicator(path)) = new {
+            ed.show_file_explorer_status_tooltip(path.clone(), col, row);
+            return true;
+        }
+        false
+    }
+
+    fn on_wheel(
+        &self,
+        ed: &mut Editor,
+        bx: &LayoutBox,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> AnyhowResult<Disposition> {
+        if bx.kind != "chrome:file_explorer" {
+            return Ok(Disposition::Pass);
+        }
+        // The explorer scrolls its own viewport (moved from the old
+        // central `wheel_surface_at` fork — the surface's wheel lives
+        // with the surface).
+        ed.dismiss_transient_popups();
+        ed.active_window().wheel_plugin_hook(col, row, delta);
+        ed.active_window_mut().scroll_file_explorer_view(delta);
+        Ok(Disposition::Consumed)
+    }
+
     fn on_pointer(
         &self,
         ed: &mut Editor,

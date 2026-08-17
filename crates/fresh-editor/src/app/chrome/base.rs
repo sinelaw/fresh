@@ -1,6 +1,7 @@
-//! The base surface: splits / tab strip fallback (right-click's tab
-//! context menu, double-click's word select, the wheel's
-//! `wheel_surface_at` resolution).
+//! The base surface: the tab-strip right-click fallback and the
+//! wheel's drop floor (scroll surfaces each own their boxes in the
+//! Splits / FileExplorer components; what falls to the base has
+//! nothing scrollable under the pointer).
 
 use crate::app::types::TabContextMenu;
 use crate::view::ui::tabs::TabHit;
@@ -48,32 +49,30 @@ impl ChromeComponent for Base {
 
     fn on_wheel(
         &self,
-        ed: &mut Editor,
+        _ed: &mut Editor,
         _bx: &LayoutBox,
-        col: u16,
-        row: u16,
-        delta: i32,
+        _col: u16,
+        _row: u16,
+        _delta: i32,
     ) -> anyhow::Result<super::Disposition> {
-        use crate::app::scrollbar_input::WheelSurface;
-        match ed.active_window().wheel_surface_at(col, row) {
-            None => {}
-            Some(surface) => {
-                // Only a wheel over a pane changes that terminal's
-                // live/scrollback state; panning the tab strip or the
-                // explorer leaves a live terminal streaming.
-                if let WheelSurface::Split(split_id, buffer_id) = surface {
-                    if ed.active_window().focused_terminal_live() {
-                        ed.enter_terminal_scrollback();
-                    } else {
-                        ed.active_window_mut()
-                            .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
-                    }
-                }
-                ed.dismiss_transient_popups();
-                ed.active_window_mut()
-                    .handle_mouse_scroll(col, row, delta)?;
-            }
-        }
+        // The wheel's floor: chrome that owns no scrollable content —
+        // the menu bar, the status bar, separators, empty frame —
+        // DROPS the wheel rather than handing it to the focused pane
+        // (sinelaw/fresh#2969). The scrollable surfaces (splits, tab
+        // strips, the explorer) each claim their own boxes above; what
+        // reaches the base has nothing under the pointer to move.
+        Ok(super::Disposition::Consumed)
+    }
+
+    fn on_hwheel(
+        &self,
+        _ed: &mut Editor,
+        _bx: &LayoutBox,
+        _col: u16,
+        _row: u16,
+        _delta: i32,
+    ) -> anyhow::Result<super::Disposition> {
+        // Same drop ruling as the vertical wheel.
         Ok(super::Disposition::Consumed)
     }
 

@@ -21,6 +21,28 @@ impl ChromeComponent for ContextMenu {
         }
     }
 
+    fn on_hover_change(
+        &self,
+        ed: &mut Editor,
+        _old: Option<&HoverTarget>,
+        new: Option<&HoverTarget>,
+        _col: u16,
+        _row: u16,
+    ) -> bool {
+        // Hovering an item in whichever native context menu is open
+        // moves its highlight. One handler covers all three menus via
+        // the shared core.
+        if let Some(HoverTarget::ContextMenuItem(item_idx)) = new {
+            if let Some(core) = ed.active_window_mut().context_menu_core_mut() {
+                if core.highlighted != *item_idx {
+                    core.highlighted = *item_idx;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
         if bx.kind != "chrome:context_menu" {
             return None;

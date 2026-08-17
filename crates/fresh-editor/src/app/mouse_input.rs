@@ -229,38 +229,6 @@ impl Editor {
             return result;
         }
 
-        // Dismiss theme info popup on any left-click; check if click is on the button first
-        if self.active_window_mut().theme_info_popup.is_some() {
-            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                if let Some((popup_rect, button_row_offset)) = self.theme_info_popup_rect() {
-                    if in_rect(col, row, popup_rect) {
-                        // Check if click is on the button row (last content row
-                        // before border). `button_row_offset` is `None` when the
-                        // popup has no theme keys (no button to open).
-                        if let Some(offset) = button_row_offset {
-                            let actual_button_row = popup_rect.y + offset;
-                            if row == actual_button_row {
-                                let key =
-                                    self.active_window_mut().theme_info_popup.as_ref().and_then(
-                                        |p| p.info.fg_key.clone().or_else(|| p.info.bg_key.clone()),
-                                    );
-                                self.active_window_mut().theme_info_popup = None;
-                                if let Some(key) = key {
-                                    self.fire_theme_inspect_hook(key);
-                                }
-                                return Ok(true);
-                            }
-                        }
-                        // Click inside popup but not on an actionable button - ignore
-                        return Ok(true);
-                    }
-                }
-                // Click outside popup - dismiss
-                self.active_window_mut().theme_info_popup = None;
-                needs_render = true;
-            }
-        }
-
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if is_double_click || is_triple_click {
@@ -372,22 +340,6 @@ impl Editor {
                     self.update_terminal_link_hover(col, row, mouse_event.modifiers);
                 needs_render = needs_render || term_link_changed;
 
-                // Update theme info popup button highlight on hover (only when
-                // the popup actually has a button — the keyless message variant
-                // returns `None` and never highlights).
-                if let Some((popup_rect, Some(button_row_offset))) = self.theme_info_popup_rect() {
-                    let button_row = popup_rect.y + button_row_offset;
-                    let new_highlighted = row == button_row
-                        && col >= popup_rect.x
-                        && col < popup_rect.x + popup_rect.width;
-                    if let Some(ref mut popup) = self.active_window_mut().theme_info_popup {
-                        if popup.button_highlighted != new_highlighted {
-                            popup.button_highlighted = new_highlighted;
-                            needs_render = true;
-                        }
-                    }
-                }
-
                 // Track LSP hover state for mouse-triggered hover popups
                 self.update_lsp_hover_state(col, row);
 
@@ -431,34 +383,21 @@ impl Editor {
             }
             MouseEventKind::ScrollLeft => {
                 // Native horizontal scroll left
-                self.active_window_mut()
-                    .handle_horizontal_scroll(col, row, -3)?;
+                self.handle_horizontal_scroll(col, row, -3)?;
                 needs_render = true;
             }
             MouseEventKind::ScrollRight => {
                 // Native horizontal scroll right
-                self.active_window_mut()
-                    .handle_horizontal_scroll(col, row, 3)?;
+                self.handle_horizontal_scroll(col, row, 3)?;
                 needs_render = true;
             }
             MouseEventKind::Down(MouseButton::Right) => {
-                // Mouse-modal overlay: swallow right-click / Ctrl+right-click
-                // so neither the tab context menu nor the theme-info popup
-                // fires, and the buffer below is untouched.
-                if self.overlay_prompt_active() {
-                    needs_render = true;
-                } else if mouse_event
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL)
-                {
-                    // Ctrl+Right-Click → theme info popup
-                    self.show_theme_info_popup(col, row)?;
-                    needs_render = true;
-                } else {
-                    // Normal right-click → tab context menu
-                    self.handle_right_click(col, row)?;
-                    needs_render = true;
-                }
+                // One walk for every right-click flavor: the overlay
+                // prompt's guard box swallows (mouse-modal), the theme
+                // inspector's trigger claims Ctrl+Right-Click, and the
+                // routable surfaces below take plain right-clicks.
+                self.handle_right_click(col, row, mouse_event.modifiers)?;
+                needs_render = true;
             }
             _ => {
                 // Ignore other mouse events for now
@@ -521,14 +460,34 @@ impl Editor {
         delta: i32,
     ) -> AnyhowResult<()> {
         if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
-            self.active_window_mut()
-                .handle_horizontal_scroll(col, row, delta)?;
-            return Ok(());
+            return self.handle_horizontal_scroll(col, row, delta);
         }
         let tree = super::chrome::chrome_tree(self);
         for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
             let b = &tree[i];
             match super::chrome::components()[b.owner].on_wheel(self, &b.lb, col, row, delta)? {
+                super::chrome::Disposition::Consumed => return Ok(()),
+                super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Route a horizontal scroll (Shift+wheel, native ScrollLeft /
+    /// ScrollRight) through the SAME chrome tree as every other
+    /// gesture — surfaces with a horizontal axis (split panes, tab
+    /// strips) claim their boxes; everything else declines and the
+    /// base drops it.
+    pub(super) fn handle_horizontal_scroll(
+        &mut self,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> AnyhowResult<()> {
+        let tree = super::chrome::chrome_tree(self);
+        for i in crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32) {
+            let b = &tree[i];
+            match super::chrome::components()[b.owner].on_hwheel(self, &b.lb, col, row, delta)? {
                 super::chrome::Disposition::Consumed => return Ok(()),
                 super::chrome::Disposition::PassAfter | super::chrome::Disposition::Pass => {}
             }
@@ -570,167 +529,23 @@ impl Editor {
         true
     }
 
-    /// Update the current hover target based on mouse position
-    /// Returns true if the hover target changed (requiring a re-render)
+    /// Update the current hover target based on mouse position.
+    /// Returns true if a re-render is needed. This is the generic
+    /// engine only: walk the tree for the new target, diff, store,
+    /// then offer the transition to every registered component
+    /// (`on_hover_change`) — the per-surface hover REACTIONS (menu
+    /// auto-switch/submenu machine, context-menu highlight, explorer
+    /// tooltip) live with their components, not here.
     pub(super) fn update_hover_target(&mut self, col: u16, row: u16) -> bool {
         let old_target = self.active_window_mut().mouse_state.hover_target.clone();
         let new_target = self.compute_hover_target(col, row);
-        let changed = old_target != new_target;
+        let mut needs_render = old_target != new_target;
         self.active_window_mut().mouse_state.hover_target = new_target.clone();
-
-        // If a menu is currently open and we're hovering over a different menu bar item,
-        // switch to that menu automatically
-        if let Some(active_menu_idx) = self.menu_state.active_menu {
-            let all_menus: Vec<crate::config::Menu> = self
-                .menus
-                .menus
-                .iter()
-                .chain(self.menu_state.plugin_menus.iter())
-                .cloned()
-                .collect();
-            if let Some(HoverTarget::MenuBarItem(hovered_menu_idx)) = new_target.clone() {
-                if hovered_menu_idx != active_menu_idx {
-                    self.menu_state.open_menu(hovered_menu_idx);
-                    return true; // Force re-render since menu changed
-                }
-            }
-
-            // If hovering over a menu dropdown item, check if it's a submenu and open it
-            if let Some(HoverTarget::MenuDropdownItem(_, item_idx)) = new_target.clone() {
-                // If this item is the parent of the currently open submenu, keep it open.
-                // This prevents blinking when hovering over the parent item of an open submenu.
-                if self.menu_state.submenu_path.first() == Some(&item_idx) {
-                    tracing::trace!(
-                        "menu hover: staying on submenu parent item_idx={}, submenu_path={:?}",
-                        item_idx,
-                        self.menu_state.submenu_path
-                    );
-                    return changed;
-                }
-
-                // Clear any open submenus since we're at a different item in the main dropdown
-                if !self.menu_state.submenu_path.is_empty() {
-                    tracing::trace!(
-                        "menu hover: clearing submenu_path={:?} for different item_idx={}",
-                        self.menu_state.submenu_path,
-                        item_idx
-                    );
-                    self.menu_state.submenu_path.clear();
-                    self.menu_state.highlighted_item = Some(item_idx);
-                    return true;
-                }
-
-                // Check if the hovered item is a submenu
-                if let Some(menu) = all_menus.get(active_menu_idx) {
-                    if let Some(crate::config::MenuItem::Submenu { items, .. }) =
-                        menu.items.get(item_idx)
-                    {
-                        if !items.is_empty() {
-                            tracing::trace!("menu hover: opening submenu at item_idx={}", item_idx);
-                            self.menu_state.submenu_path.push(item_idx);
-                            self.menu_state.highlighted_item = Some(0);
-                            return true;
-                        }
-                    }
-                }
-                // Update highlighted item for non-submenu items too
-                if self.menu_state.highlighted_item != Some(item_idx) {
-                    self.menu_state.highlighted_item = Some(item_idx);
-                    return true;
-                }
-            }
-
-            // If hovering over a submenu item, handle submenu navigation
-            if let Some(HoverTarget::SubmenuItem(depth, item_idx)) = new_target {
-                // If this item is the parent of a currently open nested submenu, keep it open.
-                // This prevents blinking when hovering over the parent item of an open nested submenu.
-                // submenu_path[depth] stores the index of the nested submenu opened from this level.
-                if self.menu_state.submenu_path.len() > depth
-                    && self.menu_state.submenu_path.get(depth) == Some(&item_idx)
-                {
-                    tracing::trace!(
-                        "menu hover: staying on nested submenu parent depth={}, item_idx={}, submenu_path={:?}",
-                        depth,
-                        item_idx,
-                        self.menu_state.submenu_path
-                    );
-                    return changed;
-                }
-
-                // Truncate submenu path to this depth (close any deeper submenus)
-                if self.menu_state.submenu_path.len() > depth {
-                    tracing::trace!(
-                        "menu hover: truncating submenu_path={:?} to depth={} for item_idx={}",
-                        self.menu_state.submenu_path,
-                        depth,
-                        item_idx
-                    );
-                    self.menu_state.submenu_path.truncate(depth);
-                }
-
-                // Get the items at this depth
-                if let Some(items) = self
-                    .menu_state
-                    .get_current_items(&all_menus, active_menu_idx)
-                {
-                    // Check if hovered item is a submenu - if so, open it
-                    if let Some(crate::config::MenuItem::Submenu {
-                        items: sub_items, ..
-                    }) = items.get(item_idx)
-                    {
-                        if !sub_items.is_empty()
-                            && !self.menu_state.submenu_path.contains(&item_idx)
-                        {
-                            tracing::trace!(
-                                "menu hover: opening nested submenu at depth={}, item_idx={}",
-                                depth,
-                                item_idx
-                            );
-                            self.menu_state.submenu_path.push(item_idx);
-                            self.menu_state.highlighted_item = Some(0);
-                            return true;
-                        }
-                    }
-                    // Update highlighted item
-                    if self.menu_state.highlighted_item != Some(item_idx) {
-                        self.menu_state.highlighted_item = Some(item_idx);
-                        return true;
-                    }
-                }
-            }
+        for c in super::chrome::components() {
+            needs_render |=
+                c.on_hover_change(self, old_target.as_ref(), new_target.as_ref(), col, row);
         }
-
-        // Hovering an item in whichever native context menu is open moves its
-        // highlight. One handler covers all three menus via the shared core.
-        if let Some(HoverTarget::ContextMenuItem(item_idx)) = new_target {
-            if let Some(core) = self.active_window_mut().context_menu_core_mut() {
-                if core.highlighted != item_idx {
-                    core.highlighted = item_idx;
-                    return true;
-                }
-            }
-        }
-
-        // Handle file explorer status indicator hover - show tooltip
-        // Always dismiss existing tooltip first when target changes
-        if old_target != new_target
-            && matches!(
-                old_target,
-                Some(HoverTarget::FileExplorerStatusIndicator(_))
-            )
-        {
-            self.dismiss_file_explorer_status_tooltip();
-        }
-
-        if let Some(HoverTarget::FileExplorerStatusIndicator(ref path)) = new_target {
-            // Only show tooltip if this is a new hover (not already showing for this path)
-            if old_target != new_target {
-                self.show_file_explorer_status_tooltip(path.clone(), col, row);
-                return true;
-            }
-        }
-
-        changed
+        needs_render
     }
 
     /// Update LSP hover state based on mouse position
@@ -3059,7 +2874,12 @@ impl Editor {
     }
 
     /// Handle right-click event
-    pub(super) fn handle_right_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+    pub(super) fn handle_right_click(
+        &mut self,
+        col: u16,
+        row: u16,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> AnyhowResult<()> {
         // A right-click anywhere dismisses the left-click-only popups (the "+"
         // new-tab menu and the close-split confirmation).
         self.active_window_mut().new_tab_menu = None;
@@ -3076,7 +2896,7 @@ impl Editor {
                 press: super::chrome::PointerPress::Right,
                 col,
                 row,
-                modifiers: crossterm::event::KeyModifiers::empty(),
+                modifiers,
             };
             match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
                 super::chrome::Disposition::Consumed => return Ok(()),
@@ -3349,7 +3169,12 @@ impl Editor {
     }
 
     /// Show a tooltip for a file explorer status indicator
-    fn show_file_explorer_status_tooltip(&mut self, path: std::path::PathBuf, col: u16, row: u16) {
+    pub(super) fn show_file_explorer_status_tooltip(
+        &mut self,
+        path: std::path::PathBuf,
+        col: u16,
+        row: u16,
+    ) {
         use crate::view::popup::{Popup, PopupPosition};
         use ratatui::style::Style;
 
@@ -3497,7 +3322,7 @@ impl Editor {
     }
 
     /// Dismiss the file explorer status tooltip
-    fn dismiss_file_explorer_status_tooltip(&mut self) {
+    pub(super) fn dismiss_file_explorer_status_tooltip(&mut self) {
         // Dismiss any transient popups
         let __buffer_id = self.active_buffer();
         if let Some(state) = self

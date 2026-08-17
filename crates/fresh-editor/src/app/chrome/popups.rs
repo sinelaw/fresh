@@ -144,17 +144,9 @@ impl ChromeComponent for Popups {
         if bx.kind != "chrome:popups" {
             return Ok(Disposition::Pass);
         }
-        // File browser popup scrolls its list; every other popup
-        // scrolls through the popup stack. Both consume. (The file
-        // browser check rides here too because historically the two
-        // surfaces shared one arm — the file_browser component runs
-        // the same logic for its own box.)
-        if ed.is_file_open_active()
-            && ed.is_mouse_over_file_browser(col, row)
-            && ed.handle_file_open_scroll(delta)
-        {
-            return Ok(Disposition::Consumed);
-        }
+        // The popup stack scrolls under the wheel. (The file browser's
+        // wheel lives on ITS box — the z bands disambiguate the two
+        // surfaces now, so the historically shared arm is un-shared.)
         if !ed.is_mouse_over_any_popup(col, row) {
             return Ok(Disposition::Pass);
         }
