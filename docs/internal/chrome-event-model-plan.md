@@ -327,28 +327,36 @@ fixed:
   #3024). (7) The `PassAfter`-vs-opacity walk contract is code
   (`pointer_walk_step`, unit-tested), not prose.
 
-- **R10 — generation-counter memo (perf slice).** The per-event
-  derivation cost (`overlay_stack` + `chrome_tree` rebuilt on every
-  mouse/key event) is amortized by a `ui_gen: u64` counter on
-  `Editor`: both derivations cache their last result keyed by the
-  generation and reuse it while the generation is unchanged. Every
-  mutation funnel bumps: `handle_key` on ENTRY (one rebuild shared by
-  all of a keystroke's queries), `handle_mouse` on EXIT only when the
-  event reported `needs_render` (a quiet motion stream reuses one
-  tree across MANY events — the case this slice exists for),
-  `handle_action`, `process_deferred_actions`, `relayout`,
-  `show_popup`/`hide_popup`, `editor_tick` when it did work, and
-  `render` at its end (paint-side caches refresh there).
-  Over-invalidation is fine and expected; staleness is not — so in
-  debug builds every memo HIT is oracle-checked (`debug_assert_eq!`)
-  against a fresh rebuild, converting the bump roster from a
-  hand-maintained convention into a checked invariant. The same
-  counter keys a hover-cell memo in `update_hover_target`: same
-  `(generation, col, row)` → the whole hover walk is skipped, which
-  collapses terminal motion bursts to one walk per cell. The keyboard
-  walk's handler-level rebuilds stay UNTOUCHED per the R9 ruling
-  (mutate-then-decline), but they now hit the memo when nothing
-  bumped in between.
+- **R10 — validated memo for `chrome_tree` (perf slice).** The
+  per-event derivation cost is amortized WITHOUT a hand-maintained
+  invalidation roster. RULING (learned the hard way — a first cut
+  keyed both derivations on a counter bumped at "every mutation
+  funnel", and CI's debug oracle failed 82 tests across four families
+  of unbumped paths: plugin dispatch opening modals, dock
+  focus/blur, terminal-mode `key_context` flips, context-menu
+  dismissal): the set of Editor APIs that can flip a layer predicate
+  is unbounded, so a counter alone is exactly the enumerated-roster
+  antipattern this model rejects. Staleness must be CHECKED, not
+  trusted. The design: `overlay_stack` is deliberately NEVER memoized
+  — it is ~17 cheap activity predicates and is itself the ground
+  truth. `chrome_tree` (the expensive derivation) caches
+  `(ui_gen, stack_snapshot, tree)` and reuses only when the coarse
+  `ui_gen` epoch matches AND a fresh stack build equals the snapshot
+  — presence/claim changes from ANY path invalidate by derivation.
+  `ui_gen` covers the geometry epoch (paint caches move only under
+  `render`/`relayout`) and is bumped coarsely at the event funnels:
+  `handle_key` entry, `handle_mouse` exit when the event reported
+  `needs_render` (a quiet motion stream reuses one tree across MANY
+  events — the case the slice exists for), `handle_action`,
+  `process_deferred_actions`, `relayout`, `show_popup`/`hide_popup`,
+  `editor_tick` when it did work, `render` at its end. Each actual
+  rebuild advances `ui_tree_seq`; the hover-cell memo in
+  `update_hover_target` keys on `(tree_seq, col, row)` so it inherits
+  the validation, collapsing terminal motion bursts to one hover walk
+  per cell. Debug builds still oracle-check every memo hit against a
+  full rebuild (`debug_assert_eq!`), keeping the whole scheme a
+  checked invariant. The keyboard walk's handler-level rebuilds stay
+  UNTOUCHED per the R9 ruling (mutate-then-decline).
 
 Remaining recorded residue after R: `is_mouse_over_any_popup`'s
 parallel rect query (acknowledged in-tree, blocking-safe), and the
