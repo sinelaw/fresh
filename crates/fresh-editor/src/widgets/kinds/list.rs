@@ -77,6 +77,25 @@ impl WidgetImpl for List {
         true
     }
 
+    fn picker_nav(&self) -> super::PickerNav {
+        // A peek keeps the filter input focused for typing while the
+        // arrow moves the list selection.
+        super::PickerNav::Peek
+    }
+
+    fn activates_on_picker_enter(&self) -> bool {
+        true
+    }
+
+    fn picker_activate_event(
+        &self,
+        spec: &WidgetSpec,
+        key: &str,
+        panel: &crate::widgets::WidgetPanelState,
+    ) -> Option<(String, serde_json::Value)> {
+        activate_event(spec, key, panel)
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("list");
         if let WidgetSpec::List {

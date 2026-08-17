@@ -868,14 +868,16 @@ impl Editor {
                 row,
                 modifiers,
             };
-            match super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)? {
-                super::chrome::Disposition::Consumed => return Ok(()),
-                super::chrome::Disposition::PassAfter => {}
-                super::chrome::Disposition::Pass => {
-                    if b.lb.pointer_opaque {
-                        break;
-                    }
-                }
+            let disp = super::chrome::components()[b.owner].on_pointer(self, &b.lb, &ev)?;
+            // Consumed stops; the PassAfter/Pass-vs-opacity contract is
+            // `pointer_walk_step` (pure, unit-tested).
+            if disp == super::chrome::Disposition::Consumed {
+                return Ok(());
+            }
+            if super::chrome::pointer_walk_step(disp, b.lb.pointer_opaque)
+                == super::chrome::PointerWalkStep::Stop
+            {
+                break;
             }
         }
         Ok(())

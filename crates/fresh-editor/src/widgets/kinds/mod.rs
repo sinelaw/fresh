@@ -25,7 +25,7 @@ mod component;
 mod containers;
 mod divider;
 pub(crate) mod dropdown;
-mod dual_list;
+pub(crate) mod dual_list;
 mod hint_bar;
 pub(crate) mod list;
 pub(crate) mod number;
@@ -114,6 +114,18 @@ pub(crate) struct PointerFx {
     /// variant) is click-path knowledge the panel doesn't have, so
     /// the kind requests it and the dispatcher runs the host helper.
     pub place_caret: bool,
+}
+
+/// How panel-level Up/Down treats a kind that is the panel's
+/// scrollable picker target — see [`WidgetImpl::picker_nav`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PickerNav {
+    /// Arrows don't reach this kind.
+    Skip,
+    /// Move this widget's selection; the typing widget keeps focus.
+    Peek,
+    /// Move panel focus INTO this widget.
+    TakeFocus,
 }
 
 /// What a widget kind did with a resolved pointer hit.
@@ -230,6 +242,50 @@ pub(crate) trait WidgetImpl: Sync {
     /// `select`/`activate_event` on the smart-key path instead), so
     /// only Button and Toggle answer.
     fn activate_event(&self, _spec: &WidgetSpec) -> Option<(&'static str, serde_json::Value)> {
+        None
+    }
+
+    /// CAPABILITY: panel-level Up/Down lands on a focused widget of
+    /// this kind that has no vertical axis of its own — advance focus
+    /// instead (arrows walk the controls like Tab, the dock's
+    /// button-only context menus). Declared by Button/Toggle; the
+    /// panel key router asks this instead of matching kinds.
+    fn arrows_advance_focus(&self) -> bool {
+        false
+    }
+
+    /// CAPABILITY: how panel-level Up/Down treats this kind when it is
+    /// the panel's scrollable picker target. `Peek` moves this
+    /// widget's selection while the typing widget keeps focus (List:
+    /// filter-and-arrow); `TakeFocus` moves panel focus INTO this
+    /// widget so it becomes the single focused element (Tree: a real
+    /// tabbable target — peeking would leave two focus rings and
+    /// Enter acting on the wrong element); `Skip` = arrows don't
+    /// reach it. Declared by the kind; the router asks this instead
+    /// of matching kinds.
+    fn picker_nav(&self) -> PickerNav {
+        PickerNav::Skip
+    }
+
+    /// CAPABILITY: Enter in a single-line filter input fires this
+    /// scrollable picker target's activation (type-then-Enter without
+    /// tabbing to the list). The event itself comes from
+    /// [`Self::picker_activate_event`]. Declared by List/Tree.
+    fn activates_on_picker_enter(&self) -> bool {
+        false
+    }
+
+    /// The activation event the picker-Enter path fires for this
+    /// kind's CURRENT selection (distinct from [`Self::activate_event`],
+    /// which answers the focused-widget Activate action and
+    /// deliberately excludes List/Tree). Consulted only when
+    /// [`Self::activates_on_picker_enter`] is true.
+    fn picker_activate_event(
+        &self,
+        _spec: &WidgetSpec,
+        _key: &str,
+        _panel: &crate::widgets::WidgetPanelState,
+    ) -> Option<(String, serde_json::Value)> {
         None
     }
 

@@ -227,3 +227,20 @@ pub(crate) fn adjust(
             .push(("change".into(), serde_json::json!({ "value": clamped })));
     }
 }
+
+/// Kind policy for the plugin `SetNumber` mutation: clamp the wire
+/// value to THIS spec's bounds and produce the instance state. The
+/// mutation arm in `plugin_dispatch` is a pure delegation — the
+/// per-kind knowledge (where the bounds live) stays here.
+pub(crate) fn set_value_state(
+    spec: &WidgetSpec,
+    value: f64,
+) -> crate::widgets::WidgetInstanceState {
+    let (min, max) = match spec {
+        WidgetSpec::Number { min, max, .. } => (*min, *max),
+        _ => (None, None),
+    };
+    crate::widgets::WidgetInstanceState::Number {
+        value: crate::widgets::clamp_number(value, min, max),
+    }
+}

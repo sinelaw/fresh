@@ -95,6 +95,28 @@ impl WidgetImpl for Tree {
         true
     }
 
+    fn picker_nav(&self) -> super::PickerNav {
+        // A Tree is a real (tabbable) focus target. Peek-forwarding
+        // would move the tree's selection while the previously focused
+        // button/field keeps its focus ring — two focused elements at
+        // once, and Enter would still act on the button, not the
+        // highlighted row. Focus moves INTO the tree instead.
+        super::PickerNav::TakeFocus
+    }
+
+    fn activates_on_picker_enter(&self) -> bool {
+        true
+    }
+
+    fn picker_activate_event(
+        &self,
+        spec: &WidgetSpec,
+        key: &str,
+        panel: &crate::widgets::WidgetPanelState,
+    ) -> Option<(String, serde_json::Value)> {
+        activate_event(spec, key, panel)
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("tree");
         if let WidgetSpec::Tree { key: Some(k), .. } = spec {

@@ -50,6 +50,12 @@ impl WidgetImpl for Button {
         }
     }
 
+    fn arrows_advance_focus(&self) -> bool {
+        // No vertical axis of its own: panel arrows walk the controls
+        // like Tab (button-only popups such as the dock context menu).
+        true
+    }
+
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("button");
         if let WidgetSpec::Button {

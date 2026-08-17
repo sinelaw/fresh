@@ -588,3 +588,35 @@ fn collect_dual_list(
     }
     out
 }
+
+/// Kind policy for the plugin `SetDualIncluded` mutation: drop values
+/// not in THIS spec's option set and preserve the cursors/active pane
+/// from the previous state. The mutation arm in `plugin_dispatch` is
+/// a pure delegation.
+pub(crate) fn set_included_state(
+    spec: &WidgetSpec,
+    prev: Option<&crate::widgets::WidgetInstanceState>,
+    included: &[String],
+) -> crate::widgets::WidgetInstanceState {
+    let sanitized = match spec {
+        WidgetSpec::DualList { options, .. } => {
+            crate::widgets::dual_sanitize_included(options, included)
+        }
+        _ => included.to_vec(),
+    };
+    let (active, avail_cur, incl_cur) = match prev {
+        Some(crate::widgets::WidgetInstanceState::DualList {
+            active_included,
+            available_cursor,
+            included_cursor,
+            ..
+        }) => (*active_included, *available_cursor, *included_cursor),
+        _ => (false, 0, 0),
+    };
+    crate::widgets::WidgetInstanceState::DualList {
+        included: sanitized,
+        active_included: active,
+        available_cursor: avail_cur,
+        included_cursor: incl_cur,
+    }
+}

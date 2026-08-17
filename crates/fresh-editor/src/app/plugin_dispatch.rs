@@ -5361,18 +5361,11 @@ impl Editor {
                 // rerender repaints. No `change` event — a plugin-driven
                 // set is not a user edit (matches SetValue).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let (min, max) =
-                        match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
-                            Some(fresh_core::api::WidgetSpec::Number { min, max, .. }) => {
-                                (*min, *max)
-                            }
-                            _ => (None, None),
-                        };
-                    let clamped = crate::widgets::clamp_number(value, min, max);
-                    panel.instance_states.insert(
-                        widget_key.clone(),
-                        crate::widgets::WidgetInstanceState::Number { value: clamped },
-                    );
+                    if let Some(spec) = crate::widgets::find_widget_by_key(&panel.spec, &widget_key)
+                    {
+                        let state = crate::widgets::kinds::number::set_value_state(spec, value);
+                        panel.instance_states.insert(widget_key.clone(), state);
+                    }
                 }
             }
             WidgetMutation::SetDropdown { widget_key, index } => {
@@ -5380,28 +5373,15 @@ impl Editor {
                 // clamp to the option set and write it. The trailing
                 // rerender repaints. No `change` event (matches SetValue).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let len = match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
-                        Some(fresh_core::api::WidgetSpec::Dropdown { options, .. }) => {
-                            options.len()
-                        }
-                        _ => 0,
-                    };
-                    let clamped = if len == 0 {
-                        0
-                    } else {
-                        index.clamp(0, len as i32 - 1)
-                    };
-                    let open = matches!(
-                        panel.instance_states.get(&widget_key),
-                        Some(crate::widgets::WidgetInstanceState::Dropdown { open: true, .. })
-                    );
-                    panel.instance_states.insert(
-                        widget_key.clone(),
-                        crate::widgets::WidgetInstanceState::Dropdown {
-                            selected_index: clamped,
-                            open,
-                        },
-                    );
+                    if let Some(spec) = crate::widgets::find_widget_by_key(&panel.spec, &widget_key)
+                    {
+                        let state = crate::widgets::kinds::dropdown::set_index_state(
+                            spec,
+                            panel.instance_states.get(&widget_key),
+                            index,
+                        );
+                        panel.instance_states.insert(widget_key.clone(), state);
+                    }
                 }
             }
             WidgetMutation::SetDualIncluded {
@@ -5412,32 +5392,15 @@ impl Editor {
                 // drop unknown values and preserve/reset cursors. The
                 // trailing rerender repaints. No `change` event.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let sanitized =
-                        match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
-                            Some(fresh_core::api::WidgetSpec::DualList { options, .. }) => {
-                                crate::widgets::dual_sanitize_included(options, &included)
-                            }
-                            _ => included.clone(),
-                        };
-                    let (active, avail_cur, incl_cur) = match panel.instance_states.get(&widget_key)
+                    if let Some(spec) = crate::widgets::find_widget_by_key(&panel.spec, &widget_key)
                     {
-                        Some(crate::widgets::WidgetInstanceState::DualList {
-                            active_included,
-                            available_cursor,
-                            included_cursor,
-                            ..
-                        }) => (*active_included, *available_cursor, *included_cursor),
-                        _ => (false, 0, 0),
-                    };
-                    panel.instance_states.insert(
-                        widget_key.clone(),
-                        crate::widgets::WidgetInstanceState::DualList {
-                            included: sanitized,
-                            active_included: active,
-                            available_cursor: avail_cur,
-                            included_cursor: incl_cur,
-                        },
-                    );
+                        let state = crate::widgets::kinds::dual_list::set_included_state(
+                            spec,
+                            panel.instance_states.get(&widget_key),
+                            &included,
+                        );
+                        panel.instance_states.insert(widget_key.clone(), state);
+                    }
                 }
             }
             WidgetMutation::SetCompletions { widget_key, items } => {
