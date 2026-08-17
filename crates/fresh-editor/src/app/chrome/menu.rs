@@ -10,20 +10,19 @@ pub(crate) struct Menu;
 
 impl ChromeComponent for Menu {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
-        if ed.active_window().menu_bar_visible {
-            if let Some(ml) = &ed.active_chrome().menu_layout {
-                t.rect("chrome:menu_bar", 120, ml.bar_area);
+        // Geometry derived from live state (`None` when the bar is
+        // hidden); dropdown/submenu boxes are populated only while a
+        // menu is open.
+        if let Some(ml) = ed.menu_layout_now() {
+            t.rect("chrome:menu_bar", 120, ml.bar_area);
+            if let Some(r) = ml.dropdown_box {
+                t.rect("chrome:menu_dropdown", 120, r);
+            }
+            for (_, r) in &ml.submenu_boxes {
+                t.rect("chrome:menu_dropdown", 120, *r);
             }
         }
         if ed.menu_state.active_menu.is_some() {
-            if let Some(ml) = &ed.active_chrome().menu_layout {
-                if let Some(r) = ml.dropdown_box {
-                    t.rect("chrome:menu_dropdown", 120, r);
-                }
-                for (_, r) in &ml.submenu_boxes {
-                    t.rect("chrome:menu_dropdown", 120, *r);
-                }
-            }
             // TRUE full-frame semantics: any click outside the open
             // menu closes it and is consumed.
             t.full("chrome:menu_close_guard", 110);
@@ -33,7 +32,7 @@ impl ChromeComponent for Menu {
     fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
         match bx.kind {
             "chrome:menu_bar" => {
-                let menu_layout = ed.active_chrome().menu_layout.as_ref()?;
+                let menu_layout = ed.menu_layout_now()?;
                 menu_layout.menu_at(col, row).map(HoverTarget::MenuBarItem)
             }
             "chrome:menu_dropdown" => {

@@ -181,14 +181,14 @@ impl Editor {
     }
 
     /// Compute hover target for menu dropdown chain (main dropdown and submenus).
-    /// Uses the cached menu layout from the previous render frame.
+    /// Geometry derived from live state (`menu_layout_now`).
     pub(crate) fn compute_menu_dropdown_hover(
         &self,
         col: u16,
         row: u16,
         menu_index: usize,
     ) -> Option<HoverTarget> {
-        let menu_layout = self.active_chrome().menu_layout.as_ref()?;
+        let menu_layout = self.menu_layout_now()?;
 
         // Check submenu items first (they're rendered on top)
         if let Some((depth, item_idx)) = menu_layout.submenu_item_at(col, row) {
@@ -205,7 +205,7 @@ impl Editor {
 
     /// Handle click on menu dropdown chain (main dropdown and any open submenus).
     /// Returns Some(Ok(())) if click was handled, None if click was outside all dropdowns.
-    /// Uses the cached menu layout from the previous render frame for hit testing.
+    /// Hit-tests geometry derived from live state (`menu_layout_now`).
     pub(crate) fn handle_menu_dropdown_click(
         &mut self,
         col: u16,
@@ -214,8 +214,8 @@ impl Editor {
     ) -> AnyhowResult<Option<AnyhowResult<()>>> {
         use crate::view::ui::menu::MenuHit;
 
-        let menu_layout = match &self.active_chrome().menu_layout {
-            Some(layout) => layout.clone(),
+        let menu_layout = match self.menu_layout_now() {
+            Some(layout) => layout,
             None => return Ok(None),
         };
 

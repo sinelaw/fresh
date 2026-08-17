@@ -278,6 +278,30 @@ to one) are DONE. Remaining, in order:
   buffer chunks (the cursor-column segment) — while `collect` stays
   `&Editor` (boxes need only `*_area_now()` rects, keeping tree
   collection read-only).
+- **7c: menu — DONE.** Smaller than scoped: the renderer already
+  computed layout paint-free for the web (`draw: bool`), so the
+  hoist was mechanical — `MenuRenderer::compute_layout(screen,
+  area, …)` wraps the walk with `frame: Option<&mut Frame>` (the
+  only non-draw frame uses were `frame.area()` dimension reads, now
+  the `screen` param). `Editor::menu_layout_now()` is `&self`
+  (every input the render gathered is a `&self` read + lock), so
+  ALL consumers rewired without signature changes: chrome Menu
+  collect+hover, `compute_menu_dropdown_hover`,
+  `handle_menu_dropdown_click`, `handle_click_menu_bar`, and the
+  web `menu_view`. `ChromeLayout.menu_layout` deleted; parity
+  oracle in `render_menu_bar` compares the whole `MenuLayout`
+  (bar_area included). Freshness note: `menu_layout_now` reads
+  `expanded_menus_cache` refreshed by the paint pass — the same
+  content source and staleness class the retired cache had.
+  Consolidation: `chrome_rows_now()` now derives all five chrome
+  rows via the actual `Layout` split with condition-computed
+  constraints; `status_bar_area_now` / `menu_bar_area_now` gate on
+  their row's visibility CONDITIONS (not chunk height — a squeezed
+  zero-height row must still round-trip for parity) and pick their
+  chunk. Remaining 7 series: tabs/status-bar segments are done;
+  suggestions/popups rects are the tail (their rects are
+  paint-positioned popup geometry — screen_space class, may
+  legitimately stay paint-recorded; decide when reached).
 
 ## What NOT to do
 
