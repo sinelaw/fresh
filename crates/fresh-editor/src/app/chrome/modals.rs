@@ -50,6 +50,26 @@ impl ChromeComponent for Settings {
             ));
         }
     }
+
+    fn on_layer_key(
+        &self,
+        ed: &mut Editor,
+        _layer: &Layer,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<crate::input::handler::InputResult> {
+        use crate::input::handler::{InputContext, InputHandler};
+        // Capture-all: every key is this modal's while its layer is up.
+        let mut ctx = InputContext::new();
+        let result = {
+            let settings = ed
+                .settings_state
+                .as_mut()
+                .expect("Settings layer implies settings_state present");
+            settings.dispatch_input(event, &mut ctx)
+        };
+        ed.process_deferred_actions(ctx);
+        Some(result)
+    }
 }
 
 pub(crate) struct KeybindingEditor;
@@ -84,6 +104,16 @@ impl ChromeComponent for KeybindingEditor {
                 },
             ));
         }
+    }
+
+    fn on_layer_key(
+        &self,
+        ed: &mut Editor,
+        _layer: &Layer,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<crate::input::handler::InputResult> {
+        // Capture-all with its own bespoke dispatcher.
+        Some(ed.handle_keybinding_editor_input(event))
     }
 }
 
@@ -120,6 +150,16 @@ impl ChromeComponent for CalibrationWizard {
                 },
             ));
         }
+    }
+
+    fn on_layer_key(
+        &self,
+        ed: &mut Editor,
+        _layer: &Layer,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<crate::input::handler::InputResult> {
+        // Capture-all with its own bespoke dispatcher.
+        Some(ed.handle_calibration_input(event))
     }
 }
 

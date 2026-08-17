@@ -89,6 +89,17 @@ pub(crate) struct Layer {
     pub blocks_terminal_input: bool,
 }
 
+/// One entry in the owner-stamped overlay stack: a [`Layer`] plus the
+/// registry index of the chrome component that declared it — the
+/// keyboard analogue of `chrome::ChromeBox::owner`. The key walk
+/// (`Editor::dispatch_layer_keyboard`) dispatches each layer to its
+/// owner's `on_layer_key`. `owner` is `None` only for the hardcoded
+/// event-debug head, which is a pre-walk intercept, not a component.
+pub(crate) struct OwnedLayer {
+    pub owner: Option<usize>,
+    pub layer: Layer,
+}
+
 /// Resolve the keyboard-owning `KeyContext` from an ordered (top-first)
 /// layer list: the first owning layer that has a `KeyContext` wins.
 /// Layers without a `KeyContext` (custom-dispatch modals) are skipped —
@@ -203,13 +214,23 @@ impl Editor {
     /// (`handle_mouse`) all read from this list rather than keeping their
     /// own conditional ladders.
     pub(crate) fn overlay_layers(&self) -> Vec<crate::app::overlay::Layer> {
-        // DERIVED from the chrome component registry: each component
-        // declares its own layer contributions (presence, keyboard
-        // ownership, `KeyContext`, PTY blocking) with an explicit rank
-        // (`chrome::layer_rank`), and this concatenates and sorts them
-        // top-first. No central conditional ladder — a new overlay
-        // surface registers a component and appears here.
+        self.overlay_stack().into_iter().map(|o| o.layer).collect()
+    }
+
+    /// The owner-stamped overlay stack, ordered top-first: each layer
+    /// paired with the registry index of the component that declared
+    /// it (the keyboard analogue of `chrome_tree` stamping box
+    /// owners). DERIVED from the chrome component registry: each
+    /// component declares its own layer contributions (presence,
+    /// keyboard ownership, `KeyContext`, PTY blocking) with an
+    /// explicit rank (`chrome::layer_rank`), and this concatenates
+    /// and sorts them top-first. No central conditional ladder — a
+    /// new overlay surface registers a component and appears here,
+    /// and the key walk reaches its `on_layer_key` with no edit to
+    /// any dispatcher.
+    pub(crate) fn overlay_stack(&self) -> Vec<crate::app::overlay::OwnedLayer> {
         let mut ranked: Vec<(u16, Layer)> = Vec::new();
+        let mut owners: Vec<Option<usize>> = Vec::new();
         // Event-debug intercepts every key ahead of every other path
         // (see `handle_key_event`) — a debugging instrument with a
         // custom dispatcher, deliberately not a registered component.
@@ -223,12 +244,22 @@ impl Editor {
                     blocks_terminal_input: true,
                 },
             ));
+            owners.push(None);
         }
-        for c in crate::app::chrome::components() {
+        for (i, c) in crate::app::chrome::components().iter().enumerate() {
+            let before = ranked.len();
             c.layers(self, &mut ranked);
+            owners.extend(std::iter::repeat(Some(i)).take(ranked.len() - before));
         }
-        ranked.sort_by(|a, b| b.0.cmp(&a.0));
-        ranked.into_iter().map(|(_, l)| l).collect()
+        let mut stack: Vec<(u16, OwnedLayer)> = ranked
+            .into_iter()
+            .zip(owners)
+            .map(|((rank, layer), owner)| (rank, OwnedLayer { owner, layer }))
+            .collect();
+        // Stable sort: within a rank, declaration (registry) order is
+        // preserved — same ordering `overlay_layers` always had.
+        stack.sort_by(|a, b| b.0.cmp(&a.0));
+        stack.into_iter().map(|(_, o)| o).collect()
     }
 
     /// True iff any overlay layer is currently blocking key routing to a

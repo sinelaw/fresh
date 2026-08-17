@@ -115,6 +115,33 @@ impl ChromeComponent for Menu {
             ));
         }
     }
+
+    fn on_layer_key(
+        &self,
+        ed: &mut Editor,
+        _layer: &crate::app::overlay::Layer,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<crate::input::handler::InputResult> {
+        use crate::input::handler::{InputContext, InputHandler};
+        // An open menu is capture-all: navigation, mnemonics and
+        // dismissal all belong to `MenuInputHandler` while its layer
+        // is up.
+        let mut ctx = InputContext::new();
+        let all_menus: Vec<crate::config::Menu> = ed
+            .menus
+            .menus
+            .iter()
+            .chain(ed.menu_state.plugin_menus.iter())
+            .cloned()
+            .collect();
+        let result = {
+            let mut handler =
+                crate::view::ui::MenuInputHandler::new(&mut ed.menu_state, &all_menus);
+            handler.dispatch_input(event, &mut ctx)
+        };
+        ed.process_deferred_actions(ctx);
+        Some(result)
+    }
 }
 
 /// Behavior owned by this component (moved from mouse_input.rs —
