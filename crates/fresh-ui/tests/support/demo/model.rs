@@ -89,6 +89,8 @@ pub struct App {
     pub tasks: Rc<Vec<Task>>,
     pub filter: Filter,
     pub selected: usize,
+    /// Set by File → Quit; the host loop reads it and exits.
+    pub quit: bool,
     pub draft: String,
     pub status: String,
     pub sidebar: u16,
@@ -151,6 +153,7 @@ impl App {
             tasks: Rc::new(tasks),
             filter: Filter::All,
             selected: 0,
+            quit: false,
             draft: String::new(),
             status: "ready".into(),
             sidebar: 12,
@@ -328,7 +331,7 @@ pub fn update(app: &mut App, msg: Msg) {
         Msg::MenuChoice(k) => match format!("{k}").as_str() {
             "#new" => app.draft = "new task".into(),
             "#palette" => update(app, Msg::OpenPalette),
-            "#quit" => app.status = "bye".into(),
+            "#quit" => app.quit = true,
             other => app.status = format!("menu {other}"),
         },
         Msg::BeginResize => app.resizing = true,

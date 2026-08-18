@@ -37,7 +37,11 @@ fn main() -> io::Result<()> {
     let mut demo = Demo::new(Size::new(w, h));
 
     loop {
-        term.draw(demo.ui.spec())?;
+        let dark = demo.app.theme.name == "dark";
+        term.draw(demo.ui.spec(), dark)?;
+        if demo.app.quit {
+            break;
+        }
 
         // Block for the next event, but wake periodically so a background task
         // completing (the demo's simulated sync) is pumped in and redrawn.
@@ -154,8 +158,8 @@ impl Default for Cell {
     fn default() -> Self {
         Cell {
             ch: ' ',
-            fg: c(TEXT),
-            bg: c(BASE_BG),
+            fg: Color::Reset,
+            bg: Color::Reset,
         }
     }
 }
@@ -192,29 +196,34 @@ impl Terminal {
         })
     }
 
-    fn draw(&mut self, spec: &fresh_ui::LayoutSpec) -> io::Result<()> {
+    fn draw(&mut self, spec: &fresh_ui::LayoutSpec, dark: bool) -> io::Result<()> {
         let (w, h) = terminal::size()?;
         if (w, h) != (self.w, self.h) {
             self.w = w;
             self.h = h;
         }
+        let r = roles(dark);
+        let ground = Cell {
+            ch: ' ',
+            fg: c(r.text),
+            bg: c(r.base),
+        };
         self.cells.clear();
-        self.cells
-            .resize(self.w as usize * self.h as usize, Cell::default());
+        self.cells.resize(self.w as usize * self.h as usize, ground);
         self.shadows.clear();
 
         let frame = Rect::new(0, 0, self.w, self.h);
         for item in &spec.items {
-            self.paint(item, frame);
+            self.paint(item, frame, &r);
         }
-        self.cast_shadows(frame);
+        self.cast_shadows(frame, &r);
         self.flush(spec)
     }
 
-    fn paint(&mut self, item: &fresh_ui::Item, frame: Rect) {
+    fn paint(&mut self, item: &fresh_ui::Item, frame: Rect, roles: &Roles) {
         let clip = item.clip.intersect(frame);
         let r = item.rect;
-        let (fg, bg) = style(&item.theme);
+        let (fg, bg) = style(&item.theme, roles);
         match &item.draw {
             Draw::Fill => {
                 if elevated(&item.theme) {
@@ -231,8 +240,10 @@ impl Terminal {
                 };
                 self.fill(r, ch, fg, bg, clip);
             }
-            Draw::Scrim(Scrim::Opaque) => self.fill(frame, ' ', c(TEXT), c(BASE_BG), frame),
-            Draw::Scrim(Scrim::Dim) => self.dim(frame),
+            Draw::Scrim(Scrim::Opaque) => {
+                self.fill(frame, ' ', c(roles.text), c(roles.base), frame)
+            }
+            Draw::Scrim(Scrim::Dim) => self.dim(frame, roles),
             Draw::Border => self.border(r, fg, bg, clip),
             Draw::Lines(lines) => {
                 for (i, line) in lines.iter().enumerate() {
@@ -292,15 +303,15 @@ impl Terminal {
         }
     }
 
-    fn dim(&mut self, frame: Rect) {
+    fn dim(&mut self, frame: Rect, roles: &Roles) {
         for y in 0..frame.h {
             for x in 0..frame.w {
                 if let Some(cell) = self.cell_mut(x as i32, y as i32, frame) {
                     // Push the whole frame toward the background so the modal
                     // above it is what the eye lands on. The text underneath
                     // stays faintly legible rather than vanishing.
-                    cell.fg = c(SCRIM_FG);
-                    cell.bg = c(SCRIM_BG);
+                    cell.fg = c(roles.scrim_fg);
+                    cell.bg = c(roles.scrim_bg);
                 }
             }
         }
@@ -329,22 +340,22 @@ impl Terminal {
     /// A soft shadow one cell to the right and below a floating surface: the
     /// underlying cells are darkened, which reads as depth without drawing any
     /// glyph of its own.
-    fn cast_shadows(&mut self, frame: Rect) {
+    fn cast_shadows(&mut self, frame: Rect, roles: &Roles) {
         let rects = std::mem::take(&mut self.shadows);
         for r in rects {
             for y in (r.y + 1)..=r.bottom() {
-                self.darken(r.right(), y, frame);
+                self.darken(r.right(), y, frame, roles);
             }
             for x in (r.x + 1)..=r.right() {
-                self.darken(x, r.bottom(), frame);
+                self.darken(x, r.bottom(), frame, roles);
             }
         }
     }
 
-    fn darken(&mut self, x: i32, y: i32, frame: Rect) {
+    fn darken(&mut self, x: i32, y: i32, frame: Rect, roles: &Roles) {
         if let Some(cell) = self.cell_mut(x, y, frame) {
-            cell.fg = c(SHADOW);
-            cell.bg = c(SHADOW_BG);
+            cell.fg = c(roles.shadow);
+            cell.bg = c(roles.shadow_bg);
             cell.ch = ' ';
         }
     }
@@ -398,36 +409,90 @@ impl Drop for Terminal {
 }
 
 // ---------------------------------------------------------------------------
-// The palette: theme names, mapped to a cohesive 256-colour scheme
+// The palette: theme names, mapped to a cohesive scheme in two modes
 // ---------------------------------------------------------------------------
 //
 // A theme name is the library's only statement about appearance; the backend
-// decides what it looks like. One dark scheme, tuned so the surfaces read as a
-// stack: base, panels, bars, then floating menus and modals above them.
+// decides what it looks like — including whether the scheme is dark or light.
+// The demo's "Toggle theme" command flips `app.theme`, and the loop hands the
+// mode down here, so the same tree repaints in either palette.
 
-const BASE_BG: u8 = 234; // the window behind everything
-const PANEL_BG: u8 = 236; // sidebar and other seated panels
-const BAR_BG: u8 = 238; // menu bar and other raised strips
-const ELEV_BG: u8 = 234; // floating menus sit at base level; a bright border and a shadow lift them
-const MODAL_BG: u8 = 236; // a modal dialog, one gentle step above the base
+/// The colours each role takes, chosen once per mode.
+struct Roles {
+    base: u8,
+    panel: u8,
+    bar: u8,
+    elev: u8,
+    modal: u8,
+    text: u8,
+    bright: u8,
+    dim: u8,
+    faint: u8,
+    title: u8,
+    hover: u8,
+    sel_bg: u8,
+    sel_fg: u8,
+    focus_bg: u8,
+    focus_fg: u8,
+    status_bg: u8,
+    status_fg: u8,
+    shadow: u8,
+    shadow_bg: u8,
+    scrim_fg: u8,
+    scrim_bg: u8,
+}
 
-const TEXT: u8 = 250; // ordinary text
-const BRIGHT: u8 = 253; // text on a raised strip
-const DIM: u8 = 244; // borders, and text that recedes
-const FAINT: u8 = 240; // grips and dividers
-
-const TITLE: u8 = 110; // section titles and the accent glyph
-const SEL_BG: u8 = 30; // a selected row or radio option
-const SEL_FG: u8 = 231;
-const FOCUS_BG: u8 = 179; // the focused control — a warm ring, distinct from selection
-const FOCUS_FG: u8 = 235;
-const STATUS_BG: u8 = 24; // the footer
-const STATUS_FG: u8 = 231;
-
-const SHADOW: u8 = 236; // a surface's cast shadow
-const SHADOW_BG: u8 = 232;
-const SCRIM_FG: u8 = 240; // the world behind a modal
-const SCRIM_BG: u8 = 233;
+fn roles(dark: bool) -> Roles {
+    if dark {
+        Roles {
+            base: 234,
+            panel: 236,
+            bar: 238,
+            elev: 234,
+            modal: 236,
+            text: 250,
+            bright: 253,
+            dim: 244,
+            faint: 240,
+            title: 110,
+            hover: 238,
+            sel_bg: 30,
+            sel_fg: 231,
+            focus_bg: 179,
+            focus_fg: 235,
+            status_bg: 24,
+            status_fg: 231,
+            shadow: 236,
+            shadow_bg: 232,
+            scrim_fg: 240,
+            scrim_bg: 233,
+        }
+    } else {
+        Roles {
+            base: 255,
+            panel: 253,
+            bar: 251,
+            elev: 255,
+            modal: 254,
+            text: 238,
+            bright: 232,
+            dim: 245,
+            faint: 250,
+            title: 25,
+            hover: 252,
+            sel_bg: 74,
+            sel_fg: 232,
+            focus_bg: 222,
+            focus_fg: 234,
+            status_bg: 25,
+            status_fg: 231,
+            shadow: 250,
+            shadow_bg: 250,
+            scrim_fg: 247,
+            scrim_bg: 254,
+        }
+    }
+}
 
 fn c(v: u8) -> Color {
     Color::AnsiValue(v)
@@ -442,24 +507,27 @@ fn elevated(theme: &ThemeKey) -> bool {
     )
 }
 
-/// The foreground and background a theme paints in.
-fn style(theme: &ThemeKey) -> (Color, Color) {
+/// The foreground and background a theme paints in, in the given mode.
+fn style(theme: &ThemeKey, r: &Roles) -> (Color, Color) {
     let (fg, bg) = match theme.as_str() {
-        "app" => (TEXT, BASE_BG),
-        "menubar" | "menu.file" | "menu.go" => (BRIGHT, BAR_BG),
-        "sidebar" => (TEXT, PANEL_BG),
-        "sidebar.title" => (TITLE, PANEL_BG),
-        "grip" | "divider" => (FAINT, PANEL_BG),
-        "list.row" => (TEXT, BASE_BG),
-        "list.row.selected" => (SEL_FG, SEL_BG),
-        "field" | "button" | "toggle" | "number" => (TEXT, BAR_BG),
+        "app" => (r.text, r.base),
+        "menubar" | "menu.file" | "menu.go" => (r.bright, r.bar),
+        "sidebar" => (r.text, r.panel),
+        "sidebar.title" => (r.title, r.panel),
+        "grip" | "divider" => (r.faint, r.panel),
+        "list.row" => (r.text, r.base),
+        "list.row.hover" => (r.bright, r.hover),
+        "list.row.selected" => (r.sel_fg, r.sel_bg),
+        "field" | "button" | "toggle" | "number" => (r.text, r.bar),
+        "button.hover" | "toggle.hover" | "number.hover" => (r.bright, r.hover),
         "field.focused" | "button.focused" | "toggle.focused" | "number.focused" => {
-            (FOCUS_FG, FOCUS_BG)
+            (r.focus_fg, r.focus_bg)
         }
-        "status" => (STATUS_FG, STATUS_BG),
-        "menu" | "dropdown" | "palette" => (DIM, ELEV_BG),
-        "modal" => (BRIGHT, MODAL_BG),
-        _ => (TEXT, BASE_BG),
+        "button.disabled" => (r.faint, r.bar),
+        "status" => (r.status_fg, r.status_bg),
+        "menu" | "dropdown" | "palette" => (r.dim, r.elev),
+        "modal" => (r.bright, r.modal),
+        _ => (r.text, r.base),
     };
     (c(fg), c(bg))
 }

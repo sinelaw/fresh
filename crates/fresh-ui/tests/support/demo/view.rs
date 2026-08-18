@@ -182,19 +182,15 @@ fn task_list(app: &App) -> Node<Msg> {
 fn task_row(task: &Task, i: usize, accent: &'static str) -> Node<Msg> {
     let mark = if task.done { "[x]" } else { "[ ]" };
     let id = task.id;
-    gesture(row().children([text(format!("{accent}{mark} ")), text(task.title.clone())]))
-        .on(GestureKind::Click, Rc::new(move |_| Some(Msg::Toggle(i))))
-        .on(
-            GestureKind::SecondaryClick,
-            Rc::new(move |e: &Event| Some(Msg::OpenContext(i, e.pos))),
-        )
-        .on(
-            GestureKind::Enter,
-            Rc::new(move |_| {
-                let _ = id;
-                None
-            }),
-        )
+    // No Click handler here: the enclosing List activates a row on click and
+    // on Enter alike, and this row's list is wired with on_activate(Toggle), so
+    // a click toggles it once. The row keeps only what the List does not do —
+    // the secondary-click context menu.
+    let _ = id;
+    gesture(row().children([text(format!("{accent}{mark} ")), text(task.title.clone())])).on(
+        GestureKind::SecondaryClick,
+        Rc::new(move |e: &Event| Some(Msg::OpenContext(i, e.pos))),
+    )
 }
 
 fn preview(app: &App) -> Node<Msg> {

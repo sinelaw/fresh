@@ -15,6 +15,9 @@ use crate::Component;
 #[derive(Default)]
 pub struct FocusMirror {
     pub focused: bool,
+    /// Whether the pointer is over the widget. Mirrored from Enter/Leave, the
+    /// same way `focused` is mirrored from focus transitions.
+    pub hovered: bool,
 }
 
 pub(crate) fn mirror_focus_at<M: 'static>(cx: &BuildCx<'_, M>) -> Handler<M> {
@@ -22,6 +25,17 @@ pub(crate) fn mirror_focus_at<M: 'static>(cx: &BuildCx<'_, M>) -> Handler<M> {
     Rc::new(move |e: &Event| {
         let gained = e.kind == GestureKind::FocusGained;
         up.set(move |s: &mut FocusMirror| s.focused = gained);
+        None
+    })
+}
+
+/// A handler that mirrors the pointer entering and leaving into `hovered`.
+/// Register it on both `Enter` and `Leave`.
+pub(crate) fn mirror_hover_at<M: 'static>(cx: &BuildCx<'_, M>) -> Handler<M> {
+    let up: Updater<FocusMirror> = cx.updater();
+    Rc::new(move |e: &Event| {
+        let over = e.kind == GestureKind::Enter;
+        up.set(move |s: &mut FocusMirror| s.hovered = over);
         None
     })
 }
@@ -84,11 +98,18 @@ impl<M: 'static> Component<M> for Button<M> {
             format!("{}.disabled", self.theme)
         } else if s.focused {
             format!("{}.focused", self.theme)
+        } else if s.hovered {
+            format!("{}.hover", self.theme)
         } else {
             self.theme.to_string()
         };
         let press = self.on_press.clone().filter(|_| self.enabled);
         let mut g = gesture(text(&*self.label));
+        if self.enabled {
+            g = g
+                .on(GestureKind::Enter, mirror_hover_at(cx))
+                .on(GestureKind::Leave, mirror_hover_at(cx));
+        }
         if let Some(h) = press.clone() {
             g = g.on(GestureKind::Click, h);
         }
@@ -140,6 +161,8 @@ impl<M: 'static> Component<M> for Toggle<M> {
         let mark = if self.value { "[x] " } else { "[ ] " };
         let theme = if s.focused {
             "toggle.focused"
+        } else if s.hovered {
+            "toggle.hover"
         } else {
             "toggle"
         };
@@ -151,7 +174,9 @@ impl<M: 'static> Component<M> for Toggle<M> {
             row()
                 .theme(theme)
                 .children([text(mark), text(&*self.label)]),
-        );
+        )
+        .on(GestureKind::Enter, mirror_hover_at(cx))
+        .on(GestureKind::Leave, mirror_hover_at(cx));
         if let Some(h) = flip.clone() {
             g = g.on(GestureKind::Click, h);
         }

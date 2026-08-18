@@ -25,6 +25,10 @@ pub struct ListState {
     /// Only consulted when the owner did not supply a selection.
     pub selected: usize,
     pub focused: bool,
+    /// The row the pointer is over, if any. Mirrored from Enter/Leave the same
+    /// way `focused` is mirrored from focus transitions; `build` reads it to
+    /// tint that row.
+    pub hovered: Option<usize>,
     /// A handle to the window, so a selection move can ask it to follow. The
     /// window itself belongs to the viewport.
     pub(crate) anchor: Option<Rc<crate::behavior::Anchor>>,
@@ -195,26 +199,60 @@ impl<M: 'static> Component<M> for List<M> {
         }
 
         let source = self.source.clone();
+        let hov = s.hovered;
         // Clicking a row selects it, the same selection the keyboard drives.
         // Built here so it rides along with each visible row the reader emits.
         let click: Option<RowClick<M>> = if self.focusable {
             let up = up.clone();
             let anchor = anchor.clone();
             let on_select = self.on_select.clone();
+            let on_activate = self.on_activate.clone();
             Some(Rc::new(move |i: usize| {
                 let up = up.clone();
                 let anchor = anchor.clone();
                 let on_select = on_select.clone();
+                let on_activate = on_activate.clone();
                 let handler: crate::desc::Handler<M> = Rc::new(move |e: &Event| {
                     e.request_focus(crate::event::SelectionOnFocus::Preserve);
                     up.set(move |st: &mut ListState| st.selected = i);
                     let _ = &anchor;
-                    on_select.as_ref().map(|f| f(i))
+                    // A click both moves the selection and activates the row:
+                    // for a menu or the palette that is the whole interaction,
+                    // for a plain list it is select-and-open. A handler may
+                    // return only one message, so activation wins when both are
+                    // present and the selection is delivered through state.
+                    let selected = on_select.as_ref().map(|f| f(i));
+                    match on_activate.as_ref().and_then(|f| f(i)) {
+                        Some(m) => Some(m),
+                        None => selected,
+                    }
                 });
                 handler
             }))
         } else {
             None
+        };
+
+        // The row under the pointer tints itself. Enter and Leave are mirrored
+        // into `hovered`, which the reader below reads back — the same shape as
+        // the focus mirror, one row at a time.
+        let hover: RowClick<M> = {
+            let up = up.clone();
+            Rc::new(move |i: usize| {
+                let up = up.clone();
+                let h: crate::desc::Handler<M> = Rc::new(move |e: &Event| {
+                    let over = e.kind == GestureKind::Enter;
+                    up.set(move |st: &mut ListState| {
+                        if over {
+                            st.hovered = Some(i);
+                        } else if st.hovered == Some(i) {
+                            st.hovered = None;
+                        }
+                    });
+                    None
+                });
+                h
+            })
         };
 
         // The window comes from the viewport, which owns it. This component
@@ -228,13 +266,18 @@ impl<M: 'static> Component<M> for List<M> {
                 let (k, row) = source.at(i).expect("index inside the source");
                 let theme = if i == sel {
                     "list.row.selected"
+                } else if hov == Some(i) {
+                    "list.row.hover"
                 } else {
                     "list.row"
                 };
                 let content = row.key(k).theme(theme).h(Sizing::Cells(1));
+                let g = gesture(content)
+                    .on(GestureKind::Enter, hover(i))
+                    .on(GestureKind::Leave, hover(i));
                 match &click {
-                    Some(mk) => gesture(content).on(GestureKind::Click, mk(i)),
-                    None => content,
+                    Some(mk) => g.on(GestureKind::Click, mk(i)),
+                    None => g,
                 }
             }))
         });
