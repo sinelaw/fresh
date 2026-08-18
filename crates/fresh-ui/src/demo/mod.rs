@@ -99,6 +99,11 @@ impl Demo {
         render_with(self.ui.spec(), |theme| match theme {
             "grip" => Some('│'),
             "menubar" => Some('▁'),
+            // Selection and focus are appearances, not structure: the
+            // description says which is which and the backend decides how they
+            // read.
+            "list.row.selected" => Some('░'),
+            "button.focused" | "field.focused" | "toggle.focused" => Some('▪'),
             _ => None,
         })
     }

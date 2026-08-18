@@ -90,7 +90,10 @@ impl<M: 'static> Component<M> for Dropdown<M> {
                     dismiss.set(|st: &mut DropdownState| st.open = false);
                     None
                 }))
-                .child(col().border().child(menu)),
+                // Named, so the backend paints a background under it: without
+                // one the menu is transparent and the content behind shows
+                // through the gaps between its labels.
+                .child(col().border().theme("menu").child(menu)),
         )
     }
 

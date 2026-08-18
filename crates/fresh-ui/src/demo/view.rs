@@ -227,7 +227,9 @@ fn context_menu(app: &App) -> Node<Msg> {
         .dismiss(Dismiss::OUTSIDE_POINTER.or(Dismiss::ESCAPE))
         .on_dismiss(|_| Msg::CloseContext)
         .child(
-            col().border().theme("menu").child(
+            // A fixed width, so rows stretch across it and the selected one is
+            // a full-width region rather than exactly its own text.
+            col().border().theme("menu").w(Sizing::Cells(11)).child(
                 List::keyed(
                     &[("toggle", "Toggle"), ("delete", "Delete…")],
                     |(k, _)| Key::from(*k),

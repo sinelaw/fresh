@@ -1,0 +1,32 @@
+=== the File menu
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+┌────────┐  │new task…                              Add
+│New task│░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+│Quit    │  │»[x] build the reconciler
+└────────┘  │»[ ] lay it out
+            │»[ ] route the pointer
+            │»[ ] wire up focus
+            │
+            │
+            │
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+
+=== a click outside dismisses it
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │»[x] build the reconciler
+( ) Done    │»[ ] lay it out
+            │»[ ] route the pointer
+            │»[ ] wire up focus
+            │
+            │
+            │
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+

@@ -59,6 +59,7 @@ fn the_display_list_is_flat_ordered_and_absolute() {
         snapshot(spec),
         "\
 0,0 40x6 [app] fill
+0,0 40x1 [title] fill
 0,0 40x1 [title] text [\"title\"]
 0,1 10x5 [app] border
 1,2 8x1 [app] text [\"side\"]

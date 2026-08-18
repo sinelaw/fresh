@@ -95,22 +95,26 @@ impl<M: 'static> Ui<M> {
         };
         let start = spec.items.len();
 
+        // A region that names its own appearance is a region that paints: the
+        // backend decides what the name looks like. Emitted before the node's
+        // own content, so text drawn inside it wins.
+        if node_theme.is_some() && !rect.is_empty() {
+            spec.items.push(Item {
+                key: key.clone(),
+                id,
+                rect,
+                clip,
+                theme: theme.clone(),
+                draw: Draw::Fill,
+            });
+        }
+
         match ty {
             ElemType::Box => {
                 let props = match &resolve(&self.arena[id].desc).desc {
                     Desc::Box(p) => p.clone(),
                     _ => unreachable!(),
                 };
-                if node_theme.is_some() {
-                    spec.items.push(Item {
-                        key: key.clone(),
-                        id,
-                        rect,
-                        clip,
-                        theme: theme.clone(),
-                        draw: Draw::Fill,
-                    });
-                }
                 if props.border {
                     spec.items.push(Item {
                         key: key.clone(),

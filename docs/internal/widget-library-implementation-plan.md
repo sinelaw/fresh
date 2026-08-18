@@ -1,8 +1,9 @@
 # Widget Library — Implementation Plan
 
 > _AI-generated plan. **Part 1 has started; Part 2 is PLANNED.** Phases L0
-> through L7 are implemented in `crates/fresh-ui` — all of Part 1 except the
-> demo binary. Part 2 (the migration) is still design._
+> **Part 1 is complete** in `crates/fresh-ui`: L0 through L7, the demo
+> application, and its golden and property tests. Part 2 (the migration) is
+> still design._
 >
 > How to build [`widget-library-design.md`](widget-library-design.md) as a new
 > crate, and how to move every existing UI surface onto it. Two parts, in
@@ -99,10 +100,36 @@ Each phase ends with tests that fix its semantics. The order is constrained:
 L1 and L2 define the framework's semantics and every later phase depends on
 them.
 
-**Status.** L0 through L7 are implemented and their exit criteria are covered
-by tests in `crates/fresh-ui/tests/`. The crate's only dependency is
-`unicode-width`; it pulls in no other workspace crate, so `cargo test -p
-fresh-ui` builds the library and nothing else.
+**Status.** Part 1 is complete. L0 through L7 are implemented, their exit
+criteria are covered by tests in `crates/fresh-ui/tests/`, and a demo
+application in `crates/fresh-ui/src/demo/` exercises every capability the
+library has. The crate's only dependency is `unicode-width` (`proptest` is a
+dev-dependency, for the property tests); it pulls in no other workspace crate,
+so `cargo test -p fresh-ui` builds the library and nothing else.
+
+The tests come in three kinds, and they catch different things:
+
+- **Exit-criteria tests**, one per phase, fixing the semantics that phase
+  defines.
+- **Golden functional tests** (`tests/golden.rs`), which drive the demo through
+  a scripted session and compare each frame character for character against a
+  recorded screen in `tests/golden/`. Re-record with `UPDATE_GOLDEN=1`. These
+  are what catch a change that is locally correct everywhere and wrong when
+  assembled, and a diff shows the interface moving rather than a list of
+  rectangles changing.
+- **Property tests** (`tests/properties.rs`), which state what must hold of
+  every session rather than one: the flex division conserves its total and is a
+  function of its inputs; children never overlap and never leave their parent;
+  layout is reproducible; a key permutation preserves the element set; nothing
+  paints outside the frame; the display list stays bounded by the frame rather
+  than by the data; focus never points at a disposed element; and a long
+  session accumulates no elements.
+
+Three defects were found this way that the exit-criteria tests did not reach: a
+`LayoutReader`'s children were disposed and remounted every frame, autofocus
+never fired when a modal opened over an already-focused field, and a flow
+container could place a child outside its own content box when the gaps alone
+exceeded the available space.
 
 ### Deviations from the design document
 
@@ -331,7 +358,9 @@ create/update counts.
 
 **Part 1 is done when** `fresh-ui` builds and tests standalone, and a demo
 binary drives a small app (a list, a form, a menu, a modal) through the fake
-renderer with no Fresh code involved.
+renderer with no Fresh code involved. **Done:** `src/demo/` is the application,
+`examples/demo.rs` is the binary, and `src/test/screen.rs` is the reference
+backend that turns a display list into characters.
 
 ---
 

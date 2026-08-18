@@ -126,6 +126,11 @@ impl Sched {
     pub(crate) fn mark(&mut self, id: ElementId) {
         self.dirty.insert(id);
     }
+
+    /// Whether a flush would do anything.
+    pub(crate) fn has_pending(&self) -> bool {
+        !self.dirty.is_empty() || !self.mutations.is_empty()
+    }
 }
 
 /// A capturable handle that mutates one element's state.
@@ -433,7 +438,7 @@ impl<M: 'static> Ui<M> {
     pub fn frame(&mut self, root: Node<M>, size: Size) -> &LayoutSpec {
         self.run_flush(Some(root));
         self.flush_layout(size);
-        self.apply_autofocus();
+        self.settle(size);
         self.flush_paint(size);
         &self.spec
     }
@@ -444,7 +449,7 @@ impl<M: 'static> Ui<M> {
         let size = self.frame_size;
         self.run_flush(None);
         self.flush_layout(size);
-        self.apply_autofocus();
+        self.settle(size);
         self.flush_paint(size);
         &self.spec
     }
@@ -619,6 +624,20 @@ impl<M: 'static> Ui<M> {
 
         // 4. Deferred disposal, children before parents.
         self.process_disposals();
+    }
+
+    /// Settle focus, and rebuild once more if doing so changed anything.
+    ///
+    /// Autofocus happens after layout, because which scope is active depends on
+    /// which layers resolved. A widget that mirrors focus reacts by marking
+    /// itself, so without this second pass a focus ring would appear one frame
+    /// late.
+    fn settle(&mut self, size: Size) {
+        self.apply_autofocus();
+        if self.sched.borrow().has_pending() {
+            self.run_flush(None);
+            self.flush_layout(size);
+        }
     }
 
     /// Run one reconcile transaction. On a panic the tree is rolled back to the

@@ -466,12 +466,17 @@ impl<M: 'static> Ui<M> {
             Dir::Col => (ins_y, ins_x),
         };
         let inner_cross = cross_of(dir, own).saturating_sub(2 * ins_cross);
+        // The far edge of the content box. Children are never placed past it:
+        // when the gaps alone exceed the space, the run would otherwise walk
+        // out of its own parent and paint over whatever is beside it.
+        let limit = ins_main as i32 + main_of(dir, own).saturating_sub(2 * ins_main) as i32;
         let mut pos = ins_main as i32;
         for i in 0..n {
             let off = align_offset(props.align, inner_cross, crosses[i]);
+            let at = pos.min(limit - mains[i] as i32).max(ins_main as i32);
             self.arena.get_mut(kids[i]).expect("live").layout.offset =
-                point_of(dir, pos, ins_cross as i32 + off);
-            pos += mains[i] as i32 + props.gap as i32;
+                point_of(dir, at, ins_cross as i32 + off);
+            pos = at + mains[i] as i32 + props.gap as i32;
         }
         own
     }
@@ -617,8 +622,14 @@ impl<M: 'static> Ui<M> {
     fn layout_layer_content(&mut self, lid: ElementId, c: Constraints) -> Size {
         let kids = self.flow_children(lid);
         let mut size = Size::ZERO;
+        let w_definite = c.min_w == c.max_w;
+        let h_definite = c.min_h == c.max_h;
         for k in kids {
-            let s = self.layout_node(k, c);
+            // A layer's child sizes itself the same way it would anywhere else.
+            let (sw, sh) = self.sizing_of(k);
+            let wc = cross_range(sw, c.max_w, w_definite, Align::Stretch);
+            let hc = cross_range(sh, c.max_h, h_definite, Align::Stretch);
+            let s = self.layout_node(k, Constraints::new(wc.0, wc.1, hc.0, hc.1));
             self.arena.get_mut(k).expect("live").layout.offset = Point::ZERO;
             size = Size::new(size.w.max(s.w), size.h.max(s.h));
         }
