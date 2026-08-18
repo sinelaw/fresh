@@ -13,13 +13,14 @@
 **Part 1** builds `fresh-ui` as a self-contained crate with no knowledge of
 Fresh. It is testable and shippable on its own, against a fake renderer.
 
-**Part 2** migrates surfaces one at a time. Each wave swaps one surface onto
-the library and **deletes its old implementation in the same change** —
-keeping both alive is the drift trap this whole arc exists to remove.
+**Part 2** migrates surfaces one at a time. Each wave moves one surface onto
+the library and **deletes its previous implementation in the same change.**
+Retaining both implementations produces two code paths for the same surface,
+which is the condition this work is intended to remove.
 
 ### What is in scope
 
-Current line counts, as the honest scale of Part 2:
+Current line counts, as the scale of Part 2:
 
 | Area | Lines | Wave |
 |---|---:|---|
@@ -34,9 +35,9 @@ Current line counts, as the honest scale of Part 2:
 
 ### What never migrates
 
-Buffer text rendering (token IR → `ViewLine`, highlighting, folding,
-wrapping) and terminal grids stay exactly as they are, reached through
-`Host` leaves. They are the reason `Host` exists.
+Buffer text rendering (token IR → `ViewLine`, highlighting, folding, wrapping)
+and terminal grids are unchanged, reached through `Host` leaves. These are the
+cases `Host` exists for.
 
 ---
 
@@ -71,8 +72,8 @@ crates/fresh-ui/
       harness.rs    drive events, assert on LayoutSpec
 ```
 
-**Dependencies: as close to none as possible.** `unicode-width` for cell
-measurement, `bitflags`, and nothing else. Specifically **not**:
+**Dependencies are restricted to** `unicode-width` for cell measurement and
+`bitflags`. Specifically excluded:
 
 - **not `ratatui`** — the library emits a display list; the TUI backend that
   turns `Item`s into cells lives in `fresh-editor`;
@@ -84,16 +85,16 @@ measurement, `bitflags`, and nothing else. Specifically **not**:
 `HostLeaf` for buffer splits and terminal grids.
 
 Added to `[workspace] members` and `default-members`. `cargo test -p fresh-ui`
-must pass with the rest of the workspace absent from the build graph — that is
-the check that the isolation is real.
+must pass with the rest of the workspace absent from the build graph; this is
+the check that the crate is in fact independent.
 
 ---
 
 ## 3. Part 1 — build the library
 
-Each phase ends with tests that pin its semantics. The order is not
-negotiable: L1 and L2 define the framework's meaning and everything later is
-downstream of them.
+Each phase ends with tests that fix its semantics. The order is constrained:
+L1 and L2 define the framework's semantics and every later phase depends on
+them.
 
 ### L0 — Skeleton
 Crate, CI wiring, `Key`, `Node<M>`, `Desc<M>` with props structs, no behavior.
@@ -104,7 +105,7 @@ asserted against as a plain data structure.
 ### L1 — Reconciler, against a fake renderer
 The element tree, mount/update/unmount, `(type, key)` matching at a position.
 The fake renderer records `create` / `update` / `dispose` calls.
-**Exit — the matrix that matters:**
+**Exit — required cases:**
 - unkeyed children reorder → updates in place, positionally;
 - keyed children reorder → same elements, no dispose;
 - key changed → dispose + create (state gone);
@@ -112,19 +113,19 @@ The fake renderer records `create` / `update` / `dispose` calls.
 - child removed from the middle → exactly one dispose;
 - nested subtree remount disposes depth-first, once each.
 
-Two capabilities land here rather than later, because retrofitting either one
-means revisiting every mutation site in the reconciler:
+Two capabilities are implemented here rather than later, because adding either
+afterwards requires revisiting every mutation site in the reconciler:
 
 - **the identity short-circuit** — a matched child whose new description is the
-  same instance is skipped wholesale, with `Desc::Shared` as the author's way
-  to hand one back;
+  same instance is skipped, with `Desc::Shared` as the mechanism for returning
+  the same instance;
 - **transactional subtree reconcile** — tree mutations for a subtree are
   buffered or unwound, so a failure part-way through leaves the last committed
   content intact. Three separate rules depend on this single capability: the
   error policy, deferred disposal, and unwinding a failed constructor.
 
-**Do not proceed until this is right.** A mistake here is a rewrite of
-everything after it.
+This phase is a prerequisite for all later ones: an error here propagates to
+every component built on the reconciler.
 
 ### L2 — Scheduler
 `set_state`, the dirty set, depth-ordered flush, disposal skip, the
@@ -146,28 +147,28 @@ before its parent's, when the subtree unmounts.
 `Ambient<T>`, `Provide`, `cx.read` with explicit dependent lists and
 dirty-on-change.
 **Exit:** a dependent rebuilds when its provider's value changes and not
-otherwise; a value read in a *constructor* and cached in a field is caught by a
-debug assert (the snapshot rule), since that is the one way this primitive
-silently goes stale.
-**Why here:** without ambients, theme and locale are prop-drilled into every
-signature — and signatures are the most painful thing to change late.
+otherwise; a value read in a constructor and cached in a field is reported by a
+debug assert (the snapshot rule in the design doc), which is the case where
+this primitive otherwise produces stale output without an error.
+**Why here:** without ambients, theme and locale appear in every intermediate
+component signature, and signatures are costly to change once components
+exist.
 
 ### L2c — Diagnostics
 Element dump (type, key, state), rebuild counters, last-dirty cause — which
 `set_state` site, which ambient, or "parent".
 **Exit:** a failing reconciler test can be diagnosed from the dump alone.
-**Why here:** devtools retrofitted onto a reconciler are far harder than
-devtools designed in, and this is the inspectability the three-tree split was
-sold on. Moving it late is the kind of decision only ever validated the
-expensive way.
+**Why here:** adding introspection to a reconciler after the fact requires
+changes at every mutation site, and this is the inspectability the retained
+tree is intended to provide.
 
 ### L3 — Layout
 Box constraints in integer cells; `Sizing::{Cells, Flex, Pct, Auto}`;
 `measure`/`arrange`; relayout boundaries; `Viewport` scroll windows.
-**Prerequisite:** the constraint model is settled *on paper* first, with the
-awkward cases written out — a list with `Auto` height inside a flex column
-inside a modal; a row whose children all want `Flex` in zero space; text that
-must wrap to a width that depends on a sibling.
+**Prerequisite:** the constraint model is specified before implementation,
+including these cases — a list with `Auto` height inside a flex column inside a
+modal; a row whose children all request `Flex` in zero available space; text
+that must wrap to a width determined by a sibling.
 **Exit:** layout golden tests for those cases; a dirty text node inside a
 fixed-size box relayouts that box and nothing above it; geometry access inside
 `build()` trips a debug assert, and `LayoutReader` gets its constraints as an
@@ -195,8 +196,9 @@ frames, never during build, layout or paint.
 ### L6 — Focus
 Focus tree, scopes, `TraversalPolicy` (reading order, ordinal, directional),
 key routing along the focus chain, Shortcuts → Intents → Actions.
-**Exit:** **focus survives reconciliation** — rebuild the tree, assert focus
-unchanged. Also: a modal scope traps traversal; the same `Intent` resolves to
+**Exit:** focus is preserved across reconciliation — rebuild the tree, assert
+focus unchanged. Also: a modal scope confines traversal; the same `Intent`
+resolves to
 different actions at two focus positions.
 
 ### L7 — The widget set
@@ -231,8 +233,8 @@ takes a click inside the real editor, with everything else untouched.
 
 ### Waves
 
-Ordered by rising risk. Each wave: build the surface, swap it, delete the old
-implementation, keep cells identical.
+Ordered by increasing risk. Each wave: build the surface, switch to it, delete
+the previous implementation, with cell output unchanged.
 
 | Wave | Surface | First exercises |
 |---|---|---|
@@ -243,17 +245,18 @@ implementation, keep cells identical.
 | **M5** | File browser, prompt / command palette | `FocusScope`, text input, results list, preview |
 | **M6** | Plugin panels: dock + floating | `WidgetSpec` → `Node` translation, element state replacing `WidgetInstanceState`, **plugin API change** |
 | **M7** | Modals: workspace trust, keybinding editor, calibration wizard | `Modality::Exclusive` |
-| **M8** | Settings | The largest interior; already half-migrated to `WidgetSpec` at the view layer |
-| **M9** | Frame layout: splits, tabs, scrollbars, dock column, explorer pane | The frame itself; everything else nests inside it |
+| **M8** | Settings | The largest interior; partially migrated to `WidgetSpec` at the view layer already |
+| **M9** | Frame layout: splits, tabs, scrollbars, dock column, explorer pane | The frame itself; all other surfaces nest inside it |
 
-**M2 is the go/no-go.** It is the first wave that uses layers, modality,
-dismissal and focus together. If the seam and the model hold there, the rest
-is repetition; if they do not, stop and fix the library before wave three.
+**M2 is the first decision point.** It is the first wave using layers,
+modality, dismissal and focus together. If the seam and the model hold there,
+the later waves apply the same mechanisms; if they do not, the library is
+corrected before wave three rather than after eight surfaces depend on it.
 
-**M9 last, deliberately.** Until it lands, `fresh-ui` surfaces are mounted
-*into* the existing frame layout. M9 inverts that: the frame becomes a
-`fresh-ui` tree with `Host` leaves for buffers and terminals, and the old
-chrome layout code goes.
+**M9 is last by construction.** Until it lands, `fresh-ui` surfaces are mounted
+into the existing frame layout. M9 inverts that relationship: the frame becomes
+a `fresh-ui` tree with `Host` leaves for buffers and terminals, and the previous
+chrome layout code is removed.
 
 ### Plugin API change (M6)
 
@@ -263,8 +266,8 @@ every plugin using `List`/`Tree` without keys.
 - Ship the new builders one release ahead, with the old ones deprecated and
   warning at load.
 - Element state means a plugin that re-sends its spec no longer loses list
-  scroll or tree expansion — worth calling out in the changelog, because it
-  changes behavior plugins may have worked around.
+  scroll or tree expansion. This is a behavior change that some plugins may
+  have compensated for, and belongs in the changelog.
 
 ---
 
@@ -307,15 +310,15 @@ The classification for the real fields:
 today, so a wave mostly *deletes* fields and adds none. App state that stays
 does not move — the component just receives it as a prop.
 
-**Serialization is the tripwire.** Persisted view state must be app state,
-because elements are disposed on unmount and do not survive a restart. So:
+**Serialization is the check.** Persisted view state must be app state, since
+elements are disposed on unmount and do not survive a restart. Therefore:
 
 > If a wave changes `workspace.rs` serialization, something was misclassified.
 
 **On `Persisted`.** The library ships a `Persisted<T>` behavior that rehydrates
 from a host store at construction and checkpoints at teardown. It is for **new
 incidental state only** — a panel's last scroll position, a disclosure state
-nothing else reads. It is deliberately *not* how Fresh's existing persisted
+nothing else reads. It is **not** the mechanism for Fresh's existing persisted
 view state works, because that state is not a key-value bucket: per-split
 scroll, `tab_scroll_offset` and `expanded_dirs` live in a typed, versioned
 serde structure that the daemon, workspace restore and orchestrator persistence
@@ -332,30 +335,32 @@ classification into the wave's PR description before writing code.
 
 ## 6. Verification
 
-The 312 e2e files are the safety net that makes a migration of this size
-feasible. The strategy is to lean on them, not rewrite them.
+The 312 e2e files are the primary verification mechanism for a migration of
+this size. They are used as-is rather than rewritten.
 
-1. **Cells stay byte-identical.** Every wave's acceptance criterion is that
-   rendered output does not change. Use the existing snapshot/visual-testing
-   harness; a diff is either a bug or a deliberate, reviewed change.
-2. **New tests assert on `LayoutSpec`**, by key — structure and geometry, not
-   scraped cells. Do not rewrite old assertions to match; add these alongside.
-3. **`scene_parity.rs` stays green** through every wave — it is the check that
-   the web projection did not silently drift.
-4. **Keep the standing parity oracles** (event-time geometry vs paint walk,
-   focus ring) running until the surface they cover is migrated, then delete
-   them with it.
-5. **Per-wave routing tests**: the golden precedence tests that exist today
-   (clicks not reaching the buffer through a popup, modality, focus order)
-   must pass unchanged against the new implementation.
+1. **Cell output stays byte-identical.** Each wave's acceptance criterion is
+   that rendered output does not change, checked with the existing
+   snapshot/visual-testing harness. A diff is either a defect or an intended
+   change that has been reviewed as such.
+2. **New tests assert on `LayoutSpec`** by key — structure and geometry rather
+   than cell contents. Existing assertions are not rewritten; these are added
+   alongside them.
+3. **`scene_parity.rs` passes** through every wave. It is the check that the web
+   projection has not diverged.
+4. **The standing parity oracles** (event-time geometry vs paint walk, focus
+   ring) remain enabled until the surface they cover is migrated, then are
+   removed with it.
+5. **Per-wave routing tests.** The existing precedence tests — clicks not
+   reaching the buffer through a popup, modality, focus order — must pass
+   unchanged against the new implementation.
 
 ---
 
 ## 7. Deletion ledger
 
-A wave is not done when the new surface works — it is done when the old one is
-gone. Each wave names what it deletes, and the PR is not complete until that
-list is empty of survivors.
+A wave is complete when the previous implementation has been removed, not when
+the new surface works. Each wave names what it deletes; the change is not
+complete while any listed item remains.
 
 | Wave | Deletes |
 |---|---|
@@ -374,22 +379,23 @@ When M9 lands, `app/chrome/` and the `LayoutBox` arena no longer exist.
 
 ## 8. Risks and stop points
 
-1. **L1/L2 are load-bearing.** Everything downstream assumes their semantics.
-   Budget for getting them wrong once and redoing them before L3.
-2. **The constraint model** (L3) is the least reversible decision. Settle it on
-   paper, with the awkward cases, before writing layout code.
-3. **Cell-identical output is a hard constraint, and it will hurt.** Reproducing
-   existing spacing quirks exactly is unglamorous work, and the temptation to
-   "fix" them mid-migration is what turns a refactor into a regression hunt.
-   Fix them in separate, reviewed changes afterwards.
+1. **L1 and L2 fix the framework's semantics.** All later phases depend on
+   them. Budget for one revision of both before L3.
+2. **The constraint model** (L3) has the highest cost to change later. Specify
+   it, including the cases listed there, before writing layout code.
+3. **Cell-identical output is a hard constraint.** Reproducing existing spacing
+   behavior exactly, including cases that look incorrect, is a substantial part
+   of each wave. Changing them during a migration makes it impossible to
+   distinguish a regression from an intended change; make those changes
+   separately, after the wave.
 4. **M6 changes plugin-visible behavior** (state survival) and breaks the API
    (required keys). It needs a release cycle of its own.
 5. **M8 (Settings) is optional.** It is the largest interior and the least
-   coupled to dispatch. Stopping after M7 with Settings on the old path
-   indefinitely is a legitimate end state.
-6. **Two implementations must never coexist for long.** If a wave cannot delete
-   its predecessor, that is a signal the seam is wrong — stop and fix it rather
-   than accumulating a second UI stack.
+   coupled to dispatch. Stopping after M7, with Settings remaining on the
+   previous implementation, is a supported end state.
+6. **Two implementations of one surface must not persist across waves.** A wave
+   that cannot delete its predecessor indicates a defect in the seam; correct
+   the seam rather than accumulating a second UI stack.
 
 ## 9. Sequencing summary
 
@@ -405,6 +411,6 @@ M0 seam -> M1 status bar -> M2 context menus [GO/NO-GO] -> M3 menus -> M4 popups
         -> M5 prompt -> M6 plugin panels -> M7 modals -> M8 settings -> M9 frame
 ```
 
-Part 1 is a self-contained project with its own test suite and no risk to the
-editor. Part 2 is a sequence of small, reversible swaps, each provable by
-unchanged pixels and a shrinking deletion ledger.
+Part 1 is self-contained: its own crate, its own test suite, no effect on the
+editor. Part 2 is a sequence of individually reversible changes, each verified
+by unchanged cell output and by the deletion ledger.
