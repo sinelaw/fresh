@@ -21,6 +21,10 @@
 /// registry and the state field that holds them; a behavior with mutable
 /// internals owns a `RefCell`, which it needs regardless — `build` only ever
 /// sees `&State`.
+pub mod tasks;
+
+pub use tasks::{TaskHandle, Tasks};
+
 pub trait Behavior {
     /// Called once, when the owning element is disposed.
     fn teardown(&self) {}
@@ -28,5 +32,11 @@ pub trait Behavior {
     /// For the element dump.
     fn behavior_name(&self) -> &'static str {
         "Behavior"
+    }
+
+    /// Hand over anything that arrived from elsewhere. Called between frames,
+    /// never during build, layout or paint. Behaviors with no inbox do nothing.
+    fn pump(&self) -> usize {
+        0
     }
 }

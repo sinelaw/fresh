@@ -15,7 +15,9 @@ use std::rc::Rc;
 
 use crate::desc::{resolve, Desc, ElemType, Modality, PointerMode};
 use crate::element::ElementId;
-use crate::event::{Button, Ctl, Event, Flow, GestureKind, Input, KeyPress, Mods, Phase};
+use crate::event::{
+    Ctl, Event, Flow, GestureKind, Input, KeyPress, Mods, MouseButton, Phase, SelectionOnFocus,
+};
 use crate::render::geom::Point;
 use crate::schedule::Ui;
 
@@ -33,7 +35,7 @@ impl<M: 'static> Ui<M> {
                     &path,
                     GestureKind::Move,
                     pos,
-                    Button::Left,
+                    MouseButton::Left,
                     mods,
                     0,
                     None,
@@ -71,7 +73,7 @@ impl<M: 'static> Ui<M> {
                 if let Some((pressed, b)) = self.press.take() {
                     if b == button && path.contains(&pressed) {
                         let kind = match button {
-                            Button::Right => GestureKind::SecondaryClick,
+                            MouseButton::Right => GestureKind::SecondaryClick,
                             _ => GestureKind::Click,
                         };
                         let click_path = self.path_to(pressed);
@@ -86,7 +88,7 @@ impl<M: 'static> Ui<M> {
                     &path,
                     GestureKind::Wheel,
                     pos,
-                    Button::Left,
+                    MouseButton::Left,
                     mods,
                     delta,
                     None,
@@ -247,7 +249,7 @@ impl<M: 'static> Ui<M> {
         path: &[ElementId],
         kind: GestureKind,
         pos: Point,
-        button: Button,
+        button: MouseButton,
         mods: Mods,
         delta: i32,
         key: Option<KeyPress>,
@@ -278,6 +280,7 @@ impl<M: 'static> Ui<M> {
                     mods,
                     delta,
                     key,
+                    selection: SelectionOnFocus::None,
                     target: self.retarget(target, n),
                     current: n,
                     phase: if n == target {
@@ -374,10 +377,11 @@ impl<M: 'static> Ui<M> {
             kind,
             pos,
             local: Point::new(pos.x - rect.x, pos.y - rect.y),
-            button: Button::Left,
+            button: MouseButton::Left,
             mods,
             delta: 0,
             key: None,
+            selection: SelectionOnFocus::None,
             target: n,
             current: n,
             phase: Phase::Target,
@@ -443,10 +447,11 @@ impl<M: 'static> Ui<M> {
                     kind: GestureKind::Press,
                     pos,
                     local: pos,
-                    button: Button::Left,
+                    button: MouseButton::Left,
                     mods: Mods::NONE,
                     delta: 0,
                     key: None,
+                    selection: SelectionOnFocus::None,
                     target: lid,
                     current: lid,
                     phase: Phase::Target,
@@ -483,10 +488,11 @@ impl<M: 'static> Ui<M> {
                     kind: GestureKind::Key,
                     pos: Point::ZERO,
                     local: Point::ZERO,
-                    button: Button::Left,
+                    button: MouseButton::Left,
                     mods: k.mods,
                     delta: 0,
                     key: Some(k),
+                    selection: SelectionOnFocus::None,
                     target: lid,
                     current: lid,
                     phase: Phase::Target,

@@ -406,14 +406,14 @@ fn a_dismissible_layer_closes_on_a_click_outside_it() {
     // Inside the menu: nothing.
     let inside = ui.dispatch(Input::Press {
         pos: fresh_ui::Point::new(11, 5),
-        button: fresh_ui::Button::Left,
+        button: fresh_ui::MouseButton::Left,
         mods: Mods::NONE,
     });
     assert!(inside.is_empty());
 
     let outside = ui.dispatch(Input::Press {
         pos: fresh_ui::Point::new(1, 1),
-        button: fresh_ui::Button::Left,
+        button: fresh_ui::MouseButton::Left,
         mods: Mods::NONE,
     });
     assert_eq!(outside, vec![Msg::ClosePrompt]);
@@ -438,12 +438,12 @@ fn clicking_a_focusable_can_move_focus_to_it() {
     let pos = fresh_ui::Point::new(1, 1);
     ui.dispatch(Input::Press {
         pos,
-        button: fresh_ui::Button::Left,
+        button: fresh_ui::MouseButton::Left,
         mods: Mods::NONE,
     });
     ui.dispatch(Input::Release {
         pos,
-        button: fresh_ui::Button::Left,
+        button: fresh_ui::MouseButton::Left,
         mods: Mods::NONE,
     });
 

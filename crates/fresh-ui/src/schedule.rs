@@ -374,7 +374,7 @@ pub struct Ui<M> {
     /// Pointer state.
     pub(crate) hover: Vec<ElementId>,
     pub(crate) captured: Option<ElementId>,
-    pub(crate) press: Option<(ElementId, crate::event::Button)>,
+    pub(crate) press: Option<(ElementId, crate::event::MouseButton)>,
 
     /// Focus state. Neither the application nor the component declares it.
     pub(crate) focus: Option<ElementId>,
@@ -383,6 +383,9 @@ pub struct Ui<M> {
     pub(crate) shortcuts: Vec<crate::focus::Shortcut>,
     /// Messages produced outside a dispatch call, delivered with the next one.
     pub(crate) pending_messages: Vec<M>,
+    /// Elements that registered behaviors, so the scheduler can pump them
+    /// without walking the tree.
+    pub(crate) behaviour_hosts: Vec<ElementId>,
 }
 
 impl<M: 'static> Default for Ui<M> {
@@ -418,6 +421,7 @@ impl<M: 'static> Ui<M> {
             traversal: Box::new(crate::focus::ReadingOrder),
             shortcuts: crate::focus::default_shortcuts(),
             pending_messages: Vec::new(),
+            behaviour_hosts: Vec::new(),
         }
     }
 
@@ -540,6 +544,10 @@ impl<M: 'static> Ui<M> {
     fn run_flush(&mut self, root: Option<Node<M>>) {
         self.sched.borrow().guard_not_building("flush");
 
+        // 0. Hand over anything that arrived from elsewhere since the last
+        //    frame. Between frames, never during build, layout or paint.
+        self.pump_behaviors();
+
         // 1. Apply queued state mutations, then mark their elements for build.
         //    A mutation aimed at an element that has since been disposed is
         //    dropped: the mark is silently lost, which is what makes deferred
@@ -625,6 +633,30 @@ impl<M: 'static> Ui<M> {
                 std::panic::resume_unwind(payload)
             }
         }
+    }
+
+    /// Give every registered behavior a chance to deliver what it received
+    /// from outside the UI thread. A behavior that delivers something marks its
+    /// element, so the rebuild happens in this same flush.
+    fn pump_behaviors(&mut self) {
+        let ids: Vec<ElementId> = self.behaviour_hosts.clone();
+        for id in ids {
+            let Some(el) = self.arena.get(id) else {
+                continue;
+            };
+            if el.disposed {
+                continue;
+            }
+            let behaviors = el.behaviors.clone();
+            for b in behaviors {
+                b.pump();
+            }
+        }
+        self.behaviour_hosts.retain(|id| {
+            self.arena
+                .get(*id)
+                .is_some_and(|e| !e.disposed && !e.behaviors.is_empty())
+        });
     }
 
     fn set_needs_build_untracked(&mut self, id: ElementId, v: bool) {

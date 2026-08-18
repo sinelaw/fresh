@@ -869,6 +869,22 @@ impl<M> Node<M> {
         self
     }
 
+    /// As `action`, for a handler that may decline to produce a message.
+    pub fn action_handler(mut self, intent: crate::focus::Intent, h: Handler<M>) -> Self {
+        self.focus_props().actions.push((intent, h));
+        self
+    }
+
+    pub fn on_key_handler(mut self, h: Handler<M>) -> Self {
+        self.focus_props().on_key.push(h);
+        self
+    }
+
+    pub fn on_focus_handler(mut self, h: Handler<M>) -> Self {
+        self.focus_props().on_focus_change = Some(h);
+        self
+    }
+
     fn layer_props(&mut self) -> &mut LayerProps<M> {
         match &mut self.desc {
             Desc::Layer(p) => p,
@@ -908,6 +924,12 @@ impl<M> Node<M> {
 
     pub fn on_dismiss(mut self, f: impl Fn(&Event) -> M + 'static) -> Self {
         self.layer_props().on_dismiss = Some(Rc::new(move |e| Some(f(e))));
+        self
+    }
+
+    /// As `on_dismiss`, for a handler that may decline to produce a message.
+    pub fn on_dismiss_handler(mut self, h: Handler<M>) -> Self {
+        self.layer_props().on_dismiss = Some(h);
         self
     }
 }

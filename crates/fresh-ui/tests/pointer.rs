@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, gesture, stack, text, viewport, BuildCx, Button, Component, ComponentExt, Event,
-    GestureKind, Input, Mods, Node, Point, PointerMode, Size, Sizing, Ui,
+    col, gesture, stack, text, viewport, BuildCx, Component, ComponentExt, Event, GestureKind,
+    Input, Mods, MouseButton, Node, Point, PointerMode, Size, Sizing, Ui,
 };
 
 const FRAME: Size = Size { w: 20, h: 10 };
@@ -35,12 +35,12 @@ fn click(ui: &mut Ui<()>, x: i32, y: i32) -> Vec<()> {
     let pos = Point::new(x, y);
     let mut out = ui.dispatch(Input::Press {
         pos,
-        button: Button::Left,
+        button: MouseButton::Left,
         mods: Mods::NONE,
     });
     out.extend(ui.dispatch(Input::Release {
         pos,
-        button: Button::Left,
+        button: MouseButton::Left,
         mods: Mods::NONE,
     }));
     out
@@ -199,7 +199,7 @@ fn capture_survives_the_pointer_leaving_the_rectangle() {
 
     ui.dispatch(Input::Press {
         pos: Point::new(1, 0),
-        button: Button::Left,
+        button: MouseButton::Left,
         mods: Mods::NONE,
     });
     assert!(ui.captured().is_some());
@@ -213,7 +213,7 @@ fn capture_survives_the_pointer_leaving_the_rectangle() {
 
     ui.dispatch(Input::Release {
         pos: Point::new(5, 6),
-        button: Button::Left,
+        button: MouseButton::Left,
         mods: Mods::NONE,
     });
     assert!(ui.captured().is_none(), "release ends the drag");

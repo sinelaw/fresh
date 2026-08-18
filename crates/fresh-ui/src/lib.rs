@@ -35,6 +35,7 @@ pub mod key;
 pub mod render;
 pub mod schedule;
 pub mod test;
+pub mod widgets;
 
 pub use ambient::{provide, Ambient, AmbientKey, ProvideProps};
 pub use behavior::Behavior;
@@ -47,7 +48,7 @@ pub use desc::{
 };
 pub use element::ElementId;
 pub use event::{
-    Button, Event, Flow, GestureKind, Input, KeyCode, KeyPress, Mods, Phase, SelectionOnFocus,
+    Event, Flow, GestureKind, Input, KeyCode, KeyPress, Mods, MouseButton, Phase, SelectionOnFocus,
 };
 pub use focus::{
     default_shortcuts, Directional, FocusDir, FocusEntry, FocusScope, Intent, ReadingOrder,
@@ -57,3 +58,4 @@ pub use key::{Key, KeyPath};
 pub use render::geom::{distribute, Constraints, Point, Rect, Size};
 pub use render::spec::{CursorSpec, Draw, Item, LayoutSpec, ThemeKey};
 pub use schedule::{BuildCx, DirtyCause, InitCx, NullRenderer, Renderer, Sched, Ui, Updater};
+pub use widgets::{Button, Dropdown, List, Number, RadioGroup, TextField, Toggle, Tree, TreeNode};

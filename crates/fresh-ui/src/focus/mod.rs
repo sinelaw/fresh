@@ -21,7 +21,7 @@ use std::rc::Rc;
 use crate::desc::{resolve, Desc, ElemType, Modality};
 use crate::element::ElementId;
 use crate::event::{
-    Button, Ctl, Event, Flow, GestureKind, KeyPress, Mods, Phase, SelectionOnFocus,
+    Ctl, Event, Flow, GestureKind, KeyPress, Mods, MouseButton, Phase, SelectionOnFocus,
 };
 use crate::render::geom::Point;
 use crate::schedule::{DirtyCause, Ui};
@@ -95,7 +95,7 @@ impl<M: 'static> Ui<M> {
             None => None,
         };
         let Some(h) = handler else { return };
-        let ev = self.synth_event(
+        let mut ev = self.synth_event(
             id,
             if gained {
                 GestureKind::FocusGained
@@ -105,6 +105,7 @@ impl<M: 'static> Ui<M> {
             None,
             Rc::new(Ctl::default()),
         );
+        ev.selection = self.focus_selection;
         if let Some(m) = h(&ev) {
             out.push(m);
         }
@@ -121,10 +122,11 @@ impl<M: 'static> Ui<M> {
             kind,
             pos: Point::ZERO,
             local: Point::ZERO,
-            button: Button::Left,
+            button: MouseButton::Left,
             mods: key.map(|k| k.mods).unwrap_or(Mods::NONE),
             delta: 0,
             key,
+            selection: SelectionOnFocus::None,
             target: id,
             current: id,
             phase: Phase::Target,

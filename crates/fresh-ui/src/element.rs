@@ -387,11 +387,15 @@ impl<M: 'static> Ui<M> {
                     prov.init_dependents.push(id);
                 }
             }
+            let has_behaviors = !behaviors.is_empty();
             let el = self.arena.get_mut(id).expect("live");
             el.state = Some(state);
             el.behaviors = behaviors;
             el.init_reads = init_reads;
             el.state_name = comp.state_name();
+            if has_behaviors {
+                self.behaviour_hosts.push(id);
+            }
             self.rebuild(id);
         } else {
             let kids = resolve(&self.arena[id].desc).children.clone();

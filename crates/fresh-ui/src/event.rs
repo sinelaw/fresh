@@ -22,7 +22,7 @@ pub enum Flow {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum Button {
+pub enum MouseButton {
     #[default]
     Left,
     Right,
@@ -132,12 +132,12 @@ pub enum Phase {
 pub enum Input {
     Press {
         pos: Point,
-        button: Button,
+        button: MouseButton,
         mods: Mods,
     },
     Release {
         pos: Point,
-        button: Button,
+        button: MouseButton,
         mods: Mods,
     },
     Move {
@@ -194,11 +194,14 @@ pub struct Event {
     pub pos: Point,
     /// Position relative to the listening element's rectangle.
     pub local: Point,
-    pub button: Button,
+    pub button: MouseButton,
     pub mods: Mods,
     /// Wheel notches; negative is up.
     pub delta: i32,
     pub key: Option<KeyPress>,
+    /// On a focus event, what the acquisition asked the target to do with its
+    /// selection.
+    pub selection: SelectionOnFocus,
     /// The deepest element hit, as this listener sees it: rewritten to a
     /// component's root once propagation leaves that component, so composition
     /// structure does not leak through events.
@@ -217,10 +220,11 @@ impl Event {
             kind,
             pos: Point::ZERO,
             local: Point::ZERO,
-            button: Button::Left,
+            button: MouseButton::Left,
             mods: Mods::NONE,
             delta: 0,
             key: None,
+            selection: SelectionOnFocus::None,
             target: at,
             current: at,
             phase: Phase::Target,
