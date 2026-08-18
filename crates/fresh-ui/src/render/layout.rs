@@ -326,11 +326,19 @@ impl<M: 'static> Ui<M> {
         self.layout_passthrough(id, c)
     }
 
+    /// Nodes with no geometry of their own behave as a one-cell stack: each
+    /// child's own size request is honoured against the incoming constraints,
+    /// and the node reports the largest result.
     fn layout_passthrough(&mut self, id: ElementId, c: Constraints) -> Size {
         let kids = self.flow_children(id);
         let mut size = c.min();
+        let w_definite = c.min_w == c.max_w;
+        let h_definite = c.min_h == c.max_h;
         for k in kids {
-            let s = self.layout_node(k, c);
+            let (sw, sh) = self.sizing_of(k);
+            let wc = cross_range(sw, c.max_w, w_definite, Align::Stretch);
+            let hc = cross_range(sh, c.max_h, h_definite, Align::Stretch);
+            let s = self.layout_node(k, Constraints::new(wc.0, wc.1, hc.0, hc.1));
             self.arena.get_mut(k).expect("live").layout.offset = Point::ZERO;
             size = Size::new(size.w.max(s.w), size.h.max(s.h));
         }
@@ -706,7 +714,7 @@ pub(crate) fn layout_relevant_changed<M>(old: &Node<M>, new: &Node<M>) -> bool {
         (Desc::Box(a), Desc::Box(b)) => a != b,
         (Desc::TextRun(a), Desc::TextRun(b)) => a != b,
         (Desc::Viewport(a), Desc::Viewport(b)) => a != b,
-        (Desc::Layer(a), Desc::Layer(b)) => a != b,
+        (Desc::Layer(a), Desc::Layer(b)) => !a.geom_eq(b),
         (Desc::Host(a), Desc::Host(b)) => a != b,
         // Gesture, Focusable, Provide and Component have no geometry of their
         // own; theirs comes from their children.

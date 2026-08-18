@@ -121,7 +121,10 @@ fn set_state_from_a_handler_coalesces_into_the_next_flush() {
     // Three separate updates from outside a build.
     updater.set(|s| *s += 1);
     updater.set(|s| *s += 10);
-    handler(&Default::default());
+    handler(&fresh_ui::Event::synthetic(
+        fresh_ui::GestureKind::Click,
+        id,
+    ));
 
     assert_eq!(
         *ui.state::<u32>(id).unwrap(),

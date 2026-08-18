@@ -19,16 +19,28 @@ use crate::ambient::{AmbientKey, ProvideProps};
 use crate::component::{AnyComponent, Component};
 use crate::key::Key;
 
-/// Payload delivered to a handler.
-///
-/// The fields are defined by the pointer phase (L5) and the focus phase (L6).
-/// The type exists now so that handler signatures do not change when they land.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct Event {}
+pub use crate::event::{Event, GestureKind};
 
 /// A listener. Returns a message for the application, or nothing.
 pub type Handler<M> = Rc<dyn Fn(&Event) -> Option<M>>;
+
+/// One registration on a `Gesture`.
+pub struct Listener<M> {
+    pub kind: GestureKind,
+    /// Run on the way down (root to target) rather than on the way up.
+    pub capture: bool,
+    pub handler: Handler<M>,
+}
+
+impl<M> Clone for Listener<M> {
+    fn clone(&self) -> Self {
+        Listener {
+            kind: self.kind,
+            capture: self.capture,
+            handler: self.handler.clone(),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Node
@@ -63,7 +75,7 @@ pub enum Desc<M> {
     /// Focus registration with key listeners.
     Focusable(FocusProps<M>),
     /// Out-of-flow content and a stacking context.
-    Layer(LayerProps),
+    Layer(LayerProps<M>),
     /// Foreign content owned by the host: a buffer split, a PTY grid.
     Host(HostId),
     /// Makes an ambient value visible to everything below it (§ambient). Not a
@@ -173,25 +185,16 @@ pub enum PointerMode {
     /// Hits stop here. The default: a region that draws is a region that hits.
     #[default]
     Opaque,
-    /// Hits fall through to whatever is behind.
+    /// This node's own area does not hit; its children still do, so a click
+    /// that lands on the node itself falls through to whatever is behind.
     Transparent,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub enum GestureKind {
-    Click,
-    SecondaryClick,
-    Press,
-    Release,
-    Move,
-    Enter,
-    Leave,
-    Wheel,
+    /// Neither this node nor anything below it is hittable.
+    Ignore,
 }
 
 pub struct GestureProps<M> {
     pub mode: PointerMode,
-    pub listeners: Vec<(GestureKind, Handler<M>)>,
+    pub listeners: Vec<Listener<M>>,
 }
 
 impl<M> Default for GestureProps<M> {
@@ -205,13 +208,24 @@ impl<M> Default for GestureProps<M> {
 
 pub struct FocusProps<M> {
     pub autofocus: bool,
-    /// Opens a focus scope: traversal is trapped inside while it is active.
+    /// Opens a focus scope: traversal is confined inside while it is active.
     pub scope: bool,
     /// Explicit traversal position; `None` means reading order.
     pub ordinal: Option<i32>,
     /// Reachable by pointer but skipped by traversal.
     pub skip: bool,
+    /// Raw key listeners, offered before intents are resolved.
     pub on_key: Vec<Handler<M>>,
+    /// Key chords this subtree reads differently from the global map.
+    pub shortcuts: Vec<crate::focus::Shortcut>,
+    /// How *this* part of the interface carries out an intent.
+    pub actions: Vec<(crate::focus::Intent, Handler<M>)>,
+    /// Called with `FocusGained` / `FocusLost`. A component that draws a focus
+    /// indicator mirrors focus through this; focus itself is not component
+    /// state.
+    pub on_focus_change: Option<Handler<M>>,
+    /// Rebuild this element when focus enters or leaves its subtree.
+    pub focus_within: bool,
 }
 
 impl<M> Default for FocusProps<M> {
@@ -222,6 +236,10 @@ impl<M> Default for FocusProps<M> {
             ordinal: None,
             skip: false,
             on_key: Vec::new(),
+            shortcuts: Vec::new(),
+            actions: Vec::new(),
+            on_focus_change: None,
+            focus_within: false,
         }
     }
 }
@@ -343,14 +361,52 @@ impl Dismiss {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct LayerProps {
+pub struct LayerProps<M> {
     pub anchor: Anchor,
     pub place: Place,
     pub fit: Fit,
     pub modality: Modality,
     pub scrim: Option<Scrim>,
     pub dismiss: Dismiss,
+    /// Fired when a declared dismissal condition is met. The layer is described
+    /// by the application, so closing it is the application's move.
+    pub on_dismiss: Option<Handler<M>>,
+}
+
+impl<M> Default for LayerProps<M> {
+    fn default() -> Self {
+        LayerProps {
+            anchor: Anchor::default(),
+            place: Place::default(),
+            fit: Fit::default(),
+            modality: Modality::default(),
+            scrim: None,
+            dismiss: Dismiss::default(),
+            on_dismiss: None,
+        }
+    }
+}
+
+impl<M> Clone for LayerProps<M> {
+    fn clone(&self) -> Self {
+        LayerProps {
+            anchor: self.anchor.clone(),
+            place: self.place,
+            fit: self.fit,
+            modality: self.modality,
+            scrim: self.scrim,
+            dismiss: self.dismiss,
+            on_dismiss: self.on_dismiss.clone(),
+        }
+    }
+}
+
+impl<M> LayerProps<M> {
+    /// Whether two layer descriptions place their content differently. Only
+    /// these fields matter to layout; the handler does not.
+    pub fn geom_eq(&self, o: &Self) -> bool {
+        self.anchor == o.anchor && self.place == o.place && self.fit == o.fit
+    }
 }
 
 /// A builder that receives the constraints its node was given.
@@ -431,6 +487,10 @@ impl<M> Clone for FocusProps<M> {
             ordinal: self.ordinal,
             skip: self.skip,
             on_key: self.on_key.clone(),
+            shortcuts: self.shortcuts.clone(),
+            actions: self.actions.clone(),
+            on_focus_change: self.on_focus_change.clone(),
+            focus_within: self.focus_within,
         }
     }
 }
@@ -712,8 +772,23 @@ impl<M> Node<M> {
         }
     }
 
+    /// Listen on the way up: target first, then each ancestor.
     pub fn on(mut self, kind: GestureKind, h: Handler<M>) -> Self {
-        self.gesture_props().listeners.push((kind, h));
+        self.gesture_props().listeners.push(Listener {
+            kind,
+            capture: false,
+            handler: h,
+        });
+        self
+    }
+
+    /// Listen on the way down: each ancestor before the target.
+    pub fn on_capture(mut self, kind: GestureKind, h: Handler<M>) -> Self {
+        self.gesture_props().listeners.push(Listener {
+            kind,
+            capture: true,
+            handler: h,
+        });
         self
     }
 
@@ -752,7 +827,49 @@ impl<M> Node<M> {
         self
     }
 
-    fn layer_props(&mut self) -> &mut LayerProps {
+    /// Reachable by pointer, skipped by traversal.
+    pub fn skip_traversal(mut self) -> Self {
+        self.focus_props().skip = true;
+        self
+    }
+
+    /// Rebuild when focus enters or leaves this subtree.
+    pub fn focus_within(mut self) -> Self {
+        self.focus_props().focus_within = true;
+        self
+    }
+
+    pub fn on_key(mut self, f: impl Fn(&Event) -> Option<M> + 'static) -> Self {
+        self.focus_props().on_key.push(Rc::new(f));
+        self
+    }
+
+    pub fn on_focus_change(mut self, f: impl Fn(&Event) -> Option<M> + 'static) -> Self {
+        self.focus_props().on_focus_change = Some(Rc::new(f));
+        self
+    }
+
+    /// Read a chord as an intent, for this subtree only.
+    pub fn shortcut(mut self, key: crate::event::KeyPress, intent: crate::focus::Intent) -> Self {
+        self.focus_props()
+            .shortcuts
+            .push(crate::focus::Shortcut::new(key, intent));
+        self
+    }
+
+    /// How this part of the interface carries out an intent.
+    pub fn action(
+        mut self,
+        intent: crate::focus::Intent,
+        f: impl Fn(&Event) -> M + 'static,
+    ) -> Self {
+        self.focus_props()
+            .actions
+            .push((intent, Rc::new(move |e| Some(f(e)))));
+        self
+    }
+
+    fn layer_props(&mut self) -> &mut LayerProps<M> {
         match &mut self.desc {
             Desc::Layer(p) => p,
             _ => panic!("layer properties apply to Layer nodes only"),
@@ -786,6 +903,11 @@ impl<M> Node<M> {
 
     pub fn dismiss(mut self, d: Dismiss) -> Self {
         self.layer_props().dismiss = d;
+        self
+    }
+
+    pub fn on_dismiss(mut self, f: impl Fn(&Event) -> M + 'static) -> Self {
+        self.layer_props().on_dismiss = Some(Rc::new(move |e| Some(f(e))));
         self
     }
 }

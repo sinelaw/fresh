@@ -1,8 +1,8 @@
 # Widget Library — Implementation Plan
 
 > _AI-generated plan. **Part 1 has started; Part 2 is PLANNED.** Phases L0
-> through L4 are implemented in `crates/fresh-ui`; everything from L5 onward is
-> still design._
+> through L6 are implemented in `crates/fresh-ui`; the widget set (L7), `Tasks`
+> (L5a) and all of Part 2 are still design._
 >
 > How to build [`widget-library-design.md`](widget-library-design.md) as a new
 > crate, and how to move every existing UI surface onto it. Two parts, in
@@ -99,11 +99,11 @@ Each phase ends with tests that fix its semantics. The order is constrained:
 L1 and L2 define the framework's semantics and every later phase depends on
 them.
 
-**Status.** L0 through L4 are implemented and their exit criteria are covered
+**Status.** L0 through L6 are implemented and their exit criteria are covered
 by tests in `crates/fresh-ui/tests/`. The crate's only dependency is
 `unicode-width`; it pulls in no other workspace crate, so `cargo test -p
-fresh-ui` builds the library and nothing else. Everything from L5 (hit-testing)
-onward is unstarted.
+fresh-ui` builds the library and nothing else. `Tasks` (L5a) and the widget set
+(L7) are unstarted.
 
 ### Deviations from the design document
 
@@ -168,7 +168,17 @@ different expression of it.
 11. **Positions are signed.** `Point` and `Rect` origins are `i32` because
    content scrolled above or left of its viewport has a negative origin;
    clipping removes it, and saturating it to zero would silently move it.
-12. **`Behavior::teardown` takes `&self`.** A behavior is shared between the
+12. **`PointerMode::Transparent` means the node's own area does not hit.** The
+   design document says handlers run and the hit then continues behind, which
+   needs a hit test that returns several stacked paths rather than one. What is
+   implemented is the single-path form: a transparent node is not hittable
+   itself, its children still are, and a click on the node's own area falls
+   through. `Ignore` removes the whole subtree.
+13. **The target phase belongs to the deepest hit element.** A `Gesture` wrapping
+   a `TextRun` sees `Capture` and `Bubble`, not `Target`, because the text is
+   what was hit. This matches the DOM, where an element wrapping a text node is
+   not the target either.
+14. **`Behavior::teardown` takes `&self`.** A behavior is shared between the
    element's registry and the state field holding it, and `build` only ever sees
    `&State`, so a behavior with mutable internals owns a `RefCell` regardless.
 

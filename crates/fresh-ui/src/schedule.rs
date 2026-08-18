@@ -62,6 +62,8 @@ pub enum DirtyCause {
     Parent(ElementId),
     /// Marked explicitly, at this source location.
     Marked(&'static std::panic::Location<'static>),
+    /// Focus entered or left this element's subtree.
+    Focus,
 }
 
 impl std::fmt::Display for DirtyCause {
@@ -72,6 +74,7 @@ impl std::fmt::Display for DirtyCause {
             DirtyCause::Ambient(n) => write!(f, "ambient @{n}"),
             DirtyCause::Parent(p) => write!(f, "parent {p:?}"),
             DirtyCause::Marked(l) => write!(f, "mark {}:{}", l.file(), l.line()),
+            DirtyCause::Focus => write!(f, "focus"),
         }
     }
 }
@@ -367,6 +370,19 @@ pub struct Ui<M> {
     /// Out-of-flow layers found by the last arrange walk, with their parents.
     pub(crate) pending_layers: Vec<(ElementId, ElementId)>,
     pub(crate) spec: LayoutSpec,
+
+    /// Pointer state.
+    pub(crate) hover: Vec<ElementId>,
+    pub(crate) captured: Option<ElementId>,
+    pub(crate) press: Option<(ElementId, crate::event::Button)>,
+
+    /// Focus state. Neither the application nor the component declares it.
+    pub(crate) focus: Option<ElementId>,
+    pub(crate) focus_selection: crate::event::SelectionOnFocus,
+    pub(crate) traversal: Box<dyn crate::focus::TraversalPolicy>,
+    pub(crate) shortcuts: Vec<crate::focus::Shortcut>,
+    /// Messages produced outside a dispatch call, delivered with the next one.
+    pub(crate) pending_messages: Vec<M>,
 }
 
 impl<M: 'static> Default for Ui<M> {
@@ -394,6 +410,14 @@ impl<M: 'static> Ui<M> {
             layout_dirty: Vec::new(),
             pending_layers: Vec::new(),
             spec: LayoutSpec::default(),
+            hover: Vec::new(),
+            captured: None,
+            press: None,
+            focus: None,
+            focus_selection: crate::event::SelectionOnFocus::None,
+            traversal: Box::new(crate::focus::ReadingOrder),
+            shortcuts: crate::focus::default_shortcuts(),
+            pending_messages: Vec::new(),
         }
     }
 
@@ -402,6 +426,7 @@ impl<M: 'static> Ui<M> {
     pub fn frame(&mut self, root: Node<M>, size: Size) -> &LayoutSpec {
         self.run_flush(Some(root));
         self.flush_layout(size);
+        self.apply_autofocus();
         self.flush_paint(size);
         &self.spec
     }
@@ -412,6 +437,7 @@ impl<M: 'static> Ui<M> {
         let size = self.frame_size;
         self.run_flush(None);
         self.flush_layout(size);
+        self.apply_autofocus();
         self.flush_paint(size);
         &self.spec
     }
@@ -431,6 +457,12 @@ impl<M: 'static> Ui<M> {
     /// The display list from the last `frame` or `tick`.
     pub fn spec(&self) -> &LayoutSpec {
         &self.spec
+    }
+
+    /// Messages produced by framework-initiated activity — a focus change asked
+    /// for imperatively, for instance — since the last time they were taken.
+    pub fn take_messages(&mut self) -> Vec<M> {
+        std::mem::take(&mut self.pending_messages)
     }
 
     // -- geometry ----------------------------------------------------------
