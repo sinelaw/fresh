@@ -176,6 +176,10 @@ impl<T: Send + 'static> Behavior for Tasks<T> {
         "Tasks"
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn pump(&self) -> usize {
         self.drain()
     }

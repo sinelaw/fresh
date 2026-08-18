@@ -22,6 +22,17 @@ use crate::schedule::Ui;
 
 use super::geom::{Constraints, Point, Rect, Size};
 
+/// What relinking carries down from an element with no geometry of its own.
+#[derive(Default, Clone)]
+struct Carry {
+    parent: Option<RenderId>,
+    w: Sizing,
+    h: Sizing,
+    theme: Option<Rc<str>>,
+    key: Option<crate::key::Key>,
+    focus_parent: Option<crate::focus::FocusId>,
+}
+
 pub use prim::wrap_text;
 
 pub(crate) fn wrapped_lines(text: &str, width: u16) -> u16 {
@@ -162,105 +173,170 @@ impl<M: 'static> Ui<M> {
         el.children.iter().find_map(|c| self.render_for(*c))
     }
 
-    /// Relink one element subtree under an existing render parent. Used by a
-    /// constraint-dependent builder, which reconciles mid-layout.
+    /// The element a render node belongs to.
+    pub(crate) fn element_of(&self, r: RenderId) -> Option<ElementId> {
+        self.render.get(r).map(|n| n.element)
+    }
+
+    /// Rebuild the render and focus trees' links from the element tree.
+    ///
+    /// Render objects and focus registrations are created and disposed with
+    /// their elements; only the links, the inherited size request and
+    /// provenance are recomputed. A child list that actually changed marks the
+    /// node for layout.
+    pub(crate) fn relink(&mut self) {
+        let Some(root) = self.root else {
+            self.render_root = None;
+            self.focus_roots.clear();
+            return;
+        };
+        let mut roots = Vec::new();
+        let mut focus_roots = Vec::new();
+        self.relink_from(root, Carry::default(), &mut roots, &mut focus_roots);
+        self.render_root = roots.first().copied();
+        self.focus_roots = focus_roots;
+    }
+
     pub(crate) fn relink_from_pub(
         &mut self,
         e: ElementId,
         parent: Option<RenderId>,
         out: &mut Vec<RenderId>,
     ) {
-        self.relink_from(e, parent, Sizing::Auto, Sizing::Auto, None, None, out);
-    }
-
-    /// The element a render node belongs to.
-    pub(crate) fn element_of(&self, r: RenderId) -> Option<ElementId> {
-        self.render.get(r).map(|n| n.element)
-    }
-
-    /// Rebuild the render tree's links from the element tree.
-    ///
-    /// Render objects are created and disposed with their elements; only the
-    /// links, the inherited size request, and provenance are recomputed. A
-    /// child list that actually changed marks the node for layout.
-    pub(crate) fn relink(&mut self) {
-        let Some(root) = self.root else {
-            self.render_root = None;
-            return;
-        };
-        let mut roots = Vec::new();
+        let focus_parent = self
+            .element_of(parent.unwrap_or(RenderId(0)))
+            .and_then(|pe| self.nearest_focus(pe));
+        let mut fout = Vec::new();
         self.relink_from(
-            root,
-            None,
-            Sizing::Auto,
-            Sizing::Auto,
-            None,
-            None,
-            &mut roots,
+            e,
+            Carry {
+                parent,
+                focus_parent,
+                ..Carry::default()
+            },
+            out,
+            &mut fout,
         );
-        self.render_root = roots.first().copied();
+        if let Some(fp) = focus_parent {
+            if let Some(n) = self.focus_tree.get_mut(fp) {
+                n.children = fout;
+            }
+        }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// The focus registration at or above this element.
+    fn nearest_focus(&self, e: ElementId) -> Option<crate::focus::FocusId> {
+        let mut cur = Some(e);
+        while let Some(x) = cur {
+            let el = self.arena.get(x)?;
+            if let Some(f) = el.focus {
+                return Some(f);
+            }
+            cur = el.parent;
+        }
+        None
+    }
+
     fn relink_from(
         &mut self,
         e: ElementId,
-        parent: Option<RenderId>,
-        cw: Sizing,
-        ch: Sizing,
-        theme: Option<Rc<str>>,
-        key: Option<crate::key::Key>,
+        carry: Carry,
         out: &mut Vec<RenderId>,
+        fout: &mut Vec<crate::focus::FocusId>,
     ) {
         let Some(el) = self.arena.get(e) else { return };
         let (nw, nh) = node_sizing(&el.desc);
-        let w = if cw != Sizing::Auto { cw } else { nw };
-        let h = if ch != Sizing::Auto { ch } else { nh };
+        let w = if carry.w != Sizing::Auto { carry.w } else { nw };
+        let h = if carry.h != Sizing::Auto { carry.h } else { nh };
         let theme = el
             .desc
             .theme
             .clone()
             .or_else(|| resolve(&el.desc).theme.clone())
-            .or(theme);
-        let key = el.key.clone().or(key);
+            .or(carry.theme);
+        let key = el.key.clone().or(carry.key);
         let render = el.render;
+        let focus = el.focus;
         let kids = el.children.clone();
+
+        // The focus tree mirrors the render tree but is not identical to it:
+        // only registrations and scopes appear.
+        let focus_parent = match focus {
+            Some(f) => {
+                if let Some(n) = self.focus_tree.get_mut(f) {
+                    n.parent = carry.focus_parent;
+                }
+                fout.push(f);
+                Some(f)
+            }
+            None => carry.focus_parent,
+        };
 
         match render {
             Some(r) => {
                 {
                     let n = self.render.get_mut(r).expect("live render node");
-                    n.parent = parent;
+                    n.parent = carry.parent;
                     n.w = w;
                     n.h = h;
                     n.theme = theme;
                     n.key = key;
                 }
+                let carried = self.render[r].theme.clone();
                 let mut inner = Vec::new();
+                let mut finner = Vec::new();
                 for k in kids {
                     // Provenance is inherited; identity is not. A render child
                     // uses its own key, or that of a transparent element
                     // between it and this node.
-                    let carried = self.render[r].theme.clone();
                     self.relink_from(
                         k,
-                        Some(r),
-                        Sizing::Auto,
-                        Sizing::Auto,
-                        carried,
-                        None,
+                        Carry {
+                            parent: Some(r),
+                            theme: carried.clone(),
+                            focus_parent,
+                            ..Carry::default()
+                        },
                         &mut inner,
+                        &mut finner,
                     );
                 }
                 if self.render[r].children != inner {
                     self.render.get_mut(r).expect("live").children = inner;
                     self.mark_render_dirty(r);
                 }
+                if let Some(f) = focus {
+                    if let Some(n) = self.focus_tree.get_mut(f) {
+                        n.children = finner;
+                    }
+                } else {
+                    fout.extend(finner);
+                }
                 out.push(r);
             }
             None => {
+                let mut finner = Vec::new();
                 for k in kids {
-                    self.relink_from(k, parent, w, h, theme.clone(), key.clone(), out);
+                    self.relink_from(
+                        k,
+                        Carry {
+                            parent: carry.parent,
+                            w,
+                            h,
+                            theme: theme.clone(),
+                            key: key.clone(),
+                            focus_parent,
+                        },
+                        out,
+                        &mut finner,
+                    );
+                }
+                if let Some(f) = focus {
+                    if let Some(n) = self.focus_tree.get_mut(f) {
+                        n.children = finner;
+                    }
+                } else {
+                    fout.extend(finner);
                 }
             }
         }

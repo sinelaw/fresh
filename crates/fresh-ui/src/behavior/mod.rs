@@ -40,6 +40,10 @@ pub trait Behavior {
         "Behavior"
     }
 
+    /// So the framework can find a behavior it knows about among the ones an
+    /// element registered.
+    fn as_any(&self) -> &dyn std::any::Any;
+
     /// Hand over anything that arrived from elsewhere. Called between frames,
     /// never during build, layout or paint. Behaviors with no inbox do nothing.
     fn pump(&self) -> usize {

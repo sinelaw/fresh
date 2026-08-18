@@ -7,7 +7,9 @@
 use crate::element::ElementId;
 use crate::render::geom::Rect;
 
-pub type FocusId = ElementId;
+/// Traversal addresses focusables by the element that owns them. The
+/// registration handle itself is `focus::FocusTarget`.
+pub type FocusTarget = ElementId;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FocusDir {
@@ -21,7 +23,7 @@ pub enum FocusDir {
 
 #[derive(Clone, Debug)]
 pub struct FocusEntry {
-    pub id: FocusId,
+    pub id: FocusTarget,
     pub ordinal: Option<i32>,
     pub rect: Rect,
 }
@@ -33,12 +35,12 @@ pub struct FocusScope {
 }
 
 impl FocusScope {
-    pub fn index_of(&self, id: FocusId) -> Option<usize> {
+    pub fn index_of(&self, id: FocusTarget) -> Option<usize> {
         self.nodes.iter().position(|n| n.id == id)
     }
 
     /// Reading order, with explicit ordinals taking precedence over position.
-    pub fn ordered(&self) -> Vec<FocusId> {
+    pub fn ordered(&self) -> Vec<FocusTarget> {
         let mut idx: Vec<usize> = (0..self.nodes.len()).collect();
         idx.sort_by_key(|&i| (self.nodes[i].ordinal.unwrap_or(i32::MAX), i));
         idx.into_iter().map(|i| self.nodes[i].id).collect()
@@ -46,7 +48,12 @@ impl FocusScope {
 }
 
 pub trait TraversalPolicy {
-    fn next(&self, scope: &FocusScope, from: Option<FocusId>, dir: FocusDir) -> Option<FocusId>;
+    fn next(
+        &self,
+        scope: &FocusScope,
+        from: Option<FocusTarget>,
+        dir: FocusDir,
+    ) -> Option<FocusTarget>;
 }
 
 /// The default: reading order, wrapping at the ends, with directional moves
@@ -55,7 +62,12 @@ pub trait TraversalPolicy {
 pub struct ReadingOrder;
 
 impl TraversalPolicy for ReadingOrder {
-    fn next(&self, scope: &FocusScope, from: Option<FocusId>, dir: FocusDir) -> Option<FocusId> {
+    fn next(
+        &self,
+        scope: &FocusScope,
+        from: Option<FocusTarget>,
+        dir: FocusDir,
+    ) -> Option<FocusTarget> {
         let order = scope.ordered();
         if order.is_empty() {
             return None;
@@ -83,7 +95,12 @@ impl TraversalPolicy for ReadingOrder {
 pub struct Directional;
 
 impl TraversalPolicy for Directional {
-    fn next(&self, scope: &FocusScope, from: Option<FocusId>, dir: FocusDir) -> Option<FocusId> {
+    fn next(
+        &self,
+        scope: &FocusScope,
+        from: Option<FocusTarget>,
+        dir: FocusDir,
+    ) -> Option<FocusTarget> {
         if matches!(dir, FocusDir::Next | FocusDir::Prev) {
             return ReadingOrder.next(scope, from, dir);
         }
@@ -94,7 +111,7 @@ impl TraversalPolicy for Directional {
         let center = |r: Rect| (r.x + r.w as i32 / 2, r.y + r.h as i32 / 2);
         let (cx, cy) = center(here);
 
-        let mut best: Option<(i64, FocusId)> = None;
+        let mut best: Option<(i64, FocusTarget)> = None;
         for n in &scope.nodes {
             if n.id == from {
                 continue;

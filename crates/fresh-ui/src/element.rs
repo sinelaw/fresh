@@ -66,6 +66,9 @@ pub(crate) struct Element<M> {
 
     /// This element's render object, if it has geometry of its own.
     pub render: Option<RenderId>,
+    /// This element's registration in the focus tree, if it is focusable or
+    /// opens a scope.
+    pub focus: Option<crate::focus::FocusId>,
 
     /// Diagnostics.
     pub builds: u32,
@@ -102,6 +105,7 @@ impl<M> Element<M> {
             reads: Vec::new(),
             init_reads: Vec::new(),
             render: None,
+            focus: None,
             builds: 0,
             last_dirty: None,
             state_name: "",
@@ -224,6 +228,9 @@ impl<M: 'static> Ui<M> {
                     if let Some(el) = self.arena.release(id) {
                         if let Some(r) = el.render {
                             self.render.release(r);
+                        }
+                        if let Some(f) = el.focus {
+                            self.focus_tree.release(f);
                         }
                         self.renderer.dispose(id, el.ty, el.name);
                     }
@@ -388,7 +395,11 @@ impl<M: 'static> Ui<M> {
             let sched = self.sched.clone();
             let mut icx = InitCx::new(id, sched, scope, &props_children, self.services.clone());
             let state = comp.init_any(&mut icx);
-            let (behaviors, init_reads) = icx.finish();
+            let (behaviors, init_reads, focus_request) = icx.finish();
+            if let Some(data) = focus_request {
+                let f = self.focus_tree.alloc(data);
+                self.arena.get_mut(id).expect("live").focus = Some(f);
+            }
             for &p in &init_reads {
                 if let Some(prov) = self.arena.get_mut(p) {
                     prov.init_dependents.push(id);
@@ -665,6 +676,9 @@ impl<M: 'static> Ui<M> {
                 self.render.release(r);
                 self.layout_dirty.retain(|d| *d != r);
             }
+            if let Some(f) = el.focus {
+                self.focus_tree.release(f);
+            }
             self.renderer.dispose(id, el.ty, el.name);
         }
         self.sched.borrow_mut().forget(id);
@@ -695,6 +709,36 @@ impl<M: 'static> Ui<M> {
             Desc::LayoutReader(_) => Some(Box::<ReaderRender>::default()),
             Desc::Provide(_) | Desc::Shared(_) | Desc::Component(_) => None,
         };
+        // Focus registration is held alongside the render object, and lives
+        // exactly as long as it: that is why focus survives reconciliation.
+        let focus = match &resolve(&self.arena[id].desc).desc {
+            Desc::Focusable(f) => Some(crate::focus::tree::FocusNodeData {
+                element: id,
+                parent: None,
+                children: Vec::new(),
+                ordinal: f.ordinal,
+                skip: f.skip,
+                scope: f.scope,
+            }),
+            // A modal layer groups the focusables inside it without being one:
+            // that is all "traversal is confined to the modal" means.
+            Desc::Layer(l) if l.modality != crate::desc::Modality::None => {
+                Some(crate::focus::tree::FocusNodeData {
+                    element: id,
+                    parent: None,
+                    children: Vec::new(),
+                    ordinal: None,
+                    skip: true,
+                    scope: true,
+                })
+            }
+            _ => None,
+        };
+        if let Some(data) = focus {
+            let f = self.focus_tree.alloc(data);
+            self.arena.get_mut(id).expect("live").focus = Some(f);
+        }
+
         let Some(obj) = obj else { return };
         let clips = obj.clips();
         let out_of_flow = obj.out_of_flow();
@@ -749,6 +793,13 @@ impl<M: 'static> Ui<M> {
                     o.ordinal = f.ordinal;
                     o.skip = f.skip;
                     o.scope = f.scope;
+                }
+                if let Some(fid) = self.arena.get(id).and_then(|e| e.focus) {
+                    if let Some(n) = self.focus_tree.get_mut(fid) {
+                        n.ordinal = f.ordinal;
+                        n.skip = f.skip;
+                        n.scope = f.scope;
+                    }
                 }
             }
             Desc::Layer(l) => {

@@ -10,11 +10,66 @@
 
 pub mod intent;
 pub mod policy;
+pub mod tree;
 
 pub use intent::{default_shortcuts, Intent, Shortcut};
 pub use policy::{
-    Directional, FocusDir, FocusEntry, FocusId, FocusScope, ReadingOrder, TraversalPolicy,
+    Directional, FocusDir, FocusEntry, FocusScope, FocusTarget, ReadingOrder, TraversalPolicy,
 };
+pub use tree::FocusId;
+
+/// Focus registration as a behavior.
+///
+/// A component that becomes focusable this way needs no `Focusable`
+/// description around it — build order step 3's rule that every later
+/// primitive is a behavior.
+pub struct Focusable<M: 'static> {
+    pub(crate) on_change: Option<crate::desc::Handler<M>>,
+    pub(crate) ordinal: Option<i32>,
+    pub(crate) skip: bool,
+    pub(crate) scope: bool,
+}
+
+impl<M: 'static> Focusable<M> {
+    pub fn new(on_change: crate::desc::Handler<M>) -> Self {
+        Focusable {
+            on_change: Some(on_change),
+            ordinal: None,
+            skip: false,
+            scope: false,
+        }
+    }
+
+    /// A scope that groups the focusables below it without being one itself.
+    pub fn scope() -> Self {
+        Focusable {
+            on_change: None,
+            ordinal: None,
+            skip: true,
+            scope: true,
+        }
+    }
+
+    pub fn ordinal(mut self, n: i32) -> Self {
+        self.ordinal = Some(n);
+        self
+    }
+
+    pub fn skip(mut self) -> Self {
+        self.skip = true;
+        self
+    }
+}
+
+impl<M: 'static> crate::behavior::Behavior for Focusable<M> {
+    fn behavior_name(&self) -> &'static str {
+        "Focusable"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 
 use std::rc::Rc;
 
@@ -87,13 +142,24 @@ impl<M: 'static> Ui<M> {
     }
 
     fn fire_focus_change(&mut self, id: ElementId, gained: bool, out: &mut Vec<M>) {
-        let handler = match self.arena.get(id).map(|e| &e.desc) {
+        let from_desc = match self.arena.get(id).map(|e| &e.desc) {
             Some(d) => match &resolve(d).desc {
                 Desc::Focusable(f) => f.on_focus_change.clone(),
                 _ => None,
             },
             None => None,
         };
+        // A component registered through the behavior form gets the same
+        // transitions as one wrapped in the primitive.
+        let handler = from_desc.or_else(|| {
+            self.arena.get(id).and_then(|el| {
+                el.behaviors.iter().find_map(|b| {
+                    b.as_any()
+                        .downcast_ref::<Focusable<M>>()
+                        .and_then(|f| f.on_change.clone())
+                })
+            })
+        });
         let Some(h) = handler else { return };
         let mut ev = self.synth_event(
             id,
@@ -181,30 +247,34 @@ impl<M: 'static> Ui<M> {
 
     /// The focusables traversal can reach right now.
     ///
-    /// A modal layer confines traversal to itself; otherwise the nearest
-    /// enclosing focus scope applies; otherwise the whole tree.
+    /// Read from the focus tree, so the cost is the size of the focusable set
+    /// rather than the size of the element tree. A modal layer confines
+    /// traversal to itself; otherwise the nearest enclosing scope applies;
+    /// otherwise the whole tree.
     pub fn focus_scope(&self) -> FocusScope {
         let mut nodes = Vec::new();
-        if let Some(r) = self.scope_root() {
-            self.collect_focusables(r, &mut nodes);
-        }
-        FocusScope { nodes }
-    }
-
-    fn scope_root(&self) -> Option<ElementId> {
-        if let Some(lid) = self.topmost_modal() {
-            return Some(lid);
-        }
-        if let Some(f) = self.focus {
-            let mut cur = Some(f);
-            while let Some(c) = cur {
-                if self.opens_scope(c) {
-                    return Some(c);
+        match self.active_scope() {
+            Some(f) => {
+                let kids = self
+                    .focus_tree
+                    .get(f)
+                    .map(|n| n.children.clone())
+                    .unwrap_or_default();
+                for c in kids {
+                    self.collect_focus(c, &mut nodes);
                 }
-                cur = self.arena.get(c).and_then(|e| e.parent);
+                // A scope that is itself focusable is reachable inside itself.
+                if self.focus_tree.get(f).is_some_and(|n| !n.skip) {
+                    self.push_focus(f, &mut nodes);
+                }
+            }
+            None => {
+                for r in self.focus_roots.clone() {
+                    self.collect_focus(r, &mut nodes);
+                }
             }
         }
-        self.root
+        FocusScope { nodes }
     }
 
     /// The topmost layer that makes everything outside it inert, as an element.
@@ -223,29 +293,63 @@ impl<M: 'static> Ui<M> {
         }
     }
 
-    fn opens_scope(&self, id: ElementId) -> bool {
-        match self.arena.get(id).map(|e| &e.desc) {
-            Some(d) => matches!(&resolve(d).desc, Desc::Focusable(f) if f.scope),
-            None => false,
+    /// The registration that groups what traversal may currently reach.
+    pub(crate) fn active_scope(&self) -> Option<crate::focus::FocusId> {
+        if let Some(e) = self.topmost_modal() {
+            if let Some(f) = self.arena.get(e).and_then(|el| el.focus) {
+                return Some(f);
+            }
+        }
+        // Otherwise the nearest scope above where focus is.
+        let mut cur = self
+            .focus
+            .and_then(|e| self.arena.get(e))
+            .and_then(|el| el.focus);
+        while let Some(f) = cur {
+            let n = self.focus_tree.get(f)?;
+            if n.scope {
+                return Some(f);
+            }
+            cur = n.parent;
+        }
+        None
+    }
+
+    fn collect_focus(&self, f: crate::focus::FocusId, out: &mut Vec<FocusEntry>) {
+        let Some(n) = self.focus_tree.get(f) else {
+            return;
+        };
+        if !n.skip {
+            self.push_focus(f, out);
+        }
+        for c in n.children.clone() {
+            self.collect_focus(c, out);
         }
     }
 
-    fn collect_focusables(&self, id: ElementId, out: &mut Vec<FocusEntry>) {
-        let Some(el) = self.arena.get(id) else { return };
-        if el.ty == ElemType::Focusable {
-            if let Desc::Focusable(f) = &resolve(&el.desc).desc {
-                if !f.skip {
-                    let rect = self.rect_of(id);
-                    out.push(FocusEntry {
-                        id,
-                        ordinal: f.ordinal,
-                        rect,
-                    });
-                }
+    fn push_focus(&self, f: crate::focus::FocusId, out: &mut Vec<FocusEntry>) {
+        let Some(n) = self.focus_tree.get(f) else {
+            return;
+        };
+        out.push(FocusEntry {
+            id: n.element,
+            ordinal: n.ordinal,
+            rect: self.rect_of(n.element),
+        });
+    }
+
+    /// Whether an element is inside the scope traversal is currently confined
+    /// to.
+    fn in_active_scope(&self, e: ElementId) -> bool {
+        match self.active_scope() {
+            None => true,
+            Some(scope) => {
+                let root = match self.focus_tree.get(scope) {
+                    Some(n) => n.element,
+                    None => return true,
+                };
+                self.is_within(e, root)
             }
-        }
-        for c in el.children.clone() {
-            self.collect_focusables(c, out);
         }
     }
 
@@ -266,20 +370,14 @@ impl<M: 'static> Ui<M> {
     /// Settle focus after a frame.
     ///
     /// Three cases, in order: focus is already inside the active scope and
-    /// nothing happens; a modal has just opened and focus moves into it,
-    /// remembering where it was; the modal has closed and focus goes back.
+    /// nothing happens; a scope has just opened and focus moves into it,
+    /// remembering where it was; the scope has closed and focus goes back.
     pub(crate) fn apply_autofocus(&mut self) {
-        let modal = self.topmost_modal();
-        let Some(root) = modal.or(self.root) else {
-            return;
-        };
-
-        let inside = self
-            .focus
-            .is_some_and(|f| self.arena.get(f).is_some() && self.is_within(f, root));
-        if inside {
+        let alive = self.focus.is_some_and(|f| self.arena.get(f).is_some());
+        if alive && self.focus.is_some_and(|f| self.in_active_scope(f)) {
             return;
         }
+        let modal = self.topmost_modal();
 
         if modal.is_some() {
             // Entering a scope: remember where focus was so it can come back.
@@ -297,9 +395,9 @@ impl<M: 'static> Ui<M> {
         }
 
         self.focus = None;
-        let mut nodes = Vec::new();
-        self.collect_focusables(root, &mut nodes);
-        let wanted = nodes
+        let scope = self.focus_scope();
+        let wanted = scope
+            .nodes
             .iter()
             .find(|e| {
                 matches!(self.arena.get(e.id).map(|x| &x.desc), Some(d)
@@ -307,7 +405,7 @@ impl<M: 'static> Ui<M> {
             })
             // A scope with nothing marked still needs somewhere for traversal
             // to start, or Tab inside a modal would do nothing.
-            .or_else(|| modal.and(nodes.first()));
+            .or_else(|| modal.and(scope.nodes.first()));
         if let Some(e) = wanted {
             let id = e.id;
             let mut out = Vec::new();

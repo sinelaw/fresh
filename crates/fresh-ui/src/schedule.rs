@@ -209,6 +209,9 @@ pub struct InitCx<'a, M> {
     behaviors: Vec<Rc<dyn Behavior>>,
     init_reads: Vec<ElementId>,
     services: crate::services::Services,
+    /// A focus registration this component asked for, applied by the framework
+    /// once construction finishes.
+    pub(crate) focus_request: Option<crate::focus::tree::FocusNodeData>,
 }
 
 impl<'a, M: 'static> InitCx<'a, M> {
@@ -227,11 +230,19 @@ impl<'a, M: 'static> InitCx<'a, M> {
             behaviors: Vec::new(),
             init_reads: Vec::new(),
             services,
+            focus_request: None,
         }
     }
 
-    pub(crate) fn finish(self) -> (Vec<Rc<dyn Behavior>>, Vec<ElementId>) {
-        (self.behaviors, self.init_reads)
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn finish(
+        self,
+    ) -> (
+        Vec<Rc<dyn Behavior>>,
+        Vec<ElementId>,
+        Option<crate::focus::tree::FocusNodeData>,
+    ) {
+        (self.behaviors, self.init_reads, self.focus_request)
     }
 
     pub fn id(&self) -> ElementId {
@@ -258,6 +269,24 @@ impl<'a, M: 'static> InitCx<'a, M> {
         rc.attach(&self.services);
         self.behaviors.push(rc.clone() as Rc<dyn Behavior>);
         rc
+    }
+
+    /// Register this component in the focus tree without wrapping it in a
+    /// `Focusable` description.
+    ///
+    /// Everything a `Focusable` primitive provides — traversal, key routing,
+    /// focus transitions — applies. The registration lives as long as the
+    /// element, so focus survives reconciliation for the same reason.
+    pub fn focusable(&mut self, f: crate::focus::Focusable<M>) -> Rc<crate::focus::Focusable<M>> {
+        self.focus_request = Some(crate::focus::tree::FocusNodeData {
+            element: self.id,
+            parent: None,
+            children: Vec::new(),
+            ordinal: f.ordinal,
+            skip: f.skip,
+            scope: f.scope,
+        });
+        self.register(f)
     }
 
     /// What is valid from construction: the scheduler, the spawner, the
@@ -392,6 +421,10 @@ pub struct Ui<M> {
     /// The render tree: computed, retained geometry.
     pub(crate) render: crate::render::object::RenderArena,
     pub(crate) render_root: Option<crate::render::object::RenderId>,
+    /// The focus tree: registrations, and the scopes that group them.
+    pub(crate) focus_tree: crate::focus::tree::FocusTree,
+    /// Focus registrations with no focus ancestor.
+    pub(crate) focus_roots: Vec<crate::focus::FocusId>,
     /// Set while a render object is being measured, so a second measurement of
     /// the same subtree in one frame can be counted.
     pub(crate) measuring: bool,
@@ -448,6 +481,8 @@ impl<M: 'static> Ui<M> {
             build_log: Vec::new(),
             render: Default::default(),
             render_root: None,
+            focus_tree: Default::default(),
+            focus_roots: Vec::new(),
             measuring: false,
             frame_size: Size::ZERO,
             layout_dirty: Vec::new(),
