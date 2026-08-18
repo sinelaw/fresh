@@ -22,7 +22,7 @@ use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event as CtEvent, KeyCode as CtKey,
     KeyEventKind, KeyModifiers, MouseButton as CtButton, MouseEventKind,
 };
-use crossterm::style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor};
+use crossterm::style::{Color, Print, SetBackgroundColor, SetForegroundColor};
 use crossterm::{cursor, execute, queue, terminal};
 
 use fresh_ui::{
@@ -361,36 +361,33 @@ impl Terminal {
     }
 
     fn flush(&mut self, spec: &fresh_ui::LayoutSpec) -> io::Result<()> {
-        queue!(self.out, cursor::MoveTo(0, 0))?;
+        // Hide the cursor for the whole repaint so it is never seen racing
+        // across the screen as the cells are written; it is restored at the
+        // end, at the position the frame asked for.
+        queue!(self.out, cursor::Hide, cursor::MoveTo(0, 0))?;
         let mut fg = Color::Reset;
         let mut bg = Color::Reset;
-        queue!(self.out, ResetColor)?;
         for y in 0..self.h {
             queue!(self.out, cursor::MoveTo(0, y))?;
             for x in 0..self.w {
-                let c = self.cells[y as usize * self.w as usize + x as usize];
-                if c.fg != fg {
-                    fg = c.fg;
+                let cell = self.cells[y as usize * self.w as usize + x as usize];
+                if cell.fg != fg {
+                    fg = cell.fg;
                     queue!(self.out, SetForegroundColor(fg))?;
                 }
-                if c.bg != bg {
-                    bg = c.bg;
+                if cell.bg != bg {
+                    bg = cell.bg;
                     queue!(self.out, SetBackgroundColor(bg))?;
                 }
-                queue!(self.out, Print(c.ch))?;
+                queue!(self.out, Print(cell.ch))?;
             }
         }
-        queue!(self.out, ResetColor)?;
-        if let Some(cur) = spec.cursor {
-            if cur.visible {
-                queue!(
-                    self.out,
-                    cursor::MoveTo(cur.pos.x.max(0) as u16, cur.pos.y.max(0) as u16),
-                    cursor::Show
-                )?;
-            }
-        } else {
-            queue!(self.out, cursor::Hide)?;
+        if let Some(cur) = spec.cursor.filter(|c| c.visible) {
+            queue!(
+                self.out,
+                cursor::MoveTo(cur.pos.x.max(0) as u16, cur.pos.y.max(0) as u16),
+                cursor::Show
+            )?;
         }
         self.out.flush()
     }
