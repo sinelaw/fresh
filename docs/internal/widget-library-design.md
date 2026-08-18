@@ -621,202 +621,310 @@ frames. That *is* layer 1 crossing a wire.
 
 ## 14. Tutorial
 
-This section assumes no prior use of a UI framework; it assumes familiarity
-with trees, values and references. The code is the intended API of a planned
-library. Terms introduced in bold are the ones the rest of the document uses.
+This section builds one small application — a task list — from a static
+screen to a keyboard-driven UI with a context menu, adding one library
+concept per step. It assumes no prior use of a UI framework; only trees,
+values and references. The code is the intended API of a planned library.
+Terms introduced in bold are the ones the rest of the document uses.
 
-### 14.1 A first screen
+### 14.1 The application and its first screen
 
-You do not draw to the screen. You construct a tree of plain values that
-states what the screen should contain, and return it to the library:
+The application's data is an ordinary struct, owned by your code:
 
 ```rust
-fn build() -> Node<()> {
+struct App {
+    tasks: Vec<Task>,     // Task { id: TaskId, title: String, done: bool }
+}
+```
+
+To put it on screen, write one function from that data to a tree of plain
+values, and return the tree to the library:
+
+```rust
+fn build(app: &App) -> Node<()> {
+    Box::col().children(
+        std::iter::once(TextRun::new("My Tasks"))
+            .chain(app.tasks.iter().map(|t| TextRun::new(&t.title))),
+    )
+}
+```
+
+You do not draw, and you do not create widget objects. `Box::col()`
+constructs a value describing a container that stacks its children
+vertically; `TextRun::new` a value describing a line of text. Each is a
+`Node`: a type tag, properties, and a list of child nodes. Constructing the
+tree has no effects — no screen resources, no registration — so it is data
+you can compare, print and test.
+
+This tree is the **description**. The library consumes it and produces
+terminal cells (§4 shows the pipeline). The description is rebuilt from
+`App` whenever anything changes and discarded after use; the design depends
+on that being cheap, which is why a description holds nothing but the values
+you pass in.
+
+### 14.2 Layout: from tree to rectangles
+
+The terminal is a grid of character cells — say 80 columns by 24 rows.
+**Layout** is the computation that assigns every node a rectangle in that
+grid: a column, a row, a width and a height. You never write these
+rectangles; you attach sizing rules, and the library computes them.
+
+Give the app a sidebar for tags next to the task list:
+
+```rust
+fn build(app: &App) -> Node<()> {
     Box::col().children([
-        TextRun::new("Fresh"),
-        TextRun::new("a text editor"),
+        TextRun::new("My Tasks").h(Sizing::Cells(1)),   // title: exactly 1 row
+        Box::row().flex(1).children([
+            tag_list(app).w(Sizing::Cells(20)),         // sidebar: exactly 20 columns
+            task_list(app).flex(1),                     // remaining width
+        ]),
     ])
 }
 ```
 
-`Box::col()` is a container that stacks its children vertically; `TextRun` is
-a line of text. Each call constructs a `Node` — a value with a type tag,
-properties and a list of child nodes. Constructing the tree has no effects:
-no screen resources are allocated, nothing is registered. The tree is data,
-and can be compared, printed and tested like any other value.
+The computation is one pass over the tree. Downward, each container tells
+its children how much space is available; upward, each child reports the
+size it takes; the container then positions the children inside its own
+rectangle. On an 80×24 terminal the tree above resolves to:
 
-This tree is the **description**. The library turns it into terminal cells in
-steps described later (§4); the part that matters now is that the description
-is rebuilt from scratch whenever anything changes, and discarded after use.
-The design depends on that being cheap, which is why a description holds
-nothing but the values you passed in.
-
-### 14.2 Sizes and positions
-
-You do not assign coordinates. Each node carries sizing rules and the library
-computes every rectangle:
-
-```rust
-Box::row().children([
-    file_list().w(Sizing::Cells(24)),   // fixed: 24 columns
-    editor_pane().flex(1),              // receives the remaining width
-])
+```
+Box::col          80×24 at (0, 0)     the whole terminal
+├─ TextRun        80×1  at (0, 0)     height fixed at 1 row
+└─ Box::row       80×23 at (0, 1)     flex(1): the 23 remaining rows
+   ├─ tag_list    20×23 at (0, 1)     width fixed at 20 columns
+   └─ task_list   60×23 at (20, 1)    flex(1): the 60 remaining columns
 ```
 
-Layout is a single pass over the tree: each container passes the available
-space to its children (top-down), each child reports the size it takes
-(bottom-up), and the container positions its children within its own space. A
-`flex` child receives a share of the space left after fixed-size children,
-proportional to its weight.
+`Cells(n)` is an exact size. `flex(w)` means: after fixed-size siblings are
+placed, the remaining space is divided among the flexible siblings in
+proportion to their weights. On a 120×40 terminal the same rules produce
+20×39 and 100×39; the description does not change.
 
-The computed rectangles are stored on the library's side, not in your tree.
-Code that needs geometry — an event handler, for example — reads it from the
-library (§8.2). Your description never contains a coordinate.
+The computed rectangles are stored on the library's side, never in your
+tree — a description contains no coordinate. Everything that follows —
+deciding what a click hit, painting, scrolling — reads these stored
+rectangles.
 
-### 14.3 Reacting to a click
-
-An interactive region is declared by wrapping a node in `Gesture` and
-attaching a function:
+If the task list outgrows its rectangle, wrap it in a `Viewport`:
 
 ```rust
-enum Msg { OpenFile(FileId) }
-
-Gesture::new(TextRun::new(&file.name))
-    .on_click(move |_event| Msg::OpenFile(file.id))
+Viewport::new(task_list(app)).flex(1)
 ```
 
-The function does not perform the action. It returns a value of your own
-message type — here `Msg` — and the library delivers the collected messages
-to your application loop after the event is processed. The tree is generic
-over this type: `Node<Msg>` is a tree whose handlers produce `Msg`.
+A `Viewport` clips its child to its own rectangle and holds a scroll
+offset; the mouse wheel moves the offset, and only the rows currently
+inside the rectangle are painted.
 
-When a click arrives, the library locates the innermost node whose stored
+### 14.3 Clicks: events in, messages out
+
+Clicking a task should toggle it. First, state what the interaction means,
+as a type:
+
+```rust
+enum Msg { Toggle(TaskId) }
+```
+
+Then declare the clickable region by wrapping the row in `Gesture`:
+
+```rust
+fn task_row(t: &Task) -> Node<Msg> {
+    let mark = if t.done { "x" } else { " " };
+    Gesture::new(TextRun::new(format!("[{mark}] {}", t.title)))
+        .on_click(move |_| Msg::Toggle(t.id))
+}
+```
+
+The handler performs no action: it returns a `Msg`, and the library
+delivers the collected messages to your application loop, which is ordinary
+code:
+
+```rust
+match msg {
+    Msg::Toggle(id) => toggle(&mut app.tasks, id),
+}
+// after which build(&app) runs again
+```
+
+The tree type changed from `Node<()>` to `Node<Msg>`: a tree is generic
+over the message type its handlers produce.
+
+When a click arrives, the library finds the innermost node whose stored
 rectangle contains the pointer, then offers the event to that node and to
-each of its ancestors in turn until one reports the event handled (§9). Which
-node was clicked is answered from the stored geometry; your code is not
-involved in that determination.
+each ancestor in turn until one reports it handled (§9). Your code never
+inspects coordinates.
 
-### 14.4 Updating the screen
+### 14.4 What a rebuild does: elements and reconciliation
 
-When your application state changes — a file opened — you build a new
-description from the new state and return it. That is the entire update
-model. There is no method for mutating a widget, because there is no widget
-object for you to hold.
+After `Msg::Toggle`, `build(&app)` runs again and returns an entirely new
+tree. That raises a question the `Viewport` from 14.2 makes concrete: it
+holds a scroll offset, and if everything is new each frame, where does the
+offset live, and why does toggling a task not reset it?
 
-Rebuilding everything raises the question of persistence: a list's scroll
-position, an expanded tree branch, the cursor in a text field must survive
-from one frame to the next. The library keeps, for each node it has shown, a
-persistent record called an **element**. When a new description arrives, the
-library walks the old and new trees together, slot by slot — this walk is
-called **reconciliation**:
+The library keeps, for every node it has shown, a persistent record called
+an **element**. When a new description arrives, the library walks the old
+and new trees together, slot by slot — **reconciliation**:
 
 ```
 same node type in the same slot  ->  same element: kept, inputs updated
 anything else                    ->  old element discarded, new one created
 ```
 
-An element persists as long as the same kind of node occupies its slot. All
-durable data — computed geometry, and the state introduced next — lives on
-elements, so rebuilding the description discards nothing.
+The `Viewport` in the new tree occupies the same slot with the same type,
+so it resolves to the same element — and the scroll offset, which lives on
+the element rather than in the description, is untouched. Rebuilding
+descriptions is how the screen changes; elements are how anything survives
+the rebuild.
 
-### 14.5 State that belongs to a widget
+### 14.5 State that belongs to a widget: components
 
-Some data is not application state: whether a section is folded, the
-highlighted row of a list. It belongs to the widget that renders it. To hold
-such data, define a **component** — a description that declares a state type:
+Add a collapsible "Completed" section. Whether it is expanded is not
+application data — no other part of the program reads it — so it does not
+belong in `App`. Define a **component**: a description that declares a
+state type, which the library stores on the element:
 
 ```rust
-struct Collapsible { title: String }
+struct Section { title: String, rows: Vec<Node<Msg>> }
 
-impl Component<Msg> for Collapsible {
-    type State = bool;   // expanded?
+impl Component<Msg> for Section {
+    type State = bool;                        // expanded?
 
     fn build(&self, expanded: &bool, cx: &mut BuildCx<Msg>) -> Node<Msg> {
+        let mark = if *expanded { "v" } else { ">" };
         Box::col().children([
-            Gesture::new(TextRun::new(&self.title))
+            Gesture::new(TextRun::new(format!("{mark} {}", self.title)))
                 .on_click(cx.set_state(|e| *e = !*e)),
-            section_body().if_(*expanded),
+            Box::col().children(self.rows.clone()).if_(*expanded),
         ])
     }
 }
 ```
 
-The `bool` lives on the element. Reconciliation keeps the element, so
-`expanded` survives every rebuild; when the component leaves the tree, the
-element is discarded and the state with it.
+This `build` is the component's own: given its current state, produce its
+subtree. The `bool` survives every rebuild, because reconciliation keeps
+the element; it is discarded when the section leaves the tree.
 
-`set_state` applies your closure to the state and marks the element
-**dirty**. Nothing rebuilds at that moment. Once per frame the library takes
-the set of dirty elements, sorts it by tree depth (shallowest first), and
-calls `build` on each. Depth ordering means a rebuilding parent may recreate
-its children within the same pass, so no element builds twice per frame. Two
-rules follow: handlers may call `set_state` freely, and `build` must not — a
-`set_state` during a build is reported as an error, naming the element.
+`set_state` applies the closure to the state and marks the element
+**dirty**; nothing rebuilds at that moment. Once per frame the library
+rebuilds the dirty elements, shallowest first — a rebuilding parent may
+recreate its children within the same pass, so no element builds twice.
+Two rules follow: handlers may call `set_state`, and `build` must not — a
+`set_state` during a build is reported as an error naming the element.
 
-### 14.6 Lists and identity
+The application now contains two kinds of state, and the boundary between
+them is the design's: `tasks` is application state — `build` reads it and
+messages change it; `expanded` is widget state — it lives on the element
+and the rest of the program cannot observe it.
 
-Slot-based matching fails when children move. Sort a file list and slot 3 —
-with its element and any state on it — now sits under a different file's
-data. The correction is a **key**: a stable identifier taken from your data
-and attached to each child:
+### 14.6 Sorting breaks slots: keys
 
-```rust
-List::keyed(files, |f| Key::from(f.id), |f| row(f))
-```
+Add `Msg::SortByTitle`. After sorting, `build` emits the task rows in a new
+order — and reconciliation, which matches by slot, pairs the old elements
+with different tasks' rows. Any element state attached to a row (a
+component's state, a text field mid-edit) is now attached to the wrong
+task.
 
-With keys present, reconciliation pairs children by key rather than by slot,
-so an element follows its item across reorderings. Two consequences are part
-of the model rather than side effects: giving a subtree a *different* key
-discards its elements and their state, which is the supported way to reset a
-widget; and keyed constructors require a key function, because identity
-exists only in your data and cannot be derived by the library.
-
-### 14.7 Floating content
-
-A menu must overlap the content below it. A **layer** is a node that is laid
-out and painted outside the normal flow:
+The correction is a **key**: a stable identifier taken from your data and
+attached to each child, so that matching pairs children by key instead of
+by slot:
 
 ```rust
-Gesture::new(menu_button)
-    .child_if(open, || Layer::new()
-        .anchor(Anchor::Parent).place(Place::Below)
-        .dismiss(OUTSIDE_POINTER | ESCAPE)
-        .child(menu_items()))
+List::keyed(&app.tasks, |t| Key::from(t.id), |t| task_row(t))
 ```
 
-The layer remains an ordinary child in the tree: the menu belongs to its
-button. The declared behaviors are defined in terms of that containment —
-`dismiss(OUTSIDE_POINTER)` means a press on any node outside the layer's
-subtree closes it, which the library evaluates as an ancestor test. A
+Elements now follow their task across reorderings. Two consequences are
+part of the model: giving a subtree a *different* key discards its element
+and state, which is the supported way to reset a widget; and keyed
+constructors require the key function, because identity exists only in
+your data and cannot be derived by the library.
+
+### 14.7 A context menu: layers
+
+A right-click on a task should open a menu (Rename / Delete) on top of the
+neighbouring rows. Every node so far occupies a rectangle inside its
+parent's; a **layer** is a node that is laid out and painted outside that
+flow:
+
+```rust
+fn task_row(t: &Task, menu_open: bool) -> Node<Msg> {
+    Gesture::new(row_content(t))
+        .on_click(move |_| Msg::Toggle(t.id))
+        .on_secondary_click(move |_| Msg::OpenMenu(t.id))
+        .child_if(menu_open, || Layer::new()
+            .anchor(Anchor::Parent).place(Place::Below)
+            .dismiss(OUTSIDE_POINTER | ESCAPE)
+            .child(menu_items(t.id)))
+}
+```
+
+The layer's rectangle is computed relative to its **anchor** — here the
+row — rather than inside the parent's rectangle, and it is painted above
+the surrounding content. It remains an ordinary child in the tree: the
+menu belongs to its row. The declared behaviors are defined in terms of
+that containment: `dismiss(OUTSIDE_POINTER)` means a press on any node
+outside the layer's subtree closes it, evaluated as an ancestor test. A
 `modality` property can additionally mark every node outside the subtree
 non-interactive, which is the whole of what a modal dialog requires. §12
 lists the full property set.
 
-### 14.8 The keyboard
+### 14.8 The keyboard: focus
 
-Pointer events go to the node under the pointer. Key presses go to the
-**focused** node — the single node currently holding the keyboard:
+Add a text field for new tasks. A key press carries no coordinates, so
+hit-testing cannot route it. It goes to the **focused** node — the single
+node currently holding the keyboard:
 
 ```rust
-Focusable::new(text_field).autofocus()
+Box::row().h(Sizing::Cells(1)).children([
+    Focusable::new(TextField::new(&app.draft)
+            .on_change(Msg::Draft)
+            .on_submit(|_| Msg::AddTask))
+        .autofocus(),
+    Button::new("Add").on_press(|_| Msg::AddTask),
+])
 ```
 
-A key press is offered to the focused node, then to its ancestors — the same
-walk as a click, started from focus rather than from a hit test. Tab moves
-focus through focusable nodes in tree order; a `FocusScope` confines that
-cycle to a subtree, as a dialog's fields require. Focus registration is held
-on the element side, so rebuilding descriptions does not move focus. §10
-covers traversal policies and the key-binding mechanism built on this.
+A key press is offered to the focused node, then to its ancestors — the
+same walk as a click, started from focus rather than from a hit test. Tab
+moves focus through focusable nodes in tree order; a `FocusScope` confines
+that cycle to a subtree, as a dialog's fields require. Focus registration
+is held on the element side, so rebuilding descriptions does not move
+focus: submitting a task rebuilds the whole tree, and the caret stays in
+the field. §10 covers traversal policies and the key-binding mechanism
+built on this.
 
-### 14.9 Summary
+### 14.9 The finished shape
 
-The working vocabulary: build a description; the library reconciles it
-against elements; keys give moving children identity; components hold widget
-state on their elements; `set_state` marks and the library rebuilds once per
-frame; layers float; focus routes the keyboard. The remainder of this
+Every step composed into the one build function:
+
+```rust
+fn build(app: &App) -> Node<Msg> {
+    Box::col().children([
+        TextRun::new("My Tasks").h(Sizing::Cells(1)),
+        Box::row().flex(1).children([
+            tag_list(app).w(Sizing::Cells(20)),
+            Box::col().flex(1).children([
+                new_task_field(app).h(Sizing::Cells(1)),          // 14.8
+                Viewport::new(                                    // 14.2
+                    List::keyed(&app.open_tasks(), |t| Key::from(t.id),   // 14.6
+                        |t| task_row(t, app.menu == Some(t.id))), // 14.3, 14.7
+                ).flex(1),
+                Section { title: "Completed".into(),              // 14.5
+                          rows: app.done_rows() }.node(),
+            ]),
+        ]),
+    ])
+}
+```
+
+The whole screen is one function of `App`. The working vocabulary: build a
+description; layout assigns it rectangles; handlers return messages;
+reconciliation matches descriptions to elements; keys give moving children
+identity; components hold widget state on their elements; `set_state`
+marks and the library rebuilds once per frame; layers place content
+outside the flow; focus routes the keyboard. The remainder of this
 document specifies each mechanism — reconciliation (§6), scheduling (§7),
-layout and painting (§8), the primitives' property sets (§11–§12) — and §15
-shows editor surfaces written this way.
+layout and painting (§8), the primitives' property sets (§11–§12) — and
+§15 shows real editor surfaces written this way.
 
 ## 15. Examples
 
