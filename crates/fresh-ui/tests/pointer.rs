@@ -392,3 +392,50 @@ fn hover_transitions_fire_once_on_entering_and_leaving() {
     });
     assert_eq!(*log.borrow(), vec!["enter", "leave"]);
 }
+
+#[test]
+fn pressing_and_dragging_the_scrollbar_gutter_scrolls_the_viewport() {
+    let mut ui: Ui<()> = Ui::new();
+    let rows: Vec<Node<()>> = (0..40).map(|i| text(format!("row {i}"))).collect();
+    // Content taller than the window, with a scrollbar: the last column is the
+    // gutter the framework drives.
+    ui.frame(viewport(col().children(rows)).scrollbar(), FRAME);
+    let vp = ui.root().unwrap();
+    assert_eq!(ui.scroll(vp).0.y, 0);
+
+    let gutter = FRAME.w as i32 - 1;
+    // Press near the bottom of the track: the window jumps toward the end.
+    ui.dispatch(Input::Press {
+        pos: Point::new(gutter, FRAME.h as i32 - 1),
+        button: MouseButton::Left,
+        mods: Mods::NONE,
+    });
+    ui.tick();
+    let jumped = ui.scroll(vp).0.y;
+    assert!(jumped > 0, "a press on the gutter scrolled ({jumped})");
+
+    // Still holding, drag to the top: the window follows back.
+    ui.dispatch(Input::Move {
+        pos: Point::new(gutter, 0),
+        mods: Mods::NONE,
+    });
+    ui.tick();
+    assert_eq!(ui.scroll(vp).0.y, 0, "dragging to the top scrolled back");
+
+    // After release the gutter no longer drives scrolling.
+    ui.dispatch(Input::Release {
+        pos: Point::new(gutter, 0),
+        button: MouseButton::Left,
+        mods: Mods::NONE,
+    });
+    ui.dispatch(Input::Move {
+        pos: Point::new(gutter, FRAME.h as i32 - 1),
+        mods: Mods::NONE,
+    });
+    ui.tick();
+    assert_eq!(
+        ui.scroll(vp).0.y,
+        0,
+        "a bare move after release does not scroll"
+    );
+}

@@ -484,6 +484,8 @@ pub struct Ui<M> {
     /// Geometry for the elements somebody holds a handle to, refreshed once a
     /// frame. A handler runs while the tree is borrowed, so it reads here.
     pub(crate) geom_store: Rc<RefCell<crate::services::GeomStore>>,
+    /// The viewport whose scrollbar is being dragged, between press and release.
+    pub(crate) scrollbar_drag: Option<crate::render::object::RenderId>,
 }
 
 impl<M: 'static> Default for Ui<M> {
@@ -530,6 +532,7 @@ impl<M: 'static> Ui<M> {
             behaviour_hosts: Vec::new(),
             anchored: Vec::new(),
             geom_store: Rc::new(RefCell::new(crate::services::GeomStore::default())),
+            scrollbar_drag: None,
         }
     }
 

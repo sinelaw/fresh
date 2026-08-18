@@ -177,6 +177,13 @@ pub trait RenderObject {
         false
     }
 
+    /// Whether this node draws a scrollbar in its gutter — so the framework can
+    /// route a press or drag there to the scroll offset. A viewport with a
+    /// scrollbar says yes; nothing else does.
+    fn shows_scrollbar(&self) -> bool {
+        false
+    }
+
     /// Whether this node's output depends on the window of the nearest
     /// enclosing scrolling node, and so must be measured again when that
     /// window moves. The constraint cache is keyed by constraints, and a
@@ -243,6 +250,7 @@ pub(crate) struct RenderNode {
     pub out_of_flow: bool,
     pub reads_window: bool,
     pub raw_input: bool,
+    pub scrollbar: bool,
     /// Provenance and identity, resolved through the elements with no geometry
     /// between this node and its render parent.
     pub theme: Option<Rc<str>>,

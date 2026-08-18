@@ -37,8 +37,8 @@ Filter      │new task…                              Add
 ( ) Open    │»[ ] task 499004                          │
 ( ) Done    │»[x] task 499005                          │
             │»[ ] task 499006                          │
-            │»[ ] task 499007                          │
-            │»[x] task 499008                          █
+            │»[ ] task 499007                          █
+            │»[x] task 499008                          │
             │»[ ] task 499009                          │
             │»[ ] task 499010                          │
             │»[x] task 499011                          │

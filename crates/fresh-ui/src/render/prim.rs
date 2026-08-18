@@ -577,6 +577,10 @@ impl RenderObject for ViewportRender {
         true
     }
 
+    fn shows_scrollbar(&self) -> bool {
+        self.props.scrollbar
+    }
+
     fn render_name(&self) -> &'static str {
         "Viewport"
     }

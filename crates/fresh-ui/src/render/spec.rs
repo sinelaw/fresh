@@ -105,6 +105,28 @@ pub enum Draw {
     Host(HostId),
 }
 
+impl Draw {
+    /// Thumb geometry for a [`Draw::Scrollbar`], in track cells: `(top, len)`.
+    ///
+    /// Shared so every backend renders the bar identically and correctly at the
+    /// extremes — the naive `offset * track / content` truncates and leaves the
+    /// thumb a row short of the end at maximum scroll. This maps the offset
+    /// across `[0, max]` onto the thumb's travel `[0, track - len]`, so a
+    /// fully-scrolled thumb sits flush against the bottom.
+    pub fn scrollbar_thumb(offset: u32, content: u32, track: u16) -> (u16, u16) {
+        let t = track as u32;
+        if content == 0 || t == 0 {
+            return (0, track);
+        }
+        let len = ((t * t) / content).clamp(1, t);
+        let max_off = content.saturating_sub(t);
+        let top = (offset.min(max_off) * (t - len))
+            .checked_div(max_off)
+            .unwrap_or(0);
+        (top as u16, len as u16)
+    }
+}
+
 /// What a render object emits during paint.
 ///
 /// The key, the element and the theme come from the framework, so an

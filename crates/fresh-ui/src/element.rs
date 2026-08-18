@@ -817,6 +817,7 @@ impl<M: 'static> Ui<M> {
         let out_of_flow = obj.out_of_flow();
         let reads_window = obj.reads_window();
         let raw_input = obj.takes_raw_input();
+        let scrollbar = obj.shows_scrollbar();
         let reg = obj.focus_reg();
         let r = self.render.alloc(RenderNode {
             obj: Some(obj),
@@ -829,6 +830,7 @@ impl<M: 'static> Ui<M> {
             out_of_flow,
             reads_window,
             raw_input,
+            scrollbar,
             theme: None,
             key: None,
             data: RenderData::fresh(),
@@ -855,6 +857,7 @@ impl<M: 'static> Ui<M> {
         let out_of_flow = obj.out_of_flow();
         let reads_window = obj.reads_window();
         let raw_input = obj.takes_raw_input();
+        let scrollbar = obj.shows_scrollbar();
         let reg = obj.focus_reg();
         if let Some(n) = self.render.get_mut(r) {
             n.obj = Some(obj);
@@ -862,6 +865,7 @@ impl<M: 'static> Ui<M> {
             n.out_of_flow = out_of_flow;
             n.reads_window = reads_window;
             n.raw_input = raw_input;
+            n.scrollbar = scrollbar;
         }
         self.sync_focus_reg(id, reg);
     }

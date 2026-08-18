@@ -114,11 +114,11 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
             content,
             window,
         } => {
+            let _ = window;
             let track = r.h.max(1);
-            let thumb = ((*window as u32 * track as u32) / (*content).max(1)).max(1) as u16;
-            let top = ((*offset * track as u32) / (*content).max(1)) as u16;
+            let (top, len) = Draw::scrollbar_thumb(*offset, *content, track);
             for i in 0..track {
-                let ch = if i >= top && i < top + thumb {
+                let ch = if i >= top && i < top + len {
                     '█'
                 } else {
                     '│'

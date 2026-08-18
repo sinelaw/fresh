@@ -30,6 +30,10 @@ impl<M: 'static> Ui<M> {
         match input {
             Input::Key(k) => self.dispatch_key(k, &mut out),
             Input::Move { pos, mods } => {
+                if let Some(r) = self.scrollbar_drag {
+                    self.scroll_to_pointer(r, pos.y);
+                    return out;
+                }
                 let paths = self.route(pos);
                 self.update_hover(&paths, pos, mods, &mut out);
                 self.propagate_all(
@@ -43,6 +47,16 @@ impl<M: 'static> Ui<M> {
                 );
             }
             Input::Press { pos, button, mods } => {
+                // A press on a viewport's scrollbar gutter drives its scroll
+                // directly — click to jump, then drag to follow. Scroll is
+                // framework-owned, so this produces no application message.
+                if button == MouseButton::Left {
+                    if let Some(r) = self.scrollbar_hit(pos) {
+                        self.scrollbar_drag = Some(r);
+                        self.scroll_to_pointer(r, pos.y);
+                        return out;
+                    }
+                }
                 self.dismiss_for_pointer(pos, &mut out);
                 let paths = self.route(pos);
                 // Every stacked path's target, so a click is derived per path:
@@ -54,6 +68,9 @@ impl<M: 'static> Ui<M> {
                 self.propagate_all(&paths, GestureKind::Press, pos, button, mods, 0, &mut out);
             }
             Input::Release { pos, button, mods } => {
+                if self.scrollbar_drag.take().is_some() {
+                    return out;
+                }
                 let paths = self.route(pos);
                 self.propagate_all(&paths, GestureKind::Release, pos, button, mods, 0, &mut out);
                 // A click is a press and a release over the same element, one
@@ -455,6 +472,44 @@ impl<M: 'static> Ui<M> {
     }
 
     // -- defaults ------------------------------------------------------------
+
+    /// The viewport whose scrollbar gutter is under a point, if any. The gutter
+    /// is the node's last column, which its content does not cover, so a hit
+    /// there is unambiguous.
+    fn scrollbar_hit(&self, pos: Point) -> Option<RenderId> {
+        let mut found = None;
+        for e in self.hit_test(pos) {
+            let Some(r) = self.arena.get(e).and_then(|el| el.render) else {
+                continue;
+            };
+            let Some(n) = self.render.get(r) else {
+                continue;
+            };
+            if n.scrollbar && n.clips && n.data.scroll_max.y > 0 {
+                let rect = n.data.rect;
+                if pos.x == rect.right() - 1 && rect.y <= pos.y && pos.y < rect.bottom() {
+                    found = Some(r);
+                }
+            }
+        }
+        found
+    }
+
+    /// Map a pointer row on the scrollbar track to a scroll offset and apply it.
+    /// The top of the window follows the pointer across the track's travel.
+    fn scroll_to_pointer(&mut self, r: RenderId, y: i32) {
+        let (rect, max) = {
+            let Some(n) = self.render.get(r) else { return };
+            (n.data.rect, n.data.scroll_max.y)
+        };
+        let travel = (rect.h.max(1) as i32 - 1).max(1);
+        let rel = (y - rect.y).clamp(0, travel);
+        let off = (rel * max) / travel;
+        if let Some(n) = self.render.get_mut(r) {
+            n.data.scroll.y = off.clamp(0, max);
+        }
+        self.mark_render_dirty(r);
+    }
 
     fn scroll_chain(&mut self, path: &[ElementId], delta: i32) {
         for &n in path.iter().rev() {
