@@ -49,11 +49,11 @@ Filter      │new task…                              Add
 === ran Toggle theme: the accent and the status change
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it out
-            │»[ ] route the pointer
-            │»[ ] wire up focus
+(o) All░░░░░│▸[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │▸[x] build the reconciler
+( ) Done    │▸[ ] lay it out
+            │▸[ ] route the pointer
+            │▸[ ] wire up focus
             │
             │
             │

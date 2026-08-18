@@ -68,5 +68,4 @@ impl FocusTree {
     pub fn get_mut(&mut self, id: FocusId) -> Option<&mut FocusNodeData> {
         self.slots.get_mut(id.0 as usize).and_then(|s| s.as_mut())
     }
-
 }

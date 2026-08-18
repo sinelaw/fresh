@@ -87,11 +87,22 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
     }
 
     fn set_scroll(&mut self, info: crate::render::object::ScrollInfo) {
-        if let Some(n) = self.ui.render.get_mut(self.node) {
+        let moved = {
+            let Some(n) = self.ui.render.get_mut(self.node) else {
+                return;
+            };
+            let moved = n.data.window != Some(info.window);
             n.data.window = Some(info.window);
             n.data.content = info.content;
             n.data.scroll_max = info.max;
             n.data.translate = info.translate;
+            moved
+        };
+        if moved {
+            // The constraint cache is keyed by constraints, and a window is not
+            // one: a builder that reads this window has to be told the window
+            // moved, or it returns its last answer.
+            self.ui.invalidate_window_readers(self.node);
         }
     }
 
@@ -335,6 +346,27 @@ impl<M: 'static> Ui<M> {
         }
     }
 
+    /// Tell the builders below this node that its window moved. Stops at a
+    /// nested scrolling node, which publishes a window of its own.
+    pub(crate) fn invalidate_window_readers(&mut self, r: RenderId) {
+        let kids = match self.render.get(r) {
+            Some(n) => n.children.clone(),
+            None => return,
+        };
+        for k in kids {
+            let (reads, clips) = match self.render.get(k) {
+                Some(n) => (n.reads_window, n.clips),
+                None => continue,
+            };
+            if reads {
+                self.mark_render_dirty(k);
+            }
+            if !clips {
+                self.invalidate_window_readers(k);
+            }
+        }
+    }
+
     /// Measure one render node, honouring the cache.
     pub(crate) fn measure(&mut self, r: RenderId, c: Constraints) -> Size {
         {
@@ -398,24 +430,10 @@ impl<M: 'static> Ui<M> {
         if full {
             self.layout_dirty.clear();
             self.measure(root, root_c);
-        } else {
-            let mut dirty = std::mem::take(&mut self.layout_dirty);
-            dirty.sort_by_key(|&r| self.render_depth(r));
-            // Every dirty boundary is re-entered, including one below another:
-            // path-marking stops at a boundary, so an ancestor's re-measure
-            // does not reach the boundaries beneath it. The constraint cache is
-            // what makes the overlapping case cheap.
-            for b in dirty {
-                if self.render.get(b).is_none() {
-                    continue;
-                }
-                let Some((c, _)) = self.render[b].data.cached else {
-                    self.measure(root, root_c);
-                    break;
-                };
-                self.measure(b, c);
-            }
         }
+
+        self.drain_layout(root, root_c);
+
         self.frame_size = frame;
 
         // A constraint-dependent builder may have replaced part of its subtree.
@@ -477,16 +495,48 @@ impl<M: 'static> Ui<M> {
             }
         }
         if moved {
-            // One more measure pass so the window the builders read is the one
-            // the commands asked for.
+            // One more pass so the window the builders read is the one the
+            // commands asked for.
             if let Some(root) = self.render_root {
-                if let Some((c, _)) = self.render[root].data.cached {
-                    self.measure(root, c);
-                }
+                let root_c = self.root_constraints(root, self.frame_size);
+                self.drain_layout(root, root_c);
             }
             self.process_disposals();
         }
         moved
+    }
+
+    /// Drain the dirty boundaries to a fixpoint.
+    ///
+    /// A constraint-dependent builder reconciles during the pass, and what it
+    /// produces can dirty nodes the drain has already gone past; without the
+    /// loop they would be measured one frame late.
+    ///
+    /// Every dirty boundary is re-entered, including one below another:
+    /// path-marking stops at a boundary, so an ancestor's re-measure does not
+    /// reach the boundaries beneath it. The constraint cache is what makes the
+    /// overlapping case cheap.
+    fn drain_layout(&mut self, root: RenderId, root_c: Constraints) {
+        let mut rounds = 0;
+        while !self.layout_dirty.is_empty() {
+            let mut dirty = std::mem::take(&mut self.layout_dirty);
+            dirty.sort_by_key(|&r| self.render_depth(r));
+            for b in dirty {
+                if self.render.get(b).is_none() {
+                    continue;
+                }
+                let Some((c, _)) = self.render[b].data.cached else {
+                    self.measure(root, root_c);
+                    break;
+                };
+                self.measure(b, c);
+            }
+            rounds += 1;
+            assert!(
+                rounds < 16,
+                "layout did not settle: a builder keeps dirtying what it produced"
+            );
+        }
     }
 
     fn render_depth(&self, mut r: RenderId) -> u32 {
@@ -497,7 +547,6 @@ impl<M: 'static> Ui<M> {
         }
         d
     }
-
 
     /// The root is a child of the frame. `Auto` there means "fill", and an
     /// explicit request is honoured so a subtree can be measured on its own

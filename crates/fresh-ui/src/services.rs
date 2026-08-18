@@ -27,7 +27,7 @@ impl Default for Services {
     fn default() -> Self {
         Services {
             spawn: Rc::new(|job| {
-                std::thread::spawn(move || job());
+                std::thread::spawn(job);
             }),
             store: None,
         }

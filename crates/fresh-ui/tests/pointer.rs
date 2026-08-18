@@ -145,7 +145,7 @@ fn an_opaque_sibling_above_blocks_what_is_behind() {
 }
 
 #[test]
-fn a_transparent_region_lets_its_own_area_fall_through() {
+fn a_transparent_region_runs_its_handlers_then_lets_the_hit_continue() {
     let log: Log = Rc::default();
     let mut ui: Ui<()> = Ui::new();
     let l = log.clone();
@@ -167,7 +167,12 @@ fn a_transparent_region_lets_its_own_area_fall_through() {
         FRAME,
     );
     click(&mut ui, 2, 0);
-    assert_eq!(*log.borrow(), vec!["behind Capture", "behind Bubble"]);
+    // Its own handlers run, and *then* the hit continues to what is behind:
+    // two stacked paths, in front-to-back order.
+    assert_eq!(
+        *log.borrow(),
+        vec!["front", "behind Capture", "behind Bubble"]
+    );
 }
 
 #[test]

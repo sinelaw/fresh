@@ -115,8 +115,8 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
             window,
         } => {
             let track = r.h.max(1);
-            let thumb = ((*window as u32 * track as u32) / (*content).max(1) as u32).max(1) as u16;
-            let top = ((*offset as u32 * track as u32) / (*content).max(1) as u32) as u16;
+            let thumb = ((*window as u32 * track as u32) / (*content).max(1)).max(1) as u16;
+            let top = ((*offset * track as u32) / (*content).max(1)) as u16;
             for i in 0..track {
                 let ch = if i >= top && i < top + thumb {
                     '█'

@@ -45,24 +45,31 @@ impl<M: 'static> Ui<M> {
             Input::Press { pos, button, mods } => {
                 self.dismiss_for_pointer(pos, &mut out);
                 let paths = self.route(pos);
-                self.press = paths
-                    .first()
-                    .and_then(|p| p.last().copied())
-                    .map(|t| (t, button));
+                // Every stacked path's target, so a click is derived per path:
+                // a transparent overlay and what is behind it were both
+                // pressed, and both are clicked.
+                let targets: Vec<ElementId> =
+                    paths.iter().filter_map(|p| p.last().copied()).collect();
+                self.press = Some((targets, button));
                 self.propagate_all(&paths, GestureKind::Press, pos, button, mods, 0, &mut out);
             }
             Input::Release { pos, button, mods } => {
                 let paths = self.route(pos);
                 self.propagate_all(&paths, GestureKind::Release, pos, button, mods, 0, &mut out);
-                // A click is a press and a release over the same element.
+                // A click is a press and a release over the same element, one
+                // per stacked path.
                 if let Some((pressed, b)) = self.press.take() {
-                    if b == button && paths.iter().any(|p| p.contains(&pressed)) {
+                    if b == button {
                         let kind = match button {
                             MouseButton::Right => GestureKind::SecondaryClick,
                             _ => GestureKind::Click,
                         };
-                        let click_path = self.path_to(pressed);
-                        self.propagate(&click_path, kind, pos, button, mods, 0, None, &mut out);
+                        let click_paths: Vec<Vec<ElementId>> = paths
+                            .iter()
+                            .filter(|p| p.last().is_some_and(|t| pressed.contains(t)))
+                            .cloned()
+                            .collect();
+                        self.propagate_all(&click_paths, kind, pos, button, mods, 0, &mut out);
                     }
                 }
                 self.captured = None;
@@ -441,15 +448,24 @@ impl<M: 'static> Ui<M> {
 
     fn scroll_chain(&mut self, path: &[ElementId], delta: i32) {
         for &n in path.iter().rev() {
-            if self.arena.get(n).map(|e| e.ty) != Some(ElemType::Viewport) {
+            let Some(r) = self.render_for(n) else {
+                continue;
+            };
+            let (scroll, max, clips) = {
+                let Some(node) = self.render.get(r) else {
+                    continue;
+                };
+                (node.data.scroll, node.data.scroll_max, node.clips)
+            };
+            if !clips {
                 continue;
             }
-            let (scroll, content) = self.scroll(n);
-            let window = self.size_of(n);
-            let max = content.h.saturating_sub(window.h) as i32;
-            let next = (scroll.y + delta).clamp(0, max);
+            let next = (scroll.y + delta).clamp(0, max.y.max(0));
             if next != scroll.y {
-                self.scroll_to(n, Point::new(scroll.x, next));
+                if let Some(node) = self.render.get_mut(r) {
+                    node.data.scroll.y = next;
+                }
+                self.mark_render_dirty(r);
                 return;
             }
         }

@@ -28,6 +28,8 @@ pub struct ListState {
     /// A handle to the window, so a selection move can ask it to follow. The
     /// window itself belongs to the viewport.
     pub(crate) anchor: Option<Rc<crate::behavior::Anchor>>,
+    /// The selection the window was last asked to show.
+    pub(crate) revealed: crate::behavior::Cache<usize, ()>,
 }
 
 enum Source<M> {
@@ -178,6 +180,16 @@ impl<M: 'static> Component<M> for List<M> {
         let up: Updater<ListState> = cx.updater();
         let anchor = s.anchor.clone();
 
+        // Keep the selection inside the window when it *moves* — by key here,
+        // or by the owner passing a new one down. Asking on every build would
+        // fight the wheel, which is a statement about the window rather than
+        // about the selection; the memo is what distinguishes the two, and its
+        // write is an idempotent function of the build inputs.
+        if let Some(a) = &anchor {
+            let a = a.clone();
+            s.revealed.get_or(sel, move || a.reveal(sel as u32));
+        }
+
         let source = self.source.clone();
         // The window comes from the viewport, which owns it. This component
         // decides only which rows fill it.
@@ -220,9 +232,7 @@ impl<M: 'static> Component<M> for List<M> {
          -> Option<M> {
             let up = up.clone();
             up.set(move |st: &mut ListState| st.selected = target);
-            if let Some(a) = anchor {
-                a.reveal(target as u32);
-            }
+            let _ = anchor;
             on_select.as_ref().map(|f| f(target))
         };
 

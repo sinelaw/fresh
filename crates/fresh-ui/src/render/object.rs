@@ -137,6 +137,14 @@ pub trait RenderObject {
         false
     }
 
+    /// Whether this node's output depends on the window of the nearest
+    /// enclosing scrolling node, and so must be measured again when that
+    /// window moves. The constraint cache is keyed by constraints, and a
+    /// window is not one.
+    fn reads_window(&self) -> bool {
+        false
+    }
+
     /// Whether this node takes part in its parent's flow. A layer does not: it
     /// needs its anchor's rectangle, which does not exist until the main walk
     /// is done, so the framework holds it back for the second stage.
@@ -181,6 +189,7 @@ pub(crate) struct RenderNode {
     /// is checked out for `layout`.
     pub clips: bool,
     pub out_of_flow: bool,
+    pub reads_window: bool,
     /// Provenance and identity, resolved through the elements with no geometry
     /// between this node and its render parent.
     pub theme: Option<Rc<str>>,

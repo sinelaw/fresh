@@ -397,21 +397,25 @@ impl RenderObject for ViewportRender {
         let own = c.constrain(c.max());
         let scroll = cx.scroll();
 
+        let mut own = own;
         match self.props.mode {
             ScrollMode::Cells => {
-                // Declare the window before measuring, so a builder inside it
-                // reads the window it is actually in.
+                let w = own.w;
                 self.window = Rect::at(scroll, own);
                 cx.set_scroll(ScrollInfo {
                     window: self.window,
                     content: self.content,
                     max: Point::new(
-                        self.content.w.saturating_sub(own.w) as i32,
+                        self.content.w.saturating_sub(w) as i32,
                         self.content.h.saturating_sub(own.h) as i32,
                     ),
                     translate: true,
                 });
-                let inner = Constraints::new(own.w, own.w, 0, u16::MAX);
+                let inner = if c.min_w == c.max_w {
+                    Constraints::new(w, w, 0, u16::MAX)
+                } else {
+                    Constraints::new(0, w, 0, u16::MAX)
+                };
                 let mut content = Size::ZERO;
                 for k in cx.children() {
                     let s = cx.measure(k, inner);
@@ -419,6 +423,11 @@ impl RenderObject for ViewportRender {
                     content = Size::new(content.w.max(s.w), content.h.max(s.h));
                 }
                 self.content = content;
+                // Given a definite extent, a viewport takes it. Given a loose
+                // one, it is as tall as its content: a window is only a window
+                // once something bounds it.
+                own = c.constrain(Size::new(content.w.max(c.min_w), content.h));
+                self.window = Rect::at(scroll, own);
                 cx.set_scroll(ScrollInfo {
                     window: self.window,
                     content,
@@ -433,6 +442,19 @@ impl RenderObject for ViewportRender {
                 // The child renders only the window, so nothing is translated
                 // and the offset is an index. A cell extent over a million rows
                 // would not fit a coordinate; an index does.
+                //
+                // A loose width is resolved the intrinsic way: measure the
+                // window once to learn how wide its rows are, then again at
+                // that width. The framework counts the second look.
+                if c.min_w != c.max_w {
+                    let probe = Constraints::new(0, c.max_w, 0, own.h);
+                    let mut natural = 0u16;
+                    for k in cx.children() {
+                        natural = natural.max(cx.measure(k, probe).w);
+                    }
+                    own.w = c.constrain(Size::new(natural, own.h)).w;
+                }
+                own = c.constrain(Size::new(own.w, (n.min(u16::MAX as u32)) as u16));
                 let rows = own.h as u32;
                 self.items = n;
                 self.window = Rect::new(0, scroll.y, own.w, own.h);
@@ -591,6 +613,7 @@ impl RenderObject for LayerRender {
 /// layout pass, with the constraints as an argument — so the dependency is
 /// scoped to this node and evaluated in the right pass rather than becoming a
 /// build/layout cycle or a one-frame lag.
+#[derive(Default)]
 pub struct ReaderRender {
     last: Option<LayoutInfo>,
 }
@@ -604,13 +627,11 @@ impl ReaderRender {
     }
 }
 
-impl Default for ReaderRender {
-    fn default() -> Self {
-        ReaderRender { last: None }
-    }
-}
-
 impl RenderObject for ReaderRender {
+    fn reads_window(&self) -> bool {
+        true
+    }
+
     fn layout(&mut self, c: Constraints, cx: &mut dyn LayoutCx) -> Size {
         let info = LayoutInfo {
             constraints: c,

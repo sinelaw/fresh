@@ -442,7 +442,7 @@ pub struct Ui<M> {
     /// Pointer state.
     pub(crate) hover: Vec<ElementId>,
     pub(crate) captured: Option<ElementId>,
-    pub(crate) press: Option<(ElementId, crate::event::MouseButton)>,
+    pub(crate) press: Option<(Vec<ElementId>, crate::event::MouseButton)>,
 
     /// Focus state. Neither the application nor the component declares it.
     pub(crate) focus: Option<ElementId>,

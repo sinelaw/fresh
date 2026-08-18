@@ -753,6 +753,7 @@ impl<M: 'static> Ui<M> {
         let Some(obj) = obj else { return };
         let clips = obj.clips();
         let out_of_flow = obj.out_of_flow();
+        let reads_window = obj.reads_window();
         let r = self.render.alloc(RenderNode {
             obj: Some(obj),
             element: id,
@@ -762,6 +763,7 @@ impl<M: 'static> Ui<M> {
             h: crate::desc::Sizing::Auto,
             clips,
             out_of_flow,
+            reads_window,
             theme: None,
             key: None,
             data: RenderData::fresh(),
@@ -822,10 +824,12 @@ impl<M: 'static> Ui<M> {
         }
         let clips = obj.clips();
         let out_of_flow = obj.out_of_flow();
+        let reads_window = obj.reads_window();
         if let Some(n) = self.render.get_mut(r) {
             n.obj = Some(obj);
             n.clips = clips;
             n.out_of_flow = out_of_flow;
+            n.reads_window = reads_window;
         }
     }
 
