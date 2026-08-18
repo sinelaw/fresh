@@ -1,9 +1,11 @@
 # Widget Library — Implementation Plan
 
 > _AI-generated plan. **Part 1 has started; Part 2 is PLANNED.** Phases L0
-> **Part 1 is complete** in `crates/fresh-ui`: L0 through L7, the demo
-> application, and its golden and property tests. Part 2 (the migration) is
-> still design._
+> **Part 1 is built** in `crates/fresh-ui`: L0 through L7, the demo application,
+> and its golden and property tests. It is **not yet faithful to the design
+> document** — §3's deviation register lists nine places the implemented model
+> differs and ten specified pieces that are not built. Part 1b (§4) closes them.
+> Part 2 (the migration) does not start until it does._
 >
 > How to build [`widget-library-design.md`](widget-library-design.md) as a new
 > crate, and how to move every existing UI surface onto it. Two parts, in
@@ -131,109 +133,189 @@ never fired when a modal opened over an already-focused field, and a flow
 container could place a child outside its own content box when the gaps alone
 exceeded the available space.
 
+Passing every exit criterion is not the same as matching the specification. The
+deviation register below is a section-by-section audit of the design document
+against the source; closing it is the definition of done for Part 1.
+
 ### Deviations from the design document
 
-Points where the implementation differs from the spec. The spec is the
-statement of intent; these are the places where Rust or a later phase forced a
-different expression of it.
+Every point where the implementation differs from
+[`widget-library-design.md`](widget-library-design.md), from a section-by-section
+audit of the spec against the source. Each is classified:
 
-1. **`col()` / `row()` / `stack()` instead of `Box::col()`.** A type named
-   `Box` in scope shadows `std::boxed::Box` for every user of the crate. The
-   description variant keeps the name `Desc::Box`; only the constructor spelling
-   changed.
-2. **Sizing is a node-level attribute, not a `BoxProps` field.** The design
-   document's own examples apply `.flex(1)` to a `Viewport` and `.w(Cells(20))`
-   to a `Component`, neither of which is a `Box`. `Sizing` therefore lives on
-   `Node`, where any node can carry it, and `BoxProps` holds only what the
-   container itself needs: direction, padding, gap, border, alignment.
-3. **A component reads its slot children through `cx.children()`.** The design
-   document does not say how children passed to a `Component` description reach
-   the component. They are exposed on the build context; the component decides
-   where to place them.
-4. **Transactional reconcile rolls back and then re-raises.** L1 requires that a
-   failure part-way through leaves the last committed content intact, which is
-   implemented. What happens *after* the rollback — a placeholder subtree, a
-   reported error, a dropped frame — is the error policy, and that is a later
-   phase. Until then the panic continues to the caller with the tree intact.
+| Class | Meaning | Disposition |
+|---|---|---|
+| **A** | The implemented model differs from the spec. | Close in code — §4. |
+| **B** | Specified and not built. | Build — §4. |
+| **C** | The code is right and the spec is inconsistent, silent, or unexpressible in Rust. | Correct the spec. |
 
-5. **`Component::init` is where behaviors are registered and snapshots are
-   read.** The design document shows `cx.register(...)` and says an ambient read
-   "is legal in the state constructor", but also specifies
-   `type State: Default`, which admits no context. The trait therefore gained a
-   provided method `fn init(&self, cx: &mut InitCx<M>) -> Self::State`,
-   defaulting to `Self::State::default()`. `Default` stays required, so a
-   component that needs neither writes nothing.
-6. **`Provide` is its own `Desc` variant, and the ambient's identity is part of
-   the element type.** The design document calls `Provide` "an ordinary
-   description" without saying which one; it needs framework-level storage (the
-   value and the dependent list), so it is a variant rather than a component.
-   Making the ambient key part of `ElemType` is what stops one ambient from
-   updating in place over another at the same position.
-7. **Ambient values are `Rc<T>`, compared by pointer identity.** "Swapped for a
-   non-identical one" needs a definition of identity, and the same reasoning
-   that rules out structural equality for descriptions rules it out here:
-   `Rc::ptr_eq` is O(1) and needs no bound on `T`. Handing back the same `Rc`
-   marks nobody.
-8. **Render objects are a field on the element, not a third arena.** The
-   correspondence is one-to-one and the lifetimes are identical, and the two
-   walks that need both — retargeting at component boundaries, and focus
-   registration — become direct instead of a join across two id spaces.
-9. **`Sizing` is a node-level attribute and `Align::Stretch` is the default.**
-   The design document sizes a `Viewport` and a `Component` in its own
-   examples, so sizing cannot live in `BoxProps`. Stretch as the default is
-   what makes those examples resolve in one pass: a child with `Auto` on the
-   cross axis fills it when the container's cross extent is definite, and
-   behaves as `Start` when it is not. Without that rule a sidebar declared only
-   as `w(Cells(20))` would not fill the row's height, and matching flexbox
-   would need a second cross-axis pass.
-10. **Relayout boundaries use a dirty-boundary list; `arrange` still walks the
-   whole tree.** Measurement — the expensive half — re-enters at the nearest
-   boundary, which is what the exit criterion asks for. Assigning absolute
-   positions afterwards is O(nodes) with no measurement, and doing it whole
-   keeps out-of-flow layer collection correct.
-11. **Positions are signed.** `Point` and `Rect` origins are `i32` because
-   content scrolled above or left of its viewport has a negative origin;
-   clipping removes it, and saturating it to zero would silently move it.
-12. **`PointerMode::Transparent` means the node's own area does not hit.** The
-   design document says handlers run and the hit then continues behind, which
-   needs a hit test that returns several stacked paths rather than one. What is
-   implemented is the single-path form: a transparent node is not hittable
-   itself, its children still are, and a click on the node's own area falls
-   through. `Ignore` removes the whole subtree.
-13. **The target phase belongs to the deepest hit element.** A `Gesture` wrapping
-   a `TextRun` sees `Capture` and `Bubble`, not `Target`, because the text is
-   what was hit. This matches the DOM, where an element wrapping a text node is
-   not the target either.
-14. **`List::windowed`, not `List::virtual`.** `virtual` is a reserved word in
-   Rust. Both forms go through the same `LayoutReader`, so the eager list gets
-   the windowed one's per-frame cost profile for free and the two behave
-   identically to keyboard, wheel and selection.
-15. **`Tasks` does not start work; it owns delivery.** The design document does
-   not name a runtime, and this crate has no runtime dependency. The application
-   starts a thread, a future or a channel however it likes and receives a
-   `TaskHandle`, which is `Send`. The two guarantees the design asks for are the
-   ones needing framework support, and they are implemented here: results are
-   handed over between frames, never during build, layout or paint; and a result
-   refuses delivery once its element is torn down or a newer launch under the
-   same tag has replaced it.
-16. **`event::MouseButton`, not `Button`.** The widget of that name is more
-   often written.
-17. **`Behavior::teardown` takes `&self`.** A behavior is shared between the
-   element's registry and the state field holding it, and `build` only ever sees
-   `&State`, so a behavior with mutable internals owns a `RefCell` regardless.
+Class A and B are open. **The design document is the agreement; where it and the
+code disagree, the code changes.** Class C items are proposals to amend the
+document, and need a decision rather than a keystroke.
 
-Two behaviours are implemented that the design document does not state
-explicitly. The root is treated as a child of the frame: `Auto` there means
-"fill", and an explicit request on the root is honoured, so a subtree can be
-measured on its own terms. And the `(type, key)` rule is applied to the **root**
-description as well as to children, so changing the root's type or key replaces the root
-element rather than updating it in place.
+Section references below are to the design document unless marked otherwise.
 
-The snapshot rule's debug assertion is detectable in exactly one form: a
-provider records both who read it in `build` and who read it in `init`, and
-when the value changes, any element in the second set but not the first is
-reported. That is precisely the element that cached a value it cannot see
-change.
+#### A — the model differs
+
+**A1. There is no `RenderObject` trait.** §3 names three trees, the third being
+`dyn RenderObject` with `layout` / `paint` / `hit` / `relayout_boundary` (§8).
+What exists is a `RenderData` struct on the element, and per-primitive behaviour
+written as a `match` on `ElemType` inside `layout_dispatch`, `paint_node` and
+`hit_node`. The observable semantics are the same because the correspondence is
+one to one, but the layer the spec names does not exist as a layer.
+
+**A2. `Host` is not a user-supplied render object.** A consequence of A1, and the
+larger half of it. §11: "`Host` is the single exception, and it is available to
+user code on the same terms: a render object with custom layout, paint and
+hit-testing." What is implemented is a leaf that fills its constraints and emits
+`Draw::Host` for the backend. Application code cannot supply measurement, paint
+or hit-testing for anything. Goal 6's escape hatch is missing.
+
+**A3. `Tasks` inverts ownership.** §7: `launch_replacing(tag, …)` launches the
+work. The implementation hands the application a `Send` handle and the
+application launches. Both delivery guarantees hold, but the call shape in the
+spec does not work, and the framework never sees the work.
+
+**A4. The windowed list is not built on `Viewport`.** §11: "`List::virtual` is a
+`Component` over `Viewport` … whose `build` reads the viewport's scroll window."
+The implementation is a component over `LayoutReader` that owns its own scroll
+and never instantiates a `Viewport`, so it inherits neither the viewport's clip
+nor its scrollbar, and the scroll window is not the mechanism.
+
+**A5. There is no focus tree.** §4 and §10: "Focusable render objects register
+into a focus tree that mirrors — but is not identical to — the render tree."
+`focus_scope()` walks the element tree on every query and builds a `FocusScope`
+from scratch. Nothing is registered and nothing is retained. Focus survives
+reconciliation for a different reason than the spec gives — it names an element
+rather than being held by a render object.
+
+**A6. The `Focusable` *behavior* does not exist.** §10: "Registration is a
+behavior: `cx.register(Focusable::new(on_focus_change))`." Only the
+`Desc::Focusable` primitive exists, so a component cannot become focusable
+without wrapping itself in one. Build order step 3 states the general rule this
+breaks: "every later primitive is a behavior".
+
+**A7. The context handle is not split.** §8.2 specifies `cx.services` (valid from
+construction) and `cx.geometry` (valid only after first layout, never inside
+`build`), and gives the reason: "the validity window is expressed in the type
+rather than in documentation". The implementation has one context and a runtime
+`debug_assert` in `Ui::rect` — the arrangement the spec argues against.
+
+**A8. `PointerMode::Transparent` does not run its handlers.** §9: "`Transparent`
+passes through after its own handlers." The implementation makes the node
+unhittable, so its handlers never run at all. This needs a hit test that returns
+a stacked path rather than one path.
+
+**A9. Layout never measures twice.** §8.1: "Intrinsic sizing is opt-in and
+measures a subtree twice", and §17 risk 4 asks for those cases to be
+identifiable at the API and in diagnostics. Layout is strictly single-pass:
+`Auto` resolves against the incoming loose constraint. Every case in the spec and
+every test resolves correctly, but a case that genuinely needs two measurements
+is silently wrong rather than slow. `Align::Stretch` applying only when the cross
+extent is definite is a rule invented to avoid needing the second pass.
+
+#### B — specified and not built
+
+**B1. Five of the six behaviors.** §7 names the shipped set as `Tasks`,
+`Ticker`, `Cache`, `Controller`/`Anchor`, `Focusable`, `Persisted`. Only `Tasks`
+exists.
+
+**B2. The speculative-build contract.** §8.4: the framework may call `build()`
+any number of times without committing the result, `Cache<T>` is exempted from
+the purity check, and all other fields are unchanged across builds. Neither the
+carve-out nor the purity check exists, because nothing memoizes yet.
+
+**B3. `Persisted` and `PersistenceScope`.** §7. Absent, so there is no
+rehydration path for new incidental state.
+
+**B4. `Controller` / `Anchor`.** §7. Absent, so there is no imperative command
+path and no way for host code to address a mounted surface by handle.
+
+**B5. `Ticker`.** §7. Absent, so there is no per-frame callback.
+
+**B6. `LayoutSpec.cursor`.** §8.3 declares it. It is never populated: there is no
+text cursor, so a focused field cannot place one.
+
+**B7. `Modality::Exclusive` does not suppress host raw input.** §12 and
+Appendix A: `blocks_terminal_input` is meant to be "derived from `inert` /
+`HostLeaf::raw_input`". There is no `HostLeaf` and no raw-input concept.
+
+**B8. `DualList`.** Named in L7. Not built.
+
+**B9. `request_focus()` is not rejected in `build()`.** §10 requires the
+rejection. It is unreachable from `BuildCx` today, which is not the same thing as
+being reported.
+
+**B10. The plugin boundary (§13).** Scheduled as M6 in Part 2; listed here for
+completeness, not as a defect.
+
+#### C — proposed spec corrections
+
+Each of these is a place where following the spec literally is impossible,
+self-contradictory, or contradicted by the spec's own examples. **These need a
+decision; they are not closed unilaterally.**
+
+**C1. `col()` / `row()` / `stack()` instead of `Box::col()`.** A type named `Box`
+in scope shadows `std::boxed::Box` for every user of the crate. `Desc::Box` keeps
+the name.
+
+**C2. `event::MouseButton` instead of `Button`.** The widget of that name is more
+often written.
+
+**C3. `List::windowed` instead of `List::virtual`.** `virtual` is a reserved
+word.
+
+**C4. `Sizing` on `Node`, not in `BoxProps`.** §5 puts sizing nowhere; §8.1
+implies `BoxProps`; but the spec's own examples write `Viewport::new(..).flex(1)`
+and size a `Component` with `.w(Cells(20))`, neither of which is a `Box`. Sizing
+must be a node-level attribute for the spec's own examples to compile.
+
+**C5. `Component::init`.** §7's sketch shows one method and `State: Default`,
+which admits no context; §7's prose and §17's risk 8 both describe a
+construct / build / teardown lifecycle, and §7 says an ambient read "is legal in
+the state constructor". `init` is the construct phase the prose already assumes;
+the sketch should show it.
+
+**C6. `Provide` and `LayoutReader` are `Desc` variants.** §7 calls `Provide` "an
+ordinary description whose element holds the value and a list of dependents" and
+§8.2 calls `LayoutReader` "a description"; §5's enum lists neither. The enum
+listing is incomplete. Related: the ambient's identity is part of `ElemType`, so
+one ambient cannot update in place over another at the same position — a
+strengthening consistent with §6's type-match rule, not a change to it.
+
+**C7. Ambient identity is `Rc::ptr_eq`.** §7 says a value "swapped for a
+non-identical one" marks dependents, without defining identity. Pointer identity
+is the same rule §6 gives for descriptions, is O(1), and needs no bound on `T`.
+
+**C8. Signed positions.** `Point` and `Rect` origins are `i32`, because content
+scrolled above or left of its viewport has a negative origin. Saturating it to
+zero would silently move content.
+
+**C9. Relayout re-entry uses a dirty-boundary list, and `arrange` walks the whole
+tree.** §8.2's guarantee — a change stops at the nearest boundary — holds for
+measurement, which is the expensive half. Assigning absolute positions afterwards
+carries no measurement and doing it whole keeps out-of-flow layer collection
+correct.
+
+**C10. `Behavior::teardown` takes `&self`.** A behavior is shared between the
+element's registry and the state field holding it, and `build` only ever sees
+`&State`.
+
+**C11. The target phase belongs to the deepest hit element.** A `Gesture`
+wrapping a `TextRun` sees `Capture` and `Bubble`, not `Target`. §9 does not say
+which element is the target when the deepest hit carries no listeners; this
+matches the DOM.
+
+**C12. `cx.children()` for slot children.** §5 does not say how children passed
+to a `Component` description reach the component.
+
+**C13. The root is a child of the frame.** `Auto` at the root means "fill", an
+explicit request there is honoured, and the `(type, key)` rule applies to the
+root as it does to children. §6 is silent on the root.
+
+**C14. Transactional reconcile rolls back and re-raises.** §16 step 1's
+requirement — a failure leaves the last committed content intact — holds. What
+happens after the rollback is the error policy, which no section specifies.
 
 ### L0 — Skeleton
 Crate, CI wiring, `Key`, `Node<M>`, `Desc<M>` with props structs, no behavior.
@@ -356,15 +438,192 @@ into framework internals; a `List::virtual` over 10^6 items builds, lays out
 and paints O(visible) work per frame, measured by the fake renderer's
 create/update counts.
 
-**Part 1 is done when** `fresh-ui` builds and tests standalone, and a demo
-binary drives a small app (a list, a form, a menu, a modal) through the fake
-renderer with no Fresh code involved. **Done:** `src/demo/` is the application,
+**Part 1 is done when** `fresh-ui` builds and tests standalone, a demo binary
+drives a small app (a list, a form, a menu, a modal) through the fake renderer
+with no Fresh code involved, **and the deviation register carries no open class-A
+or class-B item**. The first two hold: `src/demo/` is the application,
 `examples/demo.rs` is the binary, and `src/test/screen.rs` is the reference
-backend that turns a display list into characters.
+backend. The third is Part 1b (§4).
 
 ---
 
-## 4. Part 2 — migrate
+## 4. Part 1b — closing the deviations
+
+Part 2 (§5) does not start until class A and class B are closed. Migrating nine
+surfaces onto a library that differs from its own specification would encode the
+difference into every one of them, and the point of the exercise is a single
+generic model rather than a second set of hand-specified exceptions.
+
+The order is by dependency, not by size. **R1 is first because A2, A4, A5 and A8
+are all consequences of it**, and each would be written twice if it were closed
+before the layer it belongs in exists.
+
+Throughout: the 123 existing tests are the regression suite. A phase that
+changes behaviour must say which test changed and why; a phase that does not
+should leave every one of them passing untouched.
+
+### R1 — The render-object layer *(closes A1)*
+
+Introduce the third tree the spec names.
+
+```rust
+pub trait RenderObject {
+    fn layout(&mut self, c: Constraints, cx: &mut LayoutCx) -> Size;
+    fn paint(&self, g: Geom, out: &mut DrawList);
+    fn hit(&self, local: Point) -> Hit;
+    fn relayout_boundary(&self) -> bool { false }
+}
+```
+
+A `RenderId` arena beside the element arena; `Element::render: Option<RenderId>`,
+which the spec's own `Element` sketch already has. One implementation per
+primitive, holding what §3 says render objects hold: computed geometry, cached
+measurements, paint state, focus registration, host handles. `LayoutCx` gives an
+implementation the ability to lay out its children and read back their sizes.
+
+The three `match ElemType` bodies — `layout_dispatch`, the per-type arm of
+`paint_node`, the mode logic in `hit_node` — move into implementations and
+disappear from the framework.
+
+**Exit:** no `match` on `ElemType` remains in `render/` or `hit.rs`; the arena
+holds render objects; all 123 tests pass unchanged.
+
+**Cost:** the largest phase. It touches every file under `render/`, plus
+`hit.rs`, `focus/`, and the element arena. Expect the layout and paint tests to
+be the ones that catch mistakes.
+
+### R2 — `Host` as a user render object *(closes A2)*
+
+`Desc::Host` carries an `Rc<dyn RenderObject>` the application supplied, not an
+opaque id. The crate keeps `HostId` as a convenience for hosts that only need a
+rectangle, implemented in terms of the general form.
+
+**Exit:** a test outside the primitive set defines a host leaf with its own
+measurement and hit-testing — a fixed 3:1 aspect box that only hits its left
+half — and it lays out, paints and hit-tests correctly. Goal 6 then holds as
+written.
+
+### R3 — `Tasks` launches *(closes A3)*
+
+Restore the spec's call shape without naming a runtime: `Ui` carries a spawner
+hook (`fn(Box<dyn FnOnce() + Send>)`, defaulting to `std::thread::spawn`), and
+`Tasks::launch_replacing(tag, work)` uses it. The handle becomes internal. The
+two delivery guarantees are already implemented and must not regress.
+
+**Exit:** `cx.register(Tasks::new())` then `tasks.launch_replacing("sync", |h| …)`
+works as §7 writes it; the existing four `Tasks` tests pass against the new
+shape; a host that installs its own spawner sees the work on its own executor.
+
+### R4 — The windowed list over `Viewport` *(closes A4)*
+
+`LayoutReader`'s callback takes a `LayoutInfo { constraints, scroll_window }`
+rather than bare constraints, so a reader inside a `Viewport` can read the
+window the spec says it reads. `List` becomes `Viewport(LayoutReader(rows))`,
+inherits the viewport's clip and scrollbar, and stops owning a scroll offset.
+The `follow` flag added for wheel-versus-selection goes away with it: the
+viewport owns the window, the list owns the selection.
+
+**Exit:** `List` contains a `Viewport`; the million-row test still mounts under
+100 elements; the scrollbar appears without the list emitting it; the eager and
+windowed forms still behave identically to keyboard, wheel and selection.
+
+### R5 — The focus tree *(closes A5, A6)*
+
+A retained focus registry: a `Focusable` render object registers on mount and
+deregisters on disposal, so `focus_scope()` is a lookup rather than a tree walk.
+Add the behavior form, `cx.register(Focusable::new(on_focus_change))`, so a
+component becomes focusable without wrapping itself in a primitive — build order
+step 3's "every later primitive is a behavior".
+
+**Exit:** `focus_scope()` performs no tree walk; a component made focusable by
+`register` alone participates in traversal, receives key events and appears in
+the scope; disposal deregisters it, verified by the focus tests already written.
+
+### R6 — Split the context handle *(closes A7)*
+
+`cx.services` on `BuildCx` (scheduler, focus, ambients, anchor registration) and
+`cx.geometry` only where geometry is valid — event handlers, tickers, task
+callbacks. `BuildCx` gains no path to a rect, so the validity window is a
+compile error rather than a debug assertion.
+
+**Exit:** the `geometry is not readable during build` test is replaced by one
+that no longer compiles when uncommented, recorded as a `trybuild` case or a
+doc-test marked `compile_fail`.
+
+### R7 — Transparent pointer regions *(closes A8)*
+
+Hit-testing returns a stacked path: a `Transparent` node contributes itself and
+the search continues behind it. Propagation runs each path in turn until one
+claims.
+
+**Exit:** a transparent overlay's handler runs *and* the node behind it receives
+the event; an `Opaque` node still stops the search; `Ignore` still removes its
+subtree. The existing transparency test is rewritten — it currently asserts the
+weaker behaviour.
+
+### R8 — Intrinsic sizing *(closes A9)*
+
+The two-pass measurement §8.1 specifies, with a counter per node so the
+double-measure cases are identifiable in the dump — §17 risk 4. Then revisit
+whether `Align::Stretch` can drop its "only when the cross extent is definite"
+caveat, which exists only to avoid the second pass.
+
+**Exit:** a child whose width depends on a sibling whose height depends on that
+child resolves correctly; the dump reports which subtrees were measured twice;
+the layout goldens are unchanged, or each change is explained.
+
+### R9 — The remaining behaviors *(closes B1–B5)*
+
+`Ticker`, `Cache` with §8.4's speculative-build contract and the purity check it
+exempts, `Controller`/`Anchor`, `Persisted` with its `PersistenceScope` ambient.
+Each needs specified semantics, teardown behaviour and tests — §17 risk 8.
+
+**Exit:** one behaviour test each, plus: a `Cache` field survives a speculative
+build while a non-`Cache` field mutated during build is reported; a `Controller`
+command reaches its bound element and is rejected when it would touch controlled
+state; `Persisted` restores across an unmount/remount under a changed scope.
+
+### R10 — Loose ends *(closes B6–B9)*
+
+`LayoutSpec.cursor` populated from the focused field's caret; a `HostLeaf`
+raw-input flag so `Modality::Exclusive` derives PTY suppression rather than
+declaring it; `DualList`; `request_focus` reported when called during build.
+
+**Exit:** the demo's text field places a cursor; a host leaf under an exclusive
+layer reports that it takes no raw input; the widget set matches L7's list.
+
+### R11 — Reconcile the spec *(class C)*
+
+With A and B closed, amend `widget-library-design.md` for the fourteen class-C
+items, each with the reason recorded above. C1–C5 and C6 are the substantive
+ones: the `Desc` enum listing, the `Component` trait sketch, where `Sizing`
+lives, and three names that Rust will not accept. The rest are places the spec is
+silent and the implementation had to choose.
+
+**Exit:** a reader can follow the design document and write code that compiles,
+and no statement in it is contradicted by `crates/fresh-ui`.
+
+### Sequencing
+
+```
+R1 ──┬── R2
+     ├── R4
+     ├── R5 ── R6
+     └── R7
+R3   (independent)
+R8   (after R1)
+R9   (after R5, for Focusable)
+R10  (after R2 for HostLeaf, after R9 for the cursor)
+R11  (last)
+```
+
+R1 is the only phase that must land before the others can start. R3 can be done
+at any point. R11 is last because the spec should be amended against the finished
+code, not against an intention.
+
+---
+
+## 5. Part 2 — migrate
 
 ### M0 — The seam
 The only wave that is pure plumbing, and the one everything else depends on:
@@ -421,7 +680,7 @@ every plugin using `List`/`Tree` without keys.
 
 ---
 
-## 5. State: where each field goes
+## 6. State: where each field goes
 
 Most UI state today lives on `Editor` and `Window`. "It moves to the element"
 is true for a lot of it and wrong for the rest, so every wave starts by
@@ -483,7 +742,7 @@ That is a cheap, checkable invariant, and the restore suites
 `orchestrator_*_restore` tests) are its guard. Write the four-way
 classification into the wave's PR description before writing code.
 
-## 6. Verification
+## 7. Verification
 
 The 312 e2e files are the primary verification mechanism for a migration of
 this size. They are used as-is rather than rewritten.
@@ -506,7 +765,7 @@ this size. They are used as-is rather than rewritten.
 
 ---
 
-## 7. Deletion ledger
+## 8. Deletion ledger
 
 A wave is complete when the previous implementation has been removed, not when
 the new surface works. Each wave names what it deletes; the change is not
@@ -527,7 +786,7 @@ When M9 lands, `app/chrome/` and the `LayoutBox` arena no longer exist.
 
 ---
 
-## 8. Risks and stop points
+## 9. Risks and stop points
 
 1. **L1 and L2 fix the framework's semantics.** All later phases depend on
    them. Budget for one revision of both before L3.
@@ -547,7 +806,7 @@ When M9 lands, `app/chrome/` and the `LayoutBox` arena no longer exist.
    that cannot delete its predecessor indicates a defect in the seam; correct
    the seam rather than accumulating a second UI stack.
 
-## 9. Sequencing summary
+## 10. Sequencing summary
 
 ```
 L0 skeleton
