@@ -154,8 +154,8 @@ impl Default for Cell {
     fn default() -> Self {
         Cell {
             ch: ' ',
-            fg: Color::Grey,
-            bg: Color::Reset,
+            fg: c(TEXT),
+            bg: c(BASE_BG),
         }
     }
 }
@@ -165,6 +165,9 @@ impl Default for Cell {
 struct Terminal {
     out: io::Stdout,
     cells: Vec<Cell>,
+    /// Floating surfaces found this frame, so a soft shadow can be cast under
+    /// each after the tree is painted.
+    shadows: Vec<Rect>,
     w: u16,
     h: u16,
 }
@@ -183,6 +186,7 @@ impl Terminal {
         Ok(Terminal {
             out,
             cells: vec![Cell::default(); w as usize * h as usize],
+            shadows: Vec::new(),
             w,
             h,
         })
@@ -197,21 +201,37 @@ impl Terminal {
         self.cells.clear();
         self.cells
             .resize(self.w as usize * self.h as usize, Cell::default());
+        self.shadows.clear();
 
         let frame = Rect::new(0, 0, self.w, self.h);
         for item in &spec.items {
             self.paint(item, frame);
         }
+        self.cast_shadows(frame);
         self.flush(spec)
     }
 
     fn paint(&mut self, item: &fresh_ui::Item, frame: Rect) {
         let clip = item.clip.intersect(frame);
         let r = item.rect;
-        let (fg, bg) = palette(&item.theme);
+        let (fg, bg) = style(&item.theme);
         match &item.draw {
-            Draw::Fill => self.fill(r, ' ', fg, bg, clip),
-            Draw::Scrim(Scrim::Opaque) => self.fill(frame, ' ', fg, Color::Black, frame),
+            Draw::Fill => {
+                if elevated(&item.theme) {
+                    // A floating surface: it casts a shadow onto whatever is
+                    // behind it, drawn once the whole frame is painted.
+                    self.shadows.push(r);
+                }
+                // The drag handle between the sidebar and the content is a
+                // themed fill; a backend is free to draw it as a seam.
+                let ch = if item.theme.as_str() == "grip" {
+                    '│'
+                } else {
+                    ' '
+                };
+                self.fill(r, ch, fg, bg, clip);
+            }
+            Draw::Scrim(Scrim::Opaque) => self.fill(frame, ' ', c(TEXT), c(BASE_BG), frame),
             Draw::Scrim(Scrim::Dim) => self.dim(frame),
             Draw::Border => self.border(r, fg, bg, clip),
             Draw::Lines(lines) => {
@@ -257,12 +277,10 @@ impl Terminal {
     }
 
     fn put(&mut self, x: i32, y: i32, ch: char, fg: Color, bg: Color, clip: Rect) {
-        if let Some(c) = self.cell_mut(x, y, clip) {
-            c.ch = ch;
-            c.fg = fg;
-            if bg != Color::Reset {
-                c.bg = bg;
-            }
+        if let Some(cell) = self.cell_mut(x, y, clip) {
+            cell.ch = ch;
+            cell.fg = fg;
+            cell.bg = bg;
         }
     }
 
@@ -277,8 +295,12 @@ impl Terminal {
     fn dim(&mut self, frame: Rect) {
         for y in 0..frame.h {
             for x in 0..frame.w {
-                if let Some(c) = self.cell_mut(x as i32, y as i32, frame) {
-                    c.bg = Color::DarkGrey;
+                if let Some(cell) = self.cell_mut(x as i32, y as i32, frame) {
+                    // Push the whole frame toward the background so the modal
+                    // above it is what the eye lands on. The text underneath
+                    // stays faintly legible rather than vanishing.
+                    cell.fg = c(SCRIM_FG);
+                    cell.bg = c(SCRIM_BG);
                 }
             }
         }
@@ -298,10 +320,33 @@ impl Terminal {
             self.put(l, y, '│', fg, bg, clip);
             self.put(right, y, '│', fg, bg, clip);
         }
-        self.put(l, t, '┌', fg, bg, clip);
-        self.put(right, t, '┐', fg, bg, clip);
-        self.put(l, bottom, '└', fg, bg, clip);
-        self.put(right, bottom, '┘', fg, bg, clip);
+        self.put(l, t, '╭', fg, bg, clip);
+        self.put(right, t, '╮', fg, bg, clip);
+        self.put(l, bottom, '╰', fg, bg, clip);
+        self.put(right, bottom, '╯', fg, bg, clip);
+    }
+
+    /// A soft shadow one cell to the right and below a floating surface: the
+    /// underlying cells are darkened, which reads as depth without drawing any
+    /// glyph of its own.
+    fn cast_shadows(&mut self, frame: Rect) {
+        let rects = std::mem::take(&mut self.shadows);
+        for r in rects {
+            for y in (r.y + 1)..=r.bottom() {
+                self.darken(r.right(), y, frame);
+            }
+            for x in (r.x + 1)..=r.right() {
+                self.darken(x, r.bottom(), frame);
+            }
+        }
+    }
+
+    fn darken(&mut self, x: i32, y: i32, frame: Rect) {
+        if let Some(cell) = self.cell_mut(x, y, frame) {
+            cell.fg = c(SHADOW);
+            cell.bg = c(SHADOW_BG);
+            cell.ch = ' ';
+        }
     }
 
     fn flush(&mut self, spec: &fresh_ui::LayoutSpec) -> io::Result<()> {
@@ -352,20 +397,69 @@ impl Drop for Terminal {
     }
 }
 
-/// Map a theme name — the library's only statement about appearance — to a
-/// terminal colour. The library never interprets these; the backend does.
-fn palette(theme: &ThemeKey) -> (Color, Color) {
-    match theme.as_str() {
-        "menubar" => (Color::Black, Color::Grey),
-        "grip" => (Color::DarkGrey, Color::Reset),
-        "sidebar" => (Color::White, Color::Reset),
-        "list.row.selected" => (Color::Black, Color::Cyan),
-        "button.focused" | "field.focused" | "toggle.focused" => (Color::Black, Color::Yellow),
-        "button" | "field" | "toggle" => (Color::White, Color::DarkGrey),
-        "accent" => (Color::Magenta, Color::Reset),
-        "status" => (Color::Black, Color::Blue),
-        "menu" | "dropdown" => (Color::White, Color::DarkGrey),
-        "modal" => (Color::White, Color::DarkBlue),
-        _ => (Color::Grey, Color::Reset),
-    }
+// ---------------------------------------------------------------------------
+// The palette: theme names, mapped to a cohesive 256-colour scheme
+// ---------------------------------------------------------------------------
+//
+// A theme name is the library's only statement about appearance; the backend
+// decides what it looks like. One dark scheme, tuned so the surfaces read as a
+// stack: base, panels, bars, then floating menus and modals above them.
+
+const BASE_BG: u8 = 234; // the window behind everything
+const PANEL_BG: u8 = 236; // sidebar and other seated panels
+const BAR_BG: u8 = 238; // menu bar and other raised strips
+const ELEV_BG: u8 = 234; // floating menus sit at base level; a bright border and a shadow lift them
+const MODAL_BG: u8 = 236; // a modal dialog, one gentle step above the base
+
+const TEXT: u8 = 250; // ordinary text
+const BRIGHT: u8 = 253; // text on a raised strip
+const DIM: u8 = 244; // borders, and text that recedes
+const FAINT: u8 = 240; // grips and dividers
+
+const TITLE: u8 = 110; // section titles and the accent glyph
+const SEL_BG: u8 = 30; // a selected row or radio option
+const SEL_FG: u8 = 231;
+const FOCUS_BG: u8 = 179; // the focused control — a warm ring, distinct from selection
+const FOCUS_FG: u8 = 235;
+const STATUS_BG: u8 = 24; // the footer
+const STATUS_FG: u8 = 231;
+
+const SHADOW: u8 = 236; // a surface's cast shadow
+const SHADOW_BG: u8 = 232;
+const SCRIM_FG: u8 = 240; // the world behind a modal
+const SCRIM_BG: u8 = 233;
+
+fn c(v: u8) -> Color {
+    Color::AnsiValue(v)
+}
+
+/// Whether a theme names a floating surface — one that sits above the content
+/// and casts a shadow.
+fn elevated(theme: &ThemeKey) -> bool {
+    matches!(
+        theme.as_str(),
+        "menu" | "menu.file" | "menu.go" | "dropdown" | "palette" | "modal"
+    )
+}
+
+/// The foreground and background a theme paints in.
+fn style(theme: &ThemeKey) -> (Color, Color) {
+    let (fg, bg) = match theme.as_str() {
+        "app" => (TEXT, BASE_BG),
+        "menubar" | "menu.file" | "menu.go" => (BRIGHT, BAR_BG),
+        "sidebar" => (TEXT, PANEL_BG),
+        "sidebar.title" => (TITLE, PANEL_BG),
+        "grip" | "divider" => (FAINT, PANEL_BG),
+        "list.row" => (TEXT, BASE_BG),
+        "list.row.selected" => (SEL_FG, SEL_BG),
+        "field" | "button" | "toggle" | "number" => (TEXT, BAR_BG),
+        "field.focused" | "button.focused" | "toggle.focused" | "number.focused" => {
+            (FOCUS_FG, FOCUS_BG)
+        }
+        "status" => (STATUS_FG, STATUS_BG),
+        "menu" | "dropdown" | "palette" => (DIM, ELEV_BG),
+        "modal" => (BRIGHT, MODAL_BG),
+        _ => (TEXT, BASE_BG),
+    };
+    (c(fg), c(bg))
 }

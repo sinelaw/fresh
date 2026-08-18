@@ -71,6 +71,10 @@ impl<M> Source<M> {
     }
 }
 
+/// Builds the click handler for a row, given its index. Factored out because
+/// the nested closure type is otherwise unwieldy.
+type RowClick<M> = Rc<dyn Fn(usize) -> crate::desc::Handler<M>>;
+
 pub struct List<M> {
     source: Source<M>,
     selected: Option<usize>,
@@ -191,6 +195,28 @@ impl<M: 'static> Component<M> for List<M> {
         }
 
         let source = self.source.clone();
+        // Clicking a row selects it, the same selection the keyboard drives.
+        // Built here so it rides along with each visible row the reader emits.
+        let click: Option<RowClick<M>> = if self.focusable {
+            let up = up.clone();
+            let anchor = anchor.clone();
+            let on_select = self.on_select.clone();
+            Some(Rc::new(move |i: usize| {
+                let up = up.clone();
+                let anchor = anchor.clone();
+                let on_select = on_select.clone();
+                let handler: crate::desc::Handler<M> = Rc::new(move |e: &Event| {
+                    e.request_focus(crate::event::SelectionOnFocus::Preserve);
+                    up.set(move |st: &mut ListState| st.selected = i);
+                    let _ = &anchor;
+                    on_select.as_ref().map(|f| f(i))
+                });
+                handler
+            }))
+        } else {
+            None
+        };
+
         // The window comes from the viewport, which owns it. This component
         // decides only which rows fill it.
         let reader = layout_reader(move |info| {
@@ -205,7 +231,11 @@ impl<M: 'static> Component<M> for List<M> {
                 } else {
                     "list.row"
                 };
-                row.key(k).theme(theme).h(Sizing::Cells(1))
+                let content = row.key(k).theme(theme).h(Sizing::Cells(1));
+                match &click {
+                    Some(mk) => gesture(content).on(GestureKind::Click, mk(i)),
+                    None => content,
+                }
             }))
         });
 

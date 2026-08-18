@@ -1,11 +1,11 @@
 === clicked Open in the sidebar
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it out
-            │»[ ] route the pointer
-            │»[ ] wire up focus
+( ) All     │»[ ] lay it out░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+(o) Open░░░░│»[ ] route the pointer
+( ) Done    │»[ ] wire up focus
+            │
+            │
             │
             │
             │
@@ -17,11 +17,11 @@ Filter      │new task…                              Add
 === clicked Done
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) All     │»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
 ( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it out
-            │»[ ] route the pointer
-            │»[ ] wire up focus
+(o) Done░░░░│
+            │
+            │
             │
             │
             │

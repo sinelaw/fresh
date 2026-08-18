@@ -343,4 +343,9 @@ pub fn update(app: &mut App, msg: Msg) {
             app.status = format!("synced {n}");
         }
     }
+    // Selection is an index into the visible set, and several messages change
+    // what is visible — a toggle can drop a task out of the current filter, a
+    // click can select and toggle the same row at once. Clamp once, here, so
+    // the rest of the update logic never has to.
+    app.selected = app.selected.min(app.visible().len().saturating_sub(1));
 }
