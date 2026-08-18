@@ -191,7 +191,7 @@ swapped and the subtree rebuilds.
 Reference identity is the only skip rule. Structural equality does not hold
 across rebuilds once handlers are present: descriptions are reconstructed each
 time, so closure identity always differs. No framework mechanism compares
-handler identity, and components are forbidden from doing so (§16). Deep
+handler identity, and components are forbidden from doing so (§17). Deep
 comparison is excluded because its cost is proportional to subtree size and is
 not visible at the call site. Identity comparison is O(1).
 
@@ -619,9 +619,208 @@ frames. That *is* layer 1 crossing a wire.
 
 ---
 
-## 14. Examples
+## 14. Tutorial
 
-### 14.1 Menu bar and dropdown
+This section assumes no prior use of a UI framework; it assumes familiarity
+with trees, values and references. The code is the intended API of a planned
+library. Terms introduced in bold are the ones the rest of the document uses.
+
+### 14.1 A first screen
+
+You do not draw to the screen. You construct a tree of plain values that
+states what the screen should contain, and return it to the library:
+
+```rust
+fn build() -> Node<()> {
+    Box::col().children([
+        TextRun::new("Fresh"),
+        TextRun::new("a text editor"),
+    ])
+}
+```
+
+`Box::col()` is a container that stacks its children vertically; `TextRun` is
+a line of text. Each call constructs a `Node` — a value with a type tag,
+properties and a list of child nodes. Constructing the tree has no effects:
+no screen resources are allocated, nothing is registered. The tree is data,
+and can be compared, printed and tested like any other value.
+
+This tree is the **description**. The library turns it into terminal cells in
+steps described later (§4); the part that matters now is that the description
+is rebuilt from scratch whenever anything changes, and discarded after use.
+The design depends on that being cheap, which is why a description holds
+nothing but the values you passed in.
+
+### 14.2 Sizes and positions
+
+You do not assign coordinates. Each node carries sizing rules and the library
+computes every rectangle:
+
+```rust
+Box::row().children([
+    file_list().w(Sizing::Cells(24)),   // fixed: 24 columns
+    editor_pane().flex(1),              // receives the remaining width
+])
+```
+
+Layout is a single pass over the tree: each container passes the available
+space to its children (top-down), each child reports the size it takes
+(bottom-up), and the container positions its children within its own space. A
+`flex` child receives a share of the space left after fixed-size children,
+proportional to its weight.
+
+The computed rectangles are stored on the library's side, not in your tree.
+Code that needs geometry — an event handler, for example — reads it from the
+library (§8.2). Your description never contains a coordinate.
+
+### 14.3 Reacting to a click
+
+An interactive region is declared by wrapping a node in `Gesture` and
+attaching a function:
+
+```rust
+enum Msg { OpenFile(FileId) }
+
+Gesture::new(TextRun::new(&file.name))
+    .on_click(move |_event| Msg::OpenFile(file.id))
+```
+
+The function does not perform the action. It returns a value of your own
+message type — here `Msg` — and the library delivers the collected messages
+to your application loop after the event is processed. The tree is generic
+over this type: `Node<Msg>` is a tree whose handlers produce `Msg`.
+
+When a click arrives, the library locates the innermost node whose stored
+rectangle contains the pointer, then offers the event to that node and to
+each of its ancestors in turn until one reports the event handled (§9). Which
+node was clicked is answered from the stored geometry; your code is not
+involved in that determination.
+
+### 14.4 Updating the screen
+
+When your application state changes — a file opened — you build a new
+description from the new state and return it. That is the entire update
+model. There is no method for mutating a widget, because there is no widget
+object for you to hold.
+
+Rebuilding everything raises the question of persistence: a list's scroll
+position, an expanded tree branch, the cursor in a text field must survive
+from one frame to the next. The library keeps, for each node it has shown, a
+persistent record called an **element**. When a new description arrives, the
+library walks the old and new trees together, slot by slot — this walk is
+called **reconciliation**:
+
+```
+same node type in the same slot  ->  same element: kept, inputs updated
+anything else                    ->  old element discarded, new one created
+```
+
+An element persists as long as the same kind of node occupies its slot. All
+durable data — computed geometry, and the state introduced next — lives on
+elements, so rebuilding the description discards nothing.
+
+### 14.5 State that belongs to a widget
+
+Some data is not application state: whether a section is folded, the
+highlighted row of a list. It belongs to the widget that renders it. To hold
+such data, define a **component** — a description that declares a state type:
+
+```rust
+struct Collapsible { title: String }
+
+impl Component<Msg> for Collapsible {
+    type State = bool;   // expanded?
+
+    fn build(&self, expanded: &bool, cx: &mut BuildCx<Msg>) -> Node<Msg> {
+        Box::col().children([
+            Gesture::new(TextRun::new(&self.title))
+                .on_click(cx.set_state(|e| *e = !*e)),
+            section_body().if_(*expanded),
+        ])
+    }
+}
+```
+
+The `bool` lives on the element. Reconciliation keeps the element, so
+`expanded` survives every rebuild; when the component leaves the tree, the
+element is discarded and the state with it.
+
+`set_state` applies your closure to the state and marks the element
+**dirty**. Nothing rebuilds at that moment. Once per frame the library takes
+the set of dirty elements, sorts it by tree depth (shallowest first), and
+calls `build` on each. Depth ordering means a rebuilding parent may recreate
+its children within the same pass, so no element builds twice per frame. Two
+rules follow: handlers may call `set_state` freely, and `build` must not — a
+`set_state` during a build is reported as an error, naming the element.
+
+### 14.6 Lists and identity
+
+Slot-based matching fails when children move. Sort a file list and slot 3 —
+with its element and any state on it — now sits under a different file's
+data. The correction is a **key**: a stable identifier taken from your data
+and attached to each child:
+
+```rust
+List::keyed(files, |f| Key::from(f.id), |f| row(f))
+```
+
+With keys present, reconciliation pairs children by key rather than by slot,
+so an element follows its item across reorderings. Two consequences are part
+of the model rather than side effects: giving a subtree a *different* key
+discards its elements and their state, which is the supported way to reset a
+widget; and keyed constructors require a key function, because identity
+exists only in your data and cannot be derived by the library.
+
+### 14.7 Floating content
+
+A menu must overlap the content below it. A **layer** is a node that is laid
+out and painted outside the normal flow:
+
+```rust
+Gesture::new(menu_button)
+    .child_if(open, || Layer::new()
+        .anchor(Anchor::Parent).place(Place::Below)
+        .dismiss(OUTSIDE_POINTER | ESCAPE)
+        .child(menu_items()))
+```
+
+The layer remains an ordinary child in the tree: the menu belongs to its
+button. The declared behaviors are defined in terms of that containment —
+`dismiss(OUTSIDE_POINTER)` means a press on any node outside the layer's
+subtree closes it, which the library evaluates as an ancestor test. A
+`modality` property can additionally mark every node outside the subtree
+non-interactive, which is the whole of what a modal dialog requires. §12
+lists the full property set.
+
+### 14.8 The keyboard
+
+Pointer events go to the node under the pointer. Key presses go to the
+**focused** node — the single node currently holding the keyboard:
+
+```rust
+Focusable::new(text_field).autofocus()
+```
+
+A key press is offered to the focused node, then to its ancestors — the same
+walk as a click, started from focus rather than from a hit test. Tab moves
+focus through focusable nodes in tree order; a `FocusScope` confines that
+cycle to a subtree, as a dialog's fields require. Focus registration is held
+on the element side, so rebuilding descriptions does not move focus. §10
+covers traversal policies and the key-binding mechanism built on this.
+
+### 14.9 Summary
+
+The working vocabulary: build a description; the library reconciles it
+against elements; keys give moving children identity; components hold widget
+state on their elements; `set_state` marks and the library rebuilds once per
+frame; layers float; focus routes the keyboard. The remainder of this
+document specifies each mechanism — reconciliation (§6), scheduling (§7),
+layout and painting (§8), the primitives' property sets (§11–§12) — and §15
+shows editor surfaces written this way.
+
+## 15. Examples
+
+### 15.1 Menu bar and dropdown
 
 ```rust
 struct MenuBar { menus: Rc<[Menu]> }
@@ -655,7 +854,7 @@ Which menu is open is element state, so a rebuild does not close it. Submenus
 nest as further layers anchored to their row, to arbitrary depth, without
 additional precedence rules.
 
-### 14.2 Split grid
+### 15.2 Split grid
 
 ```rust
 fn splits(t: &SplitTree) -> Node<Action> {
@@ -686,7 +885,7 @@ The separator captures the pointer on press, so subsequent motion routes to it
 regardless of what the cursor passes over, including a full-screen terminal.
 Buffer content is a `Host` leaf using its own renderer.
 
-### 14.3 Context menu
+### 15.3 Context menu
 
 ```rust
 Gesture::new(tab_button(tab))
@@ -707,7 +906,7 @@ The menu is a child of the node it acts on, so its target is determined by tree
 position rather than stored in menu state. Each context menu in the editor has
 this structure with a different item list.
 
-### 14.4 Command palette
+### 15.4 Command palette
 
 ```rust
 impl Component<Action> for Prompt {
@@ -750,7 +949,7 @@ Storing identity rather than position is the general form of the rule below:
 in `build()` and in handlers alike.** Storing an id dissolves the staleness
 class instead of guarding against it.
 
-### 14.5 Transient popup
+### 15.5 Transient popup
 
 ```rust
 Layer::new()
@@ -763,7 +962,7 @@ Non-modal, so the buffer retains focus and continues receiving keys. `ANY_KEY`
 dismissal is implemented as a root-level observer installed by the layer while
 mounted, so it runs even when a modal above the popup claims the key.
 
-### 14.6 Modal dialog
+### 15.6 Modal dialog
 
 ```rust
 Layer::new()
@@ -785,7 +984,7 @@ visibility and host raw input as a single property.
 
 ---
 
-## 15. Build order
+## 16. Build order
 
 The order is constrained: steps 1–2 fix the framework's semantics, and later
 steps depend on them. An error in the renderer is confined to one module; an
@@ -819,7 +1018,7 @@ error in the reconciler affects every component built on it.
    component of the system that fails if the retained tree does not preserve
    elements as specified.
 
-## 16. Risks and open decisions
+## 17. Risks and open decisions
 
 1. **The constraint model** (§8.1) has the widest downstream effect and the
    highest cost to change. Specify it before step 6.
@@ -839,7 +1038,7 @@ error in the reconciler affects every component built on it.
    If description reconstruction appears in profiles, the available responses
    are pushing state down and using ambients. Structural equality is excluded
    for the reason in §6.
-7. **Transactional reconcile** (§15, step 1) is a constraint on the reconciler
+7. **Transactional reconcile** (§16, step 1) is a constraint on the reconciler
    rather than a property of the error policy. Adding it later requires
    revisiting every tree-mutation site.
 8. **Surface area.** The state-class contract is three members and the
