@@ -4124,16 +4124,48 @@ impl Window {
         }
     }
 
-    /// Handle scroll events using the active split's viewport.
+    /// The buffer a leaf currently shows.
+    ///
+    /// `SplitManager::buffer_for_split` only knows the leaves in the main
+    /// split tree, so it answers `None` for a grouped buffer's inner panel
+    /// (a Review Diff pane, say) — the leaf still owns a `SplitViewState`,
+    /// it just isn't a node of the tree. Fall back to that view state's own
+    /// active buffer, which is what `effective_active_pair` treats as
+    /// authoritative for those leaves.
+    pub(crate) fn buffer_for_leaf(&self, leaf_id: LeafId) -> Option<BufferId> {
+        let (mgr, vs_map) = self.buffers.splits()?;
+        mgr.buffer_for_split(leaf_id)
+            .or_else(|| vs_map.get(&leaf_id).map(|vs| vs.active_buffer))
+    }
+
+    /// Handle scroll events using the focused split's viewport.
     ///
     /// View events (like `Scroll`) target SplitViewState rather than
     /// EditorState so scroll limits are correct when view transforms
     /// inject extra rows.
     pub(crate) fn handle_scroll_event(&mut self, line_offset: isize) {
-        let Some((mgr, _)) = self.buffers.splits() else {
+        // Guard before resolving the split: `effective_active_pair` asserts
+        // a populated split layout, which this entry point never did.
+        if self.buffers.splits().is_none() {
             return;
-        };
-        let active_split = mgr.active_split();
+        }
+        // The *effective* active split, not the split manager's: when the
+        // focus sits on an inner panel of a grouped buffer, the tree's
+        // active leaf is the group host and scrolling it moves a viewport
+        // the user isn't looking at while the panel stays put.
+        self.handle_scroll_event_for_split(self.effective_active_split(), line_offset);
+    }
+
+    /// Body of [`Self::handle_scroll_event`], for a caller that already
+    /// resolved which leaf it means to scroll.
+    pub(crate) fn handle_scroll_event_for_split(
+        &mut self,
+        active_split: LeafId,
+        line_offset: isize,
+    ) {
+        if self.buffers.splits().is_none() {
+            return;
+        }
 
         if let Some(group) = self
             .scroll_sync_manager
@@ -4160,8 +4192,7 @@ impl Window {
         };
 
         for split_id in splits_to_scroll {
-            let (mgr, _) = self.buffers.splits().expect("splits checked above");
-            let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
+            let Some(buffer_id) = self.buffer_for_leaf(split_id) else {
                 continue;
             };
 

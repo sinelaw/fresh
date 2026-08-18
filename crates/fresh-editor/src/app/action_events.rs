@@ -129,7 +129,12 @@ impl crate::app::window::Window {
         };
 
         let old_pos = viewport_pos(self)?;
-        self.handle_scroll_event(delta);
+        // Scroll *this* leaf: `split_id` is the effective active split, which
+        // for a grouped buffer's inner panel is not the split manager's
+        // active leaf. Scrolling the latter left the panel's viewport where
+        // it was, so this always fell through to the logical-line fallback
+        // below — fold-blind, so a page landed inside a collapsed body.
+        self.handle_scroll_event_for_split(split_id, delta);
         let new_pos = viewport_pos(self)?;
 
         if new_pos == old_pos {
@@ -147,12 +152,7 @@ impl crate::app::window::Window {
         // start (landing the cursor there would re-introduce the overshoot
         // / jump-to-top bugs).
         let target_byte = {
-            let buffer_id = self
-                .buffers
-                .splits()
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .buffer_for_split(split_id)?;
+            let buffer_id = self.buffer_for_leaf(split_id)?;
             self.buffers
                 .with_buffer_and_split(buffer_id, split_id, |state, vs| {
                     let soft_breaks = state.collect_soft_break_positions();
