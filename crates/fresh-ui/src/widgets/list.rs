@@ -272,9 +272,7 @@ impl<M: 'static> Component<M> for List<M> {
                     "list.row"
                 };
                 let content = row.key(k).theme(theme).h(Sizing::Cells(1));
-                let g = gesture(content)
-                    .on(GestureKind::Enter, hover(i))
-                    .on(GestureKind::Leave, hover(i));
+                let g = gesture(content).on_enter(hover(i)).on_leave(hover(i));
                 match &click {
                     Some(mk) => g.on(GestureKind::Click, mk(i)),
                     None => g,

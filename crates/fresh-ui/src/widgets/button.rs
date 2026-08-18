@@ -107,8 +107,8 @@ impl<M: 'static> Component<M> for Button<M> {
         let mut g = gesture(text(&*self.label));
         if self.enabled {
             g = g
-                .on(GestureKind::Enter, mirror_hover_at(cx))
-                .on(GestureKind::Leave, mirror_hover_at(cx));
+                .on_enter(mirror_hover_at(cx))
+                .on_leave(mirror_hover_at(cx));
         }
         if let Some(h) = press.clone() {
             g = g.on(GestureKind::Click, h);
@@ -175,8 +175,8 @@ impl<M: 'static> Component<M> for Toggle<M> {
                 .theme(theme)
                 .children([text(mark), text(&*self.label)]),
         )
-        .on(GestureKind::Enter, mirror_hover_at(cx))
-        .on(GestureKind::Leave, mirror_hover_at(cx));
+        .on_enter(mirror_hover_at(cx))
+        .on_leave(mirror_hover_at(cx));
         if let Some(h) = flip.clone() {
             g = g.on(GestureKind::Click, h);
         }

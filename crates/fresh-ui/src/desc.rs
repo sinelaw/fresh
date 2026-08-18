@@ -930,6 +930,19 @@ impl<M> Node<M> {
         self.on(GestureKind::SecondaryClick, Rc::new(move |e| Some(f(e))))
     }
 
+    /// The pointer entered this node. Fired on the node itself, not propagated —
+    /// hover is a statement about one node. A component that draws a hover
+    /// indicator mirrors this into its own state, the way a focus indicator
+    /// mirrors `on_focus_change`.
+    pub fn on_enter(self, h: Handler<M>) -> Self {
+        self.on(GestureKind::Enter, h)
+    }
+
+    /// The pointer left this node. The partner of `on_enter`.
+    pub fn on_leave(self, h: Handler<M>) -> Self {
+        self.on(GestureKind::Leave, h)
+    }
+
     pub fn pointer_mode(mut self, m: PointerMode) -> Self {
         self.gesture_props().mode = m;
         self

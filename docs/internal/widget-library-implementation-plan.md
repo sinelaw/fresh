@@ -706,6 +706,36 @@ message or is the single factory.
 
 ---
 
+## 4d. Part 1e — the interaction register
+
+Two gaps surfaced while building the interactive example and exercising it by
+hand. Both are closed at the widget layer, consistent with the three-tree
+model, not by adding framework mechanism.
+
+| # | The finding | The fix |
+|---|-------------|---------|
+| G1 | Hover feedback had no reusable form: each widget that tinted on hover hand-rolled the Enter/Leave wiring. | Hover is framework-owned state on the render object (§design: "pointer capture and hover live on render objects"). A component that renders a hover indicator **mirrors** it into its own state through `on_enter`/`on_leave`, exactly as a focus indicator mirrors `on_focus_change` — events up, state down, read in `build`. `FocusMirror` gains a `hovered` field, `mirror_hover_at` wires it in one call, and `on_enter`/`on_leave` builders (which the design's own menu example uses) replace the raw `on(GestureKind::Enter, …)`. `List` tracks a hovered row index the same way it tracks the selected one. |
+| G2 | The `List` widget answered only the keyboard: no click-to-select, no click-to-activate, so everything built on it — the sidebar filters, dropdown menus, the command palette — was inert to the mouse. | A click on a row now moves the selection and fires `on_activate`, the same activation the Confirm key drives. Menu and palette items choose on click; a plain list selects and opens. |
+
+**Rejected alternative (recorded so it is not retried).** A `cx.hovered()` that
+reads the framework hover set during `build` and auto-registers the element to
+rebuild on a hover change was implemented and reverted. It reads well, but it
+is a reactive dependency the framework tracks implicitly — the one thing §2 of
+the design rules out ("no automatic invalidation tracking; state flows down
+through constructor arguments, events flow up through explicit callbacks").
+Hover is a downstream, render-tree fact; the sanctioned way to feed it back
+into the upstream `build` pass is the mirror — an explicit event handler that
+writes explicit state — not a hidden read. The symmetric *container* case ("a
+node styles itself because a **descendant** is hovered") is the pointer twin of
+`focus_within`, and if a widget ever needs it, it should be built exactly like
+`focus_within`: an explicit `hover_within` declaration plus a `has_hover_within`
+query, with invalidation scoped below the common ancestor — never an implicit
+per-read dependency.
+
+**Exit:** the interactive example demonstrates hover on buttons, toggles and
+list rows; menu, palette and filter items respond to the mouse; the full suite
+passes.
+
 ## 4c. Part 1d — the identity register
 
 A second architecture review, run against the state after Part 1c, confirmed
