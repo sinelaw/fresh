@@ -1,0 +1,1022 @@
+# Migrating the Fresh editor UI onto `fresh-ui`
+
+> _AI-generated. **Current-state survey is IMPLEMENTED; the design and plan are
+> PLANNED.** This is the editor-side companion to the two library documents:
+> [`widget-library-design.md`](widget-library-design.md) (the architecture
+> authority for `fresh-ui`) and
+> [`widget-library-implementation-plan.md`](widget-library-implementation-plan.md)
+> (which builds the library in Part 1 and sketches the migration as Part 2,
+> M0–M9). Those docs describe the target and the waves in the abstract. This one
+> grounds them in the editor as it exists today — what each surface actually is,
+> where its state and geometry live, how input reaches it — and turns the
+> abstract waves into concrete, file-level moves. Where this doc and the two
+> library docs disagree about the target, they win; where they disagree about
+> the current editor, the source wins._
+
+---
+
+## 0. Situation
+
+`fresh-ui` is **built and standalone** (PR #3024 plus the R1–R11 and Part 1c–1e
+follow-ups). It is a retained, reconciling UI tree — immutable descriptions →
+persistent elements matched by `(type, key)` → render objects holding geometry
+and focus — that emits a backend-independent `LayoutSpec` display list. Its only
+runtime dependency is `unicode-width`. It has the real `RenderObject` layer, a
+retained focus tree, ambients, `Tasks`, layers with modality/dismissal, pointer
+capture, and the full widget set (`Button`, `Toggle`, `TextField`, `List`
+eager+windowed, `Tree`, `Dropdown`, `RadioGroup`, `Number`, `DualList`). The
+demo under `crates/fresh-ui/tests/support/demo/` and `examples/interactive.rs`
+exercise every capability against a terminal backend — with one gap that matters
+here: no backend has ever drawn real `Draw::Host` content (both folds stub it as
+a `▒` fill), and that is exactly the capability this migration leans on (§4.4).
+
+**It is not yet wired into the editor.** No file under `crates/fresh-editor`,
+`crates/fresh-core`, or `crates/fresh-plugin-runtime` references `fresh_ui`.
+Part 2 has not started. So this is a genuine greenfield adoption, not a
+course-correction — which is the good case: the library was finished and frozen
+before any surface depended on it.
+
+The editor's UI, meanwhile, is **already halfway to this model on its own
+terms** and stopped at exactly the wall `fresh-ui` was built to get past. The
+`ChromeComponent` registry, the `Scene` projection, the shared
+`LayoutBox`/`hit_stack` primitive, and the derived `overlay_stack()` are a
+proto-retained-widget tree. What they lack — real containment, one precedence
+order, per-node pointer capture, one focus ring — is precisely what `fresh-ui`
+supplies. The migration is less a rewrite than **finishing a refactor the
+codebase already committed to** (the forward arc named in
+[`chrome-event-model-plan.md`](chrome-event-model-plan.md) and
+[`widget-framework-v2-review.md`](widget-framework-v2-review.md)).
+
+---
+
+## 1. The one hard constraint: the keep/migrate boundary
+
+The optimized, file-backed text buffers and the text-rendering pipeline **do not
+migrate**. They keep their existing logic and are reached from `fresh-ui` through
+a `Host` leaf. The boundary is not fuzzy — it is a single function signature.
+
+### The line is `SplitRenderer::render_content`
+
+`view/ui/split_rendering/mod.rs` exposes (all associated functions, no `&self`):
+
+```rust
+pub fn render_content(buf: &mut ratatui::buffer::Buffer, area: Rect, …)
+    -> /* per-leaf layout caches: split areas, tab layouts, view_line_mappings,
+         scrollbar/separator areas, close/maximize buttons */
+pub fn compute_content_layout(…)  // layout-only: the same caches, WITHOUT painting
+pub fn render_phantom_leaf(…)     // off-tree previews (palette preview, web slices)
+```
+
+`render_content` already paints into an **arbitrary `Buffer` at an arbitrary
+`Rect`** ([`rendering-and-layout.md`](rendering-and-layout.md) calls it
+composable into any buffer — offscreen previews, tests, and the web bridge).
+`compute_content_layout` matters just as much for this plan: it yields the
+geometry (`view_line_mappings`, and from them the caret's screen position)
+*before* anything paints — the tool for same-frame caret-anchored layers
+(§4.4). Everything these touch is *keep*; everything that carves the rect they
+are handed and reads the caches they return is *migrate*.
+
+One honest caveat on "untouched": `render_content`'s unit is the **whole split
+tree** — separators, tab bars, scrollbars, scroll-sync, composite views in one
+call. The target frame (§4.2, M9) wants per-leaf `Host` nodes with `fresh-ui`
+tabs and dividers, which requires either keeping the whole grid as one `Host`
+leaf or decomposing the orchestration layer per-leaf. That is an open scoping
+decision (§6.2), not a settled detail.
+
+| KEEP — behind a `Host` leaf, logic untouched | MIGRATE — onto `fresh-ui` |
+|---|---|
+| `view/ui/split_rendering/**` (token IR → `ViewLine`; `render_line/**` and its `CellPass` per-char state machine; gutter, folding, conceal, virtual-text, soft-break, scrollbar glyphs, composite view) | `app/chrome/**` (the whole `ChromeComponent` registry) |
+| `view/line_wrap_cache.rs`, `view/wrap_index.rs`, `view/wrap_machine.rs` (tier-1/tier-2 wrap caches) | `view/scene.rs` (the `Scene` projections become the tree's data model) |
+| `view/viewport.rs`, `view/folding.rs`, `view/conceal.rs`, `view/soft_break.rs`, `view/virtual_text.rs`, `view/margin.rs`, `view/composite_view.rs` | `view/ui/{menu,tabs,status_bar,suggestions,scrollbar,scroll_panel,file_explorer,file_browser,focus,layout}.rs` |
+| `EditorState`, `Buffer`, the piece tree, markers, undo (see [`text-model.md`](text-model.md), [`buffers-splits-undo.md`](buffers-splits-undo.md)) | `view/popup.rs` + `view/popup/**`; `view/settings/**`; `view/controls/**`; `view/keybinding_editor.rs`; `view/workspace_trust_dialog.rs` |
+| `Viewport` scroll math, `view_line_mappings` (mouse→byte hit-test slices), the per-cell theme-provenance map | The frame layout, dock/sidebar carve, and the modal z-band in `app/render.rs` |
+
+**What crosses the seam.** The text view is not a black box; three of its outputs
+are read by chrome and must keep flowing:
+
+1. `view_line_mappings` — per-visual-row `ViewLineMapping` slices used for O(1)
+   screen→byte hit-testing and click-to-cursor. Published by the backend fold,
+   keyed by `HostId` (§4.4) — or derived pre-paint via `compute_content_layout`.
+2. The per-cell theme-provenance map (`CellThemeInfo`) — read by the Scene/web
+   projection and the theme inspector.
+3. The **caret**. The hardware cursor is committed at end-of-frame and arbitrated
+   against late overlays (`cursor_suppressed_by_late_overlay`). `fresh-ui` has
+   `LayoutSpec.cursor` (a `TextField` sets it) — but that field is fixed during
+   the library's paint pass, while `render_content` computes the buffer caret at
+   *fold* time, after the spec is finalized. The frame therefore needs one "who
+   owns the caret" arbitration that merges the host caret outside the library's
+   cursor mechanism, or derives it early via `compute_content_layout` (§4.4).
+
+**Ordering the seam must preserve.** Today geometry is "painted, then projected":
+`render_content` writes the layout caches *during* paint, and chrome/Scene read
+them *after*. `fresh-ui` inverts this for its own tree — layout is a distinct pass
+before paint, geometry comes from the layout pass, and **paint never touches
+cells** (`render/spec.rs` opens with exactly that sentence): a render object
+emits display-list items, and per-cell content has one route across the seam,
+`Draw::Host(HostId)`. So the two orderings meet **in the backend fold**, not in
+the leaf: the leaf's `layout` reserves the rect and its `paint` emits
+`Draw::Host(id)`; the editor-driven fold, walking `LayoutSpec.items` in paint
+order after `ui.frame()` returns, maps that item back to `render_content` and
+captures the caches editor-side, keyed by `HostId`. Event handlers read those
+caches on the next event; same-frame consumers (caret-anchored layers) use
+`compute_content_layout` at build time instead. §4.4 spells out the mechanism
+and its consequences.
+
+---
+
+## 2. The current UI, as it actually is
+
+This section is the survey the migration needs. It samples the surfaces the
+request named — editor/window, menus, file explorer, the widget system, settings,
+splits, prompts, the plugin widget API — plus the mouse/keyboard event dispatch
+that ties them together.
+
+### 2.1 The frame and the `Editor` object
+
+`Editor` (`app/mod.rs`) is the central object but **not** a buffer owner. Buffers
+and splits live on `Window` (`app/window/**`); `Editor` holds a `windows` map and
+an `active_window`, and derives the active buffer/splits/explorer/prompt/popups
+through accessors (`active_window()`, `active_state()`, `split_manager()`,
+`active_chrome()`, `active_layout()`). It also holds the cross-cutting services:
+config, theme (`Arc<RwLock<Theme>>`), registries, keybindings, clipboard, the
+plugin manager and async bridge, the dock and floating-panel state, and the
+widget registry.
+
+`Editor::render(&mut self, frame: &mut Frame)` (`app/render.rs`) is **immediate
+mode**: the whole screen is re-derived every frame; the runtime loop decides
+*when* to call it. The ordered flow is, in essence:
+
+1. drain pre-layout plugin commands (the one place inside draw that takes the
+   plugin lock);
+2. `compute_dock_split` → carve the left dock column;
+3. animation snapshot; reset the cell-theme map; scroll-sync; request semantic
+   ranges for visible splits;
+4. a ratatui `Layout` splits the chrome area into
+   `[menu_bar, main_content, status_bar, search_options, prompt_line]`;
+5. carve the file-explorer sidebar out of `main_content`; render it;
+6. **`SplitRenderer::render_content(frame.buffer_mut(), editor_content_area, …)`**
+   inside a single `WindowBuffers::with_all_mut` split-borrow — this is the text
+   pipeline, and it returns the per-leaf layout caches
+   (`split_areas`, `tab_layouts`, `view_line_mappings`, scrollbar/separator
+   areas) onto `active_layout_mut()`;
+7. paint the chrome on top, in a fixed order: status bar, search options, prompt
+   line, prompt/buffer/global popups, menu bar (last), context menus, tab-drag,
+   software cursor, deferred hardware-cursor commit, frame-buffer animations;
+8. `render_panels_and_modals` — dock, full-screen modals, floating panel, trust
+   modal (the topmost z-band);
+9. `convert_buffer_colors` (256/16 fallback) over the finished buffer;
+   `bump_ui_gen()`.
+
+The whole of steps 2, 4, 5, 7, 8 is chrome composition — the part that migrates.
+Step 6 is the `Host` leaf.
+
+### 2.2 Chrome: a registry that is a proto-widget-tree
+
+There **is** a central abstraction, and it is already component-shaped.
+
+- `trait ChromeComponent: Sync` (`app/chrome/mod.rs`) — one ZST implementor per
+  surface. Its methods are the parallel dispatch interface: `collect` (contribute
+  geometry boxes), `hover`/`on_hover_change`, `on_pointer`, `on_wheel`/`on_hwheel`,
+  `capture_mouse`, `on_key` (pre-band grab), `on_layer_key` (the keyboard walk),
+  and `layers` (precedence contribution).
+- `components() -> &'static [&dyn ChromeComponent]` — **the** registry, 17
+  entries: Settings, KeybindingEditor, CalibrationWizard, WorkspaceTrust,
+  ThemeInfo, ContextMenu, Prompt, Popups, FileBrowser, FloatingModal, Dock,
+  Splits, Menu, FileExplorer, StatusBar, SearchOptions, Base.
+
+Notably, **the text view is itself a component** (`Splits`, contributing a
+`chrome:editor` box) and the keyboard/pointer floor is a component (`Base`,
+z-0). The editor content is the lowest-precedence participant in the same tree,
+not a privileged root — which is exactly the `fresh-ui` stance (no privileged
+internal surface) and makes the mapping natural.
+
+Per-surface, the pattern is uniform: `collect` reads a geometry rect (from a
+paint cache or a live derivation) and pushes a kind-tagged `LayoutBox` stamped
+with the component's registry index; the handlers delegate to `impl Editor`
+methods that hold the real behavior and mutate `Editor`/`Window` fields. The
+components are stateless; **all state is on `Editor` or `Window`.**
+
+### 2.3 Two decoupled precedence systems
+
+This is the single most important structural fact for the migration, and the
+thing `fresh-ui` collapses. Pointer stacking and keyboard/modal precedence are
+**two separate orderings that deliberately disagree**:
+
+- **Pointer z** — each `LayoutBox` carries a `z` on an ×10 band scheme (context
+  menu ~180 … tabs 60 … scrollbars 50 … status 40 … editor 10 … base 0). The
+  pointer walk is `hit_stack` (effective-z desc, then depth desc, then document
+  order), with registry order as the intra-band tiebreak.
+- **Keyboard / modal rank** — a *separate* hand-tuned constant table,
+  `chrome::layer_rank`: `SETTINGS=900 … MENU=860 PROMPT=850 POPUP=840
+  CONTEXT_MENU=830 FLOATING_MODAL=820 DOCK=810 EDITOR_BASE=0`. Each component
+  contributes `(rank, Layer)` via `layers()`; `Editor::overlay_stack()`
+  concatenates all contributions (plus a hardcoded EventDebug head at 1000) and
+  stable-sorts rank-descending into **the** single ordered `OwnedLayer` list.
+
+`overlay_stack()` is consumed by the keyboard walk, the mouse-capture band, the
+PTY-input gate (`presents_blocking_overlay`), `modal_overlay_active`,
+`popup_blocked_by_higher_modal`, and `get_key_context`. The two orderings
+intentionally diverge (e.g. a menu's *keyboard* layer outranks the prompt, but
+its *boxes* sit in a lower pointer band; context menus rank below popups for
+keyboard but their boxes sit at the top pointer band), and the relationships are
+pinned by tests. Precedence is therefore **data spread across 17 `layers()`
+impls and two constant tables**, not a property of a tree.
+
+### 2.4 Geometry: two sources, one deliberate seam
+
+Chrome geometry comes from two places, and a migration underway (slice 7 of the
+chrome-event-model plan) is moving surfaces from the first to the second:
+
+- **Paint-recorded caches** — `ChromeLayout` (editor-global) and
+  `WindowLayoutCache` (per-window splits/tabs/explorer). `render_content` and the
+  popup painters write rects here *during* paint; `collect` reads them at event
+  time.
+- **Live-derived** — `status_bar_layout_now()`, `search_options_layout_now()`,
+  `menu_layout_now()` recompute geometry from state at event time, and the paint
+  pass debug-asserts paint == derivation. Their retired cache fields are gone.
+
+A subset **stays paint-recorded by explicit ruling**: `popup_areas`,
+`global_popup_areas`, the prompt suggestions/toolbar/preview rects, the file
+browser layout, the workspace-trust dialog rect, and the floating-panel paint
+fields. The reason is real and constrains the migration: these anchor to
+**paint-produced text layout** — the cursor's screen position, the wrap maps. Any
+`fresh-ui` tree that positions a completion popup at the caret must therefore be
+able to read the caret's post-layout screen position out of the `Host` leaf. This
+is the §1 "what crosses the seam" requirement seen from the other side.
+
+### 2.5 The `Scene` projection
+
+`view/scene.rs` is **not** a retained scene graph — it is a set of
+`Serialize`-deriving **semantic projections** computed once per frame from
+`Editor` state plus the last-frame geometry caches: `MenuView`, `TabBarView`,
+`StatusView`, `PaletteView`, `ScenePopup`, `FileExplorerView`,
+`FileBrowserView`, `TrustDialogView`, `WidgetSurfaceView`, `ContextMenuView`,
+`AuxModalView`, `KeybindingEditorView`. It is the single source of truth for
+*what the chrome is* (which items/tabs/rows exist, enabled/checked, and their
+rects), and it is consumed by both the TUI painter and the web frontend. It
+deliberately **excludes buffer text** — the web bridge slices *rendered cells*
+out of the framebuffer for the buffer and preview panes (the `PaletteView`
+preview rect is exactly such a slice).
+
+This is a gift to the migration: `Scene` is already "the description of the
+chrome, minus geometry, minus text." It becomes the props the `fresh-ui`
+components read. It is also the parity oracle — `scene_parity.rs` is the check
+that the web projection has not diverged, and it must keep passing through every
+wave.
+
+### 2.6 Event dispatch — keyboard
+
+Entry `app/input.rs`, `handle_key_press` → `handle_key`. Ordered pre-band stages,
+then the derived walk:
+
+1. `bump_ui_gen()` (invalidate per-event memos);
+2. event-debug intercept;
+3. `dispatch_terminal_input` (terminal mode, `terminalBypass`, scrollback) —
+   short-circuits if `presents_blocking_overlay()`;
+4. `try_resolve_next_key_callback` (plugin `getNextKey()`);
+5. **pre-band grabs**: `for c in components() { c.on_key(...) }` — by ruling only
+   two members participate (ThemeInfo as observer, ContextMenu as a
+   custom-dispatch modal);
+6. transient-popup dismissal observer;
+7. **the walk**: `dispatch_layer_keyboard` walks `overlay_stack()` top-down,
+   offering the key to each layer's owner via `on_layer_key`; first `Some` stops.
+   `Base` always answers, so the walk always terminates.
+
+The pipeline **tail** — mode bindings → composite router → chord/keybinding
+resolution — lives in `Base`'s handler, reaching the keybinding resolver, which
+resolves key→`Action` against the `KeyContext` from `get_key_context()`.
+`KeyContext` (an enum in `fresh-core/action.rs`) is the current stand-in for a
+focus ring: it is *derived* from the topmost keyboard-owning layer, not stored.
+
+Note a deliberate asymmetry: the keyboard side does **not** get the
+one-tree-per-event treatment the pointer side does, because key handlers
+"mutate then decline" (a popup rung processes `ClosePopup` and falls through),
+which forces per-handler `get_key_context()` re-derivation.
+
+### 2.7 Event dispatch — pointer
+
+Entry `app/mouse_input.rs`, `handle_mouse` → `handle_mouse_impl`:
+
+1. **modal capture band** — walk `overlay_stack()` in rank order; the first
+   component whose modal is up claims the *whole* mouse channel via
+   `capture_mouse`. (This replaced a deleted `dispatch_modal_mouse` ladder.)
+2. pre-walk observers (LSP-rename cancel, GPM cursor);
+3. **terminal forwarding gate** — suppressed when a `pointer_grab` is active, a
+   context menu is open, or an opaque chrome box covers the point;
+4. **one chrome tree per event** — `chrome_tree(self)` collects every component's
+   boxes, validated-memoized on `(ui_gen, overlay_stack)` with a debug oracle
+   that rebuilds and compares;
+5. dispatch: `dispatch_pointer` for presses, `dispatch_wheel` for scroll. Both
+   walk the `hit_stack`; `dispatch_pointer` dedups on `(owner, kind)` and honors
+   `Disposition::{Consumed, PassAfter, Pass}` (a declining *opaque* box absorbs
+   the event); `dispatch_wheel` has **no** opacity gate and **no** dedup, so a
+   declining surface lets the wheel keep falling for scroll-chaining.
+
+Fine click geometry is pure and `Editor`-free (`app/click_geometry.rs`):
+`screen_to_buffer_position*` maps (col,row) + content rect + gutter +
+`ViewLineMapping` → buffer byte + virtual-space overshoot.
+
+### 2.8 Drags, hover, focus — the three ad-hoc clusters
+
+These are the three places the flat tree cannot express what it needs, and each
+is a hand-rolled substitute for a `fresh-ui` primitive:
+
+- **Drags → `PointerGrab`.** `pointer_grab(ed)` is a hand-ordered match over ~13
+  drag flags scattered across `Editor` and `mouse_state` (`dock_resizing`,
+  `widget_text_drag`, `dragging_scrollbar`, `dragging_horizontal_scrollbar`,
+  `selecting_in_popup`, `dragging_prompt_scrollbar`, `dragging_popup_scrollbar`,
+  `dragging_separator`, `dragging_file_explorer`, `terminal_drag_pending`,
+  `dragging_text_selection`, `dragging_tab`, …). The grab owns the pointer from
+  press to release regardless of what is under it. This is exactly what per-node
+  `cx.capture_pointer()` replaces — one slot, owned by the node that started the
+  drag.
+- **Modal capture → `capture_mouse`.** Full-screen modals (Settings, keybinding
+  editor, calibration wizard, workspace trust) and the floating modal contribute
+  **no boxes**; they swallow the entire mouse channel before the walk, and each
+  has a bespoke `handle_*_mouse`. This is what `Modality::Exclusive` + a
+  `FocusScope` replaces.
+- **Hover** is two disjoint systems: a chrome hover-target walk
+  (`update_hover_target`, memoized, offering enter/leave transitions to every
+  component) and content trackers kept **outside** the walk on purpose — the LSP
+  hover state machine and terminal-link hover, because their debounced
+  request/keep-alive state cannot be expressed as an enter/leave diff. In
+  `fresh-ui`, hover is framework state on the render object; a component
+  *mirrors* it via `on_enter`/`on_leave` (the G1 finding in the implementation
+  plan). The content trackers stay as they are — they live behind the `Host`
+  leaf.
+
+**Focus** today is not one thing: keyboard focus is the derived `KeyContext`;
+"which split/buffer is active" is `Window` state guarded by `set_active_buffer`
+and `focus_split` (with a pane-buffer invariant that once caused a panic);
+per-popup `focused` flags; per-panel `widget_registry.focus_key`; and the
+overlay-toolbar focus ring derived from layout boxes. `fresh-ui` unifies all of
+these into one focus tree with scopes and a traversal policy.
+
+### 2.9 The command → action → event pipeline (unchanged by this work)
+
+Three deliberately separate vocabularies, and **all three survive the
+migration**:
+
+| Layer | Type | Role |
+|---|---|---|
+| Command | `Command` (`fresh-core/command.rs`) | user-facing, localized, context-filtered palette entry |
+| Action | `Action` enum, ~230 variants (`fresh-core/action.rs`) | the rebinding & serialization currency; executed by `handle_action` |
+| Event | `Event::{Insert,Delete,MoveCursor,BulkEdit,…}` | the buffer-mutation, undo, and plugin-hook unit |
+
+The separation exists for rebindability (Actions round-trip to strings; Events
+are position-specific and would not replay), undo/hooks (Events are the
+transaction record), and layout-independence (`MoveUp` resolves to a concrete
+`Event::MoveCursor` late). `fresh-ui` handlers return **messages** — but the
+message type cannot simply *be* `Action`: `Action` deliberately has no
+positional variants (no click-at-byte, no drag-to-offset, no
+tab-select-(leaf, index)) precisely because it is the serializable rebinding
+currency. The tree's message type is therefore a wrapper —
+`enum UiMsg { Action(Action), /* UI-geometry messages */ }` — with the
+UI-geometry half consumed by `update` and never entering the keybinding
+namespace. (The library's own demo makes the same choice: its message type is a
+bespoke `Msg`, not a reused action enum.) The Shortcuts → Intents → Actions
+chain sits *in front of* the pipeline as before: a key on the focus chain
+resolves to an `Intent`, an `Intent` to an `Action` at the focused node, and
+from there the existing `handle_action` pipeline is unchanged. This is the
+single most important "keep" on the input side. One more keep: fresh-ui's
+static `Intent`/`Shortcut` tables cannot absorb the user-rebindable, chorded,
+multi-keymap resolver — the realistic shape is that the resolver survives as
+the root fallback key handler (today's `Base` tail), with per-node shortcuts
+reserved for widget-local keys.
+
+### 2.10 The plugin widget system
+
+Plugins describe UI as a data tree and the host owns everything else. The wire
+type is `WidgetSpec` (`fresh-core/api.rs`) — a serde-tagged, `#[ts(export)]`
+**closed enum**, 19 kinds: containers (`Row`/`Col`/`LabeledSection`/`Overlay`/
+`Component`/`Popup`), structural (`Spacer`/`Divider`/`HintBar`/`Raw`), controls
+(`Toggle`/`Button`/`Number`/`Dropdown`/`DualList`), data views
+(`List`/`Tree`/`Text`), and `WindowEmbed` — a rect reserved inside a plugin
+panel for the native per-window render path, i.e. host content *inside*
+plugin-described UI (it matters for M6; see §4.6). Plugins build it with `plugins/lib/widgets.ts` and call
+`panel.set(spec)`, which issues `PluginCommand::MountWidgetPanel` /
+`UpdateWidgetPanel`.
+
+Host-side (`widgets/**`, `app/widget_runtime.rs`): one `match` on kind
+(`kinds/mod.rs::behavior`) dispatches to a `WidgetImpl` per kind
+(`collect`/`box_meta`/`on_key`/`on_pointer`/…). The central rule is
+**spec/instance separation**: spec values are initial-only; after first render
+host-owned `WidgetInstanceState` (list scroll, selection, tree expansion, text
+edit state) is authoritative, keyed by the widget's stable string `key` in a
+`HashMap`. Identity/diffing is manual string-key matching carried forward each
+render; a `WidgetMutation` fast path (`SetValue`, `SetItems`, `SetExpandedKeys`,
+`AppendTreeNodes`, …) mutates in place to dodge re-transmitting a large tree
+(the `js_to_json` walk of a 5000-node tree blocks the JS thread ~1s). Events flow
+back through the `widget_event` hook, delivered only to the owning plugin, with a
+deliberate **one-frame lag** (PluginCommands drain on the next frame).
+
+This is a hand-rolled, string-keyed, side-table version of exactly what
+`fresh-ui` is: a retained tree with `(type, key)` identity, element-owned state,
+and a reconciler. The `WidgetInstanceState` map is the "side-table problem" the
+design doc's Appendix A calls out by name.
+
+### 2.11 Settings and the controls library
+
+Settings is **mid-unification** and instructive. Schema drives it: schemars runs
+offline over the config struct, the committed `config-schema.json` is parsed into
+a `SettingCategory` tree, and `build_pages` turns each entry into a
+`SettingControl` (10 variants: Toggle, Number, Dropdown, Text, TextList, DualList,
+Map, ObjectArray, Json, Complex). `x-` schema extensions carry UI hints
+(`x-enum-from: "$themes"` pulls live theme options, etc.).
+
+The important part is what has and has not been unified:
+
+- **Rendering is already on the widget framework.** There is no `Control` trait
+  and no per-control paint code — `view/settings/widget_map.rs` projects the full
+  control state into a `WidgetSpec` every frame and renders through
+  `widgets::render_spec`. The old `view/controls/*/render.rs` paint modules are
+  **deleted**.
+- **State, input, layout, and theming remain bespoke.** Each control keeps a
+  `*State`/`*Colors`/`*Layout`/`*Event` module with hand-written
+  `handle_key`/`handle_mouse`, and `view/settings/input.rs` routes keys through
+  per-control editing handlers. So the same widgets have **two state stores**
+  (the `SettingControl` states *and* a bridge `HashMap<key, WidgetInstanceState>`)
+  and `widget_map.rs` re-seeds one from the other every frame.
+- **The keybinding editor is a third, entirely separate hand-rolled modal** —
+  table + search + edit dialog — that uses none of `view/controls`,
+  `SettingControl`, or `WidgetSpec`.
+
+The duplication a `fresh-ui` migration removes here is concentrated in the
+control *state/input/layout/theming* layer, not rendering — and it folds three
+systems (controls, plugin widgets, keybinding editor) into one.
+
+---
+
+## 3. Why migrate — the shared root cause
+
+Every recurring UI bug class in the survey traces to one root, stated in
+[`widget-framework-v2-review.md`](widget-framework-v2-review.md): **the tree is
+flat.** No component sets `LayoutBox.parent`; `focusable`/`focus_trap`/`scroll`
+are reserved and unset at chrome level. Containment is faked, precedence is
+tabulated, drags are a flag ladder, modals bypass the walk. Concretely:
+
+1. **~10 full-frame "guard" boxes** simulate "outside my rect" containment —
+   `menu_close_guard`, `context_menu_close_guard`, `dock_blur`, `transient_guard`,
+   `popup_guard`, `clear_explorer_menu`, `tab_menu_clear_guard`, and the prompt's
+   **five** per-gesture full-frame boxes. Each is a real parent/clip/modal node's
+   job, done by hand.
+2. **Two precedence orderings** (pointer z-bands + `layer_rank`) that a real tree
+   expresses once as tree order + stacking contexts + `Modality`.
+3. **The `PointerGrab` flag ladder** — ~13 drag flags — that one per-node pointer
+   capture replaces.
+4. **`capture_mouse` modals** that bypass the walk, replaced by a focus-trap node
+   + scrim.
+5. **String-keyed side tables** (`WidgetInstanceState`, the Settings bridge map)
+   that element identity replaces.
+6. **Two/three parallel control vocabularies** (chrome, plugin widgets, settings
+   controls) that one widget set replaces.
+
+The design doc's Appendix A ("What this replaces in Fresh today") is the full
+mapping; the survey above is where each row of it actually lives.
+
+---
+
+## 4. The target design — the whole UI as one `fresh-ui` tree
+
+The end state is one `fresh-ui` description tree, rebuilt each frame from `Editor`
+state, with the buffer/terminal panes as `Host` leaves. `Editor::render` stops
+being an immediate-mode painter and becomes: build the tree, hand it to
+`ui.frame(build(editor), size)`, fold the returned `LayoutSpec` into the ratatui
+`Buffer`. Input becomes: translate the terminal event to `fresh_ui::Input`,
+`ui.dispatch` it, apply the returned messages — `Action`s plus UI-geometry
+messages (§2.9) — through the existing pipeline.
+
+### 4.1 The root tree
+
+Sketch (message type `UiMsg`, the `Action` wrapper from §2.9), mirroring the
+demo's shape and the design doc's §15 examples:
+
+```rust
+fn build(ed: &Editor) -> Node<UiMsg> {
+    provide(&THEME, ed.theme_snapshot(),                     // §4.5
+      col().children([
+        menu_bar(ed).if_(ed.menu_bar_visible),               // M3
+        row().flex(1).children([
+            dock_column(ed).w(Cells(ed.dock_width)).if_(ed.dock.visible),  // M9 carve, M6 content
+            file_explorer(ed).w(Cells(ed.explorer_width)).if_(ed.explorer_open), // M9
+            split_grid(&ed.split_tree()).flex(1),            // M9 — Host leaves
+        ]),
+        search_options(ed).if_(ed.search_active),            // M1
+        status_bar(ed).h(Cells(1)),                          // M1
+        prompt_line(ed).if_(ed.prompt.is_some()),            // M5 (bottom mode)
+      ])
+      // overlays are children of the node they belong to, not a global z-stack:
+      .child_if(ed.any_context_menu(), || context_menu(ed))  // M2
+      .child_if(ed.palette_overlay(),  || palette(ed))       // M5
+      .child_if(ed.any_modal(),        || modal(ed)))        // M7
+}
+```
+
+The two precedence tables (§2.3) **do not survive**. Precedence is tree order plus
+stacking contexts plus `Modality`; a submenu nests as a further `Layer` anchored
+to its row; a modal declares `Modality::Exclusive` and everything else falls out.
+
+### 4.2 Per-surface mapping
+
+Each surface maps onto a small, already-built combination of primitives and
+widgets. The `Scene` projection (§2.5) is the props each reads.
+
+| Surface | `fresh-ui` expression | Notes |
+|---|---|---|
+| **Menu bar + dropdowns** (`MenuView`) | `row()` of `Dropdown`s; submenus are nested `Layer`s anchored to their row, `Modality::Inert`, `dismiss(OUTSIDE_POINTER∣ESCAPE)`. Mnemonics are `Intent`s on the root focusable (as in the demo). | Replaces the close-guard box, the dropdown z-number, the rank entry, and the hover auto-switch machine. Hover auto-switch is `on_enter` firing a `Toggle` message while a menu is open. |
+| **Context menus** (`ContextMenuView`) | `Layer{ anchor: Point(click), place: Below, fit: FLIP∣CLAMP, modality: Inert, dismiss: OUTSIDE_POINTER∣ESCAPE }` wrapping a `List::keyed(...).autofocus()`. The menu is a child of the node it acts on, so its target is tree position, not stored state. | The demo's `context_menu` is this verbatim. Replaces the four `Window` context-menu structs' *highlight* (element state), the close-guard box, and the pre-band keyboard grab. |
+| **Prompt / command palette** (`PaletteView`) | `Layer` (Center overlay or Bottom line) → `FocusScope(col([ TextField, toolbar?, row([ List::keyed(results).selected_id(...), preview? ]) ]))`. Re-key on `prompt_type` to reset editing state. | Query is *controlled* (committed to `prompt_histories`); caret/selection/scroll are element state. Selection stores the result **id**, not an index. Replaces the overlay toolbar ring, the click scrim, the position-blind wheel box, the `SearchPrompt`/`Prompt` context switch, and the manual-scroll latch. |
+| **Info/hover/signature popups** (`ScenePopup`) | `Layer{ anchor: Point(caret_screen_pos), place: Below, fit, dismiss: ANY_KEY∣OUTSIDE_POINTER }` over `Viewport(styled markdown body).selectable().max_h(n)`. Non-modal. (There is no `TextRun::markdown` in the library — the body is composed from today's `PopupContent::Markdown(Vec<StyledLine>)`; see the inline-styling decision, §6.2.) | **Anchor needs the caret's pre-paint screen position via `compute_content_layout`** (§1, §4.4). The LSP hover *state machine* stays behind the leaf; only the rendered popup migrates. |
+| **Splits / tabs / scrollbars** (`TabBarView`) | `split_grid` recursion: `Leaf → col([ tab_strip, row([ Focusable(Host::buffer(id)).flex(1), vscrollbar ]) ])`; `Split → flex_dir([ a, Gesture(Divider).on_press(capture_pointer), b ])`. | The divider captures the pointer on press — the whole drag mechanism, replacing the separator arm of `PointerGrab`. The active split's border is `focus_within`. Buffers/terminals are `Host` leaves (§4.4). This shape requires decomposing `render_content` per leaf — an open scoping decision (§1 caveat, §6.2). |
+| **File explorer** (`FileExplorerView`) | `Tree` (or `List::windowed` over `get_display_nodes()`), selection controlled by `Window` state, `expanded_dirs` controlled (it is serialized). Context menu as above. | The `FileTree` model (lazy `TreeNode`, sort/filter, incremental search, decorations) is app state the `Tree` renders; only rendering/hit-testing/scroll move onto the widget. |
+| **Dock + floating plugin panels** (`WidgetSurfaceView`) | The `WidgetSpec` → `Node<Action>` translation (§4.6) mounted in a dock column or a `Layer`. | `WidgetInstanceState` dissolves into element state. This is the plugin-API-visible wave. |
+| **Settings** | The schema-driven form built directly from `SettingControl` as `col()` of `Toggle`/`Number`/`Dropdown`/`TextField`/`DualList`/`List`/`Tree`, inside a `Modality::Exclusive` `Layer` + `FocusScope`. | Deletes `widget_map.rs` (no per-frame projection), the dual state store, the bespoke `input.rs` handlers, and `view/controls/*`. The keybinding editor becomes another form in the same modal. |
+| **Status bar / search-options row** (`StatusView`) | `row().h(1)` of `TextRun`/`Button` segments; already live-derived, so the least coupled. | The M1 warm-up wave. |
+| **Full-screen modals** (`TrustDialogView`, `AuxModalView`, `KeybindingEditorView`) | `Layer{ anchor: Screen(Center), modality: Exclusive, scrim: Dim, dismiss }` + `FocusScope`. | `Modality::Exclusive` subsumes whole-channel capture, `blocks_terminal_input`, and the hover/cursor suppression lists as one property. |
+
+**Inline styling is an unsolved decision that cuts across this table.**
+`TextProps` is a single unstyled `Rc<str>`, and a display-list `Item` carries
+one `ThemeKey` — while today's chrome is full of intra-line styling: palette
+fuzzy-match highlights, menu mnemonics, markdown popups, settings search
+highlights, git-status coloring in explorer rows. Either the library grows
+styled spans (a one-time library change, decided before M3), or the editor
+composes one `TextRun` node per styled span and accepts the node count — under
+a cell-identical acceptance bar. Decide before M3 (mnemonics) and M5 (match
+highlights); see §6.2.
+
+### 4.3 State homes
+
+Every wave begins by classifying the surface's fields into four homes. This is
+the discipline the implementation plan §6 sets out; the survey lets us fill the
+column concretely.
+
+| Home | Owner | Editor examples |
+|---|---|---|
+| **App state** (prop, passed down) | `Editor`/`Window` | which menu is *present*, which plugin/spec a panel mounts, `dock_width`, `menu_bar_visible`, the `SettingControl` values being edited |
+| **Element state** (disposed with the widget) | the element | menu highlight, context-menu highlight, prompt scroll/caret, popup scroll, theme-info popup, dropdown open flag |
+| **Framework state** (render objects) | `fresh-ui` | one focus position (replaces `key_context`, `dock.focused`, popup `focused`, `Prompt.toolbar_focus`), all `PointerGrab` drag flags (→ pointer capture), hover, multi-click detection |
+| **Session state** (serialized ⇒ app state) | serde structs read by daemon/workspace/orchestrator | per-split scroll, `tab_scroll_offset`, `expanded_dirs`, `prompt.input` history |
+
+**The invariant that guards this:** if a wave changes `workspace.rs`
+serialization, something was misclassified. Persisted view state must be app
+state because elements are disposed on unmount and do not survive a restart. The
+library's `Persisted<T>` is for **new incidental state only** — it is *not* the
+home for Fresh's existing typed, versioned serde view-state, which the daemon and
+orchestrator read independently of any UI component. The restore suites
+(`workspace_persistence_gates.rs`, `daemon_workspace_restore_parity.rs`, the
+`orchestrator_*_restore` tests) are the guard.
+
+Consequence worth stating plainly: **`Editor` gets smaller.** Most of its UI
+fields are view state, so a wave mostly *deletes* fields — the god-object shrinks
+as surfaces move to element/framework state.
+
+### 4.4 The `Host` seam — where the text pipeline plugs in
+
+The library's rule is that **paint never touches cells**: `RenderObject::paint`
+has the signature `fn paint(&self, g: Geom, out: &mut DrawList)` and emits
+display-list items; per-cell content has exactly one route across the seam,
+`Draw::Host(HostId)` — "content the host owns and draws itself." The mechanism
+is therefore split in two, and who-calls-whom matters:
+
+- **The leaf** (`BufferHost`, on the exported `HostLeaf`/`RenderObject` path,
+  closed in R2/D12): `layout` reserves the rect; `paint` emits `Draw::Host(id)`
+  and nothing else; `hit` returns `Hit::Opaque` — hit results are *not*
+  messages ("layout, paint and hit-testing never see a message");
+  `takes_raw_input` reports PTY ownership so `Modality::Exclusive` above it
+  derives suppression via `raw_input_leaves()` instead of the current
+  `blocks_terminal_input` flag.
+- **The fold** (editor-side, after `ui.frame()` returns): walking
+  `LayoutSpec.items` in paint order, a `Draw::Host(id)` item calls back into
+  the editor — *this* is where the `WindowBuffers::with_all_mut` disjoint
+  borrow is taken and `render_content` runs into the shared cell buffer at the
+  item's rect. The returned caches (`view_line_mappings`, cell-theme map,
+  pending hardware cursor) are stored editor-side keyed by `HostId`. The
+  library never sees them and never owns the buffers.
+
+Consequences the plan must own:
+
+- **Click→byte is an element-level concern.** A `Gesture` wrapping the host
+  node maps the event position through the fold-published mappings and
+  `click_geometry` in its handler, emitting a `UiMsg`; the render object itself
+  cannot.
+- **The caret arrives after the spec.** `LayoutSpec.cursor` is fixed during the
+  library's paint pass, but `render_content` computes the hardware cursor at
+  fold time. Either the frame merges the host caret outside the library's
+  cursor mechanism (fold output wins for buffer carets), or geometry is derived
+  early via `compute_content_layout` — which caret-anchored popups need anyway
+  for same-frame anchoring.
+- **The fold-callback API does not exist yet.** Both existing backends stub
+  `Draw::Host` as a `▒` fill; a per-`HostId` callback over `&mut Editor`, run
+  mid-fold in paint order, is the concrete API the whole seam hangs on and the
+  first thing M0 builds.
+- **A relayout footgun**: `HostSpec::Leaf` compares by factory-`Rc` pointer
+  equality, so a `build()` that allocates a fresh leaf closure each frame
+  forces relayout of every host leaf every frame. Host factories must be
+  hoisted (`Shared`/cached fields), and the M0 prototype should assert it.
+
+### 4.5 Theme integration
+
+`fresh-ui` says only *where* appearance comes from: every `Item` carries a
+`ThemeKey` string, and the backend maps it to colors (the demo's `style()` fn).
+The editor already has a rich theme system (`view/theme`, syntect category
+mapping, live preview) and a per-cell theme-provenance map. Integration is: the
+TUI backend maps `ThemeKey → resolved Theme colors` (the same lookup
+`*Colors::from_theme` does today), the theme is an **ambient** (`provide(&THEME,
+…)`) so a theme change dirties only its dependents rather than forcing a root
+rebuild — a benefit realized only where subtrees are hoisted into `Shared` or
+components, since under a naive whole-root rebuild-per-frame the root rebuilds
+regardless (§4.7) — and buffer text keeps its own per-cell theming inside the
+`Host` leaf untouched. One granularity note: today's theme inspector reads a
+per-*cell* provenance map; migrated chrome carries one `ThemeKey` per
+display-list *item*, so chrome provenance is synthesized at fold time at item
+granularity (buffer cells keep the per-cell map via the leaf) — confirm the
+inspector survives the coarsening (§6.2). `convert_buffer_colors` (256/16 fallback) stays a post-process over
+the folded cell buffer.
+
+### 4.6 The plugin boundary
+
+A plugin already sends a whole description tree; that *is* layer 1 crossing a
+wire (design §13). The migration keeps the wire type `WidgetSpec` where it is
+(`fresh-core`, unchanged for compatibility) and adds a **host-side translation**
+`WidgetSpec → Node<Action>` in `fresh-editor` (the M6 wave). The reconciler moves
+host-side, so `WidgetInstanceState` (list scroll, tree expansion, selection)
+becomes element state — a plugin re-sending its spec no longer loses scroll. Two
+externally visible changes, both needing a release cycle:
+
+- **Keyed builders require a key function.** This breaks `widgets.ts` `List`/
+  `Tree` calls without keys. Ship the new builders one release ahead, deprecate
+  the old ones with a load-time warning.
+- **State survival changes.** A plugin that compensated for state loss on re-send
+  now sees state persist. Changelog item.
+
+The plugin vocabulary stays a **stable subset** of the internal one (no `Host`,
+no `Modality::Exclusive`, no focus policies, no arbitrary `M`), versioned with a
+`.d.ts`, so the internal vocabulary can evolve without breaking plugins. One
+kind needs care under that rule: `WidgetSpec::WindowEmbed` *is* host content
+inside plugin UI. The subset still exposes no `Host` — the host-side
+translation maps `WindowEmbed` to a nested `Host` leaf itself, so the
+translation, not the plugin, names the leaf.
+
+### 4.7 Rebuild cost and frame scheduling
+
+The sketch above has `Editor::render` rebuild the whole chrome description from
+`Editor` every frame. That is the *opposite* of the library's cost model, which
+bounds rebuilds by pushing state down, hoisting invariant subtrees into
+`Shared`, and letting ambients dirty only their dependents; a whole-root
+rebuild per frame makes the identity short-circuit inert (fresh closures every
+build) and re-reconciles every element on every PTY tick. At chrome scale
+(hundreds of nodes) that may well be fine — but it is an assumption, not a
+measurement, and it inverts the model the library documents. M0 therefore
+includes a benchmark — full chrome build + reconcile at a sustained input rate
+(≥60 events/s) — and the practice rules that fall out of it (which subtrees
+must be `Shared`, which state moves into components so dirty marks stay deep,
+host-factory hoisting per §4.4) are written down before M1.
+
+---
+
+## 5. The migration plan
+
+This refines Part 2 of
+[`widget-library-implementation-plan.md`](widget-library-implementation-plan.md)
+(the deletion ledger and verification strategy hold as written) with the
+concrete current-state findings. The acceptance test (cell-identical output)
+and the one-implementation-at-a-time rule are unchanged, and so are the wave
+*contents*. What does change is the **direction**: §5.0 argues — and a PoC
+demonstrates — that the frame should migrate **first**, not last, which
+reverses M0's mount point and dissolves M9 into the stages that follow. The
+wave table in §5.2 is kept because its per-surface deletions are still the
+work; read it as *what* each step deletes, with §5.0's stages as *when*.
+
+### 5.0 Direction — outside-in, and why it inverts the original order
+
+There are two ways to sequence this, and the choice matters more than the
+wave contents.
+
+- **Inside-out** — what the implementation plan's Part 2 assumes, and what the
+  wave table below inherits: mount `fresh-ui` subtrees into rectangles carved
+  by today's frame, migrating leaf surfaces first and the frame **last** (M9).
+- **Outside-in** — make the frame a `fresh-ui` tree **first**, with every
+  region below it a `Host` leaf that the fold paints using today's painters,
+  then replace regions with native descriptions one at a time. The buffer is
+  the last `Host` leaf standing.
+
+**Outside-in is the better order**, for three reasons that all follow from the
+code rather than from taste:
+
+1. **It is the library's native shape.** `Ui::frame(root, size)` takes a
+   whole-frame `Size`; there is no sub-rect mount. Inside-out has to invent one
+   (M0 item 4), build every wave on it, and then delete it at M9. Outside-in
+   uses the API as designed and invents nothing.
+2. **Overlays get real semantics on day one.** A `Layer`'s stacking, modality,
+   dismissal and focus scoping are properties of *being a child of the tree*.
+   Mounted into a rectangle, a migrated context menu still needs the old
+   precedence machinery for everything outside that rectangle — so M2's
+   mechanisms are half-simulated, then redone once the frame inverts. Under the
+   shell, the first migrated overlay is a real `Layer` immediately. That is
+   where the value of this migration actually is (§3).
+3. **The hybrid precedence rule already exists.** Today `Base` is the floor —
+   pointer z0, `layer_rank::EDITOR_BASE` 0, "everything not otherwise
+   claimed". The shell's legacy `Host` leaf *is* that floor. Migrated surfaces
+   sit above it as ordinary tree children, and the legacy region shrinks
+   monotonically. No new precedence concept is introduced during the
+   transition, and the two tables (§2.3) die at the end rather than being
+   emulated throughout.
+
+The costs are real but bounded: the fold callback and caret merge are needed on
+day one (already M0's hard part — earlier, not extra); dispatch runs in three
+stages while the transition lasts (legacy capture band → `fresh-ui` dispatch →
+legacy floor), collapsing to one when the last region migrates; and legacy
+overlays painted after the fold are invisible to `fresh-ui` hit-testing, so the
+legacy capture band — which today already arbitrates exactly this — stays in
+front until overlays migrate.
+
+**What does not change:** the wave *contents* (M1–M8) and the deletion ledger.
+Only the frame's position moves, from last to first.
+
+#### The PoC, and what it found
+
+The whole shell rests on one testable claim: **`fresh-ui` can reproduce the
+editor's frame rectangles exactly.** If it cannot, every region shifts and the
+cell-identical bar is lost at step one. `crates/fresh-editor/tests/ui_shell_frame_parity.rs`
+tests it: it builds the frame skeleton as a `fresh-ui` description, folds it to
+`Draw::Host` items, and compares the rectangles against the ratatui `Layout`
+calls `render.rs` actually makes — across 192 visibility combinations
+(menu / status / search-options / prompt-line / dock / explorer on either side)
+crossed with a grid of terminal sizes.
+
+Two findings:
+
+1. **Parity holds wherever the visible fixed rows fit** — exactly, including
+   the dock and sidebar carves, at every width band from 1 column to 200. The
+   frame layout is five `Length(n)` rows and one `Min(0)`, which
+   `Sizing::Cells` and `flex(1)` reproduce without rounding. The shell can
+   therefore take over the frame with no visible change.
+2. **One divergence, in the deep-squeeze band.** When the visible fixed rows
+   *cannot* all fit (frame height below the number of one-row regions), both
+   engines give the content row nothing and drop a row — but a *different* one:
+   ratatui's solver starves an interior row and keeps the last; `fresh-ui`
+   fills in order and starves the last. `render.rs` flags this band on purpose
+   ("running the actual split … keeps small-terminal squeeze behavior identical
+   by construction").
+
+Finding 2 is **not a layout bug to fix in `fresh-ui`.** It is a signal that
+*which rows are visible* belongs in `build()` as a function of the available
+height — app state deciding structure — rather than being left to
+solver-specific starvation order. Deciding that explicitly is better behavior
+than either engine's accident, and it removes the dependence entirely. It is
+recorded as a decision (§6.2) and pinned by a test so it cannot drift
+unnoticed.
+
+The PoC also surfaced a smaller structural point worth carrying into M0: the
+dock's bail-out rules (`EDITOR_MIN`/`DOCK_MIN`) are **app logic keyed on the
+frame width**, and `build()` cannot read geometry. A real shell resolves that
+width from state before building (a resize is an event like any other), or uses
+`LayoutReader`. The same will be true of every "how wide is the frame" decision
+that currently reads `size` at the top of `render`.
+
+#### Revised stages
+
+| Stage | What moves | Why here |
+|---|---|---|
+| **S1** | Frame skeleton: every region a `Host` leaf, painted by today's painters. Input fully delegated. | The PoC above, plus the fold callback, caret merge, and the three-stage dispatch. Cell output unchanged by construction. |
+| **S2** | The live-derived regions — status bar, search-options row — become native descriptions. | Smallest possible first real swap; both already derive their geometry purely (§2.4). |
+| **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. |
+| **S4** | Dock column, file explorer, plugin panels. | Depends on S3's layer semantics; carries the plugin API change. |
+| **S5** | Splits, tabs, scrollbars decompose; the buffer becomes the only `Host` leaf. | Requires the per-leaf `render_content` decision (§6.2); last because it is the only stage that touches the KEEP side. |
+
+### 5.1 M0 — the seam (a genuine prototype, not just plumbing)
+
+M0 is re-scoped from "pure plumbing" to a **prototype gate**: the Host seam
+(§4.4) has never been exercised by any backend, and every wave stands on it.
+Seven pieces:
+
+1. **TUI backend** in `fresh-editor`: `LayoutSpec` → ratatui `Buffer`, mapping
+   `Item::theme` (`ThemeKey`) through the resolved `Theme` and synthesizing
+   chrome theme provenance per item. (The `examples/interactive.rs` fold is the
+   reference shape for chrome — note it stubs `Draw::Host`.)
+2. **The fold-callback API** — the concrete shape of "backend meets
+   `Draw::Host`": a per-`HostId` callback over `&mut Editor`, run mid-fold in
+   paint order, taking the `with_all_mut` borrow and running `render_content`
+   at the item's rect (§4.4). Nothing like it exists yet; this *is* the
+   prototype.
+3. **`HostLeaf` impls** — `BufferHost` and a terminal-grid host emitting
+   `Draw::Host(id)`, with hoisted factories (the `HostSpec::Leaf` pointer-
+   equality footgun, §4.4).
+4. **The frame skeleton** — the whole frame as a `fresh-ui` tree with one
+   `Host` leaf per region, replacing the ratatui `Layout` carves. Proven
+   rect-for-rect against today's layout by
+   `crates/fresh-editor/tests/ui_shell_frame_parity.rs` (§5.0). Under
+   outside-in this replaces the inside-out mount point, which is not built at
+   all.
+5. **Input adapter** — terminal event → `fresh_ui::Input`, and messages back
+   out as `UiMsg` (Actions + UI-geometry) into the existing pipeline.
+6. **Caret arbitration** — one "who owns the caret this frame" decision,
+   replacing `cursor_suppressed_by_late_overlay`: the fold-time host caret
+   merged against `LayoutSpec.cursor`, with `compute_content_layout` for
+   same-frame anchors.
+7. **Geometry bridge** — fold-published caches keyed by `HostId`
+   (`view_line_mappings`, cell-theme map) readable by handlers, plus the
+   pre-paint path for caret-anchored layers.
+
+**Exit:** the frame renders through the shell with every region still painted
+by today's painters and cell output unchanged, a one-line status segment
+renders and takes a click as a native description, **and** a prototype
+`BufferHost` proves the seam end-to-end — real
+buffer cells under `Draw::Host`, one caret-anchored popup anchored via
+`compute_content_layout`, one click-to-cursor through a `Gesture` handler —
+plus the §4.7 rebuild benchmark. No wave is scheduled until this exit holds.
+
+### 5.2 Waves (increasing risk)
+
+| Wave | Surface | New mechanism exercised | Deletes (survey-grounded) |
+|---|---|---|---|
+| **M1** | Status bar, search-options row | static layout, click targets | the live-derived `status_bar_layout_now`/`search_options_layout_now` paths and their `StatusView` painters |
+| **M2** ⟵ **go/no-go** | Context menus (tab / new-tab / explorer / close-split) | `Layer`, `Modality::Inert`, `dismiss`, list nav | `chrome/context_menu.rs`, its close-guard box, its `on_key` pre-band grab, its rank entry, the four `Window` context-menu highlight fields |
+| **M3** | Menu bar, dropdowns, submenus | nested layers, hover auto-switch, mnemonics | `chrome/menu.rs`, the `view/ui/menu.rs` dispatch half, the menu close-guard box, the hover auto-switch machine |
+| **M4** | Info/hover/signature popups, theme inspector | transient dismissal via observers, scroll, text selection | `chrome/popups.rs`, `chrome/theme_info.rs`, `view/popup_mouse.rs` remnants, the transient-dismiss pre-band stage (the LSP hover *state machine* stays behind the leaf) |
+| **M5** | File browser, prompt / command palette | `FocusScope`, text input, results list, preview | `chrome/prompt.rs`, `chrome/file_browser.rs`, `view/prompt_input.rs`, the overlay toolbar ring, the click scrim, the position-blind wheel box, the manual-scroll latch |
+| **M6** | Plugin panels: dock + floating | `WidgetSpec` → `Node` translation, element state replacing `WidgetInstanceState`, **plugin API change** | `widgets/kinds/*` dispatch, `widget_runtime.rs`, `WidgetInstanceState`, `WidgetMutation` fast path |
+| **M7** | Modals: workspace trust, keybinding editor, calibration wizard | `Modality::Exclusive` | `chrome/modals.rs`, `capture_mouse`, `blocks_terminal_input`, the cursor/hover suppression lists, the bespoke `handle_*_mouse` |
+| **M8** | Settings (+ keybinding editor form) | the largest interior; rendering already on `WidgetSpec` | `view/settings/*` control layer, `view/controls/*`, `widget_map.rs`, the dual state store, the bespoke settings `input.rs` |
+| **M9** | Frame: splits, tabs, scrollbars, dock column, explorer pane | the frame itself; all else nests inside | `chrome/splits.rs`, `chrome/base.rs`, `chrome/mod.rs` (registry, `layer_rank`, `chrome_tree`), `mouse_input.rs` dispatch engines, `PointerGrab`, the chrome half of `render.rs`, `KeyContext` |
+
+**M2 is the decision point.** It is the first wave using layers, modality,
+dismissal and focus together. If the seam and the model hold there, the later
+waves apply the same mechanisms; if not, the library is corrected before wave
+three rather than after eight surfaces depend on it.
+
+**M9 dissolves under outside-in.** The wave table above is inherited from the
+inside-out plan, where the frame migrated last. Under §5.0 the frame is S1
+instead, so M9's contents split: the frame layout, dock and explorer carves
+move to the front (S1), and what remains — the split grid, tabs, scrollbars,
+and the removal of `app/chrome/`, `PointerGrab`, `KeyContext` and the two
+precedence tables — becomes S5, the last stage, because it is the only one that
+touches the KEEP side (§6.2). The deletions are the same; only their order
+changes. M2 remains the go/no-go: it is still the first wave to use layers,
+modality, dismissal and focus together, and under the shell it does so for
+real rather than through a mount point.
+
+**Surfaces the wave table doesn't name**, and where they land:
+
+- **Tab-drag ghost / drop indicator** (`app/tab_drag.rs`) — the *grab* is
+  pointer capture; the floating preview is a `Layer` following the pointer.
+  M9.
+- **Frame-buffer animations** (`view/animation.rs`) — cell-level snapshots of
+  the previous frame with no display-list expression; they stay post-processes
+  over the folded buffer, beside `convert_buffer_colors` (or are retired — a
+  reviewed decision, §6.2).
+- **Warning domains** (`app/warning_domains.rs`) — plugin-visible status
+  indicators + popup content; rides M1 (segments) and M4 (popup); named in the
+  M6 changelog because plugins observe it.
+- **Orchestrator dock shell pages and session preview**
+  (`render_dormant_shell_page`, `render_session_preview_into_rect`) — the
+  preview is a second `Host` leaf (the phantom-leaf path); M6/M9.
+- **`WidgetSpec::WindowEmbed`** — host content inside plugin UI; translated
+  host-side to a nested `Host` leaf (§4.6). M6.
+- **Live-grep preview and quick-open hint overlays** — M5 (the preview is a
+  phantom-leaf `Host`).
+- **`fresh-gui` native macOS menus** (`crates/fresh-gui/src/native_menu.rs`) —
+  built from the `Menu` model, which stays app state; M3 must keep that model
+  intact and name the second menu frontend in its PR.
+- **Scrollbar overview-ruler markers** (plugin API) — `Draw::Scrollbar` carries
+  only `{offset, content, window}`; see §6.2 before M9.
+
+### 5.3 Verification
+
+The e2e suite (~315 files) is the primary mechanism, used as-is:
+
+1. **Cell output stays byte-identical** per wave (the existing snapshot/visual
+   harness). A diff is a defect or a reviewed intended change. Reproducing exact
+   spacing — including cases that look wrong — is a real part of each wave; make
+   any deliberate visual change *separately*, after the wave, so a regression is
+   distinguishable from an intended change.
+2. **`scene_parity.rs` passes** through every wave — the web projection has not
+   diverged. As each surface migrates, its `Scene` projection becomes the
+   component's props rather than a separate output, but the projected data must
+   match until the web frontend consumes `LayoutSpec` directly.
+3. **The standing parity oracles** (event-time geometry vs paint walk; focus
+   ring) stay enabled until the surface they cover migrates, then are removed
+   with it.
+4. **Per-wave routing tests** — the existing precedence tests (clicks not
+   reaching the buffer through a popup, modality, focus order) pass unchanged
+   against the new implementation.
+5. **New `LayoutSpec`-level assertions** by key are *added* alongside the cell
+   assertions, not in place of them.
+
+### 5.4 Risks and stop points
+
+1. **L1/L2 semantics are fixed** (they are — Part 1 is done and its deviation
+   register is closed). The library is frozen; a wave that needs a library change
+   is a signal to stop and fix the library, not to fork behavior into the editor.
+   Two such changes are already foreseeable (styled text spans, scrollbar
+   markers — §6.2): schedule them as library work *before* the wave that needs
+   them rather than discovering them mid-wave.
+2. **Cell-identical output is a hard constraint**, and the biggest single cost
+   per wave.
+3. **M6 changes plugin-visible behavior** (state survival) and breaks the API
+   (required keys). It needs a release cycle of its own.
+4. **M8 (Settings) is optional as a stopping point.** It is the largest interior
+   and the least coupled to dispatch; stopping after M7 with Settings still on
+   the current (already-half-unified) path is a supported end state.
+5. **Two implementations of one surface must not persist across waves.** A wave
+   that cannot delete its predecessor indicates a defect in the seam — fix the
+   seam rather than accumulate a second UI stack.
+6. **The caret and the caret-anchored popups are the subtle seam.** Get the M0
+   caret arbitration and geometry-cache bridge right, or M4/M5 popups mis-anchor.
+
+---
+
+## 6. Decisions and open questions
+
+An independent review of this doc against the source (the review verified the
+§2 survey nearly claim-for-claim, corrected the §4.4 seam mechanism to the
+fold-callback form now described there, and investigated the original open
+questions) settles the first five below and leaves a concrete pre-wave decision
+list.
+
+### 6.1 Answered
+
+1. **Web frontend endgame — a parallel track, not a wave.** `Scene` +
+   `scene_parity` stay the web wire format through M9: until the frame inverts,
+   the UI is hybrid, and a `LayoutSpec`-consuming web frontend would need both
+   protocols at once. After M9 the web can consume `LayoutSpec` (it is designed
+   for DOM patching by key) — but buffer panes remain cell slices either way,
+   because they are `Draw::Host`; the display list never fully replaces the
+   cell channel.
+2. **`WidgetMutation` — still needed, reinterpreted.** `List::windowed` solves
+   *render* cost, not *wire* cost: the 5000-node `js_to_json` walk happens at
+   the plugin↔host boundary regardless of how rows are rendered. Keep
+   `AppendTreeNodes`/`SetItems` & co. as **edits to the host-side data source**
+   that the windowed builders read by index, rather than edits to a retained
+   widget tree. The plugin API survives unchanged.
+3. **Mutate-then-decline keyboard rungs — expressible per node.** A bubbling
+   handler that returns `None` continues the walk, so "process and fall
+   through" ports directly. What does *not* port is **cross-layer guard
+   coupling** — a rung consulting a higher layer's state mid-walk (the
+   unfocused-popup Esc interception guarded by
+   `popup_blocked_by_higher_modal`; the popup rung entangled with the
+   deferred-action queue). Each such rung is converted in M2/M4 into a
+   capture-phase observer on an ancestor or an `Action` that re-dispatches —
+   with a routing test per rung, because cell-identical output cannot see
+   these behaviors.
+4. **Content hover trackers — feasible, but not via a leaf-raised message.**
+   Render objects cannot emit messages; they don't need to. The LSP-hover and
+   terminal-link state machines already live in app state (`app/hover.rs` +
+   the async bridge); `build(ed)` includes the popup `Layer` when that state
+   says so. The hard part is the anchor — the §4.4 geometry bridge /
+   `compute_content_layout` — plus one verification: pointer *motion* must
+   keep reaching the leaf for the debounce machines while `fresh-ui` hover
+   exists above it.
+5. **Multi-window — one `Ui`, window subtree keyed by `WindowId`.** Fresh
+   windows are not concurrent OS windows; exactly one is rendered per frame.
+   Cross-window content (orchestrator session preview, `WindowEmbed`) appears
+   as additional `Host` leaves. Switching windows disposes the outgoing
+   subtree's element state — acceptable because anything that must survive a
+   switch is `Window` app state by the §4.3 rule, matching today's behavior.
+
+### 6.2 Open decisions — settle each before the wave it blocks
+
+1. **The fold-callback API** (blocks M0). The concrete shape of "backend meets
+   `Draw::Host`": a per-`HostId` callback over `&mut Editor`, run mid-fold in
+   paint order. Nothing like it exists; both current backends stub `Host`.
+   M0's prototype *is* this API.
+2. **Inline styled text** (blocks M3/M5). Styled spans in
+   `TextProps`/`Draw::Lines` as a one-time library change, or one `TextRun`
+   node per span editor-side (§4.2 note). Mnemonics, match highlights,
+   markdown popups, and explorer git coloring all need it under a
+   cell-identical bar.
+3. **Per-leaf decomposition of `render_content`** (blocks M9). Its unit today
+   is the whole split tree; the target grid wants per-leaf `Host` nodes with
+   `fresh-ui` tabs and dividers. Either the whole grid stays one `Host` leaf
+   (and M9's headline deletions shrink), or the orchestration layer is split
+   per leaf — a refactor on the KEEP side (`render_phantom_leaf` shows a
+   per-leaf path exists, minus the cross-tree logic). A scoping decision, not
+   a detail.
+4. **Scrollbar markers** (blocks M9). `Draw::Scrollbar` carries only
+   `{offset, content, window}`; the plugin overview-ruler marker API has no
+   expression. Extend the library's scrollbar, keep scrollbars behind the
+   `Host` leaf, or drop the API.
+5. **The message-type split** (blocks M0). `UiMsg { Action(..), … }` is the
+   shape (§2.9); decide what stays a UI-geometry message consumed by `update`
+   (click→byte, drag→offset, tab-select) versus what becomes an `Action` in
+   the keybinding namespace.
+6. **Frame scheduling and rebuild cost** (blocks M1). Who calls `ui.frame` and
+   when; which subtrees must be `Shared`; what the M0 benchmark (§4.7)
+   actually measures at a sustained input rate.
+7. **Row visibility under squeeze** (blocks S1). When the visible fixed rows
+   cannot fit, `fresh-ui` and ratatui starve different rows (§5.0). Decide
+   which rows `build()` drops as a function of available height, making the
+   choice explicit app state instead of inheriting either engine's starvation
+   order. Pinned today by
+   `squeeze_band_starves_a_different_row_than_ratatui`.
+8. **Frame-buffer animations.** Cell-snapshot effects have no display-list
+   expression: keep them as post-processes over the folded buffer (beside
+   `convert_buffer_colors`), or retire them deliberately.
+9. **Theme-inspector granularity** (§4.5). Chrome provenance coarsens from
+   per-cell to per-item; confirm the inspector survives, with buffer cells
+   keeping the per-cell map via the leaf.
+10. **Wheel-semantics parity** (M4/M5). Today's wheel walk has no dedup and no
+   opacity gate *by ruling*; `fresh-ui` chains wheels by "a `Viewport` claims
+   only if its offset changed." Close but not identical — e.g. a
+   scrolled-to-bound popup over the buffer. Land an explicit parity test
+   before relying on either behavior.

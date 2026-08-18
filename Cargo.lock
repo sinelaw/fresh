@@ -1442,6 +1442,7 @@ dependencies = [
  "fresh-languages",
  "fresh-parser-js",
  "fresh-plugin-runtime",
+ "fresh-ui",
  "fresh-update",
  "fresh-winterm",
  "ignore",
