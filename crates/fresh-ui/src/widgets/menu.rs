@@ -71,47 +71,62 @@ impl<M: 'static> Component<M> for Dropdown<M> {
 
     fn build(&self, s: &DropdownState, cx: &mut BuildCx<'_, M>) -> Node<M> {
         let up: Updater<DropdownState> = cx.updater();
-        // Controlled when the owner supplied `open`; otherwise the element's own.
+        let controlled = self.on_toggle.is_some();
+        // The effective open state, resolved once. Everything below reads this,
+        // never `s.open` directly: the internal flag is a shadow that only the
+        // uncontrolled form may consult, and mixing the two is the whole bug
+        // class this widget invites.
         let open = self.open.unwrap_or(s.open);
-        let controlled = self.on_toggle.clone();
 
-        let toggle = up.clone();
-        let on_toggle = controlled.clone();
-        let trigger: Node<M> = Button::new(&*self.label)
-            .on_press_handler(Rc::new(move |_: &Event| match &on_toggle {
-                Some(f) => Some(f(!open)),
+        // The single writer of open state. When the owner controls the widget
+        // it fires the owner's callback and touches nothing local; otherwise it
+        // sets the element's own flag. Every open and close — trigger,
+        // dismissal — goes through here, so the internal flag is never written
+        // in the controlled form.
+        let set_open: Rc<dyn Fn(bool) -> Option<M>> = {
+            let up = up.clone();
+            let on_toggle = self.on_toggle.clone();
+            Rc::new(move |want: bool| match &on_toggle {
+                Some(f) => Some(f(want)),
                 None => {
-                    toggle.set(move |st: &mut DropdownState| st.open = !open);
+                    up.set(move |st: &mut DropdownState| st.open = want);
                     None
                 }
-            }))
+            })
+        };
+
+        let trigger: Node<M> = Button::new(&*self.label)
+            .on_press_handler({
+                let set_open = set_open.clone();
+                Rc::new(move |_: &Event| set_open(!open))
+            })
             .node();
 
-        // Read the effective open state, controlled or not — this is what was
-        // wrong before: guarding on `s.open` alone never built the menu when
-        // the owner held the flag.
         if !open {
             return trigger;
         }
 
         let keys: Vec<Key> = self.items.iter().map(|(k, _)| k.clone()).collect();
         let choose = self.on_choose.clone();
-        let close = up.clone();
         let menu = List::keyed(
             &self.items,
             |(k, _)| k.clone(),
             |(_, label)| crate::desc::text(&**label),
         )
-        .on_activate_handler(Rc::new(move |i| {
-            close.set(|st: &mut DropdownState| st.open = false);
-            choose.as_ref().map(|f| f(keys[i].clone()))
-        }))
+        .on_activate_handler({
+            let up = up.clone();
+            Rc::new(move |i| {
+                // Choosing returns the choice; a handler yields one message, so
+                // closing is the owner's job in the controlled form (its choice
+                // handler clears the open state) and a local flip otherwise.
+                if !controlled {
+                    up.set(|st: &mut DropdownState| st.open = false);
+                }
+                choose.as_ref().map(|f| f(keys[i].clone()))
+            })
+        })
         .node();
-        // The owner closes a controlled menu in its own handler for the choice;
-        // the internal close above is a no-op there and drives the uncontrolled
-        // form.
 
-        let dismiss = up;
         col().child(trigger).child(
             layer()
                 .anchor(Anchor::Parent)
@@ -119,13 +134,10 @@ impl<M: 'static> Component<M> for Dropdown<M> {
                 .fit(Fit::FLIP.or(Fit::CLAMP))
                 .modality(Modality::Inert)
                 .dismiss(Dismiss::OUTSIDE_POINTER.or(Dismiss::ESCAPE))
-                .on_dismiss_handler(Rc::new(move |_: &Event| match &controlled {
-                    Some(f) => Some(f(false)),
-                    None => {
-                        dismiss.set(|st: &mut DropdownState| st.open = false);
-                        None
-                    }
-                }))
+                .on_dismiss_handler({
+                    let set_open = set_open.clone();
+                    Rc::new(move |_: &Event| set_open(false))
+                })
                 // Named, so the backend paints a background under it: without
                 // one the menu is transparent and the content behind shows
                 // through the gaps between its labels.
