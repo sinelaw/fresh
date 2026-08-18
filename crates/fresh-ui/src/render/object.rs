@@ -20,6 +20,7 @@ use crate::element::ElementId;
 use super::geom::{Constraints, Point, Rect, Size};
 use super::spec::DrawList;
 use super::Sizing;
+use crate::desc::{Anchor, Dismiss, Fit, Modality, Place, Scrim};
 
 /// A handle into the render arena.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -73,6 +74,9 @@ pub trait LayoutCx {
     /// This node's scroll offset. Framework-owned: neither the application nor
     /// the component declares it.
     fn scroll(&self) -> Point;
+    /// Move the offset. The one caller is a scrolling node applying the initial
+    /// value its description carried, once, at its first layout.
+    fn set_offset(&mut self, at: Point);
     /// Declare the window this node shows onto its content. The framework
     /// clamps the offset against it, chains the wheel off it, and a
     /// constraint-dependent builder below reads it.
@@ -106,6 +110,38 @@ pub struct LayoutInfo {
     /// The window the nearest enclosing `Viewport` is showing, in its content's
     /// coordinates. `None` outside one.
     pub scroll_window: Option<Rect>,
+}
+
+/// How a node that sits outside its parent's flow places itself, and what it
+/// does to the input aimed at what is behind it.
+///
+/// The second layout stage, paint, hit-testing and focus all read this from the
+/// render object. None of them knows which description produced the node, which
+/// is what lets a new out-of-flow kind be added without editing any of them.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LayerGeom {
+    pub anchor: Anchor,
+    pub place: Place,
+    pub fit: Fit,
+    pub modality: Modality,
+    pub scrim: Option<Scrim>,
+    pub dismiss: Dismiss,
+}
+
+/// A node's focus registration, as the focus tree needs it.
+///
+/// Read at mount and again on every description change, so a registration that
+/// changes shape reaches the tree without the framework knowing what produced
+/// it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct FocusReg {
+    pub ordinal: Option<i32>,
+    pub skip: bool,
+    pub scope: bool,
+    /// Rebuild the owning element when focus enters or leaves its subtree.
+    pub focus_within: bool,
+    /// Take focus when the enclosing scope opens.
+    pub autofocus: bool,
 }
 
 /// Computed, retained geometry and the behaviour that produces it.
@@ -152,6 +188,18 @@ pub trait RenderObject {
         false
     }
 
+    /// How an out-of-flow node places itself, and what it makes of the input
+    /// behind it. `Some` exactly when `out_of_flow` is true.
+    fn layer(&self) -> Option<LayerGeom> {
+        None
+    }
+
+    /// The focus registration this node carries. `None` for a node that takes
+    /// no part in focus.
+    fn focus_reg(&self) -> Option<FocusReg> {
+        None
+    }
+
     /// For the element dump.
     fn render_name(&self) -> &'static str {
         "RenderObject"
@@ -190,6 +238,7 @@ pub(crate) struct RenderNode {
     pub clips: bool,
     pub out_of_flow: bool,
     pub reads_window: bool,
+    pub raw_input: bool,
     /// Provenance and identity, resolved through the elements with no geometry
     /// between this node and its render parent.
     pub theme: Option<Rc<str>>,
@@ -206,6 +255,16 @@ pub(crate) struct RenderData {
     /// All ancestor clips intersected.
     pub clip: Rect,
     pub size: Size,
+
+    /// This node's rectangle, or one below it, has to be computed again. Set
+    /// when the node is measured; cleared when it is arranged.
+    pub arrange_dirty: bool,
+    pub child_arrange_dirty: bool,
+    /// The out-of-flow nodes this subtree published the last time it was
+    /// arranged, with their in-flow parents. A subtree the arrange walk skips
+    /// re-publishes these, so paint order does not depend on how much work the
+    /// pass did.
+    pub layers: Vec<(RenderId, RenderId)>,
 
     /// This node's own geometry is stale.
     pub needs_layout: bool,
@@ -238,6 +297,7 @@ impl RenderData {
     pub fn fresh() -> Self {
         RenderData {
             needs_layout: true,
+            arrange_dirty: true,
             ..RenderData::default()
         }
     }

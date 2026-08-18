@@ -155,8 +155,15 @@ impl<M: 'static> Component<M> for TextField<M> {
         };
         let theme = if s.focused { "field.focused" } else { "field" };
 
+        // The caret is where the text cursor goes. A backend reads it off the
+        // display list; the library does not draw one.
+        let mut run = text(shown);
+        if s.focused {
+            run = run.cursor_at(caret.min(chars.len()) as u16);
+        }
+
         let up_click = up;
-        let mut f = focusable(gesture(row().theme(theme).child(text(shown))).on(
+        let mut f = focusable(gesture(row().theme(theme).child(run)).on(
             GestureKind::Click,
             Rc::new(move |e: &Event| {
                 let at = e.local.x.max(0) as usize;

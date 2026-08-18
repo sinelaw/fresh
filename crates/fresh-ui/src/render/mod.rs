@@ -9,5 +9,8 @@ pub mod spec;
 
 pub use crate::desc::Sizing;
 pub use geom::{distribute, Constraints, Point, Rect, Size};
-pub use object::{Geom, Hit, HostLeaf, LayoutCx, LayoutInfo, PlainHost, RenderId, RenderObject};
+pub use object::{
+    FocusReg, Geom, Hit, HostLeaf, LayerGeom, LayoutCx, LayoutInfo, PlainHost, RenderId,
+    RenderObject, ScrollInfo,
+};
 pub use spec::{CursorSpec, Draw, DrawList, Item, LayoutSpec, ThemeKey};

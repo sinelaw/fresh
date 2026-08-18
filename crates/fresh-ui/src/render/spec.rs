@@ -98,6 +98,9 @@ pub enum Draw {
         /// Extent of the window, in cells.
         window: u16,
     },
+    /// A region whose text the backend may let the user select. The library
+    /// holds no selection model; this only says where selecting is meaningful.
+    Selectable,
     /// Content the host owns and draws itself.
     Host(HostId),
 }

@@ -14,10 +14,7 @@ use crate::ambient::AmbientNode;
 use crate::behavior::Behavior;
 use crate::desc::{component_of, node_key, node_type, resolve, Desc, ElemType, Node};
 use crate::key::Key;
-use crate::render::object::{RenderData, RenderId, RenderNode, RenderObject};
-use crate::render::prim::{
-    BoxRender, FocusRender, GestureRender, LayerRender, ReaderRender, TextRender, ViewportRender,
-};
+use crate::render::object::{RenderData, RenderId, RenderNode};
 use crate::schedule::{BuildCx, DirtyCause, InitCx, Ui};
 
 /// A handle into the element arena. Stable while the element is mounted;
@@ -70,6 +67,16 @@ pub(crate) struct Element<M> {
     /// opens a scope.
     pub focus: Option<crate::focus::FocusId>,
 
+    /// Whether this element's links into the render and focus trees have to be
+    /// recomputed. Path-marked, so a relink walk skips any subtree carrying
+    /// neither this bit nor a changed inheritance.
+    pub link_dirty: bool,
+    /// What was inherited the last time this element was relinked, and what it
+    /// contributed. Equal inputs and a clean bit mean equal outputs.
+    pub last_carry: Option<crate::render::layout::Carry>,
+    pub last_out: Vec<RenderId>,
+    pub last_fout: Vec<crate::focus::FocusId>,
+
     /// Diagnostics.
     pub builds: u32,
     pub last_dirty: Option<DirtyCause>,
@@ -106,6 +113,10 @@ impl<M> Element<M> {
             init_reads: Vec::new(),
             render: None,
             focus: None,
+            link_dirty: true,
+            last_carry: None,
+            last_out: Vec::new(),
+            last_fout: Vec::new(),
             builds: 0,
             last_dirty: None,
             state_name: "",
@@ -265,12 +276,32 @@ impl<M: 'static> Ui<M> {
 
     fn set_children(&mut self, id: ElementId, kids: Vec<ElementId>) {
         let old = std::mem::replace(&mut self.arena.get_mut(id).expect("live").children, kids);
+        if old != self.arena[id].children {
+            self.mark_link(id);
+        }
         self.journal(Undo::Children(id, old));
     }
 
     fn set_desc(&mut self, id: ElementId, d: Node<M>) {
         let old = std::mem::replace(&mut self.arena.get_mut(id).expect("live").desc, d);
+        self.mark_link(id);
         self.journal(Undo::Desc(id, old));
+    }
+
+    /// This element's links, and every ancestor's, have to be recomputed. Stops
+    /// at the first ancestor already marked: the path above it is already set.
+    pub(crate) fn mark_link(&mut self, id: ElementId) {
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            let Some(el) = self.arena.get_mut(c) else {
+                break;
+            };
+            if el.link_dirty && c != id {
+                break;
+            }
+            el.link_dirty = true;
+            cur = el.parent;
+        }
     }
 
     pub(crate) fn set_needs_build(&mut self, id: ElementId, v: bool) {
@@ -397,7 +428,14 @@ impl<M: 'static> Ui<M> {
             let props_children = resolve(&self.arena[id].desc).children.clone();
             let scope = self.arena[id].scope.clone();
             let sched = self.sched.clone();
-            let mut icx = InitCx::new(id, sched, scope, &props_children, self.services.clone());
+            let mut icx = InitCx::new(
+                id,
+                sched,
+                scope,
+                &props_children,
+                self.services.clone(),
+                self.geom_store.clone(),
+            );
             let state = comp.init_any(&mut icx);
             let (behaviors, init_reads, focus_request) = icx.finish();
             if let Some(data) = focus_request {
@@ -444,7 +482,7 @@ impl<M: 'static> Ui<M> {
                 return;
             }
         }
-        let moved = crate::render::layout::layout_relevant_changed(&self.arena[id].desc, &new);
+        let moved = crate::desc::layout_relevant_changed(&self.arena[id].desc, &new);
         self.set_desc(id, new);
         if let Some(a) = self.arena[id].desc.anchor.clone() {
             a.bind(id);
@@ -452,8 +490,11 @@ impl<M: 'static> Ui<M> {
                 self.anchored.push(id);
             }
         }
+        // Props always reach the render object and the focus tree: a pointer
+        // mode or a traversal position changes what a node does without moving
+        // it, and a change that never arrives is a change that never happened.
+        self.update_render(id);
         if moved {
-            self.update_render(id);
             self.mark_needs_layout(id);
         }
         self.renderer
@@ -547,13 +588,7 @@ impl<M: 'static> Ui<M> {
             // mount it again, losing element identity and everything that hangs
             // off it: state, focus, and an in-flight press. What this rebuild
             // does instead is tell the reader its builder is new.
-            if let Some(r) = self.arena[id].render {
-                if let Some(obj) = self.render.get_mut(r).and_then(|n| n.obj.as_mut()) {
-                    if let Some(o) = obj.as_any_mut().downcast_mut::<ReaderRender>() {
-                        o.invalidate();
-                    }
-                }
-            }
+            self.update_render(id);
             self.mark_needs_layout(id);
         } else {
             let kids = resolve(&self.arena[id].desc).children.clone();
@@ -649,6 +684,35 @@ impl<M: 'static> Ui<M> {
         self.set_children(parent, out);
     }
 
+    /// Drop every reference the framework holds to an element that has gone
+    /// away.
+    ///
+    /// Element ids are recycled, so a stale one is not merely inert: the next
+    /// element to take that slot would inherit the pointer capture, the focus
+    /// or the in-flight press of an element it has nothing to do with.
+    fn forget_element(&mut self, id: ElementId) {
+        if self.captured == Some(id) {
+            self.captured = None;
+        }
+        if self.focus == Some(id) {
+            // Nothing is told it lost focus: the element is already gone, and
+            // `apply_autofocus` decides where focus goes next.
+            self.focus = None;
+        }
+        if self.focus_restore == Some(id) {
+            self.focus_restore = None;
+        }
+        self.hover.retain(|h| *h != id);
+        if let Some((targets, _)) = &mut self.press {
+            targets.retain(|t| *t != id);
+        }
+        if self.press.as_ref().is_some_and(|(t, _)| t.is_empty()) {
+            self.press = None;
+        }
+        self.geom_store.borrow_mut().entries.remove(&id);
+        self.behaviour_hosts.retain(|b| *b != id);
+    }
+
     /// Deferred disposal. Teardown runs children before parents, so a child
     /// releasing a parent-owned handle finds the parent alive.
     pub(crate) fn process_disposals(&mut self) {
@@ -685,12 +749,15 @@ impl<M: 'static> Ui<M> {
             if let Some(r) = el.render {
                 self.render.release(r);
                 self.layout_dirty.retain(|d| *d != r);
+                self.pending_layers.retain(|(l, p)| *l != r && *p != r);
             }
             if let Some(f) = el.focus {
                 self.focus_tree.release(f);
+                self.focus_roots.retain(|x| *x != f);
             }
             self.anchored.retain(|a| *a != id);
             self.renderer.dispose(id, el.ty, el.name);
+            self.forget_element(id);
         }
         self.sched.borrow_mut().forget(id);
     }
@@ -705,55 +772,14 @@ impl<M: 'static> Ui<M> {
     /// own. Descriptions that only carry identity or data — `Component`,
     /// `Provide`, `Shared` — get none, and the render tree skips them.
     fn make_render(&mut self, id: ElementId) {
-        let obj: Option<Box<dyn RenderObject>> = match &resolve(&self.arena[id].desc).desc {
-            Desc::Box(p) => Some(Box::new(BoxRender { props: p.clone() })),
-            Desc::TextRun(p) => Some(Box::new(TextRender::new(p.clone()))),
-            Desc::Viewport(p) => Some(Box::new(ViewportRender::new(p.clone()))),
-            Desc::Gesture(g) => Some(Box::new(GestureRender { mode: g.mode })),
-            Desc::Focusable(f) => Some(Box::new(FocusRender {
-                ordinal: f.ordinal,
-                skip: f.skip,
-                scope: f.scope,
-            })),
-            Desc::Layer(l) => Some(Box::new(LayerRender::from_props(l))),
-            Desc::Host(h) => Some(h.make()),
-            Desc::LayoutReader(_) => Some(Box::<ReaderRender>::default()),
-            Desc::Provide(_) | Desc::Shared(_) | Desc::Component(_) => None,
+        let Some(obj) = resolve(&self.arena[id].desc).desc.sync_render(None) else {
+            return;
         };
-        // Focus registration is held alongside the render object, and lives
-        // exactly as long as it: that is why focus survives reconciliation.
-        let focus = match &resolve(&self.arena[id].desc).desc {
-            Desc::Focusable(f) => Some(crate::focus::tree::FocusNodeData {
-                element: id,
-                parent: None,
-                children: Vec::new(),
-                ordinal: f.ordinal,
-                skip: f.skip,
-                scope: f.scope,
-            }),
-            // A modal layer groups the focusables inside it without being one:
-            // that is all "traversal is confined to the modal" means.
-            Desc::Layer(l) if l.modality != crate::desc::Modality::None => {
-                Some(crate::focus::tree::FocusNodeData {
-                    element: id,
-                    parent: None,
-                    children: Vec::new(),
-                    ordinal: None,
-                    skip: true,
-                    scope: true,
-                })
-            }
-            _ => None,
-        };
-        if let Some(data) = focus {
-            let f = self.focus_tree.alloc(data);
-            self.arena.get_mut(id).expect("live").focus = Some(f);
-        }
-
-        let Some(obj) = obj else { return };
         let clips = obj.clips();
         let out_of_flow = obj.out_of_flow();
         let reads_window = obj.reads_window();
+        let raw_input = obj.takes_raw_input();
+        let reg = obj.focus_reg();
         let r = self.render.alloc(RenderNode {
             obj: Some(obj),
             element: id,
@@ -764,11 +790,15 @@ impl<M: 'static> Ui<M> {
             clips,
             out_of_flow,
             reads_window,
+            raw_input,
             theme: None,
             key: None,
             data: RenderData::fresh(),
         });
         self.arena.get_mut(id).expect("live").render = Some(r);
+        // Focus registration is held alongside the render object and lives
+        // exactly as long as it: that is why focus survives reconciliation.
+        self.sync_focus_reg(id, reg);
     }
 
     /// Push changed props into an existing render object, so retained state —
@@ -780,56 +810,61 @@ impl<M: 'static> Ui<M> {
         let Some(mut obj) = self.render.get_mut(r).and_then(|n| n.obj.take()) else {
             return;
         };
-        match &resolve(&self.arena[id].desc).desc {
-            Desc::Box(p) => {
-                if let Some(o) = obj.as_any_mut().downcast_mut::<BoxRender>() {
-                    o.props = p.clone();
-                }
-            }
-            Desc::TextRun(p) => {
-                if let Some(o) = obj.as_any_mut().downcast_mut::<TextRender>() {
-                    o.props = p.clone();
-                }
-            }
-            Desc::Viewport(p) => {
-                if let Some(o) = obj.as_any_mut().downcast_mut::<ViewportRender>() {
-                    o.props = p.clone();
-                }
-            }
-            Desc::Gesture(g) => {
-                if let Some(o) = obj.as_any_mut().downcast_mut::<GestureRender>() {
-                    o.mode = g.mode;
-                }
-            }
-            Desc::Focusable(f) => {
-                if let Some(o) = obj.as_any_mut().downcast_mut::<FocusRender>() {
-                    o.ordinal = f.ordinal;
-                    o.skip = f.skip;
-                    o.scope = f.scope;
-                }
-                if let Some(fid) = self.arena.get(id).and_then(|e| e.focus) {
-                    if let Some(n) = self.focus_tree.get_mut(fid) {
-                        n.ordinal = f.ordinal;
-                        n.skip = f.skip;
-                        n.scope = f.scope;
-                    }
-                }
-            }
-            Desc::Layer(l) => {
-                if let Some(o) = obj.as_any_mut().downcast_mut::<LayerRender>() {
-                    *o = LayerRender::from_props(l);
-                }
-            }
-            _ => {}
-        }
+        resolve(&self.arena[id].desc)
+            .desc
+            .sync_render(Some(obj.as_mut()));
         let clips = obj.clips();
         let out_of_flow = obj.out_of_flow();
         let reads_window = obj.reads_window();
+        let raw_input = obj.takes_raw_input();
+        let reg = obj.focus_reg();
         if let Some(n) = self.render.get_mut(r) {
             n.obj = Some(obj);
             n.clips = clips;
             n.out_of_flow = out_of_flow;
             n.reads_window = reads_window;
+            n.raw_input = raw_input;
+        }
+        self.sync_focus_reg(id, reg);
+    }
+
+    /// Make the focus tree agree with what the render object now declares:
+    /// register, update, or deregister. A registration that came from a
+    /// `Focusable` behavior is left alone — the behavior owns it.
+    fn sync_focus_reg(&mut self, id: ElementId, reg: Option<crate::render::object::FocusReg>) {
+        let existing = self.arena.get(id).and_then(|e| e.focus);
+        match (existing, reg) {
+            (Some(f), Some(reg)) => {
+                if let Some(n) = self.focus_tree.get_mut(f) {
+                    n.reg = reg;
+                }
+            }
+            (None, Some(reg)) => {
+                let f = self
+                    .focus_tree
+                    .alloc(crate::focus::tree::FocusNodeData::new(id, reg));
+                self.arena.get_mut(id).expect("live").focus = Some(f);
+            }
+            (Some(f), None) => {
+                // Only a registration this element's own render object made is
+                // withdrawn here; a behavior's outlives its description.
+                let from_behavior = self.arena.get(id).is_some_and(|el| {
+                    el.behaviors
+                        .iter()
+                        .any(|b| b.behavior_name() == "Focusable")
+                });
+                if !from_behavior {
+                    self.focus_tree.release(f);
+                    self.arena.get_mut(id).expect("live").focus = None;
+                    if self.focus == Some(id) {
+                        let mut out = Vec::new();
+                        self.fire_focus_change(id, false, &mut out);
+                        self.focus = None;
+                        self.pending_messages.extend(out);
+                    }
+                }
+            }
+            (None, None) => {}
         }
     }
 
@@ -853,9 +888,14 @@ impl<M: 'static> Ui<M> {
         self.commit_txn();
 
         let kids = self.arena[e].children.clone();
+        let theme = self.render.get(r).and_then(|n| n.theme.clone());
         let mut inner = Vec::new();
         for k in kids {
-            self.relink_from_pub(k, Some(r), &mut inner);
+            // The subtree a reader produced is an ordinary part of the tree: it
+            // inherits the reader's provenance the same way any other child
+            // does. Relinking it from nothing would strip the theme off
+            // everything the builder emitted.
+            self.relink_from_pub(k, Some(r), theme.clone(), &mut inner);
         }
         if let Some(n) = self.render.get_mut(r) {
             n.children = inner;

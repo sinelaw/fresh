@@ -9,6 +9,7 @@
 //! object keeps its registration.
 
 use crate::element::ElementId;
+use crate::render::object::FocusReg;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FocusId(pub(crate) u32);
@@ -24,13 +25,21 @@ pub(crate) struct FocusNodeData {
     pub element: ElementId,
     pub parent: Option<FocusId>,
     pub children: Vec<FocusId>,
-    /// Explicit traversal position; `None` means reading order.
-    pub ordinal: Option<i32>,
-    /// Reachable by pointer, skipped by traversal.
-    pub skip: bool,
-    /// Groups the focusables below it; traversal is confined here while it is
-    /// the active scope.
-    pub scope: bool,
+    /// Ordinal, skip, scope, focus-within and autofocus, exactly as the render
+    /// object or the behavior declared them. Traversal reads this and never the
+    /// description.
+    pub reg: FocusReg,
+}
+
+impl FocusNodeData {
+    pub fn new(element: ElementId, reg: FocusReg) -> Self {
+        FocusNodeData {
+            element,
+            parent: None,
+            children: Vec::new(),
+            reg,
+        }
+    }
 }
 
 #[derive(Default)]

@@ -627,6 +627,85 @@ code, not against an intention.
 
 ---
 
+## 4b. Part 1c — the review register
+
+After R1–R11 landed, a reviewer read the finished sub-crate against
+`widget-library-design.md`. It found fifteen places where the code and the
+document still disagreed. Unlike the class A/B/C register in §3, these are not
+deviations introduced by the plan — they are the plan not having gone far
+enough, plus six ordinary defects the new code introduced.
+
+All fifteen are closed. Each entry states what was wrong, what the design
+requires, and what closing it consisted of. The conformance suite in
+`tests/conformance.rs` has one test per finding.
+
+### The architectural three
+
+**D1 — the per-kind `match` was relocated, not eliminated.** R1 moved eleven
+dispatch sites from `ElemType` to `Desc` rather than removing them, and the
+render objects were partly inert: `LayerRender`'s `anchor`/`place`/`fit`/
+`modality`/`scrim` and `FocusRender`'s `ordinal`/`skip`/`scope` were written at
+construction and never read, because the behaviour still lived in `layout.rs`
+and `focus/`. Goals 2 and 6 were therefore only partly met.
+
+*Closed by* giving `RenderObject` two query methods — `layer() -> Option<LayerGeom>`
+and `focus_reg() -> Option<FocusReg>` — and one factory, `Desc::sync_render`,
+which both creates and updates. The second layout stage, paint, hit-testing,
+focus and raw-input routing now ask the object. What still matches on a
+description is exactly what is typed by the message (`Handler<M>` cannot live on
+a render object, which is not generic over `M`) plus the description-level diff
+that decides whether layout has to run. Adding a primitive is one `Desc`
+variant, one render object, and one arm.
+
+**D2 — the `Focusable` behavior received focus transitions but no keys.** R5's
+exit criterion was the Shortcuts → Intents → Actions chain reaching the focused
+element regardless of *how* it registered. A behavior-registered focusable got
+`FocusGained`/`FocusLost` and nothing else.
+
+*Closed by* `FocusConfig`, read from the description or from the behavior, and
+consulted by `propagate_key`, `resolve_intent`, `run_action`,
+`fire_focus_change`, and `listeners`. `Focusable` gained `on_key`, `shortcut`,
+`action`, `autofocus` and `focus_within`. The routing code no longer knows which
+form is in play.
+
+**D4 — R6 overshot.** `Geometry<'a, M>` borrows the tree, so no handler, ticker
+or task callback could hold one: the validity-window split had a window nobody
+could reach through.
+
+*Closed by* `GeomHandle` — an owned, cloneable handle taken from `InitCx`,
+reading a per-frame snapshot store keyed by element. The store is refreshed for
+watched elements only, so the cost is the number of handles rather than the size
+of the tree. The window is still enforced: reading during `build` trips the same
+debug assertion `Ui::rect` uses.
+
+### The six defects
+
+| # | Defect | Closed by |
+|---|--------|-----------|
+| D3 | Any modal layer, including `Modality::Inert` (which `Dropdown` uses), made *nested* layers unhittable: the search restricted itself to the modal's subtree, which skips out-of-flow children. | `hit_paths` treats the modal as a **floor in resolution order**, not a subtree. Layers resolved after it are above it and stay live. |
+| D5 | `PointerMode` and focus `ordinal`/`skip`/`scope` changes after mount never arrived: `update_render` ran only when `layout_relevant_changed` said something moved, and it says false for `Gesture` and `Focusable`. | Props always reach the render object and the focus tree; the diff now decides only whether the *layout pass* re-runs. |
+| D6 | `apply_autofocus` assigned `self.focus = None` directly, so nothing was told it lost focus when a scope opened or closed. | The transition is fired in every branch, including the one where there is nowhere for focus to go. |
+| D7 | R8's second measure updated the child's recorded size but not the parent's own, so the remeasure was computed and discarded. | The parent's size is recomputed from what came back whenever any child was measured again. |
+| D8 | Disposal never cleared `captured`, `focus`, `press`, `hover` or `focus_restore`, and `ElementId`s are recycled — so the next element in a recycled slot inherited a capture or a focus it had nothing to do with. | `forget_element`, called from `dispose_subtree`, drops every framework reference including the geometry store entry and the pending-layer entries. |
+| D9 | `apply_anchors` re-ran `arrange` without clearing `pending_layers`, duplicating every layer: double paint, double dismissal messages. | The list is cleared and the layers re-resolved, so a frame resolves each layer once however many arranges it took. |
+
+### The six loose ends
+
+| # | Loose end | Closed by |
+|---|-----------|-----------|
+| D10 | `raw_input` was a whole-tree boolean: an exclusive layer switched raw input off even for a leaf *inside* it. | `raw_input_leaves()` answers per element, using the ancestor test the modality rule actually implies. `raw_input()` is `next().is_some()`. |
+| D11 | `LayoutSpec.cursor` was plumbed but nothing ever set it — no widget called `cursor_at`. | `TextField` places the cursor at its caret while focused. |
+| D12 | The host-leaf path was neither exported nor exercised. | `HostLeaf`, `RenderObject`, `LayoutCx`, `Geom`, `Hit`, `ScrollInfo`, `LayerGeom`, `FocusReg` and `host_leaf` are exported; a test defines a leaf outside the library and asserts it measures, paints, hits and takes raw input. |
+| D13 | `ViewportProps::scroll`, `selectable` and `max_h` were declared and never read, though §15.5 of the design uses all three. | `max_h` bounds the window; `scroll` is the initial offset, applied once, after which the offset is framework-owned; `selectable` emits `Draw::Selectable` — the library holds no selection model, and says only where selecting is meaningful, the same way `ThemeKey` says only where appearance comes from. |
+| D14 | A `LayoutReader`'s subtree was relinked from nothing, stripping the inherited theme off everything the builder emitted. | The reader's provenance is carried into the subtree it produced. |
+| D15 | Three of the four passes were whole-tree: `relink` and `arrange` walked every node every frame regardless of what changed. | Both skip clean subtrees. `arrange` compares the rectangle it would write against the one already there and consults a path-marked dirty bit set when a node is measured; a skipped subtree re-publishes its cached out-of-flow descendants so paint order does not depend on how much work the pass did. `relink` skips a subtree that is neither marked nor handed different inheritance, replaying what it contributed. |
+
+**Exit:** `tests/conformance.rs` passes, the 124 pre-existing tests pass
+unchanged, and every framework-side `match` on `Desc` is either typed by the
+message or is the single factory.
+
+---
+
 ## 5. Part 2 — migrate
 
 ### M0 — The seam

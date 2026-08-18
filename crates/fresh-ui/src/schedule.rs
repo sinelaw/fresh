@@ -209,6 +209,7 @@ pub struct InitCx<'a, M> {
     behaviors: Vec<Rc<dyn Behavior>>,
     init_reads: Vec<ElementId>,
     services: crate::services::Services,
+    geom_store: Rc<RefCell<crate::services::GeomStore>>,
     /// A focus registration this component asked for, applied by the framework
     /// once construction finishes.
     pub(crate) focus_request: Option<crate::focus::tree::FocusNodeData>,
@@ -221,6 +222,7 @@ impl<'a, M: 'static> InitCx<'a, M> {
         scope: Option<Rc<AmbientNode>>,
         children: &'a [Node<M>],
         services: crate::services::Services,
+        geom_store: Rc<RefCell<crate::services::GeomStore>>,
     ) -> Self {
         InitCx {
             id,
@@ -230,6 +232,7 @@ impl<'a, M: 'static> InitCx<'a, M> {
             behaviors: Vec::new(),
             init_reads: Vec::new(),
             services,
+            geom_store,
             focus_request: None,
         }
     }
@@ -278,14 +281,16 @@ impl<'a, M: 'static> InitCx<'a, M> {
     /// focus transitions — applies. The registration lives as long as the
     /// element, so focus survives reconciliation for the same reason.
     pub fn focusable(&mut self, f: crate::focus::Focusable<M>) -> Rc<crate::focus::Focusable<M>> {
-        self.focus_request = Some(crate::focus::tree::FocusNodeData {
-            element: self.id,
-            parent: None,
-            children: Vec::new(),
-            ordinal: f.ordinal,
-            skip: f.skip,
-            scope: f.scope,
-        });
+        self.focus_request = Some(crate::focus::tree::FocusNodeData::new(
+            self.id,
+            crate::render::object::FocusReg {
+                ordinal: f.ordinal,
+                skip: f.skip,
+                scope: f.scope,
+                focus_within: f.focus_within,
+                autofocus: f.autofocus,
+            },
+        ));
         self.register(f)
     }
 
@@ -293,6 +298,23 @@ impl<'a, M: 'static> InitCx<'a, M> {
     /// registries. Deliberately free of geometry.
     pub fn services(&self) -> &crate::services::Services {
         &self.services
+    }
+
+    /// A handle to this element's geometry, valid from the first layout on.
+    ///
+    /// Taken here, at construction, and read from an event handler, a ticker or
+    /// a task callback — all of which run while the tree is borrowed and so
+    /// cannot hold a reference into it. Reading one during `build` is rejected:
+    /// that is the same validity window `Geometry` carries, checked at the read
+    /// rather than by the borrow.
+    pub fn geometry(&mut self) -> crate::services::GeomHandle {
+        crate::services::GeomHandle::new(self.geom_store.clone(), self.sched.clone(), self.id)
+    }
+
+    /// A handle to another element's geometry, addressed by the element id an
+    /// owner already holds.
+    pub fn geometry_of(&mut self, id: ElementId) -> crate::services::GeomHandle {
+        crate::services::GeomHandle::new(self.geom_store.clone(), self.sched.clone(), id)
     }
 
     /// Read an ambient as a snapshot. This does **not** create a dependency:
@@ -459,6 +481,9 @@ pub struct Ui<M> {
     pub(crate) behaviour_hosts: Vec<ElementId>,
     /// Elements an owner holds a handle to.
     pub(crate) anchored: Vec<ElementId>,
+    /// Geometry for the elements somebody holds a handle to, refreshed once a
+    /// frame. A handler runs while the tree is borrowed, so it reads here.
+    pub(crate) geom_store: Rc<RefCell<crate::services::GeomStore>>,
 }
 
 impl<M: 'static> Default for Ui<M> {
@@ -504,6 +529,7 @@ impl<M: 'static> Ui<M> {
             services: Default::default(),
             behaviour_hosts: Vec::new(),
             anchored: Vec::new(),
+            geom_store: Rc::new(RefCell::new(crate::services::GeomStore::default())),
         }
     }
 
@@ -564,29 +590,47 @@ impl<M: 'static> Ui<M> {
     /// outside it inert, and a leaf that is inert takes no raw input. This is
     /// what replaces a `blocks_terminal_input` flag.
     pub fn raw_input(&self) -> bool {
-        if self.pending_layers.iter().any(|(l, _)| {
-            self.element_of(*l)
-                .and_then(|e| self.arena.get(e))
-                .map(|el| {
-                    matches!(&crate::desc::resolve(&el.desc).desc,
-                        crate::desc::Desc::Layer(p)
-                            if p.modality == crate::desc::Modality::Exclusive)
-                })
-                .unwrap_or(false)
-        }) {
-            return false;
-        }
-        self.render_leaves_take_raw_input()
+        self.raw_input_leaves().next().is_some()
     }
 
-    fn render_leaves_take_raw_input(&self) -> bool {
-        (0..self.render.capacity()).any(|i| {
-            self.render
-                .get(crate::render::object::RenderId(i as u32))
-                .and_then(|n| n.obj.as_ref())
-                .map(|o| o.takes_raw_input())
-                .unwrap_or(false)
-        })
+    /// Which host leaves are taking raw input this frame.
+    ///
+    /// Derived rather than declared, and answered per element rather than for
+    /// the tree as a whole: an exclusive layer makes everything outside it
+    /// inert, and a leaf that is inert takes no raw input. A leaf *inside* the
+    /// exclusive layer still does. This is what replaces a
+    /// `blocks_terminal_input` flag.
+    pub fn raw_input_leaves(&self) -> impl Iterator<Item = ElementId> + '_ {
+        let exclusive: Vec<ElementId> = self
+            .pending_layers
+            .iter()
+            .filter(|(l, _)| {
+                self.layer_geom(*l)
+                    .is_some_and(|g| g.modality == crate::desc::Modality::Exclusive)
+            })
+            .filter_map(|(l, _)| self.element_of(*l))
+            .collect();
+        (0..self.render.capacity())
+            .filter_map(move |i| {
+                let r = crate::render::object::RenderId(i as u32);
+                let n = self.render.get(r)?;
+                n.raw_input.then_some(n.element)
+            })
+            .filter(move |e| {
+                exclusive.is_empty() || exclusive.iter().any(|x| self.is_ancestor(*x, *e))
+            })
+    }
+
+    /// Whether `anc` is `e` or one of its ancestors.
+    pub(crate) fn is_ancestor(&self, anc: ElementId, e: ElementId) -> bool {
+        let mut cur = Some(e);
+        while let Some(c) = cur {
+            if c == anc {
+                return true;
+            }
+            cur = self.arena.get(c).and_then(|x| x.parent);
+        }
+        false
     }
 
     /// Geometry for one element, valid after the first layout. The type is what

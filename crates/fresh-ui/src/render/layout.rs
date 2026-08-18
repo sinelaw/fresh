@@ -14,7 +14,7 @@
 
 use std::rc::Rc;
 
-use crate::desc::{resolve, Align, Anchor, Desc, Fit, Node, Place, Sizing};
+use crate::desc::{node_sizing, resolve, Align, Anchor, Fit, Place, Sizing};
 use crate::element::ElementId;
 use crate::render::object::{LayoutCx, LayoutInfo, RenderId};
 use crate::render::prim;
@@ -23,8 +23,8 @@ use crate::schedule::Ui;
 use super::geom::{Constraints, Point, Rect, Size};
 
 /// What relinking carries down from an element with no geometry of its own.
-#[derive(Default, Clone)]
-struct Carry {
+#[derive(Default, Clone, PartialEq)]
+pub(crate) struct Carry {
     parent: Option<RenderId>,
     w: Sizing,
     h: Sizing,
@@ -84,6 +84,12 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
 
     fn scroll(&self) -> Point {
         self.ui.render[self.node].data.scroll
+    }
+
+    fn set_offset(&mut self, at: Point) {
+        if let Some(n) = self.ui.render.get_mut(self.node) {
+            n.data.scroll = at;
+        }
     }
 
     fn set_scroll(&mut self, info: crate::render::object::ScrollInfo) {
@@ -182,6 +188,14 @@ impl<M: 'static> Ui<M> {
         self.render.get(r).map(|n| n.element)
     }
 
+    /// How an out-of-flow node places itself and what it does to the input
+    /// behind it, asked of the render object. The second layout stage, paint,
+    /// hit-testing and focus all go through this rather than matching on a
+    /// description.
+    pub(crate) fn layer_geom(&self, r: RenderId) -> Option<crate::render::object::LayerGeom> {
+        self.render.get(r).and_then(|n| n.obj.as_ref())?.layer()
+    }
+
     /// Rebuild the render and focus trees' links from the element tree.
     ///
     /// Render objects and focus registrations are created and disposed with
@@ -205,6 +219,7 @@ impl<M: 'static> Ui<M> {
         &mut self,
         e: ElementId,
         parent: Option<RenderId>,
+        theme: Option<Rc<str>>,
         out: &mut Vec<RenderId>,
     ) {
         let focus_parent = self
@@ -215,6 +230,7 @@ impl<M: 'static> Ui<M> {
             e,
             Carry {
                 parent,
+                theme,
                 focus_parent,
                 ..Carry::default()
             },
@@ -242,6 +258,33 @@ impl<M: 'static> Ui<M> {
     }
 
     fn relink_from(
+        &mut self,
+        e: ElementId,
+        carry: Carry,
+        out: &mut Vec<RenderId>,
+        fout: &mut Vec<crate::focus::FocusId>,
+    ) {
+        let Some(el) = self.arena.get(e) else { return };
+        // Nothing in this subtree changed and it is being handed exactly what
+        // it was handed last time, so it would recompute the links it already
+        // has. What it contributed is replayed instead.
+        if !el.link_dirty && el.last_carry.as_ref() == Some(&carry) {
+            out.extend(el.last_out.iter().copied());
+            fout.extend(el.last_fout.iter().copied());
+            return;
+        }
+        let (o0, f0) = (out.len(), fout.len());
+        self.relink_node(e, carry.clone(), out, fout);
+        let (delta_out, delta_fout) = (out[o0..].to_vec(), fout[f0..].to_vec());
+        if let Some(el) = self.arena.get_mut(e) {
+            el.link_dirty = false;
+            el.last_carry = Some(carry);
+            el.last_out = delta_out;
+            el.last_fout = delta_fout;
+        }
+    }
+
+    fn relink_node(
         &mut self,
         e: ElementId,
         carry: Carry,
@@ -416,7 +459,31 @@ impl<M: 'static> Ui<M> {
         if again {
             n.data.remeasures += 1;
         }
+        // A node that was laid out may have changed its own size and moved
+        // every child it placed, so its rectangles are computed again. Nothing
+        // else in the tree needs to be.
+        self.mark_arrange(r);
         size
+    }
+
+    /// Path-mark for the positioning walk, the same shape as the layout mark
+    /// but without a boundary to stop at: a rectangle is absolute, so a node
+    /// that moved moves everything below it.
+    fn mark_arrange(&mut self, r: RenderId) {
+        if let Some(n) = self.render.get_mut(r) {
+            n.data.arrange_dirty = true;
+        }
+        let mut cur = self.render.get(r).and_then(|n| n.parent);
+        while let Some(p) = cur {
+            let Some(pn) = self.render.get_mut(p) else {
+                break;
+            };
+            if pn.data.child_arrange_dirty {
+                break;
+            }
+            pn.data.child_arrange_dirty = true;
+            cur = pn.parent;
+        }
     }
 
     /// Run layout, position everything, and resolve out-of-flow layers.
@@ -447,7 +514,35 @@ impl<M: 'static> Ui<M> {
         // Commands an owner queued through a handle, applied once geometry
         // exists and before anything reads it.
         if self.apply_anchors() {
+            // The layers found by the first walk are stale the moment anything
+            // moves: re-arranging without clearing them would resolve, paint
+            // and dismiss every one of them twice.
+            self.pending_layers.clear();
             self.arrange(root, Point::ZERO, Rect::from_size(frame));
+            self.resolve_layers(frame);
+            self.process_disposals();
+        }
+
+        self.refresh_geometry();
+    }
+
+    /// Update the geometry of every element somebody holds a handle to. The
+    /// cost is the number of handles, not the size of the tree.
+    fn refresh_geometry(&mut self) {
+        let store = self.geom_store.clone();
+        let ids: Vec<ElementId> = store.borrow().entries.keys().copied().collect();
+        for id in ids {
+            let g = self
+                .render_for(id)
+                .and_then(|r| self.render.get(r))
+                .map(|n| crate::services::GeomSnapshot {
+                    rect: n.data.rect,
+                    clip: n.data.clip,
+                    scroll: n.data.scroll,
+                    content: n.data.content,
+                })
+                .unwrap_or_default();
+            store.borrow_mut().entries.insert(id, g);
         }
     }
 
@@ -574,7 +669,7 @@ impl<M: 'static> Ui<M> {
     // -- positioning ---------------------------------------------------------
 
     pub(crate) fn arrange(&mut self, r: RenderId, origin: Point, clip: Rect) {
-        let (size, clips, translate, scroll, kids) = {
+        let (size, clips, translate, scroll, kids, dirty, was, cached) = {
             let Some(n) = self.render.get(r) else { return };
             (
                 n.data.size,
@@ -582,14 +677,28 @@ impl<M: 'static> Ui<M> {
                 n.data.translate,
                 n.data.scroll,
                 n.children.clone(),
+                n.data.arrange_dirty || n.data.child_arrange_dirty,
+                (n.data.rect, n.data.clip),
+                n.data.layers.clone(),
             )
         };
         let rect = Rect::at(origin, size);
+        // Nothing below was laid out and this node lands where it already is:
+        // every rectangle in the subtree is the one it already has. The layers
+        // it published are re-published so paint order does not depend on how
+        // much work the pass did.
+        if !dirty && was == (rect, clip) {
+            self.pending_layers.extend(cached);
+            return;
+        }
         {
             let n = self.render.get_mut(r).expect("live");
             n.data.rect = rect;
             n.data.clip = clip;
+            n.data.arrange_dirty = false;
+            n.data.child_arrange_dirty = false;
         }
+        let start = self.pending_layers.len();
         let child_clip = if clips { clip.intersect(rect) } else { clip };
         let sc = if clips && translate {
             scroll
@@ -608,6 +717,10 @@ impl<M: 'static> Ui<M> {
                 child_clip,
             );
         }
+        let found = self.pending_layers[start..].to_vec();
+        if let Some(n) = self.render.get_mut(r) {
+            n.data.layers = found;
+        }
     }
 
     /// Layers resolve after the main walk: one anchored to a node needs that
@@ -618,10 +731,8 @@ impl<M: 'static> Ui<M> {
         while i < self.pending_layers.len() {
             let (lr, parent) = self.pending_layers[i];
             i += 1;
-            let element = self.render[lr].element;
-            let props = match &resolve(&self.arena[element].desc).desc {
-                Desc::Layer(p) => p.clone(),
-                _ => continue,
+            let Some(props) = self.layer_geom(lr) else {
+                continue;
             };
             let anchor = match &props.anchor {
                 Anchor::Parent => self.render[parent].data.rect,
@@ -645,7 +756,9 @@ impl<M: 'static> Ui<M> {
         }
     }
 
-    pub(crate) fn find_by_key(&self, k: &crate::key::Key) -> Option<ElementId> {
+    /// The first element carrying this key, in tree order. What an `Anchor`
+    /// addressed by key resolves through, and what a test uses to name a node.
+    pub fn find_by_key(&self, k: &crate::key::Key) -> Option<ElementId> {
         let root = self.root?;
         self.find_key_from(root, k)
     }
@@ -708,30 +821,4 @@ fn place(anchor_kind: &Anchor, p: Place, fit: Fit, anchor: Rect, size: Size, fra
         y = y.min(fh - sh).max(0);
     }
     Point::new(x, y)
-}
-
-/// A node's own size request, looking through a `Shared` wrapper.
-pub(crate) fn node_sizing<M>(n: &Node<M>) -> (Sizing, Sizing) {
-    let inner = resolve(n);
-    (
-        if n.w == Sizing::Auto { inner.w } else { n.w },
-        if n.h == Sizing::Auto { inner.h } else { n.h },
-    )
-}
-
-/// Whether a description change can move anything.
-pub(crate) fn layout_relevant_changed<M>(old: &Node<M>, new: &Node<M>) -> bool {
-    if node_sizing(old) != node_sizing(new) {
-        return true;
-    }
-    match (&resolve(old).desc, &resolve(new).desc) {
-        (Desc::Box(a), Desc::Box(b)) => a != b,
-        (Desc::TextRun(a), Desc::TextRun(b)) => a != b,
-        (Desc::Viewport(a), Desc::Viewport(b)) => a != b,
-        (Desc::Layer(a), Desc::Layer(b)) => !a.geom_eq(b),
-        (Desc::Host(a), Desc::Host(b)) => a != b,
-        // Gesture, Focusable, Provide, LayoutReader and Component have no
-        // geometry of their own; theirs comes from their children.
-        _ => false,
-    }
 }

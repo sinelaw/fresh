@@ -22,31 +22,51 @@ pub use tree::FocusId;
 ///
 /// A component that becomes focusable this way needs no `Focusable`
 /// description around it — build order step 3's rule that every later
-/// primitive is a behavior.
+/// primitive is a behavior. Everything the description form offers is offered
+/// here: traversal position, key listeners, shortcuts, actions, focus
+/// transitions and focus-within invalidation. The routing code never learns
+/// which of the two forms is in play.
 pub struct Focusable<M: 'static> {
     pub(crate) on_change: Option<crate::desc::Handler<M>>,
+    pub(crate) on_key: Vec<crate::desc::Handler<M>>,
+    pub(crate) shortcuts: Vec<Shortcut>,
+    pub(crate) actions: Vec<(Intent, crate::desc::Handler<M>)>,
     pub(crate) ordinal: Option<i32>,
     pub(crate) skip: bool,
     pub(crate) scope: bool,
+    pub(crate) focus_within: bool,
+    pub(crate) autofocus: bool,
 }
 
 impl<M: 'static> Focusable<M> {
     pub fn new(on_change: crate::desc::Handler<M>) -> Self {
         Focusable {
             on_change: Some(on_change),
+            ..Focusable::bare()
+        }
+    }
+
+    /// Focusable, with no transition handler.
+    pub fn bare() -> Self {
+        Focusable {
+            on_change: None,
+            on_key: Vec::new(),
+            shortcuts: Vec::new(),
+            actions: Vec::new(),
             ordinal: None,
             skip: false,
             scope: false,
+            focus_within: false,
+            autofocus: false,
         }
     }
 
     /// A scope that groups the focusables below it without being one itself.
     pub fn scope() -> Self {
         Focusable {
-            on_change: None,
-            ordinal: None,
             skip: true,
             scope: true,
+            ..Focusable::bare()
         }
     }
 
@@ -57,6 +77,36 @@ impl<M: 'static> Focusable<M> {
 
     pub fn skip(mut self) -> Self {
         self.skip = true;
+        self
+    }
+
+    /// Take focus when the enclosing scope opens.
+    pub fn autofocus(mut self) -> Self {
+        self.autofocus = true;
+        self
+    }
+
+    /// Rebuild the owning element when focus enters or leaves its subtree.
+    pub fn focus_within(mut self) -> Self {
+        self.focus_within = true;
+        self
+    }
+
+    /// A raw key listener, offered before intents are resolved.
+    pub fn on_key(mut self, h: crate::desc::Handler<M>) -> Self {
+        self.on_key.push(h);
+        self
+    }
+
+    /// A chord this subtree reads differently from the global map.
+    pub fn shortcut(mut self, s: Shortcut) -> Self {
+        self.shortcuts.push(s);
+        self
+    }
+
+    /// How this part of the interface carries out an intent.
+    pub fn action(mut self, i: Intent, h: crate::desc::Handler<M>) -> Self {
+        self.actions.push((i, h));
         self
     }
 }
@@ -80,6 +130,41 @@ use crate::event::{
 };
 use crate::render::geom::Point;
 use crate::schedule::{DirtyCause, Ui};
+
+/// An element's focus behaviour, wherever it was declared: on a `Focusable`
+/// description, or on a `Focusable` behavior a component registered during
+/// `init`. Key routing reads this and never the description, so the two forms
+/// are the same thing to everything downstream.
+pub(crate) struct FocusConfig<M: 'static> {
+    pub on_key: Vec<crate::desc::Handler<M>>,
+    pub shortcuts: Vec<Shortcut>,
+    pub actions: Vec<(Intent, crate::desc::Handler<M>)>,
+    pub on_change: Option<crate::desc::Handler<M>>,
+}
+
+impl<M: 'static> Ui<M> {
+    pub(crate) fn focus_config(&self, id: ElementId) -> Option<FocusConfig<M>> {
+        let el = self.arena.get(id)?;
+        if let Desc::Focusable(f) = &resolve(&el.desc).desc {
+            return Some(FocusConfig {
+                on_key: f.on_key.clone(),
+                shortcuts: f.shortcuts.clone(),
+                actions: f.actions.clone(),
+                on_change: f.on_focus_change.clone(),
+            });
+        }
+        el.behaviors.iter().find_map(|b| {
+            b.as_any()
+                .downcast_ref::<Focusable<M>>()
+                .map(|f| FocusConfig {
+                    on_key: f.on_key.clone(),
+                    shortcuts: f.shortcuts.clone(),
+                    actions: f.actions.clone(),
+                    on_change: f.on_change.clone(),
+                })
+        })
+    }
+}
 
 impl<M: 'static> Ui<M> {
     /// The element that currently has focus.
@@ -146,26 +231,10 @@ impl<M: 'static> Ui<M> {
         self.pending_messages.extend(out);
     }
 
-    fn fire_focus_change(&mut self, id: ElementId, gained: bool, out: &mut Vec<M>) {
-        let from_desc = match self.arena.get(id).map(|e| &e.desc) {
-            Some(d) => match &resolve(d).desc {
-                Desc::Focusable(f) => f.on_focus_change.clone(),
-                _ => None,
-            },
-            None => None,
+    pub(crate) fn fire_focus_change(&mut self, id: ElementId, gained: bool, out: &mut Vec<M>) {
+        let Some(h) = self.focus_config(id).and_then(|c| c.on_change) else {
+            return;
         };
-        // A component registered through the behavior form gets the same
-        // transitions as one wrapped in the primitive.
-        let handler = from_desc.or_else(|| {
-            self.arena.get(id).and_then(|el| {
-                el.behaviors.iter().find_map(|b| {
-                    b.as_any()
-                        .downcast_ref::<Focusable<M>>()
-                        .and_then(|f| f.on_change.clone())
-                })
-            })
-        });
-        let Some(h) = handler else { return };
         let mut ev = self.synth_event(
             id,
             if gained {
@@ -228,10 +297,11 @@ impl<M: 'static> Ui<M> {
     }
 
     fn registers_focus_within(&self, id: ElementId) -> bool {
-        match self.arena.get(id).map(|e| &e.desc) {
-            Some(d) => matches!(&resolve(d).desc, Desc::Focusable(f) if f.focus_within),
-            None => false,
-        }
+        self.arena
+            .get(id)
+            .and_then(|e| e.focus)
+            .and_then(|f| self.focus_tree.get(f))
+            .is_some_and(|n| n.reg.focus_within)
     }
 
     fn common_ancestor(&self, a: ElementId, b: ElementId) -> Option<ElementId> {
@@ -269,7 +339,7 @@ impl<M: 'static> Ui<M> {
                     self.collect_focus(c, &mut nodes);
                 }
                 // A scope that is itself focusable is reachable inside itself.
-                if self.focus_tree.get(f).is_some_and(|n| !n.skip) {
+                if self.focus_tree.get(f).is_some_and(|n| !n.reg.skip) {
                     self.push_focus(f, &mut nodes);
                 }
             }
@@ -282,20 +352,19 @@ impl<M: 'static> Ui<M> {
         FocusScope { nodes }
     }
 
-    /// The topmost layer that makes everything outside it inert, as an element.
+    /// The topmost layer that makes what is below it inert, as an element.
     pub(crate) fn topmost_modal(&self) -> Option<ElementId> {
-        self.pending_layers
-            .iter()
-            .rev()
-            .filter_map(|(l, _)| self.element_of(*l))
-            .find(|e| self.is_modal(*e))
+        let i = self.topmost_modal_index()?;
+        self.element_of(self.pending_layers[i].0)
     }
 
-    fn is_modal(&self, id: ElementId) -> bool {
-        match self.arena.get(id).map(|e| &e.desc) {
-            Some(d) => matches!(&resolve(d).desc, Desc::Layer(l) if l.modality != Modality::None),
-            None => false,
-        }
+    /// Where that layer sits in resolution order. Everything resolved after it
+    /// is above it and stays live; everything before it is inert.
+    pub(crate) fn topmost_modal_index(&self) -> Option<usize> {
+        (0..self.pending_layers.len()).rev().find(|&i| {
+            self.layer_geom(self.pending_layers[i].0)
+                .is_some_and(|g| g.modality != Modality::None)
+        })
     }
 
     /// The registration that groups what traversal may currently reach.
@@ -312,7 +381,7 @@ impl<M: 'static> Ui<M> {
             .and_then(|el| el.focus);
         while let Some(f) = cur {
             let n = self.focus_tree.get(f)?;
-            if n.scope {
+            if n.reg.scope {
                 return Some(f);
             }
             cur = n.parent;
@@ -324,7 +393,7 @@ impl<M: 'static> Ui<M> {
         let Some(n) = self.focus_tree.get(f) else {
             return;
         };
-        if !n.skip {
+        if !n.reg.skip {
             self.push_focus(f, out);
         }
         for c in n.children.clone() {
@@ -338,7 +407,7 @@ impl<M: 'static> Ui<M> {
         };
         out.push(FocusEntry {
             id: n.element,
-            ordinal: n.ordinal,
+            ordinal: n.reg.ordinal,
             rect: self.rect_of(n.element),
         });
     }
@@ -391,7 +460,6 @@ impl<M: 'static> Ui<M> {
             }
         } else if let Some(prev) = self.focus_restore.take() {
             if self.arena.get(prev).is_some() {
-                self.focus = None;
                 let mut out = Vec::new();
                 self.focus_element(prev, SelectionOnFocus::Preserve, &mut out);
                 self.pending_messages.extend(out);
@@ -399,24 +467,37 @@ impl<M: 'static> Ui<M> {
             }
         }
 
-        self.focus = None;
         let scope = self.focus_scope();
         let wanted = scope
             .nodes
             .iter()
             .find(|e| {
-                matches!(self.arena.get(e.id).map(|x| &x.desc), Some(d)
-                    if matches!(&resolve(d).desc, Desc::Focusable(f) if f.autofocus))
+                self.arena
+                    .get(e.id)
+                    .and_then(|x| x.focus)
+                    .and_then(|f| self.focus_tree.get(f))
+                    .is_some_and(|n| n.reg.autofocus)
             })
             // A scope with nothing marked still needs somewhere for traversal
             // to start, or Tab inside a modal would do nothing.
             .or_else(|| modal.and(scope.nodes.first()));
-        if let Some(e) = wanted {
-            let id = e.id;
-            let mut out = Vec::new();
-            self.focus_element(id, SelectionOnFocus::SelectAll, &mut out);
-            self.pending_messages.extend(out);
+        let mut out = Vec::new();
+        match wanted {
+            Some(e) => {
+                let id = e.id;
+                self.focus_element(id, SelectionOnFocus::SelectAll, &mut out);
+            }
+            // Focus was somewhere the active scope cannot reach and there is
+            // nowhere to move it to. Losing focus is still a transition, and
+            // the element that had it is told so.
+            None => {
+                if let Some(o) = self.focus.take() {
+                    self.fire_focus_change(o, false, &mut out);
+                    self.invalidate_focus_within(Some(o), None);
+                }
+            }
         }
+        self.pending_messages.extend(out);
     }
 
     fn is_within(&self, mut id: ElementId, root: ElementId) -> bool {
@@ -461,13 +542,7 @@ impl<M: 'static> Ui<M> {
         };
         let ctl = Rc::new(Ctl::default());
         for &n in chain.iter().rev() {
-            let handlers = match self.arena.get(n).map(|e| &e.desc) {
-                Some(d) => match &resolve(d).desc {
-                    Desc::Focusable(f) => f.on_key.clone(),
-                    _ => Vec::new(),
-                },
-                None => Vec::new(),
-            };
+            let handlers = self.focus_config(n).map(|c| c.on_key).unwrap_or_default();
             if handlers.is_empty() {
                 continue;
             }
@@ -503,11 +578,9 @@ impl<M: 'static> Ui<M> {
 
     fn resolve_intent(&self, chain: &[ElementId], k: KeyPress) -> Option<Intent> {
         for &n in chain.iter().rev() {
-            if let Some(d) = self.arena.get(n).map(|e| &e.desc) {
-                if let Desc::Focusable(f) = &resolve(d).desc {
-                    if let Some(s) = f.shortcuts.iter().find(|s| s.key == k) {
-                        return Some(s.intent);
-                    }
+            if let Some(c) = self.focus_config(n) {
+                if let Some(s) = c.shortcuts.iter().find(|s| s.key == k) {
+                    return Some(s.intent);
                 }
             }
         }
@@ -524,17 +597,12 @@ impl<M: 'static> Ui<M> {
         out: &mut Vec<M>,
     ) -> bool {
         for &n in chain.iter().rev() {
-            let handler = match self.arena.get(n).map(|e| &e.desc) {
-                Some(d) => match &resolve(d).desc {
-                    Desc::Focusable(f) => f
-                        .actions
-                        .iter()
-                        .find(|(i, _)| *i == intent)
-                        .map(|(_, h)| h.clone()),
-                    _ => None,
-                },
-                None => None,
-            };
+            let handler = self.focus_config(n).and_then(|c| {
+                c.actions
+                    .iter()
+                    .find(|(i, _)| *i == intent)
+                    .map(|(_, h)| h.clone())
+            });
             let Some(h) = handler else { continue };
             let ctl = Rc::new(Ctl::default());
             let ev = self.synth_event(n, GestureKind::Key, Some(k), ctl.clone());

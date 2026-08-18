@@ -139,21 +139,25 @@ impl<M: 'static> Ui<M> {
     /// content, clipping and out-of-flow layers — none of which a walk over
     /// descriptions can see.
     pub fn hit_paths(&self, p: Point) -> Vec<Vec<ElementId>> {
-        // A modal layer makes everything outside its subtree non-interactive,
-        // so the search starts there.
-        if let Some(e) = self.topmost_modal() {
-            if let Some(r) = self.render_for(e) {
-                return self.paths_in(r, p);
-            }
-        }
-        // Otherwise: layers first, topmost declared last, then the tree.
-        for &(lr, _) in self.pending_layers.iter().rev() {
-            let paths = self.paths_in(lr, p);
+        // A modal layer makes everything *below* it non-interactive. Not
+        // everything outside its subtree: a layer resolved after it — a
+        // dropdown opened by one of its own fields — is above it, and stays
+        // hittable. Layers are resolved in the order they were found, so
+        // "after" is an index.
+        let floor = self.topmost_modal_index().unwrap_or(0);
+        for i in (floor..self.pending_layers.len()).rev() {
+            let paths = self.paths_in(self.pending_layers[i].0, p);
             if !paths.is_empty() {
                 return paths;
             }
         }
-        match self.render_root {
+        // Nothing above took it. Inside a modal the search stops at its
+        // subtree; outside one it reaches the whole tree.
+        let root = match self.topmost_modal().and_then(|e| self.render_for(e)) {
+            Some(r) => Some(r),
+            None => self.render_root,
+        };
+        match root {
             Some(r) => self.paths_in(r, p),
             None => Vec::new(),
         }
@@ -363,6 +367,13 @@ impl<M: 'static> Ui<M> {
         let Some(el) = self.arena.get(id) else {
             return Vec::new();
         };
+        if kind == GestureKind::Key {
+            return if capture {
+                Vec::new()
+            } else {
+                self.focus_config(id).map(|c| c.on_key).unwrap_or_default()
+            };
+        }
         match &resolve(&el.desc).desc {
             Desc::Gesture(g) => g
                 .listeners
@@ -370,7 +381,6 @@ impl<M: 'static> Ui<M> {
                 .filter(|l| l.kind == kind && l.capture == capture)
                 .map(|l| l.handler.clone())
                 .collect(),
-            Desc::Focusable(f) if kind == GestureKind::Key && !capture => f.on_key.clone(),
             _ => Vec::new(),
         }
     }
@@ -471,6 +481,15 @@ impl<M: 'static> Ui<M> {
         }
     }
 
+    /// The one part of a layer that cannot live on the render object: a
+    /// handler is typed by the message, and a render object never sees one.
+    fn dismiss_handler(&self, lid: ElementId) -> Option<crate::desc::Handler<M>> {
+        match &resolve(&self.arena.get(lid)?.desc).desc {
+            Desc::Layer(l) => l.on_dismiss.clone(),
+            _ => None,
+        }
+    }
+
     fn dismiss_for_pointer(&mut self, pos: Point, out: &mut Vec<M>) {
         let path = self.hit_test(pos);
         let layers: Vec<ElementId> = self
@@ -479,14 +498,10 @@ impl<M: 'static> Ui<M> {
             .filter_map(|(l, _)| self.element_of(*l))
             .collect();
         for lid in layers {
-            let props = match self.arena.get(lid).map(|e| &e.desc) {
-                Some(d) => match &resolve(d).desc {
-                    Desc::Layer(l) => l.clone(),
-                    _ => continue,
-                },
-                None => continue,
+            let Some(geom) = self.render_for(lid).and_then(|r| self.layer_geom(r)) else {
+                continue;
             };
-            if !props.dismiss.outside_pointer {
+            if !geom.dismiss.outside_pointer {
                 continue;
             }
             // An ancestor test over the existing tree: inside the layer's
@@ -494,7 +509,7 @@ impl<M: 'static> Ui<M> {
             if path.contains(&lid) {
                 continue;
             }
-            if let Some(h) = &props.on_dismiss {
+            if let Some(h) = self.dismiss_handler(lid) {
                 let ctl = Rc::new(Ctl::default());
                 let ev = Event {
                     kind: GestureKind::Press,
@@ -526,20 +541,16 @@ impl<M: 'static> Ui<M> {
             .collect();
         let mut any = false;
         for lid in layers {
-            let props = match self.arena.get(lid).map(|e| &e.desc) {
-                Some(d) => match &resolve(d).desc {
-                    Desc::Layer(l) => l.clone(),
-                    _ => continue,
-                },
-                None => continue,
+            let Some(geom) = self.render_for(lid).and_then(|r| self.layer_geom(r)) else {
+                continue;
             };
-            let matched = (props.dismiss.escape && k.code == KeyCode::Esc)
-                || props.dismiss.any_key
-                || props.dismiss.any_input;
+            let matched = (geom.dismiss.escape && k.code == KeyCode::Esc)
+                || geom.dismiss.any_key
+                || geom.dismiss.any_input;
             if !matched {
                 continue;
             }
-            if let Some(h) = &props.on_dismiss {
+            if let Some(h) = self.dismiss_handler(lid) {
                 let ctl = Rc::new(Ctl::default());
                 let ev = Event {
                     kind: GestureKind::Key,

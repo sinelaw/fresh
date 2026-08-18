@@ -190,7 +190,11 @@ pub enum ScrollMode {
 pub struct ViewportProps {
     /// Framework-owned once mounted; this is the initial value only.
     pub scroll: (u16, u16),
+    /// Mark the region as text-selectable in the display list. The library
+    /// never interprets it — a backend that supports selection reads it, the
+    /// same way it reads a theme name.
     pub selectable: bool,
+    /// An upper bound on the window's height, whatever the constraints allow.
     pub max_h: Option<u16>,
     /// Emit a scrollbar item when the content exceeds the window.
     pub scrollbar: bool,
@@ -786,6 +790,35 @@ impl<M> Node<M> {
         self
     }
 
+    /// Mark the region as text-selectable in the display list. The library
+    /// holds no selection model; a backend that supports one reads this.
+    pub fn selectable(mut self) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.selectable = true,
+            _ => panic!("selectable() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Bound the window's height, whatever the constraints allow.
+    pub fn max_h(mut self, cells: u16) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.max_h = Some(cells),
+            _ => panic!("max_h() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Where the window starts. The initial value only: from the first layout
+    /// on, the offset is framework-owned.
+    pub fn scroll_at(mut self, x: u16, y: u16) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.scroll = (x, y),
+            _ => panic!("scroll_at() applies to Viewport nodes only"),
+        }
+        self
+    }
+
     /// Scroll by item index rather than by cell, over `count` items.
     pub fn items(mut self, count: u32) -> Self {
         match &mut self.desc {
@@ -1039,3 +1072,119 @@ pub trait ComponentExt<M>: Component<M> + Sized {
 }
 
 impl<M, C: Component<M>> ComponentExt<M> for C {}
+
+// ---------------------------------------------------------------------------
+// Descriptions become render objects
+// ---------------------------------------------------------------------------
+
+/// Create if there is nothing there yet, otherwise push the changed props into
+/// what is already there. Updating in place is what preserves retained state: a
+/// viewport's scroll offset, a text run's wrapped rows, a host leaf's handle.
+fn sync<T: crate::render::object::RenderObject + 'static>(
+    obj: Option<&mut dyn crate::render::object::RenderObject>,
+    make: impl FnOnce() -> T,
+    update: impl FnOnce(&mut T),
+) -> Option<Box<dyn crate::render::object::RenderObject>> {
+    match obj {
+        Some(o) => {
+            if let Some(t) = o.as_any_mut().downcast_mut::<T>() {
+                update(t);
+            }
+            None
+        }
+        None => Some(Box::new(make())),
+    }
+}
+
+impl<M: 'static> Desc<M> {
+    /// The one place in the library that knows which description produces which
+    /// render object.
+    ///
+    /// Everything downstream — layout, paint, hit-testing, focus, input routing
+    /// — asks the object rather than the description, so adding a primitive
+    /// means adding a variant, a render object, and one arm here.
+    pub(crate) fn sync_render(
+        &self,
+        obj: Option<&mut dyn crate::render::object::RenderObject>,
+    ) -> Option<Box<dyn crate::render::object::RenderObject>> {
+        use crate::render::object::FocusReg;
+        use crate::render::prim::{
+            BoxRender, FocusRender, GestureRender, LayerRender, ReaderRender, TextRender,
+            ViewportRender,
+        };
+        match self {
+            Desc::Box(p) => sync(
+                obj,
+                || BoxRender { props: p.clone() },
+                |o| o.props = p.clone(),
+            ),
+            Desc::TextRun(p) => sync(obj, || TextRender::new(p.clone()), |o| o.props = p.clone()),
+            Desc::Viewport(p) => sync(
+                obj,
+                || ViewportRender::new(p.clone()),
+                |o| o.props = p.clone(),
+            ),
+            Desc::Gesture(g) => sync(obj, || GestureRender { mode: g.mode }, |o| o.mode = g.mode),
+            Desc::Focusable(f) => {
+                let reg = FocusReg {
+                    ordinal: f.ordinal,
+                    skip: f.skip,
+                    scope: f.scope,
+                    focus_within: f.focus_within,
+                    autofocus: f.autofocus,
+                };
+                sync(obj, || FocusRender { reg }, |o| o.reg = reg)
+            }
+            Desc::Layer(l) => sync(
+                obj,
+                || LayerRender::from_props(l),
+                |o| *o = LayerRender::from_props(l),
+            ),
+            // A host leaf is opaque to the library: it owns its own state and
+            // there are no props to push into it.
+            Desc::Host(h) => match obj {
+                Some(_) => None,
+                None => Some(h.make()),
+            },
+            // The builder is a new closure over new state every build, so a
+            // description change has to re-run it even when the constraints are
+            // unchanged. Only the framework knows the description changed.
+            Desc::LayoutReader(_) => sync(obj, ReaderRender::default, |o: &mut ReaderRender| {
+                o.invalidate()
+            }),
+            // Identity or data, but no geometry: the render tree skips these.
+            Desc::Provide(_) | Desc::Shared(_) | Desc::Component(_) => None,
+        }
+    }
+}
+
+/// A node's own size request, looking through a `Shared` wrapper.
+pub(crate) fn node_sizing<M>(n: &Node<M>) -> (Sizing, Sizing) {
+    let inner = resolve(n);
+    (
+        if n.w == Sizing::Auto { inner.w } else { n.w },
+        if n.h == Sizing::Auto { inner.h } else { n.h },
+    )
+}
+
+/// Whether a description change can move anything.
+///
+/// Not "did the description change": a pointer mode, a key listener or a
+/// dismissal rule changes what a node *does* without changing where anything
+/// sits. Those reach the render object regardless; this decides only whether
+/// the layout pass has to run again.
+pub(crate) fn layout_relevant_changed<M>(old: &Node<M>, new: &Node<M>) -> bool {
+    if node_sizing(old) != node_sizing(new) {
+        return true;
+    }
+    match (&resolve(old).desc, &resolve(new).desc) {
+        (Desc::Box(a), Desc::Box(b)) => a != b,
+        (Desc::TextRun(a), Desc::TextRun(b)) => a != b,
+        (Desc::Viewport(a), Desc::Viewport(b)) => a != b,
+        (Desc::Layer(a), Desc::Layer(b)) => !a.geom_eq(b),
+        (Desc::Host(a), Desc::Host(b)) => a != b,
+        // Gesture, Focusable, Provide, LayoutReader and Component have no
+        // geometry of their own; theirs comes from their children.
+        _ => false,
+    }
+}

@@ -43,24 +43,29 @@ pub use ambient::{provide, Ambient, AmbientKey, ProvideProps};
 pub use behavior::Behavior;
 pub use component::{AnyComponent, Component};
 pub use desc::{
-    col, focusable, gesture, host, layer, layout_reader, node_key, node_type, resolve, row,
-    shared_rc, stack, text, viewport, Align, Anchor, BoxProps, ComponentExt, Desc, Dir, Dismiss,
-    ElemType, Fit, FocusProps, GestureProps, Handler, HostId, LayerProps, LayoutReaderProps,
-    Listener, Modality, Node, Pad, Place, PointerMode, Scrim, Sizing, TextProps, ViewportProps,
+    col, focusable, gesture, host, host_leaf, layer, layout_reader, node_key, node_type, resolve,
+    row, shared_rc, stack, text, viewport, Align, Anchor, BoxProps, ComponentExt, Desc, Dir,
+    Dismiss, ElemType, Fit, FocusProps, GestureProps, Handler, HostId, HostSpec, LayerProps,
+    LayoutReaderProps, Listener, Modality, Node, Pad, Place, PointerMode, Scrim, ScrollMode,
+    Sizing, TextProps, ViewportProps,
 };
 pub use element::ElementId;
 pub use event::{
     Event, Flow, GestureKind, Input, KeyCode, KeyPress, Mods, MouseButton, Phase, SelectionOnFocus,
 };
 pub use focus::{
-    default_shortcuts, Directional, FocusDir, FocusEntry, FocusScope, Intent, ReadingOrder,
-    Shortcut, TraversalPolicy,
+    default_shortcuts, Directional, FocusDir, FocusEntry, FocusScope, Focusable, Intent,
+    ReadingOrder, Shortcut, TraversalPolicy,
 };
 pub use key::{Key, KeyPath};
 pub use render::geom::{distribute, Constraints, Point, Rect, Size};
-pub use render::spec::{CursorSpec, Draw, Item, LayoutSpec, ThemeKey};
+pub use render::object::{
+    FocusReg, Geom, Hit, HostLeaf, LayerGeom, LayoutCx, LayoutInfo, PlainHost, RenderId,
+    RenderObject, ScrollInfo,
+};
+pub use render::spec::{CursorSpec, Draw, DrawList, Item, LayoutSpec, ThemeKey};
 pub use schedule::{BuildCx, DirtyCause, InitCx, NullRenderer, Renderer, Sched, Ui, Updater};
-pub use services::{Geometry, Job, Services};
+pub use services::{GeomHandle, GeomSnapshot, Geometry, Job, Services};
 pub use widgets::{
     Button, Dropdown, DualList, List, Number, RadioGroup, TextField, Toggle, Tree, TreeNode,
 };

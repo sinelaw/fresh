@@ -126,6 +126,8 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
                 s.put(r.x, r.y + i as i32, ch, clip);
             }
         }
+        // A marker for a backend that supports selection; it draws nothing.
+        Draw::Selectable => {}
         Draw::Host(_) => fill(s, r, '▒', clip),
     }
 }

@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use crate::desc::{Align, BoxProps, Dir, LayerProps, Sizing, TextProps, ViewportProps};
 use crate::render::geom::{distribute, Constraints, Point, Rect, Size};
-use crate::render::object::{Geom, Hit, LayoutCx, LayoutInfo, RenderObject};
+use crate::render::object::{FocusReg, Geom, Hit, LayerGeom, LayoutCx, LayoutInfo, RenderObject};
 use crate::render::spec::{Draw, DrawList};
 
 // -- axes --------------------------------------------------------------------
@@ -247,7 +247,7 @@ impl RenderObject for BoxRender {
             .saturating_add(gaps);
         let content_cross = crosses.iter().copied().max().unwrap_or(0);
         let content = size_of(dir, content_main, content_cross);
-        let own = c.constrain(Size::new(
+        let mut own = c.constrain(Size::new(
             content.w.saturating_add(2 * ins_x),
             content.h.saturating_add(2 * ins_y),
         ));
@@ -256,7 +256,7 @@ impl RenderObject for BoxRender {
             Dir::Row => (ins_x, ins_y),
             Dir::Col => (ins_y, ins_x),
         };
-        let inner_cross = cross_of(dir, own).saturating_sub(2 * ins_cross);
+        let mut inner_cross = cross_of(dir, own).saturating_sub(2 * ins_cross);
 
         // Intrinsic sizing: when the cross extent was not known before the
         // children were measured, the ones that asked to fill it are measured
@@ -264,6 +264,7 @@ impl RenderObject for BoxRender {
         // measures a subtree twice, and the framework counts it so the cost is
         // visible in a dump rather than inferred.
         if p.align == Align::Stretch && !cross_definite && inner_cross > 0 {
+            let mut again = false;
             for i in 0..n {
                 let (sw, sh) = cx.sizing(kids[i]);
                 let s_cross = match dir {
@@ -277,7 +278,25 @@ impl RenderObject for BoxRender {
                     );
                     mains[i] = main_of(dir, s);
                     crosses[i] = cross_of(dir, s);
+                    again = true;
                 }
+            }
+            // A child measured again at a known cross extent can come back a
+            // different size on *both* axes — text that rewraps is shorter. The
+            // node's own size is computed from what came back, not from the
+            // first pass, or the second measurement would be thrown away.
+            if again {
+                let content_main = mains
+                    .iter()
+                    .fold(0u16, |a, b| a.saturating_add(*b))
+                    .saturating_add(gaps);
+                let content_cross = crosses.iter().copied().max().unwrap_or(0);
+                let content = size_of(dir, content_main, content_cross);
+                own = c.constrain(Size::new(
+                    content.w.saturating_add(2 * ins_x),
+                    content.h.saturating_add(2 * ins_y),
+                ));
+                inner_cross = cross_of(dir, own).saturating_sub(2 * ins_cross);
             }
         }
 
@@ -374,6 +393,9 @@ pub struct ViewportRender {
     pub window: Rect,
     pub content: Size,
     pub items: u32,
+    /// Whether the description's initial offset has been applied. It is the
+    /// initial value only: after that the offset is framework-owned.
+    placed: bool,
 }
 
 impl ViewportRender {
@@ -383,6 +405,16 @@ impl ViewportRender {
             window: Rect::ZERO,
             content: Size::ZERO,
             items: 0,
+            placed: false,
+        }
+    }
+
+    /// The height this viewport is willing to take, which is what the
+    /// constraints allow unless the description asked for less.
+    fn bound(&self, c: Constraints) -> Constraints {
+        match self.props.max_h {
+            Some(m) => Constraints::new(c.min_w, c.max_w, c.min_h.min(m), c.max_h.min(m)),
+            None => c,
         }
     }
 }
@@ -392,9 +424,19 @@ impl RenderObject for ViewportRender {
         use crate::desc::ScrollMode;
         use crate::render::object::ScrollInfo;
 
+        let c = self.bound(c);
         // A viewport takes the space it is given; its content does not affect
         // it, which is what makes it a relayout boundary.
         let own = c.constrain(c.max());
+        if !self.placed {
+            // The description states where the window starts; from here on the
+            // offset belongs to the framework and survives rebuilds.
+            self.placed = true;
+            let (x, y) = self.props.scroll;
+            if x != 0 || y != 0 {
+                cx.set_offset(Point::new(x as i32, y as i32));
+            }
+        }
         let scroll = cx.scroll();
 
         let mut own = own;
@@ -477,6 +519,9 @@ impl RenderObject for ViewportRender {
 
     fn paint(&self, g: Geom, out: &mut DrawList) {
         use crate::desc::ScrollMode;
+        if self.props.selectable {
+            out.push(Draw::Selectable, g);
+        }
         if !self.props.scrollbar {
             return;
         }
@@ -548,14 +593,16 @@ impl RenderObject for GestureRender {
 /// Holds this node's focus registration. Created and torn down with the
 /// element, which is why focus survives reconciliation.
 pub struct FocusRender {
-    pub ordinal: Option<i32>,
-    pub skip: bool,
-    pub scope: bool,
+    pub reg: FocusReg,
 }
 
 impl RenderObject for FocusRender {
     fn layout(&mut self, c: Constraints, cx: &mut dyn LayoutCx) -> Size {
         stack_in(c, cx, Align::Stretch, Point::ZERO)
+    }
+
+    fn focus_reg(&self) -> Option<FocusReg> {
+        Some(self.reg)
     }
 
     fn render_name(&self) -> &'static str {
@@ -570,21 +617,20 @@ impl RenderObject for FocusRender {
 // -- Layer -------------------------------------------------------------------
 
 pub struct LayerRender {
-    pub anchor: crate::desc::Anchor,
-    pub place: crate::desc::Place,
-    pub fit: crate::desc::Fit,
-    pub modality: crate::desc::Modality,
-    pub scrim: Option<crate::desc::Scrim>,
+    pub geom: LayerGeom,
 }
 
 impl LayerRender {
     pub fn from_props<M>(p: &LayerProps<M>) -> Self {
         LayerRender {
-            anchor: p.anchor.clone(),
-            place: p.place,
-            fit: p.fit,
-            modality: p.modality,
-            scrim: p.scrim,
+            geom: LayerGeom {
+                anchor: p.anchor.clone(),
+                place: p.place,
+                fit: p.fit,
+                modality: p.modality,
+                scrim: p.scrim,
+                dismiss: p.dismiss,
+            },
         }
     }
 }
@@ -596,6 +642,22 @@ impl RenderObject for LayerRender {
 
     fn out_of_flow(&self) -> bool {
         true
+    }
+
+    fn layer(&self) -> Option<LayerGeom> {
+        Some(self.geom.clone())
+    }
+
+    /// A modal layer groups the focusables inside it without being one: that is
+    /// all "traversal is confined to the modal" means.
+    fn focus_reg(&self) -> Option<FocusReg> {
+        (self.geom.modality != crate::desc::Modality::None).then_some(FocusReg {
+            ordinal: None,
+            skip: true,
+            scope: true,
+            focus_within: false,
+            autofocus: false,
+        })
     }
 
     fn render_name(&self) -> &'static str {

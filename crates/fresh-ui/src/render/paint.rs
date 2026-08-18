@@ -8,7 +8,7 @@
 //! What each node draws is the render object's business; the framework supplies
 //! identity, provenance and order.
 
-use crate::desc::{resolve, Desc, Scrim};
+use crate::desc::{resolve, Scrim};
 use crate::render::geom::{Rect, Size};
 use crate::render::object::{Geom, RenderId};
 use crate::render::spec::{Draw, DrawList, Item, LayoutSpec, ThemeKey};
@@ -35,9 +35,8 @@ impl<M: 'static> Ui<M> {
         let Some(element) = self.element_of(lr) else {
             return;
         };
-        let scrim = match &resolve(&self.arena[element].desc).desc {
-            Desc::Layer(p) => p.scrim,
-            _ => return,
+        let Some(scrim) = self.layer_geom(lr).map(|g| g.scrim) else {
+            return;
         };
         if let Some(kind) = scrim {
             if kind == Scrim::Opaque {

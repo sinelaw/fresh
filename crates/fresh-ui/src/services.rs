@@ -7,6 +7,8 @@
 //! layout, which depends on build — is a compile error rather than an
 //! assertion.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::element::ElementId;
@@ -75,5 +77,93 @@ impl<M: 'static> Geometry<'_, M> {
     /// Another element's rectangle, addressed by key.
     pub fn rect_of_key(&self, k: &crate::key::Key) -> Option<Rect> {
         self.ui.find_by_key(k).map(|e| self.ui.rect_of(e))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Geometry a callback can hold
+// ---------------------------------------------------------------------------
+
+/// One element's geometry, as of the last layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GeomSnapshot {
+    pub rect: Rect,
+    pub clip: Rect,
+    pub scroll: Point,
+    pub content: Size,
+}
+
+/// The geometry of the elements somebody is watching. Refreshed once per frame,
+/// so the cost is the number of live handles rather than the size of the tree.
+#[derive(Default)]
+pub(crate) struct GeomStore {
+    pub(crate) entries: HashMap<ElementId, GeomSnapshot>,
+}
+
+/// A handle to one element's geometry, taken during construction and read
+/// afterwards.
+///
+/// This is what makes geometry reachable from an event handler, a ticker and a
+/// task callback: those run while the tree is borrowed mutably, so they hold a
+/// handle rather than a reference into it. The validity window is unchanged —
+/// reading during `build` would make build depend on layout, which depends on
+/// build, and is rejected.
+#[derive(Clone)]
+pub struct GeomHandle {
+    store: Rc<RefCell<GeomStore>>,
+    sched: crate::schedule::SchedRef,
+    id: ElementId,
+}
+
+impl GeomHandle {
+    pub(crate) fn new(
+        store: Rc<RefCell<GeomStore>>,
+        sched: crate::schedule::SchedRef,
+        id: ElementId,
+    ) -> Self {
+        store.borrow_mut().entries.entry(id).or_default();
+        GeomHandle { store, sched, id }
+    }
+
+    /// The element this handle addresses.
+    pub fn target(&self) -> ElementId {
+        self.id
+    }
+
+    #[track_caller]
+    fn read(&self) -> GeomSnapshot {
+        debug_assert!(
+            self.sched.borrow().building.is_none(),
+            "geometry is not readable during build"
+        );
+        self.store
+            .borrow()
+            .entries
+            .get(&self.id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    #[track_caller]
+    pub fn rect(&self) -> Rect {
+        self.read().rect
+    }
+
+    #[track_caller]
+    pub fn size(&self) -> Size {
+        self.read().rect.size()
+    }
+
+    /// The clip this element inherited from its ancestors.
+    #[track_caller]
+    pub fn clip(&self) -> Rect {
+        self.read().clip
+    }
+
+    /// A viewport's offset, and the size of the content behind it.
+    #[track_caller]
+    pub fn scroll(&self) -> (Point, Size) {
+        let g = self.read();
+        (g.scroll, g.content)
     }
 }
