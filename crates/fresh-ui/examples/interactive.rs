@@ -35,36 +35,41 @@ fn main() -> io::Result<()> {
     let mut term = Terminal::enter()?;
     let (w, h) = terminal::size()?;
     let mut demo = Demo::new(Size::new(w, h));
+    let redraw = |term: &mut Terminal, demo: &Demo| -> io::Result<()> {
+        term.draw(demo.ui.spec(), demo.app.theme.name == "dark")
+    };
+    redraw(&mut term, &demo)?;
 
     loop {
-        let dark = demo.app.theme.name == "dark";
-        term.draw(demo.ui.spec(), dark)?;
         if demo.app.quit {
             break;
         }
-
-        // Block for the next event, but wake periodically so a background task
-        // completing (the demo's simulated sync) is pumped in and redrawn.
-        if !event::poll(Duration::from_millis(100))? {
+        // An input redraws; an idle wake redraws only when the library reports
+        // that a frame would change something — a background task delivering,
+        // a ticker running. When nothing is pending, the loop touches neither
+        // the tree nor the terminal, so a still screen stays perfectly still.
+        if event::poll(Duration::from_millis(100))? {
+            match event::read()? {
+                CtEvent::Key(k) if k.kind != KeyEventKind::Release => {
+                    if k.code == CtKey::Char('q') && k.modifiers.contains(KeyModifiers::CONTROL) {
+                        break;
+                    }
+                    if let Some(press) = translate_key(k.code, k.modifiers) {
+                        demo.input(Input::Key(press));
+                    }
+                }
+                CtEvent::Mouse(m) => {
+                    if let Some(input) = translate_mouse(m) {
+                        demo.input(input);
+                    }
+                }
+                CtEvent::Resize(w, h) => demo.resize(Size::new(w, h)),
+                _ => continue,
+            }
+            redraw(&mut term, &demo)?;
+        } else if demo.ui.needs_frame() {
             demo.pump();
-            continue;
-        }
-        match event::read()? {
-            CtEvent::Key(k) if k.kind != KeyEventKind::Release => {
-                if k.code == CtKey::Char('q') && k.modifiers.contains(KeyModifiers::CONTROL) {
-                    break;
-                }
-                if let Some(press) = translate_key(k.code, k.modifiers) {
-                    demo.input(Input::Key(press));
-                }
-            }
-            CtEvent::Mouse(m) => {
-                if let Some(input) = translate_mouse(m) {
-                    demo.input(input);
-                }
-            }
-            CtEvent::Resize(w, h) => demo.resize(Size::new(w, h)),
-            _ => {}
+            redraw(&mut term, &demo)?;
         }
     }
 

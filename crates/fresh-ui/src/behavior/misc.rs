@@ -42,6 +42,11 @@ impl Behavior for Ticker {
         }
     }
 
+    fn has_pending(&self) -> bool {
+        // A running ticker wants a frame every frame; that is what it is for.
+        self.running.get()
+    }
+
     fn teardown(&self) {
         *self.f.borrow_mut() = None;
     }

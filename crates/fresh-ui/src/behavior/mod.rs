@@ -54,6 +54,14 @@ pub trait Behavior {
         0
     }
 
+    /// Whether a `pump` or a `frame` would do anything — an undelivered result
+    /// waiting, or a running ticker. Lets a host loop tell a quiet frame from a
+    /// busy one and skip the quiet ones. A behavior with no inbox and no tick
+    /// is never pending.
+    fn has_pending(&self) -> bool {
+        false
+    }
+
     /// Once per frame, before the build pass. Behaviors that do not tick do
     /// nothing.
     fn frame(&self) {}

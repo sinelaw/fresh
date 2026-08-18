@@ -543,6 +543,25 @@ impl<M: 'static> Ui<M> {
         &self.spec
     }
 
+    /// Whether a `frame` or `tick` would change anything: a dirty element, a
+    /// state mutation waiting to apply, a message produced out of band, or a
+    /// behavior with something to deliver or a ticker running.
+    ///
+    /// This surfaces the mark-and-flush state the scheduler already keeps; it
+    /// is a whole-frame yes/no, not per-cell damage tracking. A host loop reads
+    /// it to skip quiet frames entirely — compute and paint — instead of
+    /// redrawing at a fixed rate.
+    pub fn needs_frame(&self) -> bool {
+        if self.sched.borrow().has_pending() || !self.pending_messages.is_empty() {
+            return true;
+        }
+        self.behaviour_hosts.iter().any(|id| {
+            self.arena
+                .get(*id)
+                .is_some_and(|el| el.behaviors.iter().any(|b| b.has_pending()))
+        })
+    }
+
     /// Rebuild what is dirty and re-render at the last frame size. This is the
     /// path an event takes: nothing new is supplied from the application.
     pub fn tick(&mut self) -> &LayoutSpec {

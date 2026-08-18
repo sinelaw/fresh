@@ -15,7 +15,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
@@ -28,6 +28,9 @@ pub struct TaskHandle<T: Send + 'static> {
     generation: u64,
     alive: Arc<AtomicBool>,
     current: Arc<AtomicU64>,
+    /// Undelivered results still in the channel, so a host loop can tell
+    /// whether a pump would do anything without draining it.
+    inbox: Arc<AtomicUsize>,
 }
 
 impl<T: Send + 'static> TaskHandle<T> {
@@ -41,7 +44,11 @@ impl<T: Send + 'static> TaskHandle<T> {
         if self.current.load(Ordering::Acquire) != self.generation {
             return false;
         }
-        self.tx.send((self.generation, value)).is_ok()
+        let sent = self.tx.send((self.generation, value)).is_ok();
+        if sent {
+            self.inbox.fetch_add(1, Ordering::Release);
+        }
+        sent
     }
 
     /// Whether this launch is still the current one for its tag and its owner
@@ -55,6 +62,7 @@ impl<T: Send + 'static> TaskHandle<T> {
 struct Inner<T: Send + 'static> {
     tx: Sender<(u64, T)>,
     rx: Receiver<(u64, T)>,
+    inbox: Arc<AtomicUsize>,
     alive: Arc<AtomicBool>,
     tags: RefCell<HashMap<&'static str, Arc<AtomicU64>>>,
     next: Cell<u64>,
@@ -81,6 +89,7 @@ impl<T: Send + 'static> Tasks<T> {
             inner: Inner {
                 tx,
                 rx,
+                inbox: Arc::new(AtomicUsize::new(0)),
                 alive: Arc::new(AtomicBool::new(true)),
                 tags: RefCell::new(HashMap::new()),
                 next: Cell::new(1),
@@ -132,6 +141,7 @@ impl<T: Send + 'static> Tasks<T> {
             generation,
             alive: self.inner.alive.clone(),
             current,
+            inbox: self.inner.inbox.clone(),
         }
     }
 
@@ -144,6 +154,7 @@ impl<T: Send + 'static> Tasks<T> {
         let handler = self.inner.on_result.borrow().clone();
         let mut n = 0;
         while let Ok((generation, value)) = self.inner.rx.try_recv() {
+            self.inner.inbox.fetch_sub(1, Ordering::AcqRel);
             let superseded = self
                 .inner
                 .tags
@@ -182,5 +193,9 @@ impl<T: Send + 'static> Behavior for Tasks<T> {
 
     fn pump(&self) -> usize {
         self.drain()
+    }
+
+    fn has_pending(&self) -> bool {
+        self.inner.inbox.load(Ordering::Acquire) > 0
     }
 }
