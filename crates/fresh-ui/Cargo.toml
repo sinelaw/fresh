@@ -1,0 +1,26 @@
+[package]
+name = "fresh-ui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Retained reconciling UI tree: descriptions, elements, render objects. Backend- and application-agnostic."
+keywords = ["ui", "tui", "reconciler", "layout"]
+categories = ["gui"]
+
+[lib]
+name = "fresh_ui"
+path = "src/lib.rs"
+
+[dependencies]
+unicode-width = "0.2"
+
+[dev-dependencies]
+# Test and example support only. The library itself still depends on
+# `unicode-width` alone, and on no other crate in this workspace.
+proptest = "1.9"
+# The interactive example's terminal backend. A dev-dependency, so it is
+# compiled for examples and tests and never for the library.
+crossterm.workspace = true

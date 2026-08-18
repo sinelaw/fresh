@@ -1,0 +1,48 @@
+=== clicked Open in the sidebar
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+( ) All     │»[ ] lay it out░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+(o) Open░░░░│»[ ] route the pointer
+( ) Done    │»[ ] wire up focus
+            │
+            │
+            │
+            │
+            │
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+
+=== clicked Done
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+( ) All     │»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │»[x] build the reconciler
+(o) Done░░░░│
+            │
+            │
+            │
+            │
+            │
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+
+=== back to All
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │»[x] build the reconciler
+( ) Done    │»[ ] lay it out
+            │»[ ] route the pointer
+            │»[ ] wire up focus
+            │
+            │
+            │
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+

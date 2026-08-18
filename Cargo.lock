@@ -1593,6 +1593,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fresh-ui"
+version = "0.4.9"
+dependencies = [
+ "crossterm",
+ "proptest",
+ "unicode-width",
+]
+
+[[package]]
 name = "fresh-update"
 version = "0.4.9"
 dependencies = [

@@ -1,0 +1,64 @@
+=== the top of a million rows
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] task 0░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█
+( ) Open    │»[ ] task 1                               │
+( ) Done    │»[ ] task 2                               │
+            │»[x] task 3                               │
+            │»[ ] task 4                               │
+            │»[ ] task 5                               │
+            │»[x] task 6                               │
+            │»[ ] task 7                               │
+            │»[ ] task 8                               │
+            │»[x] task 9                               │
+            │»[ ] task 10                              │
+1000000 tasks · light · synced 0 · ready
+
+=== three notches down
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] task 3                               █
+( ) Open    │»[ ] task 4                               │
+( ) Done    │»[ ] task 5                               │
+            │»[x] task 6                               │
+            │»[ ] task 7                               │
+            │»[ ] task 8                               │
+            │»[x] task 9                               │
+            │»[ ] task 10                              │
+            │»[ ] task 11                              │
+            │»[x] task 12                              │
+            │»[ ] task 13                              │
+1000000 tasks · light · synced 0 · ready
+
+=== half a million rows down
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[ ] task 499003                          │
+( ) Open    │»[ ] task 499004                          │
+( ) Done    │»[x] task 499005                          │
+            │»[ ] task 499006                          │
+            │»[ ] task 499007                          █
+            │»[x] task 499008                          │
+            │»[ ] task 499009                          │
+            │»[ ] task 499010                          │
+            │»[x] task 499011                          │
+            │»[ ] task 499012                          │
+            │»[ ] task 499013                          │
+1000000 tasks · light · synced 0 · ready
+
+=== and back to the top
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] task 0░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█
+( ) Open    │»[ ] task 1                               │
+( ) Done    │»[ ] task 2                               │
+            │»[x] task 3                               │
+            │»[ ] task 4                               │
+            │»[ ] task 5                               │
+            │»[x] task 6                               │
+            │»[ ] task 7                               │
+            │»[ ] task 8                               │
+            │»[x] task 9                               │
+            │»[ ] task 10                              │
+1000000 tasks · light · synced 0 · ready
+
