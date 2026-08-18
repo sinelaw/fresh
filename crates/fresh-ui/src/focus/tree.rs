@@ -37,7 +37,6 @@ pub(crate) struct FocusNodeData {
 pub(crate) struct FocusTree {
     slots: Vec<Option<FocusNodeData>>,
     free: Vec<u32>,
-    pub root: Option<FocusId>,
 }
 
 impl FocusTree {
@@ -70,7 +69,4 @@ impl FocusTree {
         self.slots.get_mut(id.0 as usize).and_then(|s| s.as_mut())
     }
 
-    pub fn live(&self) -> usize {
-        self.slots.iter().filter(|s| s.is_some()).count()
-    }
 }

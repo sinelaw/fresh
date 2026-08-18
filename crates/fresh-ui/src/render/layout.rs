@@ -16,7 +16,7 @@ use std::rc::Rc;
 
 use crate::desc::{resolve, Align, Anchor, Desc, Fit, Node, Place, Sizing};
 use crate::element::ElementId;
-use crate::render::object::{LayoutCx, LayoutInfo, RenderId, RenderObject};
+use crate::render::object::{LayoutCx, LayoutInfo, RenderId};
 use crate::render::prim;
 use crate::schedule::Ui;
 
@@ -34,10 +34,6 @@ struct Carry {
 }
 
 pub use prim::wrap_text;
-
-pub(crate) fn wrapped_lines(text: &str, width: u16) -> u16 {
-    wrap_text(text, width).len().min(u16::MAX as usize) as u16
-}
 
 // ---------------------------------------------------------------------------
 // The layout context handed to a render object
@@ -502,15 +498,6 @@ impl<M: 'static> Ui<M> {
         d
     }
 
-    fn is_render_ancestor(&self, a: RenderId, mut b: RenderId) -> bool {
-        while let Some(p) = self.render.get(b).and_then(|n| n.parent) {
-            if p == a {
-                return true;
-            }
-            b = p;
-        }
-        false
-    }
 
     /// The root is a child of the frame. `Auto` there means "fill", and an
     /// explicit request is honoured so a subtree can be measured on its own

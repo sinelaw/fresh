@@ -270,10 +270,6 @@ impl RenderArena {
         self.slots.get_mut(id.0 as usize).and_then(|s| s.as_mut())
     }
 
-    pub fn live(&self) -> usize {
-        self.slots.iter().filter(|s| s.is_some()).count()
-    }
-
     pub fn capacity(&self) -> usize {
         self.slots.len()
     }

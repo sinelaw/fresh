@@ -73,7 +73,7 @@ impl<M: 'static> crate::behavior::Behavior for Focusable<M> {
 
 use std::rc::Rc;
 
-use crate::desc::{resolve, Desc, ElemType, Modality};
+use crate::desc::{resolve, Desc, Modality};
 use crate::element::ElementId;
 use crate::event::{
     Ctl, Event, Flow, GestureKind, KeyPress, Mods, MouseButton, Phase, SelectionOnFocus,

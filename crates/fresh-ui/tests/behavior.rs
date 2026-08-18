@@ -20,6 +20,10 @@ impl Behavior for Probe {
     fn behavior_name(&self) -> &'static str {
         self.name
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 type Log = Rc<RefCell<Vec<&'static str>>>;

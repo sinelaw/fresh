@@ -546,6 +546,12 @@ impl<M: 'static> Ui<M> {
         self.services.spawn = Rc::new(f);
     }
 
+    /// The services this tree hands to behaviors. Exposed so a test can attach
+    /// a behavior without mounting one.
+    pub fn services_for_test(&self) -> crate::services::Services {
+        self.services.clone()
+    }
+
     /// Install the host's persistence store. `Persisted` values are read from
     /// it at construction and written back at teardown.
     pub fn set_store(&mut self, s: Rc<dyn crate::behavior::Store>) {

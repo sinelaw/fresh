@@ -1,5 +1,7 @@
 //! Async ownership (plan phase L5a).
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::mpsc::channel;
 use std::thread;
 
@@ -30,7 +32,7 @@ impl Component<()> for Loader {
         tasks.on_result(move |line| {
             up.set(move |s: &mut Loaded| s.lines.push(line));
         });
-        *self.0.borrow_mut() = Some(tasks.launch_replacing(self.1));
+        *self.0.borrow_mut() = Some(tasks.handle(self.1));
         Loaded {
             lines: Vec::new(),
             _tasks: Some(tasks),
@@ -104,8 +106,8 @@ fn a_result_that_arrives_after_teardown_never_reaches_a_handler() {
 #[test]
 fn two_launches_under_one_tag_leave_only_the_later_one_live() {
     let tasks = Tasks::<u32>::new();
-    let first = tasks.launch_replacing("search");
-    let second = tasks.launch_replacing("search");
+    let first = tasks.handle("search");
+    let second = tasks.handle("search");
 
     assert!(!first.is_live(), "superseded");
     assert!(second.is_live());
@@ -122,8 +124,8 @@ fn two_launches_under_one_tag_leave_only_the_later_one_live() {
 #[test]
 fn a_different_tag_is_not_superseded() {
     let tasks = Tasks::<u32>::new();
-    let a = tasks.launch_replacing("a");
-    let b = tasks.launch_replacing("b");
+    let a = tasks.handle("a");
+    let b = tasks.handle("b");
     assert!(a.is_live() && b.is_live());
     assert!(a.deliver(1) && b.deliver(2));
 
@@ -132,4 +134,37 @@ fn a_different_tag_is_not_superseded() {
     tasks.on_result(move |v| s.borrow_mut().push(v));
     tasks.drain();
     assert_eq!(*seen.borrow(), vec![1, 2]);
+}
+
+#[test]
+fn work_runs_on_the_host_spawner_and_reports_back() {
+    // A host that runs work inline instead of on a thread of the library's
+    // choosing. The point is that the library never names a runtime.
+    let ran: Rc<std::cell::Cell<usize>> = Rc::default();
+    let seen: Rc<RefCell<Vec<u32>>> = Rc::default();
+
+    let tasks = Tasks::<u32>::new();
+    let counter = ran.clone();
+    let services = {
+        let mut ui: Ui<()> = Ui::new();
+        ui.set_spawner(move |job| {
+            counter.set(counter.get() + 1);
+            job();
+        });
+        ui.services_for_test()
+    };
+    fresh_ui::Behavior::attach(&tasks, &services);
+
+    let (tx, rx) = channel();
+    tasks.launch_replacing("load", move |h| {
+        assert!(h.deliver(7));
+        tx.send(()).unwrap();
+    });
+    rx.recv().unwrap();
+
+    assert_eq!(ran.get(), 1, "the host's spawner ran it");
+    let s = seen.clone();
+    tasks.on_result(move |v| s.borrow_mut().push(v));
+    assert_eq!(tasks.drain(), 1);
+    assert_eq!(*seen.borrow(), vec![7]);
 }
