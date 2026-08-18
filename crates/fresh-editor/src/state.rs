@@ -596,8 +596,13 @@ impl EditorState {
     ) -> anyhow::Result<Self> {
         let buffer = Buffer::load_from_file(path, large_file_threshold, fs)?;
         let first_line = buffer.first_line_lossy();
-        let detected =
-            DetectedLanguage::from_path(path, first_line.as_deref(), registry, languages);
+        let detected = DetectedLanguage::from_path(
+            path,
+            first_line.as_deref(),
+            registry,
+            languages,
+            buffer.filesystem().as_ref(),
+        );
         let mut state = Self::new_from_buffer(buffer);
         state.apply_language(detected);
         Ok(state)
@@ -621,8 +626,13 @@ impl EditorState {
     ) -> anyhow::Result<Self> {
         let buffer = Buffer::load_from_file_force_text(path, large_file_threshold, fs)?;
         let first_line = buffer.first_line_lossy();
-        let detected =
-            DetectedLanguage::from_path(path, first_line.as_deref(), registry, languages);
+        let detected = DetectedLanguage::from_path(
+            path,
+            first_line.as_deref(),
+            registry,
+            languages,
+            buffer.filesystem().as_ref(),
+        );
         let mut state = Self::new_from_buffer(buffer);
         state.apply_language(detected);
         Ok(state)

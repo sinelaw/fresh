@@ -3471,6 +3471,7 @@ impl Window {
                 &self.resources.grammar_registry,
                 &self.config().languages,
                 self.config().default_language.as_deref(),
+                buffer.filesystem().as_ref(),
             );
         let state = crate::state::EditorState::from_buffer_with_language(buffer, detected);
 

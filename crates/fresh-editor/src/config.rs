@@ -9472,13 +9472,14 @@ mod tests {
     /// commas) but no default language claimed it.
     #[test]
     fn test_default_languages_map_jsonc_filenames() {
+        use crate::model::filesystem::StdFileSystem;
         use crate::services::lsp::manager::detect_language;
         use std::path::Path;
 
         let languages = Config::default_languages();
         for filename in ["bun.lock", "tsconfig.json", "devcontainer.json"] {
             assert_eq!(
-                detect_language(Path::new(filename), &languages),
+                detect_language(Path::new(filename), &languages, &StdFileSystem),
                 Some("jsonc".to_string()),
                 "expected `{filename}` to be detected as jsonc"
             );

@@ -1846,6 +1846,7 @@ impl crate::app::window::Window {
                 &self.resources.grammar_registry,
                 &self.resources.config.languages,
                 self.resources.config.default_language.as_deref(),
+                buffer.filesystem().as_ref(),
             );
         let mut state = EditorState::from_buffer_with_language(buffer, detected);
         state
