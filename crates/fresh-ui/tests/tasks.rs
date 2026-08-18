@@ -33,7 +33,7 @@ impl Component<()> for Loader {
         *self.0.borrow_mut() = Some(tasks.launch_replacing(self.1));
         Loaded {
             lines: Vec::new(),
-            tasks: Some(tasks),
+            _tasks: Some(tasks),
         }
     }
 

@@ -1,8 +1,8 @@
 # Widget Library — Implementation Plan
 
 > _AI-generated plan. **Part 1 has started; Part 2 is PLANNED.** Phases L0
-> through L6 are implemented in `crates/fresh-ui`; the widget set (L7), `Tasks`
-> (L5a) and all of Part 2 are still design._
+> through L7 are implemented in `crates/fresh-ui` — all of Part 1 except the
+> demo binary. Part 2 (the migration) is still design._
 >
 > How to build [`widget-library-design.md`](widget-library-design.md) as a new
 > crate, and how to move every existing UI surface onto it. Two parts, in
@@ -99,11 +99,10 @@ Each phase ends with tests that fix its semantics. The order is constrained:
 L1 and L2 define the framework's semantics and every later phase depends on
 them.
 
-**Status.** L0 through L6 are implemented and their exit criteria are covered
+**Status.** L0 through L7 are implemented and their exit criteria are covered
 by tests in `crates/fresh-ui/tests/`. The crate's only dependency is
 `unicode-width`; it pulls in no other workspace crate, so `cargo test -p
-fresh-ui` builds the library and nothing else. `Tasks` (L5a) and the widget set
-(L7) are unstarted.
+fresh-ui` builds the library and nothing else.
 
 ### Deviations from the design document
 
@@ -178,7 +177,21 @@ different expression of it.
    a `TextRun` sees `Capture` and `Bubble`, not `Target`, because the text is
    what was hit. This matches the DOM, where an element wrapping a text node is
    not the target either.
-14. **`Behavior::teardown` takes `&self`.** A behavior is shared between the
+14. **`List::windowed`, not `List::virtual`.** `virtual` is a reserved word in
+   Rust. Both forms go through the same `LayoutReader`, so the eager list gets
+   the windowed one's per-frame cost profile for free and the two behave
+   identically to keyboard, wheel and selection.
+15. **`Tasks` does not start work; it owns delivery.** The design document does
+   not name a runtime, and this crate has no runtime dependency. The application
+   starts a thread, a future or a channel however it likes and receives a
+   `TaskHandle`, which is `Send`. The two guarantees the design asks for are the
+   ones needing framework support, and they are implemented here: results are
+   handed over between frames, never during build, layout or paint; and a result
+   refuses delivery once its element is torn down or a newer launch under the
+   same tag has replaced it.
+16. **`event::MouseButton`, not `Button`.** The widget of that name is more
+   often written.
+17. **`Behavior::teardown` takes `&self`.** A behavior is shared between the
    element's registry and the state field holding it, and `build` only ever sees
    `&State`, so a behavior with mutable internals owns a `RefCell` regardless.
 
