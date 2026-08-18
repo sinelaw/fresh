@@ -55,6 +55,15 @@ pub const DARK: Theme = Theme {
     accent: "▸",
 };
 
+/// The top-level menus, as a type rather than a string key. Which one is open
+/// is app state — a mnemonic must be able to open it — and making it an enum
+/// means a typo cannot silently fail to match.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Menu {
+    File,
+    Go,
+}
+
 /// Which task indices the current filter admits.
 ///
 /// `All` is a range rather than a vector, so a million-row list costs nothing
@@ -91,7 +100,7 @@ pub struct App {
     pub selected: usize,
     /// Which top-level menu is open, if any. Lifted here — not left on the
     /// dropdown — because a global mnemonic (Alt+F) must be able to open it.
-    pub menu: Option<Key>,
+    pub menu: Option<Menu>,
     /// Set by File → Quit; the host loop reads it and exits.
     pub quit: bool,
     pub draft: String,
@@ -240,7 +249,7 @@ pub enum Msg {
     ClosePalette,
     MenuChoice(Key),
     /// Open the named menu, or close whatever is open.
-    Menu(Option<Key>),
+    Menu(Option<Menu>),
     BeginResize,
     Resize(i32),
     EndResize,

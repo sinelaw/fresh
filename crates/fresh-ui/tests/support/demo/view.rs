@@ -19,7 +19,7 @@ use fresh_ui::schedule::BuildCx;
 use fresh_ui::widgets::{divider, Button, Dropdown, List, RadioGroup, TextField};
 use fresh_ui::{Component, ComponentExt};
 
-use super::model::{App, Filter, Msg, Task, Theme, COMMANDS};
+use super::model::{App, Filter, Menu, Msg, Task, Theme, COMMANDS};
 
 /// The theme reaches the status bar and the rows without appearing in a single
 /// intermediate signature.
@@ -35,8 +35,8 @@ pub fn view(app: &App) -> Node<Msg> {
         .action(Intent::Custom("palette"), |_| Msg::OpenPalette)
         // The menu mnemonics are actions on the root focusable, so they fire
         // wherever focus happens to be — that is what makes them global.
-        .action(Intent::Custom("menu.file"), |_| Msg::Menu(Some(file_key())))
-        .action(Intent::Custom("menu.go"), |_| Msg::Menu(Some(go_key())))
+        .action(Intent::Custom("menu.file"), |_| Msg::Menu(Some(Menu::File)))
+        .action(Intent::Custom("menu.go"), |_| Msg::Menu(Some(Menu::Go)))
 }
 
 fn app_body(app: &App) -> Node<Msg> {
@@ -68,36 +68,28 @@ fn app_body(app: &App) -> Node<Msg> {
 
 // -- the menu bar ------------------------------------------------------------
 
-/// The identity of each top-level menu, matched against `app.menu`.
-fn file_key() -> Key {
-    Key::from("menu.file")
-}
-fn go_key() -> Key {
-    Key::from("menu.go")
-}
-
 /// The menu bar is controlled by `app.menu`: the trigger, the Alt mnemonic and
 /// a dismissal all route through the same app state, so any of them can open or
 /// close a menu and they never disagree. It can no longer be hoisted — it is a
 /// function of state now — which is the honest cost of lifting the open flag.
 fn menu_bar(app: &App) -> Node<Msg> {
-    let open = app.menu.clone();
-    let menu = |k: Key| -> Box<dyn Fn(bool) -> Msg> {
-        Box::new(move |now| Msg::Menu(now.then(|| k.clone())))
-    };
+    // One binding per menu for the open flag and the toggle message, both
+    // derived from `app.menu`. `now.then_some(m)` reads as "open this menu, or
+    // close" and the enum makes a mismatch impossible.
+    let toggle = |m: Menu| move |now: bool| Msg::Menu(now.then_some(m));
     row().theme("menubar").h(Sizing::Cells(1)).children([
         Dropdown::new("File")
             .item("new", "New task")
             .item("quit", "Quit")
-            .open(open.as_ref() == Some(&file_key()))
-            .on_toggle(menu(file_key()))
+            .open(app.menu == Some(Menu::File))
+            .on_toggle(toggle(Menu::File))
             .on_choose(Msg::MenuChoice)
             .node()
             .key("menu.file"),
         Dropdown::new("Go")
             .item("palette", "Command palette")
-            .open(open.as_ref() == Some(&go_key()))
-            .on_toggle(menu(go_key()))
+            .open(app.menu == Some(Menu::Go))
+            .on_toggle(toggle(Menu::Go))
             .on_choose(Msg::MenuChoice)
             .node()
             .key("menu.go"),
