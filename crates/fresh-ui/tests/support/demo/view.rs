@@ -6,18 +6,18 @@
 
 use std::rc::Rc;
 
-use crate::ambient::{provide, Ambient};
-use crate::desc::{
+use fresh_ui::ambient::{provide, Ambient};
+use fresh_ui::desc::{
     col, gesture, host, layer, row, shared_rc, stack, text, Align, Anchor, Dismiss, Fit, Modality,
     Node, Place, Scrim, Sizing,
 };
-use crate::event::{Event, GestureKind, KeyCode, KeyPress, Mods};
-use crate::focus::Intent;
-use crate::key::Key;
-use crate::render::geom::Point;
-use crate::schedule::BuildCx;
-use crate::widgets::{divider, Button, Dropdown, List, RadioGroup, TextField};
-use crate::{Component, ComponentExt};
+use fresh_ui::event::{Event, GestureKind, KeyCode, KeyPress, Mods};
+use fresh_ui::focus::Intent;
+use fresh_ui::key::Key;
+use fresh_ui::render::geom::Point;
+use fresh_ui::schedule::BuildCx;
+use fresh_ui::widgets::{divider, Button, Dropdown, List, RadioGroup, TextField};
+use fresh_ui::{Component, ComponentExt};
 
 use super::model::{App, Filter, Msg, Task, Theme, COMMANDS};
 
@@ -30,7 +30,7 @@ pub fn view(app: &App) -> Node<Msg> {
     // more specific part of the interface claimed. It deliberately does *not*
     // claim Cancel — a layer that declares `dismiss(ESCAPE)` needs Escape to
     // reach it, and an action here would swallow it first.
-    crate::desc::focusable(app_body(app))
+    fresh_ui::desc::focusable(app_body(app))
         .skip_traversal()
         .action(Intent::Custom("palette"), |_| Msg::OpenPalette)
 }
@@ -316,20 +316,20 @@ pub struct StatusBar {
     slot: SyncSlot,
 }
 
-pub type SyncSlot = Rc<std::cell::RefCell<Option<crate::behavior::TaskHandle<usize>>>>;
+pub type SyncSlot = Rc<std::cell::RefCell<Option<fresh_ui::behavior::TaskHandle<usize>>>>;
 
 #[derive(Default)]
 pub struct StatusState {
     synced: usize,
     /// Held so the behavior lives exactly as long as the element does.
-    _tasks: Option<Rc<crate::behavior::Tasks<usize>>>,
+    _tasks: Option<Rc<fresh_ui::behavior::Tasks<usize>>>,
 }
 
 impl Component<Msg> for StatusBar {
     type State = StatusState;
 
-    fn init(&self, cx: &mut crate::schedule::InitCx<'_, Msg>) -> StatusState {
-        let tasks = cx.register(crate::behavior::Tasks::<usize>::new());
+    fn init(&self, cx: &mut fresh_ui::schedule::InitCx<'_, Msg>) -> StatusState {
+        let tasks = cx.register(fresh_ui::behavior::Tasks::<usize>::new());
         let up = cx.updater::<StatusState>();
         tasks.on_result(move |n| up.set(move |s: &mut StatusState| s.synced = n));
         *self.slot.borrow_mut() = Some(tasks.handle("sync"));
@@ -358,9 +358,9 @@ impl Component<Msg> for StatusBar {
 }
 
 /// Global shortcuts the demo installs on top of the default map.
-pub fn shortcuts() -> Vec<crate::focus::Shortcut> {
-    let mut s = crate::focus::default_shortcuts();
-    s.push(crate::focus::Shortcut::new(
+pub fn shortcuts() -> Vec<fresh_ui::focus::Shortcut> {
+    let mut s = fresh_ui::focus::default_shortcuts();
+    s.push(fresh_ui::focus::Shortcut::new(
         KeyPress::with(KeyCode::Char('p'), Mods::CTRL),
         Intent::Custom("palette"),
     ));

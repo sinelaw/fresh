@@ -5,9 +5,9 @@
 //! rather than on a list of rectangles, and so that the demo has something to
 //! print. A real terminal backend does the same fold into cells with colours.
 
-use crate::desc::Scrim;
-use crate::render::geom::Rect;
-use crate::render::spec::{Draw, Item, LayoutSpec};
+use fresh_ui::desc::Scrim;
+use fresh_ui::render::geom::Rect;
+use fresh_ui::render::spec::{Draw, Item, LayoutSpec};
 
 /// A character grid.
 #[derive(Clone, PartialEq, Eq)]
@@ -30,7 +30,7 @@ impl Screen {
         if x < 0 || y < 0 || x >= self.w as i32 || y >= self.h as i32 {
             return;
         }
-        if !clip.contains(crate::render::geom::Point::new(x, y)) {
+        if !clip.contains(fresh_ui::render::geom::Point::new(x, y)) {
             return;
         }
         self.cells[y as usize * self.w as usize + x as usize] = c;

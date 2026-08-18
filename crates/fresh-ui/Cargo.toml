@@ -18,6 +18,9 @@ path = "src/lib.rs"
 unicode-width = "0.2"
 
 [dev-dependencies]
-# Property tests only. The library itself still depends on `unicode-width`
-# alone, and on no other crate in this workspace.
+# Test and example support only. The library itself still depends on
+# `unicode-width` alone, and on no other crate in this workspace.
 proptest = "1.9"
+# The interactive example's terminal backend. A dev-dependency, so it is
+# compiled for examples and tests and never for the library.
+crossterm.workspace = true

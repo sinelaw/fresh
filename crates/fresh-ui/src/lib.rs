@@ -16,16 +16,16 @@
 //! ## What is implemented
 //!
 //! Descriptions, the element tree and reconciliation, the scheduler, behavior
-//! registration and teardown, ambient values, and tree diagnostics. Layout,
-//! paint, pointer routing, focus and the widget set follow in later phases; the
-//! primitives' props exist and are inert until then.
+//! registration and teardown, ambient values and tree diagnostics; box-constraint
+//! layout, the display list, pointer routing, focus and the widget set. A demo
+//! application and the tests that drive it live under `tests/support`, outside
+//! this library tree; `cargo run --example interactive` runs it in a terminal.
 
 #![forbid(unsafe_code)]
 
 pub mod ambient;
 pub mod behavior;
 pub mod component;
-pub mod demo;
 pub mod desc;
 pub mod diagnose;
 pub mod element;
@@ -36,7 +36,6 @@ pub mod key;
 pub mod render;
 pub mod schedule;
 pub mod services;
-pub mod test;
 pub mod widgets;
 
 pub use ambient::{provide, Ambient, AmbientKey, ProvideProps};

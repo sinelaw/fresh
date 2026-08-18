@@ -3,11 +3,12 @@
 //! Every assertion here goes through the public event path — dispatch an input,
 //! read the messages and the display list. Nothing reaches into the framework.
 
-use fresh_ui::test::fake::Recorder;
+mod support;
 use fresh_ui::{
     col, Button, ComponentExt, Draw, Dropdown, Input, KeyCode, KeyPress, List, Mods, MouseButton,
     Node, Number, Point, RadioGroup, Size, Sizing, TextField, Toggle, Tree, TreeNode, Ui,
 };
+use support::fake::Recorder;
 
 const FRAME: Size = Size { w: 30, h: 10 };
 

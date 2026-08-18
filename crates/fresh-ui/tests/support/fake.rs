@@ -3,9 +3,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::desc::ElemType;
-use crate::element::ElementId;
-use crate::schedule::Renderer;
+use fresh_ui::desc::ElemType;
+use fresh_ui::element::ElementId;
+use fresh_ui::schedule::Renderer;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Op {
@@ -28,7 +28,7 @@ impl Op {
     }
 }
 
-/// Clone it, hand one clone to [`crate::Ui::with_renderer`], and read the other.
+/// Clone it, hand one clone to [`fresh_ui::Ui::with_renderer`], and read the other.
 #[derive(Clone, Default)]
 pub struct Recorder {
     ops: Rc<RefCell<Vec<Op>>>,

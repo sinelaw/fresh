@@ -6,11 +6,12 @@
 
 use proptest::prelude::*;
 
-use fresh_ui::demo::{App, Demo};
+mod support;
 use fresh_ui::{
     col, distribute, row, text, Input, Key, KeyCode, KeyPress, Mods, MouseButton, Node, Point,
     Rect, Size, Sizing, Ui,
 };
+use support::demo::{App, Demo};
 
 // ---------------------------------------------------------------------------
 // The flex division algebra

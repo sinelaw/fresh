@@ -23,10 +23,10 @@ pub mod view;
 pub use model::{update, App, Filter, Msg, Task, Theme, COMMANDS};
 pub use view::{shortcuts, view};
 
-use crate::event::Input;
-use crate::render::geom::Size;
-use crate::test::screen::{render_with, Screen};
-use crate::Ui;
+use super::screen::{render_with, Screen};
+use fresh_ui::event::Input;
+use fresh_ui::render::geom::Size;
+use fresh_ui::Ui;
 
 /// A stand-in for whatever the application talks to. The tutorial's
 /// `Services { net, store }`: constructed once, owned by the program, and
@@ -71,6 +71,20 @@ impl Demo {
     pub fn input(&mut self, input: Input) -> Vec<Msg> {
         let mut msgs = self.ui.dispatch(input);
         msgs.extend(self.ui.take_messages());
+        for m in msgs.clone() {
+            update(&mut self.app, m);
+        }
+        self.render();
+        msgs
+    }
+
+    /// A turn of the loop with no input: let behaviors deliver anything that
+    /// arrived from another thread — a completed background sync — apply the
+    /// messages that produced, and redraw. This is what an idle tick calls so a
+    /// task finishing between keystrokes still reaches the screen.
+    pub fn pump(&mut self) -> Vec<Msg> {
+        self.ui.tick();
+        let msgs = self.ui.take_messages();
         for m in msgs.clone() {
             update(&mut self.app, m);
         }

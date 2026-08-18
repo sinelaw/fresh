@@ -6,8 +6,9 @@
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
-use fresh_ui::test::fake::Recorder;
+mod support;
 use fresh_ui::{col, row, shared_rc, text, BuildCx, Component, ComponentExt, Node, Ui};
+use support::fake::Recorder;
 
 fn ui() -> (Recorder, Ui<()>) {
     let rec = Recorder::new();

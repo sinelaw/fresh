@@ -4,8 +4,10 @@
 //!
 //!     cargo run -p fresh-ui --example demo
 
-use fresh_ui::demo::Demo;
+#[path = "../tests/support/mod.rs"]
+mod support;
 use fresh_ui::{Input, KeyCode, KeyPress, Mods, MouseButton, Point, Size};
+use support::demo::Demo;
 
 fn key(c: KeyCode) -> Input {
     Input::Key(KeyPress::new(c))
@@ -101,7 +103,7 @@ fn main() {
     demo.deliver_sync(42);
     show(&demo, "a result arrives from another thread", &mut step);
 
-    let mut huge = Demo::with_app(fresh_ui::demo::App::huge(1_000_000), Size::new(64, 16));
+    let mut huge = Demo::with_app(support::demo::App::huge(1_000_000), Size::new(64, 16));
     huge.input(Input::Wheel {
         pos: Point::new(30, 6),
         delta: 400_000,

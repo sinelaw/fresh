@@ -6,8 +6,8 @@
 
 use std::rc::Rc;
 
-use crate::key::Key;
-use crate::render::geom::Point;
+use fresh_ui::key::Key;
+use fresh_ui::render::geom::Point;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Task {

@@ -15,8 +15,9 @@
 
 use std::path::PathBuf;
 
-use fresh_ui::demo::{App, Demo, Msg};
+mod support;
 use fresh_ui::{Input, KeyCode, KeyPress, Mods, MouseButton, Point, Size};
+use support::demo::{App, Demo, Msg};
 
 const FRAME: Size = Size { w: 56, h: 14 };
 
