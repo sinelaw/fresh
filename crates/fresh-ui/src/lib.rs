@@ -29,6 +29,7 @@ pub mod desc;
 pub mod diagnose;
 pub mod element;
 pub mod key;
+pub mod render;
 pub mod schedule;
 pub mod test;
 
@@ -36,11 +37,14 @@ pub use ambient::{provide, Ambient, AmbientKey, ProvideProps};
 pub use behavior::Behavior;
 pub use component::{AnyComponent, Component};
 pub use desc::{
-    col, focusable, gesture, host, layer, node_key, node_type, resolve, row, shared_rc, stack,
-    text, viewport, Align, Anchor, BoxProps, ComponentExt, Desc, Dir, Dismiss, ElemType, Event,
-    Fit, FocusProps, GestureKind, GestureProps, Handler, HostId, LayerProps, Modality, Node, Pad,
-    Place, PointerMode, Scrim, Sizing, TextProps, ViewportProps,
+    col, focusable, gesture, host, layer, layout_reader, node_key, node_type, resolve, row,
+    shared_rc, stack, text, viewport, Align, Anchor, BoxProps, ComponentExt, Desc, Dir, Dismiss,
+    ElemType, Event, Fit, FocusProps, GestureKind, GestureProps, Handler, HostId, LayerProps,
+    LayoutReaderProps, Modality, Node, Pad, Place, PointerMode, Scrim, Sizing, TextProps,
+    ViewportProps,
 };
 pub use element::ElementId;
 pub use key::{Key, KeyPath};
+pub use render::geom::{distribute, Constraints, Point, Rect, Size};
+pub use render::spec::{CursorSpec, Draw, Item, LayoutSpec, ThemeKey};
 pub use schedule::{BuildCx, DirtyCause, InitCx, NullRenderer, Renderer, Sched, Ui, Updater};

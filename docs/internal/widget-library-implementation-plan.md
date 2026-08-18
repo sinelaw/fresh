@@ -1,7 +1,7 @@
 # Widget Library — Implementation Plan
 
 > _AI-generated plan. **Part 1 has started; Part 2 is PLANNED.** Phases L0
-> through L2c are implemented in `crates/fresh-ui`; everything from L3 onward is
+> through L4 are implemented in `crates/fresh-ui`; everything from L5 onward is
 > still design._
 >
 > How to build [`widget-library-design.md`](widget-library-design.md) as a new
@@ -99,11 +99,11 @@ Each phase ends with tests that fix its semantics. The order is constrained:
 L1 and L2 define the framework's semantics and every later phase depends on
 them.
 
-**Status.** L0, L1, L2, L2a, L2b and L2c are implemented and their exit
-criteria are covered by tests in `crates/fresh-ui/tests/`. The crate has no
-dependencies — neither external ones nor other workspace crates — so
-`cargo test -p fresh-ui` builds the library and nothing else. Everything from
-L3 (layout) onward is unstarted.
+**Status.** L0 through L4 are implemented and their exit criteria are covered
+by tests in `crates/fresh-ui/tests/`. The crate's only dependency is
+`unicode-width`; it pulls in no other workspace crate, so `cargo test -p
+fresh-ui` builds the library and nothing else. Everything from L5 (hit-testing)
+onward is unstarted.
 
 ### Deviations from the design document
 
@@ -148,13 +148,35 @@ different expression of it.
    that rules out structural equality for descriptions rules it out here:
    `Rc::ptr_eq` is O(1) and needs no bound on `T`. Handing back the same `Rc`
    marks nobody.
-8. **`Behavior::teardown` takes `&self`.** A behavior is shared between the
+8. **Render objects are a field on the element, not a third arena.** The
+   correspondence is one-to-one and the lifetimes are identical, and the two
+   walks that need both — retargeting at component boundaries, and focus
+   registration — become direct instead of a join across two id spaces.
+9. **`Sizing` is a node-level attribute and `Align::Stretch` is the default.**
+   The design document sizes a `Viewport` and a `Component` in its own
+   examples, so sizing cannot live in `BoxProps`. Stretch as the default is
+   what makes those examples resolve in one pass: a child with `Auto` on the
+   cross axis fills it when the container's cross extent is definite, and
+   behaves as `Start` when it is not. Without that rule a sidebar declared only
+   as `w(Cells(20))` would not fill the row's height, and matching flexbox
+   would need a second cross-axis pass.
+10. **Relayout boundaries use a dirty-boundary list; `arrange` still walks the
+   whole tree.** Measurement — the expensive half — re-enters at the nearest
+   boundary, which is what the exit criterion asks for. Assigning absolute
+   positions afterwards is O(nodes) with no measurement, and doing it whole
+   keeps out-of-flow layer collection correct.
+11. **Positions are signed.** `Point` and `Rect` origins are `i32` because
+   content scrolled above or left of its viewport has a negative origin;
+   clipping removes it, and saturating it to zero would silently move it.
+12. **`Behavior::teardown` takes `&self`.** A behavior is shared between the
    element's registry and the state field holding it, and `build` only ever sees
    `&State`, so a behavior with mutable internals owns a `RefCell` regardless.
 
-One behaviour is implemented that the design document does not state
-explicitly: the `(type, key)` rule is applied to the **root** description as
-well as to children, so changing the root's type or key replaces the root
+Two behaviours are implemented that the design document does not state
+explicitly. The root is treated as a child of the frame: `Auto` there means
+"fill", and an explicit request on the root is honoured, so a subtree can be
+measured on its own terms. And the `(type, key)` rule is applied to the **root**
+description as well as to children, so changing the root's type or key replaces the root
 element rather than updating it in place.
 
 The snapshot rule's debug assertion is detectable in exactly one form: a

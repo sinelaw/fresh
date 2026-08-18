@@ -59,7 +59,7 @@ fn tree(theme: &'static str) -> Node<()> {
 #[test]
 fn a_dependent_rebuilds_when_the_value_changes_and_not_otherwise() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(tree("dark"));
+    ui.reconcile(tree("dark"));
     let themed = ui.at(&[0, 0]).unwrap();
     let other = ui.at(&[0, 1]).unwrap();
 
@@ -68,7 +68,7 @@ fn a_dependent_rebuilds_when_the_value_changes_and_not_otherwise() {
 
     // Same value instance-for-instance is still a different Rc, so this counts
     // as a change; the point of the test is which elements react.
-    ui.frame(tree("light"));
+    ui.reconcile(tree("light"));
 
     assert_eq!(
         ui.builds(themed),
@@ -99,14 +99,14 @@ fn an_unchanged_value_marks_nobody() {
     };
 
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(build(&value));
+    ui.reconcile(build(&value));
     let themed = ui.at(&[0, 0]).unwrap();
     let provider = ui.root().unwrap();
 
     // The same instance handed back: the provider swaps nothing and marks
     // nobody. The rebuild that does happen comes from re-supplying the root.
     let before = ui.builds(themed);
-    ui.frame(build(&value));
+    ui.reconcile(build(&value));
     assert_eq!(ui.builds(themed), before + 1);
     assert!(ui.dependents(provider).contains(&themed));
 
@@ -119,7 +119,7 @@ fn an_unchanged_value_marks_nobody() {
 #[test]
 fn the_nearest_provider_wins_and_unrelated_ambients_do_not_collide() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(provide(
+    ui.reconcile(provide(
         &THEME,
         Rc::new(Theme("outer")),
         provide(
@@ -149,10 +149,10 @@ fn the_nearest_provider_wins_and_unrelated_ambients_do_not_collide() {
 #[test]
 fn replacing_one_ambient_with_another_remounts_rather_than_aliasing() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(provide(&THEME, Rc::new(Theme("dark")), Themed.node()));
+    ui.reconcile(provide(&THEME, Rc::new(Theme("dark")), Themed.node()));
     let before = ui.at(&[0]).unwrap();
 
-    ui.frame(provide(&LOCALE, Rc::new(Locale("en")), Themed.node()));
+    ui.reconcile(provide(&LOCALE, Rc::new(Locale("en")), Themed.node()));
     let after = ui.at(&[0]).unwrap();
 
     assert_ne!(
@@ -164,7 +164,7 @@ fn replacing_one_ambient_with_another_remounts_rather_than_aliasing() {
 #[test]
 fn a_dependent_that_is_disposed_stops_being_a_dependent() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(provide(
+    ui.reconcile(provide(
         &THEME,
         Rc::new(Theme("dark")),
         col().child(Themed.node()),
@@ -173,7 +173,7 @@ fn a_dependent_that_is_disposed_stops_being_a_dependent() {
     let themed = ui.at(&[0, 0]).unwrap();
     assert_eq!(ui.dependents(provider), vec![themed]);
 
-    ui.frame(provide(
+    ui.reconcile(provide(
         &THEME,
         Rc::new(Theme("dark")),
         col().child(text("plain")),
@@ -187,8 +187,8 @@ fn a_dependent_that_is_disposed_stops_being_a_dependent() {
 #[should_panic(expected = "only read it in init()")]
 fn a_constructor_read_that_goes_stale_is_reported() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(provide(&THEME, Rc::new(Theme("dark")), Snapshotter.node()));
+    ui.reconcile(provide(&THEME, Rc::new(Theme("dark")), Snapshotter.node()));
     // The provider's value changes; the snapshotter cached it and cannot see
     // the change. Without the assertion this produces stale output silently.
-    ui.frame(provide(&THEME, Rc::new(Theme("light")), Snapshotter.node()));
+    ui.reconcile(provide(&THEME, Rc::new(Theme("light")), Snapshotter.node()));
 }

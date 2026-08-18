@@ -38,7 +38,7 @@ impl Component<()> for Screen {
 #[test]
 fn the_dump_names_the_type_key_state_build_count_and_cause() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(Screen.node());
+    ui.reconcile(Screen.node());
     let row = ui.at(&[0, 0]).unwrap();
 
     ui.set_state::<Count>(row, |s| s.n = 3);
@@ -76,12 +76,12 @@ fn the_dump_attributes_an_ambient_change_to_the_ambient() {
 
     let mut ui: Ui<()> = Ui::new();
     let value = Rc::new("dark");
-    ui.frame(provide(&THEME, value.clone(), Themed.node()));
+    ui.reconcile(provide(&THEME, value.clone(), Themed.node()));
     let themed = ui.at(&[0]).unwrap();
 
     // Change the value without re-supplying the root: the only thing that can
     // mark the reader is its ambient dependency.
-    ui.frame(provide(&THEME, Rc::new("light"), Themed.node()));
+    ui.reconcile(provide(&THEME, Rc::new("light"), Themed.node()));
 
     assert_eq!(ui.last_dirty(themed), Some(DirtyCause::Ambient("theme")));
     assert!(ui.dump().contains("cause=ambient @theme"), "{}", ui.dump());
@@ -94,7 +94,7 @@ fn the_dump_attributes_an_ambient_change_to_the_ambient() {
 #[test]
 fn shape_is_the_dump_without_the_volatile_parts() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(Screen.node());
+    ui.reconcile(Screen.node());
     let before = ui.shape();
 
     let row = ui.at(&[0, 0]).unwrap();

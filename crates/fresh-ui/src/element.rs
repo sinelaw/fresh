@@ -14,6 +14,7 @@ use crate::ambient::AmbientNode;
 use crate::behavior::Behavior;
 use crate::desc::{component_of, node_key, node_type, resolve, Desc, ElemType, Node};
 use crate::key::Key;
+use crate::render::object::RenderData;
 use crate::schedule::{BuildCx, DirtyCause, InitCx, Ui};
 
 /// A handle into the element arena. Stable while the element is mounted;
@@ -60,6 +61,9 @@ pub(crate) struct Element<M> {
     pub reads: Vec<ElementId>,
     pub init_reads: Vec<ElementId>,
 
+    /// Geometry. See `render::object::RenderData`.
+    pub layout: RenderData,
+
     /// Diagnostics.
     pub builds: u32,
     pub last_dirty: Option<DirtyCause>,
@@ -94,6 +98,7 @@ impl<M> Element<M> {
             init_dependents: Vec::new(),
             reads: Vec::new(),
             init_reads: Vec::new(),
+            layout: RenderData::fresh(),
             builds: 0,
             last_dirty: None,
             state_name: "",
@@ -351,6 +356,9 @@ impl<M: 'static> Ui<M> {
             .alloc(Element::blank(key, ty, name, node, parent, depth, scope));
         self.journal(Undo::Created(id));
         self.renderer.create(id, ty, name);
+        if let Some(p) = parent {
+            self.mark_needs_layout(p);
+        }
         if let Some(el) = self.arena.get_mut(id) {
             el.last_dirty = Some(DirtyCause::Mount);
         }
@@ -410,7 +418,11 @@ impl<M: 'static> Ui<M> {
                 return;
             }
         }
+        let moved = crate::render::layout::layout_relevant_changed(&self.arena[id].desc, &new);
         self.set_desc(id, new);
+        if moved {
+            self.mark_needs_layout(id);
+        }
         self.renderer
             .update(id, self.arena[id].ty, self.arena[id].name);
         self.refresh_provided(id);
@@ -576,6 +588,9 @@ impl<M: 'static> Ui<M> {
             if !used[j] {
                 self.detach(c);
             }
+        }
+        if out != old {
+            self.mark_needs_layout(parent);
         }
         self.set_children(parent, out);
     }

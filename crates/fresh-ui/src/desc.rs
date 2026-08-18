@@ -43,6 +43,9 @@ pub struct Node<M> {
     /// `Component` that does not itself lay anything out.
     pub w: Sizing,
     pub h: Sizing,
+    /// Per-item provenance for the display list. Inherited by descendants that
+    /// do not set their own. The library never interprets it.
+    pub theme: Option<Rc<str>>,
     pub desc: Desc<M>,
     pub children: Vec<Node<M>>,
 }
@@ -66,6 +69,11 @@ pub enum Desc<M> {
     /// Makes an ambient value visible to everything below it (§ambient). Not a
     /// primitive: it has no render object and contributes no geometry.
     Provide(ProvideProps),
+    /// Structure that depends on the incoming constraints. Its builder runs
+    /// during the layout pass, with the constraints as an argument, so the
+    /// dependency is scoped to this node and evaluated in the right pass
+    /// instead of becoming a build/layout cycle or a one-frame lag.
+    LayoutReader(LayoutReaderProps<M>),
     /// A subtree the reconciler skips when the instance is unchanged.
     Shared(Rc<Node<M>>),
     /// Composition: builds a subtree from props and state.
@@ -85,6 +93,7 @@ pub enum ElemType {
     /// The ambient's identity is part of the type, so swapping one ambient for
     /// another at the same position remounts instead of aliasing.
     Provide(AmbientKey),
+    LayoutReader,
     Component(TypeId),
 }
 
@@ -119,9 +128,13 @@ pub struct Pad {
     pub y: u16,
 }
 
+/// Cross-axis placement of a container's children.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Align {
+    /// Fill the cross axis, when the container's cross extent is definite.
+    /// Where it is not, this behaves as `Start`.
     #[default]
+    Stretch,
     Start,
     Center,
     End,
@@ -150,6 +163,8 @@ pub struct ViewportProps {
     pub scroll: (u16, u16),
     pub selectable: bool,
     pub max_h: Option<u16>,
+    /// Emit a scrollbar item when the content exceeds the window.
+    pub scrollbar: bool,
 }
 
 /// Whether a gesture region absorbs pointer hits that land on it.
@@ -338,6 +353,20 @@ pub struct LayerProps {
     pub dismiss: Dismiss,
 }
 
+/// A builder that receives the constraints its node was given.
+pub struct LayoutReaderProps<M> {
+    #[allow(clippy::type_complexity)]
+    pub build: Rc<dyn Fn(crate::render::geom::Constraints) -> Node<M>>,
+}
+
+impl<M> Clone for LayoutReaderProps<M> {
+    fn clone(&self) -> Self {
+        LayoutReaderProps {
+            build: self.build.clone(),
+        }
+    }
+}
+
 /// An opaque handle to host-owned content. The library never interprets it;
 /// the embedding application maps it to a buffer, a terminal grid, or whatever
 /// else it renders itself.
@@ -360,6 +389,7 @@ impl<M> Clone for Node<M> {
             key: self.key.clone(),
             w: self.w,
             h: self.h,
+            theme: self.theme.clone(),
             desc: self.desc.clone(),
             children: self.children.clone(),
         }
@@ -377,6 +407,7 @@ impl<M> Clone for Desc<M> {
             Desc::Layer(p) => Desc::Layer(p.clone()),
             Desc::Host(h) => Desc::Host(*h),
             Desc::Provide(p) => Desc::Provide(p.clone()),
+            Desc::LayoutReader(p) => Desc::LayoutReader(p.clone()),
             Desc::Shared(n) => Desc::Shared(n.clone()),
             Desc::Component(c) => Desc::Component(c.clone()),
         }
@@ -428,6 +459,7 @@ pub fn node_type<M>(n: &Node<M>) -> (ElemType, &'static str) {
         Desc::Layer(_) => (ElemType::Layer, "Layer"),
         Desc::Host(_) => (ElemType::Host, "Host"),
         Desc::Provide(p) => (ElemType::Provide(p.key), "Provide"),
+        Desc::LayoutReader(_) => (ElemType::LayoutReader, "LayoutReader"),
         Desc::Component(c) => (ElemType::Component(c.comp_type_id()), c.comp_name()),
         Desc::Shared(_) => unreachable!("resolve() removes Shared"),
     }
@@ -455,6 +487,7 @@ impl<M> Node<M> {
             key: None,
             w: Sizing::Auto,
             h: Sizing::Auto,
+            theme: None,
             desc,
             children: Vec::new(),
         }
@@ -466,6 +499,7 @@ impl<M> Node<M> {
             key: None,
             w: Sizing::Cells(0),
             h: Sizing::Cells(0),
+            theme: None,
             desc: Desc::Box(BoxProps::default()),
             children: Vec::new(),
         }
@@ -538,6 +572,16 @@ pub fn focusable<M>(child: Node<M>) -> Node<M> {
     n
 }
 
+/// Build a subtree from the constraints this node is given.
+///
+/// The builder runs during layout, may run more than once per frame under
+/// intrinsic sizing, and may not call `set_state`.
+pub fn layout_reader<M: 'static>(
+    f: impl Fn(crate::render::geom::Constraints) -> Node<M> + 'static,
+) -> Node<M> {
+    Node::new(Desc::LayoutReader(LayoutReaderProps { build: Rc::new(f) }))
+}
+
 pub fn layer<M>() -> Node<M> {
     Node::new(Desc::Layer(LayerProps::default()))
 }
@@ -592,6 +636,21 @@ impl<M> Node<M> {
         } else {
             Node::nil()
         }
+    }
+
+    /// Tag this node and its descendants with a provenance name, which appears
+    /// on every display-list item they produce.
+    pub fn theme(mut self, name: impl AsRef<str>) -> Self {
+        self.theme = Some(Rc::from(name.as_ref()));
+        self
+    }
+
+    pub fn scrollbar(mut self) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.scrollbar = true,
+            _ => panic!("scrollbar() applies to Viewport nodes only"),
+        }
+        self
     }
 
     pub fn w(mut self, s: Sizing) -> Self {

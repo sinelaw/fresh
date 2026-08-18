@@ -1595,6 +1595,9 @@ dependencies = [
 [[package]]
 name = "fresh-ui"
 version = "0.4.9"
+dependencies = [
+ "unicode-width",
+]
 
 [[package]]
 name = "fresh-update"

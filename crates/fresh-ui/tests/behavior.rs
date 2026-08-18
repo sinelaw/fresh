@@ -78,14 +78,14 @@ impl Component<()> for Inner {
 fn behaviors_tear_down_children_first_and_in_reverse_registration_order() {
     let log: Log = Rc::default();
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(col().child(Outer(log.clone()).node()));
+    ui.reconcile(col().child(Outer(log.clone()).node()));
     assert!(
         log.borrow().is_empty(),
         "nothing is torn down while mounted"
     );
 
     // Replace the subtree: everything below goes away.
-    ui.frame(col().child(text("gone")));
+    ui.reconcile(col().child(text("gone")));
 
     assert_eq!(
         *log.borrow(),
@@ -98,9 +98,9 @@ fn behaviors_tear_down_children_first_and_in_reverse_registration_order() {
 fn a_behavior_is_torn_down_exactly_once() {
     let log: Log = Rc::default();
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(col().child(Outer(log.clone()).node()));
-    ui.frame(col().child(text("gone")));
-    ui.frame(col());
+    ui.reconcile(col().child(Outer(log.clone()).node()));
+    ui.reconcile(col().child(text("gone")));
+    ui.reconcile(col());
     ui.flush();
 
     assert_eq!(log.borrow().iter().filter(|n| **n == "inner").count(), 1);
@@ -111,11 +111,11 @@ fn a_behavior_is_torn_down_exactly_once() {
 fn a_rebuild_does_not_tear_anything_down() {
     let log: Log = Rc::default();
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(col().child(Outer(log.clone()).node()));
+    ui.reconcile(col().child(Outer(log.clone()).node()));
     let outer = ui.at(&[0]).unwrap();
 
     for _ in 0..3 {
-        ui.frame(col().child(Outer(log.clone()).node()));
+        ui.reconcile(col().child(Outer(log.clone()).node()));
     }
     ui.mark(outer);
     ui.flush();

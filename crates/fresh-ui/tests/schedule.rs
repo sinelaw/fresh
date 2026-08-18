@@ -69,7 +69,7 @@ impl Component<()> for Wired {
 #[test]
 fn parent_and_child_dirty_in_one_tick_build_once_each_parent_first() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(Parent.node());
+    ui.reconcile(Parent.node());
     let p = ui.root().unwrap();
     let c = ui.at(&[0, 0]).unwrap();
 
@@ -86,7 +86,7 @@ fn parent_and_child_dirty_in_one_tick_build_once_each_parent_first() {
 #[test]
 fn an_element_disposed_by_its_parents_rebuild_is_not_rebuilt() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(Toggle.node());
+    ui.reconcile(Toggle.node());
     let t = ui.root().unwrap();
     ui.set_state::<bool>(t, |s| *s = true);
     ui.flush();
@@ -105,14 +105,14 @@ fn an_element_disposed_by_its_parents_rebuild_is_not_rebuilt() {
 #[should_panic(expected = "set_state during build at Bad")]
 fn set_state_during_build_panics_naming_the_element() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(Bad.node());
+    ui.reconcile(Bad.node());
 }
 
 #[test]
 fn set_state_from_a_handler_coalesces_into_the_next_flush() {
     let wires = Wires::default();
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(Wired(wires.clone()).node());
+    ui.reconcile(Wired(wires.clone()).node());
     let id = ui.root().unwrap();
 
     let updater = wires.updater.borrow().clone().unwrap();
@@ -147,14 +147,14 @@ fn set_state_from_a_handler_coalesces_into_the_next_flush() {
 #[test]
 fn a_mark_on_an_element_that_flush_disposes_is_dropped_silently() {
     let mut ui: Ui<()> = Ui::new();
-    ui.frame(Toggle.node());
+    ui.reconcile(Toggle.node());
     let t = ui.root().unwrap();
     ui.set_state::<bool>(t, |s| *s = true);
     ui.flush();
     let c = ui.at(&[0, 0]).unwrap();
 
     ui.set_state::<u32>(c, |s| *s += 1);
-    ui.frame(col()); // a whole new root type: everything below goes away
+    ui.reconcile(col()); // a whole new root type: everything below goes away
     ui.flush(); // must not observe the stale mark
     assert!(!ui.is_live(c));
 }

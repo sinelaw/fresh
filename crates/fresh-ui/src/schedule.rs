@@ -16,6 +16,8 @@ use crate::ambient::{Ambient, AmbientNode};
 use crate::behavior::Behavior;
 use crate::desc::{Event, Handler, Node};
 use crate::element::{Arena, ElementId, Txn};
+use crate::render::geom::{Point, Rect, Size};
+use crate::render::spec::LayoutSpec;
 
 // ---------------------------------------------------------------------------
 // Renderer
@@ -78,7 +80,7 @@ type Mutation = Box<dyn FnOnce(&mut dyn Any)>;
 
 /// Shared between the tree and every handler that can mark it dirty.
 pub struct Sched {
-    building: Option<(ElementId, &'static str)>,
+    pub(crate) building: Option<(ElementId, &'static str)>,
     dirty: HashSet<ElementId>,
     mutations: Vec<(ElementId, Mutation)>,
     /// Causes recorded by handlers, which cannot reach the element themselves.
@@ -357,6 +359,14 @@ pub struct Ui<M> {
     pub(crate) txn: Option<Txn<M>>,
     pub(crate) trace: bool,
     pub(crate) build_log: Vec<ElementId>,
+
+    /// Geometry state.
+    pub(crate) frame_size: Size,
+    /// Relayout boundaries awaiting a measure pass.
+    pub(crate) layout_dirty: Vec<ElementId>,
+    /// Out-of-flow layers found by the last arrange walk, with their parents.
+    pub(crate) pending_layers: Vec<(ElementId, ElementId)>,
+    pub(crate) spec: LayoutSpec,
 }
 
 impl<M: 'static> Default for Ui<M> {
@@ -380,17 +390,119 @@ impl<M: 'static> Ui<M> {
             txn: None,
             trace: false,
             build_log: Vec::new(),
+            frame_size: Size::ZERO,
+            layout_dirty: Vec::new(),
+            pending_layers: Vec::new(),
+            spec: LayoutSpec::default(),
         }
     }
 
-    /// Hand over a freshly built root description and reconcile it.
-    pub fn frame(&mut self, root: Node<M>) {
+    /// One frame: take a freshly built root description, reconcile it, lay it
+    /// out for a terminal of `size`, and return the display list.
+    pub fn frame(&mut self, root: Node<M>, size: Size) -> &LayoutSpec {
+        self.run_flush(Some(root));
+        self.flush_layout(size);
+        self.flush_paint(size);
+        &self.spec
+    }
+
+    /// Rebuild what is dirty and re-render at the last frame size. This is the
+    /// path an event takes: nothing new is supplied from the application.
+    pub fn tick(&mut self) -> &LayoutSpec {
+        let size = self.frame_size;
+        self.run_flush(None);
+        self.flush_layout(size);
+        self.flush_paint(size);
+        &self.spec
+    }
+
+    /// Reconcile a new root description without laying it out. For callers
+    /// that only care about tree structure.
+    pub fn reconcile(&mut self, root: Node<M>) {
         self.run_flush(Some(root));
     }
 
-    /// Rebuild whatever is dirty, without a new root description.
+    /// Rebuild whatever is dirty, without a new root description and without
+    /// laying anything out.
     pub fn flush(&mut self) {
         self.run_flush(None);
+    }
+
+    /// The display list from the last `frame` or `tick`.
+    pub fn spec(&self) -> &LayoutSpec {
+        &self.spec
+    }
+
+    // -- geometry ----------------------------------------------------------
+
+    /// Absolute position and size, valid after the first layout. Never during
+    /// `build`: build is a function of the description, state and ambients, and
+    /// reading geometry from it would make build depend on layout, which
+    /// depends on build.
+    #[track_caller]
+    pub fn rect(&self, id: ElementId) -> Rect {
+        debug_assert!(
+            self.sched.borrow().building.is_none(),
+            "geometry is not readable during build"
+        );
+        self.arena
+            .get(id)
+            .map(|e| e.layout.rect)
+            .unwrap_or_default()
+    }
+
+    #[track_caller]
+    pub fn size_of(&self, id: ElementId) -> Size {
+        debug_assert!(
+            self.sched.borrow().building.is_none(),
+            "geometry is not readable during build"
+        );
+        self.arena
+            .get(id)
+            .map(|e| e.layout.size)
+            .unwrap_or_default()
+    }
+
+    /// The clip this element inherited from its ancestors.
+    pub fn clip(&self, id: ElementId) -> Rect {
+        self.arena
+            .get(id)
+            .map(|e| e.layout.clip)
+            .unwrap_or_default()
+    }
+
+    /// How many times this element has been measured. A change that stops at a
+    /// relayout boundary leaves the counters above it untouched.
+    pub fn layouts(&self, id: ElementId) -> u32 {
+        self.arena.get(id).map(|e| e.layout.layouts).unwrap_or(0)
+    }
+
+    /// A viewport's scroll offset and the size of the content behind it.
+    pub fn scroll(&self, id: ElementId) -> (Point, Size) {
+        self.arena
+            .get(id)
+            .map(|e| (e.layout.scroll, e.layout.content))
+            .unwrap_or_default()
+    }
+
+    /// Move a viewport's window. Framework-owned state: it survives rebuilds
+    /// and is not declared by the component.
+    pub fn scroll_to(&mut self, id: ElementId, offset: Point) {
+        let changed = match self.arena.get_mut(id) {
+            Some(el) => {
+                let old = el.layout.scroll;
+                el.layout.scroll = offset;
+                old != offset
+            }
+            None => false,
+        };
+        if changed {
+            self.mark_needs_layout(id);
+        }
+    }
+
+    pub fn frame_size(&self) -> Size {
+        self.frame_size
     }
 
     fn run_flush(&mut self, root: Option<Node<M>>) {

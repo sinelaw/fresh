@@ -15,5 +15,6 @@ name = "fresh_ui"
 path = "src/lib.rs"
 
 [dependencies]
+unicode-width = "0.2"
 
 [dev-dependencies]
