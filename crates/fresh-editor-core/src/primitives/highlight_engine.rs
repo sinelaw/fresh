@@ -2639,6 +2639,65 @@ mod tests {
     }
 
     #[test]
+    fn test_ocaml_ecosystem_highlight_categories() {
+        let mut registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let ocaml = "(* startup file *)\nlet rec identity x = x\n";
+        let ocaml_buffer = Buffer::from_str(ocaml, 0, test_fs());
+        let mut ocaml_engine = HighlightEngine::for_file(Path::new(".ocamlinit"), None, &registry);
+        assert_eq!(ocaml_engine.backend_name(), "textmate");
+        ocaml_engine.highlight_viewport(&ocaml_buffer, 0, ocaml_buffer.len(), &theme, 0);
+        assert_eq!(
+            ocaml_engine.category_at_position(ocaml.find("startup").unwrap()),
+            Some(HighlightCategory::Comment)
+        );
+        assert_eq!(
+            ocaml_engine.category_at_position(ocaml.find("let").unwrap()),
+            Some(HighlightCategory::Keyword)
+        );
+
+        let coq = "(* outer (* nested *) comment *)\nTheorem identity : forall x, x = x.\nProof. intros. reflexivity. Qed.\n";
+        let coq_buffer = Buffer::from_str(coq, 0, test_fs());
+        let mut coq_engine = HighlightEngine::for_file(Path::new("identity.v"), None, &registry);
+        assert_eq!(coq_engine.backend_name(), "textmate");
+        coq_engine.highlight_viewport(&coq_buffer, 0, coq_buffer.len(), &theme, 0);
+        for (needle, expected) in [
+            ("nested", HighlightCategory::Comment),
+            ("Theorem", HighlightCategory::Keyword),
+            ("identity", HighlightCategory::Function),
+            ("forall", HighlightCategory::Keyword),
+            ("reflexivity", HighlightCategory::Function),
+        ] {
+            assert_eq!(
+                coq_engine.category_at_position(coq.find(needle).unwrap()),
+                Some(expected),
+                "unexpected Coq/Rocq category for {needle:?}"
+            );
+        }
+
+        let dune = "(library\n (name example)\n (libraries unix)\n (action (run %{bin:tool} --version)))\n";
+        let dune_buffer = Buffer::from_str(dune, 0, test_fs());
+        let mut dune_engine = HighlightEngine::for_file(Path::new("dune"), None, &registry);
+        assert_eq!(dune_engine.backend_name(), "textmate");
+        dune_engine.highlight_viewport(&dune_buffer, 0, dune_buffer.len(), &theme, 0);
+        for (needle, expected) in [
+            ("library", HighlightCategory::Keyword),
+            ("name", HighlightCategory::Type),
+            ("run", HighlightCategory::Function),
+            ("%{bin:tool}", HighlightCategory::Variable),
+        ] {
+            assert_eq!(
+                dune_engine.category_at_position(dune.find(needle).unwrap()),
+                Some(expected),
+                "unexpected Dune category for {needle:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_fish_indented_control_keywords_stay_keywords() {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());

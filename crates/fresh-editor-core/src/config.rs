@@ -5964,9 +5964,72 @@ impl Config {
             "ocaml".to_string(),
             LanguageConfig {
                 extensions: vec!["ml".to_string(), "mli".to_string()],
-                filenames: vec![],
+                filenames: vec![".ocamlinit".to_string()],
                 grammar: "OCaml".to_string(),
                 comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "coq".to_string(),
+            LanguageConfig {
+                // `.v` is shared with the V language. Prefer Coq/Rocq here;
+                // V remains auto-detected through its unambiguous `.vv`
+                // extension and can still be selected manually for `.v`.
+                extensions: vec!["v".to_string(), "coq".to_string()],
+                filenames: vec!["_CoqProject".to_string(), "_RocqProject".to_string()],
+                grammar: "Coq/Rocq".to_string(),
+                comment_prefix: None,
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "dune".to_string(),
+            LanguageConfig {
+                extensions: vec!["dune".to_string()],
+                filenames: vec![
+                    "dune".to_string(),
+                    "dune-project".to_string(),
+                    "dune-workspace".to_string(),
+                    "dune-workspace.*".to_string(),
+                    "*.dune".to_string(),
+                ],
+                grammar: "Dune".to_string(),
+                comment_prefix: Some(";".to_string()),
                 auto_indent: true,
                 auto_close: None,
                 auto_surround: None,
@@ -7215,7 +7278,7 @@ impl Config {
         languages.insert(
             "vlang".to_string(),
             LanguageConfig {
-                extensions: vec!["v".to_string(), "vv".to_string()],
+                extensions: vec!["vv".to_string()],
                 filenames: vec![],
                 grammar: "V".to_string(),
                 comment_prefix: Some("//".to_string()),
@@ -9594,6 +9657,33 @@ mod tests {
                 detect_language(Path::new(filename), &languages),
                 Some("jsonc".to_string()),
                 "expected `{filename}` to be detected as jsonc"
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_languages_map_ocaml_coq_and_dune_files() {
+        use crate::services::lsp::manager::detect_language;
+        use std::path::Path;
+
+        let languages = Config::default_languages();
+        for (path, expected) in [
+            ("lib.ml", "ocaml"),
+            ("lib.mli", "ocaml"),
+            (".ocamlinit", "ocaml"),
+            ("proof.v", "coq"),
+            ("proof.coq", "coq"),
+            ("_CoqProject", "coq"),
+            ("dune", "dune"),
+            ("dune-project", "dune"),
+            ("dune-workspace.dev", "dune"),
+            ("library.dune", "dune"),
+            ("module.vv", "vlang"),
+        ] {
+            assert_eq!(
+                detect_language(Path::new(path), &languages),
+                Some(expected.to_string()),
+                "expected `{path}` to be detected as {expected}"
             );
         }
     }

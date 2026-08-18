@@ -1,0 +1,109 @@
+%YAML 1.2
+---
+name: Coq/Rocq
+file_extensions: [v, coq]
+scope: source.coq
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: attributes
+    - include: declarations
+    - include: vernacular
+    - include: tactics
+    - include: gallina
+    - include: numbers
+    - include: operators
+
+  comments:
+    - match: '\(\*'
+      scope: punctuation.definition.comment.begin.coq
+      push:
+        - meta_scope: comment.block.coq
+        - include: comments
+        - match: '\*\)'
+          scope: punctuation.definition.comment.end.coq
+          pop: true
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.coq
+      push:
+        - meta_scope: string.quoted.double.coq
+        - match: '""'
+          scope: constant.character.escape.coq
+        - match: '"'
+          scope: punctuation.definition.string.end.coq
+          pop: true
+
+  attributes:
+    - match: '#\['
+      scope: punctuation.definition.annotation.begin.coq
+      push:
+        - meta_scope: meta.annotation.coq
+        - match: '\]'
+          scope: punctuation.definition.annotation.end.coq
+          pop: true
+        - match: '\b(local|global|export|program|universes|polymorphic|monomorphic|canonical|primitive|warnings)\b'
+          scope: variable.annotation.coq
+
+  declarations:
+    - match: '\b(Module\s+Type|Module|Section|Namespace)\s+([[:alpha:]_][[:alnum:]_'']*)'
+      captures:
+        1: keyword.declaration.module.coq
+        2: entity.name.namespace.coq
+    - match: '\b(Theorem|Lemma|Fact|Remark|Corollary|Proposition|Property|Example|Goal)\s+([[:alpha:]_][[:alnum:]_'']*)'
+      captures:
+        1: keyword.declaration.theorem.coq
+        2: entity.name.function.theorem.coq
+    - match: '\b(Definition|Fixpoint|CoFixpoint|Function|Program\s+(?:Definition|Fixpoint)|Equations)\s+([[:alpha:]_][[:alnum:]_'']*)'
+      captures:
+        1: keyword.declaration.function.coq
+        2: entity.name.function.coq
+    - match: '\b(Inductive|CoInductive|Variant|Record|Class|Structure)\s+([[:alpha:]_][[:alnum:]_'']*)'
+      captures:
+        1: keyword.declaration.type.coq
+        2: entity.name.type.coq
+    - match: '\b(Notation|Infix|Reserved\s+Notation|Declare\s+Scope|Delimit\s+Scope|Bind\s+Scope)\b'
+      scope: keyword.declaration.notation.coq
+
+  vernacular:
+    - match: '\b(Abort|About|Add|Admit|Admitted|Arguments|Canonical|Check|Close|Coercion|Context|Create|Declare|End|Eval|Existing|Export|Focus|Generalizable|Global|Hint|Implicit|Import|Include|Locate|Ltac|Ltac2|Obligation|Open|Print|Proof|Qed|Redirect|Remove|Require|Restart|Save|Search|Set|Show|Solve|Time|Transparent|Typeclasses|Unset|Variable|Variables)\b'
+      scope: keyword.control.vernacular.coq
+    - match: '\b(From|Load|Require\s+Import|Require\s+Export)\b'
+      scope: keyword.control.import.coq
+    - match: '\b(universes?|polymorphic|monomorphic|local|global|export)\b'
+      scope: storage.modifier.coq
+
+  tactics:
+    - match: '\b(abstract|apply|assert|assumption|auto|autorewrite|case|change|clear|compute|congruence|constructor|contradiction|cut|decide|destruct|discriminate|eapply|eassumption|eauto|elim|enough|exact|exists|fail|field|firstorder|fold|f_equal|generalize|hnf|induction|injection|intro|intros|inversion|left|lia|lra|native_compute|nia|now|omega|pose|progress|refine|reflexivity|remember|rename|repeat|replace|revert|rewrite|right|ring|setoid_rewrite|simpl|simple|split|subst|symmetry|tauto|transitivity|trivial|unfold|vm_compute)\b'
+      scope: support.function.tactic.coq
+    - match: '\b(all|at|by|dependent|first|in|lazymatch|match|multimatch|once|only|reverse|try|tryif|using|with)\b'
+      scope: keyword.control.tactic.coq
+
+  gallina:
+    - match: '\b(as|at|cofix|else|end|exists|fix|for|forall|fun|if|in|let|match|return|then|where|with)\b'
+      scope: keyword.control.coq
+    - match: '\b(Prop|Set|SProp|Type)\b'
+      scope: storage.type.coq
+    - match: '\b(True|False|None|Some|O|S|nil|cons)\b'
+      scope: constant.language.coq
+    - match: '\b[A-Z][[:alnum:]_'']*(?:\.[A-Z][[:alnum:]_'']*)*\b'
+      scope: entity.name.type.coq
+
+  numbers:
+    - match: '\b0[xX][0-9A-Fa-f_]+\b'
+      scope: constant.numeric.hex.coq
+    - match: '\b0[bB][01_]+\b'
+      scope: constant.numeric.binary.coq
+    - match: '\b[0-9][0-9_]*(?:\.[0-9][0-9_]*)?\b'
+      scope: constant.numeric.coq
+
+  operators:
+    - match: ':=|=>|->|<-|<->|/\\|\\/|<=|>=|<>|\+|-|\*|/|=|<|>|\||&|~|@|\^'
+      scope: keyword.operator.coq
+    - match: '[(){}\[\],;:]'
+      scope: punctuation.separator.coq
+    - match: '\.(?![[:alnum:]_''])'
+      scope: punctuation.terminator.coq
+
