@@ -181,6 +181,7 @@ fn task_list(app: &App) -> Node<Msg> {
     .selected(app.selected.min(n.saturating_sub(1)))
     .on_select(Msg::Select)
     .on_activate(Msg::Toggle)
+    .scrollbar()
     .node()
 }
 

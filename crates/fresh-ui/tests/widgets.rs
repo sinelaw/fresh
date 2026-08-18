@@ -509,3 +509,38 @@ fn a_global_alt_shortcut_reaches_a_root_action_from_anywhere() {
     let chord = ui.dispatch(Input::Key(KeyPress::with(KeyCode::Char('f'), Mods::ALT)));
     assert_eq!(chord, vec![Msg::Chose("file".into())]);
 }
+
+#[test]
+fn a_scrollbar_sits_in_a_gutter_the_content_does_not_cover() {
+    // Many rows in a short window: the list overflows, so a scrollbar appears.
+    // The regression this guards: a node paints under its children, so a
+    // full-width row background used to erase the scrollbar. The viewport now
+    // insets its content by one column, leaving the bar a gutter of its own.
+    let list = |n: usize| -> Node<Msg> {
+        List::windowed(n, fresh_ui::Key::from, |i| {
+            fresh_ui::col()
+                .theme("list.row")
+                .child(fresh_ui::text(format!("row {i}")))
+        })
+        .scrollbar()
+        .node()
+    };
+    let frame = Size::new(20, 5);
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(500), frame);
+
+    let bar = ui
+        .spec()
+        .items
+        .iter()
+        .find(|i| matches!(i.draw, Draw::Scrollbar { .. }))
+        .expect("an overflowing list shows a scrollbar");
+    let col = bar.rect.x;
+    assert_eq!(col, frame.w as i32 - 1, "the bar sits in the last column");
+
+    // No fill or text row overlaps that column: the gutter is the bar's alone.
+    let overlap = ui.spec().items.iter().any(|i| {
+        matches!(i.draw, Draw::Fill | Draw::Lines(_)) && i.rect.x <= col && i.rect.right() > col
+    });
+    assert!(!overlap, "content must not cover the scrollbar gutter");
+}

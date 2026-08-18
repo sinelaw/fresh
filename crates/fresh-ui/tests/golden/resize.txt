@@ -27,9 +27,9 @@ Filter      │new task…    Add
 === at 90x6
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                                                                Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it out
+(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█
+( ) Open    │»[x] build the reconciler                                                   │
+( ) Done    │»[ ] lay it out                                                             │
 5 tasks · light · synced 0 · ready
 
 === back to 56x14

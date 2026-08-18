@@ -29,12 +29,13 @@ use fresh_ui::{
     Draw, Input, KeyCode, KeyPress, Mods, MouseButton, Point, Rect, Scrim, Size, ThemeKey,
 };
 
-use support::demo::Demo;
+use support::demo::{App, Demo};
 
 fn main() -> io::Result<()> {
     let mut term = Terminal::enter()?;
     let (w, h) = terminal::size()?;
-    let mut demo = Demo::new(Size::new(w, h));
+    // A long list, so the task viewport overflows and shows a scrollbar.
+    let mut demo = Demo::with_app(App::seeded(250), Size::new(w, h));
     let redraw = |term: &mut Terminal, demo: &Demo| -> io::Result<()> {
         term.draw(demo.ui.spec(), demo.app.theme.name == "dark")
     };

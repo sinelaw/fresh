@@ -159,6 +159,40 @@ impl Default for App {
 }
 
 impl App {
+    /// A long todo list, so the interactive demo overflows its viewport and
+    /// shows a scrollbar. Titles are generated deterministically; every third
+    /// task starts done.
+    pub fn seeded(n: usize) -> Self {
+        const VERBS: [&str; 10] = [
+            "write", "review", "ship", "refactor", "test", "document", "profile", "fix", "design",
+            "merge",
+        ];
+        const NOUNS: [&str; 10] = [
+            "parser",
+            "layout pass",
+            "scheduler",
+            "widget set",
+            "focus tree",
+            "hit-testing",
+            "display list",
+            "reconciler",
+            "demo",
+            "docs",
+        ];
+        let tasks = (0..n)
+            .map(|i| Task {
+                id: i as u64 + 1,
+                title: format!(
+                    "{} the {}",
+                    VERBS[i % VERBS.len()],
+                    NOUNS[(i / VERBS.len()) % NOUNS.len()]
+                ),
+                done: i % 3 == 0,
+            })
+            .collect();
+        App::with_tasks(tasks)
+    }
+
     pub fn with_tasks(tasks: Vec<Task>) -> Self {
         let next_id = tasks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
         App {

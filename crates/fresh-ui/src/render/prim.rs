@@ -469,12 +469,32 @@ impl RenderObject for ViewportRender {
                 // one, it is as tall as its content: a window is only a window
                 // once something bounds it.
                 own = c.constrain(Size::new(content.w.max(c.min_w), content.h));
-                self.window = Rect::at(scroll, own);
+                // A vertical scrollbar takes a one-column gutter when the
+                // content is taller than the window; re-measure the content in
+                // the narrower area so it is not painted over the bar.
+                let gutter = u16::from(self.props.scrollbar && content.h > own.h);
+                if gutter > 0 {
+                    let inner_w = own.w.saturating_sub(gutter);
+                    let narrow = if c.min_w == c.max_w {
+                        Constraints::new(inner_w, inner_w, 0, u16::MAX)
+                    } else {
+                        Constraints::new(0, inner_w, 0, u16::MAX)
+                    };
+                    let mut re = Size::ZERO;
+                    for k in cx.children() {
+                        let s = cx.measure(k, narrow);
+                        re = Size::new(re.w.max(s.w), re.h.max(s.h));
+                    }
+                    self.content = re;
+                    content = re;
+                }
+                let view_w = own.w.saturating_sub(gutter);
+                self.window = Rect::at(scroll, Size::new(view_w, own.h));
                 cx.set_scroll(ScrollInfo {
                     window: self.window,
                     content,
                     max: Point::new(
-                        content.w.saturating_sub(own.w) as i32,
+                        content.w.saturating_sub(view_w) as i32,
                         content.h.saturating_sub(own.h) as i32,
                     ),
                     translate: true,
@@ -499,14 +519,20 @@ impl RenderObject for ViewportRender {
                 own = c.constrain(Size::new(own.w, (n.min(u16::MAX as u32)) as u16));
                 let rows = own.h as u32;
                 self.items = n;
-                self.window = Rect::new(0, scroll.y, own.w, own.h);
+                // When the content overflows and a scrollbar is asked for, the
+                // last column is a gutter the scrollbar owns: content laid out
+                // over it would paint the bar away, since a node's own paint is
+                // under its children.
+                let gutter = u16::from(self.props.scrollbar && n > rows);
+                let inner_w = own.w.saturating_sub(gutter);
+                self.window = Rect::new(0, scroll.y, inner_w, own.h);
                 cx.set_scroll(ScrollInfo {
                     window: self.window,
-                    content: own,
+                    content: Size::new(inner_w, own.h),
                     max: Point::new(0, n.saturating_sub(rows) as i32),
                     translate: false,
                 });
-                let inner = Constraints::new(own.w, own.w, 0, own.h);
+                let inner = Constraints::new(inner_w, inner_w, 0, own.h);
                 for k in cx.children() {
                     cx.measure(k, inner);
                     cx.place(k, Point::ZERO);
