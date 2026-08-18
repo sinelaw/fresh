@@ -258,22 +258,73 @@ impl<M: 'static> Ui<M> {
         }
     }
 
-    /// Give focus to the first element that asked for it, if nothing has it.
+    /// Settle focus after a frame.
+    ///
+    /// Three cases, in order: focus is already inside the active scope and
+    /// nothing happens; a modal has just opened and focus moves into it,
+    /// remembering where it was; the modal has closed and focus goes back.
     pub(crate) fn apply_autofocus(&mut self) {
-        if self.focus.is_some_and(|f| self.arena.get(f).is_some()) {
+        let modal = self
+            .pending_layers
+            .iter()
+            .rev()
+            .find(|(l, _)| self.is_modal(*l))
+            .map(|(l, _)| *l);
+        let Some(root) = modal.or(self.root) else {
+            return;
+        };
+
+        let inside = self
+            .focus
+            .is_some_and(|f| self.arena.get(f).is_some() && self.is_within(f, root));
+        if inside {
             return;
         }
+
+        if modal.is_some() {
+            // Entering a scope: remember where focus was so it can come back.
+            if let Some(f) = self.focus.filter(|f| self.arena.get(*f).is_some()) {
+                self.focus_restore = Some(f);
+            }
+        } else if let Some(prev) = self.focus_restore.take() {
+            if self.arena.get(prev).is_some() {
+                self.focus = None;
+                let mut out = Vec::new();
+                self.focus_element(prev, SelectionOnFocus::Preserve, &mut out);
+                self.pending_messages.extend(out);
+                return;
+            }
+        }
+
         self.focus = None;
-        let scope = self.focus_scope();
-        let wanted = scope.nodes.iter().find(|e| {
-            matches!(self.arena.get(e.id).map(|x| &x.desc), Some(d)
-                if matches!(&resolve(d).desc, Desc::Focusable(f) if f.autofocus))
-        });
+        let mut nodes = Vec::new();
+        self.collect_focusables(root, &mut nodes);
+        let wanted = nodes
+            .iter()
+            .find(|e| {
+                matches!(self.arena.get(e.id).map(|x| &x.desc), Some(d)
+                    if matches!(&resolve(d).desc, Desc::Focusable(f) if f.autofocus))
+            })
+            // A scope with nothing marked still needs somewhere for traversal
+            // to start, or Tab inside a modal would do nothing.
+            .or_else(|| modal.and(nodes.first()));
         if let Some(e) = wanted {
             let id = e.id;
             let mut out = Vec::new();
             self.focus_element(id, SelectionOnFocus::SelectAll, &mut out);
             self.pending_messages.extend(out);
+        }
+    }
+
+    fn is_within(&self, mut id: ElementId, root: ElementId) -> bool {
+        loop {
+            if id == root {
+                return true;
+            }
+            match self.arena.get(id).and_then(|e| e.parent) {
+                Some(p) => id = p,
+                None => return false,
+            }
         }
     }
 

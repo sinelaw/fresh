@@ -20,14 +20,30 @@ use crate::{Component, ComponentExt};
 /// Rows above and below the window, so a one-cell scroll does not expose a gap.
 const OVERSCAN: usize = 2;
 
-#[derive(Default)]
 pub struct ListState {
     /// Only consulted when the owner did not supply a selection.
     pub selected: usize,
     /// First visible index. Framework-adjacent but component-owned: the window
     /// is what this widget is for.
     pub scroll: usize,
+    /// Whether the window should chase the selection. Set when the selection
+    /// moves, cleared when the user scrolls: a wheel is a statement about the
+    /// window, and a key is a statement about the selection.
+    pub follow: bool,
     pub focused: bool,
+}
+
+impl Default for ListState {
+    fn default() -> Self {
+        // A list follows its selection until the user says otherwise by
+        // scrolling.
+        ListState {
+            selected: 0,
+            scroll: 0,
+            follow: true,
+            focused: false,
+        }
+    }
 }
 
 enum Source<M> {
@@ -75,6 +91,7 @@ pub struct List<M> {
     on_select: Option<Rc<dyn Fn(usize) -> M>>,
     on_activate: Option<Rc<dyn Fn(usize) -> Option<M>>>,
     focusable: bool,
+    autofocus: bool,
 }
 
 impl<M: 'static> List<M> {
@@ -112,6 +129,7 @@ impl<M: 'static> List<M> {
             on_select: None,
             on_activate: None,
             focusable: true,
+            autofocus: false,
         }
     }
 
@@ -142,6 +160,12 @@ impl<M: 'static> List<M> {
         self.focusable = yes;
         self
     }
+
+    /// Take focus when this list first appears.
+    pub fn autofocus(mut self) -> Self {
+        self.autofocus = true;
+        self
+    }
 }
 
 impl<M: 'static> Component<M> for List<M> {
@@ -154,15 +178,20 @@ impl<M: 'static> Component<M> for List<M> {
 
         let source = self.source.clone();
         let scroll = s.scroll;
+        let follow = s.follow;
         let reader = layout_reader(move |c| {
             let visible = (c.max_h as usize).max(1);
             // Keep the selection inside the window without writing to state:
             // the first visible index is a function of the scroll and the
             // selection, computed here rather than stored.
-            let first = scroll
-                .min(sel)
-                .max(sel.saturating_sub(visible.saturating_sub(1)))
-                .min(n.saturating_sub(visible.min(n)));
+            let first = if follow {
+                scroll
+                    .min(sel)
+                    .max(sel.saturating_sub(visible.saturating_sub(1)))
+            } else {
+                scroll
+            }
+            .min(n.saturating_sub(visible.min(n)));
             let last = (first + visible + OVERSCAN).min(n);
             col().children((first..last).map(|i| {
                 let (k, row) = source.at(i).expect("index inside the source");
@@ -188,7 +217,10 @@ impl<M: 'static> Component<M> for List<M> {
             let next =
                 (scroll as i64 + e.delta as i64).clamp(0, n.saturating_sub(1) as i64) as usize;
             if next != scroll {
-                up_wheel.set(move |st: &mut ListState| st.scroll = next);
+                up_wheel.set(move |st: &mut ListState| {
+                    st.scroll = next;
+                    st.follow = false;
+                });
                 e.stop();
             }
             None
@@ -214,6 +246,7 @@ impl<M: 'static> Component<M> for List<M> {
                     up.set(move |st: &mut ListState| {
                         st.selected = target;
                         st.scroll = st.scroll.min(target);
+                        st.follow = true;
                     });
                     this_select.as_ref().map(|f| f(target))
                 })
@@ -223,7 +256,10 @@ impl<M: 'static> Component<M> for List<M> {
                 let this_select = self.on_select.clone();
                 Rc::new(move |_: &Event| {
                     let target = (sel + 1).min(n.saturating_sub(1));
-                    up.set(move |st: &mut ListState| st.selected = target);
+                    up.set(move |st: &mut ListState| {
+                        st.selected = target;
+                        st.follow = true;
+                    });
                     this_select.as_ref().map(|f| f(target))
                 })
             })
@@ -234,6 +270,7 @@ impl<M: 'static> Component<M> for List<M> {
                     up.set(|st: &mut ListState| {
                         st.selected = 0;
                         st.scroll = 0;
+                        st.follow = true;
                     });
                     this_select.as_ref().map(|f| f(0))
                 })
@@ -243,7 +280,10 @@ impl<M: 'static> Component<M> for List<M> {
                 let this_select = self.on_select.clone();
                 Rc::new(move |_: &Event| {
                     let target = n.saturating_sub(1);
-                    up.set(move |st: &mut ListState| st.selected = target);
+                    up.set(move |st: &mut ListState| {
+                        st.selected = target;
+                        st.follow = true;
+                    });
                     this_select.as_ref().map(|f| f(target))
                 })
             });
@@ -252,11 +292,17 @@ impl<M: 'static> Component<M> for List<M> {
         if let Some(f) = self.on_activate.clone() {
             node = node.action_handler(Intent::Confirm, Rc::new(move |_: &Event| f(sel)));
         }
+        if self.autofocus {
+            node = node.autofocus();
+        }
         node
     }
 
     fn describe_state(&self, s: &ListState) -> Option<String> {
-        Some(format!("sel={} scroll={}", s.selected, s.scroll))
+        Some(format!(
+            "sel={} scroll={} follow={}",
+            s.selected, s.scroll, s.follow
+        ))
     }
 }
 

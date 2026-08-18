@@ -24,6 +24,7 @@ pub struct TextField<M> {
     placeholder: Rc<str>,
     on_change: Option<Rc<dyn Fn(String) -> M>>,
     on_submit: Option<Handler<M>>,
+    autofocus: bool,
 }
 
 impl<M: 'static> TextField<M> {
@@ -33,6 +34,7 @@ impl<M: 'static> TextField<M> {
             placeholder: Rc::from(""),
             on_change: None,
             on_submit: None,
+            autofocus: false,
         }
     }
 
@@ -48,6 +50,12 @@ impl<M: 'static> TextField<M> {
 
     pub fn on_submit(mut self, f: impl Fn(&Event) -> M + 'static) -> Self {
         self.on_submit = Some(Rc::new(move |e| Some(f(e))));
+        self
+    }
+
+    /// Take focus when this field first appears.
+    pub fn autofocus(mut self) -> Self {
+        self.autofocus = true;
         self
     }
 }
@@ -163,6 +171,9 @@ impl<M: 'static> Component<M> for TextField<M> {
 
         if let Some(h) = self.on_submit.clone() {
             f = f.action_handler(Intent::Confirm, h);
+        }
+        if self.autofocus {
+            f = f.autofocus();
         }
         f
     }

@@ -379,6 +379,8 @@ pub struct Ui<M> {
     /// Focus state. Neither the application nor the component declares it.
     pub(crate) focus: Option<ElementId>,
     pub(crate) focus_selection: crate::event::SelectionOnFocus,
+    /// Where focus was before a modal took it.
+    pub(crate) focus_restore: Option<ElementId>,
     pub(crate) traversal: Box<dyn crate::focus::TraversalPolicy>,
     pub(crate) shortcuts: Vec<crate::focus::Shortcut>,
     /// Messages produced outside a dispatch call, delivered with the next one.
@@ -418,6 +420,7 @@ impl<M: 'static> Ui<M> {
             press: None,
             focus: None,
             focus_selection: crate::event::SelectionOnFocus::None,
+            focus_restore: None,
             traversal: Box::new(crate::focus::ReadingOrder),
             shortcuts: crate::focus::default_shortcuts(),
             pending_messages: Vec::new(),

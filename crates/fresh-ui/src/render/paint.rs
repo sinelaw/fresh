@@ -65,7 +65,12 @@ impl<M: 'static> Ui<M> {
         let clip = el.layout.clip;
         let key = el.key.clone();
         let kids = el.children.clone();
-        let node_theme = el.desc.theme.clone();
+        // A `Shared` wrapper is transparent to provenance, as it is to type.
+        let node_theme = el
+            .desc
+            .theme
+            .clone()
+            .or_else(|| resolve(&el.desc).theme.clone());
 
         // Off-screen: nothing below can be visible either, because a child's
         // rect is contained in its parent's clip.

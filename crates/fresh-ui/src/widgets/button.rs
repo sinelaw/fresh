@@ -31,6 +31,7 @@ pub struct Button<M> {
     label: Rc<str>,
     on_press: Option<Handler<M>>,
     enabled: bool,
+    autofocus: bool,
     theme: Rc<str>,
 }
 
@@ -40,6 +41,7 @@ impl<M: 'static> Button<M> {
             label: Rc::from(label.as_ref()),
             on_press: None,
             enabled: true,
+            autofocus: false,
             theme: Rc::from("button"),
         }
     }
@@ -58,6 +60,13 @@ impl<M: 'static> Button<M> {
 
     pub fn enabled(mut self, yes: bool) -> Self {
         self.enabled = yes;
+        self
+    }
+
+    /// Take focus when this button first appears — the default action of a
+    /// dialog, for instance.
+    pub fn autofocus(mut self) -> Self {
+        self.autofocus = true;
         self
     }
 
@@ -91,6 +100,8 @@ impl<M: 'static> Component<M> for Button<M> {
         }
         if !self.enabled {
             f = f.skip_traversal();
+        } else if self.autofocus {
+            f = f.autofocus();
         }
         f
     }

@@ -25,6 +25,7 @@
 pub mod ambient;
 pub mod behavior;
 pub mod component;
+pub mod demo;
 pub mod desc;
 pub mod diagnose;
 pub mod element;

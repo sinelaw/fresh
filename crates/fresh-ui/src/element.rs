@@ -505,6 +505,13 @@ impl<M: 'static> Ui<M> {
             self.arena.get_mut(id).expect("live").builds += 1;
             self.register_reads(id, reads);
             self.reconcile_children(id, vec![built]);
+        } else if ty == ElemType::LayoutReader {
+            // A reader's children are produced by the layout pass, not by its
+            // description — which carries none. Reconciling from the
+            // description here would dispose the whole window every frame and
+            // mount it again, losing element identity and everything that hangs
+            // off it: state, focus, and an in-flight press.
+            self.mark_needs_layout(id);
         } else {
             let kids = resolve(&self.arena[id].desc).children.clone();
             self.reconcile_children(id, kids);
