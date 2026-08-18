@@ -208,6 +208,7 @@ pub struct InitCx<'a, M> {
     children: &'a [Node<M>],
     behaviors: Vec<Rc<dyn Behavior>>,
     init_reads: Vec<ElementId>,
+    services: crate::services::Services,
 }
 
 impl<'a, M: 'static> InitCx<'a, M> {
@@ -216,6 +217,7 @@ impl<'a, M: 'static> InitCx<'a, M> {
         sched: SchedRef,
         scope: Option<Rc<AmbientNode>>,
         children: &'a [Node<M>],
+        services: crate::services::Services,
     ) -> Self {
         InitCx {
             id,
@@ -224,6 +226,7 @@ impl<'a, M: 'static> InitCx<'a, M> {
             children,
             behaviors: Vec::new(),
             init_reads: Vec::new(),
+            services,
         }
     }
 
@@ -252,8 +255,15 @@ impl<'a, M: 'static> InitCx<'a, M> {
     /// reverse registration order when the element is disposed.
     pub fn register<B: Behavior + 'static>(&mut self, b: B) -> Rc<B> {
         let rc = Rc::new(b);
+        rc.attach(&self.services);
         self.behaviors.push(rc.clone() as Rc<dyn Behavior>);
         rc
+    }
+
+    /// What is valid from construction: the scheduler, the spawner, the
+    /// registries. Deliberately free of geometry.
+    pub fn services(&self) -> &crate::services::Services {
+        &self.services
     }
 
     /// Read an ambient as a snapshot. This does **not** create a dependency:
@@ -275,6 +285,7 @@ pub struct BuildCx<'a, M> {
     scope: Option<Rc<AmbientNode>>,
     children: &'a [Node<M>],
     reads: Vec<ElementId>,
+    services: crate::services::Services,
 }
 
 impl<'a, M: 'static> BuildCx<'a, M> {
@@ -283,6 +294,7 @@ impl<'a, M: 'static> BuildCx<'a, M> {
         sched: SchedRef,
         scope: Option<Rc<AmbientNode>>,
         children: &'a [Node<M>],
+        services: crate::services::Services,
     ) -> Self {
         BuildCx {
             id,
@@ -290,7 +302,16 @@ impl<'a, M: 'static> BuildCx<'a, M> {
             scope,
             children,
             reads: Vec::new(),
+            services,
         }
+    }
+
+    /// What is valid from construction. There is deliberately no
+    /// `cx.geometry` here: build is a function of the description, the state
+    /// and the ambients, and reading layout from it would make build depend on
+    /// itself.
+    pub fn services(&self) -> &crate::services::Services {
+        &self.services
     }
 
     pub(crate) fn finish(self) -> Vec<ElementId> {
@@ -368,12 +389,20 @@ pub struct Ui<M> {
     pub(crate) trace: bool,
     pub(crate) build_log: Vec<ElementId>,
 
-    /// Geometry state.
+    /// The render tree: computed, retained geometry.
+    pub(crate) render: crate::render::object::RenderArena,
+    pub(crate) render_root: Option<crate::render::object::RenderId>,
+    /// Set while a render object is being measured, so a second measurement of
+    /// the same subtree in one frame can be counted.
+    pub(crate) measuring: bool,
     pub(crate) frame_size: Size,
     /// Relayout boundaries awaiting a measure pass.
-    pub(crate) layout_dirty: Vec<ElementId>,
+    pub(crate) layout_dirty: Vec<crate::render::object::RenderId>,
     /// Out-of-flow layers found by the last arrange walk, with their parents.
-    pub(crate) pending_layers: Vec<(ElementId, ElementId)>,
+    pub(crate) pending_layers: Vec<(
+        crate::render::object::RenderId,
+        crate::render::object::RenderId,
+    )>,
     pub(crate) spec: LayoutSpec,
 
     /// Pointer state.
@@ -390,6 +419,7 @@ pub struct Ui<M> {
     pub(crate) shortcuts: Vec<crate::focus::Shortcut>,
     /// Messages produced outside a dispatch call, delivered with the next one.
     pub(crate) pending_messages: Vec<M>,
+    pub(crate) services: crate::services::Services,
     /// Elements that registered behaviors, so the scheduler can pump them
     /// without walking the tree.
     pub(crate) behaviour_hosts: Vec<ElementId>,
@@ -416,6 +446,9 @@ impl<M: 'static> Ui<M> {
             txn: None,
             trace: false,
             build_log: Vec::new(),
+            render: Default::default(),
+            render_root: None,
+            measuring: false,
             frame_size: Size::ZERO,
             layout_dirty: Vec::new(),
             pending_layers: Vec::new(),
@@ -429,6 +462,7 @@ impl<M: 'static> Ui<M> {
             traversal: Box::new(crate::focus::ReadingOrder),
             shortcuts: crate::focus::default_shortcuts(),
             pending_messages: Vec::new(),
+            services: Default::default(),
             behaviour_hosts: Vec::new(),
         }
     }
@@ -466,6 +500,18 @@ impl<M: 'static> Ui<M> {
         self.run_flush(None);
     }
 
+    /// Install the host's executor. Work a component starts through `Tasks`
+    /// runs there instead of on a thread of the library's choosing.
+    pub fn set_spawner(&mut self, f: impl Fn(crate::services::Job) + 'static) {
+        self.services.spawn = Rc::new(f);
+    }
+
+    /// Geometry for one element, valid after the first layout. The type is what
+    /// keeps it out of `build`.
+    pub fn geometry(&self, id: ElementId) -> crate::services::Geometry<'_, M> {
+        crate::services::Geometry { ui: self, id }
+    }
+
     /// The display list from the last `frame` or `tick`.
     pub fn spec(&self) -> &LayoutSpec {
         &self.spec
@@ -489,9 +535,14 @@ impl<M: 'static> Ui<M> {
             self.sched.borrow().building.is_none(),
             "geometry is not readable during build"
         );
-        self.arena
-            .get(id)
-            .map(|e| e.layout.rect)
+        self.rect_of(id)
+    }
+
+    /// As `rect`, without the build-time check. For framework use.
+    pub fn rect_of(&self, id: ElementId) -> Rect {
+        self.render_for(id)
+            .and_then(|r| self.render.get(r))
+            .map(|n| n.data.rect)
             .unwrap_or_default()
     }
 
@@ -501,47 +552,61 @@ impl<M: 'static> Ui<M> {
             self.sched.borrow().building.is_none(),
             "geometry is not readable during build"
         );
-        self.arena
-            .get(id)
-            .map(|e| e.layout.size)
+        self.render_for(id)
+            .and_then(|r| self.render.get(r))
+            .map(|n| n.data.size)
             .unwrap_or_default()
     }
 
     /// The clip this element inherited from its ancestors.
     pub fn clip(&self, id: ElementId) -> Rect {
-        self.arena
-            .get(id)
-            .map(|e| e.layout.clip)
+        self.render_for(id)
+            .and_then(|r| self.render.get(r))
+            .map(|n| n.data.clip)
             .unwrap_or_default()
     }
 
     /// How many times this element has been measured. A change that stops at a
     /// relayout boundary leaves the counters above it untouched.
     pub fn layouts(&self, id: ElementId) -> u32 {
-        self.arena.get(id).map(|e| e.layout.layouts).unwrap_or(0)
+        self.render_for(id)
+            .and_then(|r| self.render.get(r))
+            .map(|n| n.data.layouts)
+            .unwrap_or(0)
+    }
+
+    /// How many of those were a second look at the same subtree in one frame.
+    /// `Auto` is the ergonomic default, so its cost is reported rather than
+    /// inferred.
+    pub fn remeasures(&self, id: ElementId) -> u32 {
+        self.render_for(id)
+            .and_then(|r| self.render.get(r))
+            .map(|n| n.data.remeasures)
+            .unwrap_or(0)
     }
 
     /// A viewport's scroll offset and the size of the content behind it.
     pub fn scroll(&self, id: ElementId) -> (Point, Size) {
-        self.arena
-            .get(id)
-            .map(|e| (e.layout.scroll, e.layout.content))
+        self.render_for(id)
+            .and_then(|r| self.render.get(r))
+            .map(|n| (n.data.scroll, n.data.content))
             .unwrap_or_default()
     }
 
     /// Move a viewport's window. Framework-owned state: it survives rebuilds
     /// and is not declared by the component.
     pub fn scroll_to(&mut self, id: ElementId, offset: Point) {
-        let changed = match self.arena.get_mut(id) {
-            Some(el) => {
-                let old = el.layout.scroll;
-                el.layout.scroll = offset;
+        let Some(r) = self.render_for(id) else { return };
+        let changed = match self.render.get_mut(r) {
+            Some(n) => {
+                let old = n.data.scroll;
+                n.data.scroll = offset;
                 old != offset
             }
             None => false,
         };
         if changed {
-            self.mark_needs_layout(id);
+            self.mark_render_dirty(r);
         }
     }
 

@@ -1,42 +1,45 @@
-//! The paint walk.
+//! The paint walk, over the render tree.
 //!
 //! Cost is O(visible items). The walk skips work four ways: off-screen
 //! (`rect ∩ clip` empty), occluded (an opaque full-frame layer above), scrolled
-//! out (a viewport emits only the rows inside its window), and absent (never
-//! built at all).
+//! out (a viewport's clip removes what is outside its window), and absent
+//! (never built at all).
+//!
+//! What each node draws is the render object's business; the framework supplies
+//! identity, provenance and order.
 
-use std::rc::Rc;
-
-use crate::desc::{resolve, Desc, ElemType, Scrim};
-use crate::element::ElementId;
+use crate::desc::{resolve, Desc, Scrim};
+use crate::render::geom::{Rect, Size};
+use crate::render::object::{Geom, RenderId};
+use crate::render::spec::{Draw, DrawList, Item, LayoutSpec, ThemeKey};
 use crate::schedule::Ui;
-
-use super::geom::{Rect, Size};
-use super::spec::{Draw, Item, ThemeKey};
 
 impl<M: 'static> Ui<M> {
     pub(crate) fn flush_paint(&mut self, frame: Size) {
         let mut spec = std::mem::take(&mut self.spec);
         spec.clear();
         spec.frame = frame;
-        if let Some(root) = self.root {
-            self.paint_node(root, &ThemeKey::default(), &mut spec);
+        if let Some(root) = self.render_root {
+            self.paint_render(root, &mut spec);
             // Layers paint above the content they were declared in, in the
             // order the arrange walk found them.
             for i in 0..self.pending_layers.len() {
-                let (lid, _) = self.pending_layers[i];
-                self.paint_layer(lid, frame, &mut spec);
+                let (lr, _) = self.pending_layers[i];
+                self.paint_layer(lr, frame, &mut spec);
             }
         }
         self.spec = spec;
     }
 
-    fn paint_layer(&mut self, lid: ElementId, frame: Size, spec: &mut super::spec::LayoutSpec) {
-        let props = match &resolve(&self.arena[lid].desc).desc {
-            Desc::Layer(p) => p.clone(),
+    fn paint_layer(&mut self, lr: RenderId, frame: Size, spec: &mut LayoutSpec) {
+        let Some(element) = self.element_of(lr) else {
+            return;
+        };
+        let scrim = match &resolve(&self.arena[element].desc).desc {
+            Desc::Layer(p) => p.scrim,
             _ => return,
         };
-        if let Some(kind) = props.scrim {
+        if let Some(kind) = scrim {
             if kind == Scrim::Opaque {
                 // Everything under an opaque full-frame scrim is invisible;
                 // emitting it would make the backend draw and then overdraw.
@@ -45,157 +48,65 @@ impl<M: 'static> Ui<M> {
             }
             spec.items.push(Item {
                 key: None,
-                id: lid,
+                id: element,
                 rect: Rect::from_size(frame),
                 clip: Rect::from_size(frame),
                 theme: ThemeKey::default(),
                 draw: Draw::Scrim(kind),
             });
         }
-        let theme = ThemeKey::default();
-        for k in self.arena[lid].children.clone() {
-            self.paint_node(k, &theme, spec);
-        }
+        self.paint_render(lr, spec);
     }
 
-    fn paint_node(&mut self, id: ElementId, theme: &ThemeKey, spec: &mut super::spec::LayoutSpec) {
-        let Some(el) = self.arena.get(id) else { return };
-        let ty = el.ty;
-        let rect = el.layout.rect;
-        let clip = el.layout.clip;
-        let key = el.key.clone();
-        let kids = el.children.clone();
-        // A `Shared` wrapper is transparent to provenance, as it is to type.
-        let node_theme = el
-            .desc
-            .theme
-            .clone()
-            .or_else(|| resolve(&el.desc).theme.clone());
-
+    fn paint_render(&mut self, r: RenderId, spec: &mut LayoutSpec) {
+        let (element, rect, clip, theme, key, kids, out_of_flow) = {
+            let Some(n) = self.render.get(r) else { return };
+            (
+                n.element,
+                n.data.rect,
+                n.data.clip,
+                n.theme.clone(),
+                n.key.clone(),
+                n.children.clone(),
+                n.out_of_flow,
+            )
+        };
         // Off-screen: nothing below can be visible either, because a child's
         // rect is contained in its parent's clip.
-        if ty != ElemType::Layer && rect.intersect(clip).is_empty() && ty != ElemType::Viewport {
-            // A zero-size pass-through node still has visible children (it does
-            // not clip them), so only cull nodes that actually bound content.
-            if !matches!(
-                ty,
-                ElemType::Gesture
-                    | ElemType::Focusable
-                    | ElemType::Provide(_)
-                    | ElemType::LayoutReader
-                    | ElemType::Component(_)
-            ) {
-                return;
-            }
+        if rect.intersect(clip).is_empty() && !rect.size().is_empty() {
+            return;
         }
 
-        let theme = match &node_theme {
-            Some(t) => ThemeKey(Some(t.clone())),
-            None => theme.clone(),
-        };
+        let mut list = DrawList::new(element);
+        list.key = key.clone();
+        list.theme = ThemeKey(theme.clone());
+
         let start = spec.items.len();
 
         // A region that names its own appearance is a region that paints: the
         // backend decides what the name looks like. Emitted before the node's
-        // own content, so text drawn inside it wins.
-        if node_theme.is_some() && !rect.is_empty() {
-            spec.items.push(Item {
-                key: key.clone(),
-                id,
-                rect,
-                clip,
-                theme: theme.clone(),
-                draw: Draw::Fill,
-            });
+        // own content, so anything drawn inside it wins.
+        let names_itself = self
+            .arena
+            .get(element)
+            .map(|e| e.desc.theme.is_some() || resolve(&e.desc).theme.is_some())
+            .unwrap_or(false);
+        if names_itself && !rect.is_empty() {
+            list.push(Draw::Fill, Geom { rect, clip });
         }
 
-        match ty {
-            ElemType::Box => {
-                let props = match &resolve(&self.arena[id].desc).desc {
-                    Desc::Box(p) => p.clone(),
-                    _ => unreachable!(),
-                };
-                if props.border {
-                    spec.items.push(Item {
-                        key: key.clone(),
-                        id,
-                        rect,
-                        clip,
-                        theme: theme.clone(),
-                        draw: Draw::Border,
-                    });
-                }
-            }
-            ElemType::TextRun => {
-                let (text, wrap) = match &resolve(&self.arena[id].desc).desc {
-                    Desc::TextRun(p) => (p.text.clone(), p.wrap),
-                    _ => unreachable!(),
-                };
-                let lines: Vec<Rc<str>> = if wrap {
-                    super::layout::wrap_text(&text, rect.w)
-                        .iter()
-                        .map(|l| Rc::from(l.as_str()))
-                        .collect()
-                } else {
-                    text.split('\n').map(Rc::from).collect()
-                };
-                spec.items.push(Item {
-                    key: key.clone(),
-                    id,
-                    rect,
-                    clip,
-                    theme: theme.clone(),
-                    draw: Draw::Lines(lines),
-                });
-            }
-            ElemType::Host => {
-                let h = match &resolve(&self.arena[id].desc).desc {
-                    Desc::Host(h) => *h,
-                    _ => unreachable!(),
-                };
-                spec.items.push(Item {
-                    key: key.clone(),
-                    id,
-                    rect,
-                    clip,
-                    theme: theme.clone(),
-                    draw: Draw::Host(h),
-                });
-            }
-            ElemType::Viewport => {
-                let props = match &resolve(&self.arena[id].desc).desc {
-                    Desc::Viewport(p) => p.clone(),
-                    _ => unreachable!(),
-                };
-                if props.scrollbar {
-                    let el = &self.arena[id];
-                    let content = el.layout.content.h;
-                    let window = el.layout.size.h;
-                    if content > window {
-                        spec.items.push(Item {
-                            key: key.clone(),
-                            id,
-                            rect: Rect::new(rect.right() - 1, rect.y, 1, rect.h),
-                            clip,
-                            theme: theme.clone(),
-                            draw: Draw::Scrollbar {
-                                offset: el.layout.scroll.y.max(0) as u16,
-                                content,
-                                window,
-                            },
-                        });
-                    }
-                }
-            }
-            // Layers are painted after the tree they were declared in, so the
-            // in-flow walk steps over them.
-            ElemType::Layer => return,
-            _ => {}
+        if let Some(obj) = self.render.get(r).and_then(|n| n.obj.as_ref()) {
+            obj.paint(Geom { rect, clip }, &mut list);
         }
+        spec.items.append(&mut list.items);
 
         for k in kids {
-            self.paint_node(k, &theme, spec);
+            if self.render.get(k).map(|n| n.out_of_flow).unwrap_or(false) {
+                continue;
+            }
+            self.paint_render(k, spec);
         }
+        let _ = out_of_flow;
 
         if let Some(k) = key {
             let end = spec.items.len();

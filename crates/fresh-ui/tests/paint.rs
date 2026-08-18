@@ -123,7 +123,9 @@ fn a_windowed_list_over_a_hundred_thousand_rows_emits_a_screenful() {
     // The shape `List::virtual` takes: a reader that turns the height it is
     // given into an index range, so build itself is O(visible).
     let spec = ui.frame(
-        layout_reader(|c| col().children((0..c.max_h as usize).map(|i| text(format!("row {i}"))))),
+        layout_reader(|info| {
+            col().children((0..info.constraints.max_h as usize).map(|i| text(format!("row {i}"))))
+        }),
         FRAME,
     );
 

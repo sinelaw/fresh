@@ -254,11 +254,11 @@ fn a_layout_reader_receives_its_constraints_during_the_pass() {
     ui.frame(
         row().children([
             text("gutter").w(Sizing::Cells(12)),
-            layout_reader(move |c| {
-                s.borrow_mut().push(c);
+            layout_reader(move |info| {
+                s.borrow_mut().push(info.constraints);
                 // How many rows fit is a function of the constraints, so the
                 // structure can only be decided here.
-                col().children((0..c.max_h.min(4)).map(|i| text(format!("row {i}"))))
+                col().children((0..info.constraints.max_h.min(4)).map(|i| text(format!("row {i}"))))
             })
             .flex(1),
         ]),

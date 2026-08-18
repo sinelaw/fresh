@@ -14,7 +14,10 @@ use crate::ambient::AmbientNode;
 use crate::behavior::Behavior;
 use crate::desc::{component_of, node_key, node_type, resolve, Desc, ElemType, Node};
 use crate::key::Key;
-use crate::render::object::RenderData;
+use crate::render::object::{RenderData, RenderId, RenderNode, RenderObject};
+use crate::render::prim::{
+    BoxRender, FocusRender, GestureRender, LayerRender, ReaderRender, TextRender, ViewportRender,
+};
 use crate::schedule::{BuildCx, DirtyCause, InitCx, Ui};
 
 /// A handle into the element arena. Stable while the element is mounted;
@@ -61,8 +64,8 @@ pub(crate) struct Element<M> {
     pub reads: Vec<ElementId>,
     pub init_reads: Vec<ElementId>,
 
-    /// Geometry. See `render::object::RenderData`.
-    pub layout: RenderData,
+    /// This element's render object, if it has geometry of its own.
+    pub render: Option<RenderId>,
 
     /// Diagnostics.
     pub builds: u32,
@@ -98,7 +101,7 @@ impl<M> Element<M> {
             init_dependents: Vec::new(),
             reads: Vec::new(),
             init_reads: Vec::new(),
-            layout: RenderData::fresh(),
+            render: None,
             builds: 0,
             last_dirty: None,
             state_name: "",
@@ -219,6 +222,9 @@ impl<M: 'static> Ui<M> {
             match u {
                 Undo::Created(id) => {
                     if let Some(el) = self.arena.release(id) {
+                        if let Some(r) = el.render {
+                            self.render.release(r);
+                        }
                         self.renderer.dispose(id, el.ty, el.name);
                     }
                 }
@@ -356,6 +362,7 @@ impl<M: 'static> Ui<M> {
             .alloc(Element::blank(key, ty, name, node, parent, depth, scope));
         self.journal(Undo::Created(id));
         self.renderer.create(id, ty, name);
+        self.make_render(id);
         if let Some(p) = parent {
             self.mark_needs_layout(p);
         }
@@ -379,7 +386,7 @@ impl<M: 'static> Ui<M> {
             let props_children = resolve(&self.arena[id].desc).children.clone();
             let scope = self.arena[id].scope.clone();
             let sched = self.sched.clone();
-            let mut icx = InitCx::new(id, sched, scope, &props_children);
+            let mut icx = InitCx::new(id, sched, scope, &props_children, self.services.clone());
             let state = comp.init_any(&mut icx);
             let (behaviors, init_reads) = icx.finish();
             for &p in &init_reads {
@@ -425,6 +432,7 @@ impl<M: 'static> Ui<M> {
         let moved = crate::render::layout::layout_relevant_changed(&self.arena[id].desc, &new);
         self.set_desc(id, new);
         if moved {
+            self.update_render(id);
             self.mark_needs_layout(id);
         }
         self.renderer
@@ -497,7 +505,13 @@ impl<M: 'static> Ui<M> {
                     .state
                     .as_ref()
                     .expect("component element mounted without state");
-                let mut cx = BuildCx::new(id, sched.clone(), scope, &props_children);
+                let mut cx = BuildCx::new(
+                    id,
+                    sched.clone(),
+                    scope,
+                    &props_children,
+                    self.services.clone(),
+                );
                 let node = comp.build_any(state, &mut cx);
                 (node, cx.finish())
             };
@@ -510,7 +524,15 @@ impl<M: 'static> Ui<M> {
             // description — which carries none. Reconciling from the
             // description here would dispose the whole window every frame and
             // mount it again, losing element identity and everything that hangs
-            // off it: state, focus, and an in-flight press.
+            // off it: state, focus, and an in-flight press. What this rebuild
+            // does instead is tell the reader its builder is new.
+            if let Some(r) = self.arena[id].render {
+                if let Some(obj) = self.render.get_mut(r).and_then(|n| n.obj.as_mut()) {
+                    if let Some(o) = obj.as_any_mut().downcast_mut::<ReaderRender>() {
+                        o.invalidate();
+                    }
+                }
+            }
             self.mark_needs_layout(id);
         } else {
             let kids = resolve(&self.arena[id].desc).children.clone();
@@ -639,8 +661,138 @@ impl<M: 'static> Ui<M> {
             for b in el.behaviors.iter().rev() {
                 b.teardown();
             }
+            if let Some(r) = el.render {
+                self.render.release(r);
+                self.layout_dirty.retain(|d| *d != r);
+            }
             self.renderer.dispose(id, el.ty, el.name);
         }
         self.sched.borrow_mut().forget(id);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Render objects
+// ---------------------------------------------------------------------------
+
+impl<M: 'static> Ui<M> {
+    /// Give an element a render object, if its description has geometry of its
+    /// own. Descriptions that only carry identity or data — `Component`,
+    /// `Provide`, `Shared` — get none, and the render tree skips them.
+    fn make_render(&mut self, id: ElementId) {
+        let obj: Option<Box<dyn RenderObject>> = match &resolve(&self.arena[id].desc).desc {
+            Desc::Box(p) => Some(Box::new(BoxRender { props: p.clone() })),
+            Desc::TextRun(p) => Some(Box::new(TextRender::new(p.clone()))),
+            Desc::Viewport(p) => Some(Box::new(ViewportRender::new(p.clone()))),
+            Desc::Gesture(g) => Some(Box::new(GestureRender { mode: g.mode })),
+            Desc::Focusable(f) => Some(Box::new(FocusRender {
+                ordinal: f.ordinal,
+                skip: f.skip,
+                scope: f.scope,
+            })),
+            Desc::Layer(l) => Some(Box::new(LayerRender::from_props(l))),
+            Desc::Host(h) => Some(h.make()),
+            Desc::LayoutReader(_) => Some(Box::<ReaderRender>::default()),
+            Desc::Provide(_) | Desc::Shared(_) | Desc::Component(_) => None,
+        };
+        let Some(obj) = obj else { return };
+        let clips = obj.clips();
+        let out_of_flow = obj.out_of_flow();
+        let r = self.render.alloc(RenderNode {
+            obj: Some(obj),
+            element: id,
+            parent: None,
+            children: Vec::new(),
+            w: crate::desc::Sizing::Auto,
+            h: crate::desc::Sizing::Auto,
+            clips,
+            out_of_flow,
+            theme: None,
+            key: None,
+            data: RenderData::fresh(),
+        });
+        self.arena.get_mut(id).expect("live").render = Some(r);
+    }
+
+    /// Push changed props into an existing render object, so retained state —
+    /// a viewport's scroll offset, a focus registration — survives.
+    fn update_render(&mut self, id: ElementId) {
+        let Some(r) = self.arena.get(id).and_then(|e| e.render) else {
+            return;
+        };
+        let Some(mut obj) = self.render.get_mut(r).and_then(|n| n.obj.take()) else {
+            return;
+        };
+        match &resolve(&self.arena[id].desc).desc {
+            Desc::Box(p) => {
+                if let Some(o) = obj.as_any_mut().downcast_mut::<BoxRender>() {
+                    o.props = p.clone();
+                }
+            }
+            Desc::TextRun(p) => {
+                if let Some(o) = obj.as_any_mut().downcast_mut::<TextRender>() {
+                    o.props = p.clone();
+                }
+            }
+            Desc::Viewport(p) => {
+                if let Some(o) = obj.as_any_mut().downcast_mut::<ViewportRender>() {
+                    o.props = p.clone();
+                }
+            }
+            Desc::Gesture(g) => {
+                if let Some(o) = obj.as_any_mut().downcast_mut::<GestureRender>() {
+                    o.mode = g.mode;
+                }
+            }
+            Desc::Focusable(f) => {
+                if let Some(o) = obj.as_any_mut().downcast_mut::<FocusRender>() {
+                    o.ordinal = f.ordinal;
+                    o.skip = f.skip;
+                    o.scope = f.scope;
+                }
+            }
+            Desc::Layer(l) => {
+                if let Some(o) = obj.as_any_mut().downcast_mut::<LayerRender>() {
+                    *o = LayerRender::from_props(l);
+                }
+            }
+            _ => {}
+        }
+        let clips = obj.clips();
+        let out_of_flow = obj.out_of_flow();
+        if let Some(n) = self.render.get_mut(r) {
+            n.obj = Some(obj);
+            n.clips = clips;
+            n.out_of_flow = out_of_flow;
+        }
+    }
+
+    /// Run a constraint-dependent builder and reconcile what it produced. The
+    /// one place a build happens inside layout: `set_state` is rejected for the
+    /// duration, and the subtree is reconciled transactionally.
+    pub(crate) fn run_reader(&mut self, r: RenderId, info: crate::render::object::LayoutInfo) {
+        let e = self.render[r].element;
+        let f = match &resolve(&self.arena[e].desc).desc {
+            Desc::LayoutReader(p) => p.build.clone(),
+            _ => return,
+        };
+        let name = self.arena[e].name;
+        let sched = self.sched.clone();
+        sched.borrow_mut().enter_build(e, name);
+        let node = f(info);
+        sched.borrow_mut().clear_building();
+
+        self.begin_txn();
+        self.reconcile_children(e, vec![node]);
+        self.commit_txn();
+
+        let kids = self.arena[e].children.clone();
+        let mut inner = Vec::new();
+        for k in kids {
+            self.relink_from_pub(k, Some(r), &mut inner);
+        }
+        if let Some(n) = self.render.get_mut(r) {
+            n.children = inner;
+        }
     }
 }

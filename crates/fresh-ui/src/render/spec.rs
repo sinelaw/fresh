@@ -100,6 +100,46 @@ pub enum Draw {
     Host(HostId),
 }
 
+/// What a render object emits during paint.
+///
+/// The key, the element and the theme come from the framework, so an
+/// implementation says only *what* to draw and *where*.
+pub struct DrawList {
+    pub(crate) items: Vec<Item>,
+    pub(crate) key: Option<Key>,
+    pub(crate) id: ElementId,
+    pub(crate) theme: ThemeKey,
+}
+
+impl DrawList {
+    pub(crate) fn new(id: ElementId) -> Self {
+        DrawList {
+            items: Vec::new(),
+            key: None,
+            id,
+            theme: ThemeKey::default(),
+        }
+    }
+
+    /// Draw over this node's own rectangle.
+    pub fn push(&mut self, draw: Draw, g: super::object::Geom) {
+        self.push_at(draw, g.rect, g.clip);
+    }
+
+    /// Draw over some other rectangle inside this node — a scrollbar down one
+    /// edge, for instance.
+    pub fn push_at(&mut self, draw: Draw, rect: Rect, clip: Rect) {
+        self.items.push(Item {
+            key: self.key.clone(),
+            id: self.id,
+            rect,
+            clip,
+            theme: self.theme.clone(),
+            draw,
+        });
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CursorSpec {
     pub pos: Point,

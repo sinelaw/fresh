@@ -13,12 +13,13 @@
 
 use std::rc::Rc;
 
-use crate::desc::{resolve, Desc, ElemType, Modality, PointerMode};
+use crate::desc::{resolve, Desc, ElemType};
 use crate::element::ElementId;
 use crate::event::{
     Ctl, Event, Flow, GestureKind, Input, KeyPress, Mods, MouseButton, Phase, SelectionOnFocus,
 };
 use crate::render::geom::Point;
+use crate::render::object::{Hit, RenderId};
 use crate::schedule::Ui;
 
 impl<M: 'static> Ui<M> {
@@ -108,40 +109,42 @@ impl<M: 'static> Ui<M> {
     // -- hit-testing ---------------------------------------------------------
 
     /// The element path under a point, outermost first.
+    ///
+    /// The walk is over the **render tree**, so it accounts for overlapping
+    /// content, clipping and out-of-flow layers — none of which a walk over
+    /// descriptions can see.
     pub fn hit_test(&self, p: Point) -> Vec<ElementId> {
         // A modal layer makes everything outside its subtree non-interactive,
         // so the search starts there.
-        if let Some(&(lid, _)) = self
-            .pending_layers
-            .iter()
-            .rev()
-            .find(|(l, _)| self.layer_modality(*l) != Modality::None)
-        {
-            return self.hit_subtree(lid, p).unwrap_or_default();
+        if let Some(e) = self.topmost_modal() {
+            if let Some(r) = self.render_for(e) {
+                return self.hit_subtree(r, p).unwrap_or_default();
+            }
         }
         // Otherwise: layers first, topmost declared last, then the tree.
-        for &(lid, _) in self.pending_layers.iter().rev() {
-            if let Some(path) = self.hit_subtree(lid, p) {
+        for &(lr, _) in self.pending_layers.iter().rev() {
+            if let Some(path) = self.hit_subtree(lr, p) {
                 return path;
             }
         }
-        match self.root {
+        match self.render_root {
             Some(r) => self.hit_subtree(r, p).unwrap_or_default(),
             None => Vec::new(),
         }
     }
 
-    /// Hit a subtree, returning the full path from the tree root: a layer is an
-    /// ordinary child of the description tree, so propagation continues through
-    /// its ancestors and it keeps its owner's identity.
-    fn hit_subtree(&self, id: ElementId, p: Point) -> Option<Vec<ElementId>> {
+    /// Hit a subtree, returning the full element path from the tree root: a
+    /// layer is an ordinary child of the description tree, so propagation
+    /// continues through its ancestors and it keeps its owner's identity.
+    fn hit_subtree(&self, r: RenderId, p: Point) -> Option<Vec<ElementId>> {
         let mut deep = Vec::new();
-        if !self.hit_node(id, p, &mut deep) {
+        if !self.hit_render(r, p, &mut deep) {
             return None;
         }
         deep.reverse();
-        let mut path = self.ancestors_of(id);
-        path.extend(deep);
+        let root_el = self.element_of(r)?;
+        let mut path = self.ancestors_of(root_el);
+        path.extend(deep.into_iter().filter_map(|n| self.element_of(n)));
         Some(path)
     }
 
@@ -156,51 +159,33 @@ impl<M: 'static> Ui<M> {
         up
     }
 
-    /// Depth-first, topmost sibling first. Pushes deepest-first.
-    fn hit_node(&self, id: ElementId, p: Point, out: &mut Vec<ElementId>) -> bool {
-        let Some(el) = self.arena.get(id) else {
+    /// Depth-first, topmost sibling first. Pushes deepest-first. What a point
+    /// does at each node is the render object's answer, not the framework's.
+    fn hit_render(&self, r: RenderId, p: Point, out: &mut Vec<RenderId>) -> bool {
+        let Some(n) = self.render.get(r) else {
             return false;
         };
-        let mode = self.pointer_mode(id);
-        if mode == PointerMode::Ignore {
+        let rect = n.data.rect;
+        let local = Point::new(p.x - rect.x, p.y - rect.y);
+        let disposition = n.obj.as_ref().map(|o| o.hit(local)).unwrap_or(Hit::Opaque);
+        if disposition == Hit::Ignore {
             return false;
         }
-        for &c in el.children.iter().rev() {
-            // Layers are hit-tested as their own stacking context.
-            if self.arena.get(c).map(|e| e.ty) == Some(ElemType::Layer) {
+        for &c in n.children.iter().rev() {
+            // Layers are hit-tested as their own stacking contexts.
+            if self.render.get(c).map(|x| x.out_of_flow).unwrap_or(false) {
                 continue;
             }
-            if self.hit_node(c, p, out) {
-                out.push(id);
+            if self.hit_render(c, p, out) {
+                out.push(r);
                 return true;
             }
         }
-        let vis = el.layout.rect.intersect(el.layout.clip);
-        if mode == PointerMode::Opaque && vis.contains(p) {
-            out.push(id);
+        if disposition == Hit::Opaque && rect.intersect(n.data.clip).contains(p) {
+            out.push(r);
             return true;
         }
         false
-    }
-
-    fn pointer_mode(&self, id: ElementId) -> PointerMode {
-        match self.arena.get(id).map(|e| &e.desc) {
-            Some(d) => match &resolve(d).desc {
-                Desc::Gesture(g) => g.mode,
-                _ => PointerMode::Opaque,
-            },
-            None => PointerMode::Opaque,
-        }
-    }
-
-    fn layer_modality(&self, id: ElementId) -> Modality {
-        match self.arena.get(id).map(|e| &e.desc) {
-            Some(d) => match &resolve(d).desc {
-                Desc::Layer(l) => l.modality,
-                _ => Modality::None,
-            },
-            None => Modality::None,
-        }
     }
 
     /// Where the event should go: the captured element if there is one,
@@ -271,7 +256,7 @@ impl<M: 'static> Ui<M> {
                 if handlers.is_empty() {
                     continue;
                 }
-                let rect = self.arena.get(n).map(|e| e.layout.rect).unwrap_or_default();
+                let rect = self.rect_of(n);
                 let ev = Event {
                     kind,
                     pos,
@@ -371,7 +356,7 @@ impl<M: 'static> Ui<M> {
         if handlers.is_empty() {
             return;
         }
-        let rect = self.arena.get(n).map(|e| e.layout.rect).unwrap_or_default();
+        let rect = self.rect_of(n);
         let ctl = Rc::new(Ctl::default());
         let ev = Event {
             kind,
@@ -424,7 +409,11 @@ impl<M: 'static> Ui<M> {
 
     fn dismiss_for_pointer(&mut self, pos: Point, out: &mut Vec<M>) {
         let path = self.hit_test(pos);
-        let layers: Vec<ElementId> = self.pending_layers.iter().map(|(l, _)| *l).collect();
+        let layers: Vec<ElementId> = self
+            .pending_layers
+            .iter()
+            .filter_map(|(l, _)| self.element_of(*l))
+            .collect();
         for lid in layers {
             let props = match self.arena.get(lid).map(|e| &e.desc) {
                 Some(d) => match &resolve(d).desc {
@@ -466,7 +455,11 @@ impl<M: 'static> Ui<M> {
 
     pub(crate) fn dismiss_for_key(&mut self, k: KeyPress, out: &mut Vec<M>) -> bool {
         use crate::event::KeyCode;
-        let layers: Vec<ElementId> = self.pending_layers.iter().map(|(l, _)| *l).collect();
+        let layers: Vec<ElementId> = self
+            .pending_layers
+            .iter()
+            .filter_map(|(l, _)| self.element_of(*l))
+            .collect();
         let mut any = false;
         for lid in layers {
             let props = match self.arena.get(lid).map(|e| &e.desc) {

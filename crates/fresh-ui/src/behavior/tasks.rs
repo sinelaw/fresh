@@ -60,6 +60,7 @@ struct Inner<T: Send + 'static> {
     next: Cell<u64>,
     #[allow(clippy::type_complexity)]
     on_result: RefCell<Option<Rc<dyn Fn(T)>>>,
+    services: RefCell<Option<crate::services::Services>>,
 }
 
 /// Register one of these per component that starts asynchronous work.
@@ -84,6 +85,7 @@ impl<T: Send + 'static> Tasks<T> {
                 tags: RefCell::new(HashMap::new()),
                 next: Cell::new(1),
                 on_result: RefCell::new(None),
+                services: RefCell::new(None),
             },
         }
     }
@@ -93,9 +95,30 @@ impl<T: Send + 'static> Tasks<T> {
         *self.inner.on_result.borrow_mut() = Some(Rc::new(f));
     }
 
-    /// Start a launch under `tag`, superseding any earlier one with the same
-    /// tag.
-    pub fn launch_replacing(&self, tag: &'static str) -> TaskHandle<T> {
+    /// Start work under `tag`, superseding any earlier launch with the same
+    /// tag: the older result is dropped rather than racing the newer one.
+    ///
+    /// The library does not name a runtime. `work` runs wherever the host's
+    /// spawner puts it, and hands its results back through the handle it is
+    /// given. Delivery still happens on the UI scheduler between frames, and
+    /// still stops once the owning element is torn down.
+    pub fn launch_replacing<F>(&self, tag: &'static str, work: F)
+    where
+        F: FnOnce(TaskHandle<T>) + Send + 'static,
+    {
+        let handle = self.handle(tag);
+        let spawn = self.inner.services.borrow().clone();
+        match spawn {
+            Some(s) => s.spawn(Box::new(move || work(handle))),
+            // Not registered, so there is nowhere to put the work: run it here
+            // rather than drop it.
+            None => work(handle),
+        }
+    }
+
+    /// A launch whose work the caller drives itself — a channel it already
+    /// owns, an executor the library never sees. Same supersession rule.
+    pub fn handle(&self, tag: &'static str) -> TaskHandle<T> {
         let generation = self.inner.next.get();
         self.inner.next.set(generation + 1);
         let mut tags = self.inner.tags.borrow_mut();
@@ -140,6 +163,10 @@ impl<T: Send + 'static> Tasks<T> {
 }
 
 impl<T: Send + 'static> Behavior for Tasks<T> {
+    fn attach(&self, services: &crate::services::Services) {
+        *self.inner.services.borrow_mut() = Some(services.clone());
+    }
+
     fn teardown(&self) {
         self.inner.alive.store(false, Ordering::Release);
         *self.inner.on_result.borrow_mut() = None;

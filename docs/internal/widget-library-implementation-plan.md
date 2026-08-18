@@ -150,8 +150,12 @@ audit of the spec against the source. Each is classified:
 | **C** | The code is right and the spec is inconsistent, silent, or unexpressible in Rust. | Correct the spec. |
 
 Class A and B are open. **The design document is the agreement; where it and the
-code disagree, the code changes.** Class C items are proposals to amend the
-document, and need a decision rather than a keystroke.
+code disagree, the code changes.**
+
+Class C is **decided**: the architecture is what matters and the spelling is not,
+so the Rust-legal names stand and the document is corrected to match (R11). No
+class-C item changes the model — each is a name Rust rejects, a place the
+document contradicts its own examples, or a place it is silent.
 
 Section references below are to the design document unless marked otherwise.
 

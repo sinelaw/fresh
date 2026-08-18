@@ -77,7 +77,7 @@ pub enum Desc<M> {
     /// Out-of-flow content and a stacking context.
     Layer(LayerProps<M>),
     /// Foreign content owned by the host: a buffer split, a PTY grid.
-    Host(HostId),
+    Host(HostSpec),
     /// Makes an ambient value visible to everything below it (§ambient). Not a
     /// primitive: it has no render object and contributes no geometry.
     Provide(ProvideProps),
@@ -412,7 +412,7 @@ impl<M> LayerProps<M> {
 /// A builder that receives the constraints its node was given.
 pub struct LayoutReaderProps<M> {
     #[allow(clippy::type_complexity)]
-    pub build: Rc<dyn Fn(crate::render::geom::Constraints) -> Node<M>>,
+    pub build: Rc<dyn Fn(crate::render::object::LayoutInfo) -> Node<M>>,
 }
 
 impl<M> Clone for LayoutReaderProps<M> {
@@ -432,6 +432,48 @@ pub struct HostId(pub u64);
 impl From<u64> for HostId {
     fn from(v: u64) -> Self {
         HostId(v)
+    }
+}
+
+/// What a `Host` description carries.
+///
+/// The escape hatch of design goal 6, and it is an ordinary render object: a
+/// host leaf has exactly the capabilities a built-in primitive has and no
+/// others. `Plain` is the convenience for a host that only needs a rectangle.
+#[derive(Clone)]
+pub enum HostSpec {
+    Plain(HostId),
+    #[allow(clippy::type_complexity)]
+    Leaf(Rc<dyn Fn() -> Box<dyn crate::render::object::HostLeaf>>),
+}
+
+impl HostSpec {
+    pub(crate) fn make(&self) -> Box<dyn crate::render::object::RenderObject> {
+        match self {
+            HostSpec::Plain(id) => Box::new(crate::render::object::PlainHost { id: *id }),
+            HostSpec::Leaf(f) => f(),
+        }
+    }
+}
+
+impl PartialEq for HostSpec {
+    fn eq(&self, o: &Self) -> bool {
+        match (self, o) {
+            (HostSpec::Plain(a), HostSpec::Plain(b)) => a == b,
+            (HostSpec::Leaf(a), HostSpec::Leaf(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for HostSpec {}
+
+impl std::fmt::Debug for HostSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HostSpec::Plain(id) => write!(f, "Host({})", id.0),
+            HostSpec::Leaf(_) => write!(f, "Host(leaf)"),
+        }
     }
 }
 
@@ -461,7 +503,7 @@ impl<M> Clone for Desc<M> {
             Desc::Gesture(p) => Desc::Gesture(p.clone()),
             Desc::Focusable(p) => Desc::Focusable(p.clone()),
             Desc::Layer(p) => Desc::Layer(p.clone()),
-            Desc::Host(h) => Desc::Host(*h),
+            Desc::Host(h) => Desc::Host(h.clone()),
             Desc::Provide(p) => Desc::Provide(p.clone()),
             Desc::LayoutReader(p) => Desc::LayoutReader(p.clone()),
             Desc::Shared(n) => Desc::Shared(n.clone()),
@@ -637,7 +679,7 @@ pub fn focusable<M>(child: Node<M>) -> Node<M> {
 /// The builder runs during layout, may run more than once per frame under
 /// intrinsic sizing, and may not call `set_state`.
 pub fn layout_reader<M: 'static>(
-    f: impl Fn(crate::render::geom::Constraints) -> Node<M> + 'static,
+    f: impl Fn(crate::render::object::LayoutInfo) -> Node<M> + 'static,
 ) -> Node<M> {
     Node::new(Desc::LayoutReader(LayoutReaderProps { build: Rc::new(f) }))
 }
@@ -646,8 +688,17 @@ pub fn layer<M>() -> Node<M> {
     Node::new(Desc::Layer(LayerProps::default()))
 }
 
+/// Content the backend draws, given a rectangle.
 pub fn host<M>(id: impl Into<HostId>) -> Node<M> {
-    Node::new(Desc::Host(id.into()))
+    Node::new(Desc::Host(HostSpec::Plain(id.into())))
+}
+
+/// Content the application measures, paints and hit-tests itself.
+///
+/// The factory runs once per mount, so the leaf may hold state for as long as
+/// the element lives — the same terms every built-in primitive has.
+pub fn host_leaf<M>(f: impl Fn() -> Box<dyn crate::render::object::HostLeaf> + 'static) -> Node<M> {
+    Node::new(Desc::Host(HostSpec::Leaf(Rc::new(f))))
 }
 
 // ---------------------------------------------------------------------------

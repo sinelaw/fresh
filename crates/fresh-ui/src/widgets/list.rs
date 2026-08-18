@@ -179,8 +179,8 @@ impl<M: 'static> Component<M> for List<M> {
         let source = self.source.clone();
         let scroll = s.scroll;
         let follow = s.follow;
-        let reader = layout_reader(move |c| {
-            let visible = (c.max_h as usize).max(1);
+        let reader = layout_reader(move |info| {
+            let visible = (info.constraints.max_h as usize).max(1);
             // Keep the selection inside the window without writing to state:
             // the first visible index is a function of the scroll and the
             // selection, computed here rather than stored.

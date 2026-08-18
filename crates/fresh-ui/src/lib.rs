@@ -35,6 +35,7 @@ pub mod hit;
 pub mod key;
 pub mod render;
 pub mod schedule;
+pub mod services;
 pub mod test;
 pub mod widgets;
 
@@ -59,4 +60,5 @@ pub use key::{Key, KeyPath};
 pub use render::geom::{distribute, Constraints, Point, Rect, Size};
 pub use render::spec::{CursorSpec, Draw, Item, LayoutSpec, ThemeKey};
 pub use schedule::{BuildCx, DirtyCause, InitCx, NullRenderer, Renderer, Sched, Ui, Updater};
+pub use services::{Geometry, Job, Services};
 pub use widgets::{Button, Dropdown, List, Number, RadioGroup, TextField, Toggle, Tree, TreeNode};

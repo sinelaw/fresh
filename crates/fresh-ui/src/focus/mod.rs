@@ -192,12 +192,7 @@ impl<M: 'static> Ui<M> {
     }
 
     fn scope_root(&self) -> Option<ElementId> {
-        if let Some(&(lid, _)) = self
-            .pending_layers
-            .iter()
-            .rev()
-            .find(|(l, _)| self.is_modal(*l))
-        {
+        if let Some(lid) = self.topmost_modal() {
             return Some(lid);
         }
         if let Some(f) = self.focus {
@@ -210,6 +205,15 @@ impl<M: 'static> Ui<M> {
             }
         }
         self.root
+    }
+
+    /// The topmost layer that makes everything outside it inert, as an element.
+    pub(crate) fn topmost_modal(&self) -> Option<ElementId> {
+        self.pending_layers
+            .iter()
+            .rev()
+            .filter_map(|(l, _)| self.element_of(*l))
+            .find(|e| self.is_modal(*e))
     }
 
     fn is_modal(&self, id: ElementId) -> bool {
@@ -231,10 +235,11 @@ impl<M: 'static> Ui<M> {
         if el.ty == ElemType::Focusable {
             if let Desc::Focusable(f) = &resolve(&el.desc).desc {
                 if !f.skip {
+                    let rect = self.rect_of(id);
                     out.push(FocusEntry {
                         id,
                         ordinal: f.ordinal,
-                        rect: el.layout.rect,
+                        rect,
                     });
                 }
             }
@@ -264,12 +269,7 @@ impl<M: 'static> Ui<M> {
     /// nothing happens; a modal has just opened and focus moves into it,
     /// remembering where it was; the modal has closed and focus goes back.
     pub(crate) fn apply_autofocus(&mut self) {
-        let modal = self
-            .pending_layers
-            .iter()
-            .rev()
-            .find(|(l, _)| self.is_modal(*l))
-            .map(|(l, _)| *l);
+        let modal = self.topmost_modal();
         let Some(root) = modal.or(self.root) else {
             return;
         };

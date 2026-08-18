@@ -26,6 +26,12 @@ pub mod tasks;
 pub use tasks::{TaskHandle, Tasks};
 
 pub trait Behavior {
+    /// Handed the services when the behavior is registered — a spawner, the
+    /// scheduler, the registries. Behaviors that need none ignore it.
+    fn attach(&self, services: &crate::services::Services) {
+        let _ = services;
+    }
+
     /// Called once, when the owning element is disposed.
     fn teardown(&self) {}
 

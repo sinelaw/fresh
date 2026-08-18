@@ -332,7 +332,7 @@ impl Component<Msg> for StatusBar {
         let tasks = cx.register(crate::behavior::Tasks::<usize>::new());
         let up = cx.updater::<StatusState>();
         tasks.on_result(move |n| up.set(move |s: &mut StatusState| s.synced = n));
-        *self.slot.borrow_mut() = Some(tasks.launch_replacing("sync"));
+        *self.slot.borrow_mut() = Some(tasks.handle("sync"));
         StatusState {
             synced: 0,
             _tasks: Some(tasks),
