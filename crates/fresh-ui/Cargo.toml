@@ -1,0 +1,19 @@
+[package]
+name = "fresh-ui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Retained reconciling UI tree: descriptions, elements, render objects. Backend- and application-agnostic."
+keywords = ["ui", "tui", "reconciler", "layout"]
+categories = ["gui"]
+
+[lib]
+name = "fresh_ui"
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]

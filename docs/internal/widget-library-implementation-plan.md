@@ -1,6 +1,8 @@
 # Widget Library — Implementation Plan
 
-> _AI-generated plan. **Entirely PLANNED** — no part of this has started._
+> _AI-generated plan. **Part 1 has started; Part 2 is PLANNED.** Phases L0, L1
+> and L2 are implemented in `crates/fresh-ui`; everything from L2a onward is
+> still design._
 >
 > How to build [`widget-library-design.md`](widget-library-design.md) as a new
 > crate, and how to move every existing UI surface onto it. Two parts, in
@@ -48,8 +50,9 @@ crates/fresh-ui/
   src/
     lib.rs
     key.rs          Key, KeyPath
-    desc.rs         Node<M>, Desc<M>, props structs
-    element.rs      Element, ElementTree, reconcile (identity skip, transactional)
+    desc.rs         Node<M>, Desc<M>, props structs, builders
+    component.rs    Component<M>, the type-erased AnyComponent<M>
+    element.rs      Element, arena, reconcile (identity skip, transactional)
     schedule.rs     dirty set, flush, re-entrancy guard, frozen-tree invariant
     ambient.rs      Ambient<T>, Provide, dependent lists
     behavior/       register/teardown; Tasks, Ticker, Controller/Anchor,
@@ -95,6 +98,41 @@ the check that the crate is in fact independent.
 Each phase ends with tests that fix its semantics. The order is constrained:
 L1 and L2 define the framework's semantics and every later phase depends on
 them.
+
+**Status.** L0, L1 and L2 are implemented and their exit criteria are covered
+by tests in `crates/fresh-ui/tests/`. The crate has no dependencies — neither
+external ones nor other workspace crates — so `cargo test -p fresh-ui` builds
+the library and nothing else. Phases from L2a onward are unstarted.
+
+### Deviations from the design document
+
+Four points where the implementation differs from the spec. The spec is the
+statement of intent; these are the places where Rust or a later phase forced a
+different expression of it.
+
+1. **`col()` / `row()` / `stack()` instead of `Box::col()`.** A type named
+   `Box` in scope shadows `std::boxed::Box` for every user of the crate. The
+   description variant keeps the name `Desc::Box`; only the constructor spelling
+   changed.
+2. **Sizing is a node-level attribute, not a `BoxProps` field.** The design
+   document's own examples apply `.flex(1)` to a `Viewport` and `.w(Cells(20))`
+   to a `Component`, neither of which is a `Box`. `Sizing` therefore lives on
+   `Node`, where any node can carry it, and `BoxProps` holds only what the
+   container itself needs: direction, padding, gap, border, alignment.
+3. **A component reads its slot children through `cx.children()`.** The design
+   document does not say how children passed to a `Component` description reach
+   the component. They are exposed on the build context; the component decides
+   where to place them.
+4. **Transactional reconcile rolls back and then re-raises.** L1 requires that a
+   failure part-way through leaves the last committed content intact, which is
+   implemented. What happens *after* the rollback — a placeholder subtree, a
+   reported error, a dropped frame — is the error policy, and that is a later
+   phase. Until then the panic continues to the caller with the tree intact.
+
+One behaviour is implemented that the design document does not state
+explicitly: the `(type, key)` rule is applied to the **root** description as
+well as to children, so changing the root's type or key replaces the root
+element rather than updating it in place.
 
 ### L0 — Skeleton
 Crate, CI wiring, `Key`, `Node<M>`, `Desc<M>` with props structs, no behavior.

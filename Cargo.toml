@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/fresh-editor",
+    "crates/fresh-ui",
     "crates/fresh-gui",
     "crates/fresh-core",
     "crates/fresh-parser-js",
@@ -14,6 +15,7 @@ members = [
 ]
 default-members = [
     "crates/fresh-editor",
+    "crates/fresh-ui",
     "crates/fresh-core",
     "crates/fresh-parser-js",
     "crates/fresh-languages",
@@ -44,6 +46,7 @@ fresh-plugin-api-macros = { version = "0.4.9", path = "crates/fresh-plugin-api-m
 fresh-winterm = { version = "0.4.9", path = "crates/fresh-winterm" }
 fresh-input-parser = { version = "0.4.9", path = "crates/fresh-input-parser" }
 fresh-update = { version = "0.4.9", path = "crates/fresh-update" }
+fresh-ui = { version = "0.4.9", path = "crates/fresh-ui" }
 
 # External crates
 serde = { version = "1.0", features = ["derive", "rc"] }
