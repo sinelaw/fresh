@@ -61,4 +61,6 @@ pub use render::geom::{distribute, Constraints, Point, Rect, Size};
 pub use render::spec::{CursorSpec, Draw, Item, LayoutSpec, ThemeKey};
 pub use schedule::{BuildCx, DirtyCause, InitCx, NullRenderer, Renderer, Sched, Ui, Updater};
 pub use services::{Geometry, Job, Services};
-pub use widgets::{Button, Dropdown, List, Number, RadioGroup, TextField, Toggle, Tree, TreeNode};
+pub use widgets::{
+    Button, Dropdown, DualList, List, Number, RadioGroup, TextField, Toggle, Tree, TreeNode,
+};

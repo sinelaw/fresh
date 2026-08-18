@@ -428,6 +428,7 @@ pub struct Ui<M> {
     /// Set while a render object is being measured, so a second measurement of
     /// the same subtree in one frame can be counted.
     pub(crate) measuring: bool,
+    pub(crate) frame_no: u64,
     pub(crate) frame_size: Size,
     /// Relayout boundaries awaiting a measure pass.
     pub(crate) layout_dirty: Vec<crate::render::object::RenderId>,
@@ -456,6 +457,8 @@ pub struct Ui<M> {
     /// Elements that registered behaviors, so the scheduler can pump them
     /// without walking the tree.
     pub(crate) behaviour_hosts: Vec<ElementId>,
+    /// Elements an owner holds a handle to.
+    pub(crate) anchored: Vec<ElementId>,
 }
 
 impl<M: 'static> Default for Ui<M> {
@@ -484,6 +487,7 @@ impl<M: 'static> Ui<M> {
             focus_tree: Default::default(),
             focus_roots: Vec::new(),
             measuring: false,
+            frame_no: 0,
             frame_size: Size::ZERO,
             layout_dirty: Vec::new(),
             pending_layers: Vec::new(),
@@ -499,6 +503,7 @@ impl<M: 'static> Ui<M> {
             pending_messages: Vec::new(),
             services: Default::default(),
             behaviour_hosts: Vec::new(),
+            anchored: Vec::new(),
         }
     }
 
@@ -539,6 +544,43 @@ impl<M: 'static> Ui<M> {
     /// runs there instead of on a thread of the library's choosing.
     pub fn set_spawner(&mut self, f: impl Fn(crate::services::Job) + 'static) {
         self.services.spawn = Rc::new(f);
+    }
+
+    /// Install the host's persistence store. `Persisted` values are read from
+    /// it at construction and written back at teardown.
+    pub fn set_store(&mut self, s: Rc<dyn crate::behavior::Store>) {
+        self.services.store = Some(s);
+    }
+
+    /// Whether a host leaf should receive raw input this frame.
+    ///
+    /// Derived rather than declared: an exclusive layer makes everything
+    /// outside it inert, and a leaf that is inert takes no raw input. This is
+    /// what replaces a `blocks_terminal_input` flag.
+    pub fn raw_input(&self) -> bool {
+        if self.pending_layers.iter().any(|(l, _)| {
+            self.element_of(*l)
+                .and_then(|e| self.arena.get(e))
+                .map(|el| {
+                    matches!(&crate::desc::resolve(&el.desc).desc,
+                        crate::desc::Desc::Layer(p)
+                            if p.modality == crate::desc::Modality::Exclusive)
+                })
+                .unwrap_or(false)
+        }) {
+            return false;
+        }
+        self.render_leaves_take_raw_input()
+    }
+
+    fn render_leaves_take_raw_input(&self) -> bool {
+        (0..self.render.capacity()).any(|i| {
+            self.render
+                .get(crate::render::object::RenderId(i as u32))
+                .and_then(|n| n.obj.as_ref())
+                .map(|o| o.takes_raw_input())
+                .unwrap_or(false)
+        })
     }
 
     /// Geometry for one element, valid after the first layout. The type is what
@@ -771,6 +813,7 @@ impl<M: 'static> Ui<M> {
             }
             let behaviors = el.behaviors.clone();
             for b in behaviors {
+                b.frame();
                 b.pump();
             }
         }

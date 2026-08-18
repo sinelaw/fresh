@@ -257,6 +257,30 @@ impl RenderObject for BoxRender {
             Dir::Col => (ins_y, ins_x),
         };
         let inner_cross = cross_of(dir, own).saturating_sub(2 * ins_cross);
+
+        // Intrinsic sizing: when the cross extent was not known before the
+        // children were measured, the ones that asked to fill it are measured
+        // again now that it is. This is the case the design document says
+        // measures a subtree twice, and the framework counts it so the cost is
+        // visible in a dump rather than inferred.
+        if p.align == Align::Stretch && !cross_definite && inner_cross > 0 {
+            for i in 0..n {
+                let (sw, sh) = cx.sizing(kids[i]);
+                let s_cross = match dir {
+                    Dir::Row => sh,
+                    Dir::Col => sw,
+                };
+                if s_cross == Sizing::Auto && crosses[i] != inner_cross {
+                    let s = cx.measure(
+                        kids[i],
+                        axes(dir, (mains[i], mains[i]), (inner_cross, inner_cross)),
+                    );
+                    mains[i] = main_of(dir, s);
+                    crosses[i] = cross_of(dir, s);
+                }
+            }
+        }
+
         // The far edge of the content box. Children are never placed past it:
         // when the gaps alone exceed the space, the run would otherwise walk
         // out of its own parent and paint over whatever is beside it.
@@ -327,6 +351,9 @@ impl RenderObject for TextRender {
 
     fn paint(&self, g: Geom, out: &mut DrawList) {
         out.push(Draw::Lines(self.lines.clone()), g);
+        if let Some(col) = self.props.cursor {
+            out.set_cursor(Point::new(g.rect.x + col as i32, g.rect.y));
+        }
     }
 
     fn render_name(&self) -> &'static str {
@@ -346,6 +373,7 @@ pub struct ViewportRender {
     /// constraint-dependent builder inside it.
     pub window: Rect,
     pub content: Size,
+    pub items: u32,
 }
 
 impl ViewportRender {
@@ -354,39 +382,93 @@ impl ViewportRender {
             props,
             window: Rect::ZERO,
             content: Size::ZERO,
+            items: 0,
         }
     }
 }
 
 impl RenderObject for ViewportRender {
     fn layout(&mut self, c: Constraints, cx: &mut dyn LayoutCx) -> Size {
+        use crate::desc::ScrollMode;
+        use crate::render::object::ScrollInfo;
+
         // A viewport takes the space it is given; its content does not affect
         // it, which is what makes it a relayout boundary.
         let own = c.constrain(c.max());
-        // Declare the window before measuring, so a constraint-dependent
-        // builder inside this viewport reads the window it is actually in.
-        self.window = Rect::at(cx.scroll(), own);
-        cx.set_window(self.window);
-        let inner = Constraints::new(own.w, own.w, 0, u16::MAX);
-        let mut content = Size::ZERO;
-        for k in cx.children() {
-            let s = cx.measure(k, inner);
-            cx.place(k, Point::ZERO);
-            content = Size::new(content.w.max(s.w), content.h.max(s.h));
+        let scroll = cx.scroll();
+
+        match self.props.mode {
+            ScrollMode::Cells => {
+                // Declare the window before measuring, so a builder inside it
+                // reads the window it is actually in.
+                self.window = Rect::at(scroll, own);
+                cx.set_scroll(ScrollInfo {
+                    window: self.window,
+                    content: self.content,
+                    max: Point::new(
+                        self.content.w.saturating_sub(own.w) as i32,
+                        self.content.h.saturating_sub(own.h) as i32,
+                    ),
+                    translate: true,
+                });
+                let inner = Constraints::new(own.w, own.w, 0, u16::MAX);
+                let mut content = Size::ZERO;
+                for k in cx.children() {
+                    let s = cx.measure(k, inner);
+                    cx.place(k, Point::ZERO);
+                    content = Size::new(content.w.max(s.w), content.h.max(s.h));
+                }
+                self.content = content;
+                cx.set_scroll(ScrollInfo {
+                    window: self.window,
+                    content,
+                    max: Point::new(
+                        content.w.saturating_sub(own.w) as i32,
+                        content.h.saturating_sub(own.h) as i32,
+                    ),
+                    translate: true,
+                });
+            }
+            ScrollMode::Items(n) => {
+                // The child renders only the window, so nothing is translated
+                // and the offset is an index. A cell extent over a million rows
+                // would not fit a coordinate; an index does.
+                let rows = own.h as u32;
+                self.items = n;
+                self.window = Rect::new(0, scroll.y, own.w, own.h);
+                cx.set_scroll(ScrollInfo {
+                    window: self.window,
+                    content: own,
+                    max: Point::new(0, n.saturating_sub(rows) as i32),
+                    translate: false,
+                });
+                let inner = Constraints::new(own.w, own.w, 0, own.h);
+                for k in cx.children() {
+                    cx.measure(k, inner);
+                    cx.place(k, Point::ZERO);
+                }
+                self.content = own;
+            }
         }
-        self.content = content;
-        cx.set_content(content);
         own
     }
 
     fn paint(&self, g: Geom, out: &mut DrawList) {
-        if !self.props.scrollbar || self.content.h <= g.rect.h {
+        use crate::desc::ScrollMode;
+        if !self.props.scrollbar {
+            return;
+        }
+        let (offset, content) = match self.props.mode {
+            ScrollMode::Cells => (self.window.y.max(0) as u32, self.content.h as u32),
+            ScrollMode::Items(n) => (self.window.y.max(0) as u32, n),
+        };
+        if content <= g.rect.h as u32 {
             return;
         }
         out.push_at(
             Draw::Scrollbar {
-                offset: self.window.y.max(0) as u16,
-                content: self.content.h,
+                offset,
+                content,
                 window: g.rect.h,
             },
             Rect::new(g.rect.right() - 1, g.rect.y, 1, g.rect.h),

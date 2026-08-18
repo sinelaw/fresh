@@ -73,18 +73,30 @@ pub trait LayoutCx {
     /// This node's scroll offset. Framework-owned: neither the application nor
     /// the component declares it.
     fn scroll(&self) -> Point;
-    /// Declare the window this node shows onto its content, so a
-    /// constraint-dependent builder below can read it.
-    fn set_window(&mut self, w: Rect);
-    /// Declare how large the content behind that window is. The framework
-    /// clamps the scroll offset against it and the wheel chains off it.
-    fn set_content(&mut self, s: Size);
+    /// Declare the window this node shows onto its content. The framework
+    /// clamps the offset against it, chains the wheel off it, and a
+    /// constraint-dependent builder below reads it.
+    fn set_scroll(&mut self, info: ScrollInfo);
     /// Run a structure builder that depends on the constraints, reconcile what
     /// it produced, and return the render children that resulted. The one place
     /// a build happens inside layout.
     fn rebuild(&mut self, info: LayoutInfo);
     /// The element this render object belongs to, for diagnostics.
     fn element(&self) -> ElementId;
+}
+
+/// What a scrolling node tells the framework about its window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScrollInfo {
+    /// The window, in the content's coordinates.
+    pub window: Rect,
+    /// The content behind it, in cells.
+    pub content: Size,
+    /// The furthest the offset may travel.
+    pub max: Point,
+    /// Whether children are moved by the offset. An index-scrolled window
+    /// renders only what is inside it, so nothing is moved.
+    pub translate: bool,
 }
 
 /// What a constraint-dependent builder is told.
@@ -140,6 +152,12 @@ pub trait RenderObject {
     /// So the framework can push changed props into a live object rather than
     /// replacing it, which would discard its retained state.
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+
+    /// Whether this object consumes raw host input — a PTY grid does. Answered
+    /// by host leaves; every built-in primitive says no.
+    fn takes_raw_input(&self) -> bool {
+        false
+    }
 }
 
 /// Host content: application-owned drawing with its own measurement and
@@ -147,14 +165,7 @@ pub trait RenderObject {
 ///
 /// This is the escape hatch, and it is an ordinary `RenderObject`: a host leaf
 /// has exactly the capabilities a built-in primitive has, and no others.
-pub trait HostLeaf: RenderObject {
-    /// Whether this leaf consumes raw input — a PTY grid does. A leaf under an
-    /// inert layer is asked and answers `false`, which is where terminal-input
-    /// suppression is derived rather than declared.
-    fn raw_input(&self) -> bool {
-        false
-    }
-}
+pub trait HostLeaf: RenderObject {}
 
 /// One node of the render tree.
 pub(crate) struct RenderNode {
@@ -202,12 +213,16 @@ pub(crate) struct RenderData {
     pub scroll: Point,
     pub content: Size,
     pub window: Option<Rect>,
+    pub scroll_max: Point,
+    pub translate: bool,
 
     /// How many times this node has been measured, and how many of those were a
     /// second measurement of the same subtree in one frame. Intrinsic sizing is
     /// the ergonomic default, so its cost has to be visible.
     pub layouts: u32,
     pub remeasures: u32,
+    /// The frame this node was last measured in.
+    pub measured_in: u64,
 }
 
 impl RenderData {
@@ -257,6 +272,10 @@ impl RenderArena {
 
     pub fn live(&self) -> usize {
         self.slots.iter().filter(|s| s.is_some()).count()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.slots.len()
     }
 }
 

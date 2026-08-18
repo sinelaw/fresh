@@ -10,7 +10,7 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::desc::{col, focusable, gesture, layout_reader, text, Handler, Node, Sizing};
+use crate::desc::{col, focusable, gesture, layout_reader, text, viewport, Node, Sizing};
 use crate::event::{Event, GestureKind};
 use crate::focus::Intent;
 use crate::key::Key;
@@ -20,30 +20,14 @@ use crate::{Component, ComponentExt};
 /// Rows above and below the window, so a one-cell scroll does not expose a gap.
 const OVERSCAN: usize = 2;
 
+#[derive(Default)]
 pub struct ListState {
     /// Only consulted when the owner did not supply a selection.
     pub selected: usize,
-    /// First visible index. Framework-adjacent but component-owned: the window
-    /// is what this widget is for.
-    pub scroll: usize,
-    /// Whether the window should chase the selection. Set when the selection
-    /// moves, cleared when the user scrolls: a wheel is a statement about the
-    /// window, and a key is a statement about the selection.
-    pub follow: bool,
     pub focused: bool,
-}
-
-impl Default for ListState {
-    fn default() -> Self {
-        // A list follows its selection until the user says otherwise by
-        // scrolling.
-        ListState {
-            selected: 0,
-            scroll: 0,
-            follow: true,
-            focused: false,
-        }
-    }
+    /// A handle to the window, so a selection move can ask it to follow. The
+    /// window itself belongs to the viewport.
+    pub(crate) anchor: Option<Rc<crate::behavior::Anchor>>,
 }
 
 enum Source<M> {
@@ -92,6 +76,7 @@ pub struct List<M> {
     on_activate: Option<Rc<dyn Fn(usize) -> Option<M>>>,
     focusable: bool,
     autofocus: bool,
+    scrollbar: bool,
 }
 
 impl<M: 'static> List<M> {
@@ -130,6 +115,7 @@ impl<M: 'static> List<M> {
             on_activate: None,
             focusable: true,
             autofocus: false,
+            scrollbar: false,
         }
     }
 
@@ -166,32 +152,39 @@ impl<M: 'static> List<M> {
         self.autofocus = true;
         self
     }
+
+    /// Show how far through the list the window is.
+    pub fn scrollbar(mut self) -> Self {
+        self.scrollbar = true;
+        self
+    }
 }
 
 impl<M: 'static> Component<M> for List<M> {
     type State = ListState;
 
+    fn init(&self, cx: &mut crate::schedule::InitCx<'_, M>) -> ListState {
+        // A handle to the viewport this list is about to build, so a selection
+        // move can ask for the window rather than owning it.
+        ListState {
+            anchor: Some(cx.register(crate::behavior::Anchor::default())),
+            ..ListState::default()
+        }
+    }
+
     fn build(&self, s: &ListState, cx: &mut BuildCx<'_, M>) -> Node<M> {
         let n = self.source.len();
         let sel = self.selected.unwrap_or(s.selected).min(n.saturating_sub(1));
         let up: Updater<ListState> = cx.updater();
+        let anchor = s.anchor.clone();
 
         let source = self.source.clone();
-        let scroll = s.scroll;
-        let follow = s.follow;
+        // The window comes from the viewport, which owns it. This component
+        // decides only which rows fill it.
         let reader = layout_reader(move |info| {
-            let visible = (info.constraints.max_h as usize).max(1);
-            // Keep the selection inside the window without writing to state:
-            // the first visible index is a function of the scroll and the
-            // selection, computed here rather than stored.
-            let first = if follow {
-                scroll
-                    .min(sel)
-                    .max(sel.saturating_sub(visible.saturating_sub(1)))
-            } else {
-                scroll
-            }
-            .min(n.saturating_sub(visible.min(n)));
+            let win = info.scroll_window.unwrap_or_default();
+            let visible = (win.h as usize).max(1);
+            let first = (win.y.max(0) as usize).min(n.saturating_sub(visible.min(n)));
             let last = (first + visible + OVERSCAN).min(n);
             col().children((first..last).map(|i| {
                 let (k, row) = source.at(i).expect("index inside the source");
@@ -204,32 +197,34 @@ impl<M: 'static> Component<M> for List<M> {
             }))
         });
 
-        let select = |target: usize, this: &Self, up: &Updater<ListState>| -> Option<M> {
-            let up = up.clone();
-            up.set(move |st: &mut ListState| st.selected = target);
-            this.on_select.as_ref().map(|f| f(target))
-        };
+        let mut body = viewport(reader).items(n as u32);
+        if let Some(a) = anchor.clone() {
+            body = body.anchor_to(a);
+        }
+        if self.scrollbar {
+            body = body.scrollbar();
+        }
 
-        // Wheel: claim the notch only when the window actually moved, so a list
-        // at its bound lets the wheel chain outward.
-        let up_wheel = up.clone();
-        let wheel: Handler<M> = Rc::new(move |e: &Event| {
-            let next =
-                (scroll as i64 + e.delta as i64).clamp(0, n.saturating_sub(1) as i64) as usize;
-            if next != scroll {
-                up_wheel.set(move |st: &mut ListState| {
-                    st.scroll = next;
-                    st.follow = false;
-                });
-                e.stop();
-            }
-            None
-        });
-
-        let body = gesture(reader).on(GestureKind::Wheel, wheel);
         if !self.focusable {
             return body;
         }
+
+        // Moving the selection asks the window to follow; scrolling does not
+        // move the selection. A wheel is a statement about the window and a key
+        // is a statement about the selection, and the two now live in different
+        // places.
+        let select = |target: usize,
+                      up: &Updater<ListState>,
+                      anchor: &Option<Rc<crate::behavior::Anchor>>,
+                      on_select: &Option<Rc<dyn Fn(usize) -> M>>|
+         -> Option<M> {
+            let up = up.clone();
+            up.set(move |st: &mut ListState| st.selected = target);
+            if let Some(a) = anchor {
+                a.reveal(target as u32);
+            }
+            on_select.as_ref().map(|f| f(target))
+        };
 
         let up_focus = up.clone();
         let mut node = focusable(body)
@@ -239,56 +234,22 @@ impl<M: 'static> Component<M> for List<M> {
                 None
             }))
             .action_handler(Intent::Up, {
-                let (up, sel) = (up.clone(), sel);
-                let this_select = self.on_select.clone();
-                Rc::new(move |_: &Event| {
-                    let target = sel.saturating_sub(1);
-                    up.set(move |st: &mut ListState| {
-                        st.selected = target;
-                        st.scroll = st.scroll.min(target);
-                        st.follow = true;
-                    });
-                    this_select.as_ref().map(|f| f(target))
-                })
+                let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
+                Rc::new(move |_: &Event| select(sel.saturating_sub(1), &up, &a, &f))
             })
             .action_handler(Intent::Down, {
-                let (up, sel) = (up.clone(), sel);
-                let this_select = self.on_select.clone();
-                Rc::new(move |_: &Event| {
-                    let target = (sel + 1).min(n.saturating_sub(1));
-                    up.set(move |st: &mut ListState| {
-                        st.selected = target;
-                        st.follow = true;
-                    });
-                    this_select.as_ref().map(|f| f(target))
-                })
+                let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
+                Rc::new(move |_: &Event| select((sel + 1).min(n.saturating_sub(1)), &up, &a, &f))
             })
             .action_handler(Intent::Home, {
-                let up = up.clone();
-                let this_select = self.on_select.clone();
-                Rc::new(move |_: &Event| {
-                    up.set(|st: &mut ListState| {
-                        st.selected = 0;
-                        st.scroll = 0;
-                        st.follow = true;
-                    });
-                    this_select.as_ref().map(|f| f(0))
-                })
+                let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
+                Rc::new(move |_: &Event| select(0, &up, &a, &f))
             })
             .action_handler(Intent::End, {
-                let up = up.clone();
-                let this_select = self.on_select.clone();
-                Rc::new(move |_: &Event| {
-                    let target = n.saturating_sub(1);
-                    up.set(move |st: &mut ListState| {
-                        st.selected = target;
-                        st.follow = true;
-                    });
-                    this_select.as_ref().map(|f| f(target))
-                })
+                let (up, a, f) = (up.clone(), anchor.clone(), self.on_select.clone());
+                Rc::new(move |_: &Event| select(n.saturating_sub(1), &up, &a, &f))
             });
 
-        let _ = select;
         if let Some(f) = self.on_activate.clone() {
             node = node.action_handler(Intent::Confirm, Rc::new(move |_: &Event| f(sel)));
         }
@@ -299,10 +260,7 @@ impl<M: 'static> Component<M> for List<M> {
     }
 
     fn describe_state(&self, s: &ListState) -> Option<String> {
-        Some(format!(
-            "sel={} scroll={} follow={}",
-            s.selected, s.scroll, s.follow
-        ))
+        Some(format!("sel={}", s.selected))
     }
 }
 
@@ -419,5 +377,74 @@ fn flatten<M>(
         if open {
             flatten(&n.children, depth + 1, expanded, out);
         }
+    }
+}
+
+// -- DualList ----------------------------------------------------------------
+
+/// Two lists and the moves between them: available on the left, chosen on the
+/// right. Controlled — the owner holds both sides and is told what moved.
+pub struct DualList<M> {
+    available: Vec<(Key, Rc<str>)>,
+    chosen: Vec<(Key, Rc<str>)>,
+    on_move: Option<Rc<dyn Fn(Key, bool) -> M>>,
+}
+
+impl<M: 'static> Default for DualList<M> {
+    fn default() -> Self {
+        DualList::new()
+    }
+}
+
+impl<M: 'static> DualList<M> {
+    pub fn new() -> Self {
+        DualList {
+            available: Vec::new(),
+            chosen: Vec::new(),
+            on_move: None,
+        }
+    }
+
+    pub fn available(mut self, items: impl IntoIterator<Item = (Key, String)>) -> Self {
+        self.available = items
+            .into_iter()
+            .map(|(k, s)| (k, Rc::from(s.as_str())))
+            .collect();
+        self
+    }
+
+    pub fn chosen(mut self, items: impl IntoIterator<Item = (Key, String)>) -> Self {
+        self.chosen = items
+            .into_iter()
+            .map(|(k, s)| (k, Rc::from(s.as_str())))
+            .collect();
+        self
+    }
+
+    /// Called with the item and `true` when it moves into the chosen side.
+    pub fn on_move(mut self, f: impl Fn(Key, bool) -> M + 'static) -> Self {
+        self.on_move = Some(Rc::new(f));
+        self
+    }
+}
+
+impl<M: 'static> Component<M> for DualList<M> {
+    type State = ();
+
+    fn build(&self, _s: &(), _cx: &mut BuildCx<'_, M>) -> Node<M> {
+        let side = |items: &[(Key, Rc<str>)],
+                    into_chosen: bool,
+                    f: &Option<Rc<dyn Fn(Key, bool) -> M>>| {
+            let keys: Vec<Key> = items.iter().map(|(k, _)| k.clone()).collect();
+            let mut l = List::keyed(items, |(k, _)| k.clone(), |(_, s)| text(&**s));
+            if let Some(f) = f.clone() {
+                l = l.on_activate(move |i| f(keys[i].clone(), into_chosen));
+            }
+            l.node()
+        };
+        crate::desc::row().gap(1).children([
+            side(&self.available, true, &self.on_move),
+            side(&self.chosen, false, &self.on_move),
+        ])
     }
 }

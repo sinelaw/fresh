@@ -58,6 +58,8 @@ pub struct Node<M> {
     /// Per-item provenance for the display list. Inherited by descendants that
     /// do not set their own. The library never interprets it.
     pub theme: Option<Rc<str>>,
+    /// An owner's handle to this element, bound when it mounts.
+    pub anchor: Option<Rc<crate::behavior::Anchor>>,
     pub desc: Desc<M>,
     pub children: Vec<Node<M>>,
 }
@@ -167,6 +169,21 @@ pub struct BoxProps {
 pub struct TextProps {
     pub text: Rc<str>,
     pub wrap: bool,
+    /// Where the text cursor sits within this run, in columns. Set by whatever
+    /// is being edited; the library places it and the backend shows it.
+    pub cursor: Option<u16>,
+}
+
+/// What a viewport's scroll offset counts.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ScrollMode {
+    /// Cells of content. The viewport translates its children.
+    #[default]
+    Cells,
+    /// Items. The child renders only the window, so nothing is translated; the
+    /// offset is an index. This is what lets a window onto a million rows exist
+    /// at all: a cell extent that large does not fit a coordinate.
+    Items(u32),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -177,6 +194,7 @@ pub struct ViewportProps {
     pub max_h: Option<u16>,
     /// Emit a scrollbar item when the content exceeds the window.
     pub scrollbar: bool,
+    pub mode: ScrollMode,
 }
 
 /// Whether a gesture region absorbs pointer hits that land on it.
@@ -488,6 +506,7 @@ impl<M> Clone for Node<M> {
             w: self.w,
             h: self.h,
             theme: self.theme.clone(),
+            anchor: self.anchor.clone(),
             desc: self.desc.clone(),
             children: self.children.clone(),
         }
@@ -590,6 +609,7 @@ impl<M> Node<M> {
             w: Sizing::Auto,
             h: Sizing::Auto,
             theme: None,
+            anchor: None,
             desc,
             children: Vec::new(),
         }
@@ -602,6 +622,7 @@ impl<M> Node<M> {
             w: Sizing::Cells(0),
             h: Sizing::Cells(0),
             theme: None,
+            anchor: None,
             desc: Desc::Box(BoxProps::default()),
             children: Vec::new(),
         }
@@ -653,6 +674,7 @@ pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
     Node::new(Desc::TextRun(TextProps {
         text: Rc::from(s.as_ref()),
         wrap: false,
+        cursor: None,
     }))
 }
 
@@ -764,6 +786,21 @@ impl<M> Node<M> {
         self
     }
 
+    /// Scroll by item index rather than by cell, over `count` items.
+    pub fn items(mut self, count: u32) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.mode = ScrollMode::Items(count),
+            _ => panic!("items() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Let the owner address this element's window by handle.
+    pub fn anchor_to(mut self, a: std::rc::Rc<crate::behavior::Anchor>) -> Self {
+        self.anchor = Some(a);
+        self
+    }
+
     pub fn w(mut self, s: Sizing) -> Self {
         self.w = s;
         self
@@ -805,6 +842,15 @@ impl<M> Node<M> {
 
     pub fn align(mut self, a: Align) -> Self {
         self.box_props().align = a;
+        self
+    }
+
+    /// Place the text cursor at this column within the run.
+    pub fn cursor_at(mut self, col: u16) -> Self {
+        match &mut self.desc {
+            Desc::TextRun(p) => p.cursor = Some(col),
+            _ => panic!("cursor_at() applies to TextRun nodes only"),
+        }
         self
     }
 

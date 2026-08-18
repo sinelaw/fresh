@@ -21,8 +21,12 @@
 /// registry and the state field that holds them; a behavior with mutable
 /// internals owns a `RefCell`, which it needs regardless — `build` only ever
 /// sees `&State`.
+pub mod anchor;
+pub mod misc;
 pub mod tasks;
 
+pub use anchor::Anchor;
+pub use misc::{Cache, Controller, Persisted, Store, Ticker, PERSISTENCE_SCOPE};
 pub use tasks::{TaskHandle, Tasks};
 
 pub trait Behavior {
@@ -49,4 +53,8 @@ pub trait Behavior {
     fn pump(&self) -> usize {
         0
     }
+
+    /// Once per frame, before the build pass. Behaviors that do not tick do
+    /// nothing.
+    fn frame(&self) {}
 }

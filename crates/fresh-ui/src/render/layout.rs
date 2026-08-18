@@ -90,15 +90,12 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
         self.ui.render[self.node].data.scroll
     }
 
-    fn set_window(&mut self, w: Rect) {
+    fn set_scroll(&mut self, info: crate::render::object::ScrollInfo) {
         if let Some(n) = self.ui.render.get_mut(self.node) {
-            n.data.window = Some(w);
-        }
-    }
-
-    fn set_content(&mut self, s: Size) {
-        if let Some(n) = self.ui.render.get_mut(self.node) {
-            n.data.content = s;
+            n.data.window = Some(info.window);
+            n.data.content = info.content;
+            n.data.scroll_max = info.max;
+            n.data.translate = info.translate;
         }
     }
 
@@ -354,7 +351,9 @@ impl<M: 'static> Ui<M> {
                 }
             }
         }
-        let already = self.render[r].data.cached.is_some() && self.measuring;
+        // A second measurement of the same node within one frame is the
+        // intrinsic-sizing cost, and is counted rather than hidden.
+        let again = self.render[r].data.measured_in == self.frame_no;
         let mut obj = self
             .render
             .get_mut(r)
@@ -375,21 +374,18 @@ impl<M: 'static> Ui<M> {
         n.obj = Some(obj);
         n.data.size = size;
         if n.clips {
-            // Framework-owned: keep the window inside the content.
-            let max_x = n.data.content.w.saturating_sub(size.w) as i32;
-            let max_y = n.data.content.h.saturating_sub(size.h) as i32;
-            n.data.scroll.x = n.data.scroll.x.clamp(0, max_x.max(0));
-            n.data.scroll.y = n.data.scroll.y.clamp(0, max_y.max(0));
-            n.data.window = Some(Rect::at(n.data.scroll, size));
+            // Framework-owned: keep the window inside what the node said its
+            // content is.
+            n.data.scroll.x = n.data.scroll.x.clamp(0, n.data.scroll_max.x.max(0));
+            n.data.scroll.y = n.data.scroll.y.clamp(0, n.data.scroll_max.y.max(0));
         }
         n.data.cached = Some((c, size));
         n.data.needs_layout = false;
         n.data.child_needs_layout = false;
         n.data.boundary = boundary;
         n.data.layouts += 1;
-        if already {
-            // A second measurement of the same subtree in one frame. `Auto` is
-            // the ergonomic default, so its cost has to be visible.
+        n.data.measured_in = self.frame_no;
+        if again {
             n.data.remeasures += 1;
         }
         size
@@ -397,6 +393,7 @@ impl<M: 'static> Ui<M> {
 
     /// Run layout, position everything, and resolve out-of-flow layers.
     pub(crate) fn flush_layout(&mut self, frame: Size) {
+        self.frame_no = self.frame_no.wrapping_add(1);
         self.relink();
         let Some(root) = self.render_root else { return };
 
@@ -432,6 +429,68 @@ impl<M: 'static> Ui<M> {
         self.arrange(root, Point::ZERO, Rect::from_size(frame));
         self.resolve_layers(frame);
         self.process_disposals();
+
+        // Commands an owner queued through a handle, applied once geometry
+        // exists and before anything reads it.
+        if self.apply_anchors() {
+            self.arrange(root, Point::ZERO, Rect::from_size(frame));
+        }
+    }
+
+    /// Returns whether anything moved.
+    fn apply_anchors(&mut self) -> bool {
+        use crate::behavior::anchor::Command;
+        let ids = self.anchored.clone();
+        let mut moved = false;
+        for id in ids {
+            let Some(a) = self.arena.get(id).and_then(|e| e.desc.anchor.clone()) else {
+                continue;
+            };
+            for cmd in a.take() {
+                let Some(r) = self.render_for(id) else {
+                    continue;
+                };
+                let (scroll, max, rows) = {
+                    let n = &self.render[r];
+                    (n.data.scroll, n.data.scroll_max, n.data.size.h as i32)
+                };
+                let next = match cmd {
+                    Command::ScrollTo(p) => p,
+                    Command::Reveal(i) => {
+                        let i = i as i32;
+                        // The shortest move that puts the index inside the
+                        // window; nothing at all if it already is.
+                        let y = if i < scroll.y {
+                            i
+                        } else if i >= scroll.y + rows {
+                            i - rows + 1
+                        } else {
+                            scroll.y
+                        };
+                        Point::new(scroll.x, y)
+                    }
+                };
+                let next = Point::new(next.x.clamp(0, max.x.max(0)), next.y.clamp(0, max.y.max(0)));
+                if next != scroll {
+                    if let Some(n) = self.render.get_mut(r) {
+                        n.data.scroll = next;
+                    }
+                    self.mark_render_dirty(r);
+                    moved = true;
+                }
+            }
+        }
+        if moved {
+            // One more measure pass so the window the builders read is the one
+            // the commands asked for.
+            if let Some(root) = self.render_root {
+                if let Some((c, _)) = self.render[root].data.cached {
+                    self.measure(root, c);
+                }
+            }
+            self.process_disposals();
+        }
+        moved
     }
 
     fn render_depth(&self, mut r: RenderId) -> u32 {
@@ -479,9 +538,15 @@ impl<M: 'static> Ui<M> {
     // -- positioning ---------------------------------------------------------
 
     pub(crate) fn arrange(&mut self, r: RenderId, origin: Point, clip: Rect) {
-        let (size, clips, scroll, kids) = {
+        let (size, clips, translate, scroll, kids) = {
             let Some(n) = self.render.get(r) else { return };
-            (n.data.size, n.clips, n.data.scroll, n.children.clone())
+            (
+                n.data.size,
+                n.clips,
+                n.data.translate,
+                n.data.scroll,
+                n.children.clone(),
+            )
         };
         let rect = Rect::at(origin, size);
         {
@@ -490,7 +555,11 @@ impl<M: 'static> Ui<M> {
             n.data.clip = clip;
         }
         let child_clip = if clips { clip.intersect(rect) } else { clip };
-        let sc = if clips { scroll } else { Point::ZERO };
+        let sc = if clips && translate {
+            scroll
+        } else {
+            Point::ZERO
+        };
         for k in kids {
             if self.render.get(k).map(|n| n.out_of_flow).unwrap_or(false) {
                 self.pending_layers.push((k, r));

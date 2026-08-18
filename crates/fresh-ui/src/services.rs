@@ -20,6 +20,7 @@ pub type Job = Box<dyn FnOnce() + Send>;
 #[derive(Clone)]
 pub struct Services {
     pub(crate) spawn: Rc<dyn Fn(Job)>,
+    pub(crate) store: Option<Rc<dyn crate::behavior::Store>>,
 }
 
 impl Default for Services {
@@ -28,6 +29,7 @@ impl Default for Services {
             spawn: Rc::new(|job| {
                 std::thread::spawn(move || job());
             }),
+            store: None,
         }
     }
 }

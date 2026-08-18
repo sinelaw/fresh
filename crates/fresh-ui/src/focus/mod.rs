@@ -109,7 +109,12 @@ impl<M: 'static> Ui<M> {
         false
     }
 
+    #[track_caller]
     pub fn request_focus(&mut self, id: ElementId, sel: SelectionOnFocus) {
+        debug_assert!(
+            self.sched.borrow().building.is_none(),
+            "request_focus during build: focus is not a function of the description"
+        );
         let mut out = Vec::new();
         self.focus_element(id, sel, &mut out);
         self.pending_messages.extend(out);

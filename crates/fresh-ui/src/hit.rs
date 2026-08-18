@@ -30,49 +30,33 @@ impl<M: 'static> Ui<M> {
         match input {
             Input::Key(k) => self.dispatch_key(k, &mut out),
             Input::Move { pos, mods } => {
-                let path = self.route(pos);
-                self.update_hover(&path, pos, mods, &mut out);
-                self.propagate(
-                    &path,
+                let paths = self.route(pos);
+                self.update_hover(&paths, pos, mods, &mut out);
+                self.propagate_all(
+                    &paths,
                     GestureKind::Move,
                     pos,
                     MouseButton::Left,
                     mods,
                     0,
-                    None,
                     &mut out,
                 );
             }
             Input::Press { pos, button, mods } => {
                 self.dismiss_for_pointer(pos, &mut out);
-                let path = self.route(pos);
-                self.press = path.last().copied().map(|t| (t, button));
-                self.propagate(
-                    &path,
-                    GestureKind::Press,
-                    pos,
-                    button,
-                    mods,
-                    0,
-                    None,
-                    &mut out,
-                );
+                let paths = self.route(pos);
+                self.press = paths
+                    .first()
+                    .and_then(|p| p.last().copied())
+                    .map(|t| (t, button));
+                self.propagate_all(&paths, GestureKind::Press, pos, button, mods, 0, &mut out);
             }
             Input::Release { pos, button, mods } => {
-                let path = self.route(pos);
-                self.propagate(
-                    &path,
-                    GestureKind::Release,
-                    pos,
-                    button,
-                    mods,
-                    0,
-                    None,
-                    &mut out,
-                );
+                let paths = self.route(pos);
+                self.propagate_all(&paths, GestureKind::Release, pos, button, mods, 0, &mut out);
                 // A click is a press and a release over the same element.
                 if let Some((pressed, b)) = self.press.take() {
-                    if b == button && path.contains(&pressed) {
+                    if b == button && paths.iter().any(|p| p.contains(&pressed)) {
                         let kind = match button {
                             MouseButton::Right => GestureKind::SecondaryClick,
                             _ => GestureKind::Click,
@@ -84,68 +68,153 @@ impl<M: 'static> Ui<M> {
                 self.captured = None;
             }
             Input::Wheel { pos, delta, mods } => {
-                let path = self.route(pos);
-                let (claimed, prevented) = self.propagate(
-                    &path,
+                let paths = self.route(pos);
+                let (claimed, prevented) = self.propagate_all(
+                    &paths,
                     GestureKind::Wheel,
                     pos,
                     MouseButton::Left,
                     mods,
                     delta,
-                    None,
                     &mut out,
                 );
                 if !claimed && !prevented {
                     // Scroll chaining: the first viewport along the path whose
-                    // offset can actually move takes it. One that is already at
-                    // its bound does not claim, so the wheel continues outward.
-                    self.scroll_chain(&path, delta);
+                    // offset can actually move takes it. One at its bound does
+                    // not claim, so the wheel continues outward.
+                    if let Some(p) = paths.first() {
+                        let p = p.clone();
+                        self.scroll_chain(&p, delta);
+                    }
                 }
             }
         }
         out
     }
 
+    /// Run the stacked paths in order until one claims the event. A
+    /// transparent region is why there is more than one.
+    #[allow(clippy::too_many_arguments)]
+    fn propagate_all(
+        &mut self,
+        paths: &[Vec<ElementId>],
+        kind: GestureKind,
+        pos: Point,
+        button: MouseButton,
+        mods: Mods,
+        delta: i32,
+        out: &mut Vec<M>,
+    ) -> (bool, bool) {
+        let mut prevented = false;
+        for path in paths {
+            let (claimed, p) = self.propagate(path, kind, pos, button, mods, delta, None, out);
+            prevented |= p;
+            if claimed {
+                return (true, prevented);
+            }
+        }
+        (false, prevented)
+    }
+
     // -- hit-testing ---------------------------------------------------------
 
-    /// The element path under a point, outermost first.
+    /// The element path under a point, outermost first. The topmost one when
+    /// several are stacked.
+    pub fn hit_test(&self, p: Point) -> Vec<ElementId> {
+        self.hit_paths(p).into_iter().next().unwrap_or_default()
+    }
+
+    /// Every path under a point, topmost first.
     ///
-    /// The walk is over the **render tree**, so it accounts for overlapping
+    /// There is more than one when a region declares itself transparent: its
+    /// own handlers run, and then the hit continues to whatever is behind. The
+    /// walk is over the **render tree**, so it accounts for overlapping
     /// content, clipping and out-of-flow layers — none of which a walk over
     /// descriptions can see.
-    pub fn hit_test(&self, p: Point) -> Vec<ElementId> {
+    pub fn hit_paths(&self, p: Point) -> Vec<Vec<ElementId>> {
         // A modal layer makes everything outside its subtree non-interactive,
         // so the search starts there.
         if let Some(e) = self.topmost_modal() {
             if let Some(r) = self.render_for(e) {
-                return self.hit_subtree(r, p).unwrap_or_default();
+                return self.paths_in(r, p);
             }
         }
         // Otherwise: layers first, topmost declared last, then the tree.
         for &(lr, _) in self.pending_layers.iter().rev() {
-            if let Some(path) = self.hit_subtree(lr, p) {
-                return path;
+            let paths = self.paths_in(lr, p);
+            if !paths.is_empty() {
+                return paths;
             }
         }
         match self.render_root {
-            Some(r) => self.hit_subtree(r, p).unwrap_or_default(),
+            Some(r) => self.paths_in(r, p),
             None => Vec::new(),
         }
     }
 
-    /// Hit a subtree, returning the full element path from the tree root: a
-    /// layer is an ordinary child of the description tree, so propagation
-    /// continues through its ancestors and it keeps its owner's identity.
-    fn hit_subtree(&self, r: RenderId, p: Point) -> Option<Vec<ElementId>> {
-        let mut deep = Vec::new();
-        if !self.hit_render(r, p, &mut deep) {
-            return None;
+    /// Hit a subtree, returning full element paths from the tree root: a layer
+    /// is an ordinary child of the description tree, so propagation continues
+    /// through its ancestors and it keeps its owner's identity.
+    fn paths_in(&self, r: RenderId, p: Point) -> Vec<Vec<ElementId>> {
+        let mut deep: Vec<Vec<RenderId>> = Vec::new();
+        self.collect_paths(r, p, &mut deep);
+        let Some(root_el) = self.element_of(r) else {
+            return Vec::new();
+        };
+        let above = self.ancestors_of(root_el);
+        deep.into_iter()
+            .map(|mut path| {
+                path.reverse();
+                let mut out = above.clone();
+                out.extend(path.into_iter().filter_map(|n| self.element_of(n)));
+                out
+            })
+            .collect()
+    }
+
+    /// Depth-first, topmost sibling first, pushing deepest-first paths.
+    /// Returns whether an opaque hit occurred, which is what stops the search
+    /// reaching anything behind.
+    fn collect_paths(&self, r: RenderId, p: Point, out: &mut Vec<Vec<RenderId>>) -> bool {
+        let Some(n) = self.render.get(r) else {
+            return false;
+        };
+        let rect = n.data.rect;
+        let local = Point::new(p.x - rect.x, p.y - rect.y);
+        let disposition = n.obj.as_ref().map(|o| o.hit(local)).unwrap_or(Hit::Opaque);
+        if disposition == Hit::Ignore {
+            return false;
         }
-        deep.reverse();
-        let root_el = self.element_of(r)?;
-        let mut path = self.ancestors_of(root_el);
-        path.extend(deep.into_iter().filter_map(|n| self.element_of(n)));
-        Some(path)
+
+        let mut blocked = false;
+        let mut below: Vec<Vec<RenderId>> = Vec::new();
+        for &c in n.children.iter().rev() {
+            // Layers are hit-tested as their own stacking contexts.
+            if self.render.get(c).map(|x| x.out_of_flow).unwrap_or(false) {
+                continue;
+            }
+            if self.collect_paths(c, p, &mut below) {
+                blocked = true;
+                break;
+            }
+        }
+        for path in below.iter_mut() {
+            path.push(r);
+        }
+        out.append(&mut below);
+
+        if !blocked && rect.intersect(n.data.clip).contains(p) {
+            match disposition {
+                Hit::Opaque => {
+                    out.push(vec![r]);
+                    blocked = true;
+                }
+                // Its own handlers run, and then the hit continues behind it.
+                Hit::Transparent => out.push(vec![r]),
+                Hit::Ignore => {}
+            }
+        }
+        blocked
     }
 
     fn ancestors_of(&self, id: ElementId) -> Vec<ElementId> {
@@ -159,41 +228,12 @@ impl<M: 'static> Ui<M> {
         up
     }
 
-    /// Depth-first, topmost sibling first. Pushes deepest-first. What a point
-    /// does at each node is the render object's answer, not the framework's.
-    fn hit_render(&self, r: RenderId, p: Point, out: &mut Vec<RenderId>) -> bool {
-        let Some(n) = self.render.get(r) else {
-            return false;
-        };
-        let rect = n.data.rect;
-        let local = Point::new(p.x - rect.x, p.y - rect.y);
-        let disposition = n.obj.as_ref().map(|o| o.hit(local)).unwrap_or(Hit::Opaque);
-        if disposition == Hit::Ignore {
-            return false;
-        }
-        for &c in n.children.iter().rev() {
-            // Layers are hit-tested as their own stacking contexts.
-            if self.render.get(c).map(|x| x.out_of_flow).unwrap_or(false) {
-                continue;
-            }
-            if self.hit_render(c, p, out) {
-                out.push(r);
-                return true;
-            }
-        }
-        if disposition == Hit::Opaque && rect.intersect(n.data.clip).contains(p) {
-            out.push(r);
-            return true;
-        }
-        false
-    }
-
     /// Where the event should go: the captured element if there is one,
     /// otherwise whatever is under the pointer.
-    fn route(&self, p: Point) -> Vec<ElementId> {
+    fn route(&self, p: Point) -> Vec<Vec<ElementId>> {
         match self.captured {
-            Some(c) if self.arena.get(c).is_some() => self.path_to(c),
-            _ => self.hit_test(p),
+            Some(c) if self.arena.get(c).is_some() => vec![self.path_to(c)],
+            _ => self.hit_paths(p),
         }
     }
 
@@ -330,11 +370,19 @@ impl<M: 'static> Ui<M> {
 
     // -- hover ---------------------------------------------------------------
 
-    fn update_hover(&mut self, path: &[ElementId], pos: Point, mods: Mods, out: &mut Vec<M>) {
+    fn update_hover(&mut self, paths: &[Vec<ElementId>], pos: Point, mods: Mods, out: &mut Vec<M>) {
+        let mut now: Vec<ElementId> = Vec::new();
+        for p in paths {
+            for e in p {
+                if !now.contains(e) {
+                    now.push(*e);
+                }
+            }
+        }
         let old = std::mem::take(&mut self.hover);
-        let left: Vec<ElementId> = old.iter().copied().filter(|e| !path.contains(e)).collect();
-        let entered: Vec<ElementId> = path.iter().copied().filter(|e| !old.contains(e)).collect();
-        self.hover = path.to_vec();
+        let left: Vec<ElementId> = old.iter().copied().filter(|e| !now.contains(e)).collect();
+        let entered: Vec<ElementId> = now.iter().copied().filter(|e| !old.contains(e)).collect();
+        self.hover = now;
         // Enter and Leave do not propagate: they are statements about one node.
         for n in left.into_iter().rev() {
             self.fire_at(n, GestureKind::Leave, pos, mods, out);

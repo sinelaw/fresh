@@ -98,6 +98,9 @@ impl<M: 'static> Ui<M> {
         if let Some(obj) = self.render.get(r).and_then(|n| n.obj.as_ref()) {
             obj.paint(Geom { rect, clip }, &mut list);
         }
+        if let Some(c) = list.cursor {
+            spec.cursor = Some(c);
+        }
         spec.items.append(&mut list.items);
 
         for k in kids {

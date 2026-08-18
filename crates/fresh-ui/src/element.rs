@@ -370,6 +370,10 @@ impl<M: 'static> Ui<M> {
         self.journal(Undo::Created(id));
         self.renderer.create(id, ty, name);
         self.make_render(id);
+        if let Some(a) = self.arena[id].desc.anchor.clone() {
+            a.bind(id);
+            self.anchored.push(id);
+        }
         if let Some(p) = parent {
             self.mark_needs_layout(p);
         }
@@ -442,6 +446,12 @@ impl<M: 'static> Ui<M> {
         }
         let moved = crate::render::layout::layout_relevant_changed(&self.arena[id].desc, &new);
         self.set_desc(id, new);
+        if let Some(a) = self.arena[id].desc.anchor.clone() {
+            a.bind(id);
+            if !self.anchored.contains(&id) {
+                self.anchored.push(id);
+            }
+        }
         if moved {
             self.update_render(id);
             self.mark_needs_layout(id);
@@ -679,6 +689,7 @@ impl<M: 'static> Ui<M> {
             if let Some(f) = el.focus {
                 self.focus_tree.release(f);
             }
+            self.anchored.retain(|a| *a != id);
             self.renderer.dispose(id, el.ty, el.name);
         }
         self.sched.borrow_mut().forget(id);

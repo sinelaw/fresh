@@ -89,11 +89,13 @@ pub enum Draw {
     /// Text, one entry per visual row.
     Lines(Vec<Rc<str>>),
     Scrollbar {
-        /// Cells scrolled past.
-        offset: u16,
-        /// Total extent of the content.
-        content: u16,
-        /// Extent of the window onto it.
+        /// How far the window has travelled, in whatever the viewport counts.
+        offset: u32,
+        /// Total extent of the content, in the same unit. Wider than a
+        /// coordinate, because a million-row list has no cell extent that fits
+        /// one.
+        content: u32,
+        /// Extent of the window, in cells.
         window: u16,
     },
     /// Content the host owns and draws itself.
@@ -109,6 +111,7 @@ pub struct DrawList {
     pub(crate) key: Option<Key>,
     pub(crate) id: ElementId,
     pub(crate) theme: ThemeKey,
+    pub(crate) cursor: Option<CursorSpec>,
 }
 
 impl DrawList {
@@ -118,7 +121,17 @@ impl DrawList {
             key: None,
             id,
             theme: ThemeKey::default(),
+            cursor: None,
         }
+    }
+
+    /// Put the text cursor here. The last one emitted in a frame wins, which is
+    /// what makes the innermost editable surface own it.
+    pub fn set_cursor(&mut self, at: super::geom::Point) {
+        self.cursor = Some(CursorSpec {
+            pos: at,
+            visible: true,
+        });
     }
 
     /// Draw over this node's own rectangle.
