@@ -1,0 +1,32 @@
+//! Reusable stateful concerns, enrolled for ordered teardown.
+//!
+//! A behavior is an object held in a named field of a component's state and
+//! registered with the element that owns that state. `Drop` handles teardown in
+//! most cases; registration is what is needed where teardown must run in a
+//! defined order, or before the tree is dismantled.
+//!
+//! Two orderings hold, and every later primitive depends on them:
+//!
+//! - across the tree, **children before parents**, so a child releasing a
+//!   parent-owned handle finds the parent alive;
+//! - within one state object, **reverse registration order**.
+//!
+//! The shipped set (`Tasks`, `Ticker`, `Cache`, `Controller`/`Anchor`,
+//! `Focusable`, `Persisted`) arrives with the phases that need it. This module
+//! is the substrate they register through.
+
+/// Something with a teardown step.
+///
+/// Teardown takes `&self` because behaviors are shared between the element's
+/// registry and the state field that holds them; a behavior with mutable
+/// internals owns a `RefCell`, which it needs regardless — `build` only ever
+/// sees `&State`.
+pub trait Behavior {
+    /// Called once, when the owning element is disposed.
+    fn teardown(&self) {}
+
+    /// For the element dump.
+    fn behavior_name(&self) -> &'static str {
+        "Behavior"
+    }
+}

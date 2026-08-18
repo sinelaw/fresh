@@ -1,7 +1,7 @@
 # Widget Library — Implementation Plan
 
-> _AI-generated plan. **Part 1 has started; Part 2 is PLANNED.** Phases L0, L1
-> and L2 are implemented in `crates/fresh-ui`; everything from L2a onward is
+> _AI-generated plan. **Part 1 has started; Part 2 is PLANNED.** Phases L0
+> through L2c are implemented in `crates/fresh-ui`; everything from L3 onward is
 > still design._
 >
 > How to build [`widget-library-design.md`](widget-library-design.md) as a new
@@ -99,14 +99,15 @@ Each phase ends with tests that fix its semantics. The order is constrained:
 L1 and L2 define the framework's semantics and every later phase depends on
 them.
 
-**Status.** L0, L1 and L2 are implemented and their exit criteria are covered
-by tests in `crates/fresh-ui/tests/`. The crate has no dependencies — neither
-external ones nor other workspace crates — so `cargo test -p fresh-ui` builds
-the library and nothing else. Phases from L2a onward are unstarted.
+**Status.** L0, L1, L2, L2a, L2b and L2c are implemented and their exit
+criteria are covered by tests in `crates/fresh-ui/tests/`. The crate has no
+dependencies — neither external ones nor other workspace crates — so
+`cargo test -p fresh-ui` builds the library and nothing else. Everything from
+L3 (layout) onward is unstarted.
 
 ### Deviations from the design document
 
-Four points where the implementation differs from the spec. The spec is the
+Points where the implementation differs from the spec. The spec is the
 statement of intent; these are the places where Rust or a later phase forced a
 different expression of it.
 
@@ -129,10 +130,38 @@ different expression of it.
    reported error, a dropped frame — is the error policy, and that is a later
    phase. Until then the panic continues to the caller with the tree intact.
 
+5. **`Component::init` is where behaviors are registered and snapshots are
+   read.** The design document shows `cx.register(...)` and says an ambient read
+   "is legal in the state constructor", but also specifies
+   `type State: Default`, which admits no context. The trait therefore gained a
+   provided method `fn init(&self, cx: &mut InitCx<M>) -> Self::State`,
+   defaulting to `Self::State::default()`. `Default` stays required, so a
+   component that needs neither writes nothing.
+6. **`Provide` is its own `Desc` variant, and the ambient's identity is part of
+   the element type.** The design document calls `Provide` "an ordinary
+   description" without saying which one; it needs framework-level storage (the
+   value and the dependent list), so it is a variant rather than a component.
+   Making the ambient key part of `ElemType` is what stops one ambient from
+   updating in place over another at the same position.
+7. **Ambient values are `Rc<T>`, compared by pointer identity.** "Swapped for a
+   non-identical one" needs a definition of identity, and the same reasoning
+   that rules out structural equality for descriptions rules it out here:
+   `Rc::ptr_eq` is O(1) and needs no bound on `T`. Handing back the same `Rc`
+   marks nobody.
+8. **`Behavior::teardown` takes `&self`.** A behavior is shared between the
+   element's registry and the state field holding it, and `build` only ever sees
+   `&State`, so a behavior with mutable internals owns a `RefCell` regardless.
+
 One behaviour is implemented that the design document does not state
 explicitly: the `(type, key)` rule is applied to the **root** description as
 well as to children, so changing the root's type or key replaces the root
 element rather than updating it in place.
+
+The snapshot rule's debug assertion is detectable in exactly one form: a
+provider records both who read it in `build` and who read it in `init`, and
+when the value changes, any element in the second set but not the first is
+reported. That is precisely the element that cached a value it cannot see
+change.
 
 ### L0 — Skeleton
 Crate, CI wiring, `Key`, `Node<M>`, `Desc<M>` with props structs, no behavior.

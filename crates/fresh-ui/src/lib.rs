@@ -15,12 +15,15 @@
 //!
 //! ## What is implemented
 //!
-//! Descriptions, the element tree and reconciliation, and the scheduler.
-//! Layout, paint, pointer routing, focus and the widget set follow in later
-//! phases; the primitives' props exist and are inert until then.
+//! Descriptions, the element tree and reconciliation, the scheduler, behavior
+//! registration and teardown, ambient values, and tree diagnostics. Layout,
+//! paint, pointer routing, focus and the widget set follow in later phases; the
+//! primitives' props exist and are inert until then.
 
 #![forbid(unsafe_code)]
 
+pub mod ambient;
+pub mod behavior;
 pub mod component;
 pub mod desc;
 pub mod diagnose;
@@ -29,6 +32,8 @@ pub mod key;
 pub mod schedule;
 pub mod test;
 
+pub use ambient::{provide, Ambient, AmbientKey, ProvideProps};
+pub use behavior::Behavior;
 pub use component::{AnyComponent, Component};
 pub use desc::{
     col, focusable, gesture, host, layer, node_key, node_type, resolve, row, shared_rc, stack,
@@ -38,4 +43,4 @@ pub use desc::{
 };
 pub use element::ElementId;
 pub use key::{Key, KeyPath};
-pub use schedule::{BuildCx, NullRenderer, Renderer, Sched, Ui, Updater};
+pub use schedule::{BuildCx, DirtyCause, InitCx, NullRenderer, Renderer, Sched, Ui, Updater};

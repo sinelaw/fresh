@@ -172,7 +172,7 @@ fn the_same_shared_instance_skips_the_subtree() {
 fn a_panic_part_way_through_leaves_the_last_committed_tree() {
     let (rec, mut ui) = ui();
     ui.frame(col().children([text("a"), Boom(false).node()]));
-    let shape = ui.dump();
+    let shape = ui.shape();
     let live = ui.live_count();
 
     rec.clear();
@@ -185,12 +185,12 @@ fn a_panic_part_way_through_leaves_the_last_committed_tree() {
 
     assert!(outcome.is_err());
     assert_eq!(ui.live_count(), live, "nothing was left behind");
-    assert_eq!(ui.dump(), shape, "the committed structure is intact");
+    assert_eq!(ui.shape(), shape, "the committed structure is intact");
     // Elements created before the panic were rolled back, so create and
     // dispose stay balanced.
     assert_eq!(rec.creates().len(), rec.disposes().len());
 
     // And the tree is still usable.
     ui.frame(col().children([text("c"), Boom(false).node()]));
-    assert_eq!(ui.dump(), shape);
+    assert_eq!(ui.shape(), shape);
 }

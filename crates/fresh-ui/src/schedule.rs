@@ -12,6 +12,8 @@ use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
+use crate::ambient::{Ambient, AmbientNode};
+use crate::behavior::Behavior;
 use crate::desc::{Event, Handler, Node};
 use crate::element::{Arena, ElementId, Txn};
 
@@ -44,6 +46,34 @@ impl Renderer for NullRenderer {}
 // Scheduler state
 // ---------------------------------------------------------------------------
 
+/// Why an element was marked for rebuild. Recorded so that a tree dump answers
+/// the question a failing test actually asks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DirtyCause {
+    /// First build, at mount.
+    Mount,
+    /// A `set_state`, at this source location.
+    SetState(&'static std::panic::Location<'static>),
+    /// The named ambient changed.
+    Ambient(&'static str),
+    /// Reconciled as part of this parent's rebuild.
+    Parent(ElementId),
+    /// Marked explicitly, at this source location.
+    Marked(&'static std::panic::Location<'static>),
+}
+
+impl std::fmt::Display for DirtyCause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DirtyCause::Mount => write!(f, "mount"),
+            DirtyCause::SetState(l) => write!(f, "set_state {}:{}", l.file(), l.line()),
+            DirtyCause::Ambient(n) => write!(f, "ambient @{n}"),
+            DirtyCause::Parent(p) => write!(f, "parent {p:?}"),
+            DirtyCause::Marked(l) => write!(f, "mark {}:{}", l.file(), l.line()),
+        }
+    }
+}
+
 type Mutation = Box<dyn FnOnce(&mut dyn Any)>;
 
 /// Shared between the tree and every handler that can mark it dirty.
@@ -51,6 +81,9 @@ pub struct Sched {
     building: Option<(ElementId, &'static str)>,
     dirty: HashSet<ElementId>,
     mutations: Vec<(ElementId, Mutation)>,
+    /// Causes recorded by handlers, which cannot reach the element themselves.
+    /// Applied at the start of the flush.
+    causes: Vec<(ElementId, DirtyCause)>,
 }
 
 pub(crate) type SchedRef = Rc<RefCell<Sched>>;
@@ -61,6 +94,7 @@ impl Sched {
             building: None,
             dirty: HashSet::new(),
             mutations: Vec::new(),
+            causes: Vec::new(),
         }
     }
 
@@ -75,6 +109,7 @@ impl Sched {
     pub(crate) fn forget(&mut self, id: ElementId) {
         self.dirty.remove(&id);
         self.mutations.retain(|(i, _)| *i != id);
+        self.causes.retain(|(i, _)| *i != id);
     }
 
     fn guard_not_building(&self, what: &str) {
@@ -83,7 +118,7 @@ impl Sched {
         }
     }
 
-    fn mark(&mut self, id: ElementId) {
+    pub(crate) fn mark(&mut self, id: ElementId) {
         self.dirty.insert(id);
     }
 }
@@ -115,7 +150,21 @@ impl<S: 'static> Updater<S> {
 
     /// Queue a mutation and mark the element dirty. Applied at the start of the
     /// next flush, in the order queued.
+    #[track_caller]
     pub fn set(&self, f: impl FnOnce(&mut S) + 'static) {
+        self.set_at(std::panic::Location::caller(), f);
+    }
+
+    /// As [`set`], with the reporting site supplied explicitly. A handler built
+    /// during a build records the site where the handler was created, which is
+    /// the source location that explains the rebuild.
+    ///
+    /// [`set`]: Updater::set
+    pub fn set_at(
+        &self,
+        site: &'static std::panic::Location<'static>,
+        f: impl FnOnce(&mut S) + 'static,
+    ) {
         let mut s = self.sched.borrow_mut();
         s.guard_not_building("set_state");
         let id = self.id;
@@ -128,6 +177,7 @@ impl<S: 'static> Updater<S> {
                 f(st);
             }),
         ));
+        s.causes.push((id, DirtyCause::SetState(site)));
         s.mark(id);
     }
 }
@@ -136,20 +186,119 @@ impl<S: 'static> Updater<S> {
 // BuildCx
 // ---------------------------------------------------------------------------
 
+/// What a component sees while constructing its state.
+///
+/// This runs once per mount. Behaviors are registered here, and an ambient read
+/// here is a **snapshot**: `init` does not re-run, so a value cached in a field
+/// from here will not track later changes to that ambient.
+pub struct InitCx<'a, M> {
+    id: ElementId,
+    sched: SchedRef,
+    scope: Option<Rc<AmbientNode>>,
+    children: &'a [Node<M>],
+    behaviors: Vec<Rc<dyn Behavior>>,
+    init_reads: Vec<ElementId>,
+}
+
+impl<'a, M: 'static> InitCx<'a, M> {
+    pub(crate) fn new(
+        id: ElementId,
+        sched: SchedRef,
+        scope: Option<Rc<AmbientNode>>,
+        children: &'a [Node<M>],
+    ) -> Self {
+        InitCx {
+            id,
+            sched,
+            scope,
+            children,
+            behaviors: Vec::new(),
+            init_reads: Vec::new(),
+        }
+    }
+
+    pub(crate) fn finish(self) -> (Vec<Rc<dyn Behavior>>, Vec<ElementId>) {
+        (self.behaviors, self.init_reads)
+    }
+
+    pub fn id(&self) -> ElementId {
+        self.id
+    }
+
+    pub fn children(&self) -> &'a [Node<M>] {
+        self.children
+    }
+
+    pub fn updater<S: 'static>(&self) -> Updater<S> {
+        Updater {
+            sched: self.sched.clone(),
+            id: self.id,
+            _p: PhantomData,
+        }
+    }
+
+    /// Enrol a behavior for teardown. The returned handle is stored in a named
+    /// field of the state; the element holds the other half. Teardown runs in
+    /// reverse registration order when the element is disposed.
+    pub fn register<B: Behavior + 'static>(&mut self, b: B) -> Rc<B> {
+        let rc = Rc::new(b);
+        self.behaviors.push(rc.clone() as Rc<dyn Behavior>);
+        rc
+    }
+
+    /// Read an ambient as a snapshot. This does **not** create a dependency:
+    /// caching the result in a field and using it later is the stale-output
+    /// case, and it is reported by a debug assertion if the value ever changes.
+    pub fn read<T: 'static>(&mut self, ambient: &Ambient<T>) -> Option<Rc<T>> {
+        let (provider, value) = self.scope.as_ref()?.lookup(ambient.key())?;
+        if !self.init_reads.contains(&provider) {
+            self.init_reads.push(provider);
+        }
+        value.downcast::<T>().ok()
+    }
+}
+
 /// What a component sees while building.
 pub struct BuildCx<'a, M> {
     id: ElementId,
     sched: SchedRef,
+    scope: Option<Rc<AmbientNode>>,
     children: &'a [Node<M>],
+    reads: Vec<ElementId>,
 }
 
 impl<'a, M: 'static> BuildCx<'a, M> {
-    pub(crate) fn new(id: ElementId, sched: SchedRef, children: &'a [Node<M>]) -> Self {
+    pub(crate) fn new(
+        id: ElementId,
+        sched: SchedRef,
+        scope: Option<Rc<AmbientNode>>,
+        children: &'a [Node<M>],
+    ) -> Self {
         BuildCx {
             id,
             sched,
+            scope,
             children,
+            reads: Vec::new(),
         }
+    }
+
+    pub(crate) fn finish(self) -> Vec<ElementId> {
+        self.reads
+    }
+
+    /// Read an ambient and register this element as a dependent of the nearest
+    /// provider. One explicit hop, a visible dependent list, no tracking.
+    ///
+    /// Rebuild-and-re-read is the whole protocol: when the provider's value
+    /// changes, every dependent is marked, regardless of which part of the
+    /// value it actually read.
+    pub fn read<T: 'static>(&mut self, ambient: &Ambient<T>) -> Option<Rc<T>> {
+        let (provider, value) = self.scope.as_ref()?.lookup(ambient.key())?;
+        if !self.reads.contains(&provider) {
+            self.reads.push(provider);
+        }
+        value.downcast::<T>().ok()
     }
 
     pub fn id(&self) -> ElementId {
@@ -171,12 +320,14 @@ impl<'a, M: 'static> BuildCx<'a, M> {
     }
 
     /// A handler that mutates this element's state and marks it dirty.
+    #[track_caller]
     pub fn set_state<S: 'static>(&self, f: impl Fn(&mut S) + 'static) -> Handler<M> {
         let up = self.updater::<S>();
+        let site = std::panic::Location::caller();
         let f = Rc::new(f);
         Rc::new(move |_ev: &Event| {
             let f = f.clone();
-            up.set(move |s| f(s));
+            up.set_at(site, move |s| f(s));
             None
         })
     }
@@ -261,6 +412,14 @@ impl<M: 'static> Ui<M> {
                 f(&mut **st);
             }
         }
+        let causes = std::mem::take(&mut self.sched.borrow_mut().causes);
+        for (id, cause) in causes {
+            if let Some(el) = self.arena.get_mut(id) {
+                if !el.disposed {
+                    el.last_dirty = Some(cause);
+                }
+            }
+        }
         let marked: Vec<ElementId> = self.sched.borrow().dirty.iter().copied().collect();
         for id in marked {
             let disposed = self.arena.get(id).map(|e| e.disposed).unwrap_or(true);
@@ -334,18 +493,20 @@ impl<M: 'static> Ui<M> {
 
     /// Queue a state mutation from outside a handler. Same path as
     /// [`Updater::set`]: applied at the start of the next flush.
+    #[track_caller]
     pub fn set_state<S: 'static>(&mut self, id: ElementId, f: impl FnOnce(&mut S) + 'static) {
         let up: Updater<S> = Updater {
             sched: self.sched.clone(),
             id,
             _p: PhantomData,
         };
-        up.set(f);
+        up.set_at(std::panic::Location::caller(), f);
     }
 
     /// Mark an element for rebuild without changing its state.
+    #[track_caller]
     pub fn mark(&mut self, id: ElementId) {
-        self.sched.borrow_mut().mark(id);
+        self.mark_dirty(id, DirtyCause::Marked(std::panic::Location::caller()));
     }
 
     pub fn state<S: 'static>(&self, id: ElementId) -> Option<&S> {

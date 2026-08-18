@@ -15,6 +15,7 @@
 use std::any::TypeId;
 use std::rc::Rc;
 
+use crate::ambient::{AmbientKey, ProvideProps};
 use crate::component::{AnyComponent, Component};
 use crate::key::Key;
 
@@ -62,6 +63,9 @@ pub enum Desc<M> {
     Layer(LayerProps),
     /// Foreign content owned by the host: a buffer split, a PTY grid.
     Host(HostId),
+    /// Makes an ambient value visible to everything below it (§ambient). Not a
+    /// primitive: it has no render object and contributes no geometry.
+    Provide(ProvideProps),
     /// A subtree the reconciler skips when the instance is unchanged.
     Shared(Rc<Node<M>>),
     /// Composition: builds a subtree from props and state.
@@ -78,6 +82,9 @@ pub enum ElemType {
     Focusable,
     Layer,
     Host,
+    /// The ambient's identity is part of the type, so swapping one ambient for
+    /// another at the same position remounts instead of aliasing.
+    Provide(AmbientKey),
     Component(TypeId),
 }
 
@@ -369,6 +376,7 @@ impl<M> Clone for Desc<M> {
             Desc::Focusable(p) => Desc::Focusable(p.clone()),
             Desc::Layer(p) => Desc::Layer(p.clone()),
             Desc::Host(h) => Desc::Host(*h),
+            Desc::Provide(p) => Desc::Provide(p.clone()),
             Desc::Shared(n) => Desc::Shared(n.clone()),
             Desc::Component(c) => Desc::Component(c.clone()),
         }
@@ -419,6 +427,7 @@ pub fn node_type<M>(n: &Node<M>) -> (ElemType, &'static str) {
         Desc::Focusable(_) => (ElemType::Focusable, "Focusable"),
         Desc::Layer(_) => (ElemType::Layer, "Layer"),
         Desc::Host(_) => (ElemType::Host, "Host"),
+        Desc::Provide(p) => (ElemType::Provide(p.key), "Provide"),
         Desc::Component(c) => (ElemType::Component(c.comp_type_id()), c.comp_name()),
         Desc::Shared(_) => unreachable!("resolve() removes Shared"),
     }

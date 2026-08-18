@@ -10,9 +10,11 @@ use std::collections::HashMap;
 use std::ops::Index;
 use std::rc::Rc;
 
+use crate::ambient::AmbientNode;
+use crate::behavior::Behavior;
 use crate::desc::{component_of, node_key, node_type, resolve, Desc, ElemType, Node};
 use crate::key::Key;
-use crate::schedule::{BuildCx, Ui};
+use crate::schedule::{BuildCx, DirtyCause, InitCx, Ui};
 
 /// A handle into the element arena. Stable while the element is mounted;
 /// reused after it is disposed, so never store one across frames.
@@ -39,6 +41,64 @@ pub(crate) struct Element<M> {
     /// detached element is still readable — that is what makes it safe for a
     /// handler to finish on it — but it never rebuilds.
     pub disposed: bool,
+
+    /// Registered behaviors, in registration order; torn down in reverse.
+    pub behaviors: Vec<Rc<dyn Behavior>>,
+
+    /// The ambients visible to this element.
+    pub scope: Option<Rc<AmbientNode>>,
+    /// What this element exports to its children. `Provide` elements only.
+    pub provides: Option<Rc<AmbientNode>>,
+    /// `Provide` elements only: who read this ambient in `build`, and so must
+    /// rebuild when the value changes.
+    pub dependents: Vec<ElementId>,
+    /// `Provide` elements only: who read this ambient in `init`, and so took a
+    /// snapshot that will not track changes.
+    pub init_dependents: Vec<ElementId>,
+    /// The providers this element is registered with, so that disposal and
+    /// re-reads can deregister.
+    pub reads: Vec<ElementId>,
+    pub init_reads: Vec<ElementId>,
+
+    /// Diagnostics.
+    pub builds: u32,
+    pub last_dirty: Option<DirtyCause>,
+    pub state_name: &'static str,
+}
+
+impl<M> Element<M> {
+    fn blank(
+        key: Option<Key>,
+        ty: ElemType,
+        name: &'static str,
+        desc: Node<M>,
+        parent: Option<ElementId>,
+        depth: u32,
+        scope: Option<Rc<AmbientNode>>,
+    ) -> Element<M> {
+        Element {
+            key,
+            ty,
+            name,
+            desc,
+            state: None,
+            children: Vec::new(),
+            parent,
+            depth,
+            needs_build: false,
+            disposed: false,
+            behaviors: Vec::new(),
+            scope,
+            provides: None,
+            dependents: Vec::new(),
+            init_dependents: Vec::new(),
+            reads: Vec::new(),
+            init_reads: Vec::new(),
+            builds: 0,
+            last_dirty: None,
+            state_name: "",
+        }
+    }
 }
 
 pub(crate) struct Arena<M> {
@@ -205,6 +265,19 @@ impl<M: 'static> Ui<M> {
         }
     }
 
+    /// Mark an element for rebuild in this or the next flush, recording why.
+    pub(crate) fn mark_dirty(&mut self, id: ElementId, cause: DirtyCause) {
+        let Some(el) = self.arena.get(id) else { return };
+        if el.disposed {
+            return;
+        }
+        self.set_needs_build(id, true);
+        if let Some(el) = self.arena.get_mut(id) {
+            el.last_dirty = Some(cause);
+        }
+        self.sched.borrow_mut().mark(id);
+    }
+
     pub(crate) fn detach(&mut self, id: ElementId) {
         if let Some(t) = self.txn.as_mut() {
             t.detached.push(id);
@@ -229,6 +302,12 @@ impl<M: 'static> Ui<M> {
         }
     }
 
+    /// What an element's children see: what it provides, or what it sees.
+    fn child_scope(&self, id: ElementId) -> Option<Rc<AmbientNode>> {
+        let el = self.arena.get(id)?;
+        el.provides.clone().or_else(|| el.scope.clone())
+    }
+
     /// Reconcile the root description.
     ///
     /// The root has no parent to match it against, so the `(type, key)` rule is
@@ -236,7 +315,7 @@ impl<M: 'static> Ui<M> {
     /// place, anything else replaces it.
     pub(crate) fn reconcile_root(&mut self, node: Node<M>) {
         let Some(r) = self.root else {
-            let id = self.mount_node(node, None, 0);
+            let id = self.mount_node(node, None, 0, None);
             self.journal(Undo::Root(None));
             self.root = Some(id);
             return;
@@ -251,7 +330,7 @@ impl<M: 'static> Ui<M> {
             self.update_node(r, node);
         } else {
             self.detach(r);
-            let id = self.mount_node(node, None, 0);
+            let id = self.mount_node(node, None, 0, None);
             self.journal(Undo::Root(Some(r)));
             self.root = Some(id);
         }
@@ -263,34 +342,55 @@ impl<M: 'static> Ui<M> {
         node: Node<M>,
         parent: Option<ElementId>,
         depth: u32,
+        scope: Option<Rc<AmbientNode>>,
     ) -> ElementId {
         let key = node_key(&node);
         let (ty, name) = node_type(&node);
-        let id = self.arena.alloc(Element {
-            key,
-            ty,
-            name,
-            desc: node,
-            state: None,
-            children: Vec::new(),
-            parent,
-            depth,
-            needs_build: false,
-            disposed: false,
-        });
+        let id = self
+            .arena
+            .alloc(Element::blank(key, ty, name, node, parent, depth, scope));
         self.journal(Undo::Created(id));
         self.renderer.create(id, ty, name);
+        if let Some(el) = self.arena.get_mut(id) {
+            el.last_dirty = Some(DirtyCause::Mount);
+        }
+
+        // A `Provide` element exports a new ambient link to its children.
+        if let Desc::Provide(p) = &resolve(&self.arena[id].desc).desc {
+            let node = Rc::new(AmbientNode {
+                parent: self.arena[id].scope.clone(),
+                key: p.key,
+                provider: id,
+                value: std::cell::RefCell::new(p.value.clone()),
+            });
+            self.arena.get_mut(id).expect("live").provides = Some(node);
+        }
 
         if let ElemType::Component(_) = ty {
             let comp = component_of(&self.arena[id].desc).expect("component description");
-            let state = comp.new_state();
-            self.arena.get_mut(id).expect("live").state = Some(state);
+            let props_children = resolve(&self.arena[id].desc).children.clone();
+            let scope = self.arena[id].scope.clone();
+            let sched = self.sched.clone();
+            let mut icx = InitCx::new(id, sched, scope, &props_children);
+            let state = comp.init_any(&mut icx);
+            let (behaviors, init_reads) = icx.finish();
+            for &p in &init_reads {
+                if let Some(prov) = self.arena.get_mut(p) {
+                    prov.init_dependents.push(id);
+                }
+            }
+            let el = self.arena.get_mut(id).expect("live");
+            el.state = Some(state);
+            el.behaviors = behaviors;
+            el.init_reads = init_reads;
+            el.state_name = comp.state_name();
             self.rebuild(id);
         } else {
             let kids = resolve(&self.arena[id].desc).children.clone();
+            let child_scope = self.child_scope(id);
             let mut out = Vec::with_capacity(kids.len());
             for k in kids {
-                out.push(self.mount_node(k, Some(id), depth + 1));
+                out.push(self.mount_node(k, Some(id), depth + 1, child_scope.clone()));
             }
             // The element itself is journalled, so its initial child list is
             // undone with it; no separate entry is needed.
@@ -313,7 +413,45 @@ impl<M: 'static> Ui<M> {
         self.set_desc(id, new);
         self.renderer
             .update(id, self.arena[id].ty, self.arena[id].name);
+        self.refresh_provided(id);
         self.rebuild(id);
+    }
+
+    /// A `Provide` element whose value changed swaps it in place — descendants
+    /// already point at this link — and marks the elements that read it.
+    fn refresh_provided(&mut self, id: ElementId) {
+        let Desc::Provide(p) = &resolve(&self.arena[id].desc).desc else {
+            return;
+        };
+        let value = p.value.clone();
+        let key = p.key;
+        let Some(node) = self.arena[id].provides.clone() else {
+            return;
+        };
+        if Rc::ptr_eq(&node.value.borrow(), &value) {
+            return;
+        }
+        *node.value.borrow_mut() = value;
+
+        let dependents = self.arena[id].dependents.clone();
+        let init_only: Vec<ElementId> = self.arena[id]
+            .init_dependents
+            .iter()
+            .copied()
+            .filter(|d| !dependents.contains(d))
+            .collect();
+        for d in dependents {
+            self.mark_dirty(d, DirtyCause::Ambient(key.name()));
+        }
+        for d in init_only {
+            let name = self.arena.get(d).map(|e| e.name).unwrap_or("<gone>");
+            debug_assert!(
+                false,
+                "ambient {} changed, but {name} ({d:?}) only read it in init(). \
+                 A constructor read is a snapshot and does not re-run; read in build() instead.",
+                key.name()
+            );
+        }
     }
 
     /// Re-run this element's build (component) or re-reconcile its children
@@ -326,31 +464,54 @@ impl<M: 'static> Ui<M> {
             if self.trace {
                 self.build_log.push(id);
             }
-            let (comp, props_children, name) = {
+            let (comp, props_children, name, scope) = {
                 let el = &self.arena[id];
                 (
                     component_of(&el.desc).expect("component description"),
                     resolve(&el.desc).children.clone(),
                     el.name,
+                    el.scope.clone(),
                 )
             };
             let sched = self.sched.clone();
             sched.borrow_mut().enter_build(id, name);
-            let built = {
+            let (built, reads) = {
                 let el = &self.arena[id];
                 let state: &dyn Any = &**el
                     .state
                     .as_ref()
                     .expect("component element mounted without state");
-                let mut cx = BuildCx::new(id, sched.clone(), &props_children);
-                comp.build_any(state, &mut cx)
+                let mut cx = BuildCx::new(id, sched.clone(), scope, &props_children);
+                let node = comp.build_any(state, &mut cx);
+                (node, cx.finish())
             };
             sched.borrow_mut().clear_building();
+            self.arena.get_mut(id).expect("live").builds += 1;
+            self.register_reads(id, reads);
             self.reconcile_children(id, vec![built]);
         } else {
             let kids = resolve(&self.arena[id].desc).children.clone();
             self.reconcile_children(id, kids);
         }
+    }
+
+    /// Replace this element's dependency registrations with the set the last
+    /// build actually read.
+    fn register_reads(&mut self, id: ElementId, reads: Vec<ElementId>) {
+        if self.arena[id].reads == reads {
+            return;
+        }
+        for p in self.arena[id].reads.clone() {
+            if let Some(prov) = self.arena.get_mut(p) {
+                prov.dependents.retain(|d| *d != id);
+            }
+        }
+        for &p in &reads {
+            if let Some(prov) = self.arena.get_mut(p) {
+                prov.dependents.push(id);
+            }
+        }
+        self.arena.get_mut(id).expect("live").reads = reads;
     }
 
     /// Match new descriptions against existing children.
@@ -367,6 +528,7 @@ impl<M: 'static> Ui<M> {
     pub(crate) fn reconcile_children(&mut self, parent: ElementId, new_nodes: Vec<Node<M>>) {
         let old = self.arena[parent].children.clone();
         let depth = self.arena[parent].depth + 1;
+        let scope = self.child_scope(parent);
 
         let mut by_key: HashMap<Key, Vec<usize>> = HashMap::new();
         for (i, &c) in old.iter().enumerate() {
@@ -398,10 +560,15 @@ impl<M: 'static> Ui<M> {
                 Some(j) => {
                     used[j] = true;
                     let c = old[j];
+                    if let Some(el) = self.arena.get_mut(c) {
+                        if el.last_dirty.is_none() || !el.needs_build {
+                            el.last_dirty = Some(DirtyCause::Parent(parent));
+                        }
+                    }
                     self.update_node(c, n);
                     out.push(c);
                 }
-                None => out.push(self.mount_node(n, Some(parent), depth)),
+                None => out.push(self.mount_node(n, Some(parent), depth, scope.clone())),
             }
         }
 
@@ -429,7 +596,23 @@ impl<M: 'static> Ui<M> {
         for k in kids {
             self.dispose_subtree(k);
         }
+        // Deregister from every provider before the element goes away.
+        for p in self.arena[id].reads.clone() {
+            if let Some(prov) = self.arena.get_mut(p) {
+                prov.dependents.retain(|d| *d != id);
+            }
+        }
+        for p in self.arena[id].init_reads.clone() {
+            if let Some(prov) = self.arena.get_mut(p) {
+                prov.init_dependents.retain(|d| *d != id);
+            }
+        }
         if let Some(el) = self.arena.release(id) {
+            // Within one state object, behaviors tear down in reverse
+            // registration order.
+            for b in el.behaviors.iter().rev() {
+                b.teardown();
+            }
             self.renderer.dispose(id, el.ty, el.name);
         }
         self.sched.borrow_mut().forget(id);
