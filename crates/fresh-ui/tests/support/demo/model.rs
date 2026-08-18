@@ -89,6 +89,9 @@ pub struct App {
     pub tasks: Rc<Vec<Task>>,
     pub filter: Filter,
     pub selected: usize,
+    /// Which top-level menu is open, if any. Lifted here — not left on the
+    /// dropdown — because a global mnemonic (Alt+F) must be able to open it.
+    pub menu: Option<Key>,
     /// Set by File → Quit; the host loop reads it and exits.
     pub quit: bool,
     pub draft: String,
@@ -153,6 +156,7 @@ impl App {
             tasks: Rc::new(tasks),
             filter: Filter::All,
             selected: 0,
+            menu: None,
             quit: false,
             draft: String::new(),
             status: "ready".into(),
@@ -235,6 +239,8 @@ pub enum Msg {
     RunCommand(usize),
     ClosePalette,
     MenuChoice(Key),
+    /// Open the named menu, or close whatever is open.
+    Menu(Option<Key>),
     BeginResize,
     Resize(i32),
     EndResize,
@@ -328,12 +334,17 @@ pub fn update(app: &mut App, msg: Msg) {
             }
         }
         Msg::ClosePalette => app.palette = None,
-        Msg::MenuChoice(k) => match format!("{k}").as_str() {
-            "#new" => app.draft = "new task".into(),
-            "#palette" => update(app, Msg::OpenPalette),
-            "#quit" => app.quit = true,
-            other => app.status = format!("menu {other}"),
-        },
+        Msg::Menu(which) => app.menu = which,
+        Msg::MenuChoice(k) => {
+            // Choosing an item closes the menu it came from.
+            app.menu = None;
+            match format!("{k}").as_str() {
+                "#new" => app.draft = "new task".into(),
+                "#palette" => update(app, Msg::OpenPalette),
+                "#quit" => app.quit = true,
+                other => app.status = format!("menu {other}"),
+            }
+        }
         Msg::BeginResize => app.resizing = true,
         Msg::Resize(x) => {
             if app.resizing {

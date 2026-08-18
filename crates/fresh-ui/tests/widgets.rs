@@ -239,7 +239,10 @@ fn a_list_moves_its_selection_and_activates_it() {
 fn the_selected_row_is_marked_in_the_display_list() {
     let mut ui: Ui<Msg> = Ui::new();
     ui.frame(eager_list(2), FRAME);
-    assert_eq!(themes_of(&ui, "item 2"), vec!["list.row.selected"]);
+    // The list has no focus here, so its selected row reads as the blurred
+    // variant — a list shows a vivid selection only while it has focus, so the
+    // eye can tell which of several lists the keyboard is driving.
+    assert_eq!(themes_of(&ui, "item 2"), vec!["list.row.selected.blur"]);
     assert_eq!(themes_of(&ui, "item 3"), vec!["list.row"]);
 }
 
@@ -443,4 +446,66 @@ fn widgets_compose_into_a_form_that_tabs_in_order() {
         vec![Msg::Pressed],
         "the button is last"
     );
+}
+
+// -- Controlled dropdown and global mnemonics --------------------------------
+
+#[test]
+fn a_controlled_dropdown_opens_from_its_owner() {
+    // The open state is held by the owner, not the element: a menu a global
+    // command must be able to open needs its flag somewhere a command can reach.
+    let mut ui: Ui<Msg> = Ui::new();
+    let build = |open: bool| -> Node<Msg> {
+        col().child(
+            Dropdown::new("File")
+                .item("open", "Open")
+                .item("save", "Save")
+                .open(open)
+                .on_toggle(|now| Msg::Chose(format!("toggle:{now}")))
+                .on_choose(|k| Msg::Chose(format!("{k}")))
+                .node(),
+        )
+    };
+
+    // Closed: no menu, and nothing was clicked.
+    ui.frame(build(false), FRAME);
+    assert!(!texts(&ui).iter().any(|t| t.contains("Open")));
+
+    // The owner sets the flag and the menu appears — no pointer involved.
+    ui.frame(build(true), FRAME);
+    assert!(texts(&ui).iter().any(|t| t.contains("Open")));
+
+    // Clicking the trigger does not flip a private flag; it reports the toggle
+    // the owner should record.
+    assert_eq!(
+        click(&mut ui, 1, 0),
+        vec![Msg::Chose("toggle:false".into())]
+    );
+}
+
+#[test]
+fn a_global_alt_shortcut_reaches_a_root_action_from_anywhere() {
+    use fresh_ui::desc::focusable;
+    use fresh_ui::focus::{Intent, Shortcut};
+
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.set_shortcuts(vec![Shortcut::new(
+        KeyPress::with(KeyCode::Char('f'), Mods::ALT),
+        Intent::Custom("menu.file"),
+    )]);
+
+    // A root focusable that traversal skips, catching the app-global intent no
+    // more specific part of the tree claimed — the idiom for a menu mnemonic.
+    let view = || -> Node<Msg> {
+        focusable(col().child(TextField::new("body").on_change(Msg::Changed).node()))
+            .skip_traversal()
+            .action(Intent::Custom("menu.file"), |_| Msg::Chose("file".into()))
+    };
+    ui.frame(view(), FRAME);
+
+    // Focus is on the field (typing works there), yet the chord still fires the
+    // root action rather than being swallowed as input.
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    let chord = ui.dispatch(Input::Key(KeyPress::with(KeyCode::Char('f'), Mods::ALT)));
+    assert_eq!(chord, vec![Msg::Chose("file".into())]);
 }

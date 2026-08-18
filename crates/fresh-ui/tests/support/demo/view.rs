@@ -33,6 +33,10 @@ pub fn view(app: &App) -> Node<Msg> {
     fresh_ui::desc::focusable(app_body(app))
         .skip_traversal()
         .action(Intent::Custom("palette"), |_| Msg::OpenPalette)
+        // The menu mnemonics are actions on the root focusable, so they fire
+        // wherever focus happens to be — that is what makes them global.
+        .action(Intent::Custom("menu.file"), |_| Msg::Menu(Some(file_key())))
+        .action(Intent::Custom("menu.go"), |_| Msg::Menu(Some(go_key())))
 }
 
 fn app_body(app: &App) -> Node<Msg> {
@@ -64,27 +68,36 @@ fn app_body(app: &App) -> Node<Msg> {
 
 // -- the menu bar ------------------------------------------------------------
 
-thread_local! {
-    /// Hoisted: the menu bar does not depend on any application state, so the
-    /// same instance is handed back every frame and the reconciler skips the
-    /// whole subtree. Reference identity is the only skip rule there is.
-    static MENU_BAR: Rc<Node<Msg>> = Rc::new(build_menu_bar());
+/// The identity of each top-level menu, matched against `app.menu`.
+fn file_key() -> Key {
+    Key::from("menu.file")
+}
+fn go_key() -> Key {
+    Key::from("menu.go")
 }
 
-fn menu_bar(_app: &App) -> Node<Msg> {
-    MENU_BAR.with(|m| shared_rc(m.clone())).h(Sizing::Cells(1))
-}
-
-fn build_menu_bar() -> Node<Msg> {
+/// The menu bar is controlled by `app.menu`: the trigger, the Alt mnemonic and
+/// a dismissal all route through the same app state, so any of them can open or
+/// close a menu and they never disagree. It can no longer be hoisted — it is a
+/// function of state now — which is the honest cost of lifting the open flag.
+fn menu_bar(app: &App) -> Node<Msg> {
+    let open = app.menu.clone();
+    let menu = |k: Key| -> Box<dyn Fn(bool) -> Msg> {
+        Box::new(move |now| Msg::Menu(now.then(|| k.clone())))
+    };
     row().theme("menubar").h(Sizing::Cells(1)).children([
         Dropdown::new("File")
             .item("new", "New task")
             .item("quit", "Quit")
+            .open(open.as_ref() == Some(&file_key()))
+            .on_toggle(menu(file_key()))
             .on_choose(Msg::MenuChoice)
             .node()
             .key("menu.file"),
         Dropdown::new("Go")
             .item("palette", "Command palette")
+            .open(open.as_ref() == Some(&go_key()))
+            .on_toggle(menu(go_key()))
             .on_choose(Msg::MenuChoice)
             .node()
             .key("menu.go"),
@@ -359,6 +372,16 @@ pub fn shortcuts() -> Vec<fresh_ui::focus::Shortcut> {
     s.push(fresh_ui::focus::Shortcut::new(
         KeyPress::with(KeyCode::Char('p'), Mods::CTRL),
         Intent::Custom("palette"),
+    ));
+    // Menu mnemonics: Alt-F opens File, Alt-G opens Go — the same intents the
+    // root focusable acts on, so the chord works from anywhere.
+    s.push(fresh_ui::focus::Shortcut::new(
+        KeyPress::with(KeyCode::Char('f'), Mods::ALT),
+        Intent::Custom("menu.file"),
+    ));
+    s.push(fresh_ui::focus::Shortcut::new(
+        KeyPress::with(KeyCode::Char('g'), Mods::ALT),
+        Intent::Custom("menu.go"),
     ));
     s
 }

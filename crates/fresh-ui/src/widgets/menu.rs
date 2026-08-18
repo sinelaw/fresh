@@ -23,6 +23,11 @@ pub struct Dropdown<M> {
     label: Rc<str>,
     items: Vec<(Key, Rc<str>)>,
     on_choose: Option<Rc<dyn Fn(Key) -> M>>,
+    /// When set, the owner holds the open state — the controlled form. A menu
+    /// an outside command can open (a mnemonic, a toolbar) needs its open state
+    /// somewhere a command can reach, which is the owner, not this element.
+    open: Option<bool>,
+    on_toggle: Option<Rc<dyn Fn(bool) -> M>>,
 }
 
 impl<M: 'static> Dropdown<M> {
@@ -31,7 +36,23 @@ impl<M: 'static> Dropdown<M> {
             label: Rc::from(label.as_ref()),
             items: Vec::new(),
             on_choose: None,
+            open: None,
+            on_toggle: None,
         }
+    }
+
+    /// Hand the open state to the owner. Pair with `on_toggle`; omit both to let
+    /// the dropdown keep its own.
+    pub fn open(mut self, open: bool) -> Self {
+        self.open = Some(open);
+        self
+    }
+
+    /// Told when the trigger or a dismissal would change the open state, so the
+    /// owner can record it.
+    pub fn on_toggle(mut self, f: impl Fn(bool) -> M + 'static) -> Self {
+        self.on_toggle = Some(Rc::new(f));
+        self
     }
 
     pub fn item(mut self, key: impl Into<Key>, label: impl AsRef<str>) -> Self {
@@ -50,17 +71,26 @@ impl<M: 'static> Component<M> for Dropdown<M> {
 
     fn build(&self, s: &DropdownState, cx: &mut BuildCx<'_, M>) -> Node<M> {
         let up: Updater<DropdownState> = cx.updater();
-        let toggle = up.clone();
-        let open = s.open;
+        // Controlled when the owner supplied `open`; otherwise the element's own.
+        let open = self.open.unwrap_or(s.open);
+        let controlled = self.on_toggle.clone();
 
+        let toggle = up.clone();
+        let on_toggle = controlled.clone();
         let trigger: Node<M> = Button::new(&*self.label)
-            .on_press_handler(Rc::new(move |_: &Event| {
-                toggle.set(move |st: &mut DropdownState| st.open = !open);
-                None
+            .on_press_handler(Rc::new(move |_: &Event| match &on_toggle {
+                Some(f) => Some(f(!open)),
+                None => {
+                    toggle.set(move |st: &mut DropdownState| st.open = !open);
+                    None
+                }
             }))
             .node();
 
-        if !s.open {
+        // Read the effective open state, controlled or not — this is what was
+        // wrong before: guarding on `s.open` alone never built the menu when
+        // the owner held the flag.
+        if !open {
             return trigger;
         }
 
@@ -77,6 +107,9 @@ impl<M: 'static> Component<M> for Dropdown<M> {
             choose.as_ref().map(|f| f(keys[i].clone()))
         }))
         .node();
+        // The owner closes a controlled menu in its own handler for the choice;
+        // the internal close above is a no-op there and drives the uncontrolled
+        // form.
 
         let dismiss = up;
         col().child(trigger).child(
@@ -86,9 +119,12 @@ impl<M: 'static> Component<M> for Dropdown<M> {
                 .fit(Fit::FLIP.or(Fit::CLAMP))
                 .modality(Modality::Inert)
                 .dismiss(Dismiss::OUTSIDE_POINTER.or(Dismiss::ESCAPE))
-                .on_dismiss_handler(Rc::new(move |_: &Event| {
-                    dismiss.set(|st: &mut DropdownState| st.open = false);
-                    None
+                .on_dismiss_handler(Rc::new(move |_: &Event| match &controlled {
+                    Some(f) => Some(f(false)),
+                    None => {
+                        dismiss.set(|st: &mut DropdownState| st.open = false);
+                        None
+                    }
                 }))
                 // Named, so the backend paints a background under it: without
                 // one the menu is transparent and the content behind shows

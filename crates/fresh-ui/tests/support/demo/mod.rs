@@ -116,8 +116,13 @@ impl Demo {
             // Selection and focus are appearances, not structure: the
             // description says which is which and the backend decides how they
             // read.
-            "list.row.selected" => Some('░'),
+            // Selection reads the same in the character grid whether the list
+            // has focus or not; the focused/blurred difference is a colour, and
+            // colour is the interactive backend's business, not this one's.
+            "list.row.selected" | "list.row.selected.blur" => Some('░'),
             "button.focused" | "field.focused" | "toggle.focused" => Some('▪'),
+            // Hover is colour-only here too.
+            "list.row.hover" | "button.hover" | "toggle.hover" | "number.hover" => None,
             _ => None,
         })
     }

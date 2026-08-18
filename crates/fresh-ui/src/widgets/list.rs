@@ -200,6 +200,7 @@ impl<M: 'static> Component<M> for List<M> {
 
         let source = self.source.clone();
         let hov = s.hovered;
+        let focused = s.focused;
         // Clicking a row selects it, the same selection the keyboard drives.
         // Built here so it rides along with each visible row the reader emits.
         let click: Option<RowClick<M>> = if self.focusable {
@@ -265,7 +266,14 @@ impl<M: 'static> Component<M> for List<M> {
             col().children((first..last).map(|i| {
                 let (k, row) = source.at(i).expect("index inside the source");
                 let theme = if i == sel {
-                    "list.row.selected"
+                    // A selected row reads as focused only when the list has
+                    // focus; otherwise it is muted, so the eye can tell which
+                    // list among several the keyboard is driving.
+                    if focused {
+                        "list.row.selected"
+                    } else {
+                        "list.row.selected.blur"
+                    }
                 } else if hov == Some(i) {
                     "list.row.hover"
                 } else {
