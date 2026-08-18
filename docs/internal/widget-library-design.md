@@ -50,6 +50,14 @@
   unchanged.
 - **Mutable objects at the description layer.** Descriptions are values; only
   the framework retains anything across frames.
+- **Logical coordinates and writing modes.** Layout is in physical rows and
+  columns. Right-to-left text is a per-widget text-rendering concern, not a
+  layout-system concern; block-progression variants are out of scope.
+- **Block fragmentation.** One node maps to one rectangle. Splitting a single
+  node's content across columns or pages is out of scope.
+- **Sub-cell precision.** Coordinates are integer cells. The determinism
+  concern that leads pixel-based engines to fixed-point arithmetic survives in
+  one form here: flex remainder distribution, specified in §8.1.
 
 ---
 
@@ -395,17 +403,50 @@ Choice: **box constraints in integer cells.** Constraints (`min_w`, `max_w`,
 children. Single pass, no constraint solver, no sub-cell rounding.
 
 - `Sizing::{Cells(n), Flex(w), Pct(p), Auto}` resolve into constraints.
+- **Flex division is specified, not incidental.** Dividing leftover cells among
+  flex children leaves an integer remainder; the distribution rule is
+  largest-remainder, ties resolved toward earlier children. An unspecified rule
+  produces one-cell gaps or overlaps that vary between runs — the integer-cell
+  form of the seam artifacts that push pixel-based engines to fixed-point
+  arithmetic.
 - **Intrinsic sizing is opt-in and measures a subtree twice.** `Auto` over a
-  large subtree is the case where this cost appears; document it at the API.
+  large subtree is the case where this cost appears; document it at the API —
+  and note that the layout cache below turns the repeated measurement of an
+  unchanged subtree into a lookup.
 - A common case requiring a second layout pass indicates a defect in the
   constraint model rather than a performance problem.
 
 ### 8.2 Layout pass
 
-Walks the render tree in tree order, honoring dirty flags. `needs_layout`
-propagates **up to the nearest relayout boundary** — a node whose own size
-cannot change as a result (a fixed-size box, a viewport with a fixed rect). A
-status-bar text change then relayouts the status bar, not the split grid.
+Walks the render tree in tree order, honoring dirty flags. Dirtiness is two
+bits per node: `needs_layout` on the changed node, and `child_needs_layout`
+path-marked on each ancestor when the mark is set — so the top-down walk skips
+any subtree carrying neither bit without visiting it. `needs_layout` propagates
+**up to the nearest relayout boundary** — a node whose own size cannot change
+as a result (a fixed-size box, a viewport with a fixed rect). A status-bar text
+change then relayouts the status bar, not the split grid.
+
+**Layout results are cached by incoming constraints.** Each node stores the
+constraints of its last layout together with the result; a clean node handed
+equal constraints returns the stored result without visiting its subtree. This
+is the downward complement of relayout boundaries: boundaries stop a change
+propagating up, the cache stops recomputation propagating down — a parent that
+relayouts but passes a child unchanged constraints skips the child entirely. It
+also bounds the cost of intrinsic sizing: the second measurement of an
+unchanged subtree under equal constraints is a lookup.
+
+**Anchored layers resolve after the main walk.** A `Layer` anchored to a node
+needs that node's rectangle, which does not exist until the node's subtree has
+laid out. Layers are collected during the main walk and resolved in a second
+stage of the same layout pass, after their anchors have rectangles; `fit`
+(flip/clamp/shift against the frame edge) is applied at that point. No layer
+geometry survives to paint unresolved.
+
+A stateless layout model — algorithms that never mutate the render object and
+return immutable result fragments, as in Blink's LayoutNG — was considered and
+declined. It exists to make speculative and parallel measurement safe at
+10^5–10^6 nodes; at this library's scale (hundreds of nodes, one thread) the
+constraint cache above captures its benefit without the restructuring.
 
 Output per node: `rect`, `clip`, `scroll window`. This is the **only** source
 of geometry.
@@ -504,6 +545,7 @@ bubble : target -> root           // each node may claim
 | opacity | `PointerMode::Opaque` is the default; `Transparent` passes through after its own handlers; `Ignore` is not hittable. |
 | drag | `cx.capture_pointer()`, per node. Subsequent moves and releases route to that node regardless of pointer position, until release or unmount. This is the complete drag mechanism. |
 | scroll chaining | Wheel events bubble; a `Viewport` claims one only if its offset changed. |
+| retargeting | When propagation crosses out of a `Component` subtree, `target` is rewritten to the component's root. Listeners outside a button see the button, not the `TextRun` inside it — composition structure (§11) does not leak through events. `current` is unaffected. |
 
 ## 10. Focus
 
@@ -534,6 +576,20 @@ pub trait TraversalPolicy {
   `request_focus()` is an imperative command, permitted in handlers and
   rejected in `build()`. A component that renders a focus indicator mirrors the
   state via `on_focus_change`; focus itself is not component state.
+- **Transition order is fixed**: the old element receives `Focus(Lost)` before
+  the new element receives `Focus(Gained)`, and both are delivered through
+  normal dispatch before the flush that renders the change.
+- **Focus acquisition carries a selection behavior.** Focusing a text field by
+  click, by Tab, and by restore are different operations on its selection:
+  caret to the clicked position, select-all, and preserve, respectively. The
+  focus request carries this as a parameter (`SelectionOnFocus::{Caret(pos),
+  SelectAll, Preserve, None}`) rather than each call site improvising; `None`
+  is for non-editable targets.
+- **Ancestor-visible focus is scoped by common ancestor.** A node may render
+  differently because a *descendant* holds focus — the active split's border is
+  this. Such nodes register for `focus_within`, and on a focus move only
+  registrants below the common ancestor of the old and new positions are
+  notified; the common ancestor and everything above it keep their state.
 
 ### Shortcuts → Intents → Actions
 
@@ -572,6 +628,42 @@ The cost of this rule is verbosity: description trees nest deeply. The
 mitigation is convenience constructors and defaults, not a privileged
 primitive. `Host` is the single exception, and it is available to user code on
 the same terms: a render object with custom layout, paint and hit-testing.
+
+### Lazy lists
+
+`List::keyed` constructs one description per item, so its cost is O(items) per
+rebuild — acceptable for a menu, not for a 10^6-row dataset. Paint culling
+(§8.3) does not help: it runs after build, and by then the descriptions exist.
+The windowed form moves the bound to build time:
+
+```rust
+List::virtual(app.tasks.len(), |i| Key::from(app.tasks[i].id),
+              |i| task_row(&app.tasks[i]))
+```
+
+`List::virtual` is a `Component` over `Viewport` — not a privileged primitive —
+whose `build` reads the viewport's scroll window and constructs descriptions
+only for the visible index range plus a fixed overscan. Every per-frame cost is
+then O(visible): build, reconciliation, layout and paint all touch ~a
+screenful of rows regardless of item count. A million-entry list rebuilds a few
+dozen descriptions per frame.
+
+The model's consequences, stated rather than implied:
+
+- **Uniform item extent.** Scroll geometry (total height, thumb position,
+  index-from-offset) is arithmetic only if every item has the same height —
+  one cell by default, or a declared constant. Per-item measured heights would
+  require measuring off-screen items, which is the cost this form exists to
+  avoid; a variable-height virtual list is out of scope.
+- **Off-screen rows have no elements and no state.** A row scrolled out is
+  unmounted; scrolled back in, it is a fresh mount. Row state that must
+  survive scrolling is therefore controlled (held by the owner and passed
+  down — selection already is) or rehydrated via `Persisted`. Keys still
+  matter within the window: a sort while 40 rows are visible must move those
+  40 elements, not rebuild them.
+- **The index is the interface.** The builder receives an index; the
+  application resolves it against its own storage. The library never holds
+  the collection and imposes no requirement on it beyond indexed access.
 
 ## 12. Layers
 

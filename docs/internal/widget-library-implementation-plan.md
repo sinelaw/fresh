@@ -169,8 +169,13 @@ Box constraints in integer cells; `Sizing::{Cells, Flex, Pct, Auto}`;
 including these cases — a list with `Auto` height inside a flex column inside a
 modal; a row whose children all request `Flex` in zero available space; text
 that must wrap to a width determined by a sibling.
+Includes the two-bit dirty scheme (`needs_layout` / path-marked
+`child_needs_layout`), the constraint-keyed layout cache, deterministic flex
+remainder distribution, and deferred layer resolution (design doc §8.1–§8.2).
 **Exit:** layout golden tests for those cases; a dirty text node inside a
-fixed-size box relayouts that box and nothing above it; geometry access inside
+fixed-size box relayouts that box and nothing above it; a clean node handed
+equal constraints returns its cached result without visiting its subtree; flex
+remainders distribute identically across runs; geometry access inside
 `build()` trips a debug assert, and `LayoutReader` gets its constraints as an
 argument during the layout pass.
 
@@ -204,9 +209,13 @@ different actions at two focus positions.
 ### L7 — The widget set
 `Button`, `Toggle`, `TextField`, `List`, `Tree`, `Dropdown`, `DualList`,
 `Number`, `Divider`, `Spacer`, `RadioGroup` — all as `Component`s over the
-seven primitives, with no privileged access.
+seven primitives, with no privileged access. `List` ships both forms: eager
+(`List::keyed`) and windowed (`List::virtual`, design doc §11), the second
+building descriptions only for the visible index range.
 **Exit:** each has behavior tests through the public event path; none reaches
-into framework internals.
+into framework internals; a `List::virtual` over 10^6 items builds, lays out
+and paints O(visible) work per frame, measured by the fake renderer's
+create/update counts.
 
 **Part 1 is done when** `fresh-ui` builds and tests standalone, and a demo
 binary drives a small app (a list, a form, a menu, a modal) through the fake
