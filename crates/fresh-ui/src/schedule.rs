@@ -610,9 +610,9 @@ impl<M: 'static> Ui<M> {
             })
             .filter_map(|(l, _)| self.element_of(*l))
             .collect();
-        (0..self.render.capacity())
-            .filter_map(move |i| {
-                let r = crate::render::object::RenderId(i as u32);
+        self.render
+            .live_ids()
+            .filter_map(move |r| {
                 let n = self.render.get(r)?;
                 n.raw_input.then_some(n.element)
             })
@@ -797,7 +797,7 @@ impl<M: 'static> Ui<M> {
             if ids.is_empty() {
                 break;
             }
-            ids.sort_by_key(|&e| (self.arena.get(e).map(|el| el.depth).unwrap_or(0), e.0));
+            ids.sort_by_key(|&e| (self.arena.get(e).map(|el| el.depth).unwrap_or(0), e.idx));
             for e in ids {
                 let Some(el) = self.arena.get(e) else {
                     continue;

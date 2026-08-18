@@ -677,3 +677,81 @@ fn a_change_deep_in_the_tree_relinks_only_its_own_path() {
     );
     assert_eq!(ui.rect(stable), builds);
 }
+
+// ---------------------------------------------------------------------------
+// F1 — a geometry handle does not resolve to a recycled arena slot
+// ---------------------------------------------------------------------------
+
+/// Takes a geometry handle at construction and stashes a clone where the test
+/// can reach it, so the handle outlives the element.
+struct Stash(Rc<RefCell<Vec<GeomHandle>>>);
+
+#[derive(Default)]
+struct StashState {
+    // Held so the handle lives as long as the element, as a real component
+    // would keep it; the test reads its own clone.
+    _geom: Option<GeomHandle>,
+}
+
+impl Component<()> for Stash {
+    type State = StashState;
+
+    fn init(&self, cx: &mut InitCx<'_, ()>) -> StashState {
+        let g = cx.geometry();
+        self.0.borrow_mut().push(g.clone());
+        StashState { _geom: Some(g) }
+    }
+
+    fn build(&self, _s: &StashState, _cx: &mut BuildCx<'_, ()>) -> Node<()> {
+        // One row tall; the element that reuses its slot is three, so a handle
+        // that follows the slot reads a height it should never see.
+        gesture(text("x")).h(Sizing::Cells(1))
+    }
+}
+
+struct Tall(Rc<RefCell<Vec<GeomHandle>>>);
+
+impl Component<()> for Tall {
+    type State = StashState;
+
+    fn init(&self, cx: &mut InitCx<'_, ()>) -> StashState {
+        let g = cx.geometry();
+        self.0.borrow_mut().push(g.clone());
+        StashState { _geom: Some(g) }
+    }
+
+    fn build(&self, _s: &StashState, _cx: &mut BuildCx<'_, ()>) -> Node<()> {
+        col()
+            .child(text("a"))
+            .child(text("b"))
+            .child(text("c"))
+            .h(Sizing::Cells(3))
+    }
+}
+
+#[test]
+fn a_geometry_handle_does_not_read_a_recycled_slot() {
+    let handles: Rc<RefCell<Vec<GeomHandle>>> = Rc::default();
+
+    // Frame 1: mount the short component. It is the only dynamic element, so it
+    // takes a slot the next mount will pop off the free list.
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(col().child(Stash(handles.clone()).node()), FRAME);
+    let first = handles.borrow()[0].clone();
+    assert_eq!(first.size().h, 1, "the first occupant is one row tall");
+
+    // Frame 2: the short component is gone and a taller one is built in its
+    // place, reusing the freed slot. Its geometry is three rows.
+    ui.frame(col().child(Tall(handles.clone()).node()), FRAME);
+    let second = handles.borrow()[1].clone();
+    assert_eq!(second.size().h, 3, "the new occupant is three rows tall");
+
+    // The stale handle must not have followed the slot to the new element: it
+    // reads nothing, not the three-row rectangle. Without a generation tag the
+    // two ids are the same u32 and this returns 3.
+    assert_eq!(
+        first.size(),
+        Size::new(0, 0),
+        "a handle to a disposed element reads nothing, not its slot's new occupant"
+    );
+}

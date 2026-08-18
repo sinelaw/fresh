@@ -706,6 +706,35 @@ message or is the single factory.
 
 ---
 
+## 4c. Part 1d — the identity register
+
+A second architecture review, run against the state after Part 1c, confirmed
+fourteen of the fifteen D-findings closed in code and the two incremental
+caches correctly invalidated. It raised five new findings (F1–F5). The most
+severe, F1, is closed here; the rest are recorded for a later pass because they
+are either language-limited or a documentation correction rather than a code
+change.
+
+| # | The finding | The fix |
+|---|-------------|---------|
+| F1 | Arena ids (`ElementId`, `RenderId`, `FocusId`) were a bare slot index allocated from a free list with no generation. A handle outliving its element — a stored `GeomHandle`, an `Anchor`'s bound target — resolved to whatever element next took the slot, returning plausible wrong data rather than failing. This is the "id side table keyed by a recyclable identity" goal 4 sets out to avoid, and it fails silently, so the test suite could not see it. | Every id carries the slot's generation as of the moment it was minted; the arena bumps a slot's generation each time it is freed. `get`, `get_mut` and `release` compare generations and treat a mismatch as absent, so a stale id resolves to nothing instead of a recycled occupant. `tests/conformance.rs` proves a `GeomHandle` to a disposed element reads nothing, not the geometry of the element that reused its slot. |
+
+**Exit:** `a_geometry_handle_does_not_read_a_recycled_slot` passes; the arena
+`get`/`get_mut`/`release` reject a mismatched generation; the full suite passes.
+
+**Deferred (F2–F5), not closed here.** F2: the speculative-build purity check
+(R9's exit) is argued from the `&State` signature, which interior mutability
+escapes; a real check is owed. F3: geometry validity during `build` is a
+runtime `debug_assert` again, not the type-level guarantee A7 wanted. F4: a
+`Controller`'s scope restriction is a convention the binding is trusted to
+honour, not enforced — and may be a class-C item, since a closure's captures
+are not inspectable in Rust. F5: focus registration is keyed by element rather
+than held by the render object — functionally equivalent to what §10 describes,
+but not the stated mechanism. F1's generation tag turns F2's and F4's silent
+failures into loud ones, which is the main reason to do it first.
+
+---
+
 ## 5. Part 2 — migrate
 
 ### M0 — The seam

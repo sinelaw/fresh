@@ -24,11 +24,15 @@ use crate::desc::{Anchor, Dismiss, Fit, Modality, Place, Scrim};
 
 /// A handle into the render arena.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RenderId(pub(crate) u32);
+pub struct RenderId {
+    pub(crate) idx: u32,
+    /// The slot generation this id was minted at; see [`ElementId`].
+    pub(crate) gen: u32,
+}
 
 impl std::fmt::Debug for RenderId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "R{}", self.0)
+        write!(f, "R{}", self.idx)
     }
 }
 
@@ -303,9 +307,14 @@ impl RenderData {
     }
 }
 
+struct RenderSlot {
+    gen: u32,
+    node: Option<RenderNode>,
+}
+
 #[derive(Default)]
 pub(crate) struct RenderArena {
-    slots: Vec<Option<RenderNode>>,
+    slots: Vec<RenderSlot>,
     free: Vec<u32>,
 }
 
@@ -313,34 +322,64 @@ impl RenderArena {
     pub fn alloc(&mut self, node: RenderNode) -> RenderId {
         match self.free.pop() {
             Some(i) => {
-                self.slots[i as usize] = Some(node);
-                RenderId(i)
+                let slot = &mut self.slots[i as usize];
+                slot.node = Some(node);
+                RenderId {
+                    idx: i,
+                    gen: slot.gen,
+                }
             }
             None => {
-                self.slots.push(Some(node));
-                RenderId(self.slots.len() as u32 - 1)
+                self.slots.push(RenderSlot {
+                    gen: 0,
+                    node: Some(node),
+                });
+                RenderId {
+                    idx: self.slots.len() as u32 - 1,
+                    gen: 0,
+                }
             }
         }
     }
 
     pub fn release(&mut self, id: RenderId) -> Option<RenderNode> {
-        let n = self.slots.get_mut(id.0 as usize)?.take();
+        let slot = self.slots.get_mut(id.idx as usize)?;
+        if slot.gen != id.gen {
+            return None;
+        }
+        let n = slot.node.take();
         if n.is_some() {
-            self.free.push(id.0);
+            slot.gen = slot.gen.wrapping_add(1);
+            self.free.push(id.idx);
         }
         n
     }
 
     pub fn get(&self, id: RenderId) -> Option<&RenderNode> {
-        self.slots.get(id.0 as usize).and_then(|s| s.as_ref())
+        let slot = self.slots.get(id.idx as usize)?;
+        if slot.gen != id.gen {
+            return None;
+        }
+        slot.node.as_ref()
     }
 
     pub fn get_mut(&mut self, id: RenderId) -> Option<&mut RenderNode> {
-        self.slots.get_mut(id.0 as usize).and_then(|s| s.as_mut())
+        let slot = self.slots.get_mut(id.idx as usize)?;
+        if slot.gen != id.gen {
+            return None;
+        }
+        slot.node.as_mut()
     }
 
-    pub fn capacity(&self) -> usize {
-        self.slots.len()
+    /// The live render ids, each carrying its slot's current generation. The
+    /// one caller scans for host leaves taking raw input.
+    pub fn live_ids(&self) -> impl Iterator<Item = RenderId> + '_ {
+        self.slots.iter().enumerate().filter_map(|(i, s)| {
+            s.node.as_ref().map(|_| RenderId {
+                idx: i as u32,
+                gen: s.gen,
+            })
+        })
     }
 }
 

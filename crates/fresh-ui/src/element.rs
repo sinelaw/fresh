@@ -20,11 +20,18 @@ use crate::schedule::{BuildCx, DirtyCause, InitCx, Ui};
 /// A handle into the element arena. Stable while the element is mounted;
 /// reused after it is disposed, so never store one across frames.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ElementId(pub(crate) u32);
+pub struct ElementId {
+    pub(crate) idx: u32,
+    /// The slot's generation when this id was minted. A slot's generation is
+    /// bumped every time it is freed, so an id outlives its element by value
+    /// but not by access: a lookup with a stale generation finds nothing rather
+    /// than the element that later took the slot.
+    pub(crate) gen: u32,
+}
 
 impl std::fmt::Debug for ElementId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "E{}", self.0)
+        write!(f, "E{}", self.idx)
     }
 }
 
@@ -124,8 +131,14 @@ impl<M> Element<M> {
     }
 }
 
+/// One arena slot: its current generation, and its occupant if any.
+struct Slot<M> {
+    gen: u32,
+    el: Option<Element<M>>,
+}
+
 pub(crate) struct Arena<M> {
-    slots: Vec<Option<Element<M>>>,
+    slots: Vec<Slot<M>>,
     free: Vec<u32>,
 }
 
@@ -142,34 +155,59 @@ impl<M> Arena<M> {
     pub fn alloc(&mut self, el: Element<M>) -> ElementId {
         match self.free.pop() {
             Some(i) => {
-                self.slots[i as usize] = Some(el);
-                ElementId(i)
+                let slot = &mut self.slots[i as usize];
+                slot.el = Some(el);
+                ElementId {
+                    idx: i,
+                    gen: slot.gen,
+                }
             }
             None => {
-                self.slots.push(Some(el));
-                ElementId(self.slots.len() as u32 - 1)
+                self.slots.push(Slot {
+                    gen: 0,
+                    el: Some(el),
+                });
+                ElementId {
+                    idx: self.slots.len() as u32 - 1,
+                    gen: 0,
+                }
             }
         }
     }
 
     pub fn release(&mut self, id: ElementId) -> Option<Element<M>> {
-        let el = self.slots.get_mut(id.0 as usize)?.take();
+        let slot = self.slots.get_mut(id.idx as usize)?;
+        if slot.gen != id.gen {
+            return None;
+        }
+        let el = slot.el.take();
         if el.is_some() {
-            self.free.push(id.0);
+            // The next occupant of this slot gets a fresh generation, so every
+            // id minted for this element stops resolving here.
+            slot.gen = slot.gen.wrapping_add(1);
+            self.free.push(id.idx);
         }
         el
     }
 
     pub fn get(&self, id: ElementId) -> Option<&Element<M>> {
-        self.slots.get(id.0 as usize).and_then(|s| s.as_ref())
+        let slot = self.slots.get(id.idx as usize)?;
+        if slot.gen != id.gen {
+            return None;
+        }
+        slot.el.as_ref()
     }
 
     pub fn get_mut(&mut self, id: ElementId) -> Option<&mut Element<M>> {
-        self.slots.get_mut(id.0 as usize).and_then(|s| s.as_mut())
+        let slot = self.slots.get_mut(id.idx as usize)?;
+        if slot.gen != id.gen {
+            return None;
+        }
+        slot.el.as_mut()
     }
 
     pub fn live(&self) -> usize {
-        self.slots.iter().filter(|s| s.is_some()).count()
+        self.slots.iter().filter(|s| s.el.is_some()).count()
     }
 }
 

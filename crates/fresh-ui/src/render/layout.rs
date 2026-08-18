@@ -222,8 +222,8 @@ impl<M: 'static> Ui<M> {
         theme: Option<Rc<str>>,
         out: &mut Vec<RenderId>,
     ) {
-        let focus_parent = self
-            .element_of(parent.unwrap_or(RenderId(0)))
+        let focus_parent = parent
+            .and_then(|p| self.element_of(p))
             .and_then(|pe| self.nearest_focus(pe));
         let mut fout = Vec::new();
         self.relink_from(

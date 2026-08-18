@@ -12,11 +12,15 @@ use crate::element::ElementId;
 use crate::render::object::FocusReg;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FocusId(pub(crate) u32);
+pub struct FocusId {
+    pub(crate) idx: u32,
+    /// The slot generation this id was minted at; see [`crate::element::ElementId`].
+    pub(crate) gen: u32,
+}
 
 impl std::fmt::Debug for FocusId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "F{}", self.0)
+        write!(f, "F{}", self.idx)
     }
 }
 
@@ -42,9 +46,14 @@ impl FocusNodeData {
     }
 }
 
+struct FocusSlot {
+    gen: u32,
+    data: Option<FocusNodeData>,
+}
+
 #[derive(Default)]
 pub(crate) struct FocusTree {
-    slots: Vec<Option<FocusNodeData>>,
+    slots: Vec<FocusSlot>,
     free: Vec<u32>,
 }
 
@@ -52,29 +61,52 @@ impl FocusTree {
     pub fn alloc(&mut self, n: FocusNodeData) -> FocusId {
         match self.free.pop() {
             Some(i) => {
-                self.slots[i as usize] = Some(n);
-                FocusId(i)
+                let slot = &mut self.slots[i as usize];
+                slot.data = Some(n);
+                FocusId {
+                    idx: i,
+                    gen: slot.gen,
+                }
             }
             None => {
-                self.slots.push(Some(n));
-                FocusId(self.slots.len() as u32 - 1)
+                self.slots.push(FocusSlot {
+                    gen: 0,
+                    data: Some(n),
+                });
+                FocusId {
+                    idx: self.slots.len() as u32 - 1,
+                    gen: 0,
+                }
             }
         }
     }
 
     pub fn release(&mut self, id: FocusId) -> Option<FocusNodeData> {
-        let n = self.slots.get_mut(id.0 as usize)?.take();
+        let slot = self.slots.get_mut(id.idx as usize)?;
+        if slot.gen != id.gen {
+            return None;
+        }
+        let n = slot.data.take();
         if n.is_some() {
-            self.free.push(id.0);
+            slot.gen = slot.gen.wrapping_add(1);
+            self.free.push(id.idx);
         }
         n
     }
 
     pub fn get(&self, id: FocusId) -> Option<&FocusNodeData> {
-        self.slots.get(id.0 as usize).and_then(|s| s.as_ref())
+        let slot = self.slots.get(id.idx as usize)?;
+        if slot.gen != id.gen {
+            return None;
+        }
+        slot.data.as_ref()
     }
 
     pub fn get_mut(&mut self, id: FocusId) -> Option<&mut FocusNodeData> {
-        self.slots.get_mut(id.0 as usize).and_then(|s| s.as_mut())
+        let slot = self.slots.get_mut(id.idx as usize)?;
+        if slot.gen != id.gen {
+            return None;
+        }
+        slot.data.as_mut()
     }
 }
