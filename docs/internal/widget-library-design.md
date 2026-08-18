@@ -622,8 +622,8 @@ frames. That *is* layer 1 crossing a wire.
 ## 14. Tutorial
 
 This section builds one small application — a task list — from a static
-screen to a keyboard-driven UI with a context menu, adding one library
-concept per step. It assumes no prior use of a UI framework; only trees,
+screen to a complete terminal program with an event loop, a network client,
+and a context menu, adding one library concept per step. It assumes no prior use of a UI framework; only trees,
 values and references. The code is the intended API of a planned library.
 Terms introduced in bold are the ones the rest of the document uses.
 
@@ -662,7 +662,51 @@ terminal cells (§4 shows the pipeline). The description is rebuilt from
 on that being cheap, which is why a description holds nothing but the values
 you pass in.
 
-### 14.2 Layout: from tree to rectangles
+### 14.2 The program around it
+
+The library does not own the process; you write the program. It needs a
+terminal, your `App`, and one library object:
+
+```rust
+fn main() -> io::Result<()> {
+    let mut term = Terminal::new()?;   // raw mode + alternate screen; restored on drop
+    let mut app  = App { tasks: load_tasks() };
+    let mut ui   = Ui::new();          // the library's side: elements, focus, dirty set
+
+    loop {
+        // One frame: hand over a freshly built description. The library
+        // reconciles it, rebuilds what is marked dirty, computes layout,
+        // and returns a display list of positioned, clipped items.
+        let frame = ui.frame(build(&app), term.size());
+        term.draw(&frame)?;            // writes cells; unchanged cells are skipped
+
+        // Block until the terminal reports something: a key, a pointer
+        // event, a resize. The process sleeps here.
+        let event = term.read()?;
+        if event.is_key(CTRL, 'q') {
+            return Ok(());             // program-level shortcut, handled before the tree
+        }
+
+        // Route the event into the tree. Handlers run during this call;
+        // the messages they return come back out.
+        for msg in ui.dispatch(event) {
+            update(&mut app, msg);     // ordinary code; defined in 14.4
+        }
+    }
+}
+```
+
+Two objects persist across iterations, and the division between them is the
+design's: `app` is yours — the data. `ui` is the library's — the elements
+behind the tree (14.6), the focus position, and the set of components to
+rebuild. `build` connects them once per iteration, in one direction.
+
+A resize needs no handling: the next `ui.frame` receives the new size and
+layout produces new rectangles (14.3). Until the tutorial introduces
+messages, `ui.dispatch` has nothing to return and the `for` body never
+runs; the loop is complete as written.
+
+### 14.3 Layout: from tree to rectangles
 
 The terminal is a grid of character cells — say 80 columns by 24 rows.
 **Layout** is the computation that assigns every node a rectangle in that
@@ -716,7 +760,7 @@ A `Viewport` clips its child to its own rectangle and holds a scroll
 offset; the mouse wheel moves the offset, and only the rows currently
 inside the rectangle are painted.
 
-### 14.3 Clicks: events in, messages out
+### 14.4 Clicks: events in, messages out
 
 Clicking a task should toggle it. First, state what the interaction means,
 as a type:
@@ -735,15 +779,17 @@ fn task_row(t: &Task) -> Node<Msg> {
 }
 ```
 
-The handler performs no action: it returns a `Msg`, and the library
-delivers the collected messages to your application loop, which is ordinary
-code:
+The handler performs no action: it returns a `Msg`, which comes back out
+of `ui.dispatch` in the loop of 14.2. Applying it is the `update` function
+that loop calls — ordinary code:
 
 ```rust
-match msg {
-    Msg::Toggle(id) => toggle(&mut app.tasks, id),
+fn update(app: &mut App, msg: Msg) {
+    match msg {
+        Msg::Toggle(id) => toggle(&mut app.tasks, id),
+    }
 }
-// after which build(&app) runs again
+// the next loop iteration rebuilds from the updated App
 ```
 
 The tree type changed from `Node<()>` to `Node<Msg>`: a tree is generic
@@ -754,10 +800,63 @@ rectangle contains the pointer, then offers the event to that node and to
 each ancestor in turn until one reports it handled (§9). Your code never
 inspects coordinates.
 
-### 14.4 What a rebuild does: elements and reconciliation
+### 14.5 Services: a network client behind `update`
+
+`Msg::Toggle` should also persist the change to a server. The network
+client is application infrastructure — mutable, long-lived, not renderable
+— and it is subject to the same rule as every other resource here:
+**handlers cannot reach it.** A handler receives an event and returns a
+message; it has no access to the client, the file system, or `App`. The
+only place services are used is where messages are applied. `update` gains
+a parameter:
+
+```rust
+struct Services { net: NetClient, store: TaskStore }
+
+fn update(app: &mut App, svc: &mut Services, msg: Msg) {
+    match msg {
+        Msg::Toggle(id) => {
+            toggle(&mut app.tasks, id);
+            svc.net.send(Sync::Done(id));      // issue the request; do not wait
+        }
+        Msg::Synced(id, result) => mark_synced(app, id, result),
+    }
+}
+```
+
+`Services` lives next to `App` in `main`, and because handlers can only
+produce messages, every use of the client is inside `update` — readable in
+one function.
+
+A slow call must not stall the loop — while `update` runs, `term.read()`
+does not, and the UI is frozen. So the client sends without waiting, and
+the completion arrives later as an input like any other. The loop's event
+source generalizes from "the terminal" to "a channel of inputs":
+
+```rust
+enum Input { Term(Event), Net(NetEvent) }
+
+match inputs.recv()? {
+    Input::Term(event) => {
+        for msg in ui.dispatch(event) { update(&mut app, &mut svc, msg) }
+    }
+    Input::Net(ev) => update(&mut app, &mut svc, Msg::from(ev)),
+}
+```
+
+A network completion becomes a message directly — it has no screen
+position, so it never enters the tree. The next iteration rebuilds from the
+updated `App`, and the screen shows the result.
+
+This is application-level asynchrony. A widget that owns its own async work
+— a completion list fetching suggestions — uses the component-scoped
+`Tasks` behavior instead (§7), which ties the work's lifetime to the
+element.
+
+### 14.6 What a rebuild does: elements and reconciliation
 
 After `Msg::Toggle`, `build(&app)` runs again and returns an entirely new
-tree. That raises a question the `Viewport` from 14.2 makes concrete: it
+tree. That raises a question the `Viewport` from 14.3 makes concrete: it
 holds a scroll offset, and if everything is new each frame, where does the
 offset live, and why does toggling a task not reset it?
 
@@ -776,7 +875,7 @@ the element rather than in the description, is untouched. Rebuilding
 descriptions is how the screen changes; elements are how anything survives
 the rebuild.
 
-### 14.5 State that belongs to a widget: components
+### 14.7 State that belongs to a widget: components
 
 Add a collapsible "Completed" section. Whether it is expanded is not
 application data — no other part of the program reads it — so it does not
@@ -816,7 +915,7 @@ them is the design's: `tasks` is application state — `build` reads it and
 messages change it; `expanded` is widget state — it lives on the element
 and the rest of the program cannot observe it.
 
-### 14.6 Sorting breaks slots: keys
+### 14.8 Sorting breaks slots: keys
 
 Add `Msg::SortByTitle`. After sorting, `build` emits the task rows in a new
 order — and reconciliation, which matches by slot, pairs the old elements
@@ -838,7 +937,7 @@ and state, which is the supported way to reset a widget; and keyed
 constructors require the key function, because identity exists only in
 your data and cannot be derived by the library.
 
-### 14.7 A context menu: layers
+### 14.9 A context menu: layers
 
 A right-click on a task should open a menu (Rename / Delete) on top of the
 neighbouring rows. Every node so far occupies a rectangle inside its
@@ -867,7 +966,7 @@ outside the layer's subtree closes it, evaluated as an ancestor test. A
 non-interactive, which is the whole of what a modal dialog requires. §12
 lists the full property set.
 
-### 14.8 The keyboard: focus
+### 14.10 The keyboard: focus
 
 Add a text field for new tasks. A key press carries no coordinates, so
 hit-testing cannot route it. It goes to the **focused** node — the single
@@ -892,7 +991,7 @@ focus: submitting a task rebuilds the whole tree, and the caret stays in
 the field. §10 covers traversal policies and the key-binding mechanism
 built on this.
 
-### 14.9 The finished shape
+### 14.11 The finished shape
 
 Every step composed into the one build function:
 
@@ -903,12 +1002,12 @@ fn build(app: &App) -> Node<Msg> {
         Box::row().flex(1).children([
             tag_list(app).w(Sizing::Cells(20)),
             Box::col().flex(1).children([
-                new_task_field(app).h(Sizing::Cells(1)),          // 14.8
-                Viewport::new(                                    // 14.2
-                    List::keyed(&app.open_tasks(), |t| Key::from(t.id),   // 14.6
-                        |t| task_row(t, app.menu == Some(t.id))), // 14.3, 14.7
+                new_task_field(app).h(Sizing::Cells(1)),          // 14.10
+                Viewport::new(                                    // 14.3
+                    List::keyed(&app.open_tasks(), |t| Key::from(t.id),   // 14.8
+                        |t| task_row(t, app.menu == Some(t.id))), // 14.4, 14.9
                 ).flex(1),
-                Section { title: "Completed".into(),              // 14.5
+                Section { title: "Completed".into(),              // 14.7
                           rows: app.done_rows() }.node(),
             ]),
         ]),
@@ -916,8 +1015,10 @@ fn build(app: &App) -> Node<Msg> {
 }
 ```
 
-The whole screen is one function of `App`. The working vocabulary: build a
-description; layout assigns it rectangles; handlers return messages;
+The whole screen is one function of `App`, and the whole program is the
+loop of 14.2 around it. The working vocabulary: build a description; layout
+assigns it rectangles; handlers return messages; `update` applies them and
+is the only place services are used;
 reconciliation matches descriptions to elements; keys give moving children
 identity; components hold widget state on their elements; `set_state`
 marks and the library rebuilds once per frame; layers place content
