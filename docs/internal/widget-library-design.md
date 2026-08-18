@@ -122,6 +122,9 @@ pub enum Desc<M> {
     Layer(LayerProps),        // out-of-flow, stacking context (§12)
     Host(HostId),             // foreign content: buffer split, PTY grid
 
+    // a subtree the reconciler may skip when unchanged (§6)
+    Shared(Rc<Node<M>>),
+
     // composition — builds a subtree from props (+ state)
     Component(Rc<dyn Component<M>>),
 }
@@ -181,6 +184,35 @@ argument.
 List::keyed(items, |it| Key::from(it.id), |it| row(it))   // key fn required
 ```
 
+### Rebuild propagation — the identity short-circuit
+
+When a matched child's new description is **the same instance** the element
+already holds, the subtree is skipped entirely. Otherwise the description is
+swapped and the subtree rebuilds.
+
+Reference identity is the only skip rule. Structural equality is a lie once
+handlers are involved — descriptions are rebuilt every time, so closure
+identity always differs, which is expected and harmless because nothing
+memoizes on it. Deep comparison is the hidden cost this design exists to avoid.
+Identity is O(1) and never silently wrong.
+
+Skipping is therefore **author-controlled**: hand back the same instance, via
+`Desc::Shared(Rc<Node<M>>)` held in a field, or interned at a boundary (§13).
+By default a `set_state` near the root rebuilds every description below it.
+That is honest, and the containment tools are the design's own:
+
+1. **push state down**, so dirty elements are deep and their subtrees small;
+2. **ambient values dirty their dependents directly** (§7), so broadcast data
+   like a theme change never needs a root rebuild;
+3. **hoist invariant subtrees** into `Shared`.
+
+The ordering matters. In a language with cheap compile-time-constant
+descriptions, (3) does most of the work; here it costs an `Rc` and a field, so
+(1) and (2) carry the load and hoisting is a distant third. Description rebuild
+is also not layout or paint — layer 3's dirty flags mean an unchanged result
+reconciles cheaply — but description churn is real, and this is the only lever
+against it.
+
 ## 7. State and scheduling
 
 Private state — scroll offset, dropdown open flag, tree expansion, list
@@ -202,6 +234,93 @@ impl BuildCx<'_, M> {
 State is allocated on mount, dropped on unmount, and a remount is
 indistinguishable from a first mount — that is what makes key changes a
 reliable reset.
+
+### The frozen-tree invariant
+
+**The tree is structurally frozen between flushes.** All mounting, unmounting
+and reordering happens inside `flush`. This is *why* `set_state` defers instead
+of rebuilding synchronously, and three otherwise-separate rules fall out of it:
+
+- `set_state` during event dispatch is the normal case, not a hazard — no
+  handler can tear down a node while the propagation walk still holds a path of
+  element ids;
+- a handler that calls a parent callback (which may `set_state` on an ancestor)
+  always finishes on a live object, because disposal is deferred;
+- a dirty mark on an element that flush then disposes is dropped silently.
+
+Within flush the dirty set drains shallowest-first, with depth evaluated at
+flush time, and **rebuilding a subtree clears dirty marks inside it** — a
+descendant's build has already read its current fields.
+
+Teardown runs **children before parents** (reverse of construction), so a child
+releasing a parent-owned handle finds the parent alive. Within one state
+object, registered behaviors tear down in reverse registration order.
+
+### Ambient values
+
+Prop-drilling a theme, a locale or a service handle through every intermediate
+component is not acceptable, and a reactive graph is not the answer. One
+primitive:
+
+- `Ambient<T>` — a typed token, declared statically;
+- `Provide(ambient, value, child)` — an ordinary description whose element
+  holds the value and a list of dependents;
+- `cx.read(ambient)` — walks up once, registers this element as a dependent,
+  returns the value.
+
+When a `Provide` element's value is swapped for a non-identical one, it marks
+its registered dependents dirty. One explicit hop, a visible dependent list, no
+tracking and no graph. There is no `didChangeDependencies` equivalent because
+rebuild-and-re-read *is* the protocol.
+
+The price, stated plainly: every dependent rebuilds regardless of which part of
+the value it actually read. That is what having no tracker costs.
+
+**Constructor reads are snapshots.** `read` is legal in the state constructor,
+but the constructor does not re-run — a value cached in a field from it is
+stale after the next change, silently. Anything that must track an ambient is
+read in `build()`. (This is `initState` + `didChangeDependencies` in a new
+costume; the rule is what dissolves it.)
+
+### Behaviors and teardown
+
+Reusable stateful concerns are ordinary objects in named fields, enrolled for
+teardown:
+
+```rust
+let tasks    = cx.register(Tasks::new());
+let ticker   = cx.register(Ticker::new(on_tick));
+let expanded = cx.register(Persisted::new("expanded", HashSet::new()));
+```
+
+The shipped set: **`Tasks`** (async), **`Ticker`** (per-frame callbacks),
+**`Cache`** (the memo carve-out, §8.4), **`Controller`** / **`Anchor`**
+(imperative commands), **`Focusable`** (§10), **`Persisted`** (rehydration).
+`Drop` covers most teardown for free; `register` exists for teardown that needs
+ordering, or that must run before the tree is dismantled.
+
+**Async.** `Tasks` owns it, with two guarantees that replace an `is_mounted`
+flag entirely: results are delivered on the UI scheduler between frames, never
+concurrently with build, layout or paint; and **delivery never happens after
+teardown**. `launch_replacing(tag, …)` gives latest-wins for the common race;
+anything subtler validates at delivery time.
+
+**Imperative commands.** A `Controller` is constructed by the *owner*, passed
+down in a description, and bound by the child at construction. Commands are
+method calls forwarded to the bound state. This is the sanctioned escape from
+one-way data flow and it is deliberately narrow: **a command may touch only the
+target's local state** — one that changes controlled state is a data-flow
+violation. `Anchor` is the same mechanism with the framework as registrar, so
+host code can address a mounted surface by handle. Neither is the forbidden
+side table: binding is explicit, state still lives on the element, and the
+registry maps handle → element, not identity → state.
+
+**Persistence.** `Persisted<T>` rehydrates from a host store at construction
+and checkpoints at teardown, scoped by a `PersistenceScope` ambient so keys
+anchor to explicit document or route ids rather than tree position. Unmount
+still destroys the state object; this is rehydration on next construction, not
+survival. It is **for new incidental state only** — existing serialized view
+state stays app state, for the reasons in the implementation plan.
 
 ### Controlled and uncontrolled
 
@@ -291,6 +410,29 @@ status-bar text change then relayouts the status bar, not the split grid.
 Output per node: `rect`, `clip`, `scroll window`. This is the **only** source
 of geometry.
 
+**Geometry accessors are illegal during `build()`** — a debug assert in the
+same class as the re-entrancy assert. If build could read layout, build would
+depend on layout which depends on build: a cycle, or a permanent one-frame lag.
+`build()` is a function of description, fields and ambients, full stop.
+
+The element handle is split so the validity window is a type-level fact rather
+than a footnote:
+
+- `cx.services` — scheduler, focus, ambients, anchor registration. Valid from
+  construction.
+- `cx.geometry` — rect, size, scroll window. Valid only after first layout, and
+  never inside `build()`.
+
+For the legitimate case — structure that depends on incoming constraints —
+`LayoutReader(|constraints| -> Node<M>)` is a description whose builder runs
+*during* the layout pass, with constraints as an explicit argument. The
+dependency becomes scoped and visible instead of cyclic. Post-layout geometry
+stays legal in event handlers, tickers and task callbacks.
+
+`LayoutReader` is the one place build runs mid-layout: `set_state` is illegal
+in its builder, and under intrinsic sizing it may run more than once per frame
+with different constraints.
+
 ### 8.3 Paint pass and the display list
 
 Paint produces a flat, ordered, absolute, keyed display list rather than
@@ -322,7 +464,18 @@ opaque full-frame `Layer` above), scrolled out (a `Viewport` emits only
 `[offset, offset+visible)`), and absent (never built). Cost is **O(visible
 items)**: a list over 100k rows emits a screenful.
 
-### 8.4 Boundaries
+### 8.4 Speculative builds and the cache carve-out
+
+The framework may call `build()` any number of times without committing —
+intrinsic measurement, tests, offscreen rendering. Authors must not count
+builds.
+
+That makes local memoization safe, but it needs an explicit exemption from the
+purity assertion: a `Cache<T>` field is excluded from the mutation check, under
+the contract that **writes are idempotent functions of build inputs** — same
+inputs, same value. Everything else stays immutable across `build()`.
+
+### 8.5 Boundaries
 
 Keep dirty flags per pass and per node. For a terminal specifically:
 **`needs_layout` boundaries are load-bearing; repaint boundaries are an
@@ -374,6 +527,10 @@ pub trait TraversalPolicy {
 - **Focus survives reconciliation**, because registration lives on the render
   object and reconciliation preserves matched elements. Worth a test on day
   one — it is the direct payoff of the three-tree split.
+- **Registration is a behavior**: `cx.register(Focusable::new(on_focus_change))`.
+  `request_focus()` is an imperative command — legal in handlers, never in
+  `build()`. A component that *renders* focus mirrors it into its own state
+  through `on_focus_change`; focus itself is never component state.
 
 ### Shortcuts → Intents → Actions
 
@@ -569,9 +726,9 @@ impl Component<Action> for Prompt {
                 Box::row().flex(1).children([
                     List::keyed(&self.results, |r| Key::from(r.id), result_row)
                         .flex(1)
-                        .selected(s.selection)
-                        .on_select(cx.set_state(|s, i| s.selection = i))
-                        .on_activate(cx.emit(|e| Action::PromptConfirmAt(e.index))),
+                        .selected_id(s.selected)          // an id, never an index
+                        .on_select(cx.set_state(|s, id| s.selected = Some(id)))
+                        .on_activate(cx.emit(|e| Action::PromptConfirmAt(e.id))),
                     preview(self).flex(1).if_(self.overlay),
                 ]),
             ])))
@@ -579,8 +736,16 @@ impl Component<Action> for Prompt {
 }
 ```
 
-`FocusScope` contains Tab cycling to the prompt. Query and selection are
-element state, so refreshing the result list does not disturb them.
+`FocusScope` contains Tab cycling to the prompt. Selection is element state, so
+refreshing the result list does not disturb it — and it stores the selected
+*id*, not an index, so a shrinking result list cannot leave it dangling. The
+query is controlled: the app owns the value (it is committed and pushed to
+history), the element owns only the caret, selection and scroll around it.
+
+Storing identity rather than position is the general form of the rule below:
+**validate stored references against the current description at every read —
+in `build()` and in handlers alike.** Storing an id dissolves the staleness
+class instead of guarding against it.
 
 ### 14.5 Transient popup
 
@@ -624,14 +789,31 @@ decision is downstream. A mistake in the renderer is a rewrite of one module;
 a mistake in the reconciler is a rewrite of everything.
 
 1. **The reconciler, against a fake renderer** that logs create / update /
-   dispose. Get keying and remount semantics right before any pixels exist.
-2. **The dirty-marking scheduler**, with the re-entrancy assertion. Test:
-   dirty a parent and a child in one tick, assert exactly one build each.
-3. **Layout**, once the constraint model (§8.1) is settled on paper, with the
+   dispose — including the identity short-circuit (§6) and **transactional
+   subtree reconcile**: tree mutations for a subtree are buffered or unwound so
+   a failure part-way leaves the last committed content intact. Three later
+   rules depend on that one capability (the error policy, deferred disposal,
+   and constructor unwinding), so it belongs here rather than being discovered
+   three times.
+2. **The dirty-marking scheduler**, with the re-entrancy assertion and the
+   frozen-tree invariant (§7). Test: dirty a parent and a child in one tick,
+   assert exactly one build each.
+3. **`register` and teardown fan-out**, child-first — every later primitive is
+   a behavior, so this is the substrate they all sit on.
+4. **Ambient values** (§7) — needed before any real surface, because without
+   them theme and locale are prop-drilled into every signature and the
+   signatures are painful to change later.
+5. **Diagnostics** — element dump with type, key and state; rebuild counters;
+   last-dirty cause (which `set_state` site, which ambient, or "parent").
+   Deliberately early: devtools retrofitted onto a reconciler are much harder
+   than devtools designed in, and this is the inspectability the three-tree
+   split was sold on.
+6. **Layout**, once the constraint model (§8.1) is settled on paper, with the
    awkward cases written out (a list with `Auto` height inside a flex column
-   inside a modal).
-4. **Hit-testing and propagation.**
-5. **Focus, last** — it depends on everything above, and it is where you find
+   inside a modal). Then the geometry assert and `LayoutReader` (§8.2).
+7. **Hit-testing and propagation.**
+8. **`Tasks`**, with its two delivery guarantees (§7).
+9. **Focus, last** — it depends on everything above, and it is where you find
    out whether the retained tree really persists the way you think it does.
 
 ## 16. Risks and open decisions
@@ -647,6 +829,20 @@ a mistake in the reconciler is a rewrite of everything.
    reach for; make the expensive cases loud.
 5. **Verbosity of composition-only** (§11). Budget for a convenience layer, and
    hold the line against privileged primitives when it gets tempting.
+6. **The identity skip is weaker here than in Flutter.** `Shared` costs an `Rc`
+   and a field, where a `const` widget costs nothing, so hoisting will not be
+   reached for as reflexively. If description churn shows up in profiles, the
+   fix is pushing state down and leaning on ambients — not a structural-equality
+   escape hatch, which would reintroduce the hidden cost this design excludes.
+7. **Transactional reconcile is a real implementation constraint**, not a
+   detail of the error policy (§15, step 1). Design the reconciler for it from
+   the start; bolting it on afterwards means revisiting every mutation site.
+8. **Surface area.** The state-class contract stayed at three members and the
+   lifecycle stayed construct / build / teardown — but the framework now ships
+   `Ambient`/`Provide`, `Tasks`, `Ticker`, `Controller`/`Anchor`, `Persisted`,
+   `Focusable`, `Cache` and `LayoutReader`. Each needs semantics, teardown
+   behavior and tests. That they are all behaviors or ordinary descriptions is
+   evidence the load-bearing walls are right; it does not make them free.
 
 ---
 

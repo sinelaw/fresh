@@ -48,8 +48,12 @@ crates/fresh-ui/
     lib.rs
     key.rs          Key, KeyPath
     desc.rs         Node<M>, Desc<M>, props structs
-    element.rs      Element, ElementTree, reconcile
-    schedule.rs     dirty set, flush, re-entrancy guard
+    element.rs      Element, ElementTree, reconcile (identity skip, transactional)
+    schedule.rs     dirty set, flush, re-entrancy guard, frozen-tree invariant
+    ambient.rs      Ambient<T>, Provide, dependent lists
+    behavior/       register/teardown; Tasks, Ticker, Controller/Anchor,
+                    Persisted, Cache
+    diagnose.rs     element dump, rebuild counters, last-dirty cause
     render/
       object.rs     RenderObject trait, Geom, Constraints
       layout.rs     layout pass, relayout boundaries
@@ -108,6 +112,17 @@ The fake renderer records `create` / `update` / `dispose` calls.
 - child removed from the middle → exactly one dispose;
 - nested subtree remount disposes depth-first, once each.
 
+Two capabilities land here rather than later, because retrofitting either one
+means revisiting every mutation site in the reconciler:
+
+- **the identity short-circuit** — a matched child whose new description is the
+  same instance is skipped wholesale, with `Desc::Shared` as the author's way
+  to hand one back;
+- **transactional subtree reconcile** — tree mutations for a subtree are
+  buffered or unwound, so a failure part-way through leaves the last committed
+  content intact. Three separate rules depend on this single capability: the
+  error policy, deferred disposal, and unwinding a failed constructor.
+
 **Do not proceed until this is right.** A mistake here is a rewrite of
 everything after it.
 
@@ -121,6 +136,31 @@ re-entrancy assertion.
 - `set_state` during build panics with the element named;
 - `set_state` from a handler outside build coalesces into the next flush.
 
+### L2a — `register` and teardown fan-out
+Behavior enrollment, child-first teardown, reverse-registration order within a
+state object. Every later primitive is a behavior, so this is their substrate.
+**Exit:** a behavior registered in a nested component is torn down exactly once,
+before its parent's, when the subtree unmounts.
+
+### L2b — Ambient values
+`Ambient<T>`, `Provide`, `cx.read` with explicit dependent lists and
+dirty-on-change.
+**Exit:** a dependent rebuilds when its provider's value changes and not
+otherwise; a value read in a *constructor* and cached in a field is caught by a
+debug assert (the snapshot rule), since that is the one way this primitive
+silently goes stale.
+**Why here:** without ambients, theme and locale are prop-drilled into every
+signature — and signatures are the most painful thing to change late.
+
+### L2c — Diagnostics
+Element dump (type, key, state), rebuild counters, last-dirty cause — which
+`set_state` site, which ambient, or "parent".
+**Exit:** a failing reconciler test can be diagnosed from the dump alone.
+**Why here:** devtools retrofitted onto a reconciler are far harder than
+devtools designed in, and this is the inspectability the three-tree split was
+sold on. Moving it late is the kind of decision only ever validated the
+expensive way.
+
 ### L3 — Layout
 Box constraints in integer cells; `Sizing::{Cells, Flex, Pct, Auto}`;
 `measure`/`arrange`; relayout boundaries; `Viewport` scroll windows.
@@ -129,7 +169,9 @@ awkward cases written out — a list with `Auto` height inside a flex column
 inside a modal; a row whose children all want `Flex` in zero space; text that
 must wrap to a width that depends on a sibling.
 **Exit:** layout golden tests for those cases; a dirty text node inside a
-fixed-size box relayouts that box and nothing above it.
+fixed-size box relayouts that box and nothing above it; geometry access inside
+`build()` trips a debug assert, and `LayoutReader` gets its constraints as an
+argument during the layout pass.
 
 ### L4 — Paint
 `DrawList`, the paint walk, `LayoutSpec` with the keyed index; culling
@@ -143,6 +185,12 @@ Back-to-front hit-test, path construction, capture/target/bubble, `Flow::Stop`,
 **Exit:** ordering tests (capture root→target, bubble target→root); an opaque
 sibling above blocks; capture survives the pointer leaving the node's rect; a
 `Viewport` at its bound lets the wheel through.
+
+### L5a — `Tasks`
+Async ownership: launch, cancel-on-teardown, `launch_replacing(tag, …)`.
+**Exit:** a result delivered after teardown never reaches a handler; two
+launches under one tag leave only the later one live; delivery lands between
+frames, never during build, layout or paint.
 
 ### L6 — Focus
 Focus tree, scopes, `TraversalPolicy` (reading order, ordinal, directional),
@@ -264,6 +312,19 @@ because elements are disposed on unmount and do not survive a restart. So:
 
 > If a wave changes `workspace.rs` serialization, something was misclassified.
 
+**On `Persisted`.** The library ships a `Persisted<T>` behavior that rehydrates
+from a host store at construction and checkpoints at teardown. It is for **new
+incidental state only** — a panel's last scroll position, a disclosure state
+nothing else reads. It is deliberately *not* how Fresh's existing persisted
+view state works, because that state is not a key-value bucket: per-split
+scroll, `tab_scroll_offset` and `expanded_dirs` live in a typed, versioned
+serde structure that the daemon, workspace restore and orchestrator persistence
+all read and write independently of any UI component. Routing those through
+component-owned rehydration would invert ownership — the serializer would have
+to ask the UI tree for values, or the UI would write a parallel bucket needing
+reconciliation against the typed struct — and it would break the invariant
+above, which is the best guard we have on this whole class.
+
 That is a cheap, checkable invariant, and the restore suites
 (`workspace_persistence_gates.rs`, `daemon_workspace_restore_parity.rs`, the
 `orchestrator_*_restore` tests) are its guard. Write the four-way
@@ -333,9 +394,13 @@ When M9 lands, `app/chrome/` and the `LayoutBox` arena no longer exist.
 ## 9. Sequencing summary
 
 ```
-L0 skeleton -> L1 reconciler -> L2 scheduler -> L3 layout -> L4 paint
-                                             -> L5 hit-test -> L6 focus -> L7 widgets
-                                                                            |
+L0 skeleton
+  -> L1 reconciler + identity skip + transactional reconcile
+  -> L2 scheduler + frozen-tree invariant
+  -> L2a register/teardown -> L2b ambients -> L2c diagnostics
+  -> L3 layout (+ geometry assert, LayoutReader) -> L4 paint
+  -> L5 hit-test -> L5a tasks -> L6 focus -> L7 widgets
+
 M0 seam -> M1 status bar -> M2 context menus [GO/NO-GO] -> M3 menus -> M4 popups
         -> M5 prompt -> M6 plugin panels -> M7 modals -> M8 settings -> M9 frame
 ```
