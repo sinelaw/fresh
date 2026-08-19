@@ -1972,6 +1972,16 @@ impl Editor {
     /// Sets line number visibility on the specified buffer's per-split view state,
     /// so that different splits showing the same buffer can have independent
     /// line number settings (e.g., source mode shows line numbers, compose hides them).
+    ///
+    /// `enabled` is a *default*, not a command: an explicit
+    /// `line_numbers_override` — "Toggle Line Numbers (Current Buffer)" — wins,
+    /// exactly as it does in [`BufferViewState::apply_config_defaults`] and when
+    /// leaving page view. Markdown compose re-asserts `false` from its
+    /// `buffer_activated` handler, so without this a plugin re-entering a mode
+    /// silently erased a per-buffer pin the user had made while composing
+    /// (issue #2931). The override is left untouched here for the same reason
+    /// `SetFoldIndicators` writes its own field: a mode's opinion is not a
+    /// preference, and must not leak into the persisted workspace.
     pub(super) fn handle_set_line_numbers(&mut self, buffer_id: BufferId, enabled: bool) {
         let active_split = self
             .windows
@@ -1988,10 +1998,10 @@ impl Editor {
             .get_mut(&active_split)
         {
             if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
-                buf_state.show_line_numbers = enabled;
+                buf_state.show_line_numbers = buf_state.line_numbers_override.unwrap_or(enabled);
             } else {
                 // Buffer not yet in this split — fall back to setting on active
-                view_state.show_line_numbers = enabled;
+                view_state.show_line_numbers = view_state.line_numbers_override.unwrap_or(enabled);
             }
         }
     }
