@@ -278,6 +278,18 @@ impl Editor {
             }
         }
 
+        // The migration shell is offered the key first. It declines
+        // everything today — no node in its tree carries a handler yet — so
+        // the walk below still sees every key. A surface starts answering its
+        // own keys the moment it stops being a `Host` leaf.
+        if let Some(input) =
+            crate::view::shell::input::key(&fresh_input_parser::KeyPress::new(key_event))
+        {
+            if self.shell_dispatch(input) {
+                return Ok(());
+            }
+        }
+
         // THE derived key walk: every registered overlay layer —
         // capture-all modals, workspace trust, the prompt rungs, the
         // popup rungs (including the unfocused popup-cancel/-focus

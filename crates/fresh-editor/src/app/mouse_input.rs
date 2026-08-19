@@ -147,6 +147,17 @@ impl Editor {
 
         let (is_double_click, is_triple_click) = self.detect_multi_click(&mouse_event, col, row);
 
+        // The shell sees the pointer before the chrome tree does — stage two
+        // of three, with the legacy modal-capture band still ahead of it and
+        // the existing walk still the floor. Inert while every region is a
+        // `Host` leaf: nothing in the tree claims, so the walk below runs on
+        // every event exactly as before.
+        if let Some(input) = crate::view::shell::input::mouse(mouse_event) {
+            if self.shell_dispatch(input) {
+                return Ok(true);
+            }
+        }
+
         // Modal mouse-capture, offered in RANK order over the derived
         // overlay stack: the first component whose modal surface is up
         // claims the whole mouse channel. Every capturing component

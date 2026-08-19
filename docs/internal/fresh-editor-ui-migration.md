@@ -595,6 +595,14 @@ is therefore split in two, and who-calls-whom matters:
 
 Consequences the plan must own:
 
+- **The `Ui` cannot live on the `Editor`.** The fold reads the display list off
+  the `Ui` while calling back into `&mut Editor`; if the `Ui` were a field of
+  `Editor`, those borrows would conflict and the callback could not take the
+  `with_all_mut` split. `Ui` and `Editor` are siblings, as in the library's
+  tutorial — so `Editor::render(&mut self, frame)` becomes a free function or a
+  method taking the `Ui` as a parameter. Asserted at compile time by
+  `_the_ui_must_not_live_on_the_editor` in `app/shell_host.rs`.
+
 - **Click→byte is an element-level concern.** A `Gesture` wrapping the host
   node maps the event position through the fold-published mappings and
   `click_geometry` in its handler, emitting a `UiMsg`; the render object itself
@@ -605,10 +613,11 @@ Consequences the plan must own:
   cursor mechanism (fold output wins for buffer carets), or geometry is derived
   early via `compute_content_layout` — which caret-anchored popups need anyway
   for same-frame anchoring.
-- **The fold-callback API does not exist yet.** Both existing backends stub
-  `Draw::Host` as a `▒` fill; a per-`HostId` callback over `&mut Editor`, run
-  mid-fold in paint order, is the concrete API the whole seam hangs on and the
-  first thing M0 builds.
+- **The fold-callback API** — a per-`HostId` callback over `&mut Editor`, run
+  mid-fold in paint order — is the concrete API the whole seam hangs on. Both
+  of the library's own backends stub `Draw::Host` as a `▒` fill, so it had to
+  be built here; it now exists in prototype as `view::shell::fold::HostPainter`
+  with `impl HostPainter for Editor` calling `render_content` (§5.0).
 - **A relayout footgun**: `HostSpec::Leaf` compares by factory-`Rc` pointer
   equality, so a `build()` that allocates a fresh leaf closure each frame
   forces relayout of every host leaf every frame. Host factories must be
@@ -759,6 +768,86 @@ Two findings:
    ("running the actual split … keeps small-terminal squeeze behavior identical
    by construction").
 
+#### The fold, prototyped
+
+The frame parity above proves the *layout*. The other half — the fold, where
+the backend meets `Draw::Host` — is prototyped in
+`crates/fresh-editor/src/view/shell/fold.rs` (display list → cells, with a
+`HostPainter` callback) and `crates/fresh-editor/src/app/shell_host.rs`
+(`impl HostPainter for Editor`, calling `render_content`). Four things it
+establishes:
+
+- **Paint order is preserved across the seam.** Host regions are painted
+  *inline* as their item is reached, so a chrome item later in the list lands
+  on top — the popup-over-a-buffer case. A fold that collected host items and
+  painted them in a second pass would invert this; the test
+  `chrome_painted_after_a_host_lands_on_top_of_it` pins it.
+- **The borrow works, on one condition.** `paint_body` assembles all ~28 of
+  `render_content`'s parameters — the `WindowBuffers::with_all_mut` disjoint
+  split, the theme read-guard, the config bundle — from `&mut Editor` *inside*
+  the callback, while the display list being folded is borrowed from the `Ui`.
+  That type-checks only because **the `Ui` does not live on the `Editor`**:
+  `ui.spec()` borrows the `Ui`, the callback borrows the editor, and the two
+  must be separate objects. This is the arrangement the library's own tutorial
+  uses (`app` and `ui` side by side in `main`), and it is now a compile-time
+  assertion (`_the_ui_must_not_live_on_the_editor`) rather than a claim.
+- **The caret rule falls out instead of being listed.** `LayoutSpec.cursor` —
+  set by a focused native `TextField` — wins over a caret a host region wrote
+  through the `pending_hardware_cursor` out-parameter. That reproduces today's
+  "an overlay's field takes the caret from the buffer" without the
+  `cursor_suppressed_by_late_overlay` suppression list: if a native field has
+  focus, it set the cursor, so it wins by construction.
+- **`impl HostPainter for Editor` is the thing that shrinks.** Every region
+  still listed in its `match` is one the old painters own; each stage moves one
+  out into a native description, until only `HostRegion::Body` — the buffer and
+  terminal grid — is left. That one never migrates.
+
+#### Input, the other direction
+
+`view/shell/input.rs` carries events the other way: the crossterm key and mouse
+events `Editor::handle_key_press` and `Editor::handle_mouse` already receive,
+translated into `fresh_ui::Input`.
+
+The rule that makes the hybrid dispatch of S1 work is that translation is
+**lossy in one direction only**. Everything the library understands passes
+through faithfully; everything it does not returns `None` and stays on the
+existing path. The shell takes what it understands and the legacy floor keeps
+the rest, which is exactly the three-stage arrangement §5.0 describes.
+
+Writing this adapter is also what found the library's one real gap, and it is
+worth recording how that was decided, because the same judgement recurs. Three
+things did not cross the seam. Each was tested against two questions — *is the
+concept backend-neutral* (meaningful for a terminal, the web DOM and a test
+alike), and *does the editor actually need it*:
+
+| Gap | Verdict |
+|---|---|
+| **Horizontal wheel** | **Fixed in the library.** The scroll model was already two-dimensional (`ViewportProps::scroll` is a pair, `ScrollInfo::max` is a `Point`) but `Input::Wheel` had no axis and `scroll_chain` only moved `y` — an axis implied by the geometry everywhere except where it could be driven. The editor genuinely uses it (`ScrollLeft`/`ScrollRight`, a whole `on_hwheel` arm). Closed by the wheel-axis change this migration is stacked on. |
+| **Keys with no counterpart** (`Insert`, media keys) | **Left alone.** Tested empirically rather than assumed: every key token bound by the shipped keymap was diffed against `KeyCode`, and the gap is empty. `KeyCode` is deliberately an abstract vocabulary, not a mirror of crossterm; widening it preemptively invites terminal specifics to leak. Grow it when a real binding needs it. |
+| **Key kinds** (press / repeat / release) | **Left alone, and declining is correct.** Treating a repeat as a press is the right behaviour for every widget in the set — a held arrow should move a list. No widget needs release, and a `kind` field would force every consumer to reason about a case none of them handle. |
+
+The general rule, worth applying to the two library changes §5.4 already
+predicts: fix the library when the gap is an **internal asymmetry** — something
+the model already half-expresses — and leave it alone when the gap is only
+"the backend has a concept the library chose not to have".
+
+Two translations encode decisions rather than mechanics:
+
+- **Drag is reported as a move.** The library routes it by pointer capture, so
+  the node that took the press keeps receiving motion without the backend
+  distinguishing the two. That is the whole drag mechanism, and it is what
+  replaces the `PointerGrab` flag ladder (§2.8).
+- **The physical chord is reported, not the layout reading.**
+  `fresh_input_parser::KeyPress` carries both, and the editor's keymap decides
+  which wins. That decision belongs to the keybinding resolver, which survives
+  at the root fallback (§2.9) — not to a widget.
+
+What the prototype does *not* yet do: thread the real per-frame state (hover
+targets, LSP-waiting, cursor hiding) instead of defaults, publish `BodyOutput`
+(`view_line_mappings`, tab layouts) to the geometry bridge, and run the
+three-stage dispatch for real. None touches the borrow, which was the open
+question; all are mechanical work for S1.
+
 Finding 2 is **not a layout bug to fix in `fresh-ui`.** It is a signal that
 *which rows are visible* belongs in `build()` as a function of the available
 height — app state deciding structure — rather than being left to
@@ -774,11 +863,90 @@ width from state before building (a resize is an event like any other), or uses
 `LayoutReader`. The same will be true of every "how wide is the frame" decision
 that currently reads `size` at the top of `render`.
 
+#### Landing S1 without a flag day
+
+The frame does not have to switch over in one commit. This codebase already has
+the right technique for hoisting geometry: when the chrome-layout work moved
+surfaces from paint-recorded caches to live derivations, the paint pass
+**debug-asserted that paint == derivation** before the cache was deleted
+(§2.4). The same applies here.
+
+**S1a** — `Editor::render` builds the shell's `Frame` from the same visibility
+flags it already computes, runs `region_rects`, and `debug_assert`s every
+region against the rectangle the ratatui `Layout` just produced. In debug
+builds this runs on every frame, so the ~315-file e2e suite becomes the check
+that `fresh-ui` can take the frame over — thousands of real frames at real
+sizes, with real dock, explorer, prompt and suggestion states. Release builds
+are untouched, and nothing about painting changes.
+
+The assertion deliberately skips the squeeze band (frame shorter than its fixed
+rows), where the two engines starve different rows by design. That is the
+decision recorded in §6.2, not a defect, and it is pinned separately.
+
+**S1b** — **landed.** S1a came back clean across the whole e2e suite, so the
+frame's geometry now comes from the shell: one description, laid out once,
+giving every region its rectangle. The five-row `Layout` and the sidebar carve
+are gone from `render`.
+
+Three things were needed to make the swap safe, and they are the reusable part
+of the lesson:
+
+- **Hidden regions still have positions.** A zero-height prompt row is where
+  the suggestions popup anchors, so the description carries *every* region,
+  hidden ones at zero size, mirroring the `Length(0)` constraints the ratatui
+  layout used. The parity test compares all seven, empty ones included.
+- **Decisions and geometry separate cleanly.** `split_file_explorer_area` both
+  decided whether a sidebar shows and computed where it goes; it is now
+  `file_explorer_layout_request`, which answers only "is there one, how wide,
+  which side". The shell turns that into rectangles. Splitting the two is what
+  let the geometry move without the policy moving with it.
+- **Presence is app state, not geometry.** A hidden sidebar has a zero-width
+  rectangle like anything else, so callers keep distinguishing the two by
+  `Option` rather than by measuring.
+
+The S1a assertion is removed with the code it checked — with only one
+derivation left in `render`, it would have compared the shell against itself.
+`tests/ui_shell_frame_parity.rs` keeps both honest instead, and covers far more
+combinations than a running editor reaches.
+
+#### S1 complete: the seam is live and inert
+
+Three pieces closed it, and they share a shape worth naming — **each is
+load-bearing and changes nothing**:
+
+- **The retained tree persists.** `Editor::shell_ui` holds the `Ui` across
+  frames, so element state, focus and the dirty set survive. It is held in an
+  `Option` and **moved out for the duration of a frame** rather than borrowed
+  from `self`: the display list is borrowed from the `Ui` while the fold calls
+  back into `&mut Editor`, and as a plain field those borrows conflict. That is
+  the same disjointness the sibling arrangement gives; either satisfies the
+  constraint §4.4 records.
+- **Native items paint through the fold.** `fold_native` walks the display list
+  and skips `Host` items, so a region can move into the tree on its own while
+  the ones around it keep their existing painters and their existing
+  rectangles. When the last region is native this collapses into the general
+  `fold`. A test pins the property the working state depends on: a frame of
+  host regions paints *nothing*.
+- **Input reaches the shell first.** `shell_dispatch` offers each translated
+  event to the tree ahead of the legacy walk — stage two of the three-stage
+  arrangement, with the modal-capture band still ahead of it and the existing
+  walk still the floor. No node carries a handler yet, so it declines
+  everything and every event lands where it always did.
+
+The message type landed with it: `UiMsg::{Action, Ui}` (§2.9). Everything a
+user could bind stays an `Action` and goes through `handle_action` unchanged;
+positional facts get a `Ui` variant that is applied and never serialized.
+
+**What this buys:** a surface stops being a `Host` leaf and immediately draws
+through the fold, takes its own input, and keeps its own state — with no
+further plumbing. That is what makes S2 and S3 a sequence of independent swaps
+rather than one flag day.
+
 #### Revised stages
 
 | Stage | What moves | Why here |
 |---|---|---|
-| **S1** | Frame skeleton: every region a `Host` leaf, painted by today's painters. Input fully delegated. | The PoC above, plus the fold callback, caret merge, and the three-stage dispatch. Cell output unchanged by construction. |
+| **S1** | Frame skeleton: every region a `Host` leaf, painted by today's painters. Input fully delegated. | **Landed.** The frame's geometry is the shell's, the retained tree persists across frames, native items paint through the fold, and input is offered to the shell ahead of the legacy walk. Every region is still a `Host` leaf, so nothing has changed on screen — which is the point. Remaining before S3: threading real `BodyState`. |
 | **S2** | The live-derived regions — status bar, search-options row — become native descriptions. | Smallest possible first real swap; both already derive their geometry purely (§2.4). |
 | **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. |
 | **S4** | Dock column, file explorer, plugin panels. | Depends on S3's layer semantics; carries the plugin API change. |
@@ -976,10 +1144,11 @@ list.
 
 ### 6.2 Open decisions — settle each before the wave it blocks
 
-1. **The fold-callback API** (blocks M0). The concrete shape of "backend meets
-   `Draw::Host`": a per-`HostId` callback over `&mut Editor`, run mid-fold in
-   paint order. Nothing like it exists; both current backends stub `Host`.
-   M0's prototype *is* this API.
+1. ~~**The fold-callback API**~~ — **prototyped** (§5.0). `HostPainter` +
+   `impl HostPainter for Editor`; paint order, clipping, the caret rule and the
+   borrow are covered by tests. What remains is threading real per-frame state
+   and publishing `BodyOutput` to the geometry bridge — mechanical S1 work. The
+   `Ui`-beside-`Editor` constraint it revealed is recorded in §4.4.
 2. **Inline styled text** (blocks M3/M5). Styled spans in
    `TextProps`/`Draw::Lines` as a one-time library change, or one `TextRun`
    node per span editor-side (§4.2 note). Mnemonics, match highlights,

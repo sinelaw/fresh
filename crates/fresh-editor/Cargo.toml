@@ -162,6 +162,10 @@ wasm = [
 [dependencies]
 # Local crates
 fresh-core.workspace = true
+# The retained UI tree. Used so far by `view::shell` — the outside-in
+# migration shell (frame description + display-list fold). Not yet on the
+# render path; see docs/internal/fresh-editor-ui-migration.md.
+fresh-ui.workspace = true
 fresh-update.workspace = true
 fresh-parser-js = { workspace = true, optional = true }
 # Provides the shared `Language` / `HighlightCategory` types (small, always
@@ -277,11 +281,6 @@ fresh-gui = { workspace = true, optional = true }
 # TARGET_TRIPLE / archive_ext when driving the built binary against a fake
 # release (tests/self_update_spine.rs).
 fresh-update.workspace = true
-# PoC for the outside-in fresh-ui migration shell
-# (tests/ui_shell_frame_parity.rs). A dev-dependency for now: the shell is
-# not yet on the render path, so the shipping crate is untouched. M0 promotes
-# this to a normal dependency.
-fresh-ui.workspace = true
 proptest = "1.9"
 tempfile = "3.25"
 insta = { version = "1.46", features = ["yaml"] }
