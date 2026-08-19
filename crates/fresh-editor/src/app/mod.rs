@@ -83,6 +83,7 @@ mod search_scan;
 mod settings_actions;
 mod settings_prompts;
 mod shell_command;
+pub(crate) mod shell_host;
 mod smart_home;
 mod split_actions;
 mod stdin_stream;
@@ -1153,6 +1154,18 @@ pub struct Editor {
     /// hide. The TUI/GUI leave it `false` and draw chrome to cells as before.
     /// See docs/internal/web-ui.md.
     pub(crate) suppress_chrome_cells: bool,
+
+    /// The migration shell's retained tree: elements, focus, and the dirty
+    /// set, surviving across frames.
+    ///
+    /// Held in an `Option` and **moved out for the duration of a frame**. The
+    /// display list is borrowed from the `Ui` while the fold calls back into
+    /// `&mut Editor` for host regions; as a plain field those borrows would
+    /// conflict and the callback could not take the `with_all_mut` split that
+    /// painting a buffer needs. Moving it out makes it a local for the frame,
+    /// which is the same disjointness the library's own tutorial gets by
+    /// keeping `app` and `ui` side by side in `main`.
+    pub(crate) shell_ui: Option<fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
 
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
