@@ -74,6 +74,8 @@ Control visibility of space (`·`) and tab (`→`) characters. Configure indepen
 
 Line endings can be shown too: `whitespace_newlines` renders `↵` at the end of every line, and `whitespace_carriage_returns` renders `␍` for the CR half of CRLF (and Classic-Mac CR) line endings — so a CRLF file shows `␍↵` where an LF file shows `↵`. Both are off by default and follow the same master toggle.
 
+Inside a selection the indicators appear regardless of the settings above, so selected runs of spaces and tabs stay legible without turning indicators on for the whole buffer. Set `whitespace_in_selection` to `false` to switch that off; it is independent of the master toggle and of the per-buffer whitespace overrides.
+
 ## Inline Diagnostics
 
 Diagnostic messages can be displayed at the end of each line, right-aligned, with version-aware staleness dimming. Disabled by default — enable "diagnostics inline text" in the Settings UI or set `diagnostics_inline_text` in config.
@@ -108,6 +110,8 @@ Edit multiple locations simultaneously:
 | `Shift+Home/End` | Select to line start/end |
 | `Ctrl+Shift+Home/End` | Select to document start/end |
 | `Shift+PgUp/PgDn` | Select page up/down |
+
+Selected line breaks are drawn too: every line break inside the selection highlights the single column it occupies — column 0 on an empty line, just past the text otherwise — so a selection that spans blank lines is visible instead of leaving them looking untouched. Whitespace inside the selection also gets its `·` / `→` indicators (see [Whitespace Indicators](#whitespace-indicators)).
 
 ### Block Selection
 

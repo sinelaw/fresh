@@ -1397,6 +1397,7 @@
   "settings.field.editor.whitespace_tabs_inner": "Vnitřní tabulátory",
   "settings.field.editor.whitespace_tabs_leading": "Úvodní tabulátory",
   "settings.field.editor.whitespace_tabs_trailing": "Koncové tabulátory",
+  "settings.field.editor.whitespace_in_selection": "Bílé znaky ve výběru",
   "settings.help_default": "↑↓:Navigace  Tab:Další  Enter:Upravit  /:Hledat  Esc:Zavřít",
   "settings.help_footer": "Tab:Další  Enter:Aktivovat  Esc:Zavřít",
   "settings.help_search": "Hledat, ↑↓:Navigace  Enter:Přejít  Esc:Zrušit",

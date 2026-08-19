@@ -8,6 +8,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
+* **A selection that spans empty lines is visible** - every selected line break highlights the column it occupies (column 0 on an empty line), and whitespace inside a selection draws its `·` / `→` indicators even when the indicators are otherwise off (`whitespace_in_selection`, on by default) (#2797, reported by @akarinotomoshibi).
 * **Installing and updating Fresh** - the preferred install method for Linux is now a single self-contained, self-updating, statically linked (musl) binary - one install that works everywhere, instead of a dozen fragile packaging channels.
 * **LSP completions can offer auto-imports** - servers like rust-analyzer now suggest unimported symbols, and accepting one inserts the `use`/import line (#2603).
 * **The scripting API can manage the whole Orchestrator dock** - create, rename, move, archive, delete and list workspaces, including over SSH, not just create them.

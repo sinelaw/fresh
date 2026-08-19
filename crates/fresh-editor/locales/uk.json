@@ -1397,6 +1397,7 @@
   "settings.field.editor.whitespace_tabs_inner": "Внутрішні табуляції",
   "settings.field.editor.whitespace_tabs_leading": "Початкові табуляції",
   "settings.field.editor.whitespace_tabs_trailing": "Кінцеві табуляції",
+  "settings.field.editor.whitespace_in_selection": "Пробіли у виділенні",
   "settings.help_default": "↑↓:Навігація  Tab:Далі  Enter:Редагувати  /:Пошук  Esc:Закрити",
   "settings.help_footer": "Tab:Далі  Enter:Активувати  Esc:Закрити",
   "settings.help_search": "Пошук, ↑↓:Навігація  Enter:Перейти  Esc:Скасувати",

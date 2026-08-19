@@ -1397,6 +1397,7 @@
   "settings.field.editor.whitespace_tabs_inner": "行内制表符",
   "settings.field.editor.whitespace_tabs_leading": "行首制表符",
   "settings.field.editor.whitespace_tabs_trailing": "行尾制表符",
+  "settings.field.editor.whitespace_in_selection": "空白字符（选区内）",
   "settings.help_default": "↑↓:导航  Tab:下一个  Enter:编辑  /:搜索  Esc:关闭",
   "settings.help_footer": "Tab:下一个  Enter:激活  Esc:关闭",
   "settings.help_search": "搜索, ↑↓:导航  Enter:跳转  Esc:取消",

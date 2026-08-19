@@ -334,13 +334,35 @@ impl CellPass<'_, '_, '_> {
             };
             (guide_glyph, false)
         } else {
-            self.display_cell_text(ch, byte_pos, is_cursor, is_tab_start, &mut indicator_buf)
+            self.display_cell_text(
+                ch,
+                byte_pos,
+                is_cursor,
+                is_tab_start,
+                is_selected,
+                &mut indicator_buf,
+            )
         };
+        // A selected line break has nothing of its own to draw, which left a
+        // selection over empty lines invisible (issue #2797). Paint the one
+        // column the break occupies — column 0 on an empty line, just past the
+        // text otherwise — carrying the selection background from
+        // `resolve_cell_style`.
+        let selected_break_column = ch == '\n'
+            && display_char.is_empty()
+            && is_selected
+            && byte_pos.is_some_and(|bp| self.selection_sweep.contains_linear(bp));
+        let display_char = if selected_break_column {
+            " "
+        } else {
+            display_char
+        };
+
         // A newline cell normally renders as nothing; when it renders a
-        // line-ending indicator instead, remember how many cells landed so
-        // position bookkeeping (rendered_cols, the cursor-on-newline
-        // indicator) accounts for them.
-        if ch == '\n' && is_whitespace_indicator {
+        // line-ending indicator (or the selected-break column) instead,
+        // remember how many cells landed so position bookkeeping
+        // (rendered_cols, the cursor-on-newline indicator) accounts for them.
+        if ch == '\n' && (is_whitespace_indicator || selected_break_column) {
             self.newline_indicator_cols = display_char.chars().count();
         }
 
@@ -600,26 +622,36 @@ impl CellPass<'_, '_, '_> {
         byte_pos: Option<usize>,
         is_cursor: bool,
         is_tab_start: bool,
+        is_selected: bool,
         indicator_buf: &'buf mut [u8; 4],
     ) -> (&'buf str, bool) {
         let ws = &self.input.state.buffer_settings.whitespace;
+        // Selected whitespace draws its indicator regardless of the
+        // per-position settings (issue #2797): a selection over blank
+        // stretches is otherwise invisible. Line-ending indicators stay out of
+        // it — the selected line break gets its own highlighted column in
+        // `render_visible_cell`.
+        let ws_in_selection =
+            is_selected && self.input.state.buffer_settings.whitespace_in_selection;
         let ws_show_tab = is_tab_start
-            && ws_indicator_visible(
-                self.display_char_idx,
-                self.non_ws,
-                ws.tabs_leading,
-                ws.tabs_inner,
-                ws.tabs_trailing,
-            );
+            && (ws_in_selection
+                || ws_indicator_visible(
+                    self.display_char_idx,
+                    self.non_ws,
+                    ws.tabs_leading,
+                    ws.tabs_inner,
+                    ws.tabs_trailing,
+                ));
         let ws_show_space = ch == ' '
             && !is_tab_start
-            && ws_indicator_visible(
-                self.display_char_idx,
-                self.non_ws,
-                ws.spaces_leading,
-                ws.spaces_inner,
-                ws.spaces_trailing,
-            );
+            && (ws_in_selection
+                || ws_indicator_visible(
+                    self.display_char_idx,
+                    self.non_ws,
+                    ws.spaces_leading,
+                    ws.spaces_inner,
+                    ws.spaces_trailing,
+                ));
 
         if is_cursor && self.input.lsp_waiting && self.input.is_active {
             ("⋯", false)

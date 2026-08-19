@@ -95,6 +95,13 @@ pub struct BufferSettings {
     /// Set based on global + language config; can be toggled per-buffer by user
     pub whitespace: crate::config::WhitespaceVisibility,
 
+    /// Whether whitespace inside a selection draws its `·` / `→` indicators
+    /// even when `whitespace` hides them. Mirrors
+    /// `editor.whitespace_in_selection`; deliberately independent of the
+    /// per-buffer whitespace overrides, so hiding the indicators for a buffer
+    /// still leaves a selection's own whitespace legible.
+    pub whitespace_in_selection: bool,
+
     /// Whether pressing Tab should insert a tab character instead of spaces.
     /// Set based on language config; can be toggled per-buffer by user
     pub use_tabs: bool,
@@ -166,6 +173,7 @@ impl Default for BufferSettings {
     fn default() -> Self {
         Self {
             whitespace: crate::config::WhitespaceVisibility::default(),
+            whitespace_in_selection: true,
             use_tabs: false,
             use_tabs_override: None,
             whitespace_override: None,
@@ -206,6 +214,7 @@ impl BufferSettings {
             .virtual_space_override
             .unwrap_or(resolved.virtual_space);
         self.apply_whitespace_override(resolved.whitespace);
+        self.whitespace_in_selection = resolved.whitespace_in_selection;
         self.word_characters = resolved.word_characters.clone();
         self.indentation_guide = resolved.indentation_guide;
     }

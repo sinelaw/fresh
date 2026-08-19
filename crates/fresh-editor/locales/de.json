@@ -1397,6 +1397,7 @@
   "settings.field.editor.whitespace_tabs_inner": "Innere Tabs",
   "settings.field.editor.whitespace_tabs_leading": "Führende Tabs",
   "settings.field.editor.whitespace_tabs_trailing": "Nachfolgende Tabs",
+  "settings.field.editor.whitespace_in_selection": "Leerzeichen in Auswahl",
   "settings.help_default": "↑↓:Navigieren  Tab:Weiter  Enter:Bearbeiten  /:Suchen  Esc:Schließen",
   "settings.help_footer": "Tab:Weiter  Enter:Aktivieren  Esc:Schließen",
   "settings.help_search": "Suchen, ↑↓:Navigieren  Enter:Springen  Esc:Abbrechen",
