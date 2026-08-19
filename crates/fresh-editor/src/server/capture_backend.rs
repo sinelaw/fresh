@@ -62,6 +62,24 @@ impl CaptureBackend {
     /// Reset style state to force full output on next draw
     /// Call this when a new client connects to ensure they get a complete frame
     pub fn reset_style_state(&mut self) {
+        self.emit_style_reset();
+    }
+
+    /// Return the client terminal to default colors/attributes and forget the
+    /// tracked style.
+    ///
+    /// The tracked fields describe what the *client* terminal is currently
+    /// showing, so they may never be cleared without telling the client: doing
+    /// so leaves the two out of sync, and the diffing in `write_style` then
+    /// skips the SGR that would have repainted a cell.
+    ///
+    /// This matters most around erase operations. `ED`/`EL` fill the erased
+    /// cells with the currently active background (background-color-erase), so
+    /// an erase issued while, say, the status bar's background is still active
+    /// paints the whole screen in that color (issue #2723).
+    fn emit_style_reset(&mut self) {
+        self.buffer
+            .extend_from_slice(crate::services::terminal_modes::sequences::RESET_ATTRIBUTES);
         self.current_fg = Color::Reset;
         self.current_bg = Color::Reset;
         self.current_modifiers = Modifier::empty();
@@ -214,6 +232,7 @@ impl Backend for CaptureBackend {
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
         let mut last_pos: Option<(u16, u16)> = None;
+        let mut wrote_any = false;
 
         for (x, y, cell) in content {
             // Move cursor if not at expected position
@@ -237,6 +256,19 @@ impl Backend for CaptureBackend {
             self.buffer.extend_from_slice(symbol.as_bytes());
 
             last_pos = Some((x, y));
+            wrote_any = true;
+        }
+
+        // Leave the client terminal at default colors/attributes between
+        // frames, the way ratatui's own `CrosstermBackend` does. Otherwise the
+        // last cell's style stays active on the client, and whatever the next
+        // frame starts with — an erase in particular — inherits it.
+        //
+        // Skipped when the frame changed nothing: ratatui only hands us the
+        // cells that differ, and an unchanged frame must stay byte-empty so
+        // the server can skip the broadcast entirely.
+        if wrote_any {
+            self.emit_style_reset();
         }
 
         Ok(())
@@ -268,6 +300,9 @@ impl Backend for CaptureBackend {
     }
 
     fn clear(&mut self) -> io::Result<()> {
+        // The erase inherits the active background, so drop back to the
+        // default one first.
+        self.emit_style_reset();
         // Clear entire screen
         self.buffer.extend_from_slice(b"\x1b[2J");
         // Move cursor to home
@@ -277,6 +312,10 @@ impl Backend for CaptureBackend {
     }
 
     fn clear_region(&mut self, clear_type: ClearType) -> io::Result<()> {
+        // Every erase below fills with the active background, so drop back to
+        // the default one first. `Terminal::clear()` — and therefore the
+        // autoresize path — reaches the erase through here, not `clear()`.
+        self.emit_style_reset();
         match clear_type {
             ClearType::All => {
                 self.buffer.extend_from_slice(b"\x1b[2J");
@@ -414,8 +453,9 @@ mod tests {
         backend.clear().unwrap();
 
         let output = backend.take_buffer();
-        // ED (Erase Display) sequence: CSI 2 J
-        assert!(output.starts_with(b"\x1b[2J"));
+        // SGR reset first, so the erase does not fill with a stale background
+        // (issue #2723), then ED (Erase Display): CSI 2 J
+        assert!(output.starts_with(b"\x1b[0m\x1b[2J"));
     }
 
     #[test]
@@ -500,6 +540,62 @@ mod tests {
         assert!(teardown_str.contains("\x1b[0m"));
     }
 
+    /// Issue #2723: a resize inside a daemon session left blank cells filled
+    /// with the status bar's background color.
+    ///
+    /// This drives the real path: `Terminal::draw` -> `autoresize` ->
+    /// `Terminal::clear` -> `clear_region(All)`, with a first frame whose last
+    /// painted cell carries a magenta background (the `terminal` theme's
+    /// "Palette: Ctrl+P" chip). The captured stream is then replayed into a
+    /// terminal emulator, so the assertion is on what a client would actually
+    /// display rather than on the bytes.
+    #[test]
+    fn resize_does_not_leave_blank_cells_filled_with_the_previous_frames_color() {
+        use ratatui::Terminal;
+
+        let backend = CaptureBackend::new(20, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Frame 1: text on the first row, and a magenta-background chip as the
+        // very last cell painted — the state the erase would otherwise inherit.
+        terminal
+            .draw(|frame| {
+                let magenta = Style::default().bg(ratatui::style::Color::Magenta);
+                frame
+                    .buffer_mut()
+                    .set_string(0, 0, "File", Style::default());
+                frame.buffer_mut().set_string(16, 3, "Chip", magenta);
+            })
+            .unwrap();
+
+        // Frame 2, at a new size: this is what a terminal resize triggers.
+        terminal.backend_mut().resize(18, 4);
+        terminal
+            .draw(|frame| {
+                frame
+                    .buffer_mut()
+                    .set_string(0, 0, "File", Style::default());
+            })
+            .unwrap();
+
+        let stream = terminal.backend_mut().take_buffer();
+
+        let mut parser = vt100::Parser::new(4, 18, 0);
+        parser.process(&stream);
+        let screen = parser.screen();
+
+        // The gap between the glyphs of the first row is the cell the
+        // incremental redraw skips; before the fix it kept the erase fill.
+        for (row, col) in [(0, 5), (0, 17), (1, 0), (2, 9), (3, 17)] {
+            let cell = screen.cell(row, col).unwrap();
+            assert_eq!(
+                cell.bgcolor(),
+                vt100::Color::Default,
+                "blank cell at row {row}, col {col} kept a background from the previous frame"
+            );
+        }
+    }
+
     #[test]
     fn test_clear_region_variants() {
         let mut backend = CaptureBackend::new(80, 24);
@@ -509,5 +605,32 @@ mod tests {
 
         backend.clear_region(ClearType::CurrentLine).unwrap();
         assert!(backend.take_buffer().ends_with(b"\x1b[2K"));
+    }
+
+    /// Erase sequences fill with the active background, so the reset has to be
+    /// emitted *before* them, not merely tracked internally.
+    ///
+    /// `Terminal::clear()` erases via `clear_region(All)`, so that is the
+    /// variant that has to hold the ordering; `clear()` is pinned alongside it.
+    #[test]
+    fn style_reset_is_emitted_before_every_hard_clear() {
+        let mut backend = CaptureBackend::new(80, 24);
+        backend.current_bg = ratatui::style::Color::Magenta;
+        backend.clear_region(ClearType::All).unwrap();
+        assert_eq!(backend.take_buffer(), b"\x1b[0m\x1b[2J");
+
+        backend.current_bg = ratatui::style::Color::Magenta;
+        backend.clear().unwrap();
+        assert_eq!(backend.take_buffer(), b"\x1b[0m\x1b[2J\x1b[H");
+    }
+
+    /// A frame that changed nothing must stay byte-empty: `render_and_broadcast`
+    /// skips the broadcast on an empty buffer, so an unconditional trailing
+    /// reset would send traffic to every client on every idle render.
+    #[test]
+    fn unchanged_frame_emits_no_bytes() {
+        let mut backend = CaptureBackend::new(80, 24);
+        backend.draw(std::iter::empty()).unwrap();
+        assert!(backend.take_buffer().is_empty());
     }
 }
