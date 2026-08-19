@@ -49,7 +49,9 @@ fn the_dump_names_the_type_key_state_build_count_and_cause() {
     assert!(dump.contains("state=Count(n=3)"), "live state\n{dump}");
     assert!(dump.contains("builds=2"), "rebuild counter\n{dump}");
     assert!(
-        dump.contains("cause=set_state") && dump.contains("tests/diagnose.rs:"),
+        // Not "tests/diagnose.rs": `file!()` spells the separator the host
+        // platform's way, and the claim here is that the site is named.
+        dump.contains("cause=set_state") && dump.contains("diagnose.rs:"),
         "the set_state site that marked it\n{dump}"
     );
     assert!(
