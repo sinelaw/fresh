@@ -5990,10 +5990,10 @@ impl Config {
         languages.insert(
             "coq".to_string(),
             LanguageConfig {
-                // `.v` is shared with the V language. Prefer Coq/Rocq here;
-                // V remains auto-detected through its unambiguous `.vv`
-                // extension and can still be selected manually for `.v`.
-                extensions: vec!["v".to_string(), "coq".to_string()],
+                // Keep `.v` assigned to V for compatibility (see #1528).
+                // Coq/Rocq files can use `.coq`, a project filename below,
+                // or manual language selection for conventional `.v` files.
+                extensions: vec!["coq".to_string()],
                 filenames: vec!["_CoqProject".to_string(), "_RocqProject".to_string()],
                 grammar: "Coq/Rocq".to_string(),
                 comment_prefix: None,
@@ -7278,7 +7278,7 @@ impl Config {
         languages.insert(
             "vlang".to_string(),
             LanguageConfig {
-                extensions: vec!["vv".to_string()],
+                extensions: vec!["v".to_string(), "vv".to_string()],
                 filenames: vec![],
                 grammar: "V".to_string(),
                 comment_prefix: Some("//".to_string()),
@@ -9671,13 +9671,13 @@ mod tests {
             ("lib.ml", "ocaml"),
             ("lib.mli", "ocaml"),
             (".ocamlinit", "ocaml"),
-            ("proof.v", "coq"),
             ("proof.coq", "coq"),
             ("_CoqProject", "coq"),
             ("dune", "dune"),
             ("dune-project", "dune"),
             ("dune-workspace.dev", "dune"),
             ("library.dune", "dune"),
+            ("module.v", "vlang"),
             ("module.vv", "vlang"),
         ] {
             assert_eq!(

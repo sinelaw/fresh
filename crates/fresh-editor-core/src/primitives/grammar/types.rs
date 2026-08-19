@@ -2470,7 +2470,6 @@ mod tests {
         registry.apply_language_config(&config.languages);
 
         for (path, expected) in [
-            ("proof.v", "Coq/Rocq"),
             ("proof.coq", "Coq/Rocq"),
             ("_CoqProject", "Coq/Rocq"),
             ("dune", "Dune"),
@@ -2485,6 +2484,11 @@ mod tests {
             assert_eq!(entry.display_name, expected, "for {path}");
             assert!(entry.engines.syntect.is_some(), "for {path}");
         }
+
+        let vlang = registry
+            .find_by_path(Path::new("main.v"), None)
+            .expect(".v must remain assigned to V for compatibility");
+        assert_eq!(vlang.display_name, "V");
 
         assert_eq!(
             registry

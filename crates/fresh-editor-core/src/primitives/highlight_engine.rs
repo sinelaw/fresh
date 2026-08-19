@@ -2661,7 +2661,7 @@ mod tests {
 
         let coq = "(* outer (* nested *) comment *)\nTheorem identity : forall x, x = x.\nProof. intros. reflexivity. Qed.\n";
         let coq_buffer = Buffer::from_str(coq, 0, test_fs());
-        let mut coq_engine = HighlightEngine::for_file(Path::new("identity.v"), None, &registry);
+        let mut coq_engine = HighlightEngine::for_file(Path::new("identity.coq"), None, &registry);
         assert_eq!(coq_engine.backend_name(), "textmate");
         coq_engine.highlight_viewport(&coq_buffer, 0, coq_buffer.len(), &theme, 0);
         for (needle, expected) in [
