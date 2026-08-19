@@ -167,12 +167,24 @@ impl DrawList {
     /// Draw over some other rectangle inside this node — a scrollbar down one
     /// edge, for instance.
     pub fn push_at(&mut self, draw: Draw, rect: Rect, clip: Rect) {
+        let theme = self.theme.clone();
+        self.push_themed(draw, rect, clip, theme);
+    }
+
+    /// Draw with a theme more specific than the one the framework assigned.
+    ///
+    /// Provenance is the framework's by default — an item takes the nearest
+    /// enclosing `theme(..)` tag. This is for the case where one node's output
+    /// is not uniform: a text run whose pieces are styled differently emits an
+    /// item per piece, each naming its own. The item still carries exactly one
+    /// theme, so nothing downstream changes.
+    pub fn push_themed(&mut self, draw: Draw, rect: Rect, clip: Rect, theme: ThemeKey) {
         self.items.push(Item {
             key: self.key.clone(),
             id: self.id,
             rect,
             clip,
-            theme: self.theme.clone(),
+            theme,
             draw,
         });
     }
