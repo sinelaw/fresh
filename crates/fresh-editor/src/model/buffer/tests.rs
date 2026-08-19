@@ -1264,6 +1264,151 @@ fn test_normalize_empty() {
     assert_eq!(output, Vec::<u8>::new());
 }
 
+// ===== Classic-Mac (CR) line-ending support (issue #2736) =====
+
+#[test]
+fn test_detect_cr() {
+    assert_eq!(
+        super::format::detect_line_ending(b"Line 1\rLine 2\rLine 3\r"),
+        LineEnding::CR
+    );
+}
+
+#[test]
+fn test_line_ending_insertion_str_vs_as_str() {
+    // The in-memory line model splits on `\n`, so CR must *insert* a bare
+    // `\n` (normalized form) even though its on-disk representation is `\r`.
+    assert_eq!(LineEnding::LF.insertion_str(), "\n");
+    assert_eq!(LineEnding::CRLF.insertion_str(), "\r\n");
+    assert_eq!(LineEnding::CR.insertion_str(), "\n");
+    // On-disk representation is unchanged.
+    assert_eq!(LineEnding::CR.as_str(), "\r");
+}
+
+#[test]
+fn test_cr_file_splits_into_lines_on_load() {
+    // A Classic-Mac file must split into rows (not render as one line
+    // full of <0D> glyphs) — issue #2736, existing-file case.
+    let buffer = TextBuffer::from_bytes(b"Line 1\rLine 2\rLine 3".to_vec(), test_fs());
+    assert_eq!(buffer.line_ending(), LineEnding::CR);
+    assert_eq!(buffer.line_count(), Some(3));
+    // Internally normalized to `\n`; no literal CR survives to render.
+    let text = buffer.get_all_text().unwrap();
+    assert_eq!(&text, b"Line 1\nLine 2\nLine 3");
+    assert!(
+        !text.contains(&b'\r'),
+        "CR file must not keep a literal \\r in the buffer"
+    );
+}
+
+#[test]
+fn test_cr_only_separators_split_into_blank_rows() {
+    // `printf '\r\r'` is two CR separators -> three (empty) rows.
+    let buffer = TextBuffer::from_bytes(b"\r\r".to_vec(), test_fs());
+    assert_eq!(buffer.line_ending(), LineEnding::CR);
+    assert_eq!(&buffer.get_all_text().unwrap(), b"\n\n");
+    assert_eq!(buffer.line_count(), Some(3));
+}
+
+#[test]
+fn test_cr_file_roundtrips_on_save() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("classic_mac.txt");
+    std::fs::write(&file_path, b"Line 1\rLine 2\rLine 3\r").unwrap();
+
+    // Open for editing: a genuine Classic-Mac file is normalized to `\n`
+    // so it splits into rows (the plain `load_from_file` preserves bytes).
+    let mut buffer = TextBuffer::load_from_file_for_editing(
+        &file_path,
+        crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+        test_fs(),
+    )
+    .unwrap();
+    assert_eq!(buffer.line_ending(), LineEnding::CR);
+    // 3 CR separators -> 3 `\n` -> 4 rows (trailing empty line).
+    assert_eq!(buffer.line_count(), Some(4));
+
+    // Saving an unchanged CR buffer must write `\r`, never `\n`.
+    buffer.save_to_file(&file_path).unwrap();
+    let saved = std::fs::read(&file_path).unwrap();
+    assert_eq!(&saved, b"Line 1\rLine 2\rLine 3\r");
+    assert!(
+        !saved.contains(&b'\n'),
+        "CR file must not gain LF bytes on save; got {saved:?}"
+    );
+}
+
+#[test]
+fn test_cr_enter_inserts_row_and_saves_cr() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("cr_edit.txt");
+    std::fs::write(&file_path, b"Line 1\rLine 2").unwrap();
+
+    let mut buffer = TextBuffer::load_from_file_for_editing(
+        &file_path,
+        crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+        test_fs(),
+    )
+    .unwrap();
+    assert_eq!(buffer.line_ending(), LineEnding::CR);
+    assert_eq!(buffer.line_count(), Some(2));
+
+    // Simulate pressing Enter at end of "Line 1" (offset 6). Enter inserts
+    // the buffer's insertion_str, which for CR is a bare `\n`.
+    let ending = buffer.line_ending().insertion_str().to_string();
+    buffer.insert(6, &ending);
+    assert_eq!(
+        buffer.line_count(),
+        Some(3),
+        "Enter in a CR buffer must create a new row"
+    );
+
+    buffer.save_to_file(&file_path).unwrap();
+    let saved = std::fs::read(&file_path).unwrap();
+    assert_eq!(&saved, b"Line 1\r\rLine 2");
+}
+
+#[test]
+fn test_new_buffer_default_cr_saves_cr_separators() {
+    // Brand-new buffer created with default_line_ending = CR must save its
+    // rows with `\r` separators — issue #2736, new-file case.
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("new_cr.txt");
+
+    let mut buffer = TextBuffer::empty(test_fs());
+    buffer.set_default_line_ending(LineEnding::CR);
+    assert_eq!(buffer.line_ending(), LineEnding::CR);
+    assert!(!buffer.is_modified());
+
+    let ending = buffer.line_ending().insertion_str().to_string();
+    buffer.insert(0, &format!("line one{ending}line two"));
+    // The buffer split into two rows despite being CR mode.
+    assert_eq!(buffer.line_count(), Some(2));
+
+    buffer.save_to_file(&file_path).unwrap();
+    let saved = std::fs::read(&file_path).unwrap();
+    assert_eq!(&saved, b"line one\rline two");
+}
+
+#[test]
+fn test_lf_and_crlf_load_unchanged() {
+    // Regression guard: the CR normalization must not touch LF/CRLF files.
+    let lf = TextBuffer::from_bytes(b"a\nb\n".to_vec(), test_fs());
+    assert_eq!(lf.line_ending(), LineEnding::LF);
+    assert_eq!(&lf.get_all_text().unwrap(), b"a\nb\n");
+
+    let crlf = TextBuffer::from_bytes(b"a\r\nb\r\n".to_vec(), test_fs());
+    assert_eq!(crlf.line_ending(), LineEnding::CRLF);
+    // CRLF keeps its raw `\r` bytes in the buffer.
+    assert_eq!(&crlf.get_all_text().unwrap(), b"a\r\nb\r\n");
+}
+
 /// Regression test: get_all_text() returns empty for large files with unloaded regions
 ///
 /// This was the root cause of a bug where recovery auto-save would save 0 bytes
@@ -2836,4 +2981,79 @@ mod boundary_overlap {
         let matches = search_boundary_overlap(b"aXb", b"Xc", 0, 1, &make_regex("X"), 1);
         assert!(matches.len() <= 1);
     }
+}
+
+/// The LSP converter reads only the prefix before the cursor, and gets the
+/// UTF-16 column right for multi-byte and astral characters.
+#[test]
+fn position_to_lsp_position_counts_utf16_from_the_line_start() {
+    // "héllo" — é is 2 bytes / 1 UTF-16 unit; "𝄞" is 4 bytes / 2 units.
+    let text = "ascii\nhéllo 𝄞 tail\nlast";
+    let buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+
+    let line1 = text.find("héllo").expect("line 1 present");
+    assert_eq!(buffer.position_to_lsp_position(line1), (1, 0));
+
+    // Just past "héllo " — 6 characters, all in the BMP.
+    let after_word = line1 + "héllo ".len();
+    assert_eq!(buffer.position_to_lsp_position(after_word), (1, 6));
+
+    // Past the astral clef: 6 + 2 UTF-16 units.
+    let after_clef = after_word + "𝄞".len();
+    assert_eq!(buffer.position_to_lsp_position(after_clef), (1, 8));
+}
+
+/// `find_all_in_range` streams the buffer once, so it has to reproduce what
+/// repeated `find_next_in_range` calls returned: non-overlapping matches, in
+/// order, including ones straddling the 64KB chunk boundary it reads in.
+#[test]
+fn find_all_in_range_matches_repeated_find_next() {
+    // Long enough to span several 64KB chunks, with a match landing on every
+    // boundary: the filler length is chosen so occurrences fall at regular
+    // offsets that cross 65536.
+    let mut text = String::new();
+    while text.len() < 200_000 {
+        text.push_str("some source code here\n");
+    }
+    let buffer = Buffer::from_bytes(text.into_bytes(), test_fs());
+
+    let mut expected = Vec::new();
+    let mut pos = 0;
+    while let Some(offset) = buffer.find_next_in_range("source", pos, Some(pos..buffer.len())) {
+        expected.push(offset);
+        pos = offset + "source".len();
+    }
+    assert!(expected.len() > 3_000, "expected many matches");
+
+    assert_eq!(
+        buffer.find_all_in_range("source", 0..buffer.len(), usize::MAX),
+        expected
+    );
+
+    // The limit caps the result without changing which matches come first.
+    assert_eq!(
+        buffer.find_all_in_range("source", 0..buffer.len(), 5),
+        expected[..5]
+    );
+
+    // A sub-range reports only matches fully inside it.
+    let third = expected[2];
+    let in_range = buffer.find_all_in_range("source", third..expected[5], usize::MAX);
+    assert_eq!(in_range, &expected[2..5]);
+}
+
+/// Overlapping candidates are skipped the same way the sequential search
+/// skipped them: each match resumes the scan after the previous one.
+#[test]
+fn find_all_in_range_skips_overlapping_matches() {
+    let buffer = Buffer::from_bytes(b"aaaaaa".to_vec(), test_fs());
+    assert_eq!(
+        buffer.find_all_in_range("aa", 0..buffer.len(), usize::MAX),
+        vec![0, 2, 4]
+    );
+
+    // An empty pattern never matches, as with find_next_in_range.
+    assert!(buffer
+        .find_all_in_range("", 0..buffer.len(), usize::MAX)
+        .is_empty());
 }

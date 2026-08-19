@@ -1,0 +1,37 @@
+%YAML 1.2
+---
+name: Wavefront OBJ
+file_extensions:
+  - obj
+scope: source.wavefront-obj
+
+contexts:
+  main:
+    - include: comments
+    - include: statements
+    - include: indices
+    - include: numbers
+
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.wavefront-obj
+
+  statements:
+    - match: '^\s*(v|vt|vn|vp)\b'
+      scope: keyword.declaration.vertex.wavefront-obj
+    - match: '^\s*(f|l|p)\b'
+      scope: keyword.declaration.element.wavefront-obj
+    - match: '^\s*(o|g|s|usemtl|mtllib)\b'
+      scope: keyword.declaration.group.wavefront-obj
+    - match: '^\s*(cstype|deg|bmat|step|curv|curv2|surf|parm|trim|hole|scrv|sp|end|con)\b'
+      scope: keyword.declaration.free-form.wavefront-obj
+    - match: '\b(off|on)\b'
+      scope: constant.language.wavefront-obj
+
+  indices:
+    - match: '(?<!\S)-?\d+(?:/-?\d*){1,2}(?!\S)'
+      scope: constant.numeric.index.wavefront-obj
+
+  numbers:
+    - match: '(?<![A-Za-z_])[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?'
+      scope: constant.numeric.wavefront-obj

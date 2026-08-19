@@ -243,7 +243,14 @@ export function dropdown(
  * `WidgetPanel.setDualIncluded(key, values)`.
  *
  * `excluded` names option values owned by a sibling list, kept out of
- * this list's Available column (cross-exclusion). */
+ * this list's Available column (cross-exclusion).
+ *
+ * The focused column's cursor row is marked `▸`, the other column's
+ * parked cursor `▹`, and the active column's header `▾`, so the state
+ * reads without relying on color. `activeIncluded` / `availableCursor`
+ * / `includedCursor` seed that cursor (host instance state takes over
+ * after the first render); `hint` adds a one-line key legend under the
+ * columns. */
 export function dualList(
   options: { value: string; label: string }[],
   opts?: {
@@ -251,6 +258,10 @@ export function dualList(
     excluded?: string[];
     label?: string;
     focused?: boolean;
+    activeIncluded?: boolean;
+    availableCursor?: number;
+    includedCursor?: number;
+    hint?: string;
     visibleRows?: number;
     key?: string;
   },
@@ -262,6 +273,10 @@ export function dualList(
     excluded: opts?.excluded ?? [],
     label: opts?.label ?? "",
     focused: opts?.focused ?? false,
+    activeIncluded: opts?.activeIncluded ?? false,
+    availableCursor: opts?.availableCursor ?? 0,
+    includedCursor: opts?.includedCursor ?? 0,
+    hint: opts?.hint ?? "",
     visibleRows: opts?.visibleRows ?? 6,
     key: opts?.key,
   };
@@ -288,9 +303,44 @@ export function button(
      * advances one stop per group (the active option) and ←/→ moves
      * the selection within the group. Defaults to true. */
     focusable?: boolean;
+    /** Render the label alone — no `[ ]` frame, no focus-marker
+     * gutter — turning the button into an *icon affordance* (a `×`
+     * close glyph, a `▾` chevron) rather than a framed action. Use
+     * where the glyph itself is the control; keep the default for
+     * anything with a word on it. Layout only — `hoverStyle` decides
+     * how it looks under the pointer. */
+    bare?: boolean;
+    /** Stretch the button across the full width it is laid out in (the
+     * panel's content width, or its share of an enclosing `row`),
+     * padding the label out — and `…`-truncating it when the width
+     * can't hold it.
+     *
+     * Focus and hover paint the button's *own* cells, so a
+     * natural-width button leaves the rest of its row unhighlighted
+     * even where the container pads the row out around it (a
+     * `labeledSection` pads every child to its inner width). Menu
+     * entries are rows of a menu rather than free-standing actions, so
+     * set this on them and the highlight spans the row — at the width
+     * the host actually rendered, with no plugin-side width guess to
+     * drift on a resize or a dock drag.
+     *
+     * Leave it off inside an anchored popup that sizes itself to its
+     * content: filling there stretches the popup to the panel width. */
+    fullWidth?: boolean;
+    /** How the button looks while the pointer is over it. Omit to
+     * leave it looking the same hovered as not.
+     *
+     * The host applies this as the mouse moves, with no round-trip to
+     * the plugin, so hover costs a panel re-render and nothing more.
+     * It outranks focus styling while both apply.
+     *
+     * For a close glyph, `{ fg: "ui.tab_close_hover_fg" }` is the
+     * editor's shared "close affordance under the pointer" look — the
+     * tab `×` and the file explorer's `×` both use it. */
+    hoverStyle?: Partial<OverlayOptions>;
   },
 ): WidgetSpec {
-  return {
+  const spec: WidgetSpec = {
     kind: "button",
     label,
     focused: options?.focused ?? false,
@@ -298,7 +348,14 @@ export function button(
     key: options?.key,
     disabled: options?.disabled ?? false,
     focusable: options?.focusable ?? true,
+    bare: options?.bare ?? false,
+    fullWidth: options?.fullWidth ?? false,
   };
+  // Omit rather than pass `undefined`: the plugin bridge turns a
+  // present `undefined` into JSON `null`, which fails to deserialize
+  // as the host's `Option<OverlayOptions>`.
+  if (options?.hoverStyle !== undefined) spec.hoverStyle = options.hoverStyle;
+  return spec;
 }
 
 /** Horizontal spacer of fixed column count. In a `Row` it produces
@@ -310,7 +367,10 @@ export function spacer(cols: number, key?: string): WidgetSpec {
 
 /** Flex horizontal spacer — fills remaining row width
  * (`panel_width - sum(non-flex children)`). Use to right-align a
- * trailing widget: `row(label, flexSpacer(), button)`. With
+ * trailing widget: `row(label, flexSpacer(), button)`. Inside a
+ * `col` on a height-budgeted panel it absorbs leftover ROWS instead —
+ * `col(content, flexSpacer(), hintBar)` pins the hints to the panel
+ * bottom without counting chrome rows. With
  * multiple flex spacers in one row the leftover splits evenly. */
 export function flexSpacer(key?: string): WidgetSpec {
   return { kind: "spacer", cols: 0, flex: true, key };
@@ -337,10 +397,15 @@ export function divider(
 
 /** Vertical list of pre-rendered rows with host-managed selection
  * styling, click routing, and **virtual scrolling**. Plugin passes
- * the full dataset of items + a `visibleRows` count; the widget
- * owns scroll offset as instance state (keyed by `key`) and
- * auto-clamps it to keep `selectedIndex` in view. Plugins never
- * compute scroll math.
+ * the full dataset of items; the widget owns scroll offset as
+ * instance state (keyed by `key`) and auto-clamps it to keep
+ * `selectedIndex` in view. Plugins never compute scroll math.
+ *
+ * Omit `visibleRows` to auto-size: the host windows the list to the
+ * panel height it already knows, minus the rows the list's Col
+ * siblings occupy — so a panel with a header and footer never needs
+ * `getViewportHeight()` arithmetic. Pass an explicit count only to
+ * pin the window (at most one auto-sized list/tree per Col).
  *
  * Click on a row fires `widget_event` with `eventType: "select"` and
  * `payload: { index, key }` where `index` is the *absolute* index
@@ -360,7 +425,10 @@ export function list(options: {
   itemSpecs?: WidgetSpec[];
   itemKeys?: string[];
   selectedIndex?: number;
-  visibleRows: number;
+  /** Rows this widget windows to. Omit to auto-size from the
+   * host-known panel height (recommended); an explicit value pins
+   * the window. */
+  visibleRows?: number;
   /** Whether Tab / Shift+Tab lands focus on this list. Default
    * true (matches other tabbable widgets). Set to false in
    * picker-style layouts where the filter input stays focused
@@ -446,7 +514,10 @@ export function tree(options: {
   nodes: TreeNode[];
   itemKeys?: string[];
   selectedIndex?: number;
-  visibleRows: number;
+  /** Rows this widget windows to. Omit to auto-size from the
+   * host-known panel height (recommended); an explicit value pins
+   * the window. */
+  visibleRows?: number;
   /** Initial expanded keys; subsequent expansion changes are
    * host-owned and don't read this field. Use
    * `panel.setExpandedKeys(...)` to override host state after
@@ -471,6 +542,11 @@ export function tree(options: {
    * headers) render as plain single rows instead of being blank-padded
    * to the card height. */
   cardBorders?: boolean;
+  /** Columns of indent per depth level. `2` (default) is the classic
+   * tree step. Narrow panels that nest several levels deep can drop to
+   * `1` to spend those columns on the node text instead; the disclosure
+   * glyph (or the blank standing in for one) still marks each level. */
+  indentCols?: number;
   key?: string;
 }): WidgetSpec {
   return {
@@ -483,6 +559,7 @@ export function tree(options: {
     checkable: options.checkable ?? false,
     itemHeight: options.itemHeight ?? 1,
     cardBorders: options.cardBorders ?? false,
+    indentCols: options.indentCols ?? 2,
     key: options.key,
   };
 }
@@ -556,6 +633,15 @@ export function text(
      * from the value with `: `, so a column of controls aligns their
      * value cells. `0` (default) keeps the compact `label [value]`. */
     labelWidth?: number;
+    /** Reject every mutating operation (typing, Backspace/Delete, Cut,
+     * Paste) while keeping caret motion, selection, and Copy. Implied
+     * by `markdown`. */
+    readOnly?: boolean;
+    /** Render `value` as a markdown document (multi-line only): the
+     * host renders it through the same engine as LSP hover docs and
+     * word-wraps to the widget's width. Forcibly read-only; the caret,
+     * selection, and Copy operate on the rendered plain text. */
+    markdown?: boolean;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -575,6 +661,8 @@ export function text(
     selStart: options.selStart ?? -1,
     selEnd: options.selEnd ?? -1,
     labelWidth: options.labelWidth ?? 0,
+    readOnly: options.readOnly ?? false,
+    markdown: options.markdown ?? false,
     key: options.key,
   };
 }
@@ -713,6 +801,50 @@ export function overlay(
 ): WidgetSpec {
   return {
     kind: "overlay",
+    child,
+    key: options?.key,
+  };
+}
+
+/** A popup layer: the child paints OVER the panel's rows (like
+ * `overlay`) as a first-class tree node — part of the layout-box
+ * tree, pointer-opaque, and slated to grow screen-space anchoring
+ * so a popup near a panel edge is not clipped. Prefer this over
+ * `overlay` for new popup UI. */
+export function popup(
+  child: WidgetSpec,
+  options?: {
+    key?: string;
+    /** Anchor [row, col] in panel-inner coordinates the popup drops
+     * from (host resolves the final rect: below the anchor, flipping
+     * above near the frame edge, clamped on screen). */
+    anchor?: [number, number];
+    /** Escape the panel's clipping and paint at screen level (what
+     * the dropdown pop-over does). Default: panel-clipped. */
+    screenSpace?: boolean;
+  },
+): WidgetSpec {
+  return {
+    kind: "popup",
+    child,
+    key: options?.key,
+    anchor: options?.anchor,
+    screenSpace: options?.screenSpace ?? false,
+  };
+}
+
+/** A focus and event scope around a subtree — the unit for composing
+ * reusable pieces. Renders its child transparently (no chrome of its
+ * own); Tab / Shift+Tab cycle among the focusable widgets INSIDE the
+ * component instead of the whole panel, so a picker or dialog subtree
+ * keeps its own ring without hand-written focus code. Give it a `key`
+ * for stable identity (keyed reconciliation, targeted swaps). */
+export function component(
+  child: WidgetSpec,
+  options?: { key?: string },
+): WidgetSpec {
+  return {
+    kind: "component",
     child,
     key: options?.key,
   };
@@ -992,6 +1124,12 @@ export class FloatingWidgetPanel {
        * the panel exactly like Esc / Cancel (fires the panel's `cancel`
        * `widget_event`). Ignored for `asDock`. Default false. */
       closable?: boolean;
+      /** Mount without taking keyboard focus — the editor keeps the
+       * keys. Use this instead of mount-then-`blur` for a panel that
+       * must never own the keyboard (command dispatch is budgeted
+       * across frames, so a follow-up blur can land a tick late).
+       * Default false: mounting focuses the panel. */
+      startBlurred?: boolean;
     } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
@@ -1008,6 +1146,7 @@ export class FloatingWidgetPanel {
       options.focusMarker ?? false,
       options.title ?? "",
       options.closable ?? false,
+      options.startBlurred ?? false,
     );
   }
 

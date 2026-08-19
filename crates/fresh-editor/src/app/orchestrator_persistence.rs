@@ -164,6 +164,9 @@ pub(crate) fn read_persisted_windows_env(
         migrate_legacy_windows(filesystem, data_dir);
     }
     migrate_windows_json_into_workspaces(filesystem, data_dir);
+    // Daemon-scoped workspaces predate the one-set model; fold them in before
+    // discovery so they show up in the dock like any other workspace.
+    migrate_session_workspaces_into_store(filesystem, data_dir);
 
     // The workspace cache is the session registry now: sessions discovered
     // from disk, keyed by durable identity. A directory may host several
@@ -440,6 +443,103 @@ fn migrate_windows_json_into_workspaces(
         // Best-effort: if delete also fails the file stays and migration reruns (idempotent).
         let _ = filesystem.remove_file(&global_p).ok();
     }
+}
+
+/// Fold pre-migration daemon-scoped workspaces into the one workspace store.
+///
+/// A named daemon used to persist *all* of its windows into a single
+/// `session-workspaces/<daemon>.json`, keyed on the daemon's name. That store
+/// could not represent more than one window (each overwrote the last) and
+/// nothing here ever scanned it, so those layouts were invisible to the dock
+/// and unreachable from any other invocation. Workspaces are now one set,
+/// shared by direct mode and every daemon, so each surviving legacy snapshot is
+/// re-keyed as an ordinary workspace: its recorded `working_dir` plus a minted
+/// `stable_id` if it predates durable identities.
+///
+/// Two named daemons that each held a layout over the same root migrate into
+/// two co-tenant workspaces over that root — which the per-window store already
+/// supports — so neither user's layout is dropped.
+///
+/// Idempotent and best-effort: the legacy directory is renamed aside once every
+/// file in it has been converted, and anything that fails to convert is left
+/// alone for the next boot to retry rather than deleted.
+fn migrate_session_workspaces_into_store(
+    filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
+    data_dir: &Path,
+) {
+    let legacy_dir = data_dir.join("session-workspaces");
+    let Ok(entries) = filesystem.read_dir(&legacy_dir) else {
+        return;
+    };
+    let mut all_converted = true;
+    for entry in entries {
+        if !entry.name.ends_with(".json") {
+            continue;
+        }
+        let Ok(bytes) = filesystem.read_file(&entry.path) else {
+            all_converted = false;
+            continue;
+        };
+        let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            // Unparseable: leave it rather than silently lose a layout.
+            all_converted = false;
+            continue;
+        };
+        let Some(root) = val
+            .get("working_dir")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+        else {
+            all_converted = false;
+            continue;
+        };
+        // Mint an identity for snapshots written before durable ids, so the
+        // file lands under the id-keyed name the per-window store uses.
+        let stable_id = match val.get("stable_id").and_then(|v| v.as_str()) {
+            Some(id) if !id.is_empty() => id.to_string(),
+            _ => {
+                let id = crate::workspace::generate_stable_id();
+                if let Some(obj) = val.as_object_mut() {
+                    obj.insert("stable_id".into(), serde_json::Value::String(id.clone()));
+                }
+                id
+            }
+        };
+        let dest = workspaces_dir(data_dir).join(format!(
+            "{}.{}.json",
+            crate::workspace::encode_path_for_filename(&canonical_key(&root)),
+            stable_id
+        ));
+        // Never clobber a live workspace: the per-window store is authoritative
+        // wherever both describe the same identity.
+        if filesystem.exists(&dest) {
+            continue;
+        }
+        let Ok(out) = serde_json::to_vec_pretty(&val) else {
+            all_converted = false;
+            continue;
+        };
+        if filesystem.write_file(&dest, &out).is_err() {
+            all_converted = false;
+            continue;
+        }
+        tracing::info!(
+            "Migrated daemon-scoped workspace {:?} into the shared store as {:?}",
+            entry.path,
+            dest
+        );
+    }
+    if !all_converted {
+        return;
+    }
+    // Retire the legacy directory (keep it as a .bak so a downgrade isn't
+    // one-way). A failure just leaves it for the next boot — the conversion
+    // above skips anything already present, so rerunning is harmless.
+    let bak = legacy_dir.with_extension("retired.bak");
+    if filesystem.exists(&bak) {
+        return;
+    }
+    let _ = filesystem.rename(&legacy_dir, &bak).ok();
 }
 
 /// Pick which persisted session to bring up at boot, scoped to the

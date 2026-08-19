@@ -32,6 +32,11 @@ pub enum QuickOpenResult {
     },
     /// Show a buffer by ID
     ShowBuffer(usize),
+    /// Activate a buffer-group tab by its group leaf id. A group (the
+    /// review-diff panels, say) owns several buffers but shows as one tab,
+    /// and its member buffers are hidden from tabs — so it is reachable
+    /// only through the group, not through any one of its buffers.
+    ShowBufferGroup(usize),
     /// Go to a line in the current buffer
     GotoLine(GotoLineTarget),
     /// Do nothing (provider handled it internally)
@@ -108,6 +113,9 @@ pub struct QuickOpenContext {
     pub buffer_mode: Option<String>,
     /// Whether the active buffer's language has an LSP server configured
     pub has_lsp_config: bool,
+    /// What the active buffer can be asked to do (save, revert, accept edits).
+    /// Shared with the menus so both surfaces gate on the same answers.
+    pub buffer_caps: crate::app::buffer_capabilities::BufferCapabilities,
     /// Whether relative line numbers are enabled
     pub relative_line_numbers: bool,
 }
@@ -123,6 +131,11 @@ pub struct BufferInfo {
     /// `*Git Log*`) with no backing file path. Virtual buffers are listed in
     /// the `#` switcher even though `path` is empty.
     pub is_virtual: bool,
+    /// Set when this entry stands for a buffer-group tab rather than a
+    /// buffer, carrying the group's leaf id. Selecting it activates the
+    /// group instead of setting an active buffer — a group's own buffers
+    /// are hidden from tabs, so the group is the only way back to it.
+    pub group_leaf: Option<usize>,
 }
 
 /// Parse a `path:line:col` string into its components.

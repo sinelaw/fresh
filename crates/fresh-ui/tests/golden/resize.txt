@@ -1,0 +1,50 @@
+=== at 56x14
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │»[x] build the reconciler
+( ) Done    │»[ ] lay it out
+            │»[ ] route the pointer
+            │»[ ] wire up focus
+            │
+            │
+            │
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+
+=== at 30x8
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…    Add
+(o) All░░░░░│»[x] write the sp
+( ) Open    │»[x] build the re
+( ) Done    │»[ ] lay it out
+            │»[ ] route the po
+            │»[ ] wire up focu
+5 tasks · light · synced 0 · r
+
+=== at 90x6
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                                                                Add
+(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█
+( ) Open    │»[x] build the reconciler                                                   │
+( ) Done    │»[ ] lay it out                                                             │
+5 tasks · light · synced 0 · ready
+
+=== back to 56x14
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │»[x] build the reconciler
+( ) Done    │»[ ] lay it out
+            │»[ ] route the pointer
+            │»[ ] wire up focus
+            │
+            │
+            │
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+

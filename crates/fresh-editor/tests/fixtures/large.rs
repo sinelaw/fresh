@@ -3148,26 +3148,11 @@ impl Editor {
             };
             let tab_size = self.config.editor.tab_size;
 
-            // Get view_transform tokens from SplitViewState (if any)
-            let view_transform_tokens = self
-                .split_view_states
-                .get(&split_id)
-                .and_then(|vs| vs.view_transform.as_ref())
-                .map(|vt| vt.tokens.clone());
-
             // Get mutable references to both buffer and view state
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 let buffer = &mut state.buffer;
                 if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                    if let Some(tokens) = view_transform_tokens {
-                        // Use view-aware scrolling with the transform's tokens
-                        let view_lines: Vec<_> =
-                            ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
-                        view_state
-                            .viewport
-                            .scroll_view_lines(&view_lines, line_offset);
-                    } else {
-                        // No view transform - use traditional buffer-based scrolling
+                    {
                         if line_offset > 0 {
                             view_state
                                 .viewport
@@ -3296,7 +3281,7 @@ impl Editor {
                         }
                     }
                     let new_top_byte = iter.current_position();
-                    view_state.viewport.top_byte = new_top_byte;
+                    view_state.viewport.set_top_byte(new_top_byte);
                     // Mark to skip ensure_visible on next render so the scroll isn't undone
                     view_state.viewport.set_skip_ensure_visible();
                 }
@@ -3308,8 +3293,6 @@ impl Editor {
     ///
     /// Called after buffer content changes (Insert/Delete) to mark
     /// layouts as dirty, forcing rebuild on next access.
-    /// Also clears any cached view transform since its token source_offsets
-    /// become stale after buffer edits.
     fn invalidate_layouts_for_buffer(&mut self, buffer_id: BufferId) {
         // Find all splits that display this buffer
         let splits_for_buffer = self.split_manager.splits_for_buffer(buffer_id);
@@ -3320,11 +3303,6 @@ impl Editor {
                 view_state.invalidate_layout();
                 // Clear cached view transform — its token source_offsets are from
                 // before the edit and would cause conceals to be applied at wrong positions.
-                // The view_transform_request hook will fire on the next render to rebuild it.
-                view_state.view_transform = None;
-                // Mark as stale so that any pending SubmitViewTransform commands
-                // (from a previous view_transform_request) are rejected.
-                view_state.view_transform_stale = true;
             }
         }
     }
@@ -3647,8 +3625,8 @@ impl Editor {
         if let Some(text) = default_text {
             if let Some(ref mut prompt) = self.prompt {
                 prompt.set_input(text.clone());
-                prompt.selection_anchor = Some(0);
-                prompt.cursor_pos = text.len();
+                prompt.select_range(0, prompt.cursor_byte());
+                prompt.set_cursor_byte(text.len());
             }
             if from_history {
                 self.get_or_create_prompt_history("search").init_at_last();
@@ -3720,8 +3698,8 @@ impl Editor {
 
         // Start with ">" prefix for command mode by default
         let mut prompt = Prompt::with_suggestions(String::new(), PromptType::QuickOpen, vec![]);
-        prompt.input = ">".to_string();
-        prompt.cursor_pos = 1;
+        prompt.set_input_plain(">".to_string());
+        prompt.set_cursor_byte(1);
         self.prompt = Some(prompt);
 
         // Load initial command suggestions
@@ -3925,13 +3903,13 @@ impl Editor {
     /// Pre-fill the Open File prompt input with the current buffer directory
     fn prefill_open_file_prompt(&mut self) {
         // With the native file browser, the directory is shown from file_open_state.current_dir
-        // in the prompt rendering. The prompt.input is just the filter/filename, so we
+        // in the prompt rendering. The prompt.input_str() is just the filter/filename, so we
         // start with an empty input.
         if let Some(prompt) = self.prompt.as_mut() {
             if prompt.prompt_type == PromptType::OpenFile {
-                prompt.input.clear();
-                prompt.cursor_pos = 0;
-                prompt.selection_anchor = None;
+                prompt.input_str().clear();
+                prompt.set_cursor_byte(0);
+                prompt.clear_selection();
             }
         }
     }
@@ -4141,7 +4119,7 @@ impl Editor {
                         "prompt_cancelled",
                         HookArgs::PromptCancelled {
                             prompt_type: custom_type.clone(),
-                            input: prompt.input.clone(),
+                            input: prompt.input_str().to_string(),
                         },
                     );
                 }
@@ -4203,8 +4181,8 @@ impl Editor {
             // Update input to match selected suggestion for non-plugin prompts
             if !matches!(prompt.prompt_type, PromptType::Plugin { .. }) {
                 if let Some(suggestion) = prompt.suggestions.get(new_selected) {
-                    prompt.input = suggestion.get_value().to_string();
-                    prompt.cursor_pos = prompt.input.len();
+                    prompt.set_input_plain(suggestion.get_value().to_string());
+                    prompt.set_cursor_byte(prompt.input_str().len());
                 }
             }
 
@@ -4224,7 +4202,7 @@ impl Editor {
             let mut final_input = if prompt.sync_input_on_navigate {
                 // When sync_input_on_navigate is set, the input field is kept in sync
                 // with the selected suggestion, so always use the input value
-                prompt.input.clone()
+                prompt.input_str().to_string()
             } else if matches!(
                 prompt.prompt_type,
                 PromptType::Command
@@ -4265,13 +4243,13 @@ impl Editor {
                         // Use the selected suggestion value
                         suggestion.get_value().to_string()
                     } else {
-                        prompt.input.clone()
+                        prompt.input_str().to_string()
                     }
                 } else {
-                    prompt.input.clone()
+                    prompt.input_str().to_string()
                 }
             } else {
-                prompt.input.clone()
+                prompt.input_str().to_string()
             };
 
             // For StopLspServer/RestartLspServer, validate that the input matches a suggestion
@@ -4297,7 +4275,7 @@ impl Editor {
             // If the user typed text, it must match a suggestion value to be accepted.
             // If the input is empty, the pre-selected suggestion is used.
             if matches!(prompt.prompt_type, PromptType::RemoveRuler) {
-                if prompt.input.is_empty() {
+                if prompt.input_str().is_empty() {
                     // No typed text — use the selected suggestion
                     if let Some(selected_idx) = prompt.selected_suggestion {
                         if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
@@ -4309,7 +4287,7 @@ impl Editor {
                     }
                 } else {
                     // User typed text — it must match a suggestion value
-                    let typed = prompt.input.trim().to_string();
+                    let typed = prompt.input_str().trim().to_string();
                     let matched = prompt.suggestions.iter().find(|s| s.get_value() == typed);
                     if let Some(suggestion) = matched {
                         final_input = suggestion.get_value().to_string();
@@ -4438,7 +4416,7 @@ impl Editor {
     pub fn update_prompt_suggestions(&mut self) {
         // Extract prompt type and input to avoid borrow checker issues
         let (prompt_type, input) = if let Some(prompt) = &self.prompt {
-            (prompt.prompt_type.clone(), prompt.input.clone())
+            (prompt.prompt_type.clone(), prompt.input_str().to_string())
         } else {
             return;
         };
@@ -5385,13 +5363,13 @@ impl Editor {
                 // Viewport - get from SplitViewState (the authoritative source)
                 let top_line = self.buffers.get(&self.active_buffer()).and_then(|state| {
                     if state.buffer.line_count().is_some() {
-                        Some(state.buffer.get_line_number(active_vs.viewport.top_byte))
+                        Some(state.buffer.get_line_number(active_vs.viewport.top_byte()))
                     } else {
                         None
                     }
                 });
                 snapshot.viewport = Some(ViewportInfo {
-                    top_byte: active_vs.viewport.top_byte,
+                    top_byte: active_vs.viewport.top_byte(),
                     top_line,
                     left_column: active_vs.viewport.left_column,
                     width: active_vs.viewport.width,
@@ -5727,19 +5705,6 @@ impl Editor {
                 enabled,
             } => {
                 self.handle_set_line_wrap(buffer_id, split_id, enabled);
-            }
-            PluginCommand::SubmitViewTransform {
-                buffer_id,
-                split_id,
-                payload,
-            } => {
-                self.handle_submit_view_transform(buffer_id, split_id, payload);
-            }
-            PluginCommand::ClearViewTransform {
-                buffer_id: _,
-                split_id,
-            } => {
-                self.handle_clear_view_transform(split_id);
             }
             PluginCommand::SetViewState {
                 buffer_id,

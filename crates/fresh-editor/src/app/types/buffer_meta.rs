@@ -112,6 +112,14 @@ impl BufferMetadata {
             BufferKind::File { .. } => None,
         }
     }
+
+    /// Re-point a virtual buffer at a different mode. No-op on a
+    /// file-backed buffer, whose keybindings come from its language.
+    pub fn set_virtual_mode(&mut self, new_mode: impl Into<String>) {
+        if let BufferKind::Virtual { mode } = &mut self.kind {
+            *mode = new_mode.into();
+        }
+    }
 }
 
 impl Default for BufferMetadata {

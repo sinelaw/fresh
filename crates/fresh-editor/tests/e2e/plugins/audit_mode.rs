@@ -2084,6 +2084,62 @@ fn open_review_diff(harness: &mut EditorTestHarness) -> String {
     harness.screen_to_string()
 }
 
+/// True while a side panel — not the diff — holds keyboard focus. Each
+/// panel header carries a `▸` when it owns the keys.
+fn review_panel_has_focus(screen: &str) -> bool {
+    screen.contains("▸FILES") || screen.contains("▸COMMENTS")
+}
+
+/// Tab until the diff holds the keys again. `F` / `C` focus the panel they
+/// reveal, and the Tab order is FILES → diff → COMMENTS, so the number of
+/// steps back to the diff depends on which panels are already open.
+fn focus_review_diff(harness: &mut EditorTestHarness) {
+    for _ in 0..3 {
+        if !review_panel_has_focus(&harness.screen_to_string()) {
+            return;
+        }
+        let before = harness.screen_to_string();
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string() != before)
+            .unwrap();
+    }
+    assert!(
+        !review_panel_has_focus(&harness.screen_to_string()),
+        "focus never came back to the diff:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Reveal the FILES sidebar (`F`) and hand focus back to the diff. Both
+/// side panels start hidden so the diff owns the full width; tests that
+/// exercise the sidebar have to ask for it first, and `F` focuses what it
+/// reveals — so this returns the caller to the state it would otherwise
+/// assume, with the panel visible and the diff holding the keys.
+fn show_files_panel(harness: &mut EditorTestHarness) -> String {
+    harness
+        .send_key(KeyCode::Char('F'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("▸FILES"))
+        .unwrap();
+    focus_review_diff(harness);
+    harness.screen_to_string()
+}
+
+/// Reveal the COMMENTS rail (`C`) and hand focus back to the diff, for the
+/// same reason as `show_files_panel`.
+fn show_comments_panel(harness: &mut EditorTestHarness) -> String {
+    harness
+        .send_key(KeyCode::Char('C'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("COMMENTS"))
+        .unwrap();
+    focus_review_diff(harness);
+    harness.screen_to_string()
+}
+
 /// Test that j/k delegate to native cursor motion in the unified-stream
 /// diff buffer (no more files-pane plugin-managed selection). Verifies
 /// the cursor moves down/up by one row without errors.
@@ -2228,7 +2284,9 @@ fn test_review_diff_shows_comments_panel() {
         .wait_until(|h| h.screen_to_string().contains("changed"))
         .unwrap();
 
-    let screen = open_review_diff(&mut harness);
+    open_review_diff(&mut harness);
+    // The rail starts hidden; `C` reveals it.
+    let screen = show_comments_panel(&mut harness);
 
     // The comments panel header and empty state are visible.
     assert!(
@@ -2421,6 +2479,9 @@ fn test_review_diff_tab_cycles_focus() {
         .unwrap();
 
     open_review_diff(&mut harness);
+    // The sidebar starts hidden and a hidden panel is not in the focus
+    // ring, so reveal it before cycling focus.
+    show_files_panel(&mut harness);
 
     // The diff panel holds focus initially; Tab moves focus to the FILES
     // panel, which gains the ▸ focus marker on its header.
@@ -2563,6 +2624,8 @@ fn test_review_diff_focus_switch_preserves_scroll() {
     harness.render().unwrap();
 
     let _ = open_review_diff(&mut harness);
+    // The FILES panel has to be on screen to be a focus target.
+    show_files_panel(&mut harness);
 
     // Scroll the cursor far down the unified stream using native `j`
     // motion. `j` delegates to the editor's `move_down`, which moves the
@@ -3940,7 +4003,8 @@ fn test_review_diff_comment_nav_single_keys() {
         .wait_until(|h| h.screen_to_string().contains("edit"))
         .unwrap();
 
-    let screen = open_review_diff(&mut harness);
+    open_review_diff(&mut harness);
+    let screen = show_comments_panel(&mut harness);
     assert!(
         screen.contains("No comments yet"),
         "Empty comments panel should be visible. Screen:\n{}",

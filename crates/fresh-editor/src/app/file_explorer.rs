@@ -19,6 +19,7 @@ pub struct FileExplorerClipboard {
 pub(crate) struct FileExplorerViewDefaults {
     pub show_hidden: bool,
     pub show_gitignored: bool,
+    pub respect_gitignore: bool,
     pub compact_directories: bool,
     pub custom_ignore_patterns: Vec<String>,
 }
@@ -915,10 +916,7 @@ impl Editor {
 
         // Persist to config so the setting survives across sessions
         self.config_mut().file_explorer.show_hidden = show_hidden;
-        self.persist_config_change(
-            "/file_explorer/show_hidden",
-            serde_json::Value::Bool(show_hidden),
-        );
+        self.persist_config_change(crate::config_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden);
     }
 
     pub fn file_explorer_toggle_gitignored(&mut self) {
@@ -939,8 +937,8 @@ impl Editor {
         // Persist to config so the setting survives across sessions
         self.config_mut().file_explorer.show_gitignored = show_gitignored;
         self.persist_config_change(
-            "/file_explorer/show_gitignored",
-            serde_json::Value::Bool(show_gitignored),
+            crate::config_keys::FILE_EXPLORER_SHOW_GITIGNORED,
+            show_gitignored,
         );
     }
 
@@ -1692,6 +1690,10 @@ impl crate::app::window::Window {
             .unwrap_or(defaults.show_gitignored);
         view.ignore_patterns_mut()
             .set_show_gitignored(show_gitignored);
+        // Not session-restorable: unlike `show_gitignored` (a runtime toggle),
+        // this one only ever comes from config.
+        view.ignore_patterns_mut()
+            .set_respect_gitignore(defaults.respect_gitignore);
         {
             // Wire the configured custom ignore patterns into the matcher (previously the
             // `custom_ignore_patterns` config field was parsed but never applied).

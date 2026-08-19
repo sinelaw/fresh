@@ -1,21 +1,26 @@
+mod action_dispatch;
 mod action_events;
 mod active_focus;
+mod agent_scripts;
 mod async_dispatch;
 mod async_messages;
 mod bookmark_actions;
 mod bookmarks;
+pub mod buffer_capabilities;
 mod buffer_close;
 mod buffer_config_resolve;
 mod buffer_groups;
 mod buffer_management;
 mod calibration_actions;
 pub mod calibration_wizard;
+pub(crate) mod chrome;
 mod click_geometry;
 mod click_handlers;
 mod clipboard;
 mod composite_buffer_actions;
 mod dabbrev_actions;
 mod diagnostic_jumps;
+pub(crate) mod diff_baselines;
 mod editor_accessors;
 mod editor_init;
 mod event_apply;
@@ -57,6 +62,10 @@ mod path_utils;
 mod plugin_commands;
 #[cfg(feature = "plugins")]
 mod plugin_dispatch;
+#[cfg(feature = "plugins")]
+mod plugin_offloop;
+#[cfg(feature = "plugins")]
+pub(crate) mod plugin_timers;
 mod popup_actions;
 mod popup_dialogs;
 mod popup_overlay_actions;
@@ -104,6 +113,14 @@ use rust_i18n::t;
 /// Returns true if a render is needed. The `clear_terminal` callback handles full-redraw
 /// requests (terminal clears the screen; GUI can ignore or handle differently).
 /// Used by both the terminal event loop and the GUI event loop.
+impl Editor {
+    /// Invalidate the derived-structure memos (see `ui_gen`).
+    #[inline]
+    pub(crate) fn bump_ui_gen(&mut self) {
+        self.ui_gen = self.ui_gen.wrapping_add(1);
+    }
+}
+
 pub fn editor_tick(
     editor: &mut Editor,
     mut clear_terminal: impl FnMut() -> AnyhowResult<()>,
@@ -120,7 +137,7 @@ pub fn editor_tick(
 
     let async_messages = {
         let _s = tracing::info_span!("process_async_messages").entered();
-        editor.process_async_messages()
+        editor.process_async_messages_budgeted()
     };
     if async_messages {
         needs_render = true;
@@ -169,6 +186,14 @@ pub fn editor_tick(
     if editor.check_completion_trigger_timer() {
         needs_render = true;
     }
+    // Plugin `setInterval` / `setTimeout` fires from the tick rather than
+    // from a promise chain the plugin has to keep alive itself, so a throw in
+    // one handler costs one tick instead of ending the schedule, and unload
+    // can cancel it.
+    #[cfg(feature = "plugins")]
+    if editor.check_plugin_timers() {
+        needs_render = true;
+    }
     editor.active_window_mut().check_diagnostic_pull_timer();
     editor.check_inlay_hints_timer();
     if editor.check_warning_log() {
@@ -190,6 +215,15 @@ pub fn editor_tick(
         needs_render = true;
     }
 
+    // A tick that did work (timers fired, async results landed, plugin
+    // callbacks ran) may have changed routing-relevant UI state; spoil the
+    // per-generation UI memos. An idle tick keeps the generation — that is
+    // what lets a quiet mouse-motion stream reuse one chrome tree across
+    // events.
+    if needs_render {
+        editor.bump_ui_gen();
+    }
+
     Ok(needs_render)
 }
 
@@ -198,8 +232,7 @@ pub(crate) use path_utils::{
 };
 
 use self::types::{
-    LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, TabContextMenu,
-    DEFAULT_BACKGROUND_FILE,
+    LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
 use crate::config_io::DirectoryContext;
@@ -270,6 +303,27 @@ pub struct PendingGrammar {
     pub grammar_path: String,
     /// File extensions to associate with this grammar
     pub extensions: Vec<String>,
+}
+
+/// What a still-being-built workspace shows in place of its contents.
+///
+/// See [`Editor::preparing_windows`]. The window is real; this is only
+/// the copy on its placeholder page, so the plugin driving the build can
+/// narrate it ("Adding worktree…", then "Starting agent…") without the
+/// host knowing anything about worktrees.
+#[derive(Clone, Debug)]
+pub struct PreparingWindow {
+    /// Progress line under the workspace name, e.g. `Adding worktree…`.
+    pub message: String,
+    /// Name to show on the page, when it should differ from the window's
+    /// own label — the Orchestrator's resolved display name, so renaming a
+    /// workspace mid-build renames the page too. Empty falls back to the
+    /// window label.
+    pub label: String,
+    /// The build failed and `message` is the reason. Renders in the error
+    /// colour with a retry hint instead of the "any moment now" one — the
+    /// same distinction a disconnected remote session draws.
+    pub failed: bool,
 }
 
 /// Track an in-flight semantic token range request.
@@ -352,8 +406,81 @@ pub(crate) struct GotoLinePreviewSnapshot {
     pub last_jump_position: usize,
 }
 
+/// How long the editor thread may spend dispatching plugin commands in one
+/// tick. This is a pathology guard, not a frame pacer: a normal burst — a
+/// plugin load, a large file firing hooks, a hundred queued commands —
+/// should clear in one or two passes rather than being spread over many
+/// frames, so the limit sits at the same order as the per-handler watchdog
+/// (50ms). Only a genuinely pathological flood gets deferred, in arrival
+/// order, at one budget per frame.
+#[cfg(feature = "plugins")]
+pub(crate) const PLUGIN_COMMAND_FRAME_BUDGET: std::time::Duration =
+    std::time::Duration::from_millis(50);
+
+/// Minimum dispatches per drain pass, regardless of the deadline. Without a
+/// floor, one dispatch costing more than the whole budget collapses the
+/// drain to a single item per frame — a startup batch then trickles for
+/// seconds and sustained load can outgrow the backlog. Eight items bounds
+/// the extra frame cost at eight times the worst handler, which the 50ms
+/// watchdog keeps honest.
+pub(crate) const DRAIN_MIN_PER_PASS: usize = 8;
+
+/// A single plugin command handler taking longer than this on the editor
+/// thread is over budget: the work belongs in `plugin_offloop`. Logged at
+/// DEBUG naming the offending variant — a handler can cross 50ms on a loaded
+/// machine or a cold cache without anything being wrong, so this is a lead to
+/// follow when profiling, not a complaint aimed at the user. See
+/// `dispatch_plugin_command_measured` for why an overrun is a diagnostic
+/// rather than a failure, and which test does fail.
+#[cfg(feature = "plugins")]
+pub(crate) const PLUGIN_COMMAND_HANDLER_LIMIT: std::time::Duration =
+    std::time::Duration::from_millis(50);
+
+/// An overrun this far past `PLUGIN_COMMAND_HANDLER_LIMIT` is a visible stall
+/// — ten frames' worth of editor thread — and no amount of machine noise
+/// explains it. Logged at WARN, so the noisy-but-harmless case stays at DEBUG
+/// while the genuinely broken handler still gets named by default.
+#[cfg(feature = "plugins")]
+pub(crate) const PLUGIN_COMMAND_HANDLER_HARD_LIMIT: std::time::Duration =
+    std::time::Duration::from_millis(500);
+
+/// Counters for work whose cost must not grow with a buffer's content.
+///
+/// A frame and a tick are supposed to cost what is on screen, not what is
+/// in the buffer. That contract had no way to fail: the per-tick copy of
+/// every text property of every buffer went unnoticed until it was timed
+/// by hand, on a review diff carrying a property per line. Timings can't
+/// hold the line in CI — they vary with machine and build profile — but
+/// these counters are exact, so a test can assert the shape directly (see
+/// `plugin_snapshot_scaling`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PerfCounters {
+    /// Buffers whose text-property set was shared into the plugin state
+    /// snapshot — one refcount bump each, so this tracks the number of
+    /// buffers and never their contents.
+    pub text_property_shares: u64,
+    /// Text properties *copied* into the snapshot. Zero by construction:
+    /// the snapshot holds shared handles. A copy reappearing here is the
+    /// per-tick cost returning, which is what `plugin_snapshot_scaling`
+    /// watches for.
+    pub text_properties_copied: u64,
+    /// Rows shipped into a plugin's panel by `SetPanelContent`. Laying
+    /// out a big panel — a review diff of a hundred commits, say — costs
+    /// about a second, and the panel it lands in is already on screen, so
+    /// a needless one is a visible stale-then-jump rather than invisible
+    /// waste. Counted in rows rather than calls because that is what
+    /// separates re-emitting a whole diff stream from repainting the
+    /// one-row sticky header above it.
+    pub panel_content_rows: u64,
+}
+
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
+    /// See [`PerfCounters`]. Cheap to maintain (two increments on a path
+    /// that is already copying), and the only way an assertion can tell a
+    /// per-tick copy from a per-change one.
+    pub(crate) perf_counters: PerfCounters,
+
     // Buffers moved onto `Window` (Step 0c). Each window owns its
     // own buffer storage; opening the same file in two windows
     // produces two independent buffers. Access through
@@ -503,8 +630,16 @@ pub struct Editor {
     /// Backend does not render a hardware cursor — always use software cursor indicators.
     software_cursor_only: bool,
 
-    /// Session name for display in status bar (session mode only)
+    /// Name of the *named* daemon whose persistence scope this editor uses
+    /// (`fresh --cmd daemon new NAME`). `None` in direct mode and for an
+    /// unnamed working-directory daemon, which shares the directory's
+    /// workspaces and recovery with a direct-mode run. Not a display field —
+    /// see `session_display_name`.
     session_name: Option<String>,
+
+    /// Status-bar label for a daemon-backed editor: the daemon's name, or the
+    /// working directory for an unnamed one. Cosmetic only.
+    session_display_name: Option<String>,
 
     /// Pending escape sequences to send to client (session mode only)
     /// These get prepended to the next render output
@@ -737,6 +872,14 @@ pub struct Editor {
     /// `materialize_window`.
     pub(crate) materialize_pending: std::collections::HashSet<fresh_core::WindowId>,
 
+    /// Whether workspace files (`workspaces/*.json`) may be written at all;
+    /// `false` under `--no-restore`. Quit-time saves and mid-session
+    /// checkpoints must be suppressed together — a checkpoint that ignored
+    /// the flag persisted the source workspace while the co-tenant extracted
+    /// out of it was never written, silently dropping it (#2735). Enforced
+    /// in [`Editor::save_workspace_for`].
+    pub(crate) workspace_persistence_enabled: bool,
+
     /// Persisted **remote** sessions (SSH / kube) discovered at boot but not
     /// yet connected — there is deliberately **no `Window`** for them, because a
     /// `Window` must always own its session's *real* authority and a remote
@@ -753,6 +896,23 @@ pub struct Editor {
         fresh_core::WindowId,
         crate::app::orchestrator_persistence::PersistedWindow,
     >,
+
+    /// Windows whose *contents* are still being built — the Orchestrator's
+    /// "create a workspace" flow, where the `git worktree add` behind a new
+    /// workspace can run for a long time on a big repo or a slow disk.
+    ///
+    /// The window itself is entirely real from the moment the user asks for
+    /// it: a `Window` with its own id, durable `stable_id`, label, and local
+    /// authority, so it can be focused, renamed, filed into a folder,
+    /// archived, or closed exactly like any other workspace. Only what it
+    /// *shows* differs — [`Editor::render_preparing_shell_page`] paints the
+    /// progress line here instead of an empty scratch buffer, the same shape
+    /// a not-yet-connected remote session shows.
+    ///
+    /// The entry is dropped when the workspace's terminal is finally seeded
+    /// into it (via `create_window_with_terminal`'s adopt path), at which
+    /// point the window renders as the ordinary session it has become.
+    pub(crate) preparing_windows: std::collections::HashMap<fresh_core::WindowId, PreparingWindow>,
 
     /// Monotonic counter for the next session id. The base session
     /// uses 1; new sessions take 2, 3, …. Closing a session does
@@ -872,6 +1032,14 @@ pub struct Editor {
     /// `last_register`, and the `playing` guard flag).
     // `macros` moved onto `Window`.
 
+    /// Clickable lines per buffer, from `editor.setLineTargets`.
+    ///
+    /// Editor-owned rather than plugin-owned so a view outlives the script
+    /// that built it: a one-shot agent can leave behind an index whose lines
+    /// still open their targets long after it has exited.
+    #[cfg(feature = "plugins")]
+    line_targets: std::collections::HashMap<fresh_core::BufferId, Vec<fresh_core::api::LineTarget>>,
+
     /// Pending plugin action receivers (for async action execution)
     #[cfg(feature = "plugins")]
     pending_plugin_actions: Vec<(
@@ -882,6 +1050,47 @@ pub struct Editor {
     /// Flag set by plugin commands that need a render (e.g., RefreshLines)
     #[cfg(feature = "plugins")]
     plugin_render_requested: bool,
+
+    /// Clone of the buffer as it stood at the end of the previous render
+    /// pass. Ratatui's `swap_buffers` resets the "current" buffer, so at
+    /// the start of the next draw `frame.buffer_mut()` is blank rather
+    /// than the previous frame; animations need what the user actually
+    /// saw. Editor-wide, not per-window: only the active window paints,
+    /// so a per-window copy would go stale the moment focus moved, and
+    /// cross-window transitions read it from the *incoming* window.
+    last_rendered_frame: Option<ratatui::buffer::Buffer>,
+
+    /// Plugin commands the frame budget deferred, in arrival order. Drained
+    /// ahead of the plugin channel on the next tick so a burst is spread
+    /// across frames without reordering.
+    #[cfg(feature = "plugins")]
+    plugin_command_backlog: std::collections::VecDeque<fresh_core::api::PluginCommand>,
+
+    /// Cancellation flag for the in-flight `grepProject`, if any. A new
+    /// request supersedes the old one rather than queueing behind it.
+    #[cfg(feature = "plugins")]
+    grep_project_cancel: std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
+
+    /// Live `editor.setInterval` / `setTimeout` timers, checked once per
+    /// tick by `check_plugin_timers`. Held on the editor rather than in the
+    /// plugin runtime on purpose: the editor's tick is what runs whether or
+    /// not any JS is awaiting, which is the property that makes a timer fire
+    /// the same way regardless of where it was created.
+    #[cfg(feature = "plugins")]
+    plugin_timers: Vec<crate::app::plugin_timers::PluginTimer>,
+
+    /// Registered diff baselines (registerDiffBaseline plugin API family).
+    /// Shared with off-loop loader tasks; see `app/diff_baselines.rs`.
+    #[cfg(feature = "plugins")]
+    diff_baselines: crate::app::diff_baselines::BaselineStore,
+
+    /// Next baseline id to allocate (editor thread only).
+    #[cfg(feature = "plugins")]
+    next_diff_baseline_id: u64,
+
+    /// Async messages the frame budget deferred, in arrival order. Drained
+    /// ahead of the bridges on the next tick.
+    async_message_backlog: std::collections::VecDeque<crate::services::async_bridge::AsyncMessage>,
 
     /// Pending chord sequence for multi-key bindings (e.g., C-x C-s in Emacs)
     /// Stores the keys pressed so far in a chord sequence
@@ -972,6 +1181,20 @@ pub struct Editor {
 
     /// Periodic update checker (checks for new releases every hour)
     update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
+
+    /// Lifecycle of an interactive in-editor self-update, reflected by the
+    /// status-bar update indicator (see `SelfUpdatePhase`).
+    self_update_phase: crate::services::release_checker::SelfUpdatePhase,
+
+    /// The local terminal running an interactive self-update, if one is in
+    /// flight — matched against `TerminalExited` to move the indicator to its
+    /// terminal state. `None` once reaped.
+    self_update_terminal: Option<fresh_core::TerminalId>,
+
+    /// The (window, buffer) of the update terminal, so the indicator can switch
+    /// back to it on click. The update always runs locally, so this is a local
+    /// terminal buffer regardless of the window's authority.
+    self_update_output: Option<(fresh_core::WindowId, fresh_core::BufferId)>,
 
     // Terminal subsystem moved onto `Window` (Step 0d). PTYs and
     // their backing files belong to the window that spawned them, so
@@ -1134,6 +1357,43 @@ pub struct Editor {
     /// shown. Independent of `floating_widget_panel` so the dock persists
     /// while a centered modal is open. Always rendered as a `LeftDock`.
     pub(crate) dock: Option<FloatingWidgetState>,
+    /// Coarse UI-STATE GENERATION — the GEOMETRY/EPOCH half of the
+    /// `chrome_tree` memo key. Bumped at the event funnels
+    /// (`handle_key` entry, `handle_mouse` exit-when-rendering,
+    /// `handle_action`, `process_deferred_actions`, `relayout`, popup
+    /// show/hide, `editor_tick` when it did work, `render` end). The
+    /// counter is deliberately NOT trusted as a full invalidation
+    /// story: surface presence/claim changes are caught by comparing
+    /// the freshly built `overlay_stack` against the memo's snapshot
+    /// (see `chrome_tree`), because the set of Editor APIs that can
+    /// flip a layer predicate is unbounded and a hand-maintained bump
+    /// roster there was proven incomplete by CI. Over-invalidation is
+    /// fine; a validated hit can never be stale, and debug builds
+    /// oracle-check every hit against a fresh rebuild anyway.
+    pub(crate) ui_gen: u64,
+    /// Memoized `chrome_tree()`: (generation, the `overlay_stack`
+    /// snapshot the tree was built from, the tree). A hit requires the
+    /// generation to match AND a fresh stack build to equal the
+    /// snapshot.
+    pub(crate) chrome_tree_memo: std::cell::RefCell<
+        Option<(
+            u64,
+            Vec<crate::app::overlay::OwnedLayer>,
+            Vec<crate::app::chrome::ChromeBox>,
+        )>,
+    >,
+    /// Monotonic count of ACTUAL `chrome_tree` rebuilds (memo misses).
+    /// An unchanged value between two queries proves the tree — and the
+    /// validated inputs it derives from — did not change in between;
+    /// downstream per-event memos (the hover cell) key on this instead
+    /// of `ui_gen` so they inherit the stack-equality validation.
+    pub(crate) ui_tree_seq: std::cell::Cell<u64>,
+    /// The (tree seq, col, row) of the last completed hover pass: an
+    /// identical triple means the tree provably didn't change and the
+    /// cursor is on the same cell, so the walk and every
+    /// `on_hover_change` reaction would see identical inputs and the
+    /// pass is skipped.
+    pub(crate) hover_cell_memo: std::cell::Cell<Option<(u64, u16, u16)>>,
 
     /// Persisted width (columns) of the orchestrator left dock after the
     /// user drags its right border. `None` until first resized; when set,
@@ -1142,6 +1402,19 @@ pub struct Editor {
     pub(crate) dock_width: Option<u16>,
     /// True while the user is dragging the dock's right border to resize.
     pub(crate) dock_resizing: bool,
+    /// In-flight mouse drag-to-select on a widget markdown/text document:
+    /// armed by the press that placed the caret, extended on every Drag,
+    /// cleared on button-up. `anchor_flat` is the press position as a
+    /// flat byte offset into the widget's shadow TextEdit value.
+    pub(crate) widget_text_drag: Option<WidgetTextDrag>,
+}
+
+/// See [`Editor::widget_text_drag`].
+#[derive(Debug, Clone)]
+pub(crate) struct WidgetTextDrag {
+    pub panel: crate::widgets::PanelKey,
+    pub widget: String,
+    pub anchor_flat: usize,
 }
 
 /// Control plane for a long-running plugin child process.
@@ -1252,7 +1525,10 @@ pub(crate) struct FloatingWidgetState {
     /// Scrollable `List` widgets that overflowed, with the geometry
     /// the draw pass uses to paint a scrollbar. Refreshed on every
     /// render alongside `entries`/`embeds`.
-    pub scroll_regions: Vec<crate::widgets::ScrollRegion>,
+    /// The panel's layout-box tree from its most recent render — the
+    /// paint pass reads scrollable boxes (rect + scroll payload) from
+    /// it to draw overlay scrollbars.
+    pub boxes: Vec<crate::widgets::LayoutBox>,
     /// Screen-space scrollbar tracks computed at the last draw — used
     /// by the mouse hit-test to start/continue a scrollbar drag. One
     /// per overflowing list.
@@ -1321,31 +1597,48 @@ pub(crate) struct FloatingWidgetState {
     /// (web mode) since geometry is computed there without painting cells.
     /// `None` when the panel isn't a closable `Centered` modal.
     pub close_button_rect: Option<ratatui::layout::Rect>,
+    /// Widget key the pointer is currently over, tracked from mouse-move
+    /// events against this panel's hit areas. Empty for "nothing hovered".
+    ///
+    /// Feeds `RenderContext::hover_key` on the next render, where widgets
+    /// carrying a `hover_style` compare it against their own key. Only a
+    /// crossing between widgets changes it, so motion inside one control
+    /// costs nothing.
+    pub hovered_widget_key: String,
+    /// Per-row identity of the pointer's target inside a `List` / `Tree`,
+    /// taken from the hovered hit's `key` payload. Empty when the pointer
+    /// is over nothing, or over a widget whose hits carry no row key.
+    ///
+    /// `hovered_widget_key` alone can't light a single row: every row of a
+    /// tree shares the *tree's* spec key, so it names the list, not the
+    /// line under the pointer. This feeds `RenderContext::hover_item_key`,
+    /// which the list/tree collectors compare against each row's item key.
+    pub hovered_item_key: String,
     /// The open `Dropdown`'s option list, surfaced by the widget renderer
     /// for a screen-level floating pop-over (drawn by
     /// `render_floating_widget_panel` at the trigger's screen row, clipped
     /// to the terminal so it extends past the panel/modal frame). `None`
     /// when no keyed Dropdown in this panel is open. Refreshed on every
     /// render alongside `entries`.
-    pub dropdown_popup: Option<crate::widgets::DropdownPopup>,
+    pub popup: Option<crate::widgets::PanelPopup>,
     /// Screen-space hit rectangles for the open dropdown pop-over's option
     /// rows, recomputed on every draw (like `close_button_rect`). Each maps
     /// a terminal rect to the absolute option index; the mouse hit-test
     /// checks these BEFORE the panel-inner gate so a click on an option
     /// below the modal border still selects it. Empty when no pop-over is
     /// drawn.
-    pub dropdown_popup_hits: Vec<DropdownPopupOptionHit>,
+    pub popup_hits: Vec<PanelPopupOptionHit>,
     /// Full screen rect of the drawn dropdown pop-over box (border
     /// included), so a click anywhere inside it is consumed rather than
     /// dismissing the modal. `None` when no pop-over is drawn.
-    pub dropdown_popup_rect: Option<ratatui::layout::Rect>,
+    pub popup_rect: Option<ratatui::layout::Rect>,
 }
 
 /// One option row of the open dropdown pop-over, captured at draw time as
 /// a screen rect → absolute option index, so the mouse hit-test can route
 /// a click on the (panel-escaping) pop-over back to `dropdown_select`.
 #[derive(Debug, Clone)]
-pub(crate) struct DropdownPopupOptionHit {
+pub(crate) struct PanelPopupOptionHit {
     pub rect: ratatui::layout::Rect,
     pub index: usize,
 }
@@ -1448,6 +1741,12 @@ impl Editor {
         ids
     }
 
+    /// Counters for work that must not scale with buffer content. See
+    /// [`PerfCounters`].
+    pub fn perf_counters(&self) -> PerfCounters {
+        self.perf_counters
+    }
+
     /// Get the currently active buffer state
     pub fn active_state(&self) -> &EditorState {
         self.windows
@@ -1498,9 +1797,18 @@ impl Editor {
             .cursors
     }
 
-    /// Set completion items for type-to-filter (for testing)
+    /// Set completion items for type-to-filter (for testing).
+    ///
+    /// The items come from no server, so nothing can be resolved against
+    /// one: a `completionItem/resolve` needs the server that minted the
+    /// item's opaque `data`.
     pub fn set_completion_items(&mut self, items: Vec<lsp_types::CompletionItem>) {
-        self.active_window_mut().completion_items = Some(items);
+        self.active_window_mut().completion_items = Some(
+            items
+                .into_iter()
+                .map(crate::app::window::LspCompletionCandidate::unattributed)
+                .collect(),
+        );
     }
 
     /// Get the viewport for the active split
@@ -1877,7 +2185,7 @@ mod tests {
             focus_cursor: None,
             embeds: Vec::new(),
             overlays: Vec::new(),
-            scroll_regions: Vec::new(),
+            boxes: Vec::new(),
             scrollbar_tracks: Vec::new(),
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
@@ -1890,9 +2198,11 @@ mod tests {
             title: None,
             closable: false,
             close_button_rect: None,
-            dropdown_popup: None,
-            dropdown_popup_hits: Vec::new(),
-            dropdown_popup_rect: None,
+            hovered_widget_key: String::new(),
+            hovered_item_key: String::new(),
+            popup: None,
+            popup_hits: Vec::new(),
+            popup_rect: None,
         }
     }
 
@@ -3914,6 +4224,60 @@ mod tests {
             })
             .sum();
         assert!(view_state.tab_scroll_offset <= total_width);
+    }
+
+    /// Regression for sinelaw/fresh#2650 (Part 2).
+    ///
+    /// In a vertical split each pane's tab bar is only as wide as the pane,
+    /// but `ensure_active_tab_visible` used to be fed `effective_tabs_width`
+    /// (the whole editor width), so the scroll math ran against ~2x the real
+    /// width. `split_tabs_width` must report the focused split's real pane
+    /// width (minus the split-control button columns, which the tab bar
+    /// reserves) instead — roughly half the editor after a vertical split.
+    #[test]
+    fn split_tabs_width_reports_per_split_pane_width() {
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+
+        let full_width = editor.active_window().effective_tabs_width();
+
+        // Split vertically into two side-by-side panes.
+        editor.split_pane_vertical();
+
+        let panes: Vec<(crate::model::event::LeafId, u16)> = editor
+            .split_manager()
+            .get_visible_buffers(editor.active_window().editor_content_area())
+            .into_iter()
+            .map(|(leaf, _buf, area)| (leaf, area.width))
+            .collect();
+        assert_eq!(panes.len(), 2, "vertical split should yield two panes");
+
+        // Two side-by-side splits show the maximize + close buttons, so the tab
+        // bar reserves those columns; split_tabs_width reflects that.
+        let reserve = crate::view::ui::tabs::split_control_reserve(true, true);
+        for (leaf, pane_width) in &panes {
+            let w = editor.active_window().split_tabs_width(*leaf);
+            assert_eq!(
+                w,
+                pane_width.saturating_sub(reserve),
+                "split_tabs_width must equal the pane's real width minus the control-button reserve"
+            );
+            assert!(
+                w < full_width,
+                "each pane width ({}) must be narrower than the whole editor ({})",
+                w,
+                full_width
+            );
+        }
     }
 
     /// Regression for sinelaw/fresh#2229.

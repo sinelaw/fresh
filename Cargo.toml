@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/fresh-editor",
+    "crates/fresh-ui",
     "crates/fresh-gui",
     "crates/fresh-core",
     "crates/fresh-parser-js",
@@ -10,9 +11,11 @@ members = [
     "crates/fresh-plugin-api-macros",
     "crates/fresh-winterm",
     "crates/fresh-input-parser",
+    "crates/fresh-update",
 ]
 default-members = [
     "crates/fresh-editor",
+    "crates/fresh-ui",
     "crates/fresh-core",
     "crates/fresh-parser-js",
     "crates/fresh-languages",
@@ -20,10 +23,11 @@ default-members = [
     "crates/fresh-plugin-api-macros",
     "crates/fresh-winterm",
     "crates/fresh-input-parser",
+    "crates/fresh-update",
 ]
 
 [workspace.package]
-version = "0.4.4"
+version = "0.4.9"
 authors = ["Noam Lewis"]
 edition = "2021"
 license = "GPL-2.0"
@@ -33,17 +37,19 @@ documentation = "https://docs.rs/fresh-editor"
 
 [workspace.dependencies]
 # Local crates
-fresh-core = { version = "0.4.4", path = "crates/fresh-core" }
-fresh-gui = { version = "0.4.4", path = "crates/fresh-gui" }
-fresh-parser-js = { version = "0.4.4", path = "crates/fresh-parser-js" }
-fresh-languages = { version = "0.4.4", path = "crates/fresh-languages" }
-fresh-plugin-runtime = { version = "0.4.4", path = "crates/fresh-plugin-runtime" }
-fresh-plugin-api-macros = { version = "0.4.4", path = "crates/fresh-plugin-api-macros" }
-fresh-winterm = { version = "0.4.4", path = "crates/fresh-winterm" }
-fresh-input-parser = { version = "0.4.4", path = "crates/fresh-input-parser" }
+fresh-core = { version = "0.4.9", path = "crates/fresh-core" }
+fresh-gui = { version = "0.4.9", path = "crates/fresh-gui" }
+fresh-parser-js = { version = "0.4.9", path = "crates/fresh-parser-js" }
+fresh-languages = { version = "0.4.9", path = "crates/fresh-languages" }
+fresh-plugin-runtime = { version = "0.4.9", path = "crates/fresh-plugin-runtime" }
+fresh-plugin-api-macros = { version = "0.4.9", path = "crates/fresh-plugin-api-macros" }
+fresh-winterm = { version = "0.4.9", path = "crates/fresh-winterm" }
+fresh-input-parser = { version = "0.4.9", path = "crates/fresh-input-parser" }
+fresh-update = { version = "0.4.9", path = "crates/fresh-update" }
+fresh-ui = { version = "0.4.9", path = "crates/fresh-ui" }
 
 # External crates
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 jsonc-parser = { version = "0.32", features = ["serde", "serde_json", "cst"] }
 anyhow = { version = "1.0.100", default-features = false }

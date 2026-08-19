@@ -3,6 +3,7 @@
 use crate::input::commands::{CommandSource, Suggestion};
 use crate::primitives::display_width::{char_width, str_width};
 use crate::view::prompt::Prompt;
+use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -72,9 +73,10 @@ impl SuggestionsRenderer {
 
         // The scroll position is owned by the Prompt itself and only adjusted
         // when the selection moves out of the viewport (see
-        // `Prompt::ensure_selected_visible`, called once before render). This
-        // keeps a stable list under the cursor so a click near the bottom
-        // doesn't trigger a recenter that shifts items mid-double-click.
+        // `Prompt::ensure_selected_visible_within`, called once before
+        // render). This keeps a stable list under the cursor so a click near
+        // the bottom doesn't trigger a recenter that shifts items
+        // mid-double-click.
         let (start_idx, end_idx) = visible_range(prompt, visible_count);
         let visible_suggestions = &prompt.suggestions[start_idx..end_idx];
         let layout = ColumnLayout::compute(visible_suggestions, available_width);
@@ -108,6 +110,27 @@ impl SuggestionsRenderer {
         if draw {
             let paragraph = Paragraph::new(lines).block(block);
             frame.render_widget(paragraph, area);
+
+            // When the list overflows the viewport, draw a scrollbar over
+            // the right border so the user can tell more entries exist and
+            // how far through them the viewport is (issues #623 / #1593).
+            // The borderless variant (floating overlay) carves its own
+            // scrollbar lane next to the list instead.
+            if with_border && prompt.suggestions.len() > visible_count && inner_area.height > 0 {
+                let scrollbar_area = Rect {
+                    x: inner_area.x + inner_area.width,
+                    y: inner_area.y,
+                    width: 1,
+                    height: inner_area.height,
+                };
+                let state = ScrollbarState::new(prompt.suggestions.len(), visible_count, start_idx);
+                render_scrollbar(
+                    frame,
+                    scrollbar_area,
+                    &state,
+                    &ScrollbarColors::from_theme(theme),
+                );
+            }
         }
 
         // Return area info for mouse hit testing
@@ -830,6 +853,59 @@ mod tests {
             all.contains("important_file.rs"),
             "a path must keep its trailing filename visible:\n{all}"
         );
+    }
+
+    /// When the suggestion list overflows the popup, a scrollbar must be
+    /// drawn over the right border so the user can tell more entries exist
+    /// (issues #623 / #1593). The scrollbar paints background-colored
+    /// cells, so the border column's `│` glyphs disappear on those rows.
+    #[test]
+    fn overflowing_list_draws_scrollbar_on_right_border() {
+        let suggestions: Vec<Suggestion> = (0..30)
+            .map(|i| Suggestion::new(format!("Command {i:02}")))
+            .collect();
+        let mut prompt = palette_prompt(suggestions);
+        prompt.selected_suggestion = Some(0);
+
+        // 12 rows: 10 inner rows for 30 suggestions -> overflow.
+        let width: u16 = 60;
+        let rows = render_rows(&prompt, width, 12);
+        let border_col = (width - 1) as usize;
+        let scrollbar_cells = (1..11)
+            .filter(|&y| {
+                let cell: String = rows[y].chars().nth(border_col).unwrap().to_string();
+                cell != "│"
+            })
+            .count();
+        assert_eq!(
+            scrollbar_cells,
+            10,
+            "all inner border rows must be covered by the scrollbar track/thumb:\n{}",
+            rows.join("\n")
+        );
+    }
+
+    /// A list that fits entirely in the popup keeps its plain right border —
+    /// no scrollbar noise.
+    #[test]
+    fn fitting_list_keeps_plain_right_border() {
+        let suggestions: Vec<Suggestion> = (0..5)
+            .map(|i| Suggestion::new(format!("Command {i}")))
+            .collect();
+        let prompt = palette_prompt(suggestions);
+
+        let width: u16 = 60;
+        let rows = render_rows(&prompt, width, 12);
+        let border_col = (width - 1) as usize;
+        for y in 1..11 {
+            let cell: String = rows[y].chars().nth(border_col).unwrap().to_string();
+            assert_eq!(
+                cell,
+                "│",
+                "row {y} must keep the plain border when the list fits:\n{}",
+                rows.join("\n")
+            );
+        }
     }
 
     /// Test that truncation produces valid UTF-8 output

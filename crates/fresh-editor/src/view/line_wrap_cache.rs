@@ -67,10 +67,15 @@ pub enum CacheViewMode {
 /// layout.  Every mutable input must be represented here — if the
 /// caller forgets one, stale entries can be returned.
 ///
-/// The `pipeline_inputs_version` folds in the buffer version plus the
-/// soft-break and conceal managers' versions (see
-/// [`pipeline_inputs_version`]).  The remaining fields are geometry /
-/// viewport config.
+/// `pipeline_inputs_version` is the buffer version, and that is
+/// sufficient: the only live consumer is [`RowCountCache`], whose value
+/// is a pure function of the line's raw text and the geometry fields
+/// below.  Decorations never enter it — `Viewport`'s row counting adds
+/// virtual rows *outside* the cache and returns before consulting it at
+/// all when soft breaks apply — so a decoration version could not stale
+/// an entry.  Layout that does model decorations goes through
+/// [`WrapIndex`](crate::view::wrap_index::WrapIndex), which keys on the
+/// full [`PipelineInputs`] instead.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct LineWrapKey {
     pub pipeline_inputs_version: u64,
@@ -81,13 +86,20 @@ pub struct LineWrapKey {
     pub wrap_column: Option<u32>,
     pub hanging_indent: bool,
     pub line_wrap_enabled: bool,
+    /// Terminal-grid wrap mode (fresh#2649): rows break at exact column
+    /// boundaries (`effective_width` columns) with no word-boundary
+    /// preference, no hanging indent, and no gutter — matching the live
+    /// PTY grid so entering scroll-back doesn't reflow. Only terminal
+    /// buffers set this; it keys separately from word-wrap entries at the
+    /// same geometry.
+    pub grid_wrap: bool,
     /// Signature of the cursor positions inside this line (see
     /// [`cursor_sig_for_line`]). Cursor-dependent conceal/soft-break
     /// activation makes the cursor line's layout a function of where the
     /// cursors sit within it; folding that into the key means a cursor
     /// move invalidates at most the two lines whose signature changed
     /// while every other entry stays valid. Cursor-blind consumers
-    /// (`VisualRowIndex`, scroll math) always use `0` — the canonical
+    /// (`WrapIndex`, scroll math) always use `0` — the canonical
     /// "no cursor anywhere" layout.
     pub cursor_sig: u64,
 }
@@ -112,33 +124,39 @@ pub fn cursor_sig_for_line(cursors: &[usize], line_start: usize, line_end: usize
     sig
 }
 
-/// Derive the combined pipeline-inputs version from the three source
-/// versions.  Any change to any of them flips the combined value.  This
-/// is not a hash — it's a packed integer with enough bit-budget to make
-/// accidental collisions astronomically unlikely in a single session.
+/// The versions of everything that feeds line layout, kept apart.
 ///
-/// * `buffer_version` gets the low 32 bits (wrapped to u32).  Buffer
-///   edits are the most frequent source of change.
-/// * `soft_breaks_version` is shifted up 32 bits.
-/// * `conceal_version` is shifted up 48 bits.
-/// * `virtual_text_version` is shifted up 16 bits.  Folded so that
-///   adding / removing plugin virtual lines (e.g.
-///   markdown_compose's table borders, git blame headers)
-///   invalidates the same caches the other three sources do —
-///   `VisualRowIndex` adds virtual line counts to its prefix sums and
-///   would otherwise serve a stale total when the plugin re-tiles a
-///   table.
-#[inline]
-pub fn pipeline_inputs_version(
-    buffer_version: u64,
-    soft_breaks_version: u32,
-    conceal_version: u32,
-    virtual_text_version: u32,
-) -> u64 {
-    (buffer_version & 0xFFFF_FFFF)
-        ^ ((soft_breaks_version as u64) << 32)
-        ^ ((conceal_version as u64) << 48)
-        ^ ((virtual_text_version as u64) << 16)
+/// This replaces a packed-XOR `u64`: equality still answers "is anything
+/// stale", but the components stay visible, and *which* one moved is the
+/// load-bearing distinction — a buffer edit is repaired locally by
+/// [`WrapIndex::damage_bytes`](crate::view::wrap_index::WrapIndex::damage_bytes),
+/// while a decoration change is repaired by diffing the old decoration
+/// snapshot against the new one. A packed integer could express neither
+/// without unpacking tricks, and its collision story ("astronomically
+/// unlikely") is replaced by plain field equality.
+///
+/// `virtual_text` is folded in so that adding / removing plugin virtual
+/// lines (e.g. markdown_compose's table borders, git blame headers)
+/// invalidates the same consumers the other sources do — `WrapIndex` adds
+/// virtual line counts to its prefix sums and would otherwise serve a
+/// stale total when the plugin re-tiles a table.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct PipelineInputs {
+    pub buffer: u64,
+    pub soft_breaks: u32,
+    pub conceals: u32,
+    pub virtual_text: u32,
+}
+
+impl PipelineInputs {
+    /// Do the decoration components (everything except the buffer text)
+    /// match? The buffer half has its own repair channel, so this is the
+    /// question `ensure_built` asks to pick diff-repair over rebuild.
+    pub fn decorations_match(&self, other: &PipelineInputs) -> bool {
+        self.soft_breaks == other.soft_breaks
+            && self.conceals == other.conceals
+            && self.virtual_text == other.virtual_text
+    }
 }
 
 /// Estimate the in-memory size of a `Vec<ViewLine>` for byte-budget
@@ -311,14 +329,36 @@ pub fn layout_for_plain_text(
     hanging_indent: bool,
     tab_size: usize,
 ) -> Vec<ViewLine> {
+    use crate::view::wrap_machine::WrapRule;
+    layout_for_plain_text_under(
+        line_text,
+        WrapRule::Word {
+            content_width: effective_width,
+            gutter_width,
+            hanging_indent,
+        },
+        tab_size,
+    )
+}
+
+/// Materialise a plain line's layout under any wrap rule: run the machine,
+/// then turn its token stream into `ViewLine`s.  The single body behind
+/// [`layout_for_plain_text`] and [`layout_for_plain_text_grid`] — the two
+/// differ only in which rule they hand the machine.
+fn layout_for_plain_text_under(
+    line_text: &str,
+    rule: crate::view::wrap_machine::WrapRule,
+    tab_size: usize,
+) -> Vec<ViewLine> {
     use crate::view::ui::view_pipeline::LineStart;
+    use crate::view::wrap_machine::WrapMachine;
     use fresh_core::api::ViewTokenWire;
     let tokens = vec![ViewTokenWire {
         source_offset: Some(0),
         kind: ViewTokenWireKind::Text(line_text.to_string()),
         style: None,
     }];
-    let wrapped = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
+    let wrapped = WrapMachine::run(tokens, rule).tokens;
     let mut lines: Vec<ViewLine> =
         ViewLineIterator::new(&wrapped, false, true, tab_size, false).collect();
     // Invariant: every logical line is at least one visual row.  An
@@ -341,41 +381,6 @@ pub fn layout_for_plain_text(
         });
     }
     lines
-}
-
-/// Look up a line's layout in the cache, running the mini-pipeline to
-/// fill on miss.  The primary read-path entry point for consumers that
-/// need full `ViewLine` layout (not just row count).
-///
-/// Guarantees that the value returned matches what the renderer would
-/// produce for the same line under the same pipeline inputs: same
-/// function chain is called either way, so cache hit and miss are
-/// indistinguishable to the caller.
-pub fn layout_for_line(
-    state: &mut EditorState,
-    line_start: usize,
-    line_end: usize,
-    geom: &WrapGeometry,
-    cursors: &[usize],
-) -> Arc<Vec<ViewLine>> {
-    let version = pipeline_inputs_version(
-        state.buffer.version(),
-        state.soft_breaks.version(),
-        state.conceals.version(),
-        state.virtual_texts.version(),
-    );
-    let key = geom.key(
-        line_start,
-        version,
-        cursor_sig_for_line(cursors, line_start, line_end),
-    );
-    if let Some(cached) = state.line_wrap_cache.get(&key) {
-        return cached;
-    }
-    let layout = compute_line_layout(state, line_start, line_end, geom, cursors);
-    let arc = Arc::new(layout);
-    state.line_wrap_cache.put(key, arc.clone());
-    arc
 }
 
 /// Given a logical line's layout and a character position within the
@@ -448,6 +453,10 @@ pub struct WrapGeometry {
     pub hanging_indent: bool,
     pub wrap_column: Option<u32>,
     pub line_wrap_enabled: bool,
+    /// Terminal-grid wrap (see [`LineWrapKey::grid_wrap`]): exact-column
+    /// breaks at `effective_width`, ignoring `gutter_width` /
+    /// `hanging_indent` / `wrap_column`.
+    pub grid_wrap: bool,
     pub view_mode: CacheViewMode,
 }
 
@@ -471,6 +480,7 @@ impl WrapGeometry {
             wrap_column: self.wrap_column,
             hanging_indent: self.hanging_indent,
             line_wrap_enabled: self.line_wrap_enabled,
+            grid_wrap: self.grid_wrap,
             cursor_sig,
         }
     }
@@ -519,16 +529,27 @@ pub fn compute_line_layout(
         is_binary,
         line_ending,
         &[], // no fold skip ranges — folds affect what's rendered, not per-line wrap count
+        // No character budget: callers ask this for the line's *total* visual
+        // row count, so a viewport-sized read would under-report it.
+        None,
+        false,
     );
 
     let is_compose = matches!(geom.view_mode, CacheViewMode::Compose);
 
     // Step 2: soft breaks (Compose mode only; same gating as the renderer).
     if is_compose && !state.soft_breaks.is_empty() {
-        let sb =
-            state
-                .soft_breaks
-                .query_viewport(line_start, line_end, &state.marker_list, cursors);
+        // `theme: None` — this output feeds scroll math and coordinate
+        // queries, never the screen, so a continuation prefix's colour is
+        // irrelevant here. Its *width* is not, and that comes through
+        // regardless (same split as `resolve_inline_hints` below).
+        let sb = state.soft_breaks.query_viewport_rendered(
+            line_start,
+            line_end,
+            &state.marker_list,
+            cursors,
+            None,
+        );
         if !sb.is_empty() {
             tokens = apply_soft_breaks(tokens, &sb);
         }
@@ -550,19 +571,31 @@ pub fn compute_line_layout(
     // feeds scroll-math / coordinate queries (never drawn), so only cell
     // width matters, not colour.
     if !state.virtual_texts.is_empty() {
-        tokens = splice_inline_virtual_text(tokens, state, None, line_start, line_end);
+        let hints = crate::view::ui::split_rendering::transforms::resolve_inline_hints(
+            state, None, line_start, line_end,
+        );
+        tokens = splice_inline_virtual_text(tokens, &hints);
     }
 
     // Step 4: wrap (only when line-wrap is actually enabled).  When
     // disabled, pass tokens through unchanged; ViewLineIterator will
     // still yield one ViewLine per Newline boundary.
     if geom.line_wrap_enabled {
-        tokens = apply_wrapping_transform(
-            tokens,
-            geom.effective_width,
-            geom.gutter_width,
-            geom.hanging_indent,
-        );
+        if geom.grid_wrap {
+            // Terminal-grid wrap: exact-column breaks at effective_width,
+            // matching the live PTY grid's row layout (fresh#2649).
+            tokens = crate::view::ui::split_rendering::transforms::apply_grid_wrapping_transform(
+                tokens,
+                geom.effective_width,
+            );
+        } else {
+            tokens = apply_wrapping_transform(
+                tokens,
+                geom.effective_width,
+                geom.gutter_width,
+                geom.hanging_indent,
+            );
+        }
     }
 
     // Materialise the ViewLines.  `build_base_tokens` may emit tokens
@@ -606,62 +639,63 @@ pub fn compute_line_layout(
     result
 }
 
-/// Row count only.  Thin wrapper over [`compute_line_layout`] for
-/// callers that need just the visual-row count — scroll math,
-/// thumb-size math.  Prefer calling through the cache
-/// (`get_or_insert_with(key, || compute_line_layout(...)).len()`).
-pub fn count_visual_rows_via_pipeline(
-    state: &mut EditorState,
-    line_start: usize,
-    line_end: usize,
-    geom: &WrapGeometry,
-) -> u32 {
-    // Cursor-blind by convention: scroll math sees the canonical
-    // "no cursor anywhere" layout (activation rules evaluated with no
-    // cursors), consistent with `VisualRowIndex`.
-    compute_line_layout(state, line_start, line_end, geom, &[]).len() as u32
-}
-
-/// Combined version of all pipeline inputs on the given state.  Fold into
-/// a `LineWrapKey` to make stale entries unreachable on any mutation.
-#[inline]
-pub fn state_pipeline_inputs_version(state: &EditorState) -> u64 {
-    pipeline_inputs_version(
-        state.buffer.version(),
-        state.soft_breaks.version(),
-        state.conceals.version(),
-        state.virtual_texts.version(),
-    )
-}
-
-/// Build a placeholder `Vec<ViewLine>` of a given row count for cache
-/// consumers that only need `.len()` (e.g. scroll math's count-only
-/// queries, or the per-viewport row-count memoization).  The returned
-/// `ViewLine`s have empty char/visual mappings — they carry no real
-/// layout information.
+/// Row counts keyed the same way [`LineWrapCache`] keys layouts, for the
+/// consumers that only ever ask "how many rows?" — the viewport's scroll
+/// hot paths.
 ///
-/// This exists because the cache is typed on `Vec<ViewLine>` so the
-/// cross-consumer path can share real layout, but some call sites
-/// don't yet have access to `EditorState` (needed by
-/// [`compute_line_layout`]).  When those sites are migrated to take
-/// `&mut EditorState`, this helper can go away.
-pub fn placeholder_layout_for_row_count(n: u32) -> Vec<ViewLine> {
-    use crate::view::ui::view_pipeline::LineStart;
-    (0..n)
-        .map(|_| ViewLine {
-            text: String::new(),
-            source_start_byte: None,
-            char_source_bytes: Vec::new(),
-            char_styles: Vec::new(),
-            char_visual_cols: Vec::new(),
-            visual_to_char: Vec::new(),
-            tab_starts: std::collections::HashSet::new(),
-            line_start: LineStart::Beginning,
-            ends_with_newline: false,
-            virtual_gutter_glyph: None,
-            virtual_line_style: None,
-        })
-        .collect()
+/// Separate from `LineWrapCache` because the value really is a `u32`:
+/// storing counts as `Vec<ViewLine>` of that length, as this memo used to,
+/// allocated thousands of empty `ViewLine`s per miss on a long line and
+/// needed a byte-budget evictor to keep them in check. Counts are uniform,
+/// so a plain entry cap is the right bound.
+#[derive(Debug, Clone)]
+pub struct RowCountCache {
+    map: HashMap<LineWrapKey, u32>,
+    order: VecDeque<LineWrapKey>,
+    capacity: usize,
+}
+
+impl RowCountCache {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            capacity: capacity.max(1),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    /// Read the cached count, or compute and store one. FIFO eviction once
+    /// `capacity` entries are held.
+    pub fn get_or_insert_with<F: FnOnce() -> u32>(&mut self, key: LineWrapKey, compute: F) -> u32 {
+        if let Some(&n) = self.map.get(&key) {
+            return n;
+        }
+        let n = compute();
+        while self.map.len() >= self.capacity {
+            match self.order.pop_front() {
+                Some(oldest) => {
+                    self.map.remove(&oldest);
+                }
+                None => break,
+            }
+        }
+        self.order.push_back(key);
+        self.map.insert(key, n);
+        n
+    }
+
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+    }
 }
 
 /// Count visual rows for a single line's text after applying the
@@ -794,7 +828,7 @@ pub fn count_visual_rows_for_text(
     gutter_width: usize,
     hanging_indent: bool,
 ) -> u32 {
-    use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
+    use crate::view::wrap_machine::{WrapMachine, WrapRule};
     use fresh_core::api::ViewTokenWire;
 
     let tokens = vec![ViewTokenWire {
@@ -802,32 +836,75 @@ pub fn count_visual_rows_for_text(
         kind: ViewTokenWireKind::Text(line_text.to_string()),
         style: None,
     }];
-    let wrapped = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
-    let mut rows: u32 = 0;
-    let mut row_has_content = false;
-    for t in &wrapped {
-        match &t.kind {
-            ViewTokenWireKind::Newline => break,
-            ViewTokenWireKind::Break => {
-                if row_has_content {
-                    rows += 1;
-                }
-                row_has_content = false;
-            }
-            ViewTokenWireKind::Text(s) => {
-                if !s.is_empty() {
-                    row_has_content = true;
-                }
-            }
-            ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
-                row_has_content = true;
-            }
-        }
+    let out = WrapMachine::run(
+        tokens,
+        WrapRule::Word {
+            content_width: effective_width,
+            gutter_width,
+            hanging_indent,
+        },
+    );
+    (out.rows.len() as u32).max(1)
+}
+
+/// Row count under the terminal-grid rule (fresh#2649).
+///
+/// Drives the same machine as the renderer, so the count and the drawn rows
+/// cannot disagree — the divergence that made scroll-back stick.
+pub fn count_visual_rows_for_text_grid(line_text: &str, cols: usize) -> u32 {
+    use crate::view::wrap_machine::{WrapMachine, WrapRule};
+    use fresh_core::api::ViewTokenWire;
+
+    if cols == 0 {
+        return 1;
     }
-    if row_has_content {
-        rows += 1;
+    let tokens = vec![ViewTokenWire {
+        source_offset: Some(0),
+        kind: ViewTokenWireKind::Text(line_text.to_string()),
+        style: None,
+    }];
+    let out = WrapMachine::run(tokens, WrapRule::Grid { cols });
+    (out.rows.len() as u32).max(1)
+}
+
+/// Absolute source byte of each grid-wrap visual row of `line_text` at `cols`
+/// columns, where `line_start` is the line's byte offset. Grid-mode
+/// counterpart of `viewport::wrap_segment_source_bytes` — PageUp/PageDown use
+/// it to find the byte of the visual row at the top of the viewport.
+///
+/// Drives the same machine as the renderer, so the byte mapping and the drawn
+/// rows cannot disagree (fresh#2649).
+pub fn grid_segment_source_bytes(line_text: &str, line_start: usize, cols: usize) -> Vec<usize> {
+    use crate::view::wrap_machine::{WrapMachine, WrapRule};
+    use fresh_core::api::ViewTokenWire;
+
+    if cols == 0 {
+        return vec![line_start];
     }
-    rows.max(1)
+    let tokens = vec![ViewTokenWire {
+        source_offset: Some(line_start),
+        kind: ViewTokenWireKind::Text(line_text.to_string()),
+        style: None,
+    }];
+    let out = WrapMachine::run(tokens, WrapRule::Grid { cols });
+    let mut rows: Vec<usize> = out
+        .rows
+        .iter()
+        .map(|r| r.source_byte.unwrap_or(line_start))
+        .collect();
+    if rows.is_empty() {
+        rows.push(line_start);
+    }
+    rows
+}
+
+/// Grid-mode counterpart of [`layout_for_plain_text`]: materialise a line's
+/// layout as `Vec<ViewLine>` under terminal-grid wrapping at `cols` columns.
+/// Matches the renderer's `apply_grid_wrapping_transform` output for the
+/// same text, so row counts and cursor mappings agree with what is drawn.
+pub fn layout_for_plain_text_grid(line_text: &str, cols: usize, tab_size: usize) -> Vec<ViewLine> {
+    use crate::view::wrap_machine::WrapRule;
+    layout_for_plain_text_under(line_text, WrapRule::Grid { cols }, tab_size)
 }
 
 #[cfg(test)]
@@ -845,8 +922,50 @@ mod tests {
             wrap_column: None,
             hanging_indent: false,
             line_wrap_enabled: true,
+            grid_wrap: false,
             cursor_sig: 0,
         }
+    }
+
+    #[test]
+    fn row_count_cache_serves_hits_and_evicts_oldest_first() {
+        let mut cache = RowCountCache::with_capacity(2);
+        let mut misses = 0;
+        let count = |cache: &mut RowCountCache, line: usize, n: u32, misses: &mut usize| {
+            cache.get_or_insert_with(key(line, 1), || {
+                *misses += 1;
+                n
+            })
+        };
+
+        assert_eq!(count(&mut cache, 0, 3, &mut misses), 3);
+        assert_eq!(count(&mut cache, 10, 5, &mut misses), 5);
+        assert_eq!(misses, 2);
+
+        // A repeat is served from the map, not recomputed.
+        assert_eq!(count(&mut cache, 0, 999, &mut misses), 3);
+        assert_eq!(misses, 2);
+
+        // The third distinct key evicts the oldest (line 0), not line 10.
+        assert_eq!(count(&mut cache, 20, 7, &mut misses), 7);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(count(&mut cache, 10, 999, &mut misses), 5);
+        assert_eq!(misses, 3);
+        assert_eq!(count(&mut cache, 0, 42, &mut misses), 42);
+        assert_eq!(misses, 4);
+
+        cache.clear();
+        assert!(cache.is_empty());
+    }
+
+    /// A different `pipeline_inputs_version` is a different key, so an edit
+    /// makes stale counts unreachable rather than needing invalidation.
+    #[test]
+    fn row_count_cache_is_keyed_on_the_pipeline_version() {
+        let mut cache = RowCountCache::with_capacity(8);
+        assert_eq!(cache.get_or_insert_with(key(0, 1), || 3), 3);
+        assert_eq!(cache.get_or_insert_with(key(0, 2), || 9), 9);
+        assert_eq!(cache.get_or_insert_with(key(0, 1), || 0), 3);
     }
 
     /// Build a dummy `Vec<ViewLine>` of length `n` for primitive tests
@@ -980,28 +1099,32 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_inputs_version_changes_when_any_source_changes() {
-        let a = pipeline_inputs_version(100, 5, 3, 7);
-        assert_ne!(
-            a,
-            pipeline_inputs_version(101, 5, 3, 7),
-            "buffer bump changes version"
+    fn pipeline_inputs_distinguishes_the_buffer_from_the_decorations() {
+        let a = PipelineInputs {
+            buffer: 100,
+            soft_breaks: 5,
+            conceals: 3,
+            virtual_text: 7,
+        };
+        assert_ne!(a, PipelineInputs { buffer: 101, ..a });
+        assert!(
+            a.decorations_match(&PipelineInputs { buffer: 101, ..a }),
+            "a buffer edit alone leaves the decoration half current"
         );
-        assert_ne!(
-            a,
-            pipeline_inputs_version(100, 6, 3, 7),
-            "soft-break bump changes version"
-        );
-        assert_ne!(
-            a,
-            pipeline_inputs_version(100, 5, 4, 7),
-            "conceal bump changes version"
-        );
-        assert_ne!(
-            a,
-            pipeline_inputs_version(100, 5, 3, 8),
-            "virtual-text bump changes version"
-        );
+        for changed in [
+            PipelineInputs {
+                soft_breaks: 6,
+                ..a
+            },
+            PipelineInputs { conceals: 4, ..a },
+            PipelineInputs {
+                virtual_text: 8,
+                ..a
+            },
+        ] {
+            assert_ne!(a, changed);
+            assert!(!a.decorations_match(&changed));
+        }
     }
 
     #[test]
@@ -1153,6 +1276,102 @@ mod tests {
         for _ in 0..16 {
             let r = count_visual_rows_for_text(text, w, g, false);
             assert_eq!(r, r1, "non-deterministic row count");
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Terminal-grid wrap (fresh#2649).
+    // -------------------------------------------------------------------
+
+    /// Grid counting basics: exact-column breaks, no word-boundary
+    /// preference, ANSI escapes zero-width, wide chars two cells.
+    #[test]
+    fn grid_count_basics() {
+        // Empty line is one row at any width.
+        assert_eq!(count_visual_rows_for_text_grid("", 20), 1);
+        // Exact fit stays one row; one more char wraps.
+        assert_eq!(count_visual_rows_for_text_grid(&"a".repeat(20), 20), 1);
+        assert_eq!(count_visual_rows_for_text_grid(&"a".repeat(21), 20), 2);
+        assert_eq!(count_visual_rows_for_text_grid(&"a".repeat(40), 20), 2);
+        assert_eq!(count_visual_rows_for_text_grid(&"a".repeat(41), 20), 3);
+        // Words are split mid-word at the exact column — 6 words of 5
+        // chars minus the trailing space = 29 visible cells at width 10.
+        assert_eq!(
+            count_visual_rows_for_text_grid("word1 word2 word3 word4 word5", 10),
+            3
+        );
+        // SGR color codes are zero width.
+        let colored = format!("\x1b[31m{}\x1b[0m", "x".repeat(20));
+        assert_eq!(count_visual_rows_for_text_grid(&colored, 20), 1);
+        // Wide chars take two cells: 10 CJK chars = 20 cells.
+        let cjk = "\u{4e16}".repeat(10);
+        assert_eq!(count_visual_rows_for_text_grid(&cjk, 20), 1);
+        assert_eq!(count_visual_rows_for_text_grid(&cjk, 19), 2);
+    }
+
+    /// A wide char that would straddle the boundary moves to the next row
+    /// whole (like the grid's early wrap) — the count follows the same
+    /// walk, not a `ceil(total/cols)` shortcut.
+    #[test]
+    fn grid_count_wide_char_straddles_boundary() {
+        // 19 narrow cells then a wide char at width 20: the wide char
+        // doesn't fit in the single remaining cell → next row.
+        let text = format!("{}\u{4e16}", "a".repeat(19));
+        assert_eq!(count_visual_rows_for_text_grid(&text, 20), 2);
+    }
+
+    /// The transform-backed layout (what the renderer draws), the
+    /// allocation-free count (what scroll math uses), and the segment
+    /// byte map (what PageUp/Down use) must agree row-for-row — the
+    /// single-row-model invariant that keeps terminal scroll-back
+    /// scrolling stable (fresh#2649 symptom 2).
+    #[test]
+    fn grid_layout_count_and_segments_agree() {
+        let texts: Vec<String> = vec![
+            String::new(),
+            "short".into(),
+            "a".repeat(99),
+            "a".repeat(100),
+            "a".repeat(101),
+            "word1 word2 word3 word4 word5 word6 word7 word8".into(),
+            format!("\x1b[31mred{}\x1b[0m tail", "x".repeat(50)),
+            format!("{}{}", "\u{4e16}".repeat(13), "mixed latin \u{e9}\u{5d0}"),
+            format!("prompt$ {}", "argword ".repeat(30)),
+        ];
+        for text in &texts {
+            for cols in [7usize, 10, 20, 33, 99] {
+                let count = count_visual_rows_for_text_grid(text, cols) as usize;
+                let layout = layout_for_plain_text_grid(text, cols, 4);
+                assert_eq!(
+                    layout.len(),
+                    count,
+                    "layout rows != counted rows for cols={cols} text={text:?}"
+                );
+                let segs = grid_segment_source_bytes(text, 0, cols);
+                assert_eq!(
+                    segs.len(),
+                    count,
+                    "segment starts != counted rows for cols={cols} text={text:?}"
+                );
+                // Each row's first source byte must match the segment map.
+                for (i, row) in layout.iter().enumerate() {
+                    if let Some(first) = row.char_source_bytes.iter().find_map(|b| *b) {
+                        assert_eq!(
+                            first, segs[i],
+                            "row {i} first byte mismatch for cols={cols} text={text:?}"
+                        );
+                    }
+                    // No visible row is wider than the grid... except a
+                    // trailing newline cell which ViewLine carries.
+                    let vis = row
+                        .visual_width()
+                        .saturating_sub(usize::from(row.ends_with_newline));
+                    assert!(
+                        vis <= cols,
+                        "row {i} wider than grid ({vis} > {cols}) for text={text:?}"
+                    );
+                }
+            }
         }
     }
 
@@ -1347,6 +1566,7 @@ mod tests {
                 wrap_column: None,
                 hanging_indent: false,
                 line_wrap_enabled: true,
+                grid_wrap: false,
                 cursor_sig: 0,
             };
             let real_val = real.get_or_insert_with(key, || dummy_lines(shadow_rows));
@@ -1380,6 +1600,7 @@ mod tests {
             wrap_column: None,
             hanging_indent: false,
             line_wrap_enabled: true,
+            grid_wrap: false,
             cursor_sig: 0,
         };
         cache.get_or_insert_with(key_v0, || dummy_lines(5));
@@ -1423,11 +1644,12 @@ mod tests {
             wrap_column: None,
             hanging_indent: false,
             line_wrap_enabled: true,
+            grid_wrap: false,
             cursor_sig: 0,
         };
 
         // Vary each field in turn; each variation must be a distinct key.
-        let variations: [LineWrapKey; 8] = [
+        let variations: [LineWrapKey; 9] = [
             LineWrapKey {
                 pipeline_inputs_version: 2,
                 ..base
@@ -1459,6 +1681,10 @@ mod tests {
             LineWrapKey {
                 line_wrap_enabled: false,
                 cursor_sig: 0,
+                ..base
+            },
+            LineWrapKey {
+                grid_wrap: true,
                 ..base
             },
         ];

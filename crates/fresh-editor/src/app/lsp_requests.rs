@@ -15,6 +15,7 @@ use rust_i18n::t;
 use std::io;
 use std::time::{Duration, Instant};
 
+use crate::app::window::LspCompletionCandidate;
 use crate::model::event::{BufferId, Event};
 use crate::primitives::word_navigation::{find_word_end, find_word_start};
 use crate::view::prompt::{Prompt, PromptType};
@@ -108,18 +109,20 @@ impl Editor {
         request_id: u64,
         items: Vec<lsp_types::CompletionItem>,
     ) -> AnyhowResult<()> {
-        // Check if this is one of the pending completion requests
-        if !self
+        // Check if this is one of the pending completion requests. Removing
+        // it also names the server that answered — the candidates below are
+        // only resolvable against that one.
+        let Some(server) = self
             .active_window_mut()
             .pending_completion_requests
             .remove(&request_id)
-        {
+        else {
             tracing::debug!(
                 "Ignoring completion response for outdated request {}",
                 request_id
             );
             return Ok(());
-        }
+        };
 
         if items.is_empty() {
             tracing::debug!("No completion items received");
@@ -134,76 +137,55 @@ impl Editor {
         }
 
         // Get the partial word at cursor to filter completions
-        use crate::primitives::word_navigation::find_completion_word_start;
-        let cursor_pos = self.active_cursors().primary().position;
-        let (word_start, cursor_pos) = {
-            let state = self.active_state();
-            let word_start = find_completion_word_start(&state.buffer, cursor_pos);
-            (word_start, cursor_pos)
-        };
-        let prefix = if word_start < cursor_pos {
-            self.active_state_mut()
-                .get_text_range(word_start, cursor_pos)
-                .to_lowercase()
-        } else {
-            String::new()
-        };
+        use crate::app::popup_actions::completion_matches_prefix;
+        let prefix = self.completion_word_prefix();
 
-        let matches_prefix = |item: &lsp_types::CompletionItem| -> bool {
-            prefix.is_empty()
-                || item.label.to_lowercase().starts_with(&prefix)
-                || item
-                    .filter_text
-                    .as_ref()
-                    .map(|ft| ft.to_lowercase().starts_with(&prefix))
-                    .unwrap_or(false)
-        };
+        let any_new_match = items
+            .iter()
+            .any(|item| completion_matches_prefix(item, &prefix));
 
-        let filtered_items: Vec<&lsp_types::CompletionItem> =
-            items.iter().filter(|item| matches_prefix(item)).collect();
-
-        if filtered_items.is_empty() && self.active_window().completion_items.is_none() {
+        if !any_new_match && self.active_window().completion_items.is_none() {
             tracing::debug!("No completion items match prefix '{}'", prefix);
             return Ok(());
         }
 
-        // Store/extend original items for type-to-filter (merge from multiple servers)
+        // Store/extend original items for type-to-filter (merge from
+        // multiple servers). This is the merge point, so it is also where
+        // each candidate's origin has to be stamped on: once several
+        // servers' results sit in one list, nothing else can tell them
+        // apart.
+        let candidates = items.into_iter().map(|item| LspCompletionCandidate {
+            item,
+            server: Some(server),
+        });
         match &mut self.active_window_mut().completion_items {
             Some(existing) => {
-                existing.extend(items);
+                existing.extend(candidates);
                 tracing::debug!("Extended completion items, now {} total", existing.len());
             }
             None => {
-                self.active_window_mut().completion_items = Some(items);
+                self.active_window_mut().completion_items = Some(candidates.collect());
             }
         }
 
-        // Rebuild popup from ALL merged items (not just the new batch)
-        let all_items = self.active_window_mut().completion_items.as_ref().unwrap();
-        let all_filtered: Vec<&lsp_types::CompletionItem> = all_items
+        // Only the *LSP* results open the popup from this path; a response
+        // that leaves nothing matching is not a reason to show buffer-word
+        // candidates. Checked before rebuilding so a late non-matching
+        // response can't drop the mapping behind a popup already on screen.
+        let any_stored_match = self
+            .active_window()
+            .completion_items
             .iter()
-            .filter(|item| matches_prefix(item))
-            .collect();
-
-        if all_filtered.is_empty() {
+            .flatten()
+            .any(|candidate| completion_matches_prefix(&candidate.item, &prefix));
+        if !any_stored_match {
             tracing::debug!("No completion items match prefix '{}'", prefix);
             return Ok(());
         }
 
-        // Build LSP popup items, then append buffer-word items below.
-        let mut all_popup_items =
-            crate::app::popup_actions::lsp_items_to_popup_items(&all_filtered);
-        let buffer_word_items = self.get_buffer_completion_popup_items();
-        // Deduplicate: skip buffer-word items whose label already appears in LSP results.
-        let lsp_labels: std::collections::HashSet<String> = all_popup_items
-            .iter()
-            .map(|i| i.text.to_lowercase())
-            .collect();
-        all_popup_items.extend(
-            buffer_word_items
-                .into_iter()
-                .filter(|item| !lsp_labels.contains(&item.text.to_lowercase())),
-        );
+        // Rebuild popup rows from ALL merged items (not just the new batch),
+        // recording which candidate each LSP row came from.
+        let all_popup_items = self.build_completion_popup_rows();
 
         let popup_data =
             crate::app::popup_actions::build_completion_popup_from_items(all_popup_items, 0);
@@ -665,6 +647,7 @@ impl Editor {
                 .active_window_mut()
                 .pending_completion_requests
                 .drain()
+                .map(|(request_id, _server)| request_id)
                 .collect();
             for request_id in ids {
                 tracing::debug!(
@@ -674,7 +657,7 @@ impl Editor {
                 self.active_window_mut().send_lsp_cancel_request(request_id);
             }
         }
-        self.active_window_mut().completion_items = None;
+        self.active_window_mut().clear_completion_items();
 
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
@@ -710,14 +693,16 @@ impl Editor {
                         request_id
                     );
                 }
-                (request_id, result.is_ok())
+                (request_id, handle.id(), result.is_ok())
             },
         );
 
+        // Remember which server each request went to: its response's
+        // candidates can only be resolved against that same server.
         let mut sent_ids = Vec::new();
-        for (request_id, ok) in &results {
+        for (request_id, server, ok) in &results {
             if *ok {
-                sent_ids.push(*request_id);
+                sent_ids.push((*request_id, *server));
             }
         }
         // Advance the ID counter past all allocated IDs
@@ -737,7 +722,10 @@ impl Editor {
     ///
     /// Called when no LSP servers are available for the current buffer.
     fn show_buffer_word_completion_popup(&mut self) {
-        let items = self.get_buffer_completion_popup_items();
+        // Goes through the shared row builder so the popup-row → LSP-item
+        // mapping is reset (to "no LSP rows") by the same code that fills
+        // it — no separate place to forget.
+        let items = self.build_completion_popup_rows();
         if items.is_empty() {
             return;
         }
@@ -897,11 +885,20 @@ impl Editor {
         }
 
         let buffer_id = self.active_buffer();
-        let request_id = self.active_window_mut().next_lsp_request_id;
 
-        // Use helper to ensure didOpen is sent before the request
-        let sent = self
-            .with_lsp_for_buffer(buffer_id, LspFeature::Hover, |handle, uri, _language| {
+        // Fan out to every capable server so non-null hovers can be merged
+        // (a first server returning null must not hide a second server's
+        // hover — sinelaw/fresh#2635). Pre-allocate ids and advance the
+        // counter past all of them.
+        let base_request_id = self.active_window_mut().next_lsp_request_id;
+        let counter = std::sync::atomic::AtomicU64::new(0);
+
+        let results = self.with_all_lsp_for_buffer_feature(
+            buffer_id,
+            LspFeature::Hover,
+            |handle, uri, _language| {
+                let idx = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let request_id = base_request_id + idx;
                 let result = handle.hover(
                     request_id,
                     uri.as_uri().clone(),
@@ -910,21 +907,27 @@ impl Editor {
                 );
                 if result.is_ok() {
                     tracing::info!(
-                        "Requested hover at {}:{}:{} (byte_pos={})",
+                        "Requested hover at {}:{}:{} (request_id={}, byte_pos={})",
                         uri.as_str(),
                         line,
                         character,
+                        request_id,
                         cursor_pos
                     );
                 }
-                result.is_ok()
-            })
-            .unwrap_or(false);
+                (request_id, result.is_ok())
+            },
+        );
 
-        if sent {
-            self.active_window_mut().next_lsp_request_id += 1;
-            self.active_window_mut().hover.record_request(
-                request_id,
+        let sent_ids: Vec<u64> = results
+            .iter()
+            .filter_map(|(id, ok)| ok.then_some(*id))
+            .collect();
+        self.active_window_mut().next_lsp_request_id = base_request_id + results.len() as u64;
+
+        if !sent_ids.is_empty() {
+            self.active_window_mut().hover.record_requests(
+                &sent_ids,
                 line as u32,
                 character as u32,
             );
@@ -966,11 +969,20 @@ impl Editor {
             );
         }
 
-        let request_id = self.active_window_mut().next_lsp_request_id;
+        // Fan out to every capable server (see `request_hover`). Query the
+        // buffer the pointer is over (the `buffer_id` argument), not the active
+        // buffer, so the hover card never leaks in from another buffer (#2572).
+        // (Reassigning `buffer_id` to `self.active_buffer()` here was the source
+        // of that leak.)
+        let base_request_id = self.active_window_mut().next_lsp_request_id;
+        let counter = std::sync::atomic::AtomicU64::new(0);
 
-        // Use helper to ensure didOpen is sent before the request
-        let sent = self
-            .with_lsp_for_buffer(buffer_id, LspFeature::Hover, |handle, uri, _language| {
+        let results = self.with_all_lsp_for_buffer_feature(
+            buffer_id,
+            LspFeature::Hover,
+            |handle, uri, _language| {
+                let idx = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let request_id = base_request_id + idx;
                 let result = handle.hover(
                     request_id,
                     uri.as_uri().clone(),
@@ -979,27 +991,33 @@ impl Editor {
                 );
                 if result.is_ok() {
                     tracing::trace!(
-                        "Mouse hover requested at {}:{}:{} (byte_pos={})",
+                        "Mouse hover requested at {}:{}:{} (request_id={}, byte_pos={})",
                         uri.as_str(),
                         line,
                         character,
+                        request_id,
                         byte_pos
                     );
                 }
-                result.is_ok()
-            })
-            .unwrap_or(false);
+                (request_id, result.is_ok())
+            },
+        );
 
-        if sent {
-            self.active_window_mut().next_lsp_request_id += 1;
-            self.active_window_mut().hover.record_request(
-                request_id,
+        let sent_ids: Vec<u64> = results
+            .iter()
+            .filter_map(|(id, ok)| ok.then_some(*id))
+            .collect();
+        self.active_window_mut().next_lsp_request_id = base_request_id + results.len() as u64;
+
+        if !sent_ids.is_empty() {
+            self.active_window_mut().hover.record_requests(
+                &sent_ids,
                 line as u32,
                 character as u32,
             );
         }
 
-        Ok(sent)
+        Ok(!sent_ids.is_empty())
     }
 
     /// Handle hover response from LSP
@@ -1010,9 +1028,11 @@ impl Editor {
         is_markdown: bool,
         range: Option<((u32, u32), (u32, u32))>,
     ) {
-        // Check if this response is for the current pending request.
-        // `claim_pending` also drains the stored LSP position, which we keep
-        // around for diagnostic correlation below.
+        // Check if this response belongs to the current in-flight batch.
+        // Hover fans out to every capable server, so several responses may
+        // arrive for one batch; `claim_pending` returns the batch position
+        // (kept until the last response is claimed) for diagnostic
+        // correlation, and `None` for stale responses.
         let Some(position) = self.active_window_mut().hover.claim_pending(request_id) else {
             tracing::debug!("Ignoring stale hover response: {}", request_id);
             return;
@@ -1025,31 +1045,65 @@ impl Editor {
             self.active_window_mut().hover.set_symbol_range(None);
             return;
         }
-        let hover_lsp_position = Some(position);
+
+        // Accumulate this server's non-null contribution. Null / empty hovers
+        // (already normalized in `parse_hover_response`) are dropped here so a
+        // server that returns null cannot suppress another server's hover
+        // (sinelaw/fresh#2635).
+        if !contents.is_empty() {
+            tracing::debug!(
+                "LSP hover content (markdown={}, request_id={}):\n{}",
+                is_markdown,
+                request_id,
+                contents
+            );
+            self.active_window_mut()
+                .hover
+                .push_payload(crate::app::hover::HoverPayload {
+                    contents,
+                    is_markdown,
+                    range,
+                    server_name: None,
+                });
+        }
+
+        let all_in = self.active_window().hover.pending_is_empty();
+        let accumulated_empty = self.active_window().hover.accumulated().is_empty();
 
         // Gather any diagnostics whose range overlaps the hover position so
         // they can be fused into the top of the hover card. Without this the
         // user has to leave hover and go chase the error elsewhere in the UI
         // even though the cursor is already on the offending symbol.
-        let diagnostic_lines = hover_lsp_position
-            .map(|pos| self.compose_hover_diagnostic_lines(pos))
-            .unwrap_or_default();
+        let diagnostic_lines = self.compose_hover_diagnostic_lines(position);
 
-        if contents.is_empty() && diagnostic_lines.is_empty() {
+        if all_in && accumulated_empty && diagnostic_lines.is_empty() {
+            // Every capable server answered and none returned a hover, and
+            // there are no overlapping diagnostics — report "no hover" exactly
+            // once (only fires on the final response of the batch).
             self.set_status_message(t!("lsp.no_hover").to_string());
             self.active_window_mut().hover.set_symbol_range(None);
             return;
         }
 
-        // Debug: log raw hover content to diagnose formatting issues
-        tracing::debug!(
-            "LSP hover content (markdown={}):\n{}",
-            is_markdown,
-            contents
-        );
+        if accumulated_empty && !all_in {
+            // No hover content yet and more servers are still outstanding —
+            // wait for them rather than flashing a diagnostics-only or empty
+            // popup that a later non-null hover would immediately replace.
+            return;
+        }
 
-        // Convert LSP range to byte offsets for highlighting
-        if let Some(((start_line, start_char), (end_line, end_char))) = range {
+        // Rebuild the popup from ALL accumulated payloads. This runs on every
+        // response that has (or follows) content, so the card grows as
+        // additional servers answer.
+        let payloads: Vec<crate::app::hover::HoverPayload> =
+            self.active_window().hover.accumulated().to_vec();
+
+        // Symbol range/overlay: use the FIRST payload that carries a range.
+        // Because we always scan the whole accumulator, a range set by an
+        // earlier server is never clobbered by a later rangeless server's
+        // word-boundary fallback.
+        let first_range = payloads.iter().find_map(|p| p.range);
+        if let Some(((start_line, start_char), (end_line, end_char))) = first_range {
             let state = self.active_state();
             let start_byte = state
                 .buffer
@@ -1079,9 +1133,9 @@ impl Editor {
             // Add an overlay to highlight the hovered symbol and remember its
             // handle so it can be removed when the hover is dismissed. The
             // handle comes straight from the add — recovering it via
-            // `overlays.all().last()` would grab the highest-priority overlay
-            // (an error diagnostic at priority 100) instead, so dismissing the
-            // hover would then remove the error's overlay (#2601).
+            // `overlays.all().last()` would grab whichever overlay happens to
+            // sit at the end of an unordered set (an error diagnostic, say),
+            // so dismissing the hover would then remove that one (#2601).
             let handle = self.add_overlay(
                 None,
                 start_byte..end_byte,
@@ -1125,7 +1179,7 @@ impl Editor {
                 .set_symbol_range(computed_range);
         }
 
-        // Create a popup with the hover contents.
+        // Create a popup with the merged hover contents.
         //
         // When a diagnostic overlaps the hover position, we pre-style its
         // lines (severity-colored header + plain message) and concatenate
@@ -1135,48 +1189,71 @@ impl Editor {
         // input — which rendered as uncolored bold text + a thick 40-cell
         // divider with blank-line padding, wasting vertical space and
         // losing the "this is an error" visual signal.
+        //
+        // Multiple servers' hover bodies are joined with the same one-row
+        // separator used between diagnostics and hover.
         use crate::view::markdown::{parse_markdown, StyledLine};
         use crate::view::popup::{Popup, PopupContent, PopupPosition};
         use ratatui::style::Style;
         use unicode_width::UnicodeWidthStr;
 
-        let hover_lines: Vec<StyledLine> = if contents.is_empty() {
-            Vec::new()
-        } else if is_markdown {
-            parse_markdown(
-                &contents,
-                &self.theme.read().unwrap(),
-                Some(&self.grammar_registry),
-            )
-        } else {
-            contents
-                .lines()
-                .map(|s| {
-                    let mut sl = StyledLine::new();
-                    sl.push(
-                        s.to_string(),
-                        Style::default().fg(self.theme.read().unwrap().popup_text_fg),
-                    );
-                    sl
-                })
-                .collect()
-        };
+        let is_markdown = payloads.iter().any(|p| p.is_markdown);
 
-        let has_diagnostic = !diagnostic_lines.is_empty();
-        let mut all_lines: Vec<StyledLine> = Vec::new();
-        all_lines.extend(diagnostic_lines);
-        if has_diagnostic && !hover_lines.is_empty() {
-            // Compact single-line separator — no blank padding, no 40-cell
-            // dash run. One row of dashes the width of the content, in the
-            // popup border color so it reads as "same card, new section."
+        // Build one styled block per non-empty payload.
+        let mut bodies: Vec<Vec<StyledLine>> = Vec::new();
+        for payload in &payloads {
+            if payload.contents.is_empty() {
+                continue;
+            }
+            let lines: Vec<StyledLine> = if payload.is_markdown {
+                parse_markdown(
+                    &payload.contents,
+                    &self.theme.read().unwrap(),
+                    Some(&self.grammar_registry),
+                )
+            } else {
+                payload
+                    .contents
+                    .lines()
+                    .map(|s| {
+                        let mut sl = StyledLine::new();
+                        sl.push(
+                            s.to_string(),
+                            Style::default().fg(self.theme.read().unwrap().popup_text_fg),
+                        );
+                        sl
+                    })
+                    .collect()
+            };
+            if !lines.is_empty() {
+                bodies.push(lines);
+            }
+        }
+
+        // One-row separator between sections (diagnostics ↔ hover, and hover ↔
+        // hover when more than one server answered). Compact — no blank
+        // padding, no 40-cell dash run; popup border color so it reads as
+        // "same card, new section."
+        let make_separator = || {
             let mut sep = StyledLine::new();
             sep.push(
                 "─".repeat(12),
                 Style::default().fg(self.theme.read().unwrap().popup_border_fg),
             );
-            all_lines.push(sep);
+            sep
+        };
+
+        let has_diagnostic = !diagnostic_lines.is_empty();
+        let mut all_lines: Vec<StyledLine> = Vec::new();
+        all_lines.extend(diagnostic_lines);
+        let mut need_separator = has_diagnostic;
+        for body in bodies {
+            if need_separator {
+                all_lines.push(make_separator());
+            }
+            all_lines.extend(body);
+            need_separator = true;
         }
-        all_lines.extend(hover_lines);
 
         // Drop trailing empty lines that some markdown payloads carry.
         while all_lines
@@ -2113,7 +2190,26 @@ impl Editor {
     }
 
     /// Handle a resolved completion item — apply additional_text_edits (e.g. auto-imports).
-    pub(crate) fn handle_completion_resolved(&mut self, item: lsp_types::CompletionItem) {
+    ///
+    /// Only the answer to the resolve request that is still outstanding may
+    /// edit the buffer. Responses are applied as the server returned them
+    /// (no lookup by label), so accepting the *reply* of a request the user
+    /// has moved past would insert an import for a candidate that is no
+    /// longer the accepted one.
+    pub(crate) fn handle_completion_resolved(
+        &mut self,
+        request_id: u64,
+        item: lsp_types::CompletionItem,
+    ) {
+        if self.active_window().pending_completion_resolve_request != Some(request_id) {
+            tracing::debug!(
+                "Ignoring completionItem/resolve response for outdated request {}",
+                request_id
+            );
+            return;
+        }
+        self.active_window_mut().pending_completion_resolve_request = None;
+
         if let Some(additional_edits) = item.additional_text_edits {
             if !additional_edits.is_empty() {
                 tracing::info!(
@@ -3061,16 +3157,24 @@ impl Editor {
                         if ins_len > del_len {
                             state.marker_list.adjust_for_insert(pos, ins_len - del_len);
                             state.margins.adjust_for_insert(pos, ins_len - del_len);
+                            state
+                                .scrollbar_markers
+                                .adjust_for_insert(pos, ins_len - del_len);
                         } else if del_len > ins_len {
                             state.marker_list.adjust_for_delete(pos, del_len - ins_len);
                             state.margins.adjust_for_delete(pos, del_len - ins_len);
+                            state
+                                .scrollbar_markers
+                                .adjust_for_delete(pos, del_len - ins_len);
                         }
                     } else if del_len > 0 {
                         state.marker_list.adjust_for_delete(pos, del_len);
                         state.margins.adjust_for_delete(pos, del_len);
+                        state.scrollbar_markers.adjust_for_delete(pos, del_len);
                     } else if ins_len > 0 {
                         state.marker_list.adjust_for_insert(pos, ins_len);
                         state.margins.adjust_for_insert(pos, ins_len);
+                        state.scrollbar_markers.adjust_for_insert(pos, ins_len);
                     }
                 }
 
@@ -4167,12 +4271,12 @@ mod tests {
         use crate::model::marker::MarkerList;
 
         let mut markers = MarkerList::new();
-        let m0 = markers.create(200, false);
-        let m1 = markers.create(401, false);
-        let m2 = markers.create(602, false);
-        let m3 = markers.create(803, false);
-        let m5 = markers.create(1205, false);
-        let m6 = markers.create(1406, false);
+        let m0 = markers.create(200);
+        let m1 = markers.create(401);
+        let m2 = markers.create(602);
+        let m3 = markers.create(803);
+        let m5 = markers.create(1205);
+        let m6 = markers.create(1406);
 
         // Simulate remove_in_range removing marker m5 inside [1005, 1206).
         markers.delete(m5);

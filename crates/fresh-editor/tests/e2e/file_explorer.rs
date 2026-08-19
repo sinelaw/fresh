@@ -330,6 +330,114 @@ fn test_file_explorer_focus_switching() {
     assert!(harness.editor().file_explorer_visible());
 }
 
+/// Run `command` from the palette and return the resulting screen.
+///
+/// `EditorTestHarness::run_palette_command` is what waits for the row to be
+/// listed before pressing Enter; this only adds the render + capture.
+fn run_from_palette(harness: &mut EditorTestHarness, command: &str) -> String {
+    harness.run_palette_command(command).unwrap();
+    harness.render().unwrap();
+    harness.screen_to_string()
+}
+
+/// Commands that don't need a focused buffer still run from the palette while
+/// the file explorer holds the keyboard. Before this, the explorer disabled
+/// every `Normal`-context command, so Enter produced "not available in current
+/// context" for editor-wide ones too.
+#[test]
+fn test_palette_runs_focus_independent_command_while_explorer_focused() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+    assert!(harness.editor().file_explorer_visible());
+
+    // Editor-wide: the global view toggles don't care what has focus, and the
+    // status line reports the new state — proof it ran.
+    let screen = run_from_palette(&mut harness, "Toggle Line Wrap");
+    assert!(
+        !screen.contains("not available in current context"),
+        "the palette refused an editor-wide toggle in the explorer\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("Line wrap"),
+        "Toggle Line Wrap should have run and reported the new state\nScreen:\n{screen}"
+    );
+
+    // And a command whose keybinding already falls through to the explorer
+    // (`is_ui_fallthrough_action`) is no longer greyed out in the palette either.
+    let screen = run_from_palette(&mut harness, "Toggle Utility Dock");
+    assert!(
+        screen.contains("No Utility Dock open"),
+        "Toggle Utility Dock should have run and reported no dock\nScreen:\n{screen}"
+    );
+}
+
+/// Saving is the keymap's application-wide exception — Ctrl+S already saves
+/// from the explorer — so the palette offers it there too, and it lands on the
+/// buffer that had focus before the tree took it.
+#[test]
+fn test_palette_saves_last_focused_buffer_from_explorer() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    let file = project_root.join("saveme.txt");
+    fs::write(&file, "before\n").unwrap();
+
+    harness.open_file(&file).unwrap();
+    harness.type_text("EDITED").unwrap();
+    harness.render().unwrap();
+    // The tab carries the modified marker while the edit is unsaved.
+    harness.assert_screen_contains("saveme.txt*");
+
+    harness.editor_mut().focus_file_explorer();
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = run_from_palette(&mut harness, "Save File");
+    assert!(
+        !screen.contains("not available in current context"),
+        "Save File must not be refused in the explorer — Ctrl+S works there\nScreen:\n{screen}"
+    );
+
+    // The marker clears: the save reached the buffer that had focus before the
+    // tree did, not the tree's selection.
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("saveme.txt*"))
+        .expect("the modified marker should clear once the buffer is saved");
+    assert!(
+        fs::read_to_string(&file).unwrap().contains("EDITED"),
+        "the edit should have reached disk"
+    );
+}
+
+/// The other half of the rule: the explorer owns the keyboard, so commands that
+/// act on the focused buffer's cursor are *not* offered through it.
+#[test]
+fn test_palette_refuses_buffer_command_while_explorer_focused() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Typed before focusing the tree — the explorer swallows typing.
+    harness.type_text("UNIQUELINE").unwrap();
+    harness.render().unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = run_from_palette(&mut harness, "Duplicate Line");
+
+    assert!(
+        screen.contains("not available in current context"),
+        "Duplicate Line needs the buffer's cursor and should be refused from the explorer\nScreen:\n{screen}"
+    );
+    assert_eq!(
+        screen.matches("UNIQUELINE").count(),
+        1,
+        "the line must not have been duplicated\nScreen:\n{screen}"
+    );
+}
+
 /// Test that file explorer keybindings only work when explorer has focus
 #[test]
 fn test_file_explorer_context_aware_keybindings() {
@@ -1136,11 +1244,6 @@ fn test_scroll_allows_cursor_to_top() {
     let initial_screen = harness.screen_to_string();
     println!("Initial screen:\n{}", initial_screen);
 
-    // Get the viewport height (number of visible rows in file explorer)
-    // Terminal height is 10, minus menu bar (1), status bar (1), prompt line (1), tab bar (1) = 6 main area
-    // File explorer has borders (1 top) and may share space, so content area is ~5 rows
-    let viewport_height = 5;
-
     // Navigate down to the bottom of the list
     // This will cause the explorer to scroll down
     for _ in 0..25 {
@@ -1152,10 +1255,18 @@ fn test_scroll_allows_cursor_to_top() {
 
     let screen_at_bottom = harness.screen_to_string();
     println!("Screen at bottom (scrolled down):\n{}", screen_at_bottom);
+    assert!(
+        screen_at_bottom
+            .lines()
+            .any(|line| line.starts_with('│') && line.contains("project_root")),
+        "the project root should remain pinned while its children scroll"
+    );
 
     // Now we're at the bottom and the view has scrolled down.
     // The test: when we press Up, the cursor should move WITHIN the viewport
-    // for (viewport_height - 1) times before the view scrolls.
+    // for (visible ordinary rows - 1) times before the view scrolls. Sticky
+    // ancestor rows (the project root here) intentionally consume part of
+    // the viewport and are not included in `get_visible_files`.
 
     // Track which files are visible to detect scrolling. Only scan rows
     // that start with the explorer's left border so the tab bar and
@@ -1179,9 +1290,9 @@ fn test_scroll_allows_cursor_to_top() {
     let initial_visible = get_visible_files(&screen_at_bottom);
     println!("Initially visible files: {:?}", initial_visible);
 
-    // Press Up multiple times (less than viewport_height times)
+    // Press Up while there are still earlier ordinary rows in the viewport.
     // The visible files should stay the same (no scrolling yet)
-    for i in 0..(viewport_height - 1) {
+    for i in 0..initial_visible.len().saturating_sub(1) {
         harness
             .send_key(KeyCode::Up, KeyModifiers::empty())
             .unwrap();
@@ -4351,5 +4462,62 @@ fn test_file_explorer_git_decorations_nested_subrepo_under_repo_root() {
     assert!(
         inner_line.contains('M'),
         "inner.py tree row should show a modified (M) decoration from its own nested repo. Line: '{inner_line}'"
+    );
+}
+
+/// `file_explorer.respect_gitignore = false` switches the `.gitignore` rules
+/// off wholesale: ignored files show up without anyone touching the
+/// "Show Gitignored Files" toggle. The setting was previously parsed, merged
+/// and offered in the Settings UI but never read (issue #2842).
+#[test]
+fn test_respect_gitignore_false_shows_ignored_files() {
+    let mut config = Config::default();
+    config.file_explorer.respect_gitignore = false;
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 40, config).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join(".gitignore"), "build_output.txt\n").unwrap();
+    fs::write(project_root.join("build_output.txt"), "generated").unwrap();
+    fs::write(project_root.join("visible_file.txt"), "visible").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .wait_for_file_explorer_item("visible_file.txt")
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("build_output.txt"),
+        "a gitignored file should still be listed when respect_gitignore is \
+         off, even with 'Show Gitignored Files' left off.\nScreen:\n{}",
+        screen
+    );
+}
+
+/// The default (`respect_gitignore = true`) keeps ignored files out, so the
+/// test above is measuring the setting and not just a broken .gitignore.
+#[test]
+fn test_respect_gitignore_true_hides_ignored_files() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join(".gitignore"), "build_output.txt\n").unwrap();
+    fs::write(project_root.join("build_output.txt"), "generated").unwrap();
+    fs::write(project_root.join("visible_file.txt"), "visible").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .wait_for_file_explorer_item("visible_file.txt")
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("build_output.txt"),
+        "a gitignored file must stay hidden under the default \
+         respect_gitignore = true.\nScreen:\n{}",
+        screen
     );
 }

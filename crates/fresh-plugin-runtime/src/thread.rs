@@ -96,9 +96,29 @@ pub enum PluginRequest {
         response: oneshot::Sender<Result<()>>,
     },
 
-    /// Execute a plugin action
+    /// Execute a plugin action. `args_json`, when set, is a JSON object handed
+    /// to the handler as its single argument — how the agent command channel
+    /// passes `RunCommand.args` through to a plugin command. `None` calls the
+    /// handler with no arguments (the keybinding / palette path).
     ExecuteAction {
         action_name: String,
+        args_json: Option<String>,
+        /// When set, the runtime reports the handler's return value (or its
+        /// failure) back to the editor under this id once the handler settles —
+        /// how a `RunCommand` over the agent command channel gets an answer.
+        request_id: Option<u64>,
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Typed fast lane for a text-input mode's printable characters:
+    /// the mode and the typed text travel as structured fields instead
+    /// of being spliced into an action-name string
+    /// (`mode_text_input@<mode>:<char>`). Same channel as
+    /// `ExecuteAction`, so a mode's other bindings and plain characters
+    /// stay strictly ordered.
+    ModeTextInput {
+        mode: Option<String>,
+        text: String,
         response: oneshot::Sender<Result<()>>,
     },
 
@@ -348,7 +368,7 @@ impl PluginThreadHandle {
 
     /// Non-blocking check: does any loaded plugin subscribe to `hook_name`?
     /// Used by the renderer to skip building expensive hook args (e.g.
-    /// the full tokenized viewport for `view_transform_request`) when
+    /// the full tokenized viewport) when
     /// nothing would consume them. Reads from the shared
     /// `event_handlers` registry directly — no channel round-trip.
     pub fn has_subscribers(&self, hook_name: &str) -> bool {
@@ -443,6 +463,21 @@ impl PluginThreadHandle {
                     self.reject_callback(JsCallbackId(request_id), e);
                 }
             },
+            PluginResponse::SplitWindowCreated { request_id, result } => match result {
+                Ok(split) => {
+                    let json = serde_json::to_string(&split)
+                        .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
+                    self.resolve_callback(JsCallbackId(request_id), json);
+                }
+                // A failed split rejects rather than resolving to null: the
+                // caller asked for a pane and there isn't one, which should
+                // stop a script rather than have it carry on against an id
+                // that was never created.
+                Err(e) => self.reject_callback(JsCallbackId(request_id), e),
+            },
+            PluginResponse::SnapshotSynced { request_id } => {
+                self.resolve_callback(JsCallbackId(request_id), "null".to_string());
+            }
             PluginResponse::CompositeBufferCreated {
                 request_id,
                 buffer_id,
@@ -655,7 +690,12 @@ impl PluginThreadHandle {
     ///
     /// Returns a receiver that will receive the result when the action completes.
     /// The caller should poll this while processing commands to avoid deadlock.
-    pub fn execute_action_async(&self, action_name: &str) -> Result<oneshot::Receiver<Result<()>>> {
+    pub fn execute_action_async(
+        &self,
+        action_name: &str,
+        args_json: Option<String>,
+        request_id: Option<u64>,
+    ) -> Result<oneshot::Receiver<Result<()>>> {
         tracing::trace!("execute_action_async: starting action '{}'", action_name);
         let (tx, rx) = oneshot::channel();
         self.request_sender
@@ -663,11 +703,34 @@ impl PluginThreadHandle {
             .ok_or_else(|| anyhow!("Plugin thread shut down"))?
             .send(PluginRequest::ExecuteAction {
                 action_name: action_name.to_string(),
+                args_json,
+                request_id,
                 response: tx,
             })
             .map_err(|_| anyhow!("Plugin thread not responding"))?;
 
         tracing::trace!("execute_action_async: request sent for '{}'", action_name);
+        Ok(rx)
+    }
+
+    /// Dispatch a text-input mode's typed character through the typed
+    /// fast lane (see [`PluginRequest::ModeTextInput`]). FIFO with
+    /// `execute_action_async` — both ride the same request channel.
+    pub fn mode_text_input_async(
+        &self,
+        mode: Option<&str>,
+        text: &str,
+    ) -> Result<oneshot::Receiver<Result<()>>> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Plugin thread shut down"))?
+            .send(PluginRequest::ModeTextInput {
+                mode: mode.map(str::to_string),
+                text: text.to_string(),
+                response: tx,
+            })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
         Ok(rx)
     }
 
@@ -1051,13 +1114,32 @@ async fn plugin_thread_loop(
                 match request {
                     Some(PluginRequest::ExecuteAction {
                         action_name,
+                        args_json,
+                        request_id,
                         response,
                     }) => {
                         // Start the action without blocking - this allows us to process
                         // ResolveCallback requests that the action may be waiting for.
-                        let result = runtime.borrow_mut().start_action(&action_name);
+                        let result = runtime.borrow_mut().start_action(
+                            &action_name,
+                            args_json.as_deref(),
+                            request_id,
+                        );
                         fire_and_forget(response.send(result));
                         has_pending_work = true; // Action may have started async work
+                    }
+                    Some(PluginRequest::ModeTextInput {
+                        mode,
+                        text,
+                        response,
+                    }) => {
+                        // Same non-blocking treatment as ExecuteAction — the
+                        // handler may await host calls resolved on later ticks.
+                        let result = runtime
+                            .borrow_mut()
+                            .start_mode_text_input(mode.as_deref(), &text);
+                        fire_and_forget(response.send(result));
+                        has_pending_work = true;
                     }
                     Some(request) => {
                         let should_shutdown =
@@ -1182,9 +1264,17 @@ async fn handle_request(
             fire_and_forget(response.send(result));
         }
 
+        PluginRequest::ModeTextInput { response, .. } => {
+            // Handled in plugin_thread_loop's select! alongside ExecuteAction;
+            // reaching here means a dispatch bug.
+            let _ = response.send(Err(anyhow!(
+                "ModeTextInput should be handled in plugin_thread_loop"
+            )));
+        }
         PluginRequest::ExecuteAction {
             action_name,
             response,
+            ..
         } => {
             // This is handled in plugin_thread_loop with select! for concurrent processing
             // If we get here, it's an unexpected state

@@ -18,7 +18,7 @@ pub use crate::types::context_keys;
 ///
 /// Returned by `MenuRenderer::render()` to enable mouse hit testing
 /// without duplicating position calculations.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MenuLayout {
     /// Areas for top-level menu labels: (menu_index, area)
     pub menu_areas: Vec<(usize, Rect)>,
@@ -528,9 +528,75 @@ impl MenuRenderer {
         theme: &Theme,
         hover_target: Option<&crate::app::HoverTarget>,
         mnemonics_enabled: bool,
-        mut rec: Option<&mut CellThemeRecorder>,
+        rec: Option<&mut CellThemeRecorder>,
         // When false, compute + record layout but skip emitting cells (the host
         // renders the menu from the semantic model). See docs/internal/web-ui.md.
+        draw: bool,
+    ) -> MenuLayout {
+        let screen = frame.area();
+        Self::render_impl(
+            Some(frame),
+            screen,
+            area,
+            all_menus,
+            menu_state,
+            keybindings,
+            theme,
+            hover_target,
+            mnemonics_enabled,
+            rec,
+            draw,
+        )
+    }
+
+    /// Compute the menu's layout (bar labels, dropdown boxes, item rows)
+    /// from live state without painting a cell — the SAME label-width /
+    /// dropdown-placement walk the paint pass runs (`render_menu_bar`
+    /// asserts the two agree in debug builds). `screen` is the full
+    /// terminal rect (dropdowns clamp against it); `area` is the bar row.
+    /// This is the per-event geometry source (chrome hit-testing, click
+    /// resolution, the web projection): geometry produced by layout, not
+    /// recorded by paint.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compute_layout(
+        screen: Rect,
+        area: Rect,
+        all_menus: &[Menu],
+        menu_state: &MenuState,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        theme: &Theme,
+        hover_target: Option<&crate::app::HoverTarget>,
+        mnemonics_enabled: bool,
+    ) -> MenuLayout {
+        Self::render_impl(
+            None,
+            screen,
+            area,
+            all_menus,
+            menu_state,
+            keybindings,
+            theme,
+            hover_target,
+            mnemonics_enabled,
+            None,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_impl(
+        // `None` on the event-time layout path (`compute_layout`), which
+        // never paints; always `Some` when `draw` is true.
+        mut frame: Option<&mut Frame>,
+        screen: Rect,
+        area: Rect,
+        all_menus: &[Menu],
+        menu_state: &MenuState,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        theme: &Theme,
+        hover_target: Option<&crate::app::HoverTarget>,
+        mnemonics_enabled: bool,
+        mut rec: Option<&mut CellThemeRecorder>,
         draw: bool,
     ) -> MenuLayout {
         let mut layout = MenuLayout::new(area);
@@ -648,9 +714,11 @@ impl MenuRenderer {
         }
 
         if draw {
-            let line = Line::from(spans);
-            let paragraph = Paragraph::new(line).style(Style::default().bg(theme.menu_bg));
-            frame.render_widget(paragraph, area);
+            if let Some(frame) = frame.as_deref_mut() {
+                let line = Line::from(spans);
+                let paragraph = Paragraph::new(line).style(Style::default().bg(theme.menu_bg));
+                frame.render_widget(paragraph, area);
+            }
         }
 
         // Render dropdown if a menu is active
@@ -658,6 +726,7 @@ impl MenuRenderer {
             if let Some(menu) = all_menus.get(active_idx) {
                 Self::render_dropdown_chain(
                     frame,
+                    screen,
                     area,
                     menu,
                     menu_state,
@@ -679,7 +748,8 @@ impl MenuRenderer {
     /// Render a dropdown menu and all its open submenus
     #[allow(clippy::too_many_arguments)]
     fn render_dropdown_chain(
-        frame: &mut Frame,
+        mut frame: Option<&mut Frame>,
+        screen: Rect,
         menu_bar_area: Rect,
         menu: &Menu,
         menu_state: &MenuState,
@@ -709,8 +779,8 @@ impl MenuRenderer {
             }
         }
 
-        let terminal_width = frame.area().width;
-        let terminal_height = frame.area().height;
+        let terminal_width = screen.width;
+        let terminal_height = screen.height;
 
         // Track dropdown positions for rendering submenus
         let mut current_items: &[MenuItem] = &menu.items;
@@ -729,7 +799,7 @@ impl MenuRenderer {
 
             // Render this dropdown level
             let dropdown_rect = Self::render_dropdown_level(
-                frame,
+                frame.as_deref_mut(),
                 current_items,
                 highlighted_item,
                 current_x,
@@ -807,7 +877,7 @@ impl MenuRenderer {
     /// Render a single dropdown level and return its bounding Rect
     #[allow(clippy::too_many_arguments)]
     fn render_dropdown_level(
-        frame: &mut Frame,
+        frame: Option<&mut Frame>,
         items: &[MenuItem],
         highlighted_item: Option<usize>,
         x: u16,
@@ -923,8 +993,10 @@ impl MenuRenderer {
             .style(Style::reset().bg(theme.menu_dropdown_bg));
 
         if draw {
-            let paragraph = Paragraph::new(lines).block(block);
-            frame.render_widget(paragraph, dropdown_area);
+            if let Some(frame) = frame {
+                let paragraph = Paragraph::new(lines).block(block);
+                frame.render_widget(paragraph, dropdown_area);
+            }
         }
 
         dropdown_area

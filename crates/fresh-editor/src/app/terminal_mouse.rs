@@ -242,7 +242,7 @@ impl Window {
             .buffers
             .splits()
             .and_then(|(_, vs)| vs.get(&split_id))
-            .map(|vs| (vs.viewport.top_byte, vs.compose_width))
+            .map(|vs| (vs.viewport.top_byte(), vs.compose_width))
             .unwrap_or((0, None));
 
         // `allow_gutter_click = false`: a click in the gutter isn't on a path.
@@ -316,21 +316,8 @@ impl Window {
         let term_col = col.saturating_sub(content_rect.x);
         let term_row = row.saturating_sub(content_rect.y);
 
-        // Convert crossterm MouseEventKind to our TerminalMouseEventKind.
-        let kind = match mouse_event.kind {
-            MouseEventKind::Down(btn) => TerminalMouseEventKind::Down(convert_button(btn)),
-            MouseEventKind::Up(btn) => TerminalMouseEventKind::Up(convert_button(btn)),
-            MouseEventKind::Drag(btn) => TerminalMouseEventKind::Drag(convert_button(btn)),
-            MouseEventKind::Moved => TerminalMouseEventKind::Moved,
-            MouseEventKind::ScrollUp => TerminalMouseEventKind::ScrollUp,
-            MouseEventKind::ScrollDown => TerminalMouseEventKind::ScrollDown,
-            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => {
-                // Horizontal scroll not typically supported in terminal mouse protocols.
-                return Ok(false);
-            }
-        };
-
         // Send to terminal.
+        let kind = convert_kind(mouse_event.kind);
         self.send_terminal_mouse(term_col, term_row, kind, mouse_event.modifiers);
 
         // Terminal renders itself, so we need to trigger a render.
@@ -347,6 +334,67 @@ fn convert_button(btn: MouseButton) -> TerminalMouseButton {
     }
 }
 
+/// Convert a crossterm `MouseEventKind` to the kind the PTY encoders speak.
+///
+/// Total: every kind the input parser can produce has a wire representation,
+/// horizontal wheel included (xterm buttons 6 and 7). This used to drop
+/// `ScrollLeft`/`ScrollRight` on the floor — and because the caller reports
+/// "handled" either way, a horizontal wheel over a mouse-tracking terminal
+/// was swallowed rather than falling through to Fresh's own panning.
+fn convert_kind(kind: MouseEventKind) -> TerminalMouseEventKind {
+    match kind {
+        MouseEventKind::Down(btn) => TerminalMouseEventKind::Down(convert_button(btn)),
+        MouseEventKind::Up(btn) => TerminalMouseEventKind::Up(convert_button(btn)),
+        MouseEventKind::Drag(btn) => TerminalMouseEventKind::Drag(convert_button(btn)),
+        MouseEventKind::Moved => TerminalMouseEventKind::Moved,
+        MouseEventKind::ScrollUp => TerminalMouseEventKind::ScrollUp,
+        MouseEventKind::ScrollDown => TerminalMouseEventKind::ScrollDown,
+        MouseEventKind::ScrollLeft => TerminalMouseEventKind::ScrollLeft,
+        MouseEventKind::ScrollRight => TerminalMouseEventKind::ScrollRight,
+    }
+}
+
+#[cfg(test)]
+mod convert_kind_tests {
+    use super::*;
+
+    #[test]
+    fn horizontal_wheel_has_a_wire_representation() {
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollLeft),
+            TerminalMouseEventKind::ScrollLeft
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollRight),
+            TerminalMouseEventKind::ScrollRight
+        );
+    }
+
+    #[test]
+    fn other_kinds_are_unchanged() {
+        assert_eq!(
+            convert_kind(MouseEventKind::Down(MouseButton::Left)),
+            TerminalMouseEventKind::Down(TerminalMouseButton::Left)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Drag(MouseButton::Middle)),
+            TerminalMouseEventKind::Drag(TerminalMouseButton::Middle)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Moved),
+            TerminalMouseEventKind::Moved
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollUp),
+            TerminalMouseEventKind::ScrollUp
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollDown),
+            TerminalMouseEventKind::ScrollDown
+        );
+    }
+}
+
 impl super::Editor {
     /// Begin a text-selection drag on a terminal split that was showing the
     /// live PTY grid when the mouse went down (see
@@ -355,10 +403,11 @@ impl super::Editor {
     /// Live terminals have no cursor/selection model of their own, so the
     /// split is dropped into read-only scrollback first — exactly the
     /// Ctrl+Space / scroll-up transition. `sync_terminal_to_buffer` pins the
-    /// scrollback viewport to the first byte of the just-appended visible
-    /// screen, making the scrollback view pixel-identical to the grid the
-    /// user aimed at: grid row r is buffer line `top_line + r` and grid
-    /// columns map 1:1 (wrap off, no gutter). That lets both the press
+    /// scrollback viewport to the just-appended visible screen, making the
+    /// scrollback view pixel-identical to the grid the user aimed at: the
+    /// view grid-wraps at the capture-time PTY width (fresh#2649), so grid
+    /// row r is visual row r of the anchored viewport and grid columns map
+    /// 1:1 within a row (no gutter). That lets both the press
     /// origin and the current drag position resolve to exact byte positions
     /// without waiting for a re-render; the standard text-selection drag
     /// machinery then takes over (Ctrl+C copies through the editor
@@ -559,12 +608,65 @@ impl super::Editor {
         let (_, view_states) = win.buffers.splits()?;
         let vs = view_states.get(&split_id)?;
         let state = win.buffers.get(&buffer_id)?;
-        let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte);
+        let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte());
         let grid_row = row.saturating_sub(content_rect.y) as usize;
         // Account for horizontal scroll (a pinned view starts at 0, but an
         // explicit scrollback view may have been scrolled right).
         let grid_col =
             col.saturating_sub(content_rect.x) as usize + vs.viewport.left_column as usize;
+
+        // Grid-wrapped scroll-back (fresh#2649): visual rows are exact-column
+        // wrap segments of the logical lines, so walk the segments from the
+        // viewport anchor to the clicked row instead of assuming one buffer
+        // line per grid row (which was only ever true for unwrapped lines —
+        // a grid row that continued a wrapped line used to resolve to the
+        // wrong buffer line entirely).
+        if vs.viewport.grid_wrap && vs.viewport.line_wrap_enabled {
+            let cols = vs.viewport.grid_cols();
+            let mut remaining = vs.viewport.top_view_line_offset() + grid_row;
+            let mut line_idx = top_line;
+            loop {
+                let Some(bytes) = state.buffer.get_line(line_idx) else {
+                    // Clicked past the buffer's tail: clamp to the end.
+                    return Some(state.buffer.len());
+                };
+                let text = String::from_utf8_lossy(&bytes);
+                let trimmed = text.trim_end_matches(['\n', '\r']);
+                let rows =
+                    crate::view::line_wrap_cache::count_visual_rows_for_text_grid(trimmed, cols)
+                        as usize;
+                if remaining < rows {
+                    let line_start = state.buffer.line_col_to_position(line_idx, 0);
+                    let layout =
+                        crate::view::line_wrap_cache::layout_for_plain_text_grid(trimmed, cols, 4);
+                    // A column past the row's rendered content resolves to
+                    // the row segment's END (the next segment's start, or the
+                    // line end on the last row) — same as click_geometry's
+                    // past-content clamp for ordinary buffer views. It must
+                    // NOT go through `source_byte_at_visual_col`, whose
+                    // out-of-range fallback clamps to the LAST character's
+                    // start byte and would drop the final character from any
+                    // selection whose drag overshoots the text.
+                    let byte_in_line = match layout.get(remaining) {
+                        Some(seg) if grid_col < seg.visual_width() => seg
+                            .source_byte_at_visual_col(grid_col)
+                            .unwrap_or(trimmed.len()),
+                        _ => layout
+                            .get(remaining + 1)
+                            .and_then(|next| next.source_start_byte)
+                            .unwrap_or(trimmed.len()),
+                    };
+                    return Some(
+                        state
+                            .buffer
+                            .snap_to_char_boundary(line_start + byte_in_line.min(trimmed.len())),
+                    );
+                }
+                remaining -= rows;
+                line_idx += 1;
+            }
+        }
+
         let pos = state
             .buffer
             .line_col_to_position(top_line + grid_row, grid_col);

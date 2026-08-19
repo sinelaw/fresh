@@ -72,6 +72,7 @@ fn panel_mode_does_not_leak_onto_window_switched_away_from() {
             focus_marker: false,
             title: None,
             closable: false,
+            start_blurred: false,
         })
         .unwrap();
     harness

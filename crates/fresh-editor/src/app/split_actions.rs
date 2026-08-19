@@ -18,16 +18,42 @@ use super::Editor;
 impl Editor {
     /// Split the current pane horizontally
     pub fn split_pane_horizontal(&mut self) {
-        self.split_pane_impl(crate::model::event::SplitDirection::Horizontal);
+        // Failure is already reported on the status line inside
+        // `split_pane_impl`; a keystroke has no caller to hand a Result to.
+        if let Err(e) =
+            self.split_pane_impl(crate::model::event::SplitDirection::Horizontal, false, 0.5)
+        {
+            tracing::debug!("split_pane_horizontal: {e}");
+        }
     }
 
     /// Split the current pane vertically
     pub fn split_pane_vertical(&mut self) {
-        self.split_pane_impl(crate::model::event::SplitDirection::Vertical);
+        if let Err(e) =
+            self.split_pane_impl(crate::model::event::SplitDirection::Vertical, false, 0.5)
+        {
+            tracing::debug!("split_pane_vertical: {e}");
+        }
     }
 
-    /// Common split creation logic
-    fn split_pane_impl(&mut self, direction: crate::model::event::SplitDirection) {
+    /// Common split creation logic.
+    ///
+    /// `before` places the new pane first — left for a vertical divider,
+    /// above for a horizontal one. The keyboard commands always pass
+    /// `false` (new pane right/below); the plugin API's `splitWindow` is
+    /// what exposes the other side, so an agent can say "put the terminal
+    /// on the left" without a swap dance afterwards.
+    ///
+    /// `ratio` is the *first* child's share of the space, regardless of
+    /// which side the new pane landed on.
+    ///
+    /// Returns the new pane's id, or the reason it could not be created.
+    pub(crate) fn split_pane_impl(
+        &mut self,
+        direction: crate::model::event::SplitDirection,
+        before: bool,
+        ratio: f32,
+    ) -> Result<crate::model::event::LeafId, String> {
         // Splitting the layout is a commitment gesture for any preview tab:
         // the user is setting up their working environment around it. Promote
         // before touching the split tree so the invariant "preview is anchored
@@ -74,10 +100,13 @@ impl Editor {
                     )>>()
             });
 
-        match self
-            .split_manager_mut()
-            .split_active(direction, current_buffer_id, 0.5)
-        {
+        let split_outcome = self.split_manager_mut().split_active_positioned(
+            direction,
+            current_buffer_id,
+            ratio,
+            before,
+        );
+        match split_outcome {
             Ok(new_split_id) => {
                 let mut view_state = SplitViewState::with_buffer(
                     self.terminal_width,
@@ -125,6 +154,7 @@ impl Editor {
                                     .line_start_offset(end_line.saturating_add(1))
                                     .unwrap_or_else(|| state.buffer.len());
                                 buf_state.folds.add(
+                                    &state.buffer,
                                     &mut state.marker_list,
                                     start_byte,
                                     end_byte,
@@ -146,17 +176,19 @@ impl Editor {
                     crate::model::event::SplitDirection::Vertical => t!("split.vertical"),
                 };
                 self.set_status_message(msg.to_string());
+                // A new split changes every sibling pane's width/height.
+                // Reflow through the single layout funnel so existing
+                // terminals shrink to their new pane immediately, instead of
+                // waiting for the next unrelated resize trigger.
+                self.relayout();
+                Ok(new_split_id)
             }
             Err(e) => {
                 self.set_status_message(t!("split.error", error = e.to_string()).to_string());
+                self.relayout();
+                Err(e)
             }
         }
-
-        // A new split changes every sibling pane's width/height. Reflow
-        // through the single layout funnel so existing terminals shrink to
-        // their new pane immediately, instead of waiting for the next
-        // unrelated resize trigger.
-        self.relayout();
     }
 
     /// Close the active split
@@ -308,7 +340,7 @@ impl Editor {
         self.active_window_mut()
             .promote_preview_if_not_in_split(split_id);
         let buffer = self.active_buffer();
-        let tabs_width = self.active_window().effective_tabs_width();
+        let tabs_width = self.active_window().split_tabs_width(split_id);
         self.active_window_mut()
             .ensure_active_tab_visible(split_id, buffer, tabs_width);
 
@@ -611,7 +643,7 @@ impl Editor {
 
         // Keep the newly active tab scrolled into view within its split,
         // matching `switch_split` and `set_active_buffer`.
-        let tabs_width = self.active_window().effective_tabs_width();
+        let tabs_width = self.active_window().split_tabs_width(next_split);
         self.active_window_mut()
             .ensure_active_tab_visible(next_split, next_buf, tabs_width);
 
@@ -623,5 +655,453 @@ impl Editor {
                 buffer_id: next_buf,
             },
         );
+    }
+}
+
+#[cfg(feature = "plugins")]
+impl Editor {
+    /// Handle `editor.splitWindow(...)` — the plugin/agent entry point for
+    /// creating a pane.
+    ///
+    /// Everything a caller needs comes back in the response: the new pane's
+    /// id *and* its geometry, so "did the terminal land on the left" is
+    /// answerable without a follow-up read. The snapshot is refreshed before
+    /// answering, so a caller that awaits this can immediately
+    /// `listSplits()` / `describeWorkspace()` and see its own change.
+    pub(crate) fn handle_split_window(
+        &mut self,
+        options: fresh_core::api::SplitWindowOptions,
+        request_id: u64,
+    ) {
+        use fresh_core::api::{SplitAxis, SplitCreated, SplitPlacement};
+
+        let direction = match options.direction.unwrap_or_default() {
+            SplitAxis::Vertical => crate::model::event::SplitDirection::Vertical,
+            SplitAxis::Horizontal => crate::model::event::SplitDirection::Horizontal,
+        };
+        let before = matches!(options.place.unwrap_or_default(), SplitPlacement::Before);
+        // Clamp rather than reject: a ratio outside the usable band would be
+        // pinned by the layout anyway, and failing a whole split over it
+        // would be a worse answer than the pane the caller asked for.
+        let ratio = options.ratio.unwrap_or(0.5).clamp(0.05, 0.95);
+
+        let source_split_id = self.active_split_id();
+
+        let new_split_id = match self.split_pane_impl(direction, before, ratio) {
+            Ok(id) => id,
+            Err(e) => {
+                self.send_plugin_response(fresh_core::api::PluginResponse::SplitWindowCreated {
+                    request_id,
+                    result: Err(e),
+                });
+                return;
+            }
+        };
+
+        // Open the requested file *in the new pane*. Doing it here rather
+        // than making the caller follow up with `openFileInSplit` is the
+        // difference between one call and two, and removes the window where
+        // the new pane briefly shows the wrong buffer.
+        if let Some(file) = options.file.as_deref().filter(|f| !f.trim().is_empty()) {
+            let path = self.resolve_workspace_path(file);
+            if let Err(e) = self.handle_open_file_in_split(new_split_id.0 .0, path, None, None) {
+                tracing::warn!("splitWindow: could not open {} in new pane: {}", file, e);
+            }
+        }
+
+        if options.keep_focus.unwrap_or(false) {
+            self.split_manager_mut().set_active_split(source_split_id);
+        }
+
+        // Geometry has to be computed after the layout settles, which
+        // `split_pane_impl`'s relayout has already done.
+        let rect = self.split_rect(new_split_id).unwrap_or_default();
+        let buffer_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .and_then(|(_, vs)| vs.get(&new_split_id))
+            .map(|vs| vs.active_buffer)
+            .unwrap_or(self.active_buffer());
+
+        // Refresh before answering: the caller awaiting this response is
+        // very likely about to read the layout back.
+        self.update_plugin_state_snapshot();
+        self.send_plugin_response(fresh_core::api::PluginResponse::SplitWindowCreated {
+            request_id,
+            result: Ok(SplitCreated {
+                split_id: new_split_id.0 .0,
+                source_split_id: source_split_id.0 .0,
+                buffer_id,
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+            }),
+        });
+    }
+
+    /// The active pane's id.
+    pub(crate) fn active_split_id(&self) -> crate::model::event::LeafId {
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr.active_split())
+            .expect("active window must have a populated split layout")
+    }
+
+    /// Where a pane currently sits on screen, in editor-area cells.
+    /// `None` once the leaf is gone (closed, or collapsed by its last tab).
+    pub(crate) fn split_rect(
+        &self,
+        leaf: crate::model::event::LeafId,
+    ) -> Option<ratatui::layout::Rect> {
+        let area = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| w.editor_content_area())?;
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .and_then(|(mgr, _)| {
+                mgr.get_visible_buffers(area)
+                    .into_iter()
+                    .find(|(id, _, _)| *id == leaf)
+                    .map(|(_, _, rect)| rect)
+            })
+    }
+
+    /// Resolve a caller-supplied path against the window's root, so a script
+    /// can say `"README.md"` and mean the obvious thing.
+    #[cfg(feature = "plugins")]
+    fn resolve_workspace_path(&self, path: &str) -> std::path::PathBuf {
+        let p = std::path::Path::new(path);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.active_window().root.join(p)
+        }
+    }
+}
+
+#[cfg(feature = "plugins")]
+impl Editor {
+    /// Move a buffer into `target` — show it there, and drop its tab from
+    /// whatever pane held it before.
+    ///
+    /// The difference from `setSplitBuffer` is the second half. Setting a
+    /// pane's active buffer leaves the original tab where it was, so a script
+    /// arranging panes ends up stranding tabs it never asked to keep.
+    pub(crate) fn handle_move_buffer_to_split(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        split_id: fresh_core::SplitId,
+    ) {
+        use crate::model::event::LeafId;
+
+        let target = LeafId(split_id);
+        if !self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .contains_key(&buffer_id)
+        {
+            tracing::error!("Buffer {:?} not found for MoveBufferToSplit", buffer_id);
+            return;
+        }
+
+        // Every pane whose *tab strip* carries it, except the destination.
+        //
+        // Read from the view states rather than `splits_for_buffer`, which
+        // reports the narrower "is displaying it" relation: a pane can hold a
+        // buffer as a background tab without showing it, and those are exactly
+        // the copies a move is supposed to clean up.
+        let sources: Vec<LeafId> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| {
+                vs.iter()
+                    .filter(|(leaf, state)| {
+                        **leaf != target
+                            && state
+                                .open_buffers
+                                .iter()
+                                .any(|tab| tab.as_buffer() == Some(buffer_id))
+                    })
+                    .map(|(leaf, _)| *leaf)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        // Show it in the destination first: dropping the last tab from a pane
+        // can collapse that pane, and doing it in this order means the buffer
+        // is never momentarily displayed nowhere.
+        self.handle_set_split_buffer(split_id, buffer_id);
+
+        for source in sources {
+            if let Some(vs) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&source)
+            {
+                vs.remove_buffer(buffer_id);
+            }
+        }
+        self.relayout();
+    }
+}
+
+impl Editor {
+    /// Record which lines of a buffer point somewhere, replacing any previous
+    /// set. An empty list clears them.
+    #[cfg(feature = "plugins")]
+    pub(crate) fn set_line_targets(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        targets: Vec<fresh_core::api::LineTarget>,
+    ) {
+        self.clear_line_target_decorations(buffer_id);
+        if targets.is_empty() {
+            self.line_targets.remove(&buffer_id);
+        } else {
+            self.decorate_line_targets(buffer_id, &targets);
+            self.line_targets.insert(buffer_id, targets);
+        }
+    }
+
+    /// Namespace the link decorations live under, so replacing a buffer's
+    /// targets can drop exactly its own styling and nothing else's.
+    #[cfg(feature = "plugins")]
+    const LINE_TARGET_NS: &'static str = "fresh.line-targets";
+
+    /// Underline the lines that point somewhere.
+    ///
+    /// Without this a link is indistinguishable from ordinary text: the user
+    /// has no way to know a line is clickable except by clicking it, which is
+    /// no way to discover anything.
+    ///
+    /// Underline only, deliberately. There is no link colour in the theme
+    /// today, and referencing a key that doesn't exist would resolve to
+    /// nothing and leave the styling silently absent again. Underline is the
+    /// convention terminals and browsers already trained users on, and it
+    /// works against every theme.
+    #[cfg(feature = "plugins")]
+    fn decorate_line_targets(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        targets: &[fresh_core::api::LineTarget],
+    ) {
+        let ranges: Vec<std::ops::Range<usize>> = {
+            let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.get(&buffer_id))
+            else {
+                return;
+            };
+            targets
+                .iter()
+                .filter_map(|t| {
+                    let start = state.buffer.line_start_offset(t.line)?;
+                    let end = state
+                        .buffer
+                        .line_start_offset(t.line + 1)
+                        .unwrap_or_else(|| state.buffer.len());
+                    // Trim the newline so the underline stops at the text.
+                    let end = end.saturating_sub(1).max(start);
+                    (end > start).then_some(start..end)
+                })
+                .collect()
+        };
+
+        let namespace = Some(crate::view::overlay::OverlayNamespace::from_string(
+            Self::LINE_TARGET_NS.to_string(),
+        ));
+        for range in ranges {
+            let options = fresh_core::api::OverlayOptions {
+                underline: true,
+                ..Default::default()
+            };
+            self.handle_add_overlay(buffer_id, namespace.clone(), range, options);
+        }
+    }
+
+    /// Drop the link styling this buffer's previous targets installed.
+    #[cfg(feature = "plugins")]
+    fn clear_line_target_decorations(&mut self, buffer_id: fresh_core::BufferId) {
+        let len = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.get(&buffer_id))
+            .map(|state| state.buffer.len())
+            .unwrap_or(0);
+        if len == 0 {
+            return;
+        }
+        let namespace =
+            crate::view::overlay::OverlayNamespace::from_string(Self::LINE_TARGET_NS.to_string());
+        self.handle_clear_overlays_in_range_for_namespace(buffer_id, namespace, 0, len);
+    }
+
+    /// The 0-indexed line the primary cursor is on, in the active buffer.
+    #[cfg(feature = "plugins")]
+    pub(crate) fn cursor_line_in_active_buffer(&self) -> Option<usize> {
+        let position = self.active_window().active_cursors().primary().position;
+        Some(self.active_state().buffer.get_line_number(position))
+    }
+
+    /// The target on `line` of `buffer_id`, if that line has one.
+    #[cfg(feature = "plugins")]
+    pub(crate) fn line_target_at(
+        &self,
+        buffer_id: fresh_core::BufferId,
+        line: usize,
+    ) -> Option<fresh_core::api::LineTarget> {
+        self.line_targets
+            .get(&buffer_id)
+            .and_then(|targets| targets.iter().find(|t| t.line == line))
+            .cloned()
+    }
+
+    #[cfg(feature = "plugins")]
+    /// Open what a line points at.
+    ///
+    /// Gated with the rest of the plugin surface: targets can only be set
+    /// through `editor.setLineTargets`, so without plugins there is never one
+    /// to follow.
+    ///
+    /// The destination pane is resolved by label when the target names one.
+    /// Falling back to *beside* the index — rather than into it — is
+    /// deliberate: an index that replaced itself with the first thing you
+    /// clicked would destroy the view you were navigating.
+    pub(crate) fn follow_line_target(
+        &mut self,
+        target: fresh_core::api::LineTarget,
+        source_split: crate::model::event::LeafId,
+    ) {
+        // `source_split` is the pane the index itself lives in — passed in by
+        // the caller rather than read from the active split, because a click
+        // is dispatched *before* it moves focus. Reading the active split here
+        // meant "beside" was computed relative to whichever pane the user
+        // happened to be in last, so the same link opened somewhere different
+        // each time.
+        let destination = target
+            .into
+            .as_deref()
+            .and_then(|label| self.split_by_label(label))
+            .filter(|leaf| *leaf != source_split);
+
+        let path = {
+            let p = std::path::Path::new(&target.path);
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                self.active_window().root.join(p)
+            }
+        };
+        let line = target.target;
+
+        let leaf = match destination {
+            Some(leaf) => leaf,
+            None => {
+                // No usable label: put it in the pane next door, making one if
+                // this is the only pane.
+                match self.pane_beside(source_split) {
+                    Some(leaf) => leaf,
+                    None => match self.split_pane_impl(
+                        crate::model::event::SplitDirection::Vertical,
+                        false,
+                        0.5,
+                    ) {
+                        Ok(leaf) => leaf,
+                        Err(e) => {
+                            tracing::warn!("line target: could not open a pane: {e}");
+                            return;
+                        }
+                    },
+                }
+            }
+        };
+
+        #[cfg(feature = "plugins")]
+        if let Err(e) = self.handle_open_file_in_split(leaf.0 .0, path, line, None) {
+            tracing::warn!("line target: could not open {}: {e}", target.path);
+            return;
+        }
+
+        // Opening leaves a tab for the file in the pane that was active as
+        // well as the destination, so following a few entries would silently
+        // fill the index's own tab strip with the things you visited. Move it
+        // instead: the destination keeps it, everyone else drops it.
+        #[cfg(feature = "plugins")]
+        {
+            let opened = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .and_then(|(_, vs)| vs.get(&leaf))
+                .map(|vs| vs.active_buffer);
+            if let Some(buffer_id) = opened {
+                self.handle_move_buffer_to_split(buffer_id, leaf.0);
+            }
+        }
+
+        // Focus follows the jump — the user asked to go there.
+        self.split_manager_mut().set_active_split(leaf);
+    }
+
+    /// The leaf a label names, when it still exists.
+    #[cfg(feature = "plugins")]
+    fn split_by_label(&self, label: &str) -> Option<crate::model::event::LeafId> {
+        let (mgr, _) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())?;
+        mgr.labels()
+            .iter()
+            .find(|(_, l)| l.as_str() == label)
+            .map(|(id, _)| crate::model::event::LeafId(*id))
+            .filter(|leaf| self.split_rect(*leaf).is_some())
+    }
+
+    /// The pane to open a target in when no label named one: the nearest
+    /// neighbour of `this_one` that is safe to write into.
+    ///
+    /// "Safe" excludes terminals — replacing a running shell with a source
+    /// file loses the user's session, and the first version of this did
+    /// exactly that when the index was the rightmost pane. Preference is for
+    /// the pane immediately after (right/below), then the nearest before, so
+    /// the destination is where a reader would look for it and does not depend
+    /// on where focus happened to be.
+    #[cfg(feature = "plugins")]
+    fn pane_beside(
+        &self,
+        this_one: crate::model::event::LeafId,
+    ) -> Option<crate::model::event::LeafId> {
+        let window = self.windows.get(&self.active_window)?;
+        let area = window.editor_content_area();
+        let (mgr, _) = window.buffers.splits()?;
+        let panes = mgr.get_visible_buffers(area);
+        let here = panes.iter().find(|(id, _, _)| *id == this_one)?.2;
+
+        let usable: Vec<_> = panes
+            .iter()
+            .filter(|(id, buf, _)| *id != this_one && !window.is_terminal_buffer(*buf))
+            .collect();
+        // Nearest to the right / below first.
+        usable
+            .iter()
+            .filter(|(_, _, rect)| rect.x > here.x || rect.y > here.y)
+            .min_by_key(|(_, _, rect)| (rect.x as u32, rect.y as u32))
+            .or_else(|| {
+                usable
+                    .iter()
+                    .max_by_key(|(_, _, rect)| (rect.x as u32, rect.y as u32))
+            })
+            .map(|(id, _, _)| *id)
     }
 }

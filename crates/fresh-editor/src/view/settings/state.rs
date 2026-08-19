@@ -1535,14 +1535,25 @@ impl SettingsState {
         self.search_input.move_end();
     }
 
+    /// Scroll the search-result viewport just enough to show the selected
+    /// result. Only *selection* moves (keyboard, click) may call this — a
+    /// view scroll must never drag the selection along, and equally must
+    /// never be undone behind the user's back.
+    fn ensure_search_selection_visible(&mut self) {
+        if self.selected_search_result < self.search_scroll_offset {
+            self.search_scroll_offset = self.selected_search_result;
+        } else if self.selected_search_result >= self.search_scroll_offset + self.search_max_visible
+        {
+            self.search_scroll_offset =
+                self.selected_search_result + 1 - self.search_max_visible.max(1);
+        }
+    }
+
     /// Navigate to previous search result
     pub fn search_prev(&mut self) {
         if !self.search_results.is_empty() && self.selected_search_result > 0 {
             self.selected_search_result -= 1;
-            // Scroll up if selection moved above visible area
-            if self.selected_search_result < self.search_scroll_offset {
-                self.search_scroll_offset = self.selected_search_result;
-            }
+            self.ensure_search_selection_visible();
         }
     }
 
@@ -1552,28 +1563,30 @@ impl SettingsState {
             && self.selected_search_result + 1 < self.search_results.len()
         {
             self.selected_search_result += 1;
-            // Scroll down if selection moved below visible area
-            if self.selected_search_result >= self.search_scroll_offset + self.search_max_visible {
-                self.search_scroll_offset =
-                    self.selected_search_result - self.search_max_visible + 1;
-            }
+            self.ensure_search_selection_visible();
         }
     }
 
-    /// Scroll search results up by delta items
+    /// Scroll search results up by delta items.
+    ///
+    /// Scrolling moves the VIEW ONLY: the selected result never moves, even
+    /// when it scrolls out of sight. Selection belongs to the keyboard and
+    /// to clicks. (This supersedes the wheel-moves-selection behaviour that
+    /// was added here for the second half of #2860.)
     pub fn search_scroll_up(&mut self, delta: usize) -> bool {
         if self.search_results.is_empty() || self.search_scroll_offset == 0 {
             return false;
         }
         self.search_scroll_offset = self.search_scroll_offset.saturating_sub(delta);
-        // Keep selection visible
-        if self.selected_search_result >= self.search_scroll_offset + self.search_max_visible {
-            self.selected_search_result = self.search_scroll_offset + self.search_max_visible - 1;
-        }
         true
     }
 
-    /// Scroll search results down by delta items
+    /// Scroll search results down by delta items. View-only, as
+    /// [`Self::search_scroll_up`].
+    ///
+    /// The bottom stop is `len - max_visible`, so scrolling to the end does
+    /// bring the *last result* on screen — which is what #2860 asked for;
+    /// the selection just stays where the user left it.
     pub fn search_scroll_down(&mut self, delta: usize) -> bool {
         if self.search_results.is_empty() {
             return false;
@@ -1586,14 +1599,11 @@ impl SettingsState {
             return false;
         }
         self.search_scroll_offset = (self.search_scroll_offset + delta).min(max_offset);
-        // Keep selection visible
-        if self.selected_search_result < self.search_scroll_offset {
-            self.selected_search_result = self.search_scroll_offset;
-        }
         true
     }
 
-    /// Scroll search results to a ratio (0.0 = top, 1.0 = bottom)
+    /// Scroll search results to a ratio (0.0 = top, 1.0 = bottom). Driven by
+    /// the scrollbar, and view-only for the same reason as the wheel.
     pub fn search_scroll_to_ratio(&mut self, ratio: f32) -> bool {
         if self.search_results.is_empty() {
             return false;
@@ -1605,15 +1615,6 @@ impl SettingsState {
         let new_offset = (ratio * max_offset as f32) as usize;
         if new_offset != self.search_scroll_offset {
             self.search_scroll_offset = new_offset.min(max_offset);
-            // Keep selection visible
-            if self.selected_search_result < self.search_scroll_offset {
-                self.selected_search_result = self.search_scroll_offset;
-            } else if self.selected_search_result
-                >= self.search_scroll_offset + self.search_max_visible
-            {
-                self.selected_search_result =
-                    self.search_scroll_offset + self.search_max_visible - 1;
-            }
             return true;
         }
         false
@@ -4235,5 +4236,149 @@ mod tests {
         assert_eq!(state.search_cursor(), "ที่".len());
         state.search_delete();
         assert_eq!(state.search_query(), "ที่");
+    }
+
+    /// Schema with enough same-prefix settings that a search for "opt" has
+    /// more results than a small viewport can show — used to exercise the
+    /// mouse-wheel scroll clamping of the search-result list.
+    const TEST_SCHEMA_MANY_OPTS: &str = r#"
+{
+  "type": "object",
+  "properties": {
+    "opt_a": { "type": "boolean", "default": true },
+    "opt_b": { "type": "boolean", "default": true },
+    "opt_c": { "type": "boolean", "default": true },
+    "opt_d": { "type": "boolean", "default": true },
+    "opt_e": { "type": "boolean", "default": true },
+    "opt_f": { "type": "boolean", "default": true }
+  },
+  "$defs": {}
+}
+"#;
+
+    fn search_scroll_state() -> SettingsState {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA_MANY_OPTS, &config).unwrap();
+        state.show();
+        state.search_active = true;
+        for c in "opt".chars() {
+            state.search_push_char(c);
+        }
+        assert!(
+            state.search_results.len() >= 6,
+            "expected all opt_* settings to match, got {}",
+            state.search_results.len()
+        );
+        // Small viewport: 2 visible rows, so the list scrolls.
+        state.search_max_visible = 2;
+        state
+    }
+
+    /// The wheel scrolls the VIEW only. Wheeling down must walk the viewport
+    /// all the way to the end of the list — so the last result really does
+    /// become visible, which is what #2860 complained about — while leaving
+    /// the selected result exactly where the user left it, even though that
+    /// scrolls it off screen.
+    #[test]
+    fn test_search_wheel_down_reveals_last_result_without_moving_selection() {
+        let mut state = search_scroll_state();
+        let len = state.search_results.len();
+        state.selected_search_result = 1;
+
+        // Wheel down more than enough notches to pass the end of the list.
+        for _ in 0..(2 * len) {
+            state.search_scroll_down(1);
+        }
+
+        assert_eq!(
+            state.search_scroll_offset + state.search_max_visible,
+            len,
+            "wheel-down must scroll the view until the last result is visible"
+        );
+        assert_eq!(
+            state.selected_search_result, 1,
+            "the wheel must never move the selection"
+        );
+        // Once the last result is on screen there is nothing left to scroll.
+        assert!(!state.search_scroll_down(1));
+        assert_eq!(state.selected_search_result, 1);
+    }
+
+    /// Symmetric to `test_search_wheel_down_reveals_last_result_without_moving_selection`:
+    /// wheeling back up returns the view to the first result and still
+    /// leaves the selection untouched.
+    #[test]
+    fn test_search_wheel_up_reveals_first_result_without_moving_selection() {
+        let mut state = search_scroll_state();
+        let len = state.search_results.len();
+        // Select the last result (as a click would), then wheel around.
+        state.selected_search_result = len - 1;
+
+        for _ in 0..(2 * len) {
+            state.search_scroll_down(1);
+        }
+        for _ in 0..(2 * len) {
+            state.search_scroll_up(1);
+        }
+
+        assert_eq!(
+            state.search_scroll_offset, 0,
+            "wheel-up must scroll the view back to the first result"
+        );
+        assert_eq!(
+            state.selected_search_result,
+            len - 1,
+            "the wheel must never move the selection"
+        );
+        assert!(!state.search_scroll_up(1));
+    }
+
+    /// Dragging/clicking the search scrollbar is a view gesture too, so it
+    /// must not drag the selection along either.
+    #[test]
+    fn test_search_scrollbar_ratio_does_not_move_selection() {
+        let mut state = search_scroll_state();
+        state.selected_search_result = 0;
+
+        assert!(state.search_scroll_to_ratio(1.0));
+        assert_eq!(
+            state.search_scroll_offset,
+            state.search_results.len() - state.search_max_visible
+        );
+        assert_eq!(state.selected_search_result, 0);
+    }
+
+    /// Keyboard navigation is the other half of the contract: once the wheel
+    /// has scrolled the selection out of sight, pressing Down/Up must bring
+    /// it back into view (in both directions).
+    #[test]
+    fn test_search_keyboard_nav_rescrolls_to_selection_after_wheel() {
+        let mut state = search_scroll_state();
+        let len = state.search_results.len();
+
+        // Wheel to the bottom with the selection on result 0.
+        for _ in 0..(2 * len) {
+            state.search_scroll_down(1);
+        }
+        assert!(state.search_scroll_offset > 0);
+
+        // Down: selection 0 -> 1, which is above the viewport, so the view
+        // follows the selection back up.
+        state.search_next();
+        assert_eq!(state.selected_search_result, 1);
+        assert_eq!(state.search_scroll_offset, 1);
+
+        // And the other direction: wheel back to the top, then Up.
+        state.selected_search_result = len - 1;
+        for _ in 0..(2 * len) {
+            state.search_scroll_up(1);
+        }
+        assert_eq!(state.search_scroll_offset, 0);
+        state.search_prev();
+        assert_eq!(state.selected_search_result, len - 2);
+        assert_eq!(
+            state.search_scroll_offset,
+            len - 2 + 1 - state.search_max_visible
+        );
     }
 }

@@ -27,10 +27,10 @@ use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursors;
 use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection, SplitId};
 use crate::model::marker::MarkerList;
+use crate::state::ViewMode;
 use crate::view::folding::FoldManager;
 use crate::view::ui::view_pipeline::Layout;
 use crate::view::viewport::Viewport;
-use crate::{services::plugins::api::ViewTransformPayload, state::ViewMode};
 use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -179,13 +179,37 @@ pub struct BufferViewState {
     /// source of truth.
     pub line_wrap_override: Option<bool>,
 
-    /// Optional view transform payload
-    pub view_transform: Option<ViewTransformPayload>,
-
-    /// True when the buffer was edited since the last view_transform_request hook fired.
-    /// While true, incoming SubmitViewTransform commands are rejected as stale
-    /// (their tokens have source_offsets from before the edit).
-    pub view_transform_stale: bool,
+    /// Explicit per-buffer override for the current-line highlight (analogue of
+    /// `line_numbers_override`). `highlight_current_line` stays the rendered
+    /// source of truth; this records the intent so the editor-wide toggle can
+    /// tell a pinned buffer from one that is merely following the default.
+    pub highlight_current_line_override: Option<bool>,
+    /// Explicit per-(split, buffer) indentation-guide override, set by
+    /// "Toggle Indentation Guides (Current Buffer)". `None` = follow the
+    /// plugin override / language gate / global resolution (see
+    /// [`resolve_indentation_guide_mode`](crate::config::resolve_indentation_guide_mode)).
+    /// Persisted in the per-file workspace state. Distinct from
+    /// `EditorState::indentation_guide_override`, the plugin-facing knob.
+    pub indentation_guide_user_override: Option<bool>,
+    /// Explicit per-(split, buffer) fold-indicator override, set by "Toggle
+    /// Folding Indicators (Current Buffer)". `None` = show them (the default;
+    /// there is no global setting). `Some(false)` hides the gutter fold
+    /// arrows in this split without touching existing folds. Persisted in the
+    /// per-file workspace state.
+    pub fold_indicators_override: Option<bool>,
+    /// Plugin-supplied fold-indicator default for this (split, buffer), set
+    /// via `setFoldIndicators`. `None` = no plugin opinion. Markdown compose
+    /// uses it to drop the gutter arrows from a document preview.
+    ///
+    /// Deliberately separate from `fold_indicators_override` and deliberately
+    /// **not** persisted: it is a mode's transient opinion, not a preference.
+    /// Keeping the two apart means compose can never overwrite a choice the
+    /// user made, can never leak a forced value into the saved workspace, and
+    /// needs no save/restore dance to put things back when it exits — the
+    /// user's setting is still sitting there untouched. It loses to that
+    /// setting in `fold_indicators_visible`, so the toggle action keeps
+    /// working while composing.
+    pub fold_indicators_plugin_override: Option<bool>,
 
     /// Plugin-managed state (arbitrary key-value pairs).
     /// Plugins can store per-buffer-per-split state here via the `setViewState`/`getViewState` API.
@@ -240,8 +264,10 @@ impl BufferViewState {
             highlight_current_line: true,
             line_numbers_override: None,
             line_wrap_override: None,
-            view_transform: None,
-            view_transform_stale: false,
+            highlight_current_line_override: None,
+            indentation_guide_user_override: None,
+            fold_indicators_override: None,
+            fold_indicators_plugin_override: None,
             plugin_state: std::collections::HashMap::new(),
             folds: FoldManager::new(),
         }
@@ -253,6 +279,25 @@ impl BufferViewState {
     /// `wrap_column`, and `rulers` from the given config values. Call this after
     /// creating a new `BufferViewState` (via `new()` or `ensure_buffer_state()`)
     /// to ensure the view respects the user's settings.
+    ///
+    /// Explicit per-buffer pins win over the defaults. `ensure_buffer_state`
+    /// returns an *existing* view state when there is one, so several call
+    /// sites reach a buffer the user has already pinned — re-stamping the
+    /// global value there would silently undo "Toggle X (Current Buffer)" the
+    /// next time that buffer was activated. Fields with no override
+    /// (`None`, the case for every freshly created view state) are unaffected.
+    /// Whether the gutter should draw fold arrows in this split.
+    ///
+    /// The user's own toggle wins outright; a plugin (markdown compose)
+    /// supplies the default when they have not expressed one; failing both,
+    /// they show. That ordering is what lets "Toggle Folding Indicators"
+    /// still do something while a mode is hiding them.
+    pub fn fold_indicators_visible(&self) -> bool {
+        self.fold_indicators_override
+            .or(self.fold_indicators_plugin_override)
+            .unwrap_or(true)
+    }
+
     pub fn apply_config_defaults(&mut self, defaults: ViewConfigDefaults) {
         let ViewConfigDefaults {
             line_numbers,
@@ -263,9 +308,11 @@ impl BufferViewState {
             rulers,
             scroll_offset,
         } = defaults;
-        self.show_line_numbers = line_numbers;
-        self.highlight_current_line = highlight_current_line;
-        self.viewport.line_wrap_enabled = line_wrap;
+        self.show_line_numbers = self.line_numbers_override.unwrap_or(line_numbers);
+        self.highlight_current_line = self
+            .highlight_current_line_override
+            .unwrap_or(highlight_current_line);
+        self.viewport.line_wrap_enabled = self.line_wrap_override.unwrap_or(line_wrap);
         self.viewport.wrap_indent = wrap_indent;
         self.viewport.wrap_column = wrap_column;
         self.rulers = rulers;
@@ -300,8 +347,12 @@ impl Clone for BufferViewState {
             highlight_current_line: self.highlight_current_line,
             line_numbers_override: self.line_numbers_override,
             line_wrap_override: self.line_wrap_override,
-            view_transform: self.view_transform.clone(),
-            view_transform_stale: self.view_transform_stale,
+            highlight_current_line_override: self.highlight_current_line_override,
+            indentation_guide_user_override: self.indentation_guide_user_override,
+            fold_indicators_override: self.fold_indicators_override,
+            // Carried like `view_mode`: a split cloned from a composing one
+            // is composing too, and should hide its arrows for the same reason.
+            fold_indicators_plugin_override: self.fold_indicators_plugin_override,
             plugin_state: self.plugin_state.clone(),
             // Fold markers are per-view; clones start with no folded ranges.
             folds: FoldManager::new(),
@@ -338,7 +389,7 @@ pub struct SplitViewState {
     /// Horizontal scroll offset for the tabs in this split
     pub tab_scroll_offset: usize,
 
-    /// Computed layout for this view (from view_transform or base tokens)
+    /// Computed layout for this view
     /// This is View state - each split has its own Layout
     pub layout: Option<Layout>,
 
@@ -489,7 +540,7 @@ impl SplitViewState {
     /// Returns the Layout - never returns None. Following VSCode's ViewModel pattern.
     ///
     /// # Arguments
-    /// * `tokens` - ViewTokenWire array (from view_transform or built from buffer)
+    /// * `tokens` - ViewTokenWire array built from the buffer
     /// * `source_range` - The byte range this layout covers
     /// * `tab_size` - Tab width for rendering
     pub fn ensure_layout(
@@ -522,9 +573,19 @@ impl SplitViewState {
     }
 
     /// Remove a buffer from this split's tabs and clean up its keyed state
+    ///
+    /// `focus_history` is this split's tab LRU, so it goes with the tab: a
+    /// buffer that is no longer a tab here must not stay a candidate for
+    /// "what should this split show next" (`resolve_close_replacement`).
+    /// Done here rather than at each call site because every one of them —
+    /// a tab closing, a phantom tab being dropped after a panel moves to its
+    /// own split, a buffer migrating to another window — means the same
+    /// thing, and the sites that forgot the second call are what let a dock
+    /// panel get pulled into the editor split.
     pub fn remove_buffer(&mut self, buffer_id: BufferId) {
         self.open_buffers
             .retain(|t| *t != TabTarget::Buffer(buffer_id));
+        self.remove_from_history(buffer_id);
         // Clean up keyed state (but never remove the active buffer's state)
         if buffer_id != self.active_buffer {
             self.keyed_states.remove(&buffer_id);
@@ -670,7 +731,10 @@ impl SplitNode {
             direction,
             first: Box::new(first),
             second: Box::new(second),
-            ratio: ratio.clamp(0.1, 0.9), // Prevent extreme ratios
+            // Keep the stored ratio a valid fraction; the absolute
+            // minimum-pane-size guard is applied at layout time
+            // (see `clamp_first_to_min`), not as a fixed percentage floor.
+            ratio: ratio.clamp(0.0, 1.0),
             split_id: ContainerId(split_id),
             fixed_first: None,
             fixed_second: None,
@@ -1007,6 +1071,45 @@ impl SplitNode {
     }
 }
 
+/// Minimum usable pane width, in columns.
+///
+/// A vertical split's separator eats one column; each child then needs enough
+/// room to show a (truncated) tab label plus a little content. Ten columns
+/// keeps a short filename tab and a handful of content cells legible, which is
+/// about the floor for a pane to be worth showing at all.
+pub const MIN_PANE_WIDTH: u16 = 10;
+
+/// Minimum usable pane height, in rows.
+///
+/// A pane spends one row on its tab bar; three rows leaves the tab bar plus two
+/// content rows, the smallest height where a pane is still usable rather than
+/// just a header.
+pub const MIN_PANE_HEIGHT: u16 = 3;
+
+/// Clamp the first child's cell size so neither child of a split renders below
+/// `min` cells.
+///
+/// `total` is the space shared by both children (the separator has already been
+/// subtracted). Normally the first child is clamped to `[min, total - min]`, so
+/// whatever the first child takes, the sibling keeps at least `min`. This is the
+/// real guard on split sizing: the stored ratio is free to be anything in
+/// `[0, 1]` (a plugin may ask for `0.99`), but at layout time the effective size
+/// is pinned so the sibling never drops below the minimum.
+///
+/// Small-container fallback: when the container cannot give *both* children the
+/// minimum (`total < 2 * min`), there is no size that satisfies the constraint.
+/// Rather than collapse or hide a pane, we split the available space evenly
+/// (`total / 2`) as a best effort so both panes stay as usable as the cramped
+/// container allows. This never panics (e.g. `total == 0` yields `0`).
+fn clamp_first_to_min(first: u16, total: u16, min: u16) -> u16 {
+    if total < min.saturating_mul(2) {
+        // Not enough room for both minimums — degrade to an even split.
+        total / 2
+    } else {
+        first.clamp(min, total - min)
+    }
+}
+
 /// Split a rectangle into two parts based on direction and ratio
 /// Leaves 1 character space for the separator line between splits
 #[cfg(test)]
@@ -1030,7 +1133,11 @@ fn split_rect_ext(
             } else if let Some(s) = fixed_second {
                 total_height.saturating_sub(s.min(total_height))
             } else {
-                (total_height as f32 * ratio).round() as u16
+                // Convert the ratio to cells, then pin it so neither child
+                // renders below the absolute minimum height (the sibling
+                // always keeps at least MIN_PANE_HEIGHT rows).
+                let raw = (total_height as f32 * ratio).round() as u16;
+                clamp_first_to_min(raw, total_height, MIN_PANE_HEIGHT)
             };
             let second_height = total_height.saturating_sub(first_height);
 
@@ -1058,7 +1165,11 @@ fn split_rect_ext(
             } else if let Some(s) = fixed_second {
                 total_width.saturating_sub(s.min(total_width))
             } else {
-                (total_width as f32 * ratio).round() as u16
+                // Convert the ratio to cells, then pin it so neither child
+                // renders below the absolute minimum width (the sibling
+                // always keeps at least MIN_PANE_WIDTH columns).
+                let raw = (total_width as f32 * ratio).round() as u16;
+                clamp_first_to_min(raw, total_width, MIN_PANE_WIDTH)
             };
             let second_width = total_width.saturating_sub(first_width);
 
@@ -1401,6 +1512,10 @@ impl SplitManager {
                     self.active_split = first_leaf;
                 }
             }
+
+            // A collapse can strand the dock's role on the sole root leaf,
+            // which is now an ordinary editor pane (#2415).
+            self.clear_root_leaf_role();
         }
 
         result
@@ -1458,14 +1573,22 @@ impl SplitManager {
         if self.root.id() == target_id {
             return Err("Cannot remove root Grouped node".to_string());
         }
-        Self::remove_child_static(&mut self.root, target_id)
+        let result = Self::remove_child_static(&mut self.root, target_id);
+        if result.is_ok() {
+            // Same invariant as `close_split` (#2415).
+            self.clear_root_leaf_role();
+        }
+        result
     }
 
     /// Adjust the split ratio of a container
     pub fn adjust_ratio(&mut self, container_id: ContainerId, delta: f32) {
         match self.root.find_mut(container_id.into()) {
             Some(SplitNode::Split { ratio, .. }) => {
-                *ratio = (*ratio + delta).clamp(0.1, 0.9);
+                // Store the raw fraction; layout enforces the absolute
+                // minimum pane size, so resizing can approach the edge and
+                // simply stops when the sibling would drop below the minimum.
+                *ratio = (*ratio + delta).clamp(0.0, 1.0);
             }
             Some(SplitNode::Leaf { .. }) => {
                 unreachable!("ContainerId {:?} points to a leaf", container_id)
@@ -1543,7 +1666,11 @@ impl SplitManager {
     #[must_use]
     pub fn set_ratio(&mut self, container_id: ContainerId, new_ratio: f32) -> bool {
         if let Some(SplitNode::Split { ratio, .. }) = self.root.find_mut(container_id.into()) {
-            *ratio = new_ratio.clamp(0.1, 0.9);
+            // Store the plugin-supplied fraction as-is (within [0, 1]).
+            // A request like 0.99 is honored as a ratio, but layout pins the
+            // effective size so the sibling keeps at least the minimum pane
+            // size instead of being clamped to a fixed 90%.
+            *ratio = new_ratio.clamp(0.0, 1.0);
             true
         } else {
             false
@@ -1592,8 +1719,10 @@ impl SplitManager {
                 let total_leaves = first_leaves + second_leaves;
 
                 // Set ratio so each leaf gets equal space
-                // ratio = proportion for first pane
-                *ratio = (first_leaves as f32 / total_leaves as f32).clamp(0.1, 0.9);
+                // ratio = proportion for first pane. The absolute
+                // minimum-pane-size guard is applied at layout time, so we
+                // store the exact proportion here (clamped only to [0, 1]).
+                *ratio = (first_leaves as f32 / total_leaves as f32).clamp(0.0, 1.0);
 
                 total_leaves
             }
@@ -1806,6 +1935,27 @@ impl SplitManager {
         Some(leaf)
     }
 
+    /// Enforce the invariant that the root leaf never carries a role tag.
+    ///
+    /// A role tag (the Utility Dock) only means anything on a leaf *beside*
+    /// editor splits. Once a collapse leaves it as the sole root leaf, a
+    /// stale tag routes every later dock open into it as a full-window tab,
+    /// and workspace persistence makes that permanent (#2415). Returns
+    /// whether a tag was cleared.
+    pub fn clear_root_leaf_role(&mut self) -> bool {
+        if let SplitNode::Leaf { role, .. } = &mut self.root {
+            if role.is_some() {
+                tracing::info!(
+                    "Clearing role {:?} from sole root leaf (a root leaf cannot be a dock)",
+                    role
+                );
+                *role = None;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Find the first leaf split with the given label
     pub fn find_split_by_label(&self, label: &str) -> Option<LeafId> {
         self.root
@@ -1826,6 +1976,42 @@ impl SplitManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two fold-indicator overrides are a precedence, not a single flag:
+    /// a plugin supplies the default, the user's own toggle overrules it, and
+    /// with neither set the arrows show. Getting this backwards would either
+    /// let compose mode silently discard a deliberate setting, or leave
+    /// "Toggle Folding Indicators" doing nothing while composing.
+    #[test]
+    fn test_fold_indicator_precedence() {
+        let mut vs = BufferViewState::new(80, 24);
+        assert!(vs.fold_indicators_visible(), "default is on");
+
+        vs.fold_indicators_plugin_override = Some(false);
+        assert!(
+            !vs.fold_indicators_visible(),
+            "a plugin can hide them when the user has no opinion",
+        );
+
+        vs.fold_indicators_override = Some(true);
+        assert!(
+            vs.fold_indicators_visible(),
+            "the user's own choice overrules the plugin's",
+        );
+
+        vs.fold_indicators_plugin_override = None;
+        assert!(
+            vs.fold_indicators_visible(),
+            "withdrawing the plugin's opinion leaves the user's choice standing",
+        );
+
+        vs.fold_indicators_override = Some(false);
+        vs.fold_indicators_plugin_override = Some(true);
+        assert!(
+            !vs.fold_indicators_visible(),
+            "a user who hid them keeps them hidden whatever the plugin says",
+        );
+    }
 
     #[test]
     fn test_create_split_manager() {
@@ -1909,6 +2095,92 @@ mod tests {
     }
 
     #[test]
+    fn test_close_split_clears_role_stranded_on_root_leaf() {
+        // Regression for #2415: closing the editor leaf collapses the tree
+        // onto the dock leaf, which must shed its role.
+        let editor_buffer = BufferId(0);
+        let dock_buffer = BufferId(1);
+
+        let mut manager = SplitManager::new(editor_buffer);
+        let editor_leaf = manager.active_split();
+        let dock_leaf = manager
+            .split_root_positioned(SplitDirection::Horizontal, dock_buffer, 0.7, false)
+            .unwrap();
+        manager.set_leaf_role(dock_leaf, Some(SplitRole::UtilityDock));
+        assert_eq!(
+            manager.find_leaf_by_role(SplitRole::UtilityDock),
+            Some(dock_leaf)
+        );
+
+        manager.close_split(editor_leaf).unwrap();
+
+        assert_eq!(manager.root().count_leaves(), 1);
+        assert_eq!(
+            manager.find_leaf_by_role(SplitRole::UtilityDock),
+            None,
+            "a sole root leaf must not keep the UtilityDock role"
+        );
+        assert_eq!(manager.leaf_role(dock_leaf), None);
+    }
+
+    #[test]
+    fn test_close_split_keeps_dock_role_when_editor_leaves_remain() {
+        // The dock is still a panel beside a surviving editor pane (#2415).
+        let mut manager = SplitManager::new(BufferId(0));
+        let editor_a = manager.active_split();
+        let editor_b = manager
+            .split_active(SplitDirection::Vertical, BufferId(1), 0.5)
+            .unwrap();
+        let dock_leaf = manager
+            .split_root_positioned(SplitDirection::Horizontal, BufferId(2), 0.7, false)
+            .unwrap();
+        manager.set_leaf_role(dock_leaf, Some(SplitRole::UtilityDock));
+
+        manager.close_split(editor_b).unwrap();
+
+        assert!(manager.root().leaf_split_ids().contains(&editor_a));
+        assert_eq!(
+            manager.find_leaf_by_role(SplitRole::UtilityDock),
+            Some(dock_leaf),
+            "the dock role must survive while another editor leaf exists"
+        );
+    }
+
+    #[test]
+    fn test_clear_root_leaf_role_heals_a_restored_poisoned_tree() {
+        // A workspace saved before the collapse invariant existed rebuilds
+        // into exactly this shape, so restore calls the sanitizer directly
+        // rather than re-deriving it from a close (#2415).
+        let mut manager = SplitManager::new(BufferId(0));
+        let sole_leaf = manager.active_split();
+        manager.set_leaf_role(sole_leaf, Some(SplitRole::UtilityDock));
+
+        assert!(manager.clear_root_leaf_role(), "a role was there to clear");
+        assert_eq!(manager.leaf_role(sole_leaf), None);
+        assert!(
+            !manager.clear_root_leaf_role(),
+            "a healthy tree reports nothing to clear"
+        );
+    }
+
+    #[test]
+    fn test_clear_root_leaf_role_leaves_a_real_dock_alone() {
+        // The sanitizer runs unconditionally after restore, so it must be
+        // inert on a tree whose dock sits beside an editor pane.
+        let mut manager = SplitManager::new(BufferId(0));
+        let dock_leaf = manager
+            .split_root_positioned(SplitDirection::Horizontal, BufferId(1), 0.7, false)
+            .unwrap();
+        manager.set_leaf_role(dock_leaf, Some(SplitRole::UtilityDock));
+
+        assert!(!manager.clear_root_leaf_role());
+        assert_eq!(
+            manager.find_leaf_by_role(SplitRole::UtilityDock),
+            Some(dock_leaf)
+        );
+    }
+
+    #[test]
     fn test_set_ratio_on_leaf_is_graceful_noop() {
         // Regression for #2770: a plugin's `setSplitRatio` always arrives
         // with a *leaf* split id (every plugin-visible split id is a leaf).
@@ -1946,9 +2218,62 @@ mod tests {
         );
         assert_eq!(manager.get_ratio(container_id), Some(0.7));
 
-        // Ratios are clamped to [0.1, 0.9].
+        // The stored ratio is now the raw fraction (only clamped to [0, 1]);
+        // the absolute minimum-pane-size guard lives at layout time, not as a
+        // fixed percentage floor. A plugin asking for 0.99 keeps 0.99.
         assert!(manager.set_ratio(ContainerId(container_id), 0.99));
-        assert_eq!(manager.get_ratio(container_id), Some(0.9));
+        assert_eq!(manager.get_ratio(container_id), Some(0.99));
+
+        // Out-of-range values are still pinned to a valid fraction.
+        assert!(manager.set_ratio(ContainerId(container_id), 1.5));
+        assert_eq!(manager.get_ratio(container_id), Some(1.0));
+        assert!(manager.set_ratio(ContainerId(container_id), -0.5));
+        assert_eq!(manager.get_ratio(container_id), Some(0.0));
+    }
+
+    #[test]
+    fn test_leaf_resolves_to_parent_container_for_ratio() {
+        // Follow-up to #2774 (#2770): plugins only ever hold *leaf* split
+        // ids, so `setSplitRatio` must resolve a leaf to its parent
+        // container. Here we exercise the building blocks
+        // (`parent_container_of` + `set_ratio`) that `handle_set_split_ratio`
+        // composes.
+        let mut manager = SplitManager::new(BufferId(0));
+        let new_leaf = manager
+            .split_active(SplitDirection::Horizontal, BufferId(1), 0.5)
+            .unwrap();
+        let new_leaf_id: SplitId = new_leaf.into();
+
+        // The leaf itself is not a container: setting its ratio directly fails.
+        assert!(
+            !manager.set_ratio(ContainerId(new_leaf_id), 0.75),
+            "a leaf split id is not a resizable container"
+        );
+
+        // But it resolves to the parent Split container...
+        let parent = manager
+            .parent_container_of(LeafId(new_leaf_id))
+            .expect("a split leaf must have a parent container");
+
+        // ...and setting the parent's ratio applies. The stored ratio is the
+        // raw fraction (only clamped to [0, 1]); the absolute minimum-pane-size
+        // guard is applied at layout time, so a plugin's 0.99 is preserved and
+        // the sibling is kept >= min when the split is actually rendered
+        // (see the `split_rect` layout tests), not pinned to a fixed 90%.
+        assert!(manager.set_ratio(parent, 0.75));
+        assert_eq!(manager.get_ratio(parent.into()), Some(0.75));
+        assert!(manager.set_ratio(parent, 0.99));
+        assert_eq!(manager.get_ratio(parent.into()), Some(0.99));
+    }
+
+    #[test]
+    fn test_lone_top_level_leaf_has_no_parent_container() {
+        // A single un-split pane has no parent container, so there is no
+        // resizable divider — resolution must yield `None` (a graceful
+        // `false` no-op in `handle_set_split_ratio`), never a panic.
+        let manager = SplitManager::new(BufferId(0));
+        let lone_leaf: SplitId = manager.active_split().into();
+        assert_eq!(manager.parent_container_of(LeafId(lone_leaf)), None);
     }
 
     #[test]
@@ -1989,6 +2314,91 @@ mod tests {
         assert_eq!(second.height, 100);
         assert_eq!(first.x, 0);
         assert_eq!(second.x, 51); // first.x + first.width + 1 (separator)
+    }
+
+    // === Absolute minimum pane-size clamp tests ===
+
+    #[test]
+    fn test_clamp_first_to_min_pins_both_children() {
+        // Normal case: first child is clamped into [min, total - min].
+        assert_eq!(clamp_first_to_min(0, 100, 10), 10); // floor
+        assert_eq!(clamp_first_to_min(100, 100, 10), 90); // ceiling (sibling keeps min)
+        assert_eq!(clamp_first_to_min(50, 100, 10), 50); // unaffected in-range value
+        assert_eq!(clamp_first_to_min(5, 100, 10), 10);
+        assert_eq!(clamp_first_to_min(95, 100, 10), 90);
+    }
+
+    #[test]
+    fn test_clamp_first_to_min_small_container_fallback() {
+        // total < 2*min: cannot satisfy both minimums, degrade to even split.
+        assert_eq!(clamp_first_to_min(0, 15, 10), 7); // 15/2
+        assert_eq!(clamp_first_to_min(15, 15, 10), 7); // request ignored, even split
+        assert_eq!(clamp_first_to_min(3, 5, 10), 2); // 5/2
+        assert_eq!(clamp_first_to_min(0, 0, 10), 0); // never panics
+        assert_eq!(clamp_first_to_min(1, 1, 10), 0);
+    }
+
+    #[test]
+    fn test_layout_never_renders_child_below_min_width() {
+        // An extreme ratio (plugin asks for 0.99) must not starve the sibling:
+        // the second child keeps at least MIN_PANE_WIDTH columns.
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 40,
+        };
+        let (first, second) = split_rect(rect, SplitDirection::Vertical, 0.99);
+        assert!(
+            second.width >= MIN_PANE_WIDTH,
+            "sibling width {} must be >= {}",
+            second.width,
+            MIN_PANE_WIDTH
+        );
+        assert!(first.width >= MIN_PANE_WIDTH);
+        // total = 99; first pinned to 99 - MIN_PANE_WIDTH = 89, second = 10.
+        assert_eq!(first.width, 100 - 1 - MIN_PANE_WIDTH);
+        assert_eq!(second.width, MIN_PANE_WIDTH);
+
+        // The symmetric case: ratio 0.0 must leave the first child >= min.
+        let (first, second) = split_rect(rect, SplitDirection::Vertical, 0.0);
+        assert_eq!(first.width, MIN_PANE_WIDTH);
+        assert!(second.width >= MIN_PANE_WIDTH);
+    }
+
+    #[test]
+    fn test_layout_never_renders_child_below_min_height() {
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 40,
+        };
+        let (first, second) = split_rect(rect, SplitDirection::Horizontal, 0.99);
+        assert!(second.height >= MIN_PANE_HEIGHT);
+        assert!(first.height >= MIN_PANE_HEIGHT);
+        assert_eq!(second.height, MIN_PANE_HEIGHT);
+
+        let (first, second) = split_rect(rect, SplitDirection::Horizontal, 0.0);
+        assert_eq!(first.height, MIN_PANE_HEIGHT);
+        assert!(second.height >= MIN_PANE_HEIGHT);
+    }
+
+    #[test]
+    fn test_layout_small_container_degrades_evenly() {
+        // A vertical container too narrow for two MIN_PANE_WIDTH panes
+        // (available < 2*min) splits its space evenly instead of hiding one.
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            width: 15, // total = 14 after separator, < 2*MIN_PANE_WIDTH (20)
+            height: 40,
+        };
+        let (first, second) = split_rect(rect, SplitDirection::Vertical, 0.99);
+        // total = 14 -> first = 7, second = 7. Neither collapses to zero.
+        assert_eq!(first.width, 7);
+        assert_eq!(second.width, 7);
+        assert!(first.width > 0 && second.width > 0);
     }
 
     // === Split label tests ===

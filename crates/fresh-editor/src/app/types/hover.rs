@@ -34,6 +34,10 @@ pub enum HoverTarget {
     FileBrowserShowHiddenCheckbox,
     /// Hovering over the file browser "Detect Encoding" checkbox
     FileBrowserDetectEncodingCheckbox,
+    /// Hovering over the theme-info popup's "Open in Theme Editor"
+    /// button row (Ctrl+Right-Click inspector). Paint derives the
+    /// button highlight from this target.
+    ThemeInfoButton,
     /// Hovering over a tab name (target, split_id) - for non-active tabs
     TabName(crate::view::split::TabTarget, LeafId),
     /// Hovering over a tab close button (target, split_id)
@@ -50,7 +54,9 @@ pub enum HoverTarget {
     /// ending / language / warnings / messages / remote / trust / read-only).
     /// One generic variant carrying the segment's identity — the renderer
     /// styles it and `handle_click_status_bar` dispatches it via a single
-    /// hit-test over `StatusBarChrome::clickable`.
+    /// hit-test over the live-derived `status_bar_clickable_area_now`
+    /// segments (the paint-recorded `StatusBarChrome::clickable` cache
+    /// it used to name was retired in slice 7b).
     StatusBarClickable(crate::view::ui::status_bar::StatusBarClickable),
     /// Hovering over the search options "Case Sensitive" checkbox
     SearchOptionCaseSensitive,

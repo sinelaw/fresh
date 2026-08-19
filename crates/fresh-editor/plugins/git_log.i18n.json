@@ -1,41 +1,39 @@
 {
-  "en": {
+  "bg": {
     "cmd.git_log": "Git Log",
-    "cmd.git_log_desc": "Show git log in magit-style interface",
-    "cmd.git_log_close": "Git Log: Close",
-    "cmd.git_log_close_desc": "Close the git log panel",
-    "cmd.git_log_refresh": "Git Log: Refresh",
-    "cmd.git_log_refresh_desc": "Refresh the git log",
-    "cmd.git_log_current_file": "Git Log (Current File)",
-    "cmd.git_log_current_file_desc": "Show git log for the current file in a magit-style interface",
-
-    "status.already_open": "Git log already open",
-    "status.loading": "Loading git log...",
-    "status.no_commits": "No commits found or not a git repository",
-    "status.no_file": "No file to show history for",
-    "status.closed": "Git log closed",
-    "status.failed_open": "Failed to open git log panel",
-    "status.refreshing": "Refreshing git log...",
-    "status.refreshed": "Git log refreshed: %{count} commits",
-    "status.log_ready": "Git log: %{count} commits | Up/Down: navigate | RET: show | q: quit",
-    "status.commit_position": "Commit %{current}/%{total}",
-    "status.move_to_commit": "Move cursor to a commit line",
-    "status.loading_commit": "Loading commit %{hash}...",
-    "status.commit_ready": "Commit %{hash} | Up/Down: navigate | RET: open file | q: back",
-    "status.failed_open_details": "Failed to open commit details",
-    "status.hash_copied": "Copied: %{short} (%{full})",
-    "status.hash_display": "Hash: %{hash}",
-    "status.git_error": "Git log error: %{error}",
-    "status.error_fetching_diff": "Error fetching diff: %{error}",
-    "status.file_loading": "Loading %{file} at %{hash}...",
-    "status.file_not_found": "File %{file} not found at commit %{hash}",
-    "status.file_view_ready": "%{file} @ %{hash} (read-only) | Target: line %{line} | q: back",
-    "status.failed_open_file": "Failed to open %{file}",
-    "status.move_to_diff_with_context": "Move cursor to a diff line with file context",
-    "status.move_to_diff": "Move cursor to a diff line",
-
-    "panel.commits_header": "Commits:",
-    "panel.no_commits": "  No commits found"
+    "cmd.git_log_desc": "Показване на git журнала в интерфейс от тип magit",
+    "cmd.git_log_close": "Git Log: Затваряне",
+    "cmd.git_log_close_desc": "Затваряне на панел на git log",
+    "cmd.git_log_refresh": "Git Log: Опреснѝ",
+    "cmd.git_log_refresh_desc": "Опресняване на git log",
+    "cmd.git_log_current_file": "Git Log (Текущ File)",
+    "cmd.git_log_current_file_desc": "Показване на git журнал за текущия файл в стил интерфейс magit",
+    "status.already_open": "Git log вече е отворен",
+    "status.loading": "Зареждане на git журнал...",
+    "status.no_commits": "Няма намерени коммити или не е git хранилище",
+    "status.no_file": "Няма файл за показване на история",
+    "status.closed": "Git журнал е затворен",
+    "status.failed_open": "Неуспешно отваряне на панел на git журнал",
+    "status.refreshing": "Опресняване на git журнал...",
+    "status.refreshed": "Git журнал опреснен: %{count} коммити",
+    "status.log_ready": "Git журнал: %{count} коммити | Up/Down: навигация | RET: покажѝ | q: отказ",
+    "status.commit_position": "коммит %{current}/%{total}",
+    "status.move_to_commit": "Преместване на курсора към a коммит ред",
+    "status.loading_commit": "Зареждане на коммит %{hash}...",
+    "status.commit_ready": "Коммит %{hash} | Up/Down: навигация | RET: отваряне на файл | q: обратно",
+    "status.failed_open_details": "Неуспешно отваряне на детайли на коммит",
+    "status.hash_copied": "Копирани: %{short} (%{full})",
+    "status.hash_display": "Хеш: %{hash}",
+    "status.git_error": "Git журнал грешка: %{error}",
+    "status.error_fetching_diff": "Грешка при зареждане на разлики: %{error}",
+    "status.file_loading": "Зареждане на %{file} към %{hash}...",
+    "status.file_not_found": "Файл %{file} не е намерен към коммит %{hash}",
+    "status.file_view_ready": "%{file} @ %{hash} (само-четене) | Цел: ред %{line} | q: обратно",
+    "status.failed_open_file": "Неуспешно отваряне на %{file}",
+    "status.move_to_diff_with_context": "Преместване на курсора към ред с контекст разлики",
+    "status.move_to_diff": "Преместване на курсора върху ред с разлики",
+    "panel.commits_header": "коммити:",
+    "panel.no_commits": "Не са намерени коммити"
   },
   "cs": {
     "cmd.git_log": "Git Log",
@@ -46,7 +44,6 @@
     "cmd.git_log_refresh_desc": "Obnovit git log",
     "cmd.git_log_current_file": "Git Log (Aktualni soubor)",
     "cmd.git_log_current_file_desc": "Zobrazit git log pro aktualni soubor v rozhrani stylu magit",
-
     "status.already_open": "Git log je jiz otevren",
     "status.loading": "Nacitam git log...",
     "status.no_commits": "Zadne commity nenalezeny nebo to neni git repozitar",
@@ -71,7 +68,6 @@
     "status.failed_open_file": "Nepodarilo se otevrit %{file}",
     "status.move_to_diff_with_context": "Presunte kurzor na radek diffu s kontextem souboru",
     "status.move_to_diff": "Presunte kurzor na radek diffu",
-
     "panel.commits_header": "Commity:",
     "panel.no_commits": "  Zadne commity nenalezeny"
   },
@@ -84,7 +80,6 @@
     "cmd.git_log_refresh_desc": "Git-Protokoll aktualisieren",
     "cmd.git_log_current_file": "Git-Protokoll (Aktuelle Datei)",
     "cmd.git_log_current_file_desc": "Git-Protokoll fuer die aktuelle Datei in Magit-Stil-Oberflaeche anzeigen",
-
     "status.already_open": "Git-Protokoll bereits geoeffnet",
     "status.loading": "Lade Git-Protokoll...",
     "status.no_commits": "Keine Commits gefunden oder kein Git-Repository",
@@ -109,9 +104,44 @@
     "status.failed_open_file": "%{file} konnte nicht geoeffnet werden",
     "status.move_to_diff_with_context": "Cursor auf eine Diff-Zeile mit Dateikontext bewegen",
     "status.move_to_diff": "Cursor auf eine Diff-Zeile bewegen",
-
     "panel.commits_header": "Commits:",
     "panel.no_commits": "  Keine Commits gefunden"
+  },
+  "en": {
+    "cmd.git_log": "Git Log",
+    "cmd.git_log_desc": "Show git log in magit-style interface",
+    "cmd.git_log_close": "Git Log: Close",
+    "cmd.git_log_close_desc": "Close the git log panel",
+    "cmd.git_log_refresh": "Git Log: Refresh",
+    "cmd.git_log_refresh_desc": "Refresh the git log",
+    "cmd.git_log_current_file": "Git Log (Current File)",
+    "cmd.git_log_current_file_desc": "Show git log for the current file in a magit-style interface",
+    "status.already_open": "Git log already open",
+    "status.loading": "Loading git log...",
+    "status.no_commits": "No commits found or not a git repository",
+    "status.no_file": "No file to show history for",
+    "status.closed": "Git log closed",
+    "status.failed_open": "Failed to open git log panel",
+    "status.refreshing": "Refreshing git log...",
+    "status.refreshed": "Git log refreshed: %{count} commits",
+    "status.log_ready": "Git log: %{count} commits | Up/Down: navigate | RET: show | q: quit",
+    "status.commit_position": "Commit %{current}/%{total}",
+    "status.move_to_commit": "Move cursor to a commit line",
+    "status.loading_commit": "Loading commit %{hash}...",
+    "status.commit_ready": "Commit %{hash} | Up/Down: navigate | RET: open file | q: back",
+    "status.failed_open_details": "Failed to open commit details",
+    "status.hash_copied": "Copied: %{short} (%{full})",
+    "status.hash_display": "Hash: %{hash}",
+    "status.git_error": "Git log error: %{error}",
+    "status.error_fetching_diff": "Error fetching diff: %{error}",
+    "status.file_loading": "Loading %{file} at %{hash}...",
+    "status.file_not_found": "File %{file} not found at commit %{hash}",
+    "status.file_view_ready": "%{file} @ %{hash} (read-only) | Target: line %{line} | q: back",
+    "status.failed_open_file": "Failed to open %{file}",
+    "status.move_to_diff_with_context": "Move cursor to a diff line with file context",
+    "status.move_to_diff": "Move cursor to a diff line",
+    "panel.commits_header": "Commits:",
+    "panel.no_commits": "  No commits found"
   },
   "es": {
     "cmd.git_log": "Registro Git",
@@ -122,7 +152,6 @@
     "cmd.git_log_refresh_desc": "Actualizar el registro git",
     "cmd.git_log_current_file": "Registro Git (Archivo actual)",
     "cmd.git_log_current_file_desc": "Mostrar registro git del archivo actual en interfaz estilo magit",
-
     "status.already_open": "El registro git ya esta abierto",
     "status.loading": "Cargando registro git...",
     "status.no_commits": "No se encontraron commits o no es un repositorio git",
@@ -147,7 +176,6 @@
     "status.failed_open_file": "Error al abrir %{file}",
     "status.move_to_diff_with_context": "Mueve el cursor a una linea de diff con contexto de archivo",
     "status.move_to_diff": "Mueve el cursor a una linea de diff",
-
     "panel.commits_header": "Commits:",
     "panel.no_commits": "  No se encontraron commits"
   },
@@ -160,7 +188,6 @@
     "cmd.git_log_refresh_desc": "Actualiser le journal git",
     "cmd.git_log_current_file": "Journal Git (Fichier actuel)",
     "cmd.git_log_current_file_desc": "Afficher le journal git du fichier actuel en interface style magit",
-
     "status.already_open": "Le journal git est deja ouvert",
     "status.loading": "Chargement du journal git...",
     "status.no_commits": "Aucun commit trouve ou ce n'est pas un depot git",
@@ -185,7 +212,6 @@
     "status.failed_open_file": "Echec de l'ouverture de %{file}",
     "status.move_to_diff_with_context": "Deplacez le curseur sur une ligne de diff avec contexte de fichier",
     "status.move_to_diff": "Deplacez le curseur sur une ligne de diff",
-
     "panel.commits_header": "Commits:",
     "panel.no_commits": "  Aucun commit trouve"
   },
@@ -234,7 +260,6 @@
     "cmd.git_log_refresh_desc": "gitログを更新",
     "cmd.git_log_current_file": "Gitログ (現在のファイル)",
     "cmd.git_log_current_file_desc": "現在のファイルのgitログをmagitスタイルのインターフェースで表示",
-
     "status.already_open": "Gitログは既に開いています",
     "status.loading": "Gitログを読み込み中...",
     "status.no_commits": "コミットが見つからないか、gitリポジトリではありません",
@@ -259,7 +284,6 @@
     "status.failed_open_file": "%{file} を開けませんでした",
     "status.move_to_diff_with_context": "ファイルコンテキストのある差分行にカーソルを移動してください",
     "status.move_to_diff": "カーソルを差分行に移動してください",
-
     "panel.commits_header": "コミット:",
     "panel.no_commits": "  コミットが見つかりません"
   },
@@ -272,7 +296,6 @@
     "cmd.git_log_refresh_desc": "git 로그 새로고침",
     "cmd.git_log_current_file": "Git 로그 (현재 파일)",
     "cmd.git_log_current_file_desc": "현재 파일의 git 로그를 magit 스타일 인터페이스로 표시",
-
     "status.already_open": "Git 로그가 이미 열려 있습니다",
     "status.loading": "Git 로그 로딩 중...",
     "status.no_commits": "커밋을 찾을 수 없거나 git 저장소가 아닙니다",
@@ -297,7 +320,6 @@
     "status.failed_open_file": "%{file}을 열지 못했습니다",
     "status.move_to_diff_with_context": "파일 컨텍스트가 있는 diff 줄로 커서를 이동하세요",
     "status.move_to_diff": "커서를 diff 줄로 이동하세요",
-
     "panel.commits_header": "커밋:",
     "panel.no_commits": "  커밋을 찾을 수 없습니다"
   },
@@ -310,7 +332,6 @@
     "cmd.git_log_refresh_desc": "Atualizar o git log",
     "cmd.git_log_current_file": "Git Log (Arquivo atual)",
     "cmd.git_log_current_file_desc": "Mostrar git log do arquivo atual em interface estilo magit",
-
     "status.already_open": "Git log ja esta aberto",
     "status.loading": "Carregando git log...",
     "status.no_commits": "Nenhum commit encontrado ou nao e um repositorio git",
@@ -335,7 +356,6 @@
     "status.failed_open_file": "Falha ao abrir %{file}",
     "status.move_to_diff_with_context": "Mova o cursor para uma linha de diff com contexto de arquivo",
     "status.move_to_diff": "Mova o cursor para uma linha de diff",
-
     "panel.commits_header": "Commits:",
     "panel.no_commits": "  Nenhum commit encontrado"
   },
@@ -348,7 +368,6 @@
     "cmd.git_log_refresh_desc": "Obnovit' git log",
     "cmd.git_log_current_file": "Git Log (Tekushchiy fayl)",
     "cmd.git_log_current_file_desc": "Pokazat' git log dlya tekushchego fayla v interfeyse stilya magit",
-
     "status.already_open": "Git log uzhe otkryt",
     "status.loading": "Zagruzka git log...",
     "status.no_commits": "Kommity ne naydeny ili eto ne git repozitoriy",
@@ -373,7 +392,6 @@
     "status.failed_open_file": "Ne udalos' otkryt' %{file}",
     "status.move_to_diff_with_context": "Peremesstite kursor na stroku diff s kontekstom fayla",
     "status.move_to_diff": "Peremesstite kursor na stroku diff",
-
     "panel.commits_header": "Kommity:",
     "panel.no_commits": "  Kommity ne naydeny"
   },
@@ -386,7 +404,6 @@
     "cmd.git_log_refresh_desc": "รีเฟรช git log",
     "cmd.git_log_current_file": "Git Log (ไฟล์ปัจจุบัน)",
     "cmd.git_log_current_file_desc": "แสดง git log สำหรับไฟล์ปัจจุบันในอินเทอร์เฟซสไตล์ magit",
-
     "status.already_open": "Git log เปิดอยู่แล้ว",
     "status.loading": "กำลังโหลด git log...",
     "status.no_commits": "ไม่พบคอมมิตหรือไม่ใช่ git repository",
@@ -411,7 +428,6 @@
     "status.failed_open_file": "ไม่สามารถเปิด %{file} ได้",
     "status.move_to_diff_with_context": "เลื่อนเคอร์เซอร์ไปที่บรรทัด diff ที่มีบริบทไฟล์",
     "status.move_to_diff": "เลื่อนเคอร์เซอร์ไปที่บรรทัด diff",
-
     "panel.commits_header": "คอมมิต:",
     "panel.no_commits": "  ไม่พบคอมมิต"
   },
@@ -424,7 +440,6 @@
     "cmd.git_log_refresh_desc": "Onovyty git log",
     "cmd.git_log_current_file": "Git Log (Potochnyy fayl)",
     "cmd.git_log_current_file_desc": "Pokazaty git log dlya potochnoho faylu v interfeysi stylyu magit",
-
     "status.already_open": "Git log vzhe vidkryto",
     "status.loading": "Zavantazhennya git log...",
     "status.no_commits": "Komity ne znaydeno abo tse ne git repozytoriy",
@@ -449,7 +464,6 @@
     "status.failed_open_file": "Ne vdalosya vidkryty %{file}",
     "status.move_to_diff_with_context": "Peremistit' kursor na ryadok diff z kontekstom faylu",
     "status.move_to_diff": "Peremistit' kursor na ryadok diff",
-
     "panel.commits_header": "Komity:",
     "panel.no_commits": "  Komity ne znaydeno"
   },
@@ -462,7 +476,6 @@
     "cmd.git_log_refresh_desc": "Làm mới git log",
     "cmd.git_log_current_file": "Git Log (Tệp hiện tại)",
     "cmd.git_log_current_file_desc": "Hiển thị git log cho tệp hiện tại với giao diện kiểu magit",
-
     "status.already_open": "Git log đã mở",
     "status.loading": "Đang tải git log...",
     "status.no_commits": "Không tìm thấy commit hoặc không phải kho git",
@@ -487,7 +500,6 @@
     "status.failed_open_file": "Không thể mở %{file}",
     "status.move_to_diff_with_context": "Di chuyển con trỏ đến dòng diff có ngữ cảnh tệp",
     "status.move_to_diff": "Di chuyển con trỏ đến dòng diff",
-
     "panel.commits_header": "Commit:",
     "panel.no_commits": "  Không tìm thấy commit"
   },
@@ -500,7 +512,6 @@
     "cmd.git_log_refresh_desc": "刷新git日志",
     "cmd.git_log_current_file": "Git日志 (当前文件)",
     "cmd.git_log_current_file_desc": "以magit风格界面显示当前文件的git日志",
-
     "status.already_open": "Git日志已经打开",
     "status.loading": "正在加载Git日志...",
     "status.no_commits": "未找到提交或不是git仓库",
@@ -525,7 +536,6 @@
     "status.failed_open_file": "无法打开 %{file}",
     "status.move_to_diff_with_context": "请将光标移动到带有文件上下文的差异行",
     "status.move_to_diff": "请将光标移动到差异行",
-
     "panel.commits_header": "提交:",
     "panel.no_commits": "  未找到提交"
   }

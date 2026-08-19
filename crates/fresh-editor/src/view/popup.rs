@@ -123,6 +123,11 @@ pub enum PopupResolver {
     /// segment). Confirm dispatches the selected row's `data`
     /// ("toggle_read_only" / "cancel") through `handle_read_only_menu_action`.
     ReadOnly,
+    /// Update-available menu (anchored to the status bar's `{update}` segment).
+    /// Confirm dispatches the selected row's `data` ("update" / "cancel_popup")
+    /// through `handle_update_menu_action`; "update" opens a local terminal that
+    /// runs the update.
+    Update,
     /// "Couldn't save settings" error popup. Acknowledging it (confirm or
     /// cancel) opens the offending config file for `layer` in a buffer so the
     /// user can fix the syntax error that blocked the save.
@@ -480,6 +485,18 @@ impl Popup {
         }
     }
 
+    /// Index of the currently selected row (if this is a list popup and the
+    /// row exists). Rows are indexed independently of `scroll_offset`, so
+    /// this is a stable handle on the row the user is looking at — which is
+    /// how the completion accept path tells apart candidates that share a
+    /// label.
+    pub fn selected_index(&self) -> Option<usize> {
+        match &self.content {
+            PopupContent::List { items, selected } if *selected < items.len() => Some(*selected),
+            _ => None,
+        }
+    }
+
     /// Get the actual visible content height (accounting for borders)
     fn visible_height(&self) -> usize {
         let border_offset = if self.bordered { 2 } else { 0 };
@@ -581,8 +598,15 @@ impl Popup {
         }
     }
 
-    /// Scroll by a delta amount (positive = down, negative = up)
-    /// Used for mouse wheel scrolling
+    /// Scroll by a delta amount (positive = down, negative = up).
+    ///
+    /// Used for mouse-wheel scrolling and for the scrollbar handlers, so it
+    /// moves the **view only**: a `List` popup's selection stays on whatever
+    /// entry it was on, even when that entry scrolls off-screen. Dragging the
+    /// selection along with the viewport made the wheel silently retarget
+    /// what Enter would commit; the keyboard paths (`select_next`,
+    /// `page_down`, …) are the ones that move the selection, and they scroll
+    /// the view to follow it.
     pub fn scroll_by(&mut self, delta: i32) {
         let content_len = self.wrapped_item_count();
         let visible = self.visible_height();
@@ -594,18 +618,6 @@ impl Popup {
         } else {
             // Scroll down
             self.scroll_offset = (self.scroll_offset + delta as usize).min(max_scroll);
-        }
-
-        // For list popups, adjust selection to stay visible
-        if let PopupContent::List { items, selected } = &mut self.content {
-            let visible_start = self.scroll_offset;
-            let visible_end = (self.scroll_offset + visible).min(items.len());
-
-            if *selected < visible_start {
-                *selected = visible_start;
-            } else if *selected >= visible_end {
-                *selected = visible_end.saturating_sub(1);
-            }
         }
     }
 

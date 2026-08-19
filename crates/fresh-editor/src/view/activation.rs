@@ -4,7 +4,7 @@
 //! time against the rendering split's cursor positions, instead of being
 //! deleted and recreated by the plugin on every cursor move. This is what
 //! lets cursor movement leave the marker set — and therefore the
-//! `LineWrapCache` / `VisualRowIndex` versions — completely untouched.
+//! `LineWrapCache` / `WrapIndex` versions — completely untouched.
 //!
 //! The scope is stored **relative to the decoration's own marker
 //! position** (`before` bytes ahead of it, `len` bytes long). Both the

@@ -89,11 +89,11 @@ pub fn render_settings(
     // Calculate modal size (90% of screen width, 90% height to fill most of available space)
     let modal_width = (area.width * 90 / 100).min(160);
     let modal_height = area.height * 90 / 100;
-    // Offsets must be ABSOLUTE — `area.x` / `area.y` are nonzero when
-    // `area` is the chrome region right of the dock (or a bottom-anchored
-    // split). Centring with bare `area.width / 2` placed the modal at the
-    // FRAME origin, where the dock then over-drew its left edge — hiding
-    // the title bar and clipping the rounded top-left corner.
+    // Offsets must be ABSOLUTE — `area.x` / `area.y` are not assumed to be
+    // zero (this is the full frame today, but the modal must centre in
+    // whatever rect it is handed). Centring with bare `area.width / 2` placed
+    // the modal at the FRAME origin, where the dock then over-drew its left
+    // edge — hiding the title bar and clipping the rounded top-left corner.
     let modal_x = area.x + (area.width.saturating_sub(modal_width)) / 2;
     let modal_y = area.y + (area.height.saturating_sub(modal_height)) / 2;
 
@@ -1411,6 +1411,66 @@ fn hit_rect(
     Rect::default()
 }
 
+/// Build the click geometry for a `DualList` from the cells the widget
+/// renderer just painted.
+///
+/// The widget emits one `dual_focus` hit per occupied cell, carrying
+/// the column name and the row index the settings state indexes by.
+/// Converting each hit's byte range against its own row text (the same
+/// conversion [`hit_rect`] does) keeps the rects correct no matter how
+/// the columns were laid out or how far the panel is scrolled.
+fn dual_list_layout(
+    out: &crate::widgets::RenderOutput,
+    area: Rect,
+    skip_rows: u16,
+) -> crate::view::controls::DualListLayout {
+    use crate::primitives::display_width::str_width;
+    use crate::view::controls::{DualListLayout, DualListRowArea};
+
+    let mut layout = DualListLayout {
+        full_area: area,
+        ..Default::default()
+    };
+    for h in &out.hits {
+        if h.widget_kind != "dual_list" || h.event_type != "dual_focus" {
+            continue;
+        }
+        let (Some(column), Some(index)) = (
+            h.payload.get("column").and_then(|v| v.as_str()),
+            h.payload.get("index").and_then(|v| v.as_u64()),
+        ) else {
+            continue;
+        };
+        let Some(dst) = (h.buffer_row as u16).checked_sub(skip_rows) else {
+            continue;
+        };
+        if dst >= area.height {
+            continue;
+        }
+        let Some(entry) = out.entries.get(h.buffer_row as usize) else {
+            continue;
+        };
+        let text = entry.text.trim_end_matches('\n');
+        let s = h.byte_start.min(text.len());
+        let e = h.byte_end.min(text.len());
+        let x = str_width(&text[..s]) as u16;
+        if x >= area.width {
+            continue;
+        }
+        let w = (str_width(&text[s..e]).max(1) as u16).min(area.width - x);
+        let row = DualListRowArea {
+            area: Rect::new(area.x + x, area.y + dst, w, 1),
+            index: index as usize,
+        };
+        match column {
+            "available" => layout.available_rows.push(row),
+            "included" => layout.included_rows.push(row),
+            _ => {}
+        }
+    }
+    layout
+}
+
 /// Render the appropriate control for a setting
 ///
 /// # Arguments
@@ -1490,7 +1550,7 @@ fn render_control(
             //
             // The shared widget framework (`collect_dropdown`) surfaces an
             // open dropdown's options as a *floating* screen-level pop-over
-            // (`RenderOutput::dropdown_popups`) for plugin panels, and
+            // (`RenderOutput::popups`) for plugin panels, and
             // discards `render_dropdown`'s inline `option_rows`. The Settings
             // modal does not draw those floating pop-overs — it reserves
             // inline rows for the open list via `SettingControl::height`. So
@@ -1515,6 +1575,9 @@ fn render_control(
                     label_width.unwrap_or(0) as u32,
                     true,
                     state.scroll_offset as u32,
+                    // The settings dialog draws its own selection chrome
+                    // and never reserved the `▸ ` focus-marker gutter.
+                    false,
                 );
                 scroll_offset = rendered.scroll_offset;
                 for (row_i, (_idx, entry)) in rendered.option_rows.iter().enumerate() {
@@ -1652,23 +1715,31 @@ fn render_control(
             ControlLayoutInfo::TextList { rows }
         }
 
-        SettingControl::DualList(_) => {
+        SettingControl::DualList(state) => {
+            // A keyed widget takes its focus from `focus_key`, not from
+            // the spec's `focused` flag, so the picker only paints its
+            // cursor once we name it as the focused widget. Gate that on
+            // *editing*, not mere selection: outside edit mode ↑↓ walks
+            // the settings list, and a cursor drawn inside the columns
+            // would promise a movement the arrows don't make.
+            let focus_key = if state.editing { name } else { "" };
             // View migrated to the widget `DualList` kind (two-column
             // Available/Included picker); editing still runs through the
-            // settings input path. Mouse hit geometry is approximate for
-            // now (keyboard nav is the primary path).
-            render_control_via_widget(
+            // settings input path. The click geometry is read back from
+            // the cells the widget actually painted, so a click lands on
+            // the row under the pointer instead of nowhere.
+            let out = render_control_via_widget(
                 frame,
                 area,
                 control,
                 name,
                 theme,
                 skip_rows,
-                "",
+                focus_key,
                 label_width,
                 prev,
             );
-            ControlLayoutInfo::DualList(Default::default())
+            ControlLayoutInfo::DualList(dual_list_layout(&out, area, skip_rows))
         }
 
         SettingControl::Map(state) => {
@@ -2113,6 +2184,12 @@ fn render_footer(
         t!("settings.help_search").to_string()
     } else if footer_focused {
         t!("settings.help_footer").to_string()
+    } else if state.is_editing_dual_list() {
+        // The generic "Enter:Edit" line is actively wrong once the
+        // two-column picker has the keyboard — Enter no longer starts
+        // an edit, and none of the keys that do move items appear in
+        // it.
+        t!("settings.help_duallist").to_string()
     } else {
         t!("settings.help_default").to_string()
     };
@@ -2401,6 +2478,8 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         sel_start,
         sel_end,
         label_width: 0,
+        read_only: false,
+        markdown: false,
         key: None,
     };
     let out = crate::widgets::render_spec_no_autofocus(
@@ -2500,6 +2579,7 @@ fn render_search_results(
             frame,
             item_area,
             result,
+            idx,
             is_selected,
             is_hovered,
             theme,
@@ -2536,11 +2616,15 @@ fn render_search_results(
     }
 }
 
-/// Render a single search result with breadcrumb
+/// Render a single search result with breadcrumb. `result_index` is the
+/// absolute index into the state's `search_results` (needed for hit-testing
+/// because only the visible rows get registered in the layout).
+#[allow(clippy::too_many_arguments)]
 fn render_search_result_item(
     frame: &mut Frame,
     area: Rect,
     result: &SearchResult,
+    result_index: usize,
     is_selected: bool,
     is_hovered: bool,
     theme: &Theme,
@@ -2638,7 +2722,7 @@ fn render_search_result_item(
     }
 
     // Track this item in layout
-    layout.add_search_result(result.page_index, result.item_index, area);
+    layout.add_search_result(result_index, result.page_index, result.item_index, area);
 }
 
 /// Build a line with highlighted match positions

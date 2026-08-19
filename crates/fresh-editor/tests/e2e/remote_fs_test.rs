@@ -19,15 +19,26 @@ fn create_test_filesystem() -> Option<(RemoteFileSystem, tempfile::TempDir, toki
 /// would show the home directory instead of `/some/path` in the file explorer.
 #[test]
 fn test_remote_file_explorer_anchored_at_working_dir() {
-    let Some((fs, _temp_dir, _rt)) = create_test_filesystem() else {
+    let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
         eprintln!("Skipping test: could not create test filesystem");
         return;
     };
     let fs_arc: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> = Arc::new(fs);
 
     // Create a subdirectory to use as the working dir (simulating user@host:/path/to/project)
+    //
+    // In the test's own temp dir, not under `home_dir()`. The local agent's
+    // home *is* the real `$HOME` of whatever machine runs the suite, so the
+    // fixture used to be built at a fixed `~/my_test_project` shared by every
+    // run and every concurrent test — no isolation at all, against
+    // CONTRIBUTING.md Testing §4, and leaving debris in the user's home
+    // directory besides. The tempdir was already being created; it was just
+    // bound to `_temp_dir` and never used.
+    //
+    // What the test needs from `home_dir()` is only that the working dir is
+    // *not* it, which any path outside home satisfies.
     let home_dir = fs_arc.home_dir().unwrap();
-    let project_dir = home_dir.join("my_test_project");
+    let project_dir = temp_dir.path().join("my_test_project");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("hello.txt"), "hello world").unwrap();
     std::fs::create_dir_all(project_dir.join("src")).unwrap();
@@ -56,10 +67,22 @@ fn test_remote_file_explorer_anchored_at_working_dir() {
     // the title is not the ready signal; a rendered directory entry is.
     // Either name resolves the wait: the assert below decides which one
     // (project = fixed, home = the regression) actually anchored the root.
+    //
+    // Restricted to explorer *tree* rows. `home_dir_name` is a bare path
+    // component — "runner" on a GitHub runner, "root" in a container — and
+    // matching it anywhere on screen made the wait resolve on unrelated text
+    // (a status-bar path, or the substring inside "project_root"). The assert
+    // below then picked that same unrelated line and failed on it.
+    let is_tree_row = |line: &str| {
+        line.contains('│') || line.contains('>') || line.contains('▼') || line.contains('└')
+    };
+    let names_a_dir =
+        |line: &str| line.contains("my_test_project") || line.contains(&home_dir_name);
     harness
         .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("my_test_project") || screen.contains(&home_dir_name)
+            h.screen_to_string()
+                .lines()
+                .any(|l| is_tree_row(l) && names_a_dir(l))
         })
         .unwrap();
 
@@ -69,9 +92,7 @@ fn test_remote_file_explorer_anchored_at_working_dir() {
     // Find the first line in the explorer that contains a directory name.
     // The root node appears first; if the bug is present it will be the
     // home dir (e.g. "root") instead of "my_test_project".
-    let first_dir_line = screen
-        .lines()
-        .find(|l| l.contains("my_test_project") || l.contains(&home_dir_name));
+    let first_dir_line = screen.lines().find(|l| is_tree_row(l) && names_a_dir(l));
 
     let first_dir_line = first_dir_line.expect("File explorer should show directory entries");
     assert!(

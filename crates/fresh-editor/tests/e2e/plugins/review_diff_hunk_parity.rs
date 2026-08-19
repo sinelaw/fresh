@@ -92,6 +92,56 @@ fn open_review_diff(harness: &mut EditorTestHarness) -> String {
     harness.screen_to_string()
 }
 
+/// True while a side panel — not the diff — holds keyboard focus.
+fn review_panel_has_focus(screen: &str) -> bool {
+    screen.contains("▸FILES") || screen.contains("▸COMMENTS")
+}
+
+/// Tab until the diff holds the keys again. `F` / `C` focus the panel they
+/// reveal, and the Tab order is FILES → diff → COMMENTS, so the number of
+/// steps back to the diff depends on which panels are already open.
+fn focus_review_diff(harness: &mut EditorTestHarness) {
+    for _ in 0..3 {
+        if !review_panel_has_focus(&harness.screen_to_string()) {
+            return;
+        }
+        let before = harness.screen_to_string();
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string() != before)
+            .unwrap();
+    }
+    assert!(
+        !review_panel_has_focus(&harness.screen_to_string()),
+        "focus never came back to the diff:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Reveal the FILES sidebar (`F`); it starts hidden so the diff owns the
+/// full width. `F` focuses what it reveals, so hand the keys back to the
+/// diff — callers here drive the diff, not the sidebar.
+fn show_files_panel(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('F'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("▸FILES"))
+        .unwrap();
+    focus_review_diff(harness);
+}
+
+/// Reveal the COMMENTS rail (`C`), likewise leaving focus on the diff.
+fn show_comments_panel(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('C'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("COMMENTS"))
+        .unwrap();
+    focus_review_diff(harness);
+}
+
 /// §5.2 — the review sidebar lists the changed file under a section header
 /// and shows add/remove counts.
 #[test]
@@ -100,6 +150,7 @@ fn test_review_sidebar_lists_files() {
     let repo = repo_with_modification();
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
 
     // The sidebar is populated asynchronously after the toolbar (with its
     // "next hunk" hint) appears, while "Generating Review Diff Stream..." is
@@ -116,19 +167,20 @@ fn test_review_sidebar_lists_files() {
         .unwrap();
 }
 
-/// §5.1 — `1` switches to the side-by-side split, `2` returns to the
-/// unified stack with the sidebar intact.
+/// §5.1 — `2` switches to the side-by-side split (two columns, two
+/// sides), `1` returns to the unified stack with the sidebar intact.
 #[test]
 fn test_review_layout_toggle_split_and_back() {
     init_tracing_from_env();
     let repo = repo_with_modification();
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
 
-    // `1` renders the focused file as an in-panel side-by-side (the sidebar
+    // `2` renders the focused file as an in-panel side-by-side (the sidebar
     // stays); the status line confirms the mode.
     harness
-        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
         .unwrap();
     harness
         .wait_until(|h| {
@@ -137,9 +189,9 @@ fn test_review_layout_toggle_split_and_back() {
         })
         .unwrap();
 
-    // `2` returns to the unified stack, sidebar intact.
+    // `1` returns to the unified stack, sidebar intact.
     harness
-        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
         .unwrap();
     harness
         .wait_until(|h| {
@@ -198,14 +250,16 @@ fn test_review_inline_comment_renders_as_box() {
     );
 }
 
-/// §5.11 — `/` filters the file list: typing a query narrows the sidebar to
-/// matching files and hides the rest.
+/// §5.11 — `/` filters the file list: it opens the sidebar with a filter
+/// field under the header, and typing narrows the tree (and the stream) to
+/// matching files as you type — no bottom prompt involved.
 #[test]
 fn test_review_filter_narrows_files() {
     init_tracing_from_env();
     let repo = repo_with_two_files();
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
     // The file sidebar populates asynchronously after the toolbar appears, so
     // wait for both files rather than snapshotting a single (possibly early)
     // frame.
@@ -219,18 +273,23 @@ fn test_review_filter_narrows_files() {
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
-    harness.wait_for_prompt().unwrap();
+    // The field lives in the panel, so no prompt opens; type straight into it.
     harness.type_text("widget").unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.wait_for_prompt_closed().unwrap();
-
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("widget.rs") && !s.contains("main.rs") && s.contains("/widget")
+            s.contains("widget.rs") && !s.contains("main.rs")
+        })
+        .unwrap();
+
+    // Enter closes the field and keeps the query.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("widget.rs") && !s.contains("main.rs")
         })
         .unwrap();
 }
@@ -375,6 +434,7 @@ fn test_review_help_opens_and_q_closes() {
     let repo = repo_with_modification();
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
 
     harness
         .send_key(KeyCode::Char('?'), KeyModifiers::NONE)
@@ -403,6 +463,7 @@ fn test_review_comments_rail_is_narrow() {
     let repo = repo_with_modification();
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
+    show_comments_panel(&mut harness);
 
     // The comments rail is populated asynchronously after the hint bar
     // appears — wait for its header rather than reading the first frame.
@@ -448,7 +509,7 @@ fn test_review_side_by_side_shift_wheel_scrolls_horizontally() {
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
     harness
-        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
         .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Side-by-side view"))

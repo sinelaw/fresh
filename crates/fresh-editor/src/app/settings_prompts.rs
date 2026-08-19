@@ -66,9 +66,7 @@ impl Editor {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 let (_, name, desc) = options[current_index];
-                prompt.input = format!("{} ({})", name, desc);
-                prompt.cursor_pos = prompt.input.len();
-                prompt.selection_anchor = Some(0);
+                prompt.set_input_selected(format!("{} ({})", name, desc));
             }
         }
     }
@@ -114,10 +112,11 @@ impl Editor {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 let enc = Encoding::all()[current_index];
-                prompt.input = format!("{} ({})", enc.display_name(), enc.description());
-                prompt.cursor_pos = prompt.input.len();
-                // Select all text so typing immediately replaces it
-                prompt.selection_anchor = Some(0);
+                prompt.set_input_selected(format!(
+                    "{} ({})",
+                    enc.display_name(),
+                    enc.description()
+                ));
             }
         }
     }
@@ -192,9 +191,11 @@ impl Editor {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 let enc = Encoding::all()[current_index];
-                prompt.input = format!("{} ({})", enc.display_name(), enc.description());
-                prompt.cursor_pos = prompt.input.len();
-                prompt.selection_anchor = Some(0);
+                prompt.set_input_selected(format!(
+                    "{} ({})",
+                    enc.display_name(),
+                    enc.description()
+                ));
             }
         }
     }
@@ -392,13 +393,11 @@ impl Editor {
                 prompt.selected_suggestion = Some(current_index);
                 // Set input to match selected theme key
                 if let Some(suggestion) = prompt.suggestions.get(current_index) {
-                    prompt.input = suggestion.get_value().to_string();
+                    let synced = suggestion.get_value().to_string();
+                    prompt.set_input_selected(synced);
                 } else {
-                    prompt.input = current_theme_key.to_string();
+                    prompt.set_input_selected(current_theme_key.to_string());
                 }
-                prompt.cursor_pos = prompt.input.len();
-                // Select all so typing replaces the pre-filled value
-                prompt.selection_anchor = Some(0);
             }
         }
     }
@@ -415,11 +414,10 @@ impl Editor {
         if !self.config.editor.animations {
             return;
         }
-        let animations = &mut self.active_window_mut().animations;
-        let Some(area) = animations.last_frame_area() else {
+        let Some(area) = self.last_rendered_frame.as_ref().map(|b| b.area) else {
             return;
         };
-        animations.start(
+        self.active_window_mut().animations.start(
             area,
             crate::view::animation::AnimationKind::ColorTransition {
                 duration: std::time::Duration::from_millis(200),
@@ -657,9 +655,7 @@ impl Editor {
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
-                prompt.input = current_map.clone();
-                prompt.cursor_pos = prompt.input.len();
-                prompt.selection_anchor = Some(0);
+                prompt.set_input_selected(current_map.clone());
             }
         }
     }
@@ -757,9 +753,7 @@ impl Editor {
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
-                prompt.input = CursorStyle::DESCRIPTIONS[current_index].to_string();
-                prompt.cursor_pos = prompt.input.len();
-                prompt.selection_anchor = Some(0);
+                prompt.set_input_selected(CursorStyle::DESCRIPTIONS[current_index].to_string());
             }
         }
     }
@@ -932,8 +926,7 @@ impl Editor {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 // Start with empty input to show all options initially
-                prompt.input = String::new();
-                prompt.cursor_pos = 0;
+                prompt.set_input_plain(String::new());
             }
         }
     }

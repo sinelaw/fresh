@@ -31,9 +31,9 @@ impl Editor {
     /// overlay manager rather than round-tripping through an `AddOverlay` event
     /// — which would discard the handle. The handle comes straight from the add
     /// (via [`EditorState::add_overlay`]); recovering it from
-    /// `overlays.all().last()` would be wrong, since overlays are
-    /// priority-sorted and `.last()` is the highest-priority overlay (e.g. an
-    /// error diagnostic at priority 100), not the one just added.
+    /// `overlays.all().last()` would be wrong — the set is unordered and a
+    /// removal swaps entries around, so `.last()` is some other producer's
+    /// overlay (e.g. an error diagnostic), not the one just added.
     pub fn add_overlay(
         &mut self,
         namespace: Option<crate::view::overlay::OverlayNamespace>,
@@ -70,6 +70,10 @@ impl Editor {
 
     /// Show a popup window
     pub fn show_popup(&mut self, popup: crate::model::event::PopupData) {
+        // A popup changes both the overlay stack and the chrome tree; spoil
+        // the per-generation UI memos (covers show_popup_with_resolver too,
+        // which funnels through here).
+        self.bump_ui_gen();
         let event = Event::ShowPopup { popup };
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
@@ -114,6 +118,9 @@ impl Editor {
 
     /// Hide the topmost popup
     pub fn hide_popup(&mut self) {
+        // Popup dismissal changes overlay/chrome derivation; spoil the
+        // per-generation UI memos.
+        self.bump_ui_gen();
         // Editor-level popups take precedence: dismiss them first if any are
         // visible. This avoids leaking a popup-stack pop event into the
         // active buffer's event log when the popup we're closing is global.

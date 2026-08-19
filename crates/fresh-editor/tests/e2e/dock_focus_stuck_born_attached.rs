@@ -116,6 +116,7 @@ fn born_attached_session_does_not_wedge_source_window_typing() {
             focus_marker: false,
             title: None,
             closable: false,
+            start_blurred: false,
         })
         .unwrap();
     harness
@@ -142,6 +143,7 @@ fn born_attached_session_does_not_wedge_source_window_typing() {
             born_authority,
             None,
             None,
+            false,
             None,
         )
         .expect("create_window_with_terminal should succeed");

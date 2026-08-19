@@ -901,6 +901,118 @@ fn handle_auto_dedent(
     });
 }
 
+/// Electric keyword dedent (issue #2582): typing the character that turns the
+/// line into exactly "leading whitespace + a `decrease_indent_pattern` trigger
+/// token" (Python `else:`, Ruby `end`, a custom `CLOSE`, …) re-indents the line
+/// one level shallower — the keyword analogue of the electric `}` handled by
+/// [`handle_auto_dedent`].
+///
+/// Deliberately conservative, mirroring how VS Code's `decreaseIndentPattern`
+/// re-indents while typing:
+/// - fires only with the cursor at end of line;
+/// - fires only at the keystroke where the trigger regex first consumes the
+///   whole line content, so later keystrokes on the same line never re-fire
+///   and a trigger appearing mid-line never fires at all;
+/// - only ever dedents — a line the user already dedented at or below the
+///   target is left alone;
+/// - skipped when the previous non-blank line opens a block, so a block's
+///   first body line (e.g. Python `case` right under `match x:`) is never
+///   pulled out of the block it belongs to.
+///
+/// Returns `true` when it emitted events (the typed char included), so the
+/// caller skips the normal insertion for this cursor.
+#[allow(clippy::too_many_arguments)]
+fn handle_keyword_dedent(
+    state: &mut EditorState,
+    events: &mut Vec<Event>,
+    cursor_id: CursorId,
+    ch: char,
+    insert_position: usize,
+    line_start: usize,
+    char_after: Option<u8>,
+    tab_size: usize,
+) -> bool {
+    // A real trigger is leading whitespace plus a short token; capping the
+    // examined prefix keeps this O(1) per keystroke on long lines.
+    const MAX_PREFIX_BYTES: usize = 128;
+    if insert_position - line_start > MAX_PREFIX_BYTES {
+        return false;
+    }
+    // Cursor must be at end of line (VS Code re-evaluates only while typing
+    // the leading token at end-of-line).
+    if !matches!(char_after, None | Some(b'\n') | Some(b'\r')) {
+        return false;
+    }
+    let Some(rules) = buffer_indent_rules(state) else {
+        return false;
+    };
+
+    // Masked view of the line content before the cursor (comment/string bytes
+    // blanked to spaces, same convention as the rules tier), and the current
+    // visual indent while we're scanning.
+    let prefix_bytes = state.buffer.slice_bytes(line_start..insert_position);
+    let mut before = String::with_capacity(prefix_bytes.len() + 1);
+    let mut current_indent = 0;
+    let mut in_leading_ws = true;
+    for (i, &b) in prefix_bytes.iter().enumerate() {
+        if b == b'\r' {
+            continue;
+        }
+        if in_leading_ws {
+            match b {
+                b' ' => current_indent += 1,
+                b'\t' => current_indent += tab_size,
+                _ => in_leading_ws = false,
+            }
+        }
+        if byte_is_code(state, line_start + i) {
+            before.push(b as char);
+        } else {
+            before.push(' ');
+        }
+    }
+
+    // Fire exactly when this keystroke completes the trigger.
+    let mut after = before.clone();
+    after.push(ch);
+    if !rules.decrease_consumes_line(&after) || rules.decrease_consumes_line(&before) {
+        return false;
+    }
+
+    let Some(target_indent) =
+        rules.on_type_dedent_target(&state.buffer, line_start, tab_size, |b| {
+            byte_is_code(state, b)
+        })
+    else {
+        return false;
+    };
+    if target_indent >= current_indent {
+        return false;
+    }
+
+    // Replace the whole prefix with re-indented content + the typed char in
+    // one Delete + one Insert, mirroring `handle_auto_dedent` (single undo
+    // step; cursor ends up after the typed char).
+    let prefix = state.get_text_range(line_start, insert_position);
+    events.push(Event::Delete {
+        range: line_start..insert_position,
+        deleted_text: prefix.clone(),
+        cursor_id,
+    });
+    let use_tabs = state.buffer_settings.use_tabs;
+    let mut text = indent_to_string(target_indent, use_tabs, tab_size);
+    // Splitting after leading whitespace is char-boundary-safe: space/tab are
+    // single-byte ASCII.
+    text.push_str(prefix.trim_start_matches([' ', '\t']));
+    text.push(ch);
+    events.push(Event::Insert {
+        position: line_start,
+        text,
+        cursor_id,
+    });
+    true
+}
+
 /// Check if auto-close should happen based on character after cursor.
 fn should_auto_close(char_after: Option<u8>) -> bool {
     let is_alphanumeric_after = char_after
@@ -952,6 +1064,39 @@ struct InsertCursorData {
     virtual_gap: String,
 }
 
+/// Find the start of the line containing `pos`, and report whether everything
+/// between it and `pos` is a space or a tab (the auto-dedent precondition).
+///
+/// Reads in blocks rather than a byte at a time. Each `slice_bytes` call is a
+/// piece-tree range query plus a heap allocation, so walking back one byte per
+/// iteration costs one of each per column — the dominant cost of a keystroke
+/// on a long line, and one that grows the further right the cursor sits.
+/// Materialising the whole prefix to test it for whitespace has the same
+/// problem: on a single-line file that prefix can be megabytes.
+fn line_start_and_blank_prefix(state: &EditorState, pos: usize) -> (usize, bool) {
+    const CHUNK: usize = 4096;
+    let mut end = pos;
+    let mut only_spaces = true;
+    while end > 0 {
+        let start = end.saturating_sub(CHUNK);
+        let bytes = state.buffer.slice_bytes(start..end);
+        if let Some(i) = bytes.iter().rposition(|&b| b == b'\n') {
+            if only_spaces {
+                only_spaces = bytes[i + 1..].iter().all(|&b| b == b' ' || b == b'\t');
+            }
+            return (start + i + 1, only_spaces);
+        }
+        // Once a non-blank byte is seen the answer is settled, but the scan
+        // still has to reach the line start — `line_start` is returned either
+        // way.
+        if only_spaces {
+            only_spaces = bytes.iter().all(|&b| b == b' ' || b == b'\t');
+        }
+        end = start;
+    }
+    (0, only_spaces)
+}
+
 /// Collect cursor data needed for character insertion.
 fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec<InsertCursorData> {
     // Collect cursors and sort by the effective insert position (reverse order)
@@ -963,7 +1108,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
 
     // Collect cursor IDs and positions
     let vs_mode = state.buffer_settings.virtual_space;
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     let cursor_info: Vec<_> = cursor_vec
         .iter()
         .map(|(cursor_id, cursor)| {
@@ -989,17 +1134,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
         .into_iter()
         .map(|(cursor_id, selection, insert_position, virtual_gap)| {
             // Calculate line start for auto-dedent
-            let mut line_start = insert_position;
-            while line_start > 0 {
-                let prev = line_start - 1;
-                if state.buffer.slice_bytes(prev..prev + 1).first() == Some(&b'\n') {
-                    break;
-                }
-                line_start = prev;
-            }
-
-            let line_before_cursor = state.buffer.slice_bytes(line_start..insert_position);
-            let only_spaces = line_before_cursor.iter().all(|&b| b == b' ' || b == b'\t');
+            let (line_start, only_spaces) = line_start_and_blank_prefix(state, insert_position);
 
             let check_pos = selection.as_ref().map(|r| r.end).unwrap_or(insert_position);
             let char_after = if check_pos < state.buffer.len() {
@@ -1109,6 +1244,7 @@ fn insert_char_events(
         }
 
         // Delete selection if present
+        let had_selection = data.selection.is_some();
         if let (Some(range), Some(text)) = (data.selection, data.deleted_text) {
             events.push(Event::Delete {
                 range,
@@ -1161,6 +1297,26 @@ fn insert_char_events(
                 data.line_start,
                 tab_size,
             );
+            continue;
+        }
+
+        // Electric keyword dedent (issue #2582): typing the char that
+        // completes a dedent-trigger line (`else:`, `end`, custom `CLOSE`, …)
+        // re-indents the line the same way `}` does above.
+        if auto_indent
+            && !is_closing_delimiter
+            && !had_selection
+            && handle_keyword_dedent(
+                state,
+                events,
+                data.cursor_id,
+                ch,
+                data.insert_position,
+                data.line_start,
+                data.char_after,
+                tab_size,
+            )
+        {
             continue;
         }
 
@@ -1283,7 +1439,7 @@ fn handle_insert_newline(
     }
 
     // Now process insertions
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     for (cursor_id, indent_position) in indent_positions {
         // Calculate indent for new line
         let mut text = line_ending.to_string();
@@ -1626,7 +1782,7 @@ fn handle_insert_tab(
 
         // Insert tabs (materializing any virtual-space gap first)
         let vs_mode = state.buffer_settings.virtual_space;
-        let line_ending = state.buffer.line_ending().as_str();
+        let line_ending = state.buffer.line_ending().insertion_str();
         for (cursor_id, cursor) in cursor_vec {
             let gap = crate::model::virtual_space::virtual_gap_text(
                 vs_mode,
@@ -1652,7 +1808,8 @@ fn handle_insert_tab(
 ///
 /// When `extend_selection` is false (MoveUp): collapses any selection to the top edge first
 /// (VSCode/Sublime behavior, issue #1566), then respects Emacs mark mode via deselect_on_move.
-/// When `extend_selection` is true (SelectUp): keeps the existing anchor fixed and extends it.
+/// When `extend_selection` is true (SelectUp): keeps the existing anchor fixed and extends it,
+/// and on the first line extends the head to the buffer start instead of doing nothing.
 fn handle_vertical_up(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -1718,13 +1875,30 @@ fn handle_vertical_up(
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: Some(goal_visual_column),
             });
+        } else if extend_selection && cursor.position > 0 {
+            // No line above: the cursor sits on the first line. Shift+Up still
+            // extends the selection head to the very start of the buffer
+            // (VSCode/Sublime behaviour, issue #3006). The goal column is kept
+            // so a later Shift+Down returns to the original column.
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: 0,
+                old_anchor: cursor.anchor,
+                new_anchor: Some(cursor.anchor.unwrap_or(cursor.position)),
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: Some(goal_visual_column),
+            });
         }
+        // Extending with the head already at the buffer start emits nothing, so
+        // the sticky column and any existing anchor survive untouched.
     }
 }
 
 /// Move or extend selection down by one line, using visual columns for wide-character accuracy.
 ///
-/// See [`handle_vertical_up`] for the `extend_selection` contract.
+/// See [`handle_vertical_up`] for the `extend_selection` contract; on the last line an extending
+/// move takes the head to the buffer end.
 fn handle_vertical_down(
     state: &mut EditorState,
     cursors: &Cursors,
@@ -1772,6 +1946,21 @@ fn handle_vertical_down(
                 new_position: new_pos,
                 old_anchor: cursor.anchor,
                 new_anchor,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: Some(goal_visual_column),
+            });
+        } else if extend_selection && cursor.position < state.buffer.len() {
+            // No line below: the cursor sits on the last line. Shift+Down still
+            // extends the selection head to the end of the buffer
+            // (VSCode/Sublime behaviour, issue #3006). Once the head is already
+            // there nothing is emitted, so the sticky column and any existing
+            // anchor survive untouched.
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: state.buffer.len(),
+                old_anchor: cursor.anchor,
+                new_anchor: Some(cursor.anchor.unwrap_or(cursor.position)),
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: Some(goal_visual_column),
             });
@@ -2202,7 +2391,7 @@ fn handle_transpose_chars(state: &mut EditorState, cursors: &Cursors, events: &m
 /// `MoveCursor` cancels the advance `apply_insert` would otherwise make,
 /// which is what distinguishes OpenLine from Enter.
 fn handle_open_line(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     let len = line_ending.len();
     for (cursor_id, cursor) in cursors.iter() {
         events.push(Event::Insert {
@@ -2394,7 +2583,7 @@ fn handle_toggle_case(state: &mut EditorState, cursors: &Cursors, events: &mut V
 fn handle_sort_lines(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
     // Sort selected lines alphabetically
     // Process cursors in reverse order to avoid position shifts
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     let mut selections: Vec<_> = cursors
         .iter()
         .filter_map(|(cursor_id, cursor)| cursor.selection_range().map(|range| (cursor_id, range)))
@@ -2476,7 +2665,7 @@ fn handle_duplicate_line(
 
     for (cursor_id, line_start, line_end) in cursor_data {
         let line_text = state.get_text_range(line_start, line_end);
-        let line_ending = state.buffer.line_ending().as_str();
+        let line_ending = state.buffer.line_ending().insertion_str();
         // If the line doesn't end with a newline, prepend one
         let has_trailing_newline = line_text.ends_with('\n') || line_text.ends_with("\r\n");
         let insert_text = if has_trailing_newline {
@@ -3322,6 +3511,10 @@ pub fn action_to_events(
         | Action::ToggleLineNumbersCurrentBuffer
         | Action::ToggleLineWrapCurrentBuffer
         | Action::ToggleVirtualSpaceCurrentBuffer
+        | Action::ToggleIndentationGuideCurrentBuffer
+        | Action::ToggleFoldIndicatorsCurrentBuffer
+        | Action::ToggleCurrentLineHighlightCurrentBuffer
+        | Action::ToggleOccurrenceHighlightCurrentBuffer
         | Action::TriggerWaveAnimation
         | Action::ToggleScrollSync
         | Action::ToggleMouseCapture
@@ -3356,6 +3549,8 @@ pub fn action_to_events(
         | Action::SelectLocale
         | Action::Revert
         | Action::ToggleAutoRevert
+        | Action::UpdateFresh
+        | Action::OpenUpdateLog
         | Action::FormatBuffer
         | Action::TrimTrailingWhitespace
         | Action::EnsureFinalNewline
@@ -3363,6 +3558,7 @@ pub fn action_to_events(
         | Action::OpenTerminalRight
         | Action::OpenTerminalBelow
         | Action::CloseTerminal
+        | Action::RestartTerminal
         | Action::FocusTerminal
         | Action::TerminalEscape
         | Action::ToggleKeyboardCapture
@@ -6231,6 +6427,204 @@ mod tests {
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "(bc)");
+    }
+
+    fn state_with(text: &str) -> EditorState {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: text.to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn blank_prefix_finds_line_start_after_newline() {
+        let state = state_with("abc\n    ");
+        assert_eq!(line_start_and_blank_prefix(&state, 8), (4, true));
+    }
+
+    #[test]
+    fn blank_prefix_is_false_with_text_before_cursor() {
+        let state = state_with("abc\nfoo ");
+        assert_eq!(line_start_and_blank_prefix(&state, 8), (4, false));
+    }
+
+    #[test]
+    fn blank_prefix_at_buffer_start() {
+        let state = state_with("hello");
+        assert_eq!(line_start_and_blank_prefix(&state, 0), (0, true));
+        assert_eq!(line_start_and_blank_prefix(&state, 5), (0, false));
+    }
+
+    /// The scan reads in blocks, so a line longer than one block has to keep
+    /// walking back — and has to carry the "blank so far" answer across the
+    /// block boundary rather than resetting it.
+    #[test]
+    fn blank_prefix_spans_multiple_scan_blocks() {
+        let indent = " ".repeat(10_000);
+        let state = state_with(&format!("first\n{indent}"));
+        assert_eq!(
+            line_start_and_blank_prefix(&state, 6 + indent.len()),
+            (6, true)
+        );
+
+        let mut long_line = " ".repeat(10_000);
+        long_line.push('x');
+        long_line.push_str(&" ".repeat(10_000));
+        let state = state_with(&format!("first\n{long_line}"));
+        assert_eq!(
+            line_start_and_blank_prefix(&state, 6 + long_line.len()),
+            (6, false)
+        );
+    }
+
+    /// A file that is one enormous line: the line start is byte 0 no matter
+    /// how far right the cursor sits.
+    #[test]
+    fn blank_prefix_on_single_line_file() {
+        let text = "x".repeat(200_000);
+        let state = state_with(&text);
+        assert_eq!(line_start_and_blank_prefix(&state, text.len()), (0, false));
+    }
+
+    // ========================================================================
+    // Issue #2582: electric keyword dedent — typing the character that
+    // completes a dedent trigger (`else:`, custom `CLOSE`, …) re-indents the
+    // line one level shallower, the way `}` already does. Cursor sits at end
+    // of the typed prefix (where real typing happens).
+    // ========================================================================
+
+    /// Python-highlighted state with `text` inserted and the cursor at its end.
+    fn python_state_with(text: &str) -> (EditorState, Cursors) {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let registry = crate::primitives::grammar::GrammarRegistry::load(
+            &crate::primitives::grammar::LocalGrammarLoader::embedded_only(),
+        );
+        state.set_language_from_name("test.py", &registry);
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: text.to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
+        (state, cursors)
+    }
+
+    /// Type one character through the real InsertChar action (auto-indent on).
+    fn type_char(state: &mut EditorState, cursors: &mut Cursors, ch: char) {
+        let events = action_to_events(
+            state,
+            cursors,
+            Action::InsertChar(ch),
+            4,
+            true,
+            true,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
+        for event in events {
+            state.apply(cursors, &event);
+        }
+    }
+
+    #[test]
+    fn test_typing_else_colon_dedents_python_line() {
+        // Canonical #2582 case: `if a:` / body / typing `else:` on a line that
+        // inherited the body indent. The bare keyword must NOT move the line
+        // (it could still grow into an identifier such as `elsewhere`); the
+        // statement-final `:` completes the trigger and re-indents the line to
+        // column 0 — VS Code / ms-python behavior.
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\n    els");
+        type_char(&mut state, &mut cursors, 'e');
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "if a:\n    x = 1\n    else",
+            "the bare keyword must not dedent — the statement is incomplete"
+        );
+        type_char(&mut state, &mut cursors, ':');
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "if a:\n    x = 1\nelse:",
+            "the `:` completing the statement must dedent the line"
+        );
+        assert_eq!(cursors.primary().position, state.buffer.len());
+    }
+
+    #[test]
+    fn test_typing_elif_condition_dedents_at_colon() {
+        // A condition-carrying trigger: `elif x > 0` stays put while typed and
+        // dedents exactly at the `:` keystroke.
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\n    elif x > 0");
+        type_char(&mut state, &mut cursors, ':');
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "if a:\n    x = 1\nelif x > 0:"
+        );
+        assert_eq!(cursors.primary().position, state.buffer.len());
+    }
+
+    #[test]
+    fn test_typing_elsewhere_never_dedents() {
+        // An identifier that merely starts with the keyword must never fire —
+        // neither while typed nor when a `:` follows (annotation-style).
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\n    els");
+        for ch in "ewhere:".chars() {
+            type_char(&mut state, &mut cursors, ch);
+        }
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "if a:\n    x = 1\n    elsewhere:"
+        );
+    }
+
+    #[test]
+    fn test_typing_else_mid_line_does_not_reindent() {
+        // The trigger appearing mid-line (here as part of an expression) must
+        // never re-indent the line, even once its `:` is typed.
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = els");
+        type_char(&mut state, &mut cursors, 'e');
+        type_char(&mut state, &mut cursors, ':');
+        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = else:");
+    }
+
+    #[test]
+    fn test_typing_case_directly_under_match_keeps_indent() {
+        // `case _:` typed as the first body line under `match x:` belongs
+        // inside the block — the completing `:` must not pull it out to the
+        // header's level.
+        let (mut state, mut cursors) = python_state_with("match x:\n    case _");
+        type_char(&mut state, &mut cursors, ':');
+        assert_eq!(state.buffer.to_string().unwrap(), "match x:\n    case _:");
+    }
+
+    #[test]
+    fn test_typing_else_on_manually_dedented_line_is_noop() {
+        // The user already dedented the line to (or past) the target: typing
+        // the trigger must leave their indent alone.
+        let (mut state, mut cursors) = python_state_with("if a:\n    x = 1\nelse");
+        type_char(&mut state, &mut cursors, ':');
+        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    x = 1\nelse:");
     }
 }
 

@@ -353,6 +353,12 @@ impl MarginManager {
         self.indicator_markers.adjust_for_delete(position, length);
     }
 
+    /// Adjust all indicator markers for a whole bulk edit at once.
+    /// See [`MarkerList::adjust_for_bulk_edits`].
+    pub fn adjust_for_bulk_edits(&mut self, edits: &[(usize, usize, usize)]) {
+        self.indicator_markers.adjust_for_bulk_edits(edits);
+    }
+
     /// Set a line indicator at a byte position for a specific namespace
     ///
     /// The indicator is anchored to the byte position and will automatically
@@ -366,7 +372,7 @@ impl MarginManager {
         mut indicator: LineIndicator,
     ) -> MarkerId {
         // Create a marker at this byte position (left affinity - stays before inserted text)
-        let marker_id = self.indicator_markers.create(byte_offset, true);
+        let marker_id = self.indicator_markers.create(byte_offset);
         indicator.marker_id = marker_id;
 
         self.line_indicators

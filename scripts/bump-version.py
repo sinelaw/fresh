@@ -16,16 +16,13 @@ NC = "\033[0m"
 
 BumpType = Literal["patch", "minor", "major"]
 
-# Local workspace crates that need version updates in [workspace.dependencies]
-LOCAL_CRATES = [
-    "fresh-core",
-    "fresh-gui",
-    "fresh-parser-js",
-    "fresh-languages",
-    "fresh-plugin-runtime",
-    "fresh-plugin-api-macros",
-    "fresh-winterm",
-]
+# A [workspace.dependencies] entry for a local crate: has both a version and a path.
+# Discovered rather than hardcoded so new workspace crates are never left behind.
+LOCAL_DEP_RE = re.compile(
+    r'^(?P<crate>[A-Za-z0-9_.-]+) = \{(?=[^}]*\bpath = ")(?P<body>[^}]*)\}',
+    re.MULTILINE,
+)
+VERSION_FIELD_RE = re.compile(r'(\bversion = ")(?P<ver>[^"]*)(")')
 
 def print_usage():
     """Prints the usage instructions."""
@@ -95,13 +92,31 @@ def update_cargo_toml(cargo_toml_path: Path, current_version: str, new_version: 
         flags=re.MULTILINE,
     )
 
-    # Update local crate versions in [workspace.dependencies]
-    for crate in LOCAL_CRATES:
-        # Match pattern like: fresh-core = { version = "0.1.83", path = "..." }
-        pattern = rf'({re.escape(crate)} = \{{ version = "){re.escape(current_version)}(")'
-        new_content = re.sub(pattern, rf'\g<1>{new_version}\g<2>', new_content)
+    # Update every local (path) crate in [workspace.dependencies], whatever version
+    # it currently pins — a crate that already drifted must be pulled back in line.
+    updated: List[str] = []
+    missing_version: List[str] = []
+
+    def bump_local_dep(match: re.Match) -> str:
+        crate = match.group("crate")
+        body = match.group("body")
+        if not VERSION_FIELD_RE.search(body):
+            missing_version.append(crate)
+            return match.group(0)
+        old_ver = VERSION_FIELD_RE.search(body).group("ver")
+        if old_ver != new_version:
+            updated.append(f"{crate}: {old_ver} -> {new_version}")
+        body = VERSION_FIELD_RE.sub(rf'\g<1>{new_version}\g<3>', body, count=1)
+        return f"{crate} = {{{body}}}"
+
+    new_content = LOCAL_DEP_RE.sub(bump_local_dep, new_content)
 
     cargo_toml_path.write_text(new_content)
+
+    for line in updated:
+        print(f"  {line}")
+    for crate in missing_version:
+        print(f"{YELLOW}Warning:{NC} local dependency {crate} has a path but no version; not bumped")
 
 def update_cargo_lock() -> None:
     """Updates Cargo.lock by running cargo build."""

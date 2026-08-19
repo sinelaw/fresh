@@ -4354,7 +4354,8 @@ fn blog_showcase_fresh_0_4_0_review_diff() {
 
     hold(&mut h, &mut s, 4, 110);
 
-    // Open Review Diff — a three-column layout: FILES | diff | COMMENTS.
+    // Open Review Diff — the full-width unified stream, with the FILES and
+    // COMMENTS panels a keystroke away.
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
@@ -4363,19 +4364,45 @@ fn blog_showcase_fresh_0_4_0_review_diff() {
         .unwrap();
     snap(&mut h, &mut s, Some("Review Diff"), 150);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| {
-        let scr = h.screen_to_string();
-        scr.contains("FILES") && scr.contains("auth.rs") && scr.contains("COMMENTS")
-    })
-    .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("auth.rs"))
+        .unwrap();
     snap(&mut h, &mut s, Some("Enter"), 260);
-    hold(&mut h, &mut s, 7, 140);
+    hold(&mut h, &mut s, 5, 140);
 
-    // [1] switches the center panel to a side-by-side OLD/NEW view.
-    h.send_key(KeyCode::Char('1'), KeyModifiers::NONE).unwrap();
+    // The diff opens full-width; [F] and [C] bring in the file sidebar and
+    // the comments rail for the three-column review layout.
+    h.send_key(KeyCode::Char('F'), KeyModifiers::SHIFT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("FILES"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("F"), 220);
+    h.send_key(KeyCode::Char('C'), KeyModifiers::SHIFT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("COMMENTS"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("C"), 220);
+    // Each panel takes focus as it appears; Tab back to the diff so the
+    // walk below moves the diff cursor and not a panel's selection. The
+    // Tab order is FILES → diff → COMMENTS, so how many steps that takes
+    // depends on which panels are open.
+    let panel_focused = |h: &EditorTestHarness| {
+        let screen = h.screen_to_string();
+        screen.contains("▸FILES") || screen.contains("▸COMMENTS")
+    };
+    for _ in 0..3 {
+        if !panel_focused(&h) {
+            break;
+        }
+        let before = h.screen_to_string();
+        h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| h.screen_to_string() != before).unwrap();
+    }
+    assert!(!panel_focused(&h), "focus never came back to the diff");
+    hold(&mut h, &mut s, 6, 140);
+
+    // [2] switches the center panel to a side-by-side OLD/NEW view.
+    h.send_key(KeyCode::Char('2'), KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("OLD (HEAD)"))
         .unwrap();
-    snap(&mut h, &mut s, Some("1"), 240);
+    snap(&mut h, &mut s, Some("2"), 240);
     hold(&mut h, &mut s, 6, 150);
 
     // Move onto a changed line and leave a comment with [c].
@@ -4617,6 +4644,575 @@ fn blog_showcase_fresh_0_4_0_workspace_trust() {
     .unwrap();
     snap(&mut h, &mut s, Some("Enter"), 320);
     hold(&mut h, &mut s, 10, 170);
+
+    s.finalize().unwrap();
+}
+
+// =========================================================================
+// Blog Post: One Editor, Every Worktree (Orchestrator)
+// =========================================================================
+
+/// The Orchestrator dock as an agentic-multitasking cockpit: one repository
+/// checked out into three git worktrees, each its own workspace with its own
+/// file tabs and its own coding agent running in a split beside the code, plus
+/// the `main` checkout you review from. The dock lists all four with their
+/// branches and per-worktree git summary; `↓`/`↑` live-switch between them.
+/// The capture opens with the dock already up — getting to it is a different
+/// story, and this one is about the switching.
+///
+/// The point of the capture is what happens *off*-screen: the agents you are
+/// not looking at never stopped, so a workspace you come back to is further
+/// along than you left it — filmed with the real-time `animate` helper so the
+/// spinners actually turn.
+///
+/// The agents are `tests/fixtures/coding_agent.py` — a scripted fake that
+/// renames itself to `claude` / `codex` so the tabs read the way a real
+/// `Run Agent…` launch reads. Nothing is built, read or changed.
+#[test]
+#[ignore]
+fn blog_showcase_orchestrator_worktrees() {
+    let git_ok = std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !git_ok {
+        eprintln!("Skipping orchestrator-worktrees showcase: git not installed");
+        return;
+    }
+    let python_ok = std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !python_ok {
+        eprintln!("Skipping orchestrator-worktrees showcase: python3 not installed");
+        return;
+    }
+    use portable_pty::{native_pty_system, PtySize};
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping orchestrator-worktrees showcase: PTY not available");
+        return;
+    }
+
+    fresh::i18n::set_locale("en");
+    let temp = tempfile::TempDir::new().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    let repo = base.join("api");
+
+    // --- One repository -----------------------------------------------------
+    // Long enough to fill the code pane at this capture size — a half-empty
+    // buffer beside a busy agent transcript reads as an empty editor.
+    let sources: &[(&str, &str)] = &[
+        (
+            "src/main.rs",
+            r#"mod auth;
+mod db;
+mod ratelimit;
+mod routes;
+mod session;
+
+use std::net::SocketAddr;
+
+use anyhow::Context;
+use tokio::net::TcpListener;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+
+    let url = std::env::var("DATABASE_URL").context("DATABASE_URL is not set")?;
+    let pool = db::pool::connect(&url).await?;
+    pool.migrate().await?;
+
+    let addr: SocketAddr = ([0, 0, 0, 0], 8080).into();
+    let listener = TcpListener::bind(addr).await?;
+    tracing::info!(%addr, "api listening");
+
+    axum::serve(listener, routes::router(pool))
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+    tracing::info!("draining connections");
+}
+"#,
+        ),
+        (
+            "src/ratelimit.rs",
+            r#"use std::time::{Duration, Instant};
+
+/// A token bucket, one per API key.
+///
+/// `capacity` tokens are handed out per `refill` window. The bucket
+/// refills all at once rather than continuously — close enough at our
+/// window sizes, and far cheaper to reason about.
+pub struct RateLimiter {
+    capacity: u32,
+    tokens: u32,
+    refill: Duration,
+    last: Instant,
+}
+
+impl RateLimiter {
+    pub fn per_minute(capacity: u32) -> Self {
+        Self {
+            capacity,
+            tokens: capacity,
+            refill: Duration::from_secs(60),
+            last: Instant::now(),
+        }
+    }
+
+    /// Take a token, if one is left in this window.
+    pub fn allow(&mut self, now: Instant) -> bool {
+        if now.duration_since(self.last) >= self.refill {
+            self.tokens = self.capacity;
+            self.last = now;
+        }
+        if self.tokens == 0 {
+            return false;
+        }
+        self.tokens -= 1;
+        true
+    }
+
+    /// How long until the bucket refills, for the `Retry-After` header.
+    pub fn retry_after(&self, now: Instant) -> Duration {
+        if self.tokens > 0 {
+            return Duration::ZERO;
+        }
+        self.refill.saturating_sub(now.duration_since(self.last))
+    }
+}
+"#,
+        ),
+        (
+            "src/routes.rs",
+            r#"use axum::{
+    middleware,
+    routing::{get, post},
+    Router,
+};
+
+use crate::db::pool::Pool;
+use crate::ratelimit;
+
+pub fn router(pool: Pool) -> Router {
+    Router::new()
+        .route("/healthz", get(health))
+        .route("/v1/sessions", get(list_sessions).post(create_session))
+        .route("/v1/tokens/refresh", post(refresh_token))
+        .layer(middleware::from_fn(ratelimit::guard))
+        .with_state(pool)
+}
+
+async fn health() -> &'static str {
+    "ok"
+}
+
+async fn list_sessions(State(pool): State<Pool>) -> Result<Json<Sessions>, Error> {
+    let conn = pool.acquire().await?;
+    Ok(Json(conn.query_sessions().await?))
+}
+"#,
+        ),
+        (
+            "src/auth.rs",
+            r#"use crate::session::{Claims, Session};
+
+/// Validate a bearer token and mint a session from it.
+pub fn validate_token(token: &str) -> Option<Session> {
+    let claims = decode_jwt(token)?;
+    if claims.expired() {
+        return None;
+    }
+    Some(Session::from_claims(claims))
+}
+
+/// Decode a JWT, verifying the signature before trusting the payload.
+pub fn decode_jwt(token: &str) -> Option<Claims> {
+    let (header, payload, signature) = split_parts(token)?;
+    verify_signature(header, payload, signature).then(|| parse(payload))?
+}
+
+fn split_parts(token: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = token.split('.');
+    let header = parts.next()?;
+    let payload = parts.next()?;
+    let signature = parts.next()?;
+    parts.next().is_none().then_some((header, payload, signature))
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Denied {
+    #[error("token has expired")]
+    Expired,
+    #[error("token is missing a required scope")]
+    Scope,
+}
+"#,
+        ),
+        (
+            "src/session.rs",
+            r#"use std::time::{SystemTime, UNIX_EPOCH};
+
+pub struct Claims {
+    pub sub: u64,
+    pub exp: u64,
+    pub scopes: Vec<String>,
+}
+
+impl Claims {
+    pub fn expired(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.exp <= now
+    }
+}
+
+pub struct Session {
+    pub user_id: u64,
+    pub scopes: Vec<String>,
+}
+
+impl Session {
+    pub fn from_claims(claims: Claims) -> Self {
+        Self {
+            user_id: claims.sub,
+            scopes: claims.scopes,
+        }
+    }
+
+    pub fn allows(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|s| s == scope)
+    }
+}
+"#,
+        ),
+        (
+            "src/db/pool.rs",
+            r#"use std::time::{Duration, Instant};
+
+use tokio::sync::Notify;
+
+pub struct Pool {
+    idle: Vec<Conn>,
+    max_size: usize,
+    acquire_timeout: Duration,
+    idle_notify: Notify,
+}
+
+impl Pool {
+    pub fn builder() -> Builder {
+        Builder {
+            max_size: 16,
+            acquire_timeout: Duration::from_secs(5),
+        }
+    }
+
+    /// Check out a connection, waiting until one is returned or the
+    /// acquire timeout elapses.
+    pub async fn acquire(&self) -> Result<Conn, Error> {
+        let deadline = Instant::now() + self.acquire_timeout;
+        loop {
+            if let Some(conn) = self.try_pop() {
+                return Ok(conn);
+            }
+            if Instant::now() >= deadline {
+                return Err(Error::AcquireTimeout);
+            }
+            self.idle_notify.notified().await;
+        }
+    }
+
+    fn try_pop(&self) -> Option<Conn> {
+        self.idle.last().filter(|conn| conn.is_healthy()).cloned()
+    }
+}
+"#,
+        ),
+    ];
+    for (rel, content) in sources {
+        let p = repo.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, content).unwrap();
+    }
+
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let out = git_command(dir).args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&repo, &["init", "--quiet", "-b", "main"]);
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "--quiet", "-m", "api: initial"]);
+    // The demo's scaffolding (the plugins dir the harness loads the
+    // orchestrator from) shouldn't count as work-in-progress in the dock's
+    // per-row git summary. `.git/info/exclude` is shared by every worktree.
+    std::fs::write(repo.join(".git/info/exclude"), "plugins/\n").unwrap();
+
+    // --- …checked out three times, one worktree per task --------------------
+    let worktree = |dir: &str, branch: &str| -> std::path::PathBuf {
+        let path = base.join(dir);
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                branch,
+                path.to_str().unwrap(),
+                "main",
+            ],
+        );
+        path
+    };
+    let auth = worktree("auth-bypass", "fix/auth-bypass");
+    let pool = worktree("db-pool", "perf/db-pool");
+    let rate = worktree("rate-limit", "feat/rate-limit");
+
+    // Work in progress in each worktree, so every dock row carries its own
+    // git summary instead of all four reading clean.
+    let append = |path: std::path::PathBuf, text: &str| {
+        let mut content = std::fs::read_to_string(&path).unwrap();
+        content.push_str(text);
+        std::fs::write(&path, content).unwrap();
+    };
+    append(
+        auth.join("src/auth.rs"),
+        "\npub fn require_scope(session: &Session, scope: &str) -> Result<(), Denied> {\n\
+         \x20   session.allows(scope).then_some(()).ok_or(Denied::Scope)\n\
+         }\n",
+    );
+    append(
+        pool.join("src/db/pool.rs"),
+        "\nimpl Pool {\n\
+         \x20   pub fn warm(&mut self, n: usize) {\n\
+         \x20       self.idle.reserve(n.min(self.max_size));\n\
+         \x20   }\n\
+         }\n",
+    );
+    append(
+        rate.join("src/ratelimit.rs"),
+        "\npub struct KeyedLimiter {\n\
+         \x20   buckets: HashMap<KeyHash, RateLimiter>,\n\
+         }\n",
+    );
+
+    // --- The agents ---------------------------------------------------------
+    // A scripted fake, one process per worktree. `--as` makes it rename
+    // itself, so the tab reads `claude` / `codex` the way an agent launched
+    // through `Run Agent…` does.
+    let agent_py = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/coding_agent.py")
+        .to_string_lossy()
+        .into_owned();
+
+    // The orchestrator plugin loads from the launch workspace's plugins dir —
+    // which is a worktree, so `main`'s file explorer never shows it.
+    let plugins_dir = rate.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "orchestrator");
+
+    // Animations off: the dock's live-switch slide would otherwise be caught
+    // mid-transition by the test clock and captured as a doubled frame.
+    let mut cfg = fresh::config::Config::default();
+    cfg.editor.animations = false;
+    cfg.editor.cursor_jump_animation = false;
+    // The dock already takes a left column; keep the explorer narrow so the
+    // `main` workspace still shows a readable width of code beside both.
+    cfg.file_explorer.width = fresh::config::ExplorerWidth::Columns(22);
+    // Wide enough for three columns — dock, code, agent — at a readable width
+    // each, since every task workspace puts its agent beside the code.
+    let mut h = EditorTestHarness::create(
+        200,
+        48,
+        HarnessOptions::new()
+            .with_config(cfg)
+            .with_working_dir(rate.clone())
+            .without_empty_plugins_dir()
+            // Real syntax highlighting: the default registry is empty (fast
+            // startup), which would render every file flat.
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    h.tick_and_render().unwrap();
+    h.wait_until(|h| {
+        let reg = h.editor().command_registry().read().unwrap();
+        reg.get_all()
+            .iter()
+            .any(|c| c.get_localized_name() == "Orchestrator: Toggle Dock")
+    })
+    .unwrap();
+
+    // A task workspace: the files that task touches as tabs, and the agent
+    // working on it in a split beside the code — the same shape `Run Agent…`
+    // produces (an ephemeral, command-carrying terminal titled after the
+    // agent), so both are on screen at once.
+    let open_task =
+        |h: &mut EditorTestHarness, root: &std::path::Path, files: &[&str], agent: &str| {
+            hide_prompt_line(h);
+            for f in files {
+                h.open_file(&root.join(f)).unwrap();
+            }
+            h.editor_mut()
+                .active_window_mut()
+                .create_plugin_terminal(fresh::app::PluginTerminalSpec {
+                    cwd: Some(root.to_path_buf()),
+                    // Side by side: the agent's transcript is tall and narrow,
+                    // and the code stays readable next to it.
+                    direction: Some(fresh::model::event::SplitDirection::Vertical),
+                    ratio: Some(0.5),
+                    // Focus stays in the code pane: the agent runs, you read.
+                    focus: false,
+                    persistent: false,
+                    command: Some(vec![
+                        "python3".to_string(),
+                        agent_py.clone(),
+                        "--as".to_string(),
+                        agent.to_string(),
+                    ]),
+                    title: Some(agent.to_string()),
+                    env: std::collections::HashMap::new(),
+                })
+                .expect("agent terminal should spawn");
+            h.tick_and_render().unwrap();
+        };
+
+    // The launch workspace is a task like any other: `feat/rate-limit`, its
+    // two files open, its agent working underneath.
+    let rate_win = h.editor().active_window_id();
+    open_task(
+        &mut h,
+        &rate,
+        // Last one wins the active tab: the longer file fills the pane.
+        &["src/routes.rs", "src/ratelimit.rs"],
+        "claude",
+    );
+
+    for (root, label, files, agent) in [
+        (
+            &repo,
+            "api",
+            // `main` — the checkout you read and review from. No agent, and a
+            // file explorer instead of a terminal split.
+            &["src/main.rs"][..],
+            "",
+        ),
+        (
+            &auth,
+            "auth-bypass",
+            &["src/auth.rs", "src/session.rs"][..],
+            "codex",
+        ),
+        (&pool, "db-pool", &["src/db/pool.rs"][..], "claude"),
+    ] {
+        let win = h
+            .editor_mut()
+            .create_window_at(root.clone(), label.to_string());
+        h.editor_mut().set_active_window(win);
+        if agent.is_empty() {
+            hide_prompt_line(&mut h);
+            for f in files {
+                h.open_file(&root.join(f)).unwrap();
+            }
+            h.editor_mut().toggle_file_explorer();
+            h.tick_and_render().unwrap();
+        } else {
+            open_task(&mut h, root, files, agent);
+        }
+    }
+
+    // Back to the launch workspace, and let the three agents build up a log
+    // before filming — an agent whose transcript is still empty reads as one
+    // that hasn't started.
+    h.editor_mut().set_active_window(rate_win);
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        h.tick_and_render().unwrap();
+    }
+
+    // Open the dock *before* filming. Getting to it (`Ctrl+P` →
+    // `Orchestrator: Toggle Dock`, or the startup setting) is its own,
+    // already-captured story; this one is about the switching, so the capture
+    // starts with the dock up.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Toggle Dock").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Wait for the branch line on every row too, not just the names: the rows
+    // mount with a `…` placeholder while their git state resolves, and the
+    // first frame shouldn't be of a dock still filling itself in.
+    h.wait_until(|h| {
+        let scr = h.screen_to_string();
+        scr.contains("fix/auth-bypass")
+            && scr.contains("perf/db-pool")
+            && scr.contains("feat/rate-limit")
+            && h.editor().is_dock_focused()
+    })
+    .unwrap();
+
+    let mut s = BlogShowcase::new(
+        "orchestrator-worktrees",
+        "One Editor, Every Worktree",
+        "One repository, three git worktrees, three coding agents — each in its \
+         own workspace with its own tabs, all in one process. The dock lists \
+         them with their branches; the arrow keys live-switch. The agents you \
+         aren't watching keep working, so every workspace is further along than \
+         you left it.",
+    );
+
+    animate(&mut h, &mut s, None, 8, 200, 130);
+
+    // --- Walk the worktrees -------------------------------------------------
+    let do_switch = |h: &mut EditorTestHarness, key: KeyCode| {
+        let prev = h.editor().active_window().root.clone();
+        h.send_key(key, KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| h.editor().active_window().root != prev)
+            .unwrap();
+    };
+
+    // Rows keep the order their roots were first seen in — the launch
+    // workspace, then `main`, then the other two tasks — so `↓` walks down
+    // from the workspace we opened on…
+    for _ in 0..3 {
+        do_switch(&mut h, KeyCode::Down);
+        snap(&mut h, &mut s, Some("↓"), 200);
+        animate(&mut h, &mut s, None, 9, 200, 130);
+    }
+
+    // …and `↑` comes back up to the same workspaces, each further along than
+    // it was left — the agents never stopped while they were off-screen.
+    for _ in 0..3 {
+        do_switch(&mut h, KeyCode::Up);
+        snap(&mut h, &mut s, Some("↑"), 200);
+        animate(&mut h, &mut s, None, 9, 200, 130);
+    }
+
+    hold(&mut h, &mut s, 8, 150);
 
     s.finalize().unwrap();
 }

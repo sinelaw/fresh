@@ -17,6 +17,17 @@ fn keys(events: &[Event]) -> Vec<(KeyCode, KeyModifiers)> {
         .collect()
 }
 
+/// Collect the `Key` events of a parse together with their layout characters.
+fn keys_with_layout(events: &[Event]) -> Vec<(KeyCode, KeyModifiers, Option<char>)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Key(press) => Some((press.code, press.modifiers, press.layout_char)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// True if any event is a `Key(Char(_))` — used to prove mouse bytes never
 /// leak into the child as literal characters.
 fn has_char_key(events: &[Event]) -> bool {
@@ -46,6 +57,118 @@ fn control_characters_have_ctrl_modifier() {
     let mut p = InputParser::new();
     let ev = p.parse(&[0x03]); // Ctrl+C
     assert_eq!(keys(&ev), vec![(KeyCode::Char('c'), KeyModifiers::CONTROL)]);
+}
+
+/// 0x1F is the byte a legacy terminal sends for Ctrl+/ — the chord users
+/// actually press — and it must report as Ctrl+/ so a `ctrl+/` binding fires on
+/// xterm/iTerm and not only under the kitty protocol. Reporting it as Ctrl+_
+/// left `ctrl+/` dead on every terminal without CSI-u.
+#[test]
+fn us_byte_is_ctrl_slash() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(&[0x1f])),
+        vec![(KeyCode::Char('/'), KeyModifiers::CONTROL)]
+    );
+}
+
+/// The kitty encoding of the same chord agrees with the legacy byte, so a
+/// binding resolves identically on both kinds of terminal.
+#[test]
+fn ctrl_slash_agrees_across_protocols() {
+    let mut p = InputParser::new();
+    assert_eq!(keys(&p.parse(&[0x1f])), keys(&p.parse(b"\x1b[47;5u")));
+}
+
+/// Characterization test (passes before and after the Ctrl+/ fix): pins the
+/// neighbouring separators so re-canonicalising 0x1F does not drag them along.
+/// Ctrl+\ (0x1C, SIGQUIT), Ctrl+] (0x1D, the telnet/readline escape) and
+/// Ctrl+^ (0x1E) are the keys people press for those bytes, and `ctrl+]` /
+/// `ctrl+\` are live bindings in the default and macOS keymaps.
+#[test]
+fn other_separator_bytes_keep_their_keys() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(&[0x1c, 0x1d, 0x1e])),
+        vec![
+            (KeyCode::Char('\\'), KeyModifiers::CONTROL),
+            (KeyCode::Char(']'), KeyModifiers::CONTROL),
+            (KeyCode::Char('^'), KeyModifiers::CONTROL),
+        ]
+    );
+}
+
+// ---- Keyboard layout (`KeyPress::layout_char`) ----
+
+/// The non-US half of sinelaw/fresh#2933. On a German layout `/` is Shift+7, so
+/// pressing Ctrl+/ reports base 55 (`7`), shifted 47 (`/`), Ctrl+Shift. The
+/// chord keeps its physical spelling — folding the `/` in would collapse
+/// `Ctrl+Shift+A` onto `Ctrl+A` for letters — but the `/` the user meant has to
+/// survive for the keymap to find `ctrl+/`.
+#[test]
+fn a_control_chord_carries_the_character_the_layout_types() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys_with_layout(&p.parse(b"\x1b[55:47;6u")),
+        vec![(
+            KeyCode::Char('7'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            Some('/')
+        )]
+    );
+}
+
+/// The same chord on a US layout, where Shift+7 types `&`. The layout character
+/// is still reported — the parser does not know or care which layout is in use
+/// — and it is the keymap that declines to use it, since nothing binds
+/// `ctrl+&`. This is what keeps US `ctrl+shift+7` bindings intact.
+#[test]
+fn the_us_reading_of_that_chord_is_unchanged() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys_with_layout(&p.parse(b"\x1b[55:38;6u")),
+        vec![(
+            KeyCode::Char('7'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            Some('&')
+        )]
+    );
+}
+
+/// No layout character when the two readings agree: a plain letter's shifted
+/// codepoint is just its uppercase, which the chord's SHIFT bit already says.
+/// Keeping this `None` is what stops every shifted keystroke from taking the
+/// keymap's second lookup.
+#[test]
+fn agreeing_readings_report_no_layout_char() {
+    let mut p = InputParser::new();
+    // Ctrl+Shift+A: base 97 (`a`), shifted 65 (`A`) — same key, and the chord
+    // is spelled `ctrl+shift+a`, so there is nothing extra to say.
+    assert_eq!(
+        keys_with_layout(&p.parse(b"\x1b[97:65;6u")),
+        vec![(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            None
+        )]
+    );
+    // And a chord with no shifted codepoint reported at all.
+    assert_eq!(
+        keys_with_layout(&p.parse(b"\x1b[47;5u")),
+        vec![(KeyCode::Char('/'), KeyModifiers::CONTROL, None)]
+    );
+}
+
+/// Shift alone still resolves to the character it types, as before — the
+/// shifted reading *is* the chord there, so it is folded in rather than carried
+/// alongside. Guards against the new path stealing plain shifted typing.
+#[test]
+fn shift_without_control_still_folds_the_character_in() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys_with_layout(&p.parse(b"\x1b[55:47;2u")),
+        vec![(KeyCode::Char('/'), KeyModifiers::empty(), None)]
+    );
 }
 
 #[test]
@@ -107,6 +230,44 @@ fn alt_key_via_esc_prefix() {
     assert_eq!(
         keys(&p.parse(b"\x1ba")),
         vec![(KeyCode::Char('a'), KeyModifiers::ALT)]
+    );
+}
+
+#[test]
+fn alt_ctrl_key_via_esc_prefix_keeps_the_control_modifier() {
+    // `ESC` + a C0 control byte is Alt+Ctrl+<letter> — the same encoding an
+    // Escape keypress followed closely by a Ctrl chord produces. Reporting it
+    // as a plain Alt+<letter> made it run whichever command Alt+<letter> is
+    // bound to (Alt+P = find previous, Alt+A = open Search/Replace), silently
+    // eating both keypresses. See sinelaw/fresh#2810.
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(b"\x1b\x10")),
+        vec![(
+            KeyCode::Char('p'),
+            KeyModifiers::ALT | KeyModifiers::CONTROL
+        )]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1b\x01")),
+        vec![(
+            KeyCode::Char('a'),
+            KeyModifiers::ALT | KeyModifiers::CONTROL
+        )]
+    );
+    // Tab / Enter / Backspace are keys in their own right, so they stay
+    // Alt-only rather than picking up a spurious Control.
+    assert_eq!(
+        keys(&p.parse(b"\x1b\x09")),
+        vec![(KeyCode::Tab, KeyModifiers::ALT)]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1b\x0d")),
+        vec![(KeyCode::Enter, KeyModifiers::ALT)]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1b\x7f")),
+        vec![(KeyCode::Backspace, KeyModifiers::ALT)]
     );
 }
 
@@ -248,12 +409,130 @@ fn csi_u_alternate_keys_subparameters() {
     // Shift+'a' reported as base 97, shifted 65: CSI 97:65 ; 2 u
     assert_eq!(
         keys(&p.parse(b"\x1b[97:65;2u")),
-        vec![(KeyCode::Char('a'), KeyModifiers::SHIFT)]
+        vec![(KeyCode::Char('A'), KeyModifiers::empty())]
     );
     // A modifier field may carry an event-type sub-param: CSI 13 ; 5:1 u
     assert_eq!(
         keys(&p.parse(b"\x1b[13;5:1u")),
         vec![(KeyCode::Enter, KeyModifiers::CONTROL)]
+    );
+    // A base-layout code with no shifted code (`97::29`) is not a shifted key.
+    assert_eq!(
+        keys(&p.parse(b"\x1b[97::29u")),
+        vec![(KeyCode::Char('a'), KeyModifiers::empty())]
+    );
+}
+
+/// With `REPORT_ALL_KEYS_AS_ESCAPE_CODES` every printable key arrives in the
+/// CSI-u form, where the key field is the *base* key and the shift lives in the
+/// modifier field. Reporting the base made every shifted key type its unshifted
+/// character, which read as the shift key being dead (sinelaw/fresh#2880).
+#[test]
+fn csi_u_shifted_keys_report_the_character_they_type() {
+    let mut p = InputParser::new();
+    for (bytes, expected) in [
+        (&b"\x1b[97:65;2u"[..], 'A'),   // Shift+a
+        (&b"\x1b[50:64;2u"[..], '@'),   // Shift+2 on a US layout
+        (&b"\x1b[47:63;2u"[..], '?'),   // Shift+/
+        (&b"\x1b[232:200;2u"[..], 'È'), // Shift+è, non-ASCII
+    ] {
+        assert_eq!(
+            keys(&p.parse(bytes)),
+            vec![(KeyCode::Char(expected), KeyModifiers::empty())],
+            "{:?} should type {expected}",
+            String::from_utf8_lossy(bytes)
+        );
+    }
+}
+
+/// Without `REPORT_ALTERNATE_KEYS` the terminal sends no shifted codepoint.
+/// Shift+letter is the letter's uppercase on every Latin layout, so it is
+/// resolved anyway; anything else would be a guess at the layout and keeps its
+/// base key plus the SHIFT modifier.
+#[test]
+fn csi_u_shifted_keys_without_alternate_key_reporting() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(b"\x1b[99;2u")),
+        vec![(KeyCode::Char('C'), KeyModifiers::empty())]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1b[50;2u")),
+        vec![(KeyCode::Char('2'), KeyModifiers::SHIFT)]
+    );
+}
+
+/// The shifted character replaces the base key for the modifier combinations
+/// that type text, but never for Ctrl: `Ctrl+Shift+A` has to stay distinct from
+/// `Ctrl+A`, which is what `Char('A')` with the SHIFT bit dropped would
+/// normalize to.
+#[test]
+fn csi_u_shifted_keys_alongside_other_modifiers() {
+    let mut p = InputParser::new();
+    // Alt+Shift+f
+    assert_eq!(
+        keys(&p.parse(b"\x1b[102:70;4u")),
+        vec![(KeyCode::Char('F'), KeyModifiers::ALT)]
+    );
+    // Ctrl+Shift+a
+    assert_eq!(
+        keys(&p.parse(b"\x1b[97:65;6u")),
+        vec![(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )]
+    );
+    // Ctrl+Shift+a with alternate keys off
+    assert_eq!(
+        keys(&p.parse(b"\x1b[97;6u")),
+        vec![(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )]
+    );
+}
+
+/// A shifted key still carries its event type: substituting the character must
+/// not turn a release into a press.
+#[test]
+fn csi_u_shifted_key_keeps_its_event_type() {
+    let mut p = InputParser::new();
+    match &p.parse(b"\x1b[97:65;2:3u")[0] {
+        Event::Key(ke) => {
+            assert_eq!(ke.code, KeyCode::Char('A'));
+            assert_eq!(ke.modifiers, KeyModifiers::empty());
+            assert_eq!(ke.kind, KeyEventKind::Release);
+        }
+        other => panic!("expected key, got {:?}", other),
+    }
+}
+
+/// The full kitty key event is
+/// `CSI unicode-key-code:alternate-key-codes ; modifiers:event-type ; text-as-codepoints u`.
+/// fresh does not request the associated text (that needs `REPORT_ASSOCIATED_TEXT`),
+/// but a terminal that sends the field anyway must not derail the key.
+#[test]
+fn csi_u_ignores_a_trailing_text_parameter() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(b"\x1b[97:65;2;65u")),
+        vec![(KeyCode::Char('A'), KeyModifiers::empty())]
+    );
+}
+
+/// Functional keys have no shifted character. Shift+Tab keeps its own key code
+/// rather than being replaced by whatever the sub-parameter holds.
+#[test]
+fn csi_u_shifted_functional_keys_are_untouched() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(b"\x1b[9;2u")),
+        vec![(KeyCode::Tab, KeyModifiers::SHIFT)]
+    );
+    // Shift+F13, whose PUA codepoint must never become a printable character.
+    assert_eq!(
+        keys(&p.parse(b"\x1b[57376;2u")),
+        vec![(KeyCode::F(13), KeyModifiers::SHIFT)]
     );
 }
 
@@ -347,6 +626,128 @@ fn flush_never_breaks_up_a_partial_sequence() {
     }
 }
 
+// ---- Lone escape prefixes vs. legacy Alt chords (sinelaw/fresh#2930) ----
+//
+// A terminal without the kitty keyboard protocol transmits Alt+] as `ESC ]`
+// and Alt+[ as `ESC [` — byte-identical to the OSC and CSI introducers. A
+// genuine control sequence always has its payload right behind the introducer
+// (same write burst), while a human Alt chord arrives alone, so a bare
+// introducer with nothing following resolves to the Alt chord on idle flush —
+// exactly the rule that already resolved a bare `ESC` to the Escape key.
+
+#[test]
+fn lone_esc_rbracket_flushes_to_alt_rbracket() {
+    let mut p = InputParser::new();
+    // Legacy Alt+]: `ESC ]` with no continuation.
+    assert!(p.parse(b"\x1b]").is_empty());
+    assert!(p.escape_pending(), "bare OSC introducer must be flushable");
+    assert_eq!(
+        keys(&p.flush()),
+        vec![(KeyCode::Char(']'), KeyModifiers::ALT)]
+    );
+    // Back at ground: flush is spent and typing works normally.
+    assert!(!p.escape_pending());
+    assert!(p.flush().is_empty());
+    assert_eq!(
+        keys(&p.parse(b"a")),
+        vec![(KeyCode::Char('a'), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn lone_esc_lbracket_flushes_to_alt_lbracket() {
+    let mut p = InputParser::new();
+    // Legacy Alt+[: `ESC [` with no continuation.
+    assert!(p.parse(b"\x1b[").is_empty());
+    assert!(p.escape_pending(), "bare CSI introducer must be flushable");
+    assert_eq!(
+        keys(&p.flush()),
+        vec![(KeyCode::Char('['), KeyModifiers::ALT)]
+    );
+    // The next typed key stands alone — it must NOT be misread as a CSI
+    // final byte (`A` after a swallowed `ESC [` used to become the Up key).
+    assert!(!p.escape_pending());
+    assert_eq!(
+        keys(&p.parse(b"A")),
+        vec![(KeyCode::Char('A'), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn lone_string_introducers_flush_to_alt_chords() {
+    // The other legacy Alt chords that collide with string introducers:
+    // Alt+Shift+P (`ESC P` = DCS), Alt+_ (APC), Alt+^ (PM), Alt+Shift+X (SOS).
+    for (introducer, chr) in [(b'P', 'P'), (b'_', '_'), (b'^', '^'), (b'X', 'X')] {
+        let mut p = InputParser::new();
+        assert!(p.parse(&[0x1b, introducer]).is_empty());
+        assert!(p.escape_pending(), "bare `ESC {chr}` must be flushable");
+        assert_eq!(
+            keys(&p.flush()),
+            vec![(KeyCode::Char(chr), KeyModifiers::ALT)],
+            "flush of `ESC {chr}`"
+        );
+    }
+}
+
+#[test]
+fn osc_with_payload_in_same_burst_is_not_flushable() {
+    // A genuine OSC reply whose terminator hasn't arrived yet: the payload
+    // bytes commit it as a string sequence, so it must keep swallowing —
+    // never resolve to Alt+] plus leaked text.
+    let mut p = InputParser::new();
+    assert!(p.parse(b"\x1b]52;c;SGVs").is_empty());
+    assert!(!p.escape_pending(), "committed OSC must not be flushable");
+    assert!(p.flush().is_empty());
+    // The rest of the reply arrives on a later read and is swallowed whole.
+    assert!(p.parse(b"bG8=\x07").is_empty());
+    assert_eq!(
+        keys(&p.parse(b"a")),
+        vec![(KeyCode::Char('a'), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn osc_split_right_after_introducer_still_swallowed_when_payload_follows() {
+    // Read boundary lands exactly after `ESC ]` but the payload follows before
+    // the stream goes idle (so the caller never invokes `flush`): the reply
+    // must still be swallowed whole. This is the split the idle-flush rule
+    // must not break: flushing is the caller's idle-time decision, and mere
+    // parsing of the two prefix bytes must not emit anything by itself.
+    let mut p = InputParser::new();
+    assert!(p.parse(b"\x1b]").is_empty());
+    assert!(p.parse(b"11;rgb:2e2e/3434/3636\x07").is_empty());
+    assert_eq!(
+        keys(&p.parse(b"a")),
+        vec![(KeyCode::Char('a'), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn csi_with_params_pending_is_not_flushable() {
+    // `ESC [ 1` could still become F5 (`ESC [ 15 ~`) etc. — a parameter byte
+    // commits the CSI, so flush must stay silent and the sequence completes.
+    let mut p = InputParser::new();
+    assert!(p.parse(b"\x1b[1").is_empty());
+    assert!(!p.escape_pending(), "committed CSI must not be flushable");
+    assert!(p.flush().is_empty());
+    assert_eq!(
+        keys(&p.parse(b"5~")),
+        vec![(KeyCode::F(5), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn empty_osc_terminated_in_later_chunk_is_swallowed() {
+    // `ESC ]` then a lone BEL in the next read: a (degenerate but genuine)
+    // empty OSC. As long as no flush happened in between, it is swallowed.
+    let mut p = InputParser::new();
+    assert!(p.parse(b"\x1b]").is_empty());
+    assert!(p.parse(b"\x07").is_empty());
+    // Same for the ST-terminated form.
+    assert!(p.parse(b"\x1b]").is_empty());
+    assert!(p.parse(b"\x1b\\").is_empty());
+}
+
 #[test]
 fn esc_then_mouse_same_chunk() {
     let mut p = InputParser::new();
@@ -408,6 +809,26 @@ fn sgr_mouse_is_zero_indexed() {
 }
 
 #[test]
+fn sgr_mouse_decodes_wheel_buttons_across_a_split_boundary() {
+    // SGR wheel buttons 64–67 are respectively up, down, left, and right.
+    for (button, kind) in [
+        (64, MouseEventKind::ScrollUp),
+        (65, MouseEventKind::ScrollDown),
+        (66, MouseEventKind::ScrollLeft),
+        (67, MouseEventKind::ScrollRight),
+    ] {
+        let mut parser = InputParser::new();
+        let sequence = format!("\x1b[<{button};10;5M");
+        let split = sequence.len() - 1;
+        assert!(parser.parse(&sequence.as_bytes()[..split]).is_empty());
+        assert!(matches!(
+            parser.parse(&sequence.as_bytes()[split..]).as_slice(),
+            [Event::Mouse(MouseEvent { kind: actual, .. })] if *actual == kind
+        ));
+    }
+}
+
+#[test]
 fn sgr_mouse_motion_without_button() {
     let mut p = InputParser::new();
     let ev = p.parse(b"\x1b[<35;10;5M");
@@ -455,22 +876,209 @@ fn partial_csi_mouse_not_flushed() {
     }
 }
 
+#[test]
+fn sgr_mouse_high_buttons_are_dropped_without_leaking() {
+    // Bit 7 is xterm's high-button extension (buttons 8-15). `MouseButton` has
+    // no counterpart, and the low bits alias onto Left/Middle/Right — and, with
+    // bit 6 set too, onto the wheel — so 128-131 used to arrive as clicks and
+    // 192-195 as scrolls. Dropping them must not leak the report as text.
+    for seq in [
+        &b"\x1b[<128;10;5M"[..], // button 8
+        &b"\x1b[<129;10;5M"[..], // button 9
+        &b"\x1b[<131;10;5M"[..], // button 11
+        &b"\x1b[<192;10;5M"[..], // button 12 — bit 6 set, but not the wheel
+        &b"\x1b[<195;10;5M"[..], // button 15
+    ] {
+        let mut p = InputParser::new();
+        let ev = p.parse(seq);
+        assert!(
+            !ev.iter().any(|e| matches!(e, Event::Mouse(_))),
+            "{:?} produced a mouse event: {:?}",
+            std::str::from_utf8(seq),
+            ev
+        );
+        assert!(!has_char_key(&ev), "{:?} leaked: {:?}", seq, ev);
+    }
+}
+
+#[test]
+fn sgr_mouse_wheel_still_decodes_below_the_high_button_range() {
+    // The guard above keys on bit 7 alone, so ordinary wheel reports (buttons
+    // 4-7, bit 6) must be untouched by it.
+    let mut p = InputParser::new();
+    for seq in [&b"\x1b[<64;10;5M"[..], &b"\x1b[<67;10;5M"[..]] {
+        assert!(
+            matches!(p.parse(seq).first(), Some(Event::Mouse(_))),
+            "{:?} produced no mouse event",
+            std::str::from_utf8(seq)
+        );
+    }
+}
+
+#[test]
+fn sgr_mouse_unparseable_button_is_rejected() {
+    // `Cb` is a byte. A non-numeric or out-of-range field used to default to 0
+    // — a synthetic left-click at the reported cell, conjured out of garbage.
+    // Each stays inside the CSI parameter range (0x30-0x3f) so the sequence is
+    // still framed as one mouse report — it is the decoder that must reject it.
+    for seq in [
+        &b"\x1b[<?;10;5M"[..],   // not a number
+        &b"\x1b[<;10;5M"[..],    // empty
+        &b"\x1b[<300;10;5M"[..], // wider than a byte
+    ] {
+        let mut p = InputParser::new();
+        let ev = p.parse(seq);
+        assert!(
+            !ev.iter().any(|e| matches!(e, Event::Mouse(_))),
+            "{:?} produced a mouse event: {:?}",
+            std::str::from_utf8(seq),
+            ev
+        );
+        assert!(!has_char_key(&ev), "{:?} leaked: {:?}", seq, ev);
+    }
+}
+
 // ---- X10 mouse ----
 
 #[test]
 fn x10_mouse_press() {
     let mut p = InputParser::new();
-    // ESC [ M  btn=0(+32=' ')  x=41(+32=')')  y=21(+32='5')  => col 9, row 21? decode:
-    // cx = 0x29 - 32 = 9, cy = 0x35 - 32 = 21
+    // ESC [ M  btn=0(+32=' ')  x=41(+32=')')  y=21(+32='5'). Each byte is the
+    // 1-based coordinate plus 32, so 0x29 is column 9 and 0x35 is row 21, which
+    // are columns 8 and 20 once converted to the 0-based coordinates the rest
+    // of the editor uses.
     let ev = p.parse(b"\x1b[M \x29\x35");
     match &ev[0] {
         Event::Mouse(me) => {
             assert!(matches!(me.kind, MouseEventKind::Down(MouseButton::Left)));
-            assert_eq!((me.column, me.row), (9, 21));
+            assert_eq!((me.column, me.row), (8, 20));
         }
         other => panic!("expected x10 mouse, got {:?}", other),
     }
     assert!(!has_char_key(&ev));
+}
+
+#[test]
+fn x10_and_sgr_agree_on_the_same_cell() {
+    // Both protocols report the top-left cell as 1,1; the editor works in
+    // 0-based cells, so a press on it must decode to 0,0 either way. X10 used
+    // to keep the 1-based value, placing every legacy-protocol click one cell
+    // down and to the right of its SGR equivalent.
+    let mut p = InputParser::new();
+    let x10 = p.parse(b"\x1b[M\x20\x21\x21"); // btn 0, x 1, y 1
+    let sgr = p.parse(b"\x1b[<0;1;1M");
+    let coords = |ev: &[Event]| match &ev[0] {
+        Event::Mouse(me) => (me.column, me.row),
+        other => panic!("expected mouse, got {:?}", other),
+    };
+    assert_eq!(coords(&x10), (0, 0));
+    assert_eq!(coords(&sgr), (0, 0));
+}
+
+#[test]
+fn x10_mouse_zero_coordinate_does_not_panic() {
+    // An out-of-spec 0 coordinate (byte 0x20, the bias itself) must saturate
+    // rather than underflow the 1-based conversion — the X10 counterpart of
+    // `sgr_mouse_zero_coordinate_does_not_panic` (#2732).
+    let mut p = InputParser::new();
+    let ev = p.parse(b"\x1b[M\x20\x20\x20");
+    match &ev[0] {
+        Event::Mouse(me) => assert_eq!((me.column, me.row), (0, 0)),
+        other => panic!("expected x10 mouse, got {:?}", other),
+    }
+}
+
+#[test]
+fn x10_mouse_decodes_wheel_buttons() {
+    // X10 encodes the wheel the same way SGR does — buttons 4-7 in bit 6 plus
+    // the low two bits — so 96-99 are up, down, left and right. They used to
+    // fall through to the button match and arrive as clicks.
+    for (cb, kind) in [
+        (0x60, MouseEventKind::ScrollUp),
+        (0x61, MouseEventKind::ScrollDown),
+        (0x62, MouseEventKind::ScrollLeft),
+        (0x63, MouseEventKind::ScrollRight),
+    ] {
+        let mut p = InputParser::new();
+        let ev = p.parse(&[0x1b, b'[', b'M', cb, 0x2a, 0x26]);
+        match &ev[0] {
+            Event::Mouse(me) => assert_eq!(me.kind, kind, "cb {cb:#04x}"),
+            other => panic!("expected x10 mouse, got {:?}", other),
+        }
+        assert!(!has_char_key(&ev));
+    }
+}
+
+#[test]
+fn x10_mouse_decodes_motion_and_drag() {
+    // Bit 5 is the motion bit: held with a button it is a drag, and with
+    // button 3 (no button down) it is bare pointer movement. Both used to
+    // decode as presses, flooding clicks on every mouse move.
+    for (cb, kind) in [
+        (0x40, MouseEventKind::Drag(MouseButton::Left)),
+        (0x41, MouseEventKind::Drag(MouseButton::Middle)),
+        (0x42, MouseEventKind::Drag(MouseButton::Right)),
+        (0x43, MouseEventKind::Moved),
+    ] {
+        let mut p = InputParser::new();
+        let ev = p.parse(&[0x1b, b'[', b'M', cb, 0x2a, 0x26]);
+        match &ev[0] {
+            Event::Mouse(me) => assert_eq!(me.kind, kind, "cb {cb:#04x}"),
+            other => panic!("expected x10 mouse, got {:?}", other),
+        }
+    }
+}
+
+#[test]
+fn x10_mouse_decodes_modifiers() {
+    // Bits 2-4 are Shift/Alt/Ctrl. X10 reported every event as unmodified, so
+    // Ctrl+click was indistinguishable from a plain click.
+    for (cb, expected) in [
+        (0x20, KeyModifiers::empty()),
+        (0x24, KeyModifiers::SHIFT),
+        (0x28, KeyModifiers::ALT),
+        (0x30, KeyModifiers::CONTROL),
+        (0x34, KeyModifiers::SHIFT | KeyModifiers::CONTROL),
+    ] {
+        let mut p = InputParser::new();
+        let ev = p.parse(&[0x1b, b'[', b'M', cb, 0x2a, 0x26]);
+        match &ev[0] {
+            Event::Mouse(me) => assert_eq!(me.modifiers, expected, "cb {cb:#04x}"),
+            other => panic!("expected x10 mouse, got {:?}", other),
+        }
+    }
+}
+
+#[test]
+fn x10_mouse_release_is_still_button_agnostic() {
+    // X10 has no `m` terminator: a release is button 3 with the motion bit
+    // clear, and which button came up simply isn't encoded. Unlike SGR — where
+    // button 3 is always motion — this must stay a release.
+    let mut p = InputParser::new();
+    let ev = p.parse(b"\x1b[M\x23\x2a\x26");
+    match &ev[0] {
+        Event::Mouse(me) => assert_eq!(me.kind, MouseEventKind::Up(MouseButton::Left)),
+        other => panic!("expected x10 mouse, got {:?}", other),
+    }
+}
+
+#[test]
+fn x10_mouse_high_buttons_are_dropped_without_leaking() {
+    // Bit 7 marks buttons 8-15, which have no `MouseButton` counterpart. They
+    // used to alias onto Left/Middle/Right; dropping them must not let the
+    // report's bytes escape as literal text (#2745).
+    for cb in [0xa0u8, 0xa1, 0xa2, 0xa3, 0xe0, 0xe3] {
+        let mut p = InputParser::new();
+        let ev = p.parse(&[0x1b, b'[', b'M', cb, 0x2a, 0x26]);
+        assert!(
+            !ev.iter().any(|e| matches!(e, Event::Mouse(_))),
+            "cb {cb:#04x} produced a mouse event: {:?}",
+            ev
+        );
+        assert!(!has_char_key(&ev), "cb {cb:#04x} leaked: {:?}", ev);
+        // The parser is back in ground state and still usable.
+        assert!(matches!(p.parse(b"\x1b[<0;1;1M")[0], Event::Mouse(_)));
+    }
 }
 
 #[test]
@@ -941,6 +1549,91 @@ fn kitty_event_type_release_is_not_a_press() {
         matches!(&p.parse(b"\x1b[97;1:1u")[0], Event::Key(ke) if ke.kind == KeyEventKind::Press)
     );
     assert!(matches!(&p.parse(b"\x1b[97u")[0], Event::Key(ke) if ke.kind == KeyEventKind::Press));
+}
+
+#[test]
+fn kitty_event_type_on_legacy_form_keys() {
+    // Turning on event-type reporting does *not* move keys to the CSI-u form:
+    // the arrows, Home/End, keypad Begin and the `CSI <n> ~` editing keys keep
+    // their legacy final byte and gain a `:<event-type>` sub-parameter on the
+    // modifier field (`CSI 1 ; <mods>:<event-type> {ABCDEFHPQS}`,
+    // `CSI <n> ; <mods>:<event-type> ~`).
+    //
+    // Decoding only the modifiers there reported every release as a press, so a
+    // single arrow keypress moved the cursor twice and a single Delete removed
+    // two characters (sinelaw/fresh#2796).
+    let releases: &[(&[u8], KeyCode)] = &[
+        (b"\x1b[1;1:3A", KeyCode::Up),
+        (b"\x1b[1;1:3B", KeyCode::Down),
+        (b"\x1b[1;1:3C", KeyCode::Right),
+        (b"\x1b[1;1:3D", KeyCode::Left),
+        (b"\x1b[1;1:3H", KeyCode::Home),
+        (b"\x1b[1;1:3F", KeyCode::End),
+        (b"\x1b[1;1:3E", KeyCode::KeypadBegin),
+        (b"\x1b[2;1:3~", KeyCode::Insert),
+        (b"\x1b[3;1:3~", KeyCode::Delete),
+        (b"\x1b[5;1:3~", KeyCode::PageUp),
+        (b"\x1b[6;1:3~", KeyCode::PageDown),
+        (b"\x1b[24;1:3~", KeyCode::F(12)),
+        (b"\x1b[1;2:3P", KeyCode::F(1)),
+        (b"\x1b[1;2:3Z", KeyCode::BackTab),
+    ];
+    for (bytes, code) in releases {
+        let mut p = InputParser::new();
+        let ev = p.parse(bytes);
+        match &ev[..] {
+            [Event::Key(ke)] => {
+                assert_eq!(ke.code, *code, "wrong key for {:?}", bytes);
+                assert_eq!(
+                    ke.kind,
+                    KeyEventKind::Release,
+                    "{:?} is a release, not a press",
+                    bytes
+                );
+            }
+            other => panic!("expected one key event for {:?}, got {:?}", bytes, other),
+        }
+    }
+
+    // Repeat (auto-repeat while the key is held) is its own kind — it is a
+    // keystroke, so it must not be dropped, but it is not a press either.
+    let mut p = InputParser::new();
+    assert!(matches!(
+        &p.parse(b"\x1b[1;1:2B")[0],
+        Event::Key(ke) if ke.code == KeyCode::Down && ke.kind == KeyEventKind::Repeat
+    ));
+    assert!(matches!(
+        &p.parse(b"\x1b[3;1:2~")[0],
+        Event::Key(ke) if ke.code == KeyCode::Delete && ke.kind == KeyEventKind::Repeat
+    ));
+
+    // An explicit press, and the plain legacy forms a terminal without
+    // event-type reporting sends, all stay presses.
+    for bytes in [
+        b"\x1b[1;1:1B".as_slice(),
+        b"\x1b[B".as_slice(),
+        b"\x1b[3~".as_slice(),
+        b"\x1b[1;5C".as_slice(),
+    ] {
+        let mut p = InputParser::new();
+        assert!(
+            matches!(&p.parse(bytes)[0], Event::Key(ke) if ke.kind == KeyEventKind::Press),
+            "{:?} should be a press",
+            bytes
+        );
+    }
+
+    // Modifiers still decode alongside an event type: the sub-parameter must
+    // not swallow the modifier value it is attached to.
+    let mut p = InputParser::new();
+    match &p.parse(b"\x1b[1;2:3D")[0] {
+        Event::Key(ke) => {
+            assert_eq!(ke.code, KeyCode::Left);
+            assert_eq!(ke.modifiers, KeyModifiers::SHIFT);
+            assert_eq!(ke.kind, KeyEventKind::Release);
+        }
+        other => panic!("expected key, got {:?}", other),
+    }
 }
 
 #[test]

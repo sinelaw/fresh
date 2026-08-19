@@ -52,6 +52,12 @@ impl Editor {
                 return Err(format!("Failed to re-save after whitespace cleanup: {}", e));
             }
             self.active_event_log_mut().mark_saved();
+            // Refresh the recorded on-disk mtime after our own re-write (see the
+            // note on the trailing `watch_file` below). This must happen here —
+            // not only at the end of the function — because the language lookup
+            // right below can `return` early for languages with no config
+            // (e.g. plain-text files), which would otherwise skip the refresh.
+            self.watch_file(&path);
         }
 
         // Get language from buffer's stored state
@@ -73,6 +79,8 @@ impl Editor {
                             return Err(format!("Failed to re-save after format: {}", e));
                         }
                         self.active_event_log_mut().mark_saved();
+                        // Refresh the recorded on-disk mtime after our own write.
+                        self.watch_file(&path);
                         ran_any_action = true;
                     }
                     ActionResult::CommandNotFound(cmd) => {
@@ -108,6 +116,19 @@ impl Editor {
                     return Err(e);
                 }
             }
+        }
+
+        // A file-modifying on-save linter (e.g. one that rewrites `$FILE` in
+        // place) also advances the on-disk mtime past the value recorded by
+        // `finalize_save_buffer`, which ran *before* these actions. Refresh the
+        // recorded on-disk state one final time so a subsequent save's conflict
+        // check and the auto-revert poll don't mistake the editor's own on-save
+        // write for an external modification. Without keeping this state in sync
+        // the next Ctrl+S false-positives a "File changed on disk" prompt
+        // (#2706) and the poll fires a spurious "Reverted to saved file" reload
+        // (#2711).
+        if ran_any_action {
+            self.watch_file(&path);
         }
 
         Ok(ran_any_action)
@@ -492,6 +513,15 @@ impl Editor {
         let old_anchor = self.active_cursors().primary().anchor;
         let old_sticky_column = self.active_cursors().primary().sticky_column;
 
+        // Map the cursor (and any selection anchor) through a diff of the
+        // old vs. new content so each stays anchored to the same logical
+        // text — a raw byte offset lands in unrelated text whenever the
+        // rewrite changes lengths before it (issue #2777).
+        let new_cursor_pos =
+            fresh_core::diff::map_offset_through_diff(&buffer_content, output, old_cursor_pos);
+        let new_anchor = old_anchor
+            .map(|a| fresh_core::diff::map_offset_through_diff(&buffer_content, output, a));
+
         // Delete all content and insert new
         let delete_event = Event::Delete {
             range: 0..buffer_len,
@@ -504,10 +534,9 @@ impl Editor {
             cursor_id,
         };
 
-        // After delete+insert, cursor will be at output.len()
-        // Restore cursor to original position (or clamp to new buffer length)
+        // After delete+insert, the cursor sits at output.len(); a trailing
+        // MoveCursor restores it to the diff-mapped position.
         let new_buffer_len = output.len();
-        let new_cursor_pos = old_cursor_pos.min(new_buffer_len);
 
         // Leading cursor-restore event. Applied forward this is a no-op (the
         // cursor is already at `old_cursor_pos`), but a `Batch` is undone by
@@ -527,15 +556,16 @@ impl Editor {
             new_sticky_column: old_sticky_column,
         };
 
-        // Only add MoveCursor event if position actually changes
+        // Only add MoveCursor event if there is something to restore (the
+        // delete+insert left the cursor at the buffer end with no selection)
         let mut events = vec![restore_cursor_event, delete_event, insert_event];
-        if new_cursor_pos != new_buffer_len {
+        if new_cursor_pos != new_buffer_len || new_anchor.is_some() {
             let move_cursor_event = Event::MoveCursor {
                 cursor_id,
                 old_position: new_buffer_len, // Where cursor is after insert
                 new_position: new_cursor_pos,
                 old_anchor: None,
-                new_anchor: old_anchor.map(|a| a.min(new_buffer_len)),
+                new_anchor,
                 old_sticky_column: None,
                 new_sticky_column: old_sticky_column,
             };
@@ -557,20 +587,24 @@ impl Editor {
     /// Returns Ok(true) if any changes were made, Ok(false) if buffer unchanged.
     pub fn trim_trailing_whitespace(&mut self) -> Result<bool, String> {
         let content = self.active_state().buffer.to_string().unwrap_or_default();
+        let line_ending = self.active_state().buffer.line_ending();
+        let sep = line_ending.as_str();
 
-        // Process each line and trim trailing whitespace
+        // Split on the buffer's own line terminator and trim only trailing
+        // *horizontal* whitespace (never the CR/LF that form the ending) from
+        // each segment, then rejoin with the same terminator. Splitting on the
+        // real ending (and preserving it) keeps the line-ending mode intact —
+        // a CRLF buffer stays CRLF instead of collapsing to LF — and preserves
+        // the exact line count, whereas the old `str::lines()` + `join("\n")`
+        // approach both normalized CRLF to LF and dropped a trailing empty line
+        // (#2711).
         let trimmed: String = content
-            .lines()
-            .map(|line| line.trim_end())
+            .split(sep)
+            .map(|line| {
+                line.trim_end_matches(|c: char| c.is_whitespace() && c != '\r' && c != '\n')
+            })
             .collect::<Vec<_>>()
-            .join("\n");
-
-        // Preserve original trailing newline if present
-        let trimmed = if content.ends_with('\n') && !trimmed.ends_with('\n') {
-            format!("{}\n", trimmed)
-        } else {
-            trimmed
-        };
+            .join(sep);
 
         if trimmed == content {
             return Ok(false);
@@ -590,11 +624,15 @@ impl Editor {
             return Ok(false);
         }
 
-        if content.ends_with('\n') {
+        // Already terminated (LF, CRLF, or CR all end in one of these bytes).
+        if content.ends_with('\n') || content.ends_with('\r') {
             return Ok(false);
         }
 
-        let with_newline = format!("{}\n", content);
+        // Append the buffer's own line ending so a CRLF buffer's final newline
+        // is CRLF, not a hardcoded LF that would corrupt the line-ending mode.
+        let sep = self.active_state().buffer.line_ending().as_str();
+        let with_newline = format!("{}{}", content, sep);
         self.replace_buffer_with_output(&with_newline)?;
         Ok(true)
     }

@@ -250,6 +250,7 @@ fn test_orchestrator_session_prompts_then_activates_venv() {
             born,
             None,
             None,
+            false,
             None,
         )
         .expect("create orchestrator session window");

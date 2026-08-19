@@ -374,6 +374,63 @@ impl crate::app::window::Window {
         }
     }
 
+    /// Put the composite's cursor on the aligned row that shows source
+    /// line `line` (0-indexed) of pane `pane`, scrolled a third of the way
+    /// down the viewport — the same framing `composite_next_hunk` uses.
+    ///
+    /// This is how a caller holding a concrete file line (a review comment,
+    /// or the line the unified stream was sitting on before the layout
+    /// flipped) lands the side-by-side view on that exact line, rather than
+    /// on the top of the enclosing hunk. Returns `true` if the line is
+    /// present in that pane.
+    pub fn composite_cursor_to_source_line(
+        &mut self,
+        split_id: LeafId,
+        buffer_id: BufferId,
+        pane: usize,
+        line: usize,
+    ) -> bool {
+        let viewport_height = self.get_composite_viewport_height(split_id);
+        let target_row = self
+            .composite_buffers
+            .get(&buffer_id)
+            .and_then(|composite| {
+                composite
+                    .alignment
+                    .rows
+                    .iter()
+                    .position(|row| row.get_pane_line(pane).is_some_and(|r| r.line == line))
+            });
+        let Some(target_row) = target_row else {
+            return false;
+        };
+        // The view state is normally created by the first render of the
+        // composite. A caller placing the cursor right after building one
+        // (a layout flip) gets here first, so create it rather than
+        // dropping the request — `flush_layout` only reaches composites in
+        // the main split tree, not those inside a buffer group.
+        let Some(pane_count) = self.composite_buffers.get_mut(&buffer_id).map(|c| {
+            // An explicit cursor placement supersedes the framing the
+            // composite was created with: `initial_focus_hunk` is applied
+            // by the *first render*, which happens after this call and
+            // would otherwise scroll straight back to the hunk.
+            c.initial_focus_hunk = None;
+            c.pane_count()
+        }) else {
+            return false;
+        };
+        let view_state = self
+            .composite_view_states
+            .entry((split_id, buffer_id))
+            .or_insert_with(|| {
+                crate::view::composite_view::CompositeViewState::new(buffer_id, pane_count)
+            });
+        view_state.cursor_row = target_row;
+        view_state.scroll_row = target_row.saturating_sub(viewport_height / 3);
+        self.sync_editor_cursor_from_composite(split_id, buffer_id);
+        true
+    }
+
     /// Scroll a composite-buffer view to absolute row `row`, clamped.
     pub fn composite_scroll_to(&mut self, split_id: LeafId, buffer_id: BufferId, row: usize) {
         if let (Some(composite), Some(view_state)) = (

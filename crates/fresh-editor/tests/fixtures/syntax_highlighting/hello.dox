@@ -1,0 +1,11 @@
+/**
+ * @file hello.dox
+ * @brief Documentation for the greeting library.
+ *
+ * @section usage Usage
+ *
+ * Call `hello()` to print a greeting.
+ *
+ * @param name name of the person to greet
+ * @return a formatted greeting
+ */

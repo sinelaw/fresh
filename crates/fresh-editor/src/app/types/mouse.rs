@@ -66,8 +66,6 @@ pub struct MouseState {
     pub dragging_tab: Option<TabDragState>,
     /// Whether we're currently dragging a popup scrollbar (popup index)
     pub dragging_popup_scrollbar: Option<usize>,
-    /// Initial scroll offset when starting to drag popup scrollbar
-    pub drag_start_popup_scroll: Option<usize>,
     /// Whether we're currently dragging the prompt's suggestion-list
     /// scrollbar (Live Grep floating overlay, issue #1796). The
     /// rect is held in `ChromeLayout::suggestions_scrollbar_rect`

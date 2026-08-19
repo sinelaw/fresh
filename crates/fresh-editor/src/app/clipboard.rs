@@ -507,8 +507,7 @@ impl Editor {
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
-                prompt.input = current_theme_key.to_string();
-                prompt.cursor_pos = prompt.input.len();
+                prompt.set_input_plain(current_theme_key.to_string());
             }
         }
     }
@@ -1273,7 +1272,7 @@ impl Editor {
         let vs_mode = self.active_state().buffer_settings.virtual_space;
         let mut cursor_data: Vec<_> = {
             let state = self.active_state();
-            let line_ending = state.buffer.line_ending().as_str();
+            let line_ending = state.buffer.line_ending().insertion_str();
             self.active_cursors()
                 .iter()
                 .map(|(cursor_id, cursor)| {

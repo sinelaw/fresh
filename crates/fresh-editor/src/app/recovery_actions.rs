@@ -154,6 +154,9 @@ impl Editor {
                                     state.buffer.insert(0, &text);
                                     // Mark as modified since it differs from disk
                                     state.buffer.set_modified(true);
+                                    // Wholesale replacement, never described as
+                                    // edit damage. See `WrapIndex::damage_all`.
+                                    state.wrap_indices.damage_all();
                                 }
                                 // Invalidate the event log's saved position so undo
                                 // can't incorrectly clear the modified flag
@@ -311,6 +314,9 @@ impl Editor {
                                     state.buffer.insert(0, &text);
                                     state.buffer.set_modified(true);
                                     state.buffer.set_recovery_pending(false);
+                                    // Wholesale replacement, never described as
+                                    // edit damage. See `WrapIndex::damage_all`.
+                                    state.wrap_indices.damage_all();
                                 }
                                 self.active_event_log_mut().clear_saved_position();
                                 self.sync_lsp_after_recovery_replay(buffer_id);
@@ -573,10 +579,21 @@ impl Editor {
             }
         };
 
-        self.recovery_service
-            .lock()
-            .unwrap()
-            .delete_buffer_recovery(&recovery_id)?;
+        // The deletes (exists + remove_file + a chunk-directory scan) are
+        // disk I/O — off-loop. The recovery-service mutex is taken inside the
+        // spawned effect so a slow disk stalls the runtime worker, not the
+        // editor thread. Failure is logged, not returned: the stale recovery
+        // file costs one spurious recovery prompt, never a hung close.
+        let recovery_service = std::sync::Arc::clone(&self.recovery_service);
+        self.spawn_off_loop_effect("delete_buffer_recovery", move || {
+            let result = recovery_service
+                .lock()
+                .unwrap()
+                .delete_buffer_recovery(&recovery_id);
+            if let Err(e) = result {
+                tracing::warn!("off-loop recovery delete failed: {}", e);
+            }
+        });
 
         // Clear recovery_pending since buffer is now saved
         if let Some(state) = self

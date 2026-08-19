@@ -22,12 +22,34 @@ pub enum LineEnding {
 }
 
 impl LineEnding {
-    /// Get the string representation of this line ending
+    /// Get the on-disk string representation of this line ending.
+    ///
+    /// This is the byte sequence written to the file on save. Use
+    /// [`insertion_str`](Self::insertion_str) for text inserted into the
+    /// in-memory buffer.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::LF => "\n",
             Self::CRLF => "\r\n",
             Self::CR => "\r",
+        }
+    }
+
+    /// The line-ending sequence to insert into the *in-memory* buffer.
+    ///
+    /// The buffer's line model splits on `\n`, so every mode must insert a
+    /// `\n` to create a new logical line. LF and CRLF map to their on-disk
+    /// form (`\n` / `\r\n`), but Classic-Mac CR has no `\n` on disk — its
+    /// `\r` separators are normalized to `\n` on load and only turned back
+    /// into `\r` on save (see [`normalize_line_endings`] and
+    /// `convert_line_endings_to`). So CR inserts a bare `\n`, not `\r`;
+    /// inserting `\r` would leave a literal control char that never splits
+    /// the line (issue #2736).
+    pub fn insertion_str(&self) -> &'static str {
+        match self {
+            Self::LF => "\n",
+            Self::CRLF => "\r\n",
+            Self::CR => "\n",
         }
     }
 
@@ -52,20 +74,50 @@ pub struct BufferFormat {
     original_line_ending: LineEnding,
     encoding: Encoding,
     original_encoding: Encoding,
+    /// Whether the in-memory content stores line breaks in *normalized*
+    /// (`\n`) form that must be reconstructed to `line_ending`'s on-disk
+    /// bytes on save.
+    ///
+    /// This is only ever true for Classic-Mac (CR) buffers whose `\r`
+    /// separators were normalized to `\n` on load (small-file text path)
+    /// or that were created as CR buffers (their Enter inserts `\n`). A
+    /// buffer that merely *contains* stray `\r` bytes preserved verbatim
+    /// (binary, mixed endings, or a large/lazy CR load) keeps this `false`
+    /// so save never rewrites its raw bytes and content round-trips
+    /// byte-for-byte (issue #2736 vs. content-preservation invariants).
+    line_endings_normalized: bool,
 }
 
 impl BufferFormat {
     pub fn new(line_ending: LineEnding, encoding: Encoding) -> Self {
+        Self::with_normalization(line_ending, encoding, false)
+    }
+
+    /// Like [`new`](Self::new) but records whether the in-memory content is
+    /// stored in normalized (`\n`) form (see [`line_endings_normalized`]).
+    pub(super) fn with_normalization(
+        line_ending: LineEnding,
+        encoding: Encoding,
+        line_endings_normalized: bool,
+    ) -> Self {
         Self {
             line_ending,
             original_line_ending: line_ending,
             encoding,
             original_encoding: encoding,
+            line_endings_normalized,
         }
     }
 
     pub fn line_ending(&self) -> LineEnding {
         self.line_ending
+    }
+
+    /// Whether the in-memory content stores line breaks as `\n` that must
+    /// be reconstructed to `line_ending`'s on-disk bytes on save. Only true
+    /// for genuine CR-mode *text* buffers; see the field docs.
+    pub fn line_endings_normalized(&self) -> bool {
+        self.line_endings_normalized
     }
 
     pub fn encoding(&self) -> Encoding {
@@ -82,6 +134,9 @@ impl BufferFormat {
 
     pub fn set_line_ending(&mut self, le: LineEnding) {
         self.line_ending = le;
+        // Switching a buffer into CR mode means its `\n`-based content must
+        // be reconstructed as `\r` on save; switching away clears that.
+        self.line_endings_normalized = le == LineEnding::CR;
     }
 
     pub fn set_encoding(&mut self, e: Encoding) {
@@ -91,6 +146,9 @@ impl BufferFormat {
     pub fn set_default_line_ending(&mut self, le: LineEnding) {
         self.line_ending = le;
         self.original_line_ending = le;
+        // A brand-new CR buffer stores its rows as `\n` internally (Enter
+        // inserts `\n`) and must save them as `\r`.
+        self.line_endings_normalized = le == LineEnding::CR;
     }
 
     pub fn set_default_encoding(&mut self, e: Encoding) {
@@ -186,8 +244,8 @@ pub fn convert_to_encoding(utf8_bytes: &[u8], target_encoding: Encoding) -> Vec<
 /// Normalize line endings in the given bytes to LF only.
 ///
 /// Converts CRLF (\r\n) and CR (\r) to LF (\n) for internal
-/// representation. Kept for tests and potential future use.
-#[allow(dead_code)]
+/// representation. Used on load to normalize Classic-Mac (CR) files so
+/// the `\n`-based line model can split them into rows (issue #2736).
 pub fn normalize_line_endings(bytes: Vec<u8>) -> Vec<u8> {
     let mut normalized = Vec::with_capacity(bytes.len());
     let mut i = 0;

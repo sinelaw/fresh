@@ -47,6 +47,11 @@ pub enum StatusBarClickable {
     RemoteIndicator,
     WorkspaceTrust,
     ReadOnly,
+    /// The "Update: vX.Y.Z" indicator — click to offer an in-editor update.
+    Update,
+    /// The restart indicator on a terminal buffer whose process quit — click
+    /// to respawn it (resuming the agent conversation when there is one).
+    RestartTerminal,
 }
 
 /// Categorization of how a rendered element should be styled and tracked for click detection.
@@ -66,6 +71,8 @@ enum ElementKind {
     WarningBadge,
     /// Update available indicator (highlighted)
     Update,
+    /// Exited-terminal restart indicator (error palette, clickable)
+    TerminalRestart,
     /// Command palette shortcut hint (distinct style)
     Palette,
     /// Status message area (clickable to show history)
@@ -251,6 +258,10 @@ pub struct StatusBarContext<'a> {
     pub keybindings: &'a crate::input::keybindings::KeybindingResolver,
     pub chord_state: &'a [(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
     pub update_available: Option<&'a str>,
+    /// Lifecycle of an in-progress in-editor self-update; overrides the
+    /// "Update: vX" text with progress/outcome so the indicator itself relays
+    /// the result (no transient status message).
+    pub update_phase: crate::services::release_checker::SelfUpdatePhase,
     pub warning_level: WarningLevel,
     pub general_warning_count: usize,
     /// The clickable status-bar segment the mouse is currently over, if any.
@@ -303,6 +314,28 @@ pub struct StatusBarContext<'a> {
     /// `{trust}` indicator (read from the active authority each frame, so it
     /// never goes stale or vanishes — unlike a per-buffer plugin token).
     pub workspace_trust_level: crate::services::workspace_trust::TrustLevel,
+    /// Set when the active buffer is a terminal whose process has quit and can
+    /// be restarted in place. Drives the `{terminal_restart}` indicator, which
+    /// renders only in that state. `None` for every other buffer — including a
+    /// live terminal, so the indicator never offers to restart a running agent.
+    pub terminal_restart: Option<TerminalRestartState>,
+}
+
+/// What the `{terminal_restart}` indicator needs to describe the dead process
+/// behind the active buffer. Derived per frame from the window's
+/// `exited_terminals` record.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminalRestartState {
+    /// Short program name of the process that died (`claude`, `codex`, …), or
+    /// `None` when the terminal was just a shell.
+    pub program: Option<String>,
+    /// Wait-status exit code, when the platform reported one. Shown only when
+    /// non-zero — a clean exit is the common "the agent finished" case and
+    /// doesn't need a number shouting on the bar.
+    pub exit_code: Option<i32>,
+    /// Whether restarting rejoins an agent conversation rather than starting a
+    /// fresh process. Drives "Resume" vs "Restart" wording.
+    pub resumes_agent: bool,
 }
 
 /// Layout information returned from status bar rendering for mouse click detection
@@ -362,6 +395,7 @@ fn element_kind_name(kind: ElementKind) -> &'static str {
         ElementKind::RemoteIndicator(_) => "remote",
         ElementKind::WorkspaceTrust(_) => "trust",
         ElementKind::Messages => "message",
+        ElementKind::TerminalRestart => "terminalRestart",
         ElementKind::Custom => "plugin",
         _ => "text",
     }
@@ -379,7 +413,7 @@ pub enum SearchOptionsHover {
 }
 
 /// Layout information for search options bar hit testing
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchOptionsLayout {
     /// Row where the search options are rendered
     pub row: u16,
@@ -394,6 +428,89 @@ pub struct SearchOptionsLayout {
 }
 
 impl SearchOptionsLayout {
+    /// Compute the bar's checkbox spans from live state — the SAME
+    /// width math the paint pass walks (`render_search_options`
+    /// asserts the two agree in debug builds). Geometry depends on
+    /// the area, the locale labels, the keybinding hint strings,
+    /// whether the Confirm option is shown (replace modes), and —
+    /// via the `$1,$2,…` capture-group hint that precedes Confirm —
+    /// whether regex is on; the CHECKED states never move anything
+    /// ("[x]" and "[ ]" share a width). This is the per-event
+    /// geometry source (chrome hit-testing, click resolution, the
+    /// web projection): geometry produced by layout, not recorded by
+    /// paint.
+    pub fn compute(
+        area: ratatui::layout::Rect,
+        use_regex: bool,
+        confirm_shown: bool,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+    ) -> SearchOptionsLayout {
+        use crate::primitives::display_width::str_width;
+        let mut layout = SearchOptionsLayout {
+            row: area.y,
+            ..Default::default()
+        };
+        let get_shortcut = |action: &crate::input::keybindings::Action| -> Option<String> {
+            keybindings
+                .get_keybinding_for_action(
+                    action,
+                    crate::input::keybindings::KeyContext::SearchPrompt,
+                )
+                .or_else(|| {
+                    keybindings.get_keybinding_for_action(
+                        action,
+                        crate::input::keybindings::KeyContext::Prompt,
+                    )
+                })
+                .or_else(|| {
+                    keybindings.get_keybinding_for_action(
+                        action,
+                        crate::input::keybindings::KeyContext::Global,
+                    )
+                })
+        };
+        let shortcut_width = |action: &crate::input::keybindings::Action| -> usize {
+            get_shortcut(action)
+                .map(|s| str_width(&format!(" ({})", s)))
+                .unwrap_or(0)
+        };
+        // "[x]" and "[ ]" are the same width; use the unchecked glyph.
+        let item_width = |label: String, action: &crate::input::keybindings::Action| -> u16 {
+            (str_width(&format!("[ ] {}", label)) + shortcut_width(action)) as u16
+        };
+        let mut col = area.x + 1; // left padding
+        let w = item_width(
+            t!("search.case_sensitive").to_string(),
+            &crate::input::keybindings::Action::ToggleSearchCaseSensitive,
+        );
+        layout.case_sensitive = Some((col, col + w));
+        col += w + 3;
+        let w = item_width(
+            t!("search.whole_word").to_string(),
+            &crate::input::keybindings::Action::ToggleSearchWholeWord,
+        );
+        layout.whole_word = Some((col, col + w));
+        col += w + 3;
+        let w = item_width(
+            t!("search.regex").to_string(),
+            &crate::input::keybindings::Action::ToggleSearchRegex,
+        );
+        layout.regex = Some((col, col + w));
+        col += w;
+        if confirm_shown {
+            if use_regex {
+                col += str_width(" \u{2502} $1,$2,\u{2026}") as u16;
+            }
+            col += 3;
+            let w = item_width(
+                t!("search.confirm_each").to_string(),
+                &crate::input::keybindings::Action::ToggleSearchConfirmEach,
+            );
+            layout.confirm_each = Some((col, col + w));
+        }
+        layout
+    }
+
     /// Check which search option checkbox (if any) is at the given position
     pub fn checkbox_at(&self, x: u16, y: u16) -> Option<SearchOptionsHover> {
         if y != self.row {
@@ -744,6 +861,22 @@ fn format_cursor_position_compact(line: usize, col: usize, line_count: usize) ->
     }
 }
 
+/// Horizontal scroll (in display cells) for a single-line input rendered
+/// in a viewport `width` cells wide, so the cursor at display column
+/// `cursor_cells` is always visible (issue #2876). Returns 0 while the
+/// cursor fits; otherwise scrolls just enough that the cursor lands on
+/// the viewport's last column.
+///
+/// Invariant (for `width > 0`): `scroll <= cursor_cells` and
+/// `cursor_cells - scroll < width`.
+pub(crate) fn input_hscroll(cursor_cells: usize, width: usize) -> usize {
+    if width == 0 {
+        0
+    } else {
+        cursor_cells.saturating_sub(width - 1)
+    }
+}
+
 /// Renders the status bar and prompt/minibuffer
 pub struct StatusBarRenderer;
 
@@ -762,7 +895,24 @@ impl StatusBarRenderer {
         // natively from `status_view`. The TUI always passes `true`.
         draw: bool,
     ) -> StatusBarLayout {
-        Self::render_status(frame, area, ctx, config, rec, draw)
+        Self::render_status(Some(frame), area, ctx, config, rec, draw)
+    }
+
+    /// Compute the bar's layout (clickable segments + plugin token areas +
+    /// semantic segments) from live state without painting a cell — the SAME
+    /// element/width/placement walk the paint pass runs
+    /// (`render_status_bar_row` asserts the two agree in debug builds).
+    /// Geometry is content-dependent (rendered label widths: encoding, LSP
+    /// state, cursor position, messages), so it is derived from the same
+    /// `StatusBarContext` the painter consumes. This is the per-event
+    /// geometry source (chrome hit-testing, click resolution, popup
+    /// anchoring): geometry produced by layout, not recorded by paint.
+    pub fn compute_status_layout(
+        area: Rect,
+        ctx: &mut StatusBarContext<'_>,
+        config: &StatusBarConfig,
+    ) -> StatusBarLayout {
+        Self::render_status(None, area, ctx, config, None, false)
     }
 
     /// Render the prompt/minibuffer
@@ -774,12 +924,13 @@ impl StatusBarRenderer {
     ) {
         let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
 
-        // Create spans for the prompt
-        let mut spans = vec![Span::styled(prompt.message.clone(), base_style)];
+        // Create spans for the input (the message/label is rendered
+        // separately so it stays anchored while the input scrolls).
+        let mut spans = Vec::new();
 
         // If there's a selection, split the input into parts
         if let Some((sel_start, sel_end)) = prompt.selection_range() {
-            let input = &prompt.input;
+            let input = prompt.input_str();
 
             // Text before selection
             if sel_start > 0 {
@@ -804,23 +955,69 @@ impl StatusBarRenderer {
             }
         } else {
             // No selection, render entire input normally
-            spans.push(Span::styled(prompt.input.clone(), base_style));
+            spans.push(Span::styled(prompt.input_str().to_string(), base_style));
         }
 
-        let line = Line::from(spans);
-        let prompt_line = Paragraph::new(line).style(base_style);
+        Self::render_prompt_label_and_input(
+            frame,
+            area,
+            vec![Span::styled(prompt.message.clone(), base_style)],
+            spans,
+            base_style,
+            str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]),
+        );
+    }
 
-        frame.render_widget(prompt_line, area);
+    /// Shared tail of the prompt-line renderers: paint the label spans
+    /// anchored at the left edge, then the input spans in the remaining
+    /// columns with a horizontal scroll that keeps the cursor visible
+    /// (issue #2876), and always place the terminal cursor on the input.
+    ///
+    /// `cursor_cells` is the display width of the input up to the cursor.
+    fn render_prompt_label_and_input(
+        frame: &mut Frame,
+        area: Rect,
+        label_spans: Vec<Span<'static>>,
+        input_spans: Vec<Span<'static>>,
+        base_style: Style,
+        cursor_cells: usize,
+    ) {
+        // Label, clipped to the area. Use display width (not byte length)
+        // for proper handling of double-width CJK and zero-width
+        // combining characters.
+        let label_cells: usize = label_spans.iter().map(|s| str_width(&s.content)).sum();
+        let label_cols = (label_cells.min(area.width as usize)) as u16;
+        let label_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: label_cols,
+            height: area.height,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(label_spans)).style(base_style),
+            label_area,
+        );
 
-        // Set cursor position in the prompt
-        // Use display width (not byte length) for proper handling of:
-        // - Double-width CJK characters
-        // - Zero-width combining characters (Thai diacritics, etc.)
-        let message_width = str_width(&prompt.message);
-        let input_width_before_cursor = str_width(&prompt.input[..prompt.cursor_pos]);
-        let cursor_x = (message_width + input_width_before_cursor) as u16;
-        if cursor_x < area.width {
-            frame.set_cursor_position((area.x + cursor_x, area.y));
+        // Input, horizontally scrolled so the cursor never leaves the
+        // viewport: with text longer than the box the line scrolls left
+        // and the cursor rides the last column.
+        let input_area = Rect {
+            x: area.x + label_cols,
+            y: area.y,
+            width: area.width - label_cols,
+            height: area.height,
+        };
+        let scroll = input_hscroll(cursor_cells, input_area.width as usize);
+        frame.render_widget(
+            Paragraph::new(Line::from(input_spans))
+                .style(base_style)
+                .scroll((0, scroll as u16)),
+            input_area,
+        );
+
+        if input_area.width > 0 {
+            // `input_hscroll` guarantees cursor_cells - scroll < width.
+            frame.set_cursor_position((input_area.x + (cursor_cells - scroll) as u16, area.y));
         }
     }
 
@@ -845,8 +1042,10 @@ impl StatusBarRenderer {
 
         let mut spans = Vec::new();
 
-        // "Open: " prefix
-        let open_prompt = t!("file.open_prompt").to_string();
+        // Label prefix — the prompt's own message, not a hardcoded
+        // "Open file: ": a plugin-opened pick browser (editor.pickFile)
+        // carries its own label ("Enter tour file path: ", …).
+        let open_prompt = prompt.message.clone();
         spans.push(Span::styled(open_prompt.clone(), base_style));
 
         // Calculate if we need to truncate
@@ -854,7 +1053,7 @@ impl StatusBarRenderer {
         let prefix_len = str_width(&open_prompt);
         let dir_path = file_open_state.current_dir.to_string_lossy();
         let dir_path_len = dir_path.len() + 1; // +1 for trailing slash
-        let input_len = prompt.input.len();
+        let input_len = prompt.input_str().len();
         let total_len = prefix_len + dir_path_len + input_len;
         let threshold = (area.width as usize * 90) / 100;
 
@@ -901,34 +1100,18 @@ impl StatusBarRenderer {
             spans.push(Span::styled(path_display, dir_style));
         }
 
-        // User input (the filename part) - normal color
-        spans.push(Span::styled(prompt.input.clone(), base_style));
-
-        let line = Line::from(spans);
-        let prompt_line = Paragraph::new(line).style(base_style);
-
-        frame.render_widget(prompt_line, area);
-
-        // Set cursor position in the prompt
-        // Use display width for proper handling of Unicode characters
-        // We need to calculate the visual width of: "Open: " + dir_display + input[..cursor_pos]
-        let prefix_width = str_width(&open_prompt);
-        let dir_display_width = if truncated.truncated {
-            let suffix_with_slash = if truncated.suffix.ends_with('/') {
-                &truncated.suffix
-            } else {
-                // We already added "/" in the suffix_with_slash above, so approximate
-                &truncated.suffix
-            };
-            str_width(&truncated.prefix) + str_width("/[...]") + str_width(suffix_with_slash) + 1
-        } else {
-            str_width(&truncated.suffix) + 1 // +1 for trailing slash
-        };
-        let input_width_before_cursor = str_width(&prompt.input[..prompt.cursor_pos]);
-        let cursor_x = (prefix_width + dir_display_width + input_width_before_cursor) as u16;
-        if cursor_x < area.width {
-            frame.set_cursor_position((area.x + cursor_x, area.y));
-        }
+        // The label here is the whole prefix (message + colorized dir path);
+        // the user input (the filename part) scrolls after it so the cursor
+        // stays visible even when the typed name overflows the line.
+        let input_spans = vec![Span::styled(prompt.input_str().to_string(), base_style)];
+        Self::render_prompt_label_and_input(
+            frame,
+            area,
+            spans,
+            input_spans,
+            base_style,
+            str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]),
+        );
     }
 
     /// Render a single element to its text representation.
@@ -1077,18 +1260,20 @@ impl StatusBarRenderer {
                 })
             }
             StatusBarElement::Diagnostics => {
-                let diagnostics = ctx.state.overlays.all();
                 let mut error_count = 0usize;
                 let mut warning_count = 0usize;
                 let mut info_count = 0usize;
                 let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
-                for overlay in diagnostics {
-                    if overlay.namespace.as_ref() == Some(&diagnostic_ns) {
-                        match overlay.priority {
-                            100 => error_count += 1,
-                            50 => warning_count += 1,
-                            _ => info_count += 1,
-                        }
+                // Ask for the diagnostics namespace rather than filtering
+                // every overlay on the buffer: this runs on every frame, and
+                // a decorated buffer (a review diff carries an overlay per
+                // line) has tens of thousands of overlays that are not
+                // diagnostics.
+                for overlay in ctx.state.overlays.in_namespace(&diagnostic_ns) {
+                    match overlay.priority {
+                        100 => error_count += 1,
+                        50 => warning_count += 1,
+                        _ => info_count += 1,
                     }
                 }
                 if error_count + warning_count + info_count == 0 {
@@ -1206,10 +1391,55 @@ impl StatusBarRenderer {
                 })
             }
             StatusBarElement::Update => {
-                let version = ctx.update_available?;
+                use crate::services::release_checker::SelfUpdatePhase;
+                // A running/finished update owns the indicator text even though
+                // `update_available` is still set (the running process still
+                // sees itself as out of date until a restart).
+                let text = match ctx.update_phase {
+                    SelfUpdatePhase::Running => t!("status.update_running").to_string(),
+                    SelfUpdatePhase::Succeeded => t!("status.update_done").to_string(),
+                    SelfUpdatePhase::ActionRequired => {
+                        t!("status.update_action_required").to_string()
+                    }
+                    SelfUpdatePhase::Failed => t!("status.update_failed").to_string(),
+                    SelfUpdatePhase::Idle => {
+                        let version = ctx.update_available?;
+                        t!("status.update_available", version = version).to_string()
+                    }
+                };
                 Some(RenderedElement {
-                    text: t!("status.update_available", version = version).to_string(),
+                    text,
                     kind: ElementKind::Update,
+                    token_key: None,
+                })
+            }
+            StatusBarElement::TerminalRestart => {
+                // Absent unless the active buffer is a terminal whose process
+                // quit — this is a call to action, not a persistent control.
+                let restart = ctx.terminal_restart.as_ref()?;
+                // "Resume claude" when the restart rejoins the conversation,
+                // "Restart claude" when it re-runs the launch command, and a
+                // bare "Restart terminal" for a plain shell.
+                let text = match (&restart.program, restart.resumes_agent) {
+                    (Some(program), true) => {
+                        t!("status.terminal_resume", program = program).to_string()
+                    }
+                    (Some(program), false) => {
+                        t!("status.terminal_restart", program = program).to_string()
+                    }
+                    (None, _) => t!("status.terminal_restart_shell").to_string(),
+                };
+                // A non-zero code is the signal that something went wrong, so
+                // it rides along; exit 0 (the agent simply finished) doesn't.
+                let text = match restart.exit_code {
+                    Some(code) if code != 0 => {
+                        t!("status.terminal_restart_code", label = text, code = code).to_string()
+                    }
+                    _ => text,
+                };
+                Some(RenderedElement {
+                    text,
+                    kind: ElementKind::TerminalRestart,
                     token_key: None,
                 })
             }
@@ -1431,9 +1661,39 @@ impl StatusBarRenderer {
                 }
                 style
             }
-            ElementKind::Update => Style::default()
-                .fg(theme.menu_highlight_fg)
-                .bg(theme.menu_dropdown_bg),
+            ElementKind::Update => {
+                // Keep the indicator's distinctive palette, but underline on
+                // hover to signal it's clickable — matching the LSP / read-only
+                // indicators.
+                let mut style = Style::default()
+                    .fg(theme.menu_highlight_fg)
+                    .bg(theme.menu_dropdown_bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
+            ElementKind::TerminalRestart => {
+                // The error palette: a dead agent is a state the user has to
+                // act on, and the indicator *is* the action. Hover styling
+                // matches the other clickable indicators.
+                let (fg, bg) = if is_hovering {
+                    (
+                        theme.status_error_indicator_hover_fg,
+                        theme.status_error_indicator_hover_bg,
+                    )
+                } else {
+                    (
+                        theme.status_error_indicator_fg,
+                        theme.status_error_indicator_bg,
+                    )
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
             // The palette shortcut hint is purely informational — driven
             // by the dedicated `status_palette_*` theme keys (default
             // to the neutral status-bar palette so it blends into the
@@ -1526,6 +1786,10 @@ impl StatusBarRenderer {
                 "ui.status_warning_indicator_bg",
             ),
             ElementKind::Update => ("ui.menu_highlight_fg", "ui.menu_dropdown_bg"),
+            ElementKind::TerminalRestart => (
+                "ui.status_error_indicator_fg",
+                "ui.status_error_indicator_bg",
+            ),
             ElementKind::Palette => ("ui.status_palette_fg", "ui.status_palette_bg"),
             ElementKind::RemoteIndicator(state) => match state {
                 RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => {
@@ -1566,9 +1830,10 @@ impl StatusBarRenderer {
             ElementKind::RemoteIndicator(_) => Some(StatusBarClickable::RemoteIndicator),
             ElementKind::WorkspaceTrust(_) => Some(StatusBarClickable::WorkspaceTrust),
             ElementKind::ReadOnly => Some(StatusBarClickable::ReadOnly),
+            ElementKind::Update => Some(StatusBarClickable::Update),
+            ElementKind::TerminalRestart => Some(StatusBarClickable::RestartTerminal),
             ElementKind::Normal
             | ElementKind::RemoteDisconnected
-            | ElementKind::Update
             | ElementKind::Palette
             | ElementKind::Clock
             | ElementKind::Custom => None,
@@ -1702,7 +1967,9 @@ impl StatusBarRenderer {
 
     /// Render the normal status bar (config-driven).
     fn render_status(
-        frame: &mut Frame,
+        // `None` on the event-time layout path (`compute_status_layout`),
+        // which never paints; always `Some` when `draw` is true.
+        mut frame: Option<&mut Frame>,
         area: Rect,
         ctx: &mut StatusBarContext<'_>,
         config: &StatusBarConfig,
@@ -1932,7 +2199,9 @@ impl StatusBarRenderer {
                 ));
             }
             if draw {
-                frame.render_widget(Paragraph::new(Line::from(spans)), area);
+                if let Some(frame) = frame.as_deref_mut() {
+                    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+                }
             }
             return layout;
         }
@@ -1999,7 +2268,9 @@ impl StatusBarRenderer {
         }
 
         if draw {
-            frame.render_widget(Paragraph::new(Line::from(spans)), area);
+            if let Some(frame) = frame {
+                frame.render_widget(Paragraph::new(Line::from(spans)), area);
+            }
         }
         layout
     }
@@ -2252,6 +2523,16 @@ impl StatusBarRenderer {
             layout.confirm_each = Some((confirm_start, current_col));
         }
 
+        // The paint walk above and `SearchOptionsLayout::compute` are
+        // two spellings of the same geometry; the per-event consumers
+        // (chrome hit-testing, click resolution, web projection) use
+        // `compute`, so any drift between them is a real bug — trip it
+        // in every debug/e2e run.
+        debug_assert_eq!(
+            layout,
+            SearchOptionsLayout::compute(area, use_regex, confirm_each.is_some(), keybindings),
+            "search-options paint walk and compute() must agree"
+        );
         // Fill remaining space
         let current_width = (current_col - area.x) as usize;
         let available_width = area.width as usize;
@@ -2845,5 +3126,112 @@ mod tests {
         let mut buf = crate::model::buffer::TextBuffer::from_str_test("hello\nworld\n");
         let line_start = buf.line_start_offset(1).unwrap();
         assert_eq!(cursor_column(&mut buf, line_start), 0);
+    }
+
+    /// Invariant of the prompt-input horizontal scroll window (issue #2876):
+    /// for any viewport width > 0 the cursor always lands inside the
+    /// viewport (`cursor - scroll < width`), scrolling never overshoots the
+    /// cursor, and no scrolling happens while the cursor already fits.
+    #[test]
+    fn test_input_hscroll_keeps_cursor_visible() {
+        for width in 1usize..=120 {
+            for cursor in 0usize..=200 {
+                let scroll = input_hscroll(cursor, width);
+                assert!(scroll <= cursor, "scroll {scroll} > cursor {cursor}");
+                assert!(
+                    cursor - scroll < width,
+                    "cursor not visible: cursor={cursor} scroll={scroll} width={width}"
+                );
+                if cursor < width {
+                    assert_eq!(
+                        scroll, 0,
+                        "no scroll needed at cursor={cursor} width={width}"
+                    );
+                }
+            }
+        }
+        // Degenerate zero-width viewport must not underflow.
+        assert_eq!(input_hscroll(50, 0), 0);
+    }
+
+    /// Reproducer for issue #2876 at the renderer level: with input wider
+    /// than the prompt line, the tail must scroll into view and the
+    /// terminal cursor must always be placed (the old renderer clipped the
+    /// paragraph at the right edge and skipped `set_cursor_position`
+    /// whenever the cursor's logical column was past it).
+    #[test]
+    fn test_render_prompt_scrolls_long_input_and_places_cursor() {
+        use ratatui::backend::{Backend, TestBackend};
+        use ratatui::Terminal;
+
+        let theme =
+            crate::view::theme::Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        let mut prompt = Prompt::new(
+            "Search: ".to_string(),
+            crate::view::prompt::PromptType::Search,
+        );
+        // 100 chars in an 80-column line: 8 label cols + 72 input cols.
+        let input: String = ('a'..='z').cycle().take(100).collect();
+        prompt.set_input_plain(input.clone());
+
+        let width: u16 = 80;
+        let backend = TestBackend::new(width, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, width, 1);
+                StatusBarRenderer::render_prompt(frame, area, &prompt, &theme);
+            })
+            .unwrap();
+
+        // The label stays anchored and the *tail* of the input is visible.
+        let buffer = terminal.backend().buffer().clone();
+        let row: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert!(
+            row.starts_with("Search: "),
+            "label must stay visible: {row:?}"
+        );
+        // Scroll = 100 - 71 = 29 cells, so chars 29.. are visible and the
+        // last column is left free for the cursor.
+        let tail: String = input.chars().skip(100 - 71).collect();
+        assert!(
+            row.trim_end().ends_with(&tail),
+            "tail of the input must scroll into view: {row:?}"
+        );
+        // Cursor rides the last column instead of being skipped.
+        let cursor = terminal.backend_mut().get_cursor_position().unwrap();
+        assert_eq!((cursor.x, cursor.y), (width - 1, 0));
+
+        // Move the cursor 15 chars left: still visible (pinned to the last
+        // column), and the window follows it leftward.
+        prompt.set_cursor_byte(prompt.cursor_byte() - 15);
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, width, 1);
+                StatusBarRenderer::render_prompt(frame, area, &prompt, &theme);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let row: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
+        let shifted_window: String = input.chars().skip(85 - 71).take(72).collect();
+        assert!(
+            row.ends_with(&shifted_window[shifted_window.len() - 20..]),
+            "window must shift with the cursor: {row:?}"
+        );
+        let cursor = terminal.backend_mut().get_cursor_position().unwrap();
+        assert_eq!((cursor.x, cursor.y), (width - 1, 0));
+
+        // With a short input nothing scrolls and the cursor sits right
+        // after the typed text.
+        prompt.set_input_plain("abc".to_string());
+        prompt.set_cursor_byte(3);
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, width, 1);
+                StatusBarRenderer::render_prompt(frame, area, &prompt, &theme);
+            })
+            .unwrap();
+        let cursor = terminal.backend_mut().get_cursor_position().unwrap();
+        assert_eq!((cursor.x, cursor.y), (8 + 3, 0));
     }
 }

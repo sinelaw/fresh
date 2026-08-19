@@ -1,21 +1,21 @@
 {
-  "en": {
-    "cmd.open_help": "Plugin Demo: Open Help",
-    "cmd.open_help_desc": "Open the editor help page (uses built-in action)",
-    "cmd.save_file": "Plugin Demo: Save File",
-    "cmd.save_file_desc": "Save the current file (uses built-in action)",
-    "cmd.say_hello": "Plugin Demo: Say Hello",
-    "cmd.say_hello_desc": "Insert a friendly greeting into the buffer",
-    "cmd.insert_time": "Plugin Demo: Insert Time",
-    "cmd.insert_time_desc": "Insert the current time at cursor position",
-    "cmd.insert_comment": "Plugin Demo: Insert Comment",
-    "cmd.insert_comment_desc": "Insert a sample comment at cursor position",
-    "status.loaded": "Plugins are working! Welcome Plugin loaded successfully!",
-    "status.greeting_inserted": "Inserted greeting at cursor position",
-    "status.time_inserted": "Inserted time at cursor position",
-    "status.comment_inserted": "Comment inserted by plugin",
-    "text.greeting": "Hello from TypeScript! The plugin system is working!",
-    "text.comment": "// This comment was inserted by a TypeScript plugin!"
+  "bg": {
+    "cmd.open_help": "Демо на плъгин: Отваряне на Помощ",
+    "cmd.open_help_desc": "Отваряне на помощна страница на редактора (използва вградена акция)",
+    "cmd.save_file": "Демо на плъгин: Запазване на файл",
+    "cmd.save_file_desc": "Запазване на текущия файл (използва вградена акция)",
+    "cmd.say_hello": "Демо плъгин: Кажи Здрасти",
+    "cmd.say_hello_desc": "Запиши приятелско поздравление в буфера",
+    "cmd.insert_time": "Демо плъгин: Запиши часа",
+    "cmd.insert_time_desc": "Запиши текущия час в позицията на курсора",
+    "cmd.insert_comment": "Демо плъгин: Запиши коментар",
+    "cmd.insert_comment_desc": "Запиши примерен коментар на позицията на курсора",
+    "status.loaded": "Плъгините работят! Плъгин Добре дошъл зареден успешно!",
+    "status.greeting_inserted": "Запиши поздравление на текущата позиция на курсора",
+    "status.time_inserted": "Записано времето на текущата позиция на курсора",
+    "status.comment_inserted": "коментарът е записан от плъгина",
+    "text.greeting": "Поздравления от TypeScript! Системата плъгини работи!",
+    "text.comment": "// Този коментар беше записан от един плъгин на TypeScrip!"
   },
   "cs": {
     "cmd.open_help": "Demo pluginu: Otevrit napovedu",
@@ -52,6 +52,24 @@
     "status.comment_inserted": "Kommentar durch Plugin eingefuegt",
     "text.greeting": "Hallo von TypeScript! Das Plugin-System funktioniert!",
     "text.comment": "// Dieser Kommentar wurde von einem TypeScript-Plugin eingefuegt!"
+  },
+  "en": {
+    "cmd.open_help": "Plugin Demo: Open Help",
+    "cmd.open_help_desc": "Open the editor help page (uses built-in action)",
+    "cmd.save_file": "Plugin Demo: Save File",
+    "cmd.save_file_desc": "Save the current file (uses built-in action)",
+    "cmd.say_hello": "Plugin Demo: Say Hello",
+    "cmd.say_hello_desc": "Insert a friendly greeting into the buffer",
+    "cmd.insert_time": "Plugin Demo: Insert Time",
+    "cmd.insert_time_desc": "Insert the current time at cursor position",
+    "cmd.insert_comment": "Plugin Demo: Insert Comment",
+    "cmd.insert_comment_desc": "Insert a sample comment at cursor position",
+    "status.loaded": "Plugins are working! Welcome Plugin loaded successfully!",
+    "status.greeting_inserted": "Inserted greeting at cursor position",
+    "status.time_inserted": "Inserted time at cursor position",
+    "status.comment_inserted": "Comment inserted by plugin",
+    "text.greeting": "Hello from TypeScript! The plugin system is working!",
+    "text.comment": "// This comment was inserted by a TypeScript plugin!"
   },
   "es": {
     "cmd.open_help": "Demo de Plugin: Abrir Ayuda",

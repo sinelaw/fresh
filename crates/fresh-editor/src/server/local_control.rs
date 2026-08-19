@@ -48,6 +48,12 @@ use crate::server::protocol::{
 /// imperceptible.
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+/// Backstop on how long a connection handler waits for a dispatched command's
+/// answer before giving up and dropping the connection. Generous: the CLI
+/// client has its own (much shorter) deadline, so this only exists to stop a
+/// handler that never settles from pinning a thread forever.
+const COMMAND_REPLY_CEILING: Duration = Duration::from_secs(300);
+
 /// A request decoded from a nested client and handed to the editor thread.
 enum LocalControlRequest {
     /// Open files in the current window. `wait_id` is `Some` when the
@@ -58,22 +64,13 @@ enum LocalControlRequest {
     },
     /// Open a directory as a new, focused orchestrator window.
     OpenWindow { path: PathBuf },
-    /// Enumerate the editor commands `token` is allowed to run. The editor
-    /// thread computes the reply (it owns the command registry) and sends it
-    /// back on `reply`, where the parked handler thread writes it to the
-    /// client connection.
-    ListCommands {
+    /// Evaluate a script on the workspace `token` is bound to. The editor
+    /// thread does the work (it owns the plugin manager) and answers on
+    /// `reply`, where the parked handler thread writes it to the client
+    /// connection.
+    RunScript {
         token: Option<String>,
-        include_args: bool,
-        reply: Sender<ServerControl>,
-    },
-    /// Dispatch one command by id on the workspace `token` is bound to. As
-    /// with `ListCommands`, the editor thread does the work and answers on
-    /// `reply`.
-    RunCommand {
-        token: Option<String>,
-        id: String,
-        args: HashMap<String, String>,
+        source: String,
         reply: Sender<ServerControl>,
     },
 }
@@ -86,6 +83,10 @@ struct Shared {
     /// `wait_id` -> notifier that wakes the parked handler thread once the
     /// editor reports the matching buffer closed.
     waiters: Arc<Mutex<HashMap<u64, Sender<()>>>>,
+    /// `request_id` -> the parked handler thread's reply channel, for a script
+    /// that is still running. A script settles on the plugin thread well after
+    /// submission, so its reply is held here until the outcome arrives.
+    command_replies: Arc<Mutex<HashMap<u64, Sender<ServerControl>>>>,
 }
 
 /// Process-global handle. `None` until [`start`] succeeds; the control
@@ -125,6 +126,7 @@ pub fn start() -> std::io::Result<&'static str> {
     let _ = GLOBAL.set(Shared {
         req_rx: Mutex::new(bound.req_rx),
         waiters: bound.waiters,
+        command_replies: Arc::new(Mutex::new(HashMap::new())),
     });
     let id = SESSION_ID.get_or_init(|| session_id);
     tracing::info!("Local control socket listening as session {}", id);
@@ -185,7 +187,13 @@ pub fn pump(editor: &mut Editor) -> bool {
     let Some(shared) = GLOBAL.get() else {
         return false;
     };
+    pump_shared(shared, editor)
+}
 
+/// The body of [`pump`], against an explicit [`Shared`] rather than the
+/// process-global one — so a test can drive a socket bound by
+/// [`bind_and_spawn`] without touching (or racing on) the global.
+fn pump_shared(shared: &Shared, editor: &mut Editor) -> bool {
     let mut changed = false;
 
     // Drain decoded requests. The lock is only contended for the brief
@@ -244,39 +252,57 @@ pub fn pump(editor: &mut Editor) -> bool {
                     tracing::warn!("OpenWindow ignored: path must be absolute: {:?}", path);
                 }
             }
-            Ok(LocalControlRequest::ListCommands {
+            Ok(LocalControlRequest::RunScript {
                 token,
-                include_args,
+                source,
                 reply,
             }) => {
-                let commands = match token.as_deref().and_then(command_access::lookup) {
-                    Some(grant) => {
-                        command_access::list_allowed_commands(editor, &grant, include_args)
+                match command_access::run_script(Some(editor), token.as_deref(), &source) {
+                    // Only a refusal settles here — a script that started
+                    // answers for itself.
+                    command_access::CommandDispatch::Settled { ok, error, output } => {
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = reply.send(ServerControl::ScriptResult { ok, error, output });
                     }
-                    None => Vec::new(),
-                };
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = reply.send(ServerControl::CommandList { commands });
-            }
-            Ok(LocalControlRequest::RunCommand {
-                token,
-                id,
-                args,
-                reply,
-            }) => {
-                let (ok, error) =
-                    command_access::run_command_by_id(Some(editor), token.as_deref(), &id, &args);
-                if ok {
-                    changed = true;
+                    // The script settles on the plugin thread, long after
+                    // submission. Park the client's reply channel under its
+                    // request id; the drain below answers it once the outcome
+                    // arrives, with whatever the script returned.
+                    command_access::CommandDispatch::Pending { request_id } => {
+                        shared
+                            .command_replies
+                            .lock()
+                            .unwrap()
+                            .insert(request_id, reply);
+                        changed = true;
+                    }
                 }
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = reply.send(ServerControl::CommandResult {
-                    ok,
-                    error,
-                    output: None,
-                });
             }
             Err(_) => break,
+        }
+    }
+
+    // Answer callers whose script has settled since the last pump.
+    // Scoped to this host's own waiters: the daemon drains the same queue for
+    // its IPC clients, and an unscoped drain would let each swallow the other's
+    // outcomes.
+    let settled = {
+        let waiting = shared.command_replies.lock().unwrap();
+        command_access::take_completed_where(|id| waiting.contains_key(&id))
+    };
+    for outcome in settled {
+        let reply = shared
+            .command_replies
+            .lock()
+            .unwrap()
+            .remove(&outcome.request_id);
+        if let Some(reply) = reply {
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = reply.send(ServerControl::ScriptResult {
+                ok: outcome.ok,
+                error: outcome.error,
+                output: outcome.output,
+            });
         }
     }
 
@@ -347,7 +373,7 @@ fn handle_connection(
     let mut reader = std::io::BufReader::new(&conn.control);
 
     // The capability token (from the client's `Hello`) is captured once and
-    // reused for every `ListCommands` / `RunCommand` on this connection.
+    // reused for every `RunScript` on this connection.
     let cmd_token = match handshake(&conn, &mut reader) {
         Ok(token) => token,
         Err(e) => {
@@ -414,33 +440,22 @@ fn handle_connection(
                     waiters.lock().unwrap().remove(&id);
                 }
             }
-            ClientControl::ListCommands { include_args } => {
-                // Round-trip to the editor thread (it owns the registry) and
-                // relay its answer back to the client. A recv error means the
-                // editor exited first; drop the reply in that case.
+            ClientControl::RunScript { source } => {
+                // Round-trip to the editor thread (it owns the plugin manager)
+                // and relay its answer back to the client.
                 let (reply_tx, reply_rx) = mpsc::channel::<ServerControl>();
                 #[allow(clippy::let_underscore_must_use)]
-                let _ = req_tx.send(LocalControlRequest::ListCommands {
+                let _ = req_tx.send(LocalControlRequest::RunScript {
                     token: cmd_token.clone(),
-                    include_args,
+                    source,
                     reply: reply_tx,
                 });
-                if let Ok(reply) = reply_rx.recv() {
-                    let json = serde_json::to_string(&reply).unwrap_or_default();
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = conn.write_control(&json);
-                }
-            }
-            ClientControl::RunCommand { id, args } => {
-                let (reply_tx, reply_rx) = mpsc::channel::<ServerControl>();
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = req_tx.send(LocalControlRequest::RunCommand {
-                    token: cmd_token.clone(),
-                    id,
-                    args,
-                    reply: reply_tx,
-                });
-                if let Ok(reply) = reply_rx.recv() {
+                // Bounded, unlike the other requests: a script could in
+                // principle never settle, and an unbounded wait would leak this
+                // thread (and the client's connection) for the life of the
+                // editor. The client gives up long before this; the ceiling is
+                // only a backstop.
+                if let Ok(reply) = reply_rx.recv_timeout(COMMAND_REPLY_CEILING) {
                     let json = serde_json::to_string(&reply).unwrap_or_default();
                     #[allow(clippy::let_underscore_must_use)]
                     let _ = conn.write_control(&json);
@@ -457,7 +472,7 @@ fn handle_connection(
 /// same shape as the daemon server's handshake, minus the data-channel
 /// terminal setup (nested clients never render). Returns the client's
 /// capability token (`cmd_token` from the `Hello`, `None` if absent) so the
-/// command loop can authorize `ListCommands` / `RunCommand`.
+/// command loop can authorize `RunScript`.
 ///
 /// Shares the connection's [`BufReader`] with the post-handshake command
 /// loop so no buffered bytes are lost between the two.
@@ -530,12 +545,23 @@ fn read_msg(
 
 /// A unique-per-process session id: `local-<pid>-<nanos>`. The nanosecond
 /// component guards against pid reuse across quick successive runs.
+///
+/// The clock component is truncated to its low 40 bits and printed in hex (10
+/// chars instead of 19). The id becomes a socket *filename* under the runtime
+/// dir, and a Unix `sockaddr_un` path is capped at ~108 bytes — a shorter name
+/// leaves that much more headroom for the runtime dir itself before `bind`
+/// fails outright. 40 bits of nanoseconds still spans ~18 minutes, far longer
+/// than the window in which a pid could plausibly be recycled.
 fn generate_session_id() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("local-{}-{}", std::process::id(), nanos)
+    format!(
+        "local-{}-{:x}",
+        std::process::id(),
+        (nanos as u64) & 0xFF_FFFF_FFFF
+    )
 }
 
 #[cfg(test)]
@@ -778,8 +804,7 @@ mod tests {
         match req {
             LocalControlRequest::OpenFiles { .. } => "OpenFiles",
             LocalControlRequest::OpenWindow { .. } => "OpenWindow",
-            LocalControlRequest::ListCommands { .. } => "ListCommands",
-            LocalControlRequest::RunCommand { .. } => "RunCommand",
+            LocalControlRequest::RunScript { .. } => "RunScript",
         }
     }
 
@@ -802,31 +827,171 @@ mod tests {
         conn
     }
 
-    /// A `RunCommand` is forwarded to the editor thread carrying the
-    /// connection's `cmd_token` (captured from the `Hello`) and its id — the
-    /// thread that owns the editor is the only place it can be authorized and
-    /// dispatched, so the handler round-trips it there.
+    /// A `RunScript` is forwarded to the editor thread carrying the
+    /// connection's `cmd_token` (captured from the `Hello`) and its source —
+    /// the thread that owns the editor is the only place it can be authorized
+    /// and evaluated, so the handler round-trips it there.
     #[test]
-    fn run_command_forwards_request_with_token() {
+    fn run_script_forwards_request_with_token() {
         let dir = TempDir::new().unwrap();
-        let paths = SocketPaths::for_session_name_in_dir("run-cmd-token-test", dir.path());
+        let paths = SocketPaths::for_session_name_in_dir("run-script-token-test", dir.path());
         let bound = bind_and_spawn(paths.clone()).expect("bind");
 
         let conn = connect_client_with_token(&paths, "tok-123");
-        let msg = ClientControl::RunCommand {
-            id: "split_vertical".to_string(),
-            args: HashMap::new(),
+        let msg = ClientControl::RunScript {
+            source: "return 1;".to_string(),
         };
         conn.write_control(&serde_json::to_string(&msg).unwrap())
             .unwrap();
 
         match bound.req_rx.recv().expect("request forwarded") {
-            LocalControlRequest::RunCommand { token, id, .. } => {
+            LocalControlRequest::RunScript { token, source, .. } => {
                 assert_eq!(token.as_deref(), Some("tok-123"));
-                assert_eq!(id, "split_vertical");
+                assert_eq!(source, "return 1;");
             }
-            other => panic!("expected RunCommand, got {}", req_kind(&other)),
+            other => panic!("expected RunScript, got {}", req_kind(&other)),
         }
+
+        bound.shutdown.store(true, Ordering::SeqCst);
+    }
+
+    /// Build a `Shared` over an already-bound control socket, so a test can run
+    /// the editor-thread half (`pump_shared`) exactly as a host loop does.
+    fn shared_for(bound: BoundControl) -> Shared {
+        Shared {
+            req_rx: Mutex::new(bound.req_rx),
+            waiters: bound.waiters,
+            command_replies: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// An editor for the pump half of the round trip. Plugins stay off: the
+    /// commands under test are built-ins, and a plugin runtime would only add
+    /// startup cost.
+    fn pump_test_editor() -> (Editor, TempDir) {
+        let temp = TempDir::new().unwrap();
+        let dir_context = crate::config_io::DirectoryContext::for_testing(temp.path());
+        let editor = Editor::new(
+            crate::config::Config::default(),
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+        )
+        .expect("editor");
+        (editor, temp)
+    }
+
+    /// The full `fresh --cmd script run` round trip against a host that drains
+    /// the channel: the request reaches the editor thread, `pump` authorizes it,
+    /// and the client reads a `ScriptResult` back.
+    ///
+    /// The token deliberately carries *no* script grant, so the answer is a
+    /// refusal decided on the editor thread. That keeps the test about the one
+    /// thing it guards — that a queued request gets answered — and keeps it
+    /// deterministic: a granted token would hand the source to the plugin
+    /// runtime, whose completion is drained by the real editor loop and not by
+    /// `pump_shared`, so the reply would never arrive here and the test would
+    /// hang (as it did on macOS, where the runtime is live, while passing on
+    /// runners where it wasn't).
+    ///
+    /// Regression: only the TUI loop and the standalone web bridge pumped. The
+    /// GUI tick and the session daemon (what `fresh --web` and every attached
+    /// terminal run) did not, so the request sat in the queue, the handler
+    /// thread parked on a reply that was never produced, and the CLI hung
+    /// forever in the agent's terminal.
+    #[test]
+    fn script_is_answered_when_the_host_pumps() {
+        let dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("script-pump-test", dir.path());
+        let bound = bind_and_spawn(paths.clone()).expect("bind");
+        let shutdown = bound.shutdown.clone();
+        let shared = shared_for(bound);
+
+        let token = command_access::mint(command_access::Grant::new(None, false));
+
+        // The client runs on its own thread with a blocking read, exactly like
+        // the real CLI; this thread plays the host loop below.
+        let (done_tx, done_rx) = mpsc::channel::<(bool, Option<String>)>();
+        let client_paths = paths.clone();
+        let client_token = token.clone();
+        let client = std::thread::spawn(move || {
+            let conn = connect_client_with_token(&client_paths, &client_token);
+            conn.write_control(
+                &serde_json::to_string(&ClientControl::RunScript {
+                    source: "return editor.activeWindow();".to_string(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+            let line = conn
+                .read_control()
+                .expect("read reply")
+                .expect("reply present");
+            let got = match serde_json::from_str::<ServerControl>(&line).expect("parse reply") {
+                ServerControl::ScriptResult { ok, error, .. } => (ok, error),
+                other => panic!("expected ScriptResult, got {:?}", other),
+            };
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = done_tx.send(got);
+        });
+
+        // Host loop: pump until the client reports, or give up. The deadline is
+        // the assertion — with the regression no reply is ever produced, and a
+        // bounded wait reports that as a failure here instead of hanging until
+        // the outer test runner kills the whole suite.
+        let (mut editor, _temp) = pump_test_editor();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut answer = None;
+        while std::time::Instant::now() < deadline {
+            pump_shared(&shared, &mut editor);
+            if let Ok(got) = done_rx.try_recv() {
+                answer = Some(got);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (ok, error) = answer.expect("a pumping host must answer a queued RunScript");
+
+        assert!(!ok, "a token without the script grant must be refused");
+        assert!(
+            error.unwrap_or_default().contains("not granted"),
+            "the refusal must name the missing grant"
+        );
+
+        client.join().unwrap();
+        command_access::revoke(&token);
+        shutdown.store(true, Ordering::SeqCst);
+    }
+
+    /// A host that accepts the connection but never drains the channel (the
+    /// regression above, and any older editor build an agent may be talking to)
+    /// must not park the client forever: the CLI's deadline-bounded read gives
+    /// up with `TimedOut` so the agent gets a diagnosable error instead of a
+    /// hang. The short deadline here *is* the unit under test — no reply can
+    /// ever arrive, so there is nothing to race with.
+    #[test]
+    fn client_read_times_out_when_the_host_never_pumps() {
+        let dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("script-nopump-test", dir.path());
+        // Note: no `pump` — `bound` holds the receiving end and never drains it.
+        let bound = bind_and_spawn(paths.clone()).expect("bind");
+
+        let conn = connect_client(&paths);
+        conn.write_control(
+            &serde_json::to_string(&ClientControl::RunScript {
+                source: "return 1;".to_string(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let err = conn
+            .control_reader()
+            .read_line_timeout(Duration::from_millis(100))
+            .expect_err("a host that never answers must not block the client forever");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
 
         bound.shutdown.store(true, Ordering::SeqCst);
     }
@@ -834,26 +999,25 @@ mod tests {
     /// A client that presents no token still forwards the request, but with
     /// `token: None`; the editor-thread authorization then refuses it. This
     /// asserts the no-token path is wired (the refusal itself is unit-tested
-    /// against `command_access::run_command_by_id`).
+    /// against `command_access::run_script`).
     #[test]
-    fn run_command_without_token_forwards_none() {
+    fn run_script_without_token_forwards_none() {
         let dir = TempDir::new().unwrap();
-        let paths = SocketPaths::for_session_name_in_dir("run-cmd-notoken-test", dir.path());
+        let paths = SocketPaths::for_session_name_in_dir("run-script-notoken-test", dir.path());
         let bound = bind_and_spawn(paths.clone()).expect("bind");
 
         let conn = connect_client(&paths);
-        let msg = ClientControl::RunCommand {
-            id: "split_vertical".to_string(),
-            args: HashMap::new(),
+        let msg = ClientControl::RunScript {
+            source: "return 1;".to_string(),
         };
         conn.write_control(&serde_json::to_string(&msg).unwrap())
             .unwrap();
 
         match bound.req_rx.recv().expect("request forwarded") {
-            LocalControlRequest::RunCommand { token, .. } => {
+            LocalControlRequest::RunScript { token, .. } => {
                 assert!(token.is_none());
             }
-            other => panic!("expected RunCommand, got {}", req_kind(&other)),
+            other => panic!("expected RunScript, got {}", req_kind(&other)),
         }
 
         bound.shutdown.store(true, Ordering::SeqCst);

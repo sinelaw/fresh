@@ -51,6 +51,14 @@ jobs:
           mkdir -p crates/fresh-editor/docs/icons/linux
           cp -r docs/icons/linux/hicolor crates/fresh-editor/docs/icons/linux/
 
+      - name: Copy install-receipt script into Flatpak source tree
+        run: |
+          # The manifest runs scripts/write-install-receipt.sh relative to the
+          # source root (crates/fresh-editor, via `path: ..`), but the script
+          # lives at the repo root. Copy it in like the icons above.
+          mkdir -p crates/fresh-editor/scripts
+          cp scripts/write-install-receipt.sh crates/fresh-editor/scripts/
+
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
@@ -76,3 +84,14 @@ jobs:
           VERSION="${{ inputs.version }}"
           flatpak install --user -y fresh-editor-${VERSION}-x86_64.flatpak
           flatpak run io.github.sinelaw.fresh --version
+          # Assert the provenance the sandboxed binary *resolves*, not merely
+          # that the receipt file is present: `cat`ing the file passes even when
+          # the resolver never looks at that path (which is exactly how the
+          # .deb/.rpm receipts stayed broken while CI was green).
+          paths=$(flatpak run io.github.sinelaw.fresh --cmd config paths) \
+            || { echo "config paths failed inside the sandbox"; exit 1; }
+          echo "$paths"
+          echo "$paths" | grep -qE '^install channel: +.*\(flatpak\)$' \
+            || { echo "sandboxed binary did not resolve channel flatpak"; exit 1; }
+          echo "$paths" | grep -qE '^provenance: +Authoritative$' \
+            || { echo "provenance is not Authoritative — the receipt was not found"; exit 1; }

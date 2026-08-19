@@ -76,6 +76,52 @@ pub struct HitArea {
     /// Event type to deliver with the `widget_event` hook
     /// (`"toggle"` or `"activate"`).
     pub event_type: &'static str,
+    /// The spec key of the widget that OWNS this hit — where focus
+    /// moves, whose instance state a click mutates, and the key the
+    /// default event fires against. `None` means `widget_key` is
+    /// already the owner, which is every kind except `List`: a list
+    /// row's `widget_key` is the per-item key (row hover and pointer
+    /// resolution key off it), so the row's hit names its List here.
+    /// Set by the kind's own `collect` — the pointer dispatcher never
+    /// inspects kinds to find the owner.
+    pub owner_key: Option<String>,
+    /// True when this hit came from an `Overlay` child — a popup the
+    /// renderer paints *over* the rows beneath it without reflowing
+    /// them (the dock's "New Task… ▾" and "Move to Folder…" dropdowns).
+    /// Its byte range is measured against the overlay's own row text,
+    /// not the text of the row it covers, so click resolution has to
+    /// keep the two apart — `hit_test_row_aware` takes the surface as
+    /// a parameter, decided by the panel's layout-box tree (a z>0 box
+    /// covers the base rows beneath it).
+    pub overlay: bool,
+    /// Capability, DECLARED BY THE KIND at collect: this hit is a
+    /// row-wide gesture target — a click anywhere on its row resolves
+    /// to it even past the hit's own byte range (List/Tree row
+    /// `select` hits, markdown document line `focus` hits).
+    /// `row_select_hit` keys off this instead of matching kind
+    /// strings.
+    pub row_target: bool,
+    /// Capability, declared by the kind: a right-click on this hit
+    /// raises the plugin's context menu (fires a `context`
+    /// widget_event) — List/Tree row selects. The right-click seam
+    /// keys off this instead of matching kind strings.
+    ///
+    /// SCOPE: consumed today only by the DOCK slot's right-click arm
+    /// (`chrome/dock.rs` → `handle_floating_widget_context_click`).
+    /// Split-mounted panels have no right-click seam (Base's tab menu
+    /// takes the gesture), and the centered modal swallows right
+    /// -clicks whole — wiring those is part of the recorded
+    /// mounted-panel arc, not an oversight at the producer sites,
+    /// which declare the capability wherever a row select exists.
+    pub context_click: bool,
+}
+
+impl HitArea {
+    /// The owning widget's spec key: `owner_key` when the kind set
+    /// one, otherwise `widget_key`.
+    pub fn owner(&self) -> &str {
+        self.owner_key.as_deref().unwrap_or(&self.widget_key)
+    }
 }
 
 /// Widget instance state retained across spec updates, keyed by
@@ -166,6 +212,13 @@ pub enum WidgetInstanceState {
         /// row. The first ↓ flips it true — the dropdown is now
         /// navigable, the selected row highlights, and Enter accepts.
         completion_navigated: bool,
+        /// True once the user wheel-scrolled a multi-line (markdown)
+        /// text viewport without moving the caret. While set, the
+        /// renderer respects `scroll` as-is instead of snapping it
+        /// back to keep the caret visible. Cleared whenever the caret
+        /// itself moves (keys or click), re-arming follow-the-caret.
+        /// Same contract as `List`/`Tree`'s flag.
+        user_scrolled: bool,
     },
     /// `Tree` instance state: host-owned scroll offset, selected
     /// index, and the set of expanded item keys. All three become
@@ -246,6 +299,90 @@ pub struct WidgetPanelState {
     /// current `focus_key`'s position in this list and advances by
     /// the requested delta (with wraparound).
     pub tabbable: Vec<String>,
+    /// Effective rows each keyed `List`/`Tree` actually windowed to in
+    /// the most recent render — the spec's explicit value, the
+    /// auto-size height budget, or the legacy fallback. Key/mouse
+    /// handlers read this for scroll/page bounds instead of the spec,
+    /// because an auto-sized widget's spec carries no number at all.
+    pub effective_rows: HashMap<String, u32>,
+    /// The panel's layout-box tree from the most recent render
+    /// (root-last arena; see [`crate::widgets::layout_box`]).
+    /// Structure + panel-relative geometry for hit-tested dispatch
+    /// and the derived focus ring.
+    pub boxes: Vec<crate::widgets::LayoutBox>,
+}
+
+impl WidgetPanelState {
+    /// Rows the keyed widget actually windowed to in the last render,
+    /// falling back to the spec's explicit value and then the legacy
+    /// default (a panel that has never rendered).
+    pub fn effective_visible_rows(&self, key: &str, spec_visible: Option<u32>) -> u32 {
+        self.effective_rows
+            .get(key)
+            .copied()
+            .or(spec_visible)
+            .unwrap_or(fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
+    }
+
+    /// Set the host-owned selected index for a `List` or `Tree`
+    /// instance, dispatching on the *existing* instance variant so a
+    /// Tree keeps its scroll + expanded-keys set (and a List keeps
+    /// its item height / user-scroll flag). Shared by the pointer
+    /// select path (`Tree::on_pointer`) and the `SetSelectedIndex`
+    /// mutation in the plugin dispatcher so both move Tree
+    /// selections, not just List ones. Does not re-render; callers
+    /// decide when to repaint.
+    pub fn set_selected_index(&mut self, widget_key: &str, index: i32) {
+        let new_state = match self.instance_states.get(widget_key) {
+            Some(WidgetInstanceState::Tree {
+                scroll_offset,
+                selected_index,
+                expanded_keys,
+                user_scrolled,
+            }) => WidgetInstanceState::Tree {
+                scroll_offset: *scroll_offset,
+                expanded_keys: expanded_keys.clone(),
+                // Re-pinning the *same* index (which the orchestrator
+                // dock's `refreshOpenDialog` does on every probe-poll
+                // repaint) must preserve a user scroll — otherwise the
+                // refresh would snap the view back to the selection a
+                // beat after a mouse scroll. Only an actual selection
+                // change re-arms scroll-follows-selection. Mirrors the
+                // List branch below.
+                user_scrolled: *user_scrolled && index == *selected_index,
+                selected_index: index,
+            },
+            other => {
+                let (prev_scroll, prev_index, prev_item_height, prev_user_scrolled) = match other {
+                    Some(WidgetInstanceState::List {
+                        scroll_offset,
+                        selected_index,
+                        item_height,
+                        user_scrolled,
+                    }) => (
+                        *scroll_offset,
+                        *selected_index,
+                        *item_height,
+                        *user_scrolled,
+                    ),
+                    _ => (0, -1, 1, false),
+                };
+                // Re-pinning the *same* index (which `refreshOpenDialog`
+                // does on every repaint) must preserve a user scroll —
+                // otherwise a probe-poll refresh would snap the view back
+                // to the selection a beat after a mouse scroll. Only an
+                // actual selection change re-arms scroll-follows-selection.
+                WidgetInstanceState::List {
+                    scroll_offset: prev_scroll,
+                    selected_index: index,
+                    item_height: prev_item_height,
+                    user_scrolled: prev_user_scrolled && index == prev_index,
+                }
+            }
+        };
+        self.instance_states
+            .insert(widget_key.to_string(), new_state);
+    }
 }
 
 /// Global registry of mounted widget panels, keyed by composite
@@ -280,6 +417,8 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
+        effective_rows: HashMap<String, u32>,
+        boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Option<WidgetPanelState> {
         self.panels.insert(
             panel_key,
@@ -290,6 +429,8 @@ impl WidgetRegistry {
                 instance_states,
                 focus_key,
                 tabbable,
+                effective_rows,
+                boxes,
             },
         )
     }
@@ -310,6 +451,8 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
+        effective_rows: HashMap<String, u32>,
+        boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Result<BufferId, ()> {
         match self.panels.get_mut(panel_key) {
             Some(state) => {
@@ -318,6 +461,8 @@ impl WidgetRegistry {
                 state.instance_states = instance_states;
                 state.focus_key = focus_key;
                 state.tabbable = tabbable;
+                state.effective_rows = effective_rows;
+                state.boxes = boxes;
                 Ok(state.buffer_id)
             }
             None => Err(()),
@@ -397,6 +542,7 @@ impl WidgetRegistry {
     /// current (mutation helpers like `append_tree_nodes_in_spec` mutate it
     /// in place), so cloning it back through `update()` just to write the
     /// same value would waste a 5 000-node deep clone for every IPC.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_side_effects(
         &mut self,
         panel_key: &PanelKey,
@@ -404,12 +550,20 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
+        effective_rows: HashMap<String, u32>,
+        boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Option<BufferId> {
         let state = self.panels.get_mut(panel_key)?;
         state.hits = hits;
         state.instance_states = instance_states;
         state.focus_key = focus_key;
         state.tabbable = tabbable;
+        // Host-driven rerenders (focus moves, hover, wheel) refresh the
+        // window sizes and geometry too — previously `effective_rows`
+        // was only written on the plugin-driven mount/update paths and
+        // went stale across every host-side rerender.
+        state.effective_rows = effective_rows;
+        state.boxes = boxes;
         Some(state.buffer_id)
     }
 
@@ -480,12 +634,29 @@ impl WidgetRegistry {
         row: u32,
         col_byte: u32,
     ) -> Option<(PanelKey, HitArea)> {
+        self.surface_hit(buffer_id, row, col_byte, false)
+    }
+
+    /// One byte-ranged scan for both surfaces: `on_overlay` selects
+    /// whether the byte ranges are measured against the popup rows an
+    /// `Overlay` painted (`hit.overlay == true`) or the base rows
+    /// beneath. Which surface the pointer is on is the layout-box
+    /// tree's call (a z>0 box covers the base) — made by the caller,
+    /// not re-derived here.
+    fn surface_hit(
+        &self,
+        buffer_id: BufferId,
+        row: u32,
+        col_byte: u32,
+        on_overlay: bool,
+    ) -> Option<(PanelKey, HitArea)> {
         for (key, state) in &self.panels {
             if state.buffer_id != buffer_id {
                 continue;
             }
             for hit in &state.hits {
-                if hit.buffer_row == row
+                if hit.overlay == on_overlay
+                    && hit.buffer_row == row
                     && (col_byte as usize) >= hit.byte_start
                     && (col_byte as usize) < hit.byte_end
                 {
@@ -515,14 +686,25 @@ impl WidgetRegistry {
     /// the left-click path stayed byte-exact, so compact dock rows
     /// silently ignored left-clicks past their label. Route new click
     /// surfaces through here rather than calling `hit_test` directly.
+    /// `on_overlay` = the pointer sits on a popup surface (decided by
+    /// the panel's layout-box tree). Overlay surfaces are opaque: only
+    /// hits the popup itself contributed are reachable, with no
+    /// row-wide fallback — a click on its border/padding resolves to
+    /// nothing and the caller swallows it, never reaching the rows
+    /// the popup covers. Callers must map the click column to
+    /// `col_byte` through the text of the surface they name.
     pub fn hit_test_row_aware(
         &self,
         buffer_id: BufferId,
         row: u32,
         col_byte: u32,
+        on_overlay: bool,
     ) -> Option<(PanelKey, HitArea)> {
-        self.hit_test(buffer_id, row, col_byte)
-            .or_else(|| self.row_select_hit(buffer_id, row))
+        if on_overlay {
+            return self.surface_hit(buffer_id, row, col_byte, true);
+        }
+        self.surface_hit(buffer_id, row, col_byte, false)
+            .or_else(|| self.row_select_hit(buffer_id, row, col_byte))
     }
 
     /// The row-body `select` hit of a list/tree row in `buffer_id`,
@@ -532,21 +714,59 @@ impl WidgetRegistry {
     /// byte-ranged hit to land on even though it is visually "on the
     /// row". Prefer [`hit_test_row_aware`](Self::hit_test_row_aware),
     /// which tries an exact hit first and only falls back to this.
-    pub fn row_select_hit(&self, buffer_id: BufferId, row: u32) -> Option<(PanelKey, HitArea)> {
+    pub fn row_select_hit(
+        &self,
+        buffer_id: BufferId,
+        row: u32,
+        col_byte: u32,
+    ) -> Option<(PanelKey, HitArea)> {
+        // Two side-by-side lists (a Row of `labeledSection`s — a step rail
+        // beside a prose pane) put two row hits on the SAME buffer row, so
+        // "first hit on this row" would hand every click in the right-hand
+        // column to the left-hand list.
+        //
+        // Pick the row hit *nearest* the click instead. Distance is zero when
+        // the click is inside a hit's own span, so a single-column panel is
+        // unaffected. Choosing by "last hit starting at or before the click"
+        // was almost right, but resolved the seam between two columns — the
+        // right-hand section's border cell — to the left-hand list, which is
+        // the column the user visibly did not click.
+        fn distance(hit: &HitArea, col: usize) -> usize {
+            if col < hit.byte_start {
+                hit.byte_start - col
+            } else if col >= hit.byte_end {
+                col - hit.byte_end + 1
+            } else {
+                0
+            }
+        }
+        let col = col_byte as usize;
+        let mut best: Option<(&PanelKey, &HitArea, usize)> = None;
         for (key, state) in &self.panels {
             if state.buffer_id != buffer_id {
                 continue;
             }
             for hit in &state.hits {
-                if hit.buffer_row == row
-                    && hit.event_type == "select"
-                    && (hit.widget_kind == "list" || hit.widget_kind == "tree")
+                // Row-wide targets are a capability the KIND declares
+                // on the hit (`row_target`): List/Tree row selects, and
+                // markdown document line `focus` hits (their caret
+                // placement competes too — without them, a click on the
+                // seam beside a document column would resolve to a
+                // *list* in the neighbouring column).
+                if hit.buffer_row != row || !hit.row_target {
+                    continue;
+                }
+                let d = distance(hit, col);
+                // Ties go to the leftmost hit, so the panel's leading margin
+                // keeps belonging to the first column.
+                if best
+                    .is_none_or(|(_, b, bd)| d < bd || (d == bd && hit.byte_start < b.byte_start))
                 {
-                    return Some((key.clone(), hit.clone()));
+                    best = Some((key, hit, d));
                 }
             }
         }
-        None
+        best.map(|(k, h, _)| (k.clone(), h.clone()))
     }
 }
 
@@ -568,6 +788,9 @@ mod tests {
 
     fn make_hit(row: u32, byte_start: usize, byte_end: usize, key: &str) -> HitArea {
         HitArea {
+            overlay: false,
+            row_target: false,
+            context_click: false,
             widget_key: key.into(),
             widget_kind: "button",
             buffer_row: row,
@@ -575,6 +798,7 @@ mod tests {
             byte_end,
             payload: json!({}),
             event_type: "activate",
+            owner_key: None,
         }
     }
 
@@ -588,6 +812,8 @@ mod tests {
             vec![make_hit(0, 0, 5, "a"), make_hit(0, 7, 12, "b")],
             HashMap::new(),
             String::new(),
+            Vec::new(),
+            HashMap::new(),
             Vec::new(),
         );
         let hit = reg.hit_test(BufferId(7), 0, 8).expect("inside b");
@@ -606,6 +832,8 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            HashMap::new(),
+            Vec::new(),
         );
         assert!(
             reg.hit_test(BufferId(0), 0, 5).is_none(),
@@ -618,6 +846,9 @@ mod tests {
 
     fn make_row_select_hit(row: u32, byte_end: usize, key: &str) -> HitArea {
         HitArea {
+            overlay: false,
+            row_target: true,
+            context_click: true,
             widget_key: key.into(),
             widget_kind: "tree",
             buffer_row: row,
@@ -625,6 +856,7 @@ mod tests {
             byte_end,
             payload: json!({ "index": row as i64 }),
             event_type: "select",
+            owner_key: None,
         }
     }
 
@@ -643,12 +875,14 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            HashMap::new(),
+            Vec::new(),
         );
         // Byte 10 is the exclusive end, so `hit_test` alone misses...
         assert!(reg.hit_test(BufferId(2), 0, 10).is_none());
         // ...but the row-aware resolver falls back to the row's body select.
         let (_, hit) = reg
-            .hit_test_row_aware(BufferId(2), 0, 40)
+            .hit_test_row_aware(BufferId(2), 0, 40, false)
             .expect("click past text still lands on the row");
         assert_eq!(hit.widget_key, "session-a");
         assert_eq!(hit.event_type, "select");
@@ -667,9 +901,11 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            HashMap::new(),
+            Vec::new(),
         );
         let (_, hit) = reg
-            .hit_test_row_aware(BufferId(3), 0, 2)
+            .hit_test_row_aware(BufferId(3), 0, 2, false)
             .expect("on button");
         assert_eq!(hit.widget_key, "btn");
         assert_eq!(hit.event_type, "activate");
@@ -688,8 +924,44 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            HashMap::new(),
+            Vec::new(),
         );
-        assert!(reg.hit_test_row_aware(BufferId(4), 3, 0).is_none());
+        assert!(reg.hit_test_row_aware(BufferId(4), 3, 0, false).is_none());
+    }
+
+    #[test]
+    fn overlay_surface_is_opaque_and_separate() {
+        let mut reg = WidgetRegistry::default();
+        let mut base = make_hit(0, 0, 10, "under");
+        base.event_type = "select";
+        base.widget_kind = "list";
+        let mut popup = make_hit(0, 2, 6, "option");
+        popup.overlay = true;
+        reg.mount(
+            pk(9),
+            BufferId(9),
+            empty_spec(),
+            vec![base, popup],
+            HashMap::new(),
+            String::new(),
+            Vec::new(),
+            HashMap::new(),
+            Vec::new(),
+        );
+        // On the overlay surface only the popup's own hits resolve…
+        let (_, hit) = reg
+            .hit_test_row_aware(BufferId(9), 0, 3, true)
+            .expect("popup option");
+        assert_eq!(hit.widget_key, "option");
+        // …and a miss (border/padding) is swallowed — no row fallback
+        // to the covered list row.
+        assert!(reg.hit_test_row_aware(BufferId(9), 0, 8, true).is_none());
+        // On the base surface the popup's hits are invisible.
+        let (_, hit) = reg
+            .hit_test_row_aware(BufferId(9), 0, 3, false)
+            .expect("covered row");
+        assert_eq!(hit.widget_key, "under");
     }
 
     fn mount_with_list(reg: &mut WidgetRegistry, scroll: u32, sel: i32) {
@@ -710,6 +982,8 @@ mod tests {
             Vec::new(),
             states,
             String::new(),
+            Vec::new(),
+            HashMap::new(),
             Vec::new(),
         );
     }
@@ -774,6 +1048,8 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            HashMap::new(),
+            Vec::new(),
         );
         let evicted = reg.mount(
             PanelKey::new("beta", 1),
@@ -782,6 +1058,8 @@ mod tests {
             vec![make_hit(0, 0, 5, "b-btn")],
             HashMap::new(),
             String::new(),
+            Vec::new(),
+            HashMap::new(),
             Vec::new(),
         );
         assert!(evicted.is_none(), "beta:1 must not evict alpha:1");
@@ -810,6 +1088,8 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            HashMap::new(),
+            Vec::new(),
         );
         assert!(reg.hit_test(BufferId(2), 0, 1).is_some());
         reg.unmount(&pk(5));
@@ -827,6 +1107,8 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            HashMap::new(),
+            Vec::new(),
         );
         reg.update(
             &pk(5),
@@ -834,6 +1116,8 @@ mod tests {
             vec![make_hit(1, 4, 9, "new")],
             HashMap::new(),
             String::new(),
+            Vec::new(),
+            HashMap::new(),
             Vec::new(),
         )
         .expect("mounted");

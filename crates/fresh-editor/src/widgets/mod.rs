@@ -15,6 +15,8 @@
 //! design.
 
 mod actions;
+pub(crate) mod kinds;
+pub(crate) mod layout_box;
 mod registry;
 pub(crate) mod render;
 mod text_click;
@@ -24,13 +26,14 @@ pub use actions::{
     set_toggle_checked_in_spec, set_tree_checked_keys_in_spec, set_tree_nodes_in_spec,
     tree_parent_index,
 };
+pub use layout_box::LayoutBox;
 pub use registry::{
     HitArea, PanelId, PanelKey, WidgetInstanceState, WidgetPanelState, WidgetRegistry,
 };
 pub use render::{
     clamp_number, dual_available_values, dual_label, dual_sanitize_included, format_number_value,
     render_dropdown, render_number, render_spec, render_spec_no_autofocus, render_spec_with_marker,
-    wrap_index, DropdownPopup, EmbedRect, FocusCursor, OverlayRow, RenderOutput, ScrollRegion,
-    DROPDOWN_VISIBLE_OPTIONS,
+    render_spec_with_options, wrap_index, EmbedRect, FocusCursor, MarkdownCtx, OverlayRow,
+    PanelPopup, RenderContext, RenderOptions, RenderOutput, DROPDOWN_VISIBLE_OPTIONS,
 };
 pub use text_click::{row_byte_to_value_byte, WidgetTextClickGeometry};

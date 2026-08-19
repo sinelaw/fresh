@@ -7,9 +7,7 @@ use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 
 use anyhow::{Context, Result as AnyhowResult};
 use clap::{CommandFactory, FromArgMatches, Parser};
-use crossterm::event::{
-    poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEventKind,
-};
+use crossterm::event::{poll as event_poll, read as event_read};
 use fresh::input::key_translator::KeyTranslator;
 #[cfg(target_os = "linux")]
 use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
@@ -20,6 +18,7 @@ use fresh::{
     services::release_checker, services::remote, services::signal_handler,
     services::tracing_setup::TracingHandles, workspace,
 };
+use fresh_input_parser::Event as InputEvent;
 use ratatui::Terminal;
 use std::{
     io::{self, stdout},
@@ -47,7 +46,7 @@ const BEFORE_HELP_EN: &str =
 #[command(before_help = BEFORE_HELP_EN)]
 struct Cli {
     /// Run a command instead of opening files
-    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init
+    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init, update, script (api|check|run|types), help (tour|script)
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
@@ -147,7 +146,9 @@ struct Cli {
 
     /// Serve the editor to a browser over a local HTTP/WebSocket bridge.
     /// Optionally give a bind address (default 127.0.0.1:8137). Any FILES are
-    /// opened in the served editor.
+    /// opened in the served editor. This also runs the session daemon, so
+    /// `fresh -a` in the same directory attaches a terminal to the very same
+    /// editor.
     #[cfg(feature = "web")]
     #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8137")]
     web: Option<String>,
@@ -173,6 +174,17 @@ struct Args {
     dump_config: bool,
     show_paths: bool,
     list_grammars: bool,
+    /// `fresh update [...]` — check for and install an update.
+    update: bool,
+    update_check: bool,
+    update_yes: bool,
+    update_allow_downgrade: bool,
+    update_pre: bool,
+    update_print_command: bool,
+    update_download_only: bool,
+    update_force: bool,
+    update_releases_url: Option<String>,
+    update_download_base: Option<String>,
     locale: Option<String>,
     check_plugin: Option<PathBuf>,
     init: Option<Option<String>>,
@@ -207,6 +219,37 @@ impl From<Cli> for Args {
             )
         } else {
             false
+        };
+
+        // `fresh --cmd update [--check] [--yes] [--allow-downgrade] [--force]
+        //                     [--print-command] [--releases-url U] [--download-base U]`
+        let update = cli.cmd.first().map(String::as_str) == Some("update");
+        let update_check = update && cli.cmd.iter().any(|a| a == "--check");
+        let update_yes = update && cli.cmd.iter().any(|a| a == "--yes" || a == "-y");
+        let update_allow_downgrade = update && cli.cmd.iter().any(|a| a == "--allow-downgrade");
+        let update_print_command = update && cli.cmd.iter().any(|a| a == "--print-command");
+        let update_download_only = update && cli.cmd.iter().any(|a| a == "--download-only");
+        let update_force = update && cli.cmd.iter().any(|a| a == "--force");
+        let update_pre = update && cli.cmd.iter().any(|a| a == "--pre");
+        // Value flags: `--flag VALUE`. Point the update at a mirror of the
+        // release feed — an air-gapped/enterprise mirror in production, and the
+        // way the packaging containers exercise the real install flow in tests.
+        let flag_value = |name: &str| -> Option<String> {
+            cli.cmd
+                .iter()
+                .position(|a| a == name)
+                .and_then(|i| cli.cmd.get(i + 1))
+                .cloned()
+        };
+        let update_releases_url = if update {
+            flag_value("--releases-url")
+        } else {
+            None
+        };
+        let update_download_base = if update {
+            flag_value("--download-base")
+        } else {
+            None
         };
 
         // Parse --cmd arguments to determine command
@@ -409,10 +452,14 @@ impl From<Cli> for Args {
                 ["grammar", "list"] | ["grammars", "list"] | ["grammar", "ls"] | ["grammars"] => (
                     false, None, false, None, false, false, None, cli.files, None,
                 ),
+                // Update command (handled via the update flags above)
+                ["update", ..] => (
+                    false, None, false, None, false, false, None, cli.files, None,
+                ),
                 // Unknown command
                 _ => {
                     eprintln!("Unknown command: {}", cli.cmd.join(" "));
-                    eprintln!("Available commands: daemon (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init");
+                    eprintln!("Available commands: daemon (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init, update");
                     std::process::exit(1);
                 }
             }
@@ -464,6 +511,16 @@ impl From<Cli> for Args {
             dump_config,
             show_paths,
             list_grammars,
+            update,
+            update_check,
+            update_yes,
+            update_allow_downgrade,
+            update_pre,
+            update_print_command,
+            update_download_only,
+            update_force,
+            update_releases_url,
+            update_download_base,
             locale: cli.locale,
             check_plugin: cli.check_plugin,
             init,
@@ -992,6 +1049,73 @@ fn build_file_requests(
     requests
 }
 
+/// Recognise a vim-style `+N` CLI argument.  Returns the line number
+/// for `+<digits>` (saturating at `usize::MAX` — the jump clamps to
+/// the buffer end anyway, matching `file:huge`), `None` for anything
+/// else.  A bare `+` is NOT claimed: it stays an ordinary filename
+/// (vim's "+ = last line" has no `file:line` equivalent).
+fn parse_plus_line_arg(arg: &str) -> Option<usize> {
+    let digits = arg.strip_prefix('+')?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(digits.parse::<usize>().unwrap_or(usize::MAX))
+}
+
+/// Fold vim-style `+N` arguments into the file list, so
+/// `fresh +50 file.txt` behaves exactly like `fresh file.txt:50`
+/// (#1926).  Previously `+50` was opened as a literal (empty) file
+/// named `+50`, and in trailing position that stray buffer also stole
+/// focus from the real file.
+///
+/// Vim-like, the line applies to the first file argument; an explicit
+/// `file:line` location on that file wins over the `+N`.  The stdin
+/// marker `-` is skipped when picking the target.  A file literally
+/// named `+50` can still be opened as `./+50` (same escape hatch vim
+/// uses).
+fn apply_plus_line_args(files: Vec<String>) -> AnyhowResult<Vec<String>> {
+    let mut line: Option<usize> = None;
+    let mut plus_count = 0usize;
+    let mut rest: Vec<String> = Vec::with_capacity(files.len());
+    for f in files {
+        match parse_plus_line_arg(&f) {
+            Some(n) => {
+                plus_count += 1;
+                line = Some(n);
+            }
+            None => rest.push(f),
+        }
+    }
+    let Some(line) = line else {
+        return Ok(rest);
+    };
+    if plus_count > 1 {
+        anyhow::bail!("Too many '+<line>' arguments (at most one is allowed)");
+    }
+    match rest.iter_mut().find(|f| f.as_str() != "-") {
+        Some(target) => {
+            // Only annotate a file that carries no explicit location
+            // yet — `fresh +50 file.txt:10` keeps the explicit 10.
+            // Remote specs (`user@host:path`, `ssh://…`) take the
+            // same `:line` suffix, so they work too.  A malformed
+            // `ssh://` target is left alone; it errors downstream.
+            let has_line = match parse_location(target) {
+                Ok(ParsedLocation::Local(fl)) => fl.line.is_some(),
+                Ok(ParsedLocation::Remote(rl)) => rl.line.is_some(),
+                Err(_) => true,
+            };
+            if !has_line {
+                target.push_str(&format!(":{}", line));
+            }
+            Ok(rest)
+        }
+        None => anyhow::bail!(
+            "'+{line}' requires a file argument (e.g. 'fresh +{line} file.txt', \
+             which is equivalent to 'fresh file.txt:{line}')"
+        ),
+    }
+}
+
 fn parse_file_location(input: &str) -> FileLocation {
     use std::path::{Component, Path};
 
@@ -1195,35 +1319,50 @@ fn default_ssh_user() -> Option<String> {
 }
 
 /// Parse the part of an `ssh://` URL after the `ssh://` prefix.
-/// Returns `None` for any shape we don't recognise (missing `/path`,
-/// empty host, bad port, missing user with no `$USER` fallback).
-fn parse_ssh_url_rest(rest: &str) -> Option<RemoteLocation> {
+/// `default_user` fills in when the URL omits `user@` (normally
+/// `default_ssh_user()`; injected so tests don't depend on the
+/// runner's environment).  Returns a human-readable reason for any
+/// shape we don't recognise (missing `/path`, empty host, bad port,
+/// missing user with no fallback) — the caller reports it as a hard
+/// error, never as a silent local-path fallback (#2221).
+fn parse_ssh_url_rest(rest: &str, default_user: Option<&str>) -> Result<RemoteLocation, String> {
     // Authority and path are separated by the first `/`.  Missing
     // slash means no path, which we reject — consistent with the
     // scp-style branch that requires a non-empty path component.
-    let (authority, path_and_rest) = rest.split_once('/')?;
-    if path_and_rest.is_empty() {
-        return None;
-    }
+    let (authority, path_and_rest) = rest
+        .split_once('/')
+        .filter(|(_, path)| !path.is_empty())
+        .ok_or_else(|| {
+            "missing remote path (expected ssh://[user@]host[:port]/path)".to_string()
+        })?;
 
     // Optional `user@` prefix on the authority.
     let (user, host_and_port) = match authority.split_once('@') {
         Some((u, rest)) if !u.is_empty() && !u.contains(' ') => (u.to_string(), rest),
-        Some(_) => return None, // empty or space-bearing user
-        None => (default_ssh_user()?, authority),
+        Some(_) => return Err("empty or invalid user before '@'".to_string()),
+        None => match default_user {
+            Some(u) => (u.to_string(), authority),
+            None => {
+                return Err("no user given and neither $USER nor $USERNAME is set; \
+                     specify one explicitly (ssh://user@host/path)"
+                    .to_string());
+            }
+        },
     };
 
     // Optional `:port` on the host.
     let (host, port) = match host_and_port.rsplit_once(':') {
         Some((h, p)) => {
-            let parsed_port = p.parse::<u16>().ok()?;
+            let parsed_port = p
+                .parse::<u16>()
+                .map_err(|_| format!("invalid port {:?}", p))?;
             (h, Some(parsed_port))
         }
         None => (host_and_port, None),
     };
 
     if host.is_empty() || host.contains(' ') {
-        return None;
+        return Err("empty or invalid host".to_string());
     }
 
     let (path_tail, line, column) = parse_path_with_line_col(path_and_rest);
@@ -1232,7 +1371,7 @@ fn parse_ssh_url_rest(rest: &str) -> Option<RemoteLocation> {
     // same absolute path they'd get from `ssh://host/etc/hosts`.
     let path = format!("/{}", path_tail);
 
-    Some(RemoteLocation {
+    Ok(RemoteLocation {
         user,
         host: host.to_string(),
         port,
@@ -1268,7 +1407,7 @@ fn extract_ssh_url_from_files(files: &[String]) -> AnyhowResult<Option<String>> 
         .iter()
         .filter(|f| *f != "-")
         .map(|f| parse_location(f))
-        .collect();
+        .collect::<AnyhowResult<Vec<_>>>()?;
 
     let remotes: Vec<&RemoteLocation> = parsed
         .iter()
@@ -1315,8 +1454,13 @@ fn parse_ssh_url_arg(url: &str) -> AnyhowResult<RemoteLocation> {
     let rest = url
         .strip_prefix("ssh://")
         .ok_or_else(|| anyhow::anyhow!("--ssh-url expects an ssh:// URL, got {:?}", url))?;
-    parse_ssh_url_rest(rest)
-        .ok_or_else(|| anyhow::anyhow!("--ssh-url is not a valid ssh:// URL: {:?}", url))
+    parse_ssh_url_rest(rest, default_ssh_user().as_deref()).map_err(|reason| {
+        anyhow::anyhow!(
+            "--ssh-url is not a valid ssh:// URL ({}): {:?}",
+            reason,
+            url
+        )
+    })
 }
 
 /// Parse a location that may be local, scp-style remote, or an
@@ -1330,15 +1474,32 @@ fn parse_ssh_url_arg(url: &str) -> AnyhowResult<RemoteLocation> {
 /// When `ssh://` omits the user, the current login name (`$USER` /
 /// `$USERNAME`) is used.  The URL form is the only way to pass a
 /// port.  The path must be non-empty in both remote forms.
-fn parse_location(input: &str) -> ParsedLocation {
+///
+/// The `ssh://` scheme is claimed exclusively: a malformed `ssh://`
+/// argument is a hard error, never a local-path fallback.  Silently
+/// opening a local buffer named `ssh://host/...` hid the failure and
+/// invited saving to a bogus local path (#2221).  A genuine local
+/// file whose name starts with `ssh://` can still be opened as
+/// `./ssh://...`.
+fn parse_location(input: &str) -> AnyhowResult<ParsedLocation> {
+    parse_location_with_default_user(input, default_ssh_user().as_deref())
+}
+
+/// `parse_location` with the `$USER`/`$USERNAME` fallback injected,
+/// so tests can pin it without mutating the process environment.
+fn parse_location_with_default_user(
+    input: &str,
+    default_user: Option<&str>,
+) -> AnyhowResult<ParsedLocation> {
     if let Some(rest) = input.strip_prefix("ssh://") {
-        return match parse_ssh_url_rest(rest) {
-            Some(loc) => ParsedLocation::Remote(loc),
-            // Malformed `ssh://` — treat the whole input as a local
-            // filename rather than letting scp-style parsing match
-            // the `ssh://user@host:bad-port/...` slice and produce a
-            // nonsense user like `ssh://user`.
-            None => ParsedLocation::Local(parse_file_location(input)),
+        return match parse_ssh_url_rest(rest, default_user) {
+            Ok(loc) => Ok(ParsedLocation::Remote(loc)),
+            Err(reason) => Err(anyhow::anyhow!(
+                "invalid ssh:// URL {:?}: {}. \
+                 To open a local file with this name, prefix it with ./",
+                input,
+                reason
+            )),
         };
     }
 
@@ -1360,20 +1521,20 @@ fn parse_location(input: &str) -> ParsedLocation {
             {
                 let (path, line, column) = parse_path_with_line_col(path_and_rest);
 
-                return ParsedLocation::Remote(RemoteLocation {
+                return Ok(ParsedLocation::Remote(RemoteLocation {
                     user: user.to_string(),
                     host: host.to_string(),
                     port: None,
                     path,
                     line,
                     column,
-                });
+                }));
             }
         }
     }
 
     // Not a remote path, parse as local
-    ParsedLocation::Local(parse_file_location(input))
+    Ok(ParsedLocation::Local(parse_file_location(input)))
 }
 
 /// Holds resources needed for remote editing (kept alive for duration of session)
@@ -1577,7 +1738,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         .iter()
         .filter(|f| *f != "-")
         .map(|f| parse_location(f))
-        .collect();
+        .collect::<AnyhowResult<Vec<_>>>()?;
 
     // Check for remote locations - for now, collect them separately
     let remote_locations: Vec<&RemoteLocation> = parsed_locations
@@ -1693,12 +1854,14 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
 
     // Re-anchor trust to this project now that the working dir is known.
+    // `store_for_workspace` keys a linked git worktree on the repo that owns
+    // it, so every checkout of one repository shares a single decision.
     workspace_trust.set_root(Some(effective_working_dir.clone()));
-    workspace_trust.set_store(Some(
-        fresh::services::workspace_trust::TrustStore::for_project_dir(
-            &dir_context.project_state_dir(&effective_working_dir),
-        ),
-    ));
+    workspace_trust.set_store(Some(fresh::services::workspace_trust::store_for_workspace(
+        &dir_context,
+        authority.filesystem.as_ref(),
+        &effective_working_dir,
+    )));
     // Attach the project's env recipe store and, when trusted, re-enter the
     // env the user previously activated — so the editor boots already in it
     // and the env-manager plugin's auto-activation finds nothing to do
@@ -2759,19 +2922,48 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
 }
 
 /// Run as a daemon server
-fn run_server_command(args: &Args) -> AnyhowResult<()> {
+/// Run the session daemon in this process.
+///
+/// Two entry points land here, and they run the SAME daemon:
+///
+///   - `fresh --server` — the detached process a `fresh -a` client spawns
+///     when no daemon is live for the working directory. Chatty on stderr,
+///     which the spawner has already redirected into the session log.
+///   - `fresh --web [ADDR]` (`web_addr = Some`) — the same daemon in the
+///     foreground, additionally serving the web UI. Same session, same
+///     sockets: `fresh -a` in this working directory attaches a terminal to
+///     the very editor the browser is looking at, and closing either one
+///     leaves the session (and the other) running.
+///
+/// `web_addr` also picks the console posture. The detached daemon logs at
+/// `debug` into its log file; a foreground `--web` would flood the user's
+/// terminal with it, so it logs at `warn` and skips the boot chatter.
+/// `RUST_LOG` still overrides either.
+fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()> {
     use fresh::server::{EditorServer, EditorServerConfig};
+
+    let detached = web_addr.is_none();
+    // Boot progress, useful in the daemon's log file but noise in a terminal.
+    macro_rules! boot {
+        ($($arg:tt)*) => {
+            if detached {
+                eprintln!($($arg)*);
+            }
+        };
+    }
 
     // Initialize tracing to stderr (will go to log file when spawned detached)
     use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+    let default_level = if detached { "debug" } else { "warn" };
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
     fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .init();
 
-    eprintln!(
+    boot!(
         "[server] Starting server process for session {:?}",
         args.session_name
     );
@@ -2809,18 +3001,20 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         None => std::env::current_dir()?,
     };
     let config_dir = std::env::current_dir()?;
-    eprintln!("[server] Working directory: {:?}", working_dir);
+    boot!("[server] Working directory: {:?}", working_dir);
 
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
 
     // Re-anchor trust to this project: its persisted level (if any) is
-    // adopted, else the safe Restricted default.
+    // adopted, else the safe Restricted default. `store_for_workspace` keys a
+    // linked git worktree on the repo that owns it, so every checkout shares
+    // one decision.
     workspace_trust.set_root(Some(working_dir.clone()));
-    workspace_trust.set_store(Some(
-        fresh::services::workspace_trust::TrustStore::for_project_dir(
-            &dir_context.project_state_dir(&working_dir),
-        ),
-    ));
+    workspace_trust.set_store(Some(fresh::services::workspace_trust::store_for_workspace(
+        &dir_context,
+        authority.filesystem.as_ref(),
+        &working_dir,
+    )));
     // Attach the project's env recipe store and, when trusted, re-enter the
     // previously-activated env so the editor boots already in it (no
     // auto-activation restart flicker on a re-open, issue #2280).
@@ -2832,14 +3026,32 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
     );
 
     // Load editor config
-    eprintln!("[server] Loading editor config...");
-    let editor_config = if let Some(config_path) = &args.config {
+    boot!("[server] Loading editor config...");
+    let mut editor_config = if let Some(config_path) = &args.config {
         config::Config::load_from_file(config_path)?
     } else {
         config::Config::load_with_layers(&dir_context, &config_dir)
     };
-    eprintln!("[server] Editor config loaded");
+    boot!("[server] Editor config loaded");
+    // Cell-level (TUI) animations would stream to the browser as bursts of
+    // frame diffs, on top of the CSS-level motion the web frontend does for
+    // itself — the same reason the standalone bridge forces them off. One
+    // editor serves both transports here, so the whole session (attached
+    // terminals included) goes without them while `--web` is serving.
+    if web_addr.is_some() {
+        editor_config.editor.animations = false;
+    }
     editor_config.apply_runtime_flags();
+
+    // `--web` has no client to send an `OpenFiles` after the handshake, so the
+    // files from its own command line ride in on the config and are queued once
+    // the editor is up. The detached daemon leaves this empty — its `fresh -a`
+    // client sends the list itself, `--wait` and all.
+    let startup_files = if web_addr.is_some() {
+        build_file_requests(&args.files, &working_dir)
+    } else {
+        Vec::new()
+    };
 
     let session_keepalive: Option<Box<dyn std::any::Any + Send>> =
         remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
@@ -2861,29 +3073,75 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         workspace_trust,
         env_provider,
         session_keepalive,
+        startup_files,
+        #[cfg(feature = "web")]
+        web_addr: web_addr.clone(),
     };
 
-    eprintln!("[server] Creating EditorServer...");
+    boot!("[server] Creating EditorServer...");
     let mut server = match EditorServer::new(config) {
         Ok(s) => {
-            eprintln!("[server] EditorServer created successfully");
+            boot!("[server] EditorServer created successfully");
             s
         }
         Err(e) => {
-            eprintln!("[server] EditorServer::new failed: {:?}", e);
+            boot!("[server] EditorServer::new failed: {:?}", e);
             return Err(e.into());
         }
     };
 
-    eprintln!("[server] Server ready at {:?}", server.socket_paths());
+    boot!("[server] Server ready at {:?}", server.socket_paths());
     tracing::info!("Editor server started at {:?}", server.socket_paths());
+    // The web banner is the foreground path's only startup output: the URL to
+    // open, and the `fresh -a` invocation that attaches a terminal to the same
+    // session. Sessions are keyed by working directory unless named, which is
+    // exactly how `-a` resolves them.
+    if let Some(addr) = &web_addr {
+        eprintln!("fresh web bridge on http://{addr}  (WS push on /ws)");
+        match &args.session_name {
+            Some(name) => eprintln!("attach a terminal to this session: fresh -a {name}"),
+            None => eprintln!(
+                "attach a terminal to this session: fresh -a   (in {})",
+                working_dir.display()
+            ),
+        }
+    }
 
     // Run the server (blocking)
-    eprintln!("[server] Entering main loop...");
+    boot!("[server] Entering main loop...");
     server.run()?;
 
-    eprintln!("[server] Server shutting down");
+    boot!("[server] Server shutting down");
     Ok(())
+}
+
+/// `fresh --web [ADDR] [FILES…]` — run the session daemon in the foreground
+/// with the web UI bridge hosted inside it.
+///
+/// The daemon owns the editor; the browser and every `fresh -a` terminal are
+/// transports onto that one editor, so a change made in the browser shows up in
+/// an attached terminal (and the other way round), and closing either leaves the
+/// session running. Because this binds the ordinary session sockets, a session
+/// that is already live here would be shadowed rather than shared — refuse
+/// instead, and say what to do about it.
+#[cfg(feature = "web")]
+fn run_web_command(args: &Args, addr: &str) -> AnyhowResult<()> {
+    let socket_paths = resolve_session(args.session_name.as_deref())?;
+    // A daemon that died without unlinking its sockets must not block the bind.
+    socket_paths.cleanup_if_stale();
+    if socket_paths.is_server_alive() {
+        // A user error, not a bug — printed clean and exited, the same way
+        // `main` special-cases SSH connection failures. Returning an
+        // `anyhow::Error` here would hand the user a backtrace instead
+        // (`real_main` turns backtraces on so genuine crashes are diagnosable).
+        eprintln!(
+            "Error: a fresh session is already running here — `fresh -a` attaches a terminal to it."
+        );
+        eprintln!("To serve a separate session over the web, give it a name:");
+        eprintln!("  fresh --web {addr} --session-name NAME");
+        std::process::exit(1);
+    }
+    run_server_command(args, Some(addr.to_string()))
 }
 
 /// Resolve a session name to socket paths.
@@ -2941,9 +3199,11 @@ fn run_open_files_command(
     let local_files: Vec<String> = if ssh_url.is_some() {
         files
             .iter()
+            // Parse errors were already surfaced by
+            // `extract_ssh_url_from_files` above.
             .filter_map(|f| match parse_location(f) {
-                ParsedLocation::Remote(r) => Some(r.path),
-                ParsedLocation::Local(_) => None,
+                Ok(ParsedLocation::Remote(r)) => Some(r.path),
+                _ => None,
             })
             .collect()
     } else {
@@ -3044,6 +3304,19 @@ fn run_open_files_command(
 /// caller should abort quietly — a message has already been printed), and
 /// `Err` on a protocol-level error.
 fn client_handshake(conn: &fresh::server::ipc::ClientConnection) -> AnyhowResult<bool> {
+    client_handshake_reading(conn, || Ok(conn.read_control()?))
+}
+
+/// [`client_handshake`], but with the reply read through a caller-supplied
+/// reader. The command-channel client passes a deadline-bounded one so a server
+/// that accepts the connection and then goes quiet is an error, not a hang.
+fn client_handshake_reading<F>(
+    conn: &fresh::server::ipc::ClientConnection,
+    mut read_reply: F,
+) -> AnyhowResult<bool>
+where
+    F: FnMut() -> AnyhowResult<Option<String>>,
+{
     use fresh::server::protocol::{
         ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
     };
@@ -3052,8 +3325,7 @@ fn client_handshake(conn: &fresh::server::ipc::ClientConnection) -> AnyhowResult
     let hello = ClientHello::new(TermSize::new(80, 24));
     conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello))?)?;
 
-    let response = conn
-        .read_control()?
+    let response = read_reply()?
         .ok_or_else(|| anyhow::anyhow!("Server closed connection during handshake"))?;
 
     match serde_json::from_str::<ServerControl>(&response)? {
@@ -3222,21 +3494,6 @@ fn extract_session_flag<'a>(tokens: &[&'a str]) -> (Option<String>, Vec<&'a str>
     (session, rest)
 }
 
-/// Parse `k=v` tokens into an argument map. Tokens without an `=` are ignored;
-/// the value keeps any further `=` (split on the first only), so `a=b=c` maps
-/// `a -> b=c`. An empty key is skipped.
-fn parse_kv_args(tokens: &[&str]) -> std::collections::HashMap<String, String> {
-    let mut map = std::collections::HashMap::new();
-    for tok in tokens {
-        if let Some((k, v)) = tok.split_once('=') {
-            if !k.is_empty() {
-                map.insert(k.to_string(), v.to_string());
-            }
-        }
-    }
-    map
-}
-
 /// Resolve the control socket for a command-channel verb.
 ///
 /// The default target is the current workspace, named by `$FRESH_SESSION`;
@@ -3263,239 +3520,1109 @@ fn resolve_cmd_socket(session_override: Option<&str>) -> AnyhowResult<SocketPath
     Ok(socket_paths)
 }
 
-/// Connect to the resolved socket and complete the client handshake.
-fn connect_cmd(socket_paths: &SocketPaths) -> AnyhowResult<fresh::server::ipc::ClientConnection> {
+/// How long a command-channel client waits for the editor to answer before
+/// giving up.
+///
+/// The default suits a command that answers within a frame — a query, a split,
+/// a dispatch. A command that *does* something slow before it can answer (a
+/// workspace create runs `git worktree add` and waits for the agent process to
+/// come up) passes its own, longer bound. Either way an explicit
+/// `FRESH_CMD_TIMEOUT_MS` wins, so a caller can always widen the wait without
+/// the CLI having to guess.
+fn cmd_reply_timeout_or(default: std::time::Duration) -> std::time::Duration {
+    std::env::var("FRESH_CMD_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(default)
+}
+
+/// The default wait: enough for any command that answers off the editor thread.
+fn cmd_reply_timeout() -> std::time::Duration {
+    cmd_reply_timeout_or(std::time::Duration::from_secs(10))
+}
+
+/// The wait for a command that builds something first. A workspace create adds
+/// a git worktree and starts an agent, which on a large repository is seconds,
+/// not milliseconds — timing that out and reporting failure would be wrong
+/// about a create that is merely still running.
+fn cmd_build_timeout() -> std::time::Duration {
+    cmd_reply_timeout_or(std::time::Duration::from_secs(180))
+}
+
+/// Turn a bounded-read failure into an actionable message. A timeout here means
+/// the editor accepted the connection but never answered — the signature of a
+/// build whose event loop doesn't drain the control socket.
+fn cmd_read_error(e: std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::TimedOut {
+        anyhow::anyhow!(
+            "the Fresh editor accepted the connection but did not answer within {:?}. \
+             It may be busy, or running a build without command-channel support; \
+             raise the wait with FRESH_CMD_TIMEOUT_MS if it is merely slow.",
+            cmd_reply_timeout()
+        )
+    } else {
+        anyhow::Error::from(e)
+    }
+}
+
+/// A live command-channel connection: the socket plus the reader that carries
+/// bytes buffered between replies. One reader for the whole exchange — a fresh
+/// one per read would drop anything that arrived in the same chunk as the
+/// previous message.
+struct CmdConnection {
+    conn: fresh::server::ipc::ClientConnection,
+    reader: fresh::server::ipc::ControlReader,
+}
+
+impl CmdConnection {
+    fn send(&self, msg: &fresh::server::protocol::ClientControl) -> AnyhowResult<()> {
+        self.conn.write_control(&serde_json::to_string(msg)?)?;
+        Ok(())
+    }
+
+    /// Read one reply, waiting at most `timeout`.
+    fn recv_within(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> AnyhowResult<Option<fresh::server::protocol::ServerControl>> {
+        let line = self
+            .reader
+            .read_line_timeout(timeout)
+            .map_err(cmd_read_error)?;
+        match line {
+            Some(line) => Ok(Some(serde_json::from_str(&line)?)),
+            None => Ok(None),
+        }
+    }
+}
+
+/// Connect to the resolved socket and complete the client handshake. Reads are
+/// deadline-bounded, so the client can never hang on an editor that accepts the
+/// connection and then never answers.
+fn connect_cmd(socket_paths: &SocketPaths) -> AnyhowResult<CmdConnection> {
     let conn = fresh::server::ipc::ClientConnection::connect(socket_paths)?;
-    if !client_handshake(&conn)? {
+    let mut reader = conn.control_reader();
+    let accepted = client_handshake_reading(&conn, || {
+        reader
+            .read_line_timeout(cmd_reply_timeout())
+            .map_err(cmd_read_error)
+    })?;
+    if !accepted {
         // client_handshake already printed the mismatch reason.
         anyhow::bail!("handshake with the Fresh editor failed");
     }
-    Ok(conn)
+    Ok(CmdConnection { conn, reader })
 }
 
-/// Read control replies until a `CommandList` arrives (or an error/EOF).
-fn read_command_list(
-    conn: &fresh::server::ipc::ClientConnection,
-) -> AnyhowResult<Vec<fresh::server::protocol::CommandInfo>> {
-    use fresh::server::protocol::ServerControl;
-    loop {
-        match conn.read_control()? {
-            Some(line) => match serde_json::from_str::<ServerControl>(&line)? {
-                ServerControl::CommandList { commands } => return Ok(commands),
-                ServerControl::Error { message } => anyhow::bail!("server error: {}", message),
-                _ => continue,
-            },
-            None => anyhow::bail!("server closed the connection before answering"),
-        }
-    }
-}
-
-/// Read control replies until a `CommandResult` arrives (or an error/EOF).
+/// Read control replies until a `ScriptResult` arrives (or an error/EOF/timeout).
 /// Returns `(ok, error, output)`.
-fn read_command_result(
-    conn: &fresh::server::ipc::ClientConnection,
+fn read_script_result(
+    conn: &mut CmdConnection,
+    timeout: std::time::Duration,
 ) -> AnyhowResult<(bool, Option<String>, Option<String>)> {
     use fresh::server::protocol::ServerControl;
     loop {
-        match conn.read_control()? {
-            Some(line) => match serde_json::from_str::<ServerControl>(&line)? {
-                ServerControl::CommandResult { ok, error, output } => {
-                    return Ok((ok, error, output))
-                }
-                ServerControl::Error { message } => anyhow::bail!("server error: {}", message),
-                _ => continue,
-            },
+        match conn.recv_within(timeout)? {
+            Some(ServerControl::ScriptResult { ok, error, output }) => {
+                return Ok((ok, error, output))
+            }
+            Some(ServerControl::Error { message }) => anyhow::bail!("server error: {}", message),
+            Some(_) => continue,
             None => anyhow::bail!("server closed the connection before answering"),
         }
     }
 }
 
-/// Dispatch a `--cmd cmd ...` / `--cmd split ...` / `--cmd workspace ...`
-/// invocation against a running editor. `tokens` is the full `--cmd` vector
-/// (leading verb included).
+/// Dispatch a `--cmd cmd ...` / `--cmd split ...` / `--cmd workspace ...` /
+/// `--cmd agent ...` invocation against a running editor. `tokens` is the full
+/// `--cmd` vector (leading verb included).
 fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
     let (session, rest) = extract_session_flag(tokens);
     let session = session.as_deref();
 
     match rest.first().copied() {
-        Some("cmd") => {
-            let sub = &rest[1..];
-            match sub {
-                ["list", flags @ ..] => cmd_list(session, flags),
-                ["describe"] => {
-                    eprintln!("usage: fresh --cmd cmd describe <id> [--json]");
+        Some("script") => {
+            match &rest[1..] {
+                ["run", from @ ..] => script_run(session, from),
+                ["check", from @ ..] => script_check(from),
+                ["api", query, flags @ ..] => script_api(query, flags),
+                ["api"] => {
+                    eprintln!("usage: fresh --cmd script api <query> [--json]");
                     std::process::exit(2);
                 }
-                ["describe", id, flags @ ..] => cmd_describe(session, id, flags),
-                ["run"] => {
-                    eprintln!("usage: fresh --cmd cmd run <id> [k=v ...]");
-                    std::process::exit(2);
-                }
-                ["run", id, args @ ..] => cmd_run(session, id, args),
-                // Shorthand: `cmd <id> [k=v ...]` when the 2nd token isn't a
-                // known sub-verb (list/describe/run handled above).
-                [id, args @ ..] => cmd_run(session, id, args),
-                [] => {
-                    eprintln!("usage: fresh --cmd cmd <list|describe|run> ...");
+                ["types"] => script_types(),
+                _ => {
+                    eprintln!("usage: fresh --cmd script api <query>     search the API by name or description");
+                    eprintln!("       fresh --cmd script check [FILE|-]  parse + check editor.* names, without running");
+                    eprintln!("       fresh --cmd script run [FILE|-]    evaluate against this workspace (default: stdin)");
+                    eprintln!("       fresh --cmd script types           paths of the API declaration files");
                     std::process::exit(2);
                 }
             }
         }
-        Some("split") => cmd_split(session, &rest[1..]),
-        Some("workspace") => match &rest[1..] {
-            ["new", dir, ..] => workspace_new(session, dir),
+        // `init reload` only — every other `init` form is the *package*
+        // initializer, which `Args::from` handles and which never touches a
+        // running editor. Two different `init`s is unfortunate, but `reload`
+        // belongs with the thing it reloads.
+        Some("init") if rest.get(1).copied() == Some("reload") => init_reload_command(session),
+        Some("command") => match &rest[1..] {
+            ["run", name] => command_run_command(session, name),
+            ["list", query] => command_list_command(session, Some(query)),
+            ["list"] => command_list_command(session, None),
             _ => {
-                eprintln!("usage: fresh --cmd workspace new <dir>");
+                eprintln!(
+                    "usage: fresh --cmd command run \"<name>\"   run a registered command by its palette name"
+                );
+                eprintln!(
+                    "       fresh --cmd command list [QUERY]    list registered commands (built-in + plugin)"
+                );
                 std::process::exit(2);
             }
         },
         _ => {
             eprintln!("Unknown command: {}", rest.join(" "));
+            eprintln!("usage: fresh --cmd script <api|check|run|types> ...");
+            eprintln!("       fresh --cmd command <run|list> ...");
+            eprintln!("       fresh --cmd init reload");
             std::process::exit(2);
         }
     }
 }
 
-/// `fresh --cmd cmd list [--json]` — enumerate the allowed commands.
-fn cmd_list(session: Option<&str>, flags: &[&str]) -> AnyhowResult<()> {
-    use fresh::server::protocol::ClientControl;
-    let json = flags.contains(&"--json");
+// ===========================================================================
+// `fresh --cmd help` — feature guides with generated reference sections
+// ===========================================================================
 
-    let socket = resolve_cmd_socket(session)?;
-    let conn = connect_cmd(&socket)?;
-    conn.write_control(&serde_json::to_string(&ClientControl::ListCommands {
-        include_args: false,
-    })?)?;
-    let mut commands = read_command_list(&conn)?;
-    commands.sort_by(|a, b| a.id.cmp(&b.id));
+/// The tour-manifest JSON schema, embedded from the same file the
+/// code-tour plugin ships and validates against
+/// (`plugins/schemas/tour.schema.json`), so the reference `help tour`
+/// prints cannot drift from what the editor actually loads.
+const TOUR_SCHEMA_JSON: &str = include_str!("../plugins/schemas/tour.schema.json");
 
-    if json {
-        println!("{}", serde_json::to_string_pretty(&commands)?);
-    } else {
-        let width = commands.iter().map(|c| c.id.len()).max().unwrap_or(0);
-        for c in &commands {
-            println!("{:width$}  —  {}", c.id, c.name, width = width);
-        }
-    }
-    Ok(())
-}
+/// The generated plugin-API declarations (`write_fresh_dts` output) as
+/// this build embeds them — the authoritative answer to "what can a
+/// script call *in this binary*", available before the editor has ever
+/// run and written its config-dir copy.
+const EMBEDDED_FRESH_DTS: &str = include_str!("../plugins/lib/fresh.d.ts");
 
-/// `fresh --cmd cmd describe <id> [--json]` — show one command's schema.
-fn cmd_describe(session: Option<&str>, id: &str, flags: &[&str]) -> AnyhowResult<()> {
-    use fresh::server::protocol::ClientControl;
-    let json = flags.contains(&"--json");
-
-    let socket = resolve_cmd_socket(session)?;
-    let conn = connect_cmd(&socket)?;
-    conn.write_control(&serde_json::to_string(&ClientControl::ListCommands {
-        include_args: true,
-    })?)?;
-    let commands = read_command_list(&conn)?;
-
-    let info = match commands.iter().find(|c| c.id == id) {
-        Some(info) => info,
-        None => {
-            eprintln!(
-                "Command not found (not on this workspace's allowlist): {}",
-                id
+/// `fresh --cmd help [TOPIC]` — long-form feature guides on stdout.
+///
+/// English-only, like the other `--cmd` verb output. The reference
+/// sections are *generated* from artifacts compiled into this binary —
+/// the tour schema, the API declarations — not hand-maintained prose, so
+/// they describe the running version rather than whenever someone last
+/// edited a help string.
+fn help_command(topic: &[&str]) -> AnyhowResult<()> {
+    match topic {
+        [] | ["topics"] => {
+            println!("usage: fresh --cmd help <topic>");
+            println!();
+            println!("topics:");
+            println!(
+                "  tour     guided code tours — authoring, both manifest formats \
+                 (fresh + VS Code CodeTour), generated schema reference"
             );
-            std::process::exit(1);
+            println!(
+                "  script   drive a running editor with TypeScript — verbs, examples, \
+                 the API surface of this build"
+            );
+            println!(
+                "  plugin   write init.ts / a plugin — the runtime contract, the \
+                 dev loop, a worked auto-refreshing panel"
+            );
+            Ok(())
         }
-    };
-
-    if json {
-        println!("{}", serde_json::to_string_pretty(info)?);
-    } else {
-        println!("id:       {}", info.id);
-        println!("name:     {}", info.name);
-        if let Some(cat) = &info.category {
-            println!("category: {}", cat);
-        }
-        if info.args.is_empty() {
-            println!("args:     (none)");
-        } else {
-            println!("args:");
-            for a in &info.args {
-                let req = if a.required { "required" } else { "optional" };
-                match &a.description {
-                    Some(d) => println!("  {} ({}) — {}", a.name, req, d),
-                    None => println!("  {} ({})", a.name, req),
-                }
-            }
+        ["tour", flags @ ..] => help_tour(flags),
+        ["script", ..] => help_script(),
+        ["plugin", ..] | ["plugins", ..] | ["init", ..] => help_plugin(),
+        [other, ..] => {
+            eprintln!("unknown help topic: {other} (available: tour, script, plugin)");
+            std::process::exit(2);
         }
     }
+}
+
+/// `fresh --cmd help tour [--schema]` — how to author and open code tours.
+fn help_tour(flags: &[&str]) -> AnyhowResult<()> {
+    // `--schema` prints the raw JSON schema alone, for piping into a
+    // validator or handing to an agent.
+    if flags.contains(&"--schema") {
+        println!("{}", TOUR_SCHEMA_JSON.trim_end());
+        return Ok(());
+    }
+    print!("{}", tour_help_text()?);
     Ok(())
 }
 
-/// `fresh --cmd cmd run <id> [k=v ...]` — dispatch one command by id.
-fn cmd_run(session: Option<&str>, id: &str, arg_tokens: &[&str]) -> AnyhowResult<()> {
-    run_command_id(session, id, parse_kv_args(arg_tokens))
+/// The `help tour` body. A separate builder so tests can assert the
+/// generated reference tracks the embedded schema.
+fn tour_help_text() -> AnyhowResult<String> {
+    let mut out = String::from(
+        "\
+Guided code tours
+
+Fresh plays guided walkthroughs of a codebase from a JSON manifest,
+shown in the Utility Dock with a step rail and highlighted code.
+Two formats load, auto-detected by content:
+
+  .fresh-tour.json    fresh's native manifest (reference below)
+  CodeTour .tour      VS Code CodeTour files are converted on load:
+                      line/selection/pattern anchors become line ranges,
+                      content-only steps keep their prose, and a
+                      commit-hash `ref` is checked for drift.
+
+Where tour files conventionally live (all dotfiles):
+  .fresh-tour.json, .tour, main.tour, .vscode/main.tour
+  .tours/, .vscode/tours/, .github/tours/   (either format, nested dirs ok)
+
+Opening a tour:
+  - Command palette: \"Tour: Load Definition...\" or \"Tour: Open Workspace
+    Tour...\" — both open a file browser anchored at the workspace root
+    with hidden files shown, so the manifests above are in reach.
+  - From a script or agent (see also: fresh --cmd help script):
+      echo 'return editor.getPluginApi(\"code-tour\")
+        .openTour(\".fresh-tour.json\")' | fresh --cmd script run
+
+Minimal manifest:
+  {
+    \"title\": \"Request pipeline\",
+    \"description\": \"How a request reaches the handler\",
+    \"schema_version\": \"1.0\",
+    \"steps\": [
+      { \"step_id\": 1, \"title\": \"Entry point\", \"file_path\": \"src/main.rs\",
+        \"lines\": [1, 40], \"explanation\": \"## Where it starts\\n...\" }
+    ]
+  }
+
+Format reference (generated from the schema this build ships):
+
+",
+    );
+
+    let schema: serde_json::Value =
+        serde_json::from_str(TOUR_SCHEMA_JSON).context("embedded tour schema is not valid JSON")?;
+    push_schema_fields(&mut out, "Manifest", &schema);
+    if let Some(defs) = schema["definitions"].as_object() {
+        for (name, def) in defs {
+            push_schema_fields(&mut out, name, def);
+        }
+    }
+    out.push_str("Full JSON schema (machine-readable): fresh --cmd help tour --schema\n");
+    Ok(out)
 }
 
-/// `fresh --cmd split [--vertical|--horizontal]` — split alias (default vertical).
-fn cmd_split(session: Option<&str>, flags: &[&str]) -> AnyhowResult<()> {
-    let id = if flags.contains(&"--horizontal") {
-        "split_horizontal"
-    } else {
-        "split_vertical"
+/// One schema object's fields — name, type, required/optional, prose —
+/// read from the schema itself rather than restated by hand.
+fn push_schema_fields(out: &mut String, title: &str, obj: &serde_json::Value) {
+    use std::fmt::Write as _;
+    let Some(props) = obj["properties"].as_object() else {
+        return;
     };
-    run_command_id(session, id, std::collections::HashMap::new())
+    let required: Vec<&str> = obj["required"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    let _ = writeln!(out, "{title}:");
+    for (name, spec) in props {
+        let ty = if let Some(vals) = spec["enum"].as_array() {
+            vals.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join("|")
+        } else if spec["$ref"].is_string() {
+            spec["$ref"]
+                .as_str()
+                .unwrap_or_default()
+                .rsplit('/')
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        } else {
+            spec["type"].as_str().unwrap_or("any").to_string()
+        };
+        let req = if required.contains(&name.as_str()) {
+            "required"
+        } else {
+            "optional"
+        };
+        let desc = spec["description"].as_str().unwrap_or("");
+        let _ = writeln!(out, "  {name:<16} {ty:<22} {req:<9} {desc}");
+    }
+    out.push('\n');
 }
 
-/// Shared `RunCommand` path: send the command, print output, and set the exit
-/// code (0 on ok, 1 on failure — the process exits directly on failure).
-fn run_command_id(
-    session: Option<&str>,
-    id: &str,
-    args: std::collections::HashMap<String, String>,
-) -> AnyhowResult<()> {
+/// `fresh --cmd help script` — the TypeScript scripting feature.
+fn help_script() -> AnyhowResult<()> {
+    print!("{}", script_help_text());
+    Ok(())
+}
+
+/// The `help script` body. A separate builder so tests can assert the
+/// API-surface section is generated from the embedded declarations.
+fn script_help_text() -> String {
+    let mut out = String::from(
+        "\
+Scripting the editor (TypeScript)
+
+Drive a running Fresh with the same API plugins use. A script runs as
+the body of an async function with an `editor` global; whatever it
+returns is printed as JSON. Source comes from a file or stdin.
+
+  fresh --cmd script run [FILE|-]           evaluate against this workspace
+  fresh --cmd script check [FILE|-]         parse + check editor.* names, no run
+  fresh --cmd script api <query> [--json]   search the API by name/description
+  fresh --cmd script types                  paths of the API declaration files
+
+Driving the editor without a script file:
+
+  fresh --cmd init reload                   re-read + run ~/.config/fresh/init.ts
+  fresh --cmd command run \"<name>\"          run a command by its palette name
+  fresh --cmd command list [QUERY]          list registered commands
+
+Those three are the author → reload → test loop for customizing the editor:
+edit init.ts, `init reload`, then `command run` the command you registered.
+No keystroke from the user is needed at any point.
+
+Target a specific daemon with --session NAME (default: the daemon of the
+current working directory). Inside a Fresh terminal the right session is
+already in `$FRESH_SESSION`, so no flag is needed — reach for --session only
+when running from outside, where `fresh --cmd daemon list` names the
+candidates.
+
+Examples:
+  echo 'return editor.listBuffers().map(b => b.path)' | fresh --cmd script run
+  fresh --cmd script api splitWindow
+  fresh --cmd command list dashboard     # did my registerCommand land?
+  fresh --cmd script run make-tour.ts    # author + open a code tour
+                                         # (see: fresh --cmd help tour)
+
+See also: fresh --cmd help plugin   — the runtime contract, and a worked
+                                      auto-refreshing panel
+
+",
+    );
+
+    // Generated: what this binary's API actually contains, counted from the
+    // embedded declarations rather than asserted in prose.
+    use std::fmt::Write as _;
+    let entries = parse_dts_entries(EMBEDDED_FRESH_DTS, "fresh.d.ts");
+    let callable = entries.iter().filter(|e| e.signature.contains('(')).count();
+    out.push_str("API surface of this build (generated from the shipped declarations):\n");
+    let _ = writeln!(
+        out,
+        "  fresh.d.ts: {} documented members, {} callable",
+        entries.len(),
+        callable
+    );
+    out.push('\n');
+    out.push_str(
+        "Search it with `fresh --cmd script api <query>`; `fresh --cmd script types`\n\
+         prints where the full declaration files live on disk.\n",
+    );
+    out
+}
+
+/// `fresh --cmd help plugin` — how to write init.ts / a plugin.
+fn help_plugin() -> AnyhowResult<()> {
+    print!("{}", plugin_help_text());
+    Ok(())
+}
+
+/// The `help plugin` body.
+///
+/// Aimed squarely at someone — usually an agent, working in one of Fresh's own
+/// embedded terminals — who has been asked to customize the editor and wants
+/// to get it right on the first attempt. The two things that stop that are
+/// (a) not knowing the runtime's shape, and (b) not knowing the one shape a
+/// live panel has to have. Both are stated here rather than left to be
+/// rediscovered by trial.
+fn plugin_help_text() -> String {
+    String::from(
+        r#"Writing init.ts and plugins (TypeScript)
+
+Your customization lives in ~/.config/fresh/init.ts. It is loaded as a
+plugin at startup and can register commands, hook events, draw panels, and
+run processes. `fresh --cmd init reload` re-runs it; nothing needs restarting.
+
+THE DEV LOOP (no keystrokes from the user required)
+
+  1. edit  ~/.config/fresh/init.ts
+  2. fresh --cmd init check           syntax, without running it
+  3. fresh --cmd init reload          re-read + run it; errors exit non-zero
+  4. fresh --cmd command run "My Command"     exercise what you registered
+     fresh --cmd command list My                 ...or check it registered
+
+  Reloading drops the previous copy's commands, handlers, event subscriptions,
+  settings and timers before the new source runs, so iterating never stacks
+  duplicates.
+
+THE RUNTIME, IN FULL
+
+  - ES2020 in QuickJS. `new Date()`, `Math.random()`, `JSON`, `padEnd` etc.
+    all work. No DOM, no Node, no `require`/`import` of npm packages.
+  - Top-level `await` is available; init.ts is evaluated as an async body.
+  - An **unhandled promise rejection is fatal to the plugin runtime**, not a
+    logged warning. Any detached async work — a fire-and-forget IIFE, a
+    background loop, a handler you don't await — must catch its own errors.
+    This is the single most common way a plugin takes the editor's plugin
+    thread down with it.
+  - `setVirtualBufferContent(id, entries)` takes an array of *span objects*,
+    not strings: `[{ text: "a\n" }, { text: "b\n" }]`. Spans are concatenated
+    verbatim, so nothing inserts newlines for you.
+  - Handlers are named, not closures, because the host invokes them by name
+    across the boundary. Declare them with the `registerHandler` global:
+        registerHandler("my_handler", async function () { ... });
+        editor.registerCommand("My Command", "desc", "my_handler", null);
+  - **Each plugin gets its own realm, and so does each `script run`.**
+    `registerHandler` puts the function on *that realm's* `globalThis`, so
+    init.ts can call its own handlers directly — but a script submitted with
+    `script run` cannot see them, and will report them `undefined`. A script
+    reaches a plugin through `editor.runCommand("...")` or through an API the
+    plugin published with `editor.exportPluginApi(...)` / read back with
+    `getPluginApi("...")`. Nothing else crosses between realms.
+  - Most `editor.*` calls that ask the host a question are async and return a
+    promise — `getBufferText`, `createVirtualBuffer`, `spawnProcess`,
+    `listCommands`. Await them.
+  - Layout mutations are queued, not immediate. After creating/closing splits
+    or buffers, `await editor.flush()` before reading state back, or you will
+    read the layout as it was.
+  - `editor.spawnProcess(cmd, args, cwd)` runs the program directly — no
+    shell. No pipes, globs, quoting or $VARS; pass args pre-split. It inherits
+    the editor's PATH, so `git` and `gh` resolve by bare name. Do not wrap it
+    in `/bin/sh -lc` — that sources the user's profile and can hang.
+  - `editor.setInterval(ms, "handler_name")` is the low-effort way to do
+    anything periodic: the host drives it, a throw in one tick doesn't stop
+    the next, and it is cancelled for you on reload. A detached
+    `while (alive) { await editor.delay(ms); ... }` loop also works and is
+    better when iterations depend on each other — but then *you* own the
+    three things the timer handles: one unguarded throw kills the loop
+    silently, nothing cancels it on reload (gate it on an identity, not a
+    boolean, or a reopen leaves two loops racing), and the first iteration
+    is one period late unless you also run the work once up front.
+  - `editor.delay(ms)` is also how you put a timeout on anything:
+        const timedOut = Symbol("timeout");
+        const outcome = await Promise.race([
+            work().then(() => "ok"),
+            editor.delay(8000).then(() => timedOut),
+        ]);
+  - `padToChars` / `truncateToChars` on a text entry are applied when the line
+    is *drawn*. `getBufferText()` returns the text unpadded, so column
+    alignment can't be verified by reading back. Embed real spaces with
+    `padEnd` if you need alignment that survives read-back.
+  - `listWorkspaces()` reports a negative `windowId` for a workspace that
+    exists on disk but has never been activated — there is no window yet.
+    `setActiveWindow` rejects those; use
+    `getPluginApi("orchestrator").focusWorkspace(workspaceId)` instead.
+
+WORKED EXAMPLE — a live, auto-refreshing, clickable panel
+
+  Distilled from plugins/dashboard.ts, which is the same thing at full size.
+  Every line below is load-bearing; the notes after say which failure each
+  one prevents.
+
+    const editor = getEditor();
+    let panelId = null;           // null = closed
+    let opening = false;          // re-entrancy guard for the async open
+    let token = 0;                // invalidates results from a previous open
+    let inFlight = false;
+    let timer = null;             // the one refresh timer, never two
+    let rows = {};                // buffer row -> windowId
+    let last = null;              // last good data, for stale-while-revalidate
+
+    registerHandler("panel_render", async function () {
+      if (panelId === null || inFlight) return;
+      inFlight = true;
+      const mine = token;
+      try {
+        const timedOut = Symbol("timeout");
+        const orch = getPluginApi("orchestrator");
+        const got = await Promise.race([
+          orch.listWorkspaces(),
+          editor.delay(8000).then(() => timedOut),
+        ]);
+        if (got !== timedOut) last = got;
+      } catch (e) {
+        // Keep `last`: a flaky refresh should degrade to old data, not blank
+        // the panel. Swallowing here is what keeps the panel alive.
+      } finally {
+        inFlight = false;
+      }
+      if (mine !== token || panelId === null || last === null) return;
+      rows = {};
+      // Entries are *spans*, not lines: nothing inserts newlines for you,
+      // and each must be an object — an array of bare strings is rejected.
+      editor.setVirtualBufferContent(panelId, last.map(function (w, i) {
+        rows[i] = w.windowId;
+        // Real spaces: padToChars is render-only, invisible to getBufferText.
+        return { text: w.name.padEnd(24) + " " + (w.branch || "") + "\n" };
+      }));
+    });
+
+    registerHandler("open_panel", async function () {
+      // Adopt a panel left over from a previous load of this file before
+      // creating one: reload drops commands and timers, but a virtual buffer
+      // outlives it, so `edit → reload → run` otherwise stacks a new panel
+      // every iteration — the loop you are in while developing.
+      if (panelId === null) {
+        const existing = editor.listBuffers()
+          .find(b => b.is_virtual && b.name === "Workspaces");
+        if (existing) panelId = existing.id;
+      }
+      if (panelId !== null) { editor.showBuffer(panelId); }
+      if (panelId === null) {
+        if (opening) return;
+        opening = true;
+        try {
+          const res = await editor.createVirtualBuffer({
+            name: "Workspaces",      // findable later via listBuffers()
+            readOnly: true, editingDisabled: true, showCursors: false,
+          });
+          panelId = res.bufferId;
+          token++;
+        } finally {
+          opening = false;
+        }
+      }
+      await globalThis.panel_render();          // instant first paint
+      // Exactly one timer: re-running the command (or closing and reopening
+      // the panel) must not double the refresh rate.
+      if (timer === null) timer = editor.setInterval(5000, "panel_render");
+    });
+    editor.registerCommand("Workspaces", "live workspace panel",
+                           "open_panel", null);
+
+    registerHandler("panel_closed", function (ev) {
+      if (ev.bufferId !== panelId) return;
+      panelId = null;
+      token++;
+      // Stop refreshing a panel that is gone, and drop the id so a reopen
+      // arms a fresh timer rather than skipping the `timer === null` check.
+      if (timer !== null) { editor.clearInterval(timer); timer = null; }
+    });
+    editor.on("buffer_closed", "panel_closed");
+
+    registerHandler("panel_click", function (ev) {
+      if (ev.bufferId !== panelId) return;
+      const target = rows[ev.buffer_row];
+      // Guard the sign: a workspace that has never been activated reports a
+      // negative placeholder windowId, which setActiveWindow refuses.
+      if (target > 0) editor.setActiveWindow(target);
+    });
+    editor.on("mouse_click", "panel_click");
+
+  What each guard is for:
+    - `opening`      createVirtualBuffer is async, so two opens in flight at
+                     once would create two panels. dashboard.ts hit this for
+                     real (its `ready` hook racing its own command).
+    - `token`        a refresh that resolves after the panel was closed and
+                     reopened would otherwise paint into the new panel with
+                     the old panel's data.
+    - `inFlight`     setInterval does not queue ticks; if a refresh outlasts
+                     its period the next fires anyway.
+    - `timer`        arming unconditionally would double the refresh rate on
+                     every reopen, and again on every reload.
+    - try/catch      a throw inside a refresh must not take the panel down.
+                     (In a `delay` loop it would silently end the loop; here
+                     it only costs one tick — but you still want `last` kept.)
+    - Promise.race   a hung subprocess would otherwise wedge the panel
+                     forever at whatever it last drew.
+    - awaited first  without it the panel shows nothing until the first tick,
+      render         which is the classic "stuck on loading…" panel.
+
+  Scaling note: one ticker driving many independent items is better written
+  as a fast tick plus a per-item TTL — re-run an item only once its own data
+  is stale — so ambient cost tracks the sum of the items' rates instead of
+  tick-rate × item-count. dashboard.ts does this at TICK_MS = 1000.
+
+VERIFYING YOUR OWN WORK
+
+  `setStatus` has no read side, so asserting on a status message from outside
+  looks impossible. It is not: every status message is appended to
+  `<state-dir>/logs/status-<pid>.log`, where <state-dir> is the one
+  `fresh --cmd config paths` prints. That file is the readback channel for
+  "did my command actually run and report what I expect".
+
+  For anything else, `fresh --cmd script run` reads live state directly —
+  `listBuffers()`, `getBufferText(id)`, `listSplits()`. Remember
+  `await editor.flush()` before reading back after a layout change, and that
+  a script runs in its own realm (above), so it sees the editor's state but
+  not your plugin's variables.
+
+DISCOVERY
+
+  fresh --cmd script api <query>    search the API by name or description
+  fresh --cmd script types          where fresh.d.ts / plugins.d.ts live
+  fresh --cmd help script           driving a running editor from a shell
+"#,
+    )
+}
+
+/// `fresh --cmd script types` — print where the API declarations live.
+///
+/// The discovery verb. An agent that has just learned it can script the editor
+/// needs to know what it may call; these two files are the answer, and they are
+/// on disk rather than over the wire because that is where a coding agent is
+/// already good at reading.
+fn script_types() -> AnyhowResult<()> {
+    let dir = fresh::config_io::DirectoryContext::from_system()?
+        .config_dir
+        .join("types");
+    println!("{}", dir.join("fresh.d.ts").display());
+    println!("{}", dir.join("plugins.d.ts").display());
+    Ok(())
+}
+
+/// `fresh --cmd script run [FILE|-]` — evaluate a script in the editor.
+///
+/// The source comes from a file or stdin rather than argv: a script is
+/// multi-line and full of quotes, and threading that through a shell's argument
+/// vector mangles it. `fresh --cmd script run < s.ts`, a heredoc, or an explicit
+/// path all work.
+///
+/// Whatever the script returns is printed as JSON; a throw becomes a non-zero
+/// exit with the message on stderr.
+fn script_run(session: Option<&str>, from: &[&str]) -> AnyhowResult<()> {
+    let source = read_script_source(from)?;
+    if source.trim().is_empty() {
+        anyhow::bail!("empty script: pass a file, or pipe the source on stdin");
+    }
+    submit_script(session, source, false)
+}
+
+/// Send `source` to a live editor's script channel and report the outcome:
+/// whatever the script returned on stdout, a throw on stderr with exit 1.
+///
+/// Every verb below is a thin wrapper over this. The script channel is
+/// already the authorized, window-scoped, capability-checked way into a
+/// running editor, so a new verb needs a new *script*, not a new socket
+/// message — and the verb inherits the token check for free.
+///
+/// `unwrap_string` decodes a JSON string result before printing it. `script
+/// run` leaves its output verbatim (a script's return value is data, and the
+/// caller asked for JSON); the convenience verbs return prose meant to be
+/// read, where the surrounding quotes and `\n` escapes would be noise.
+fn submit_script(session: Option<&str>, source: String, unwrap_string: bool) -> AnyhowResult<()> {
     use fresh::server::protocol::ClientControl;
 
     let socket = resolve_cmd_socket(session)?;
-    let conn = connect_cmd(&socket)?;
-    conn.write_control(&serde_json::to_string(&ClientControl::RunCommand {
-        id: id.to_string(),
-        args,
-    })?)?;
+    let mut conn = connect_cmd(&socket)?;
+    conn.send(&ClientControl::RunScript { source })?;
 
-    let (ok, error, output) = read_command_result(&conn)?;
+    // A script gets the long wait: it can create a workspace (a git worktree
+    // plus an agent process) before it answers, and timing that out would
+    // report a failure about something that is merely still running.
+    let (ok, error, output) = read_script_result(&mut conn, cmd_build_timeout())?;
     if let Some(out) = output {
-        if !out.is_empty() {
-            println!("{}", out);
+        let text = if unwrap_string {
+            serde_json::from_str::<String>(&out).unwrap_or(out)
+        } else {
+            out
+        };
+        if !text.is_empty() {
+            println!("{}", text);
         }
     }
     if !ok {
-        eprintln!(
-            "{}",
-            error.unwrap_or_else(|| format!("command '{}' failed", id))
-        );
+        eprintln!("{}", error.unwrap_or_else(|| "script failed".to_string()));
         std::process::exit(1);
     }
     Ok(())
 }
 
-/// `fresh --cmd workspace new <dir>` — open `<dir>` as a new orchestrator
-/// window (the "new workspace" verb), reusing `ClientControl::OpenWindow`.
-fn workspace_new(session: Option<&str>, dir: &str) -> AnyhowResult<()> {
-    use fresh::server::protocol::ClientControl;
+/// `fresh --cmd init reload` — re-read and run `~/.config/fresh/init.ts` in
+/// the running editor.
+///
+/// The loop this closes: an agent editing init.ts on the user's behalf could
+/// previously check its syntax (`init check`) but not *run* it, because
+/// reload was palette-only — so every iteration needed a human keystroke.
+/// `reloadPlugin("init.ts")` is not the substitute it looks like: init.ts is
+/// loaded from source under a sentinel path, not from disk by name.
+///
+/// Exits non-zero with the parse/eval error when the new source does not
+/// load, in which case the previous init.ts is still the live one.
+fn init_reload_command(session: Option<&str>) -> AnyhowResult<()> {
+    submit_script(session, init_reload_script().to_string(), true)
+}
 
-    // Resolve to an absolute path (canonicalize when it exists; otherwise
-    // anchor a relative path at the cwd) so the server gets an unambiguous root.
-    let path = Path::new(dir);
-    let abs = match std::fs::canonicalize(path) {
-        Ok(p) => p,
-        Err(_) if path.is_absolute() => path.to_path_buf(),
-        Err(_) => std::env::current_dir()?.join(path),
-    };
+/// The script `init reload` submits. Split out so a test can check it still
+/// parses and still names only real API members — these sources never go
+/// through `script check`, so nothing else would catch a typo in one until a
+/// user hit the verb.
+fn init_reload_script() -> &'static str {
+    r#"
+    const loaded = await editor.reloadInit();
+    return loaded
+        ? "init.ts: reloaded"
+        : "init.ts: nothing to load (no init.ts, or started with --no-init / --safe)";
+    "#
+}
 
-    let socket = resolve_cmd_socket(session)?;
-    let conn = connect_cmd(&socket)?;
-    conn.write_control(&serde_json::to_string(&ClientControl::OpenWindow {
-        path: abs.to_string_lossy().into_owned(),
-    })?)?;
-    // OpenWindow is fire-and-forget (the server sends no reply), matching
-    // `forward_to_session`.
+/// `fresh --cmd command run "<name>"` — invoke a registered command by the
+/// name the palette shows, built-in or plugin-registered.
+///
+/// This is how an agent tests a command it just registered *through the path
+/// the user will take*, rather than by calling the plugin's exported function
+/// and hoping registration also worked.
+fn command_run_command(session: Option<&str>, name: &str) -> AnyhowResult<()> {
+    submit_script(session, command_run_script(name)?, true)
+}
+
+/// The script `command run` submits, with `name` JSON-encoded so a command
+/// containing a quote or a backslash cannot break out of the literal.
+fn command_run_script(name: &str) -> AnyhowResult<String> {
+    let encoded = serde_json::to_string(name)?;
+    Ok(format!(
+        r#"
+        const name = {encoded};
+        await editor.runCommand(name);
+        return "ran: " + name;
+        "#
+    ))
+}
+
+/// `fresh --cmd command list [QUERY]` — every registered command, optionally
+/// filtered by a case-insensitive substring of the name or description.
+///
+/// Answers "did my registerCommand land, and under what name" in one call —
+/// which is the question behind most "my command isn't in the palette" hunts.
+/// Filtering happens in the editor so a large registry doesn't cross the
+/// socket just to be discarded here.
+fn command_list_command(session: Option<&str>, query: Option<&str>) -> AnyhowResult<()> {
+    submit_script(session, command_list_script(query)?, true)
+}
+
+/// The script `command list` submits.
+fn command_list_script(query: Option<&str>) -> AnyhowResult<String> {
+    let encoded = serde_json::to_string(query.unwrap_or(""))?;
+    Ok(format!(
+        r#"
+            const q = {encoded}.toLowerCase();
+            const rows = (await editor.listCommands()).filter(function (c) {{
+                return !q
+                    || c.name.toLowerCase().indexOf(q) >= 0
+                    || c.description.toLowerCase().indexOf(q) >= 0;
+            }});
+            if (rows.length === 0) {{
+                return q ? "no command matches " + JSON.stringify(q) : "no commands registered";
+            }}
+            const width = rows.reduce(function (w, c) {{
+                return Math.max(w, c.name.length);
+            }}, 0);
+            return rows.map(function (c) {{
+                const origin = c.source === "plugin" ? "plugin:" + c.plugin : "builtin";
+                return c.name.padEnd(width) + "  " + origin.padEnd(16) + "  " + c.description;
+            }}).join("\n");
+            "#
+    ))
+}
+
+/// One `editor` member (or exported type) found in a `.d.ts`, with the doc
+/// comment that precedes it.
+struct ApiEntry {
+    /// Declared name, e.g. `splitWindow`.
+    name: String,
+    /// The declaration line, trimmed.
+    signature: String,
+    /// The `/** … */` block above it, comment markers stripped.
+    doc: Vec<String>,
+    /// Which file it came from, for the header line.
+    source: String,
+}
+
+/// Pull every documented declaration out of a `.d.ts`.
+///
+/// A deliberately small scanner rather than a TypeScript parse: the input is
+/// generated by `write_fresh_dts`, so its shape is known, and the cost of
+/// being approximate here is a slightly-off signature line — not a wrong
+/// answer about whether something exists.
+fn parse_dts_entries(text: &str, source: &str) -> Vec<ApiEntry> {
+    let mut entries = Vec::new();
+    let mut doc: Vec<String> = Vec::new();
+    let mut in_doc = false;
+
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with("/**") {
+            doc.clear();
+            in_doc = true;
+            // `/** one-liner */`
+            if let Some(rest) = t.strip_prefix("/**").and_then(|r| r.strip_suffix("*/")) {
+                doc.push(rest.trim().to_string());
+                in_doc = false;
+            }
+            continue;
+        }
+        if in_doc {
+            if t.starts_with("*/") {
+                in_doc = false;
+            } else {
+                doc.push(t.trim_start_matches('*').trim().to_string());
+            }
+            continue;
+        }
+        if t.is_empty() || t.starts_with("//") || t == "}" || t == "};" {
+            continue;
+        }
+
+        // A declaration we can name: `foo(...)`, `foo: T;`, or `type Foo = {`.
+        let name = if let Some(rest) = t.strip_prefix("type ") {
+            rest.split(|c: char| c == ' ' || c == '=' || c == '<')
+                .next()
+                .unwrap_or("")
+                .to_string()
+        } else {
+            let head: String = t
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                .collect();
+            let after = t[head.len()..].trim_start();
+            if head.is_empty()
+                || !(after.starts_with('(') || after.starts_with(':') || after.starts_with('<'))
+            {
+                doc.clear();
+                continue;
+            }
+            head
+        };
+
+        if !name.is_empty() {
+            entries.push(ApiEntry {
+                name,
+                signature: t.trim_end_matches(';').to_string(),
+                doc: std::mem::take(&mut doc),
+                source: source.to_string(),
+            });
+        } else {
+            doc.clear();
+        }
+    }
+    entries
+}
+
+/// Where the API declarations live, and their contents.
+fn read_api_declarations() -> AnyhowResult<Vec<(String, String)>> {
+    let dir = fresh::config_io::DirectoryContext::from_system()?
+        .config_dir
+        .join("types");
+    let mut out = Vec::new();
+    for file in ["fresh.d.ts", "plugins.d.ts"] {
+        let path = dir.join(file);
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            out.push((file.to_string(), text));
+        }
+    }
+    if out.is_empty() {
+        anyhow::bail!(
+            "no API declarations found in {} — start the editor once to write them",
+            dir.display()
+        );
+    }
+    Ok(out)
+}
+
+/// `fresh --cmd script api <query>` — find API members by name or description.
+///
+/// The alternative is grepping a 4000-line declaration file, where a search for
+/// "split" returns every unrelated sense of the word. Matching the name first
+/// and the prose second puts the verb you meant at the top, and printing each
+/// hit with its doc comment means one call usually answers the question
+/// outright.
+fn script_api(query: &str, flags: &[&str]) -> AnyhowResult<()> {
+    let json = flags.contains(&"--json");
+    let needle = query.to_lowercase();
+    let files = read_api_declarations()?;
+
+    let mut by_name = Vec::new();
+    let mut by_doc = Vec::new();
+    // Names that only match sparsely (fzf-style), held back as a fallback.
+    //
+    // Substring matching alone answers "no API member matches" to a caller
+    // who guessed a plausible-but-wrong name — `setCursor` for
+    // `setBufferCursor`, `setBufferText` for `setVirtualBufferContent`. That
+    // is the worst possible reply, because it reads as "the editor cannot do
+    // this" when the member is right there under a name one word longer.
+    // A subsequence match finds those, and is only consulted when nothing
+    // matched properly, so it can never push a real hit down the list.
+    let mut fuzzy_names: Vec<(i32, ApiEntry)> = Vec::new();
+    for (source, text) in &files {
+        for entry in parse_dts_entries(text, source) {
+            if entry.name.to_lowercase().contains(&needle) {
+                by_name.push(entry);
+            } else if entry
+                .doc
+                .iter()
+                .any(|line| line.to_lowercase().contains(&needle))
+            {
+                by_doc.push(entry);
+            } else {
+                let m = fresh::input::fuzzy::fuzzy_match(query, &entry.name);
+                if m.matched {
+                    fuzzy_names.push((m.score, entry));
+                }
+            }
+        }
+    }
+    // Rank so the thing you can *call* comes first. A search for "split"
+    // should answer with `splitWindow(...)`, not with the `splitId` field of
+    // six different record types — which is exactly how grepping the
+    // declaration file fails.
+    by_name.sort_by_key(|e| {
+        let callable = e.signature.contains('(');
+        let prefix = e.name.to_lowercase().starts_with(&needle);
+        (!callable as usize) * 1000 + (!prefix as usize) * 100 + e.name.len()
+    });
+    // The same field name appears on many record types; one is informative,
+    // six is noise.
+    by_name.dedup_by(|a, b| a.name == b.name && a.signature == b.signature);
+    let mut hits: Vec<ApiEntry> = by_name.into_iter().chain(by_doc).collect();
+
+    // Only when nothing matched outright: offer the near-misses, best first
+    // and capped, so a wrong guess gets an answer instead of a dead end.
+    let mut fuzzy_fallback = false;
+    if hits.is_empty() && !fuzzy_names.is_empty() {
+        fuzzy_fallback = true;
+        fuzzy_names.sort_by_key(|(score, e)| (std::cmp::Reverse(*score), e.name.len()));
+        fuzzy_names.dedup_by(|a, b| a.1.name == b.1.name && a.1.signature == b.1.signature);
+        hits = fuzzy_names.into_iter().take(8).map(|(_, e)| e).collect();
+    }
+
+    if hits.is_empty() {
+        eprintln!(
+            "no API member matches '{}'. Try a shorter or more general word \
+             (e.g. 'split', 'terminal', 'buffer').",
+            query
+        );
+        std::process::exit(1);
+    }
+
+    // Say so, on stderr, so `--json` output stays machine-readable and a
+    // caller can tell "this is exactly what you asked for" from "this is the
+    // closest thing that exists".
+    if fuzzy_fallback {
+        eprintln!("no exact match for '{query}' — showing the closest names:\n");
+    }
+
+    if json {
+        let payload: Vec<serde_json::Value> = hits
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "name": e.name,
+                    "signature": e.signature,
+                    "doc": e.doc.join("\n"),
+                    "source": e.source,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+
+    for entry in hits.iter().take(20) {
+        println!("{}  [{}]", entry.signature, entry.source);
+        for line in &entry.doc {
+            if line.is_empty() {
+                println!();
+            } else {
+                println!("    {}", line);
+            }
+        }
+        println!();
+    }
+    if hits.len() > 20 {
+        println!(
+            "… and {} more; narrow the query to see them.",
+            hits.len() - 20
+        );
+    }
     Ok(())
+}
+
+/// `fresh --cmd script check [FILE|-]` — validate a script without running it.
+///
+/// Two failure modes are worth catching before a script touches a live
+/// workspace a human is looking at: it doesn't parse, and it calls an `editor`
+/// member that doesn't exist. The second is the one that actually bites — a
+/// misremembered method name is indistinguishable from a missing feature until
+/// you run it.
+fn script_check(from: &[&str]) -> AnyhowResult<()> {
+    let source = read_script_source(from)?;
+
+    // Syntax: the same transpile the editor would do, minus the execution.
+    //
+    // Checked *wrapped*, because that is what actually runs: the host makes
+    // the script the body of an async function, which is why top-level
+    // `await` and `return` are legal in one. Parsing the bare file would
+    // reject every script that returns a value — i.e. the well-formed ones.
+    #[cfg(feature = "plugins")]
+    {
+        let wrapped = format!("(async () => {{\n{}\n}})();", source);
+        if let Err(e) = fresh_parser_js::transpile_typescript(&wrapped, "script.ts") {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
+
+    // Unknown `editor.foo(` references, checked against the declarations.
+    let files = read_api_declarations()?;
+    let known: std::collections::HashSet<String> = files
+        .iter()
+        .flat_map(|(source, text)| parse_dts_entries(text, source))
+        .map(|e| e.name)
+        .collect();
+
+    let mut unknown: Vec<String> = Vec::new();
+    let mut rest = source.as_str();
+    while let Some(idx) = rest.find("editor.") {
+        rest = &rest[idx + "editor.".len()..];
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+            .collect();
+        if !name.is_empty() && !known.contains(&name) && !unknown.contains(&name) {
+            unknown.push(name);
+        }
+    }
+
+    if !unknown.is_empty() {
+        for name in &unknown {
+            eprintln!("editor.{} is not part of the API.", name);
+            // Cheap nearest-neighbour: shared prefix, then shared substring.
+            let mut near: Vec<&String> = known
+                .iter()
+                .filter(|k| {
+                    let (a, b) = (k.to_lowercase(), name.to_lowercase());
+                    a.starts_with(&b[..b.len().min(4)]) || b.starts_with(&a[..a.len().min(4)])
+                })
+                .collect();
+            near.sort();
+            if !near.is_empty() {
+                let list: Vec<&str> = near.iter().take(5).map(|s| s.as_str()).collect();
+                eprintln!("  closest: {}", list.join(", "));
+            }
+            eprintln!("  search:  fresh --cmd script api {}", name);
+        }
+        std::process::exit(1);
+    }
+
+    println!("ok");
+    Ok(())
+}
+
+/// Read a script from a file argument, or stdin when absent or `-`.
+fn read_script_source(from: &[&str]) -> AnyhowResult<String> {
+    use std::io::Read;
+    match from.first().copied() {
+        None | Some("-") => {
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf)?;
+            Ok(buf)
+        }
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("could not read script '{}': {}", path, e)),
+    }
 }
 
 /// Attach to an existing daemon, starting one if needed
@@ -3634,9 +4761,11 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
         let local_files: Vec<String> = if ssh_url.is_some() {
             files
                 .iter()
+                // Parse errors were already surfaced by
+                // `extract_ssh_url_from_files` above.
                 .filter_map(|f| match parse_location(f) {
-                    ParsedLocation::Remote(r) => Some(r.path),
-                    ParsedLocation::Local(_) => None,
+                    Ok(ParsedLocation::Remote(r)) => Some(r.path),
+                    _ => None,
                 })
                 .collect()
         } else {
@@ -3735,13 +4864,115 @@ fn is_interactive_launch(args: &Args) -> bool {
         && !args.list_grammars
         && !args.dump_config
         && !args.show_paths
+        && !args.update
         && args.check_plugin.is_none()
 }
 
 fn show_paths_command() -> AnyhowResult<()> {
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
     fresh::services::log_dirs::print_all_paths(&dir_context);
+
+    // Also report resolved install provenance (how `fresh update` behaves).
+    let prov = fresh::services::release_checker::detect_provenance();
+    let plan = fresh::services::release_checker::plan_for(&prov);
+    println!();
+    println!(
+        "install channel:    {} ({})",
+        prov.channel.label(),
+        prov.channel
+    );
+    println!("provenance:         {:?}", prov.confidence);
+    if let Some(detail) = &prov.detail {
+        println!("provenance source:  {detail}");
+    }
+    println!(
+        "update mechanism:   {}",
+        plan.command
+            .as_ref()
+            .map(|c| c.join(" "))
+            .unwrap_or(plan.human)
+    );
     Ok(())
+}
+
+/// Handle `fresh update [--check] [--yes] [--allow-downgrade] [--force]
+///                       [--download-only] [--print-command]
+///                       [--releases-url U] [--download-base U]`.
+fn update_command(args: &Args) -> AnyhowResult<()> {
+    #[cfg(feature = "self-update")]
+    {
+        // The env vars are read inside `Endpoints::from_env`, so the
+        // background check and the update child the popup spawns agree on
+        // where releases come from. The CLI flags override on top, and go
+        // through the same policy: an endpoint that leaves the pinned host
+        // list is refused outright in a release build, and marks the run
+        // untrusted (no privileged install) in one that permits it.
+        let mut endpoints = match fresh_update::endpoint::Endpoints::from_env() {
+            Ok(ep) => ep,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        };
+        if let Some(url) = args.update_releases_url.clone() {
+            if let Err(e) = endpoints.set_releases_url(url) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        if let Some(base) = args.update_download_base.clone() {
+            if let Err(e) = endpoints.set_download_base(base) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        let opts = fresh_update::engine::UpdateOptions {
+            check_only: args.update_check,
+            yes: args.update_yes,
+            allow_downgrade: args.update_allow_downgrade,
+            allow_prerelease: args.update_pre,
+            // Three rungs, most automatic first. `--print-command` wins if
+            // both are given: it is the one that promises to touch nothing,
+            // and a promise like that should not be overridden by accident.
+            execution: if args.update_print_command {
+                fresh_update::engine::Execution::PrintOnly
+            } else if args.update_download_only {
+                fresh_update::engine::Execution::DownloadOnly
+            } else {
+                fresh_update::engine::Execution::Install
+            },
+            force: args.update_force,
+            endpoints,
+        };
+        // Map the outcome to a process exit code without an anyhow backtrace
+        // (the editor's update terminal keys the indicator off this exit
+        // status, and a backtrace there is pure noise):
+        //   - Done            -> exit 0
+        //   - ActionRequired  -> exit EXIT_ACTION_REQUIRED, a code distinct
+        //                        from both success and failure; run() already
+        //                        printed what the user has to do, so add
+        //                        nothing here
+        //   - Err             -> clean one-line "Error: <msg>", exit 1
+        use fresh_update::engine::UpdateStatus;
+        match fresh_update::engine::run(fresh::services::release_checker::CURRENT_VERSION, &opts) {
+            Ok(UpdateStatus::Done) => Ok(()),
+            Ok(UpdateStatus::ActionRequired) => {
+                std::process::exit(fresh_update::EXIT_ACTION_REQUIRED)
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    #[cfg(not(feature = "self-update"))]
+    {
+        let _ = args;
+        anyhow::bail!(
+            "this build was compiled without self-update support; \
+             download the latest release from https://github.com/sinelaw/fresh/releases"
+        );
+    }
 }
 
 fn dump_config_command(args: &Args) -> AnyhowResult<()> {
@@ -3767,6 +4998,9 @@ fn run_if_subcommand(
     args: &Args,
     #[cfg(feature = "gui")] console_available: bool,
 ) -> Option<AnyhowResult<()>> {
+    if args.update {
+        return Some(update_command(args));
+    }
     if args.show_paths {
         return Some(show_paths_command());
     }
@@ -3793,7 +5027,7 @@ fn run_if_subcommand(
         return Some(kill_session_command(session.as_deref(), args));
     }
     if args.server {
-        return Some(run_server_command(args));
+        return Some(run_server_command(args, None));
     }
     if let Some((session_name, files, wait)) = &args.open_files_in_session {
         return Some(run_open_files_command(
@@ -3805,10 +5039,14 @@ fn run_if_subcommand(
     if args.attach {
         return Some(run_attach_command(args));
     }
+    // `--web` runs the session daemon in the foreground with the web bridge
+    // hosted inside it, so the browser and any `fresh -a` terminal share one
+    // editor. It is NOT a separate editor process: the daemon binds the usual
+    // session sockets for this working directory (or `--session NAME`) first,
+    // so a session that is already live is joined rather than shadowed.
     #[cfg(feature = "web")]
     if let Some(addr) = &args.web {
-        let files: Vec<PathBuf> = args.files.iter().map(PathBuf::from).collect();
-        return Some(fresh::webui::run(addr, &files));
+        return Some(run_web_command(args, addr));
     }
     #[cfg(feature = "gui")]
     if !console_available || args.gui {
@@ -3918,6 +5156,30 @@ fn build_localized_after_help() -> String {
         "  init                      {}\n",
         t("cli.cmd.init")
     ));
+    out.push_str(&format!(
+        "  init check                {}\n",
+        t("cli.cmd.init_check")
+    ));
+    out.push_str(&format!(
+        "  init reload               {}\n",
+        t("cli.cmd.init_reload")
+    ));
+    out.push_str(&format!(
+        "  command run \"<name>\"      {}\n",
+        t("cli.cmd.command_run")
+    ));
+    out.push_str(&format!(
+        "  command list [QUERY]      {}\n",
+        t("cli.cmd.command_list")
+    ));
+    out.push_str(&format!(
+        "  script <verb>             {}\n",
+        t("cli.cmd.script")
+    ));
+    out.push_str(&format!(
+        "  help [TOPIC]              {}\n",
+        t("cli.cmd.help")
+    ));
     out.push('\n');
 
     out.push_str(&format!("{}\n", t("cli.section.session")));
@@ -3947,6 +5209,10 @@ fn build_localized_after_help() -> String {
     out.push_str(&format!(
         "  file.txt:10                  {}\n",
         t("cli.file_syntax.line")
+    ));
+    out.push_str(&format!(
+        "  +10 file.txt                 {}\n",
+        t("cli.file_syntax.plus_line")
     ));
     out.push_str(&format!(
         "  file.txt:10:5                {}\n",
@@ -4102,16 +5368,29 @@ fn real_main() -> AnyhowResult<()> {
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);
 
-    // Agent command-channel verbs (`cmd`, `split`, `workspace`) run against a
-    // live editor and never spawn a daemon, so handle them here — before the
-    // `Args` conversion, whose slice match would otherwise reject them as
-    // unknown commands. The `_ =>` fallthrough leaves every other `--cmd`
-    // invocation to the existing `Args::from` routing.
+    // The agent script verbs run against a live editor and never spawn a
+    // daemon, so handle them here — before the `Args` conversion, whose slice
+    // match would otherwise reject them as unknown commands. The `_ =>`
+    // fallthrough leaves every other `--cmd` invocation to the existing
+    // `Args::from` routing.
     if !cli.cmd.is_empty() {
         let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
         match cmd_args.as_slice() {
-            ["cmd", ..] | ["split", ..] | ["workspace", ..] => {
+            ["script", ..] | ["command", ..] => {
                 run_cmd_command(&cmd_args)?;
+                return Ok(());
+            }
+            // `init reload` drives a *running* editor; every other `init`
+            // form is the package initializer below. Matched here so the
+            // `Args::from` slice pattern (`["init", pkg_type, ..]`) doesn't
+            // claim it first and try to scaffold a package called "reload".
+            ["init", "reload", ..] => {
+                run_cmd_command(&cmd_args)?;
+                return Ok(());
+            }
+            // Feature guides are static output — no daemon, no editor.
+            ["help", topic @ ..] => {
+                help_command(topic)?;
                 return Ok(());
             }
             _ => {}
@@ -4119,7 +5398,13 @@ fn real_main() -> AnyhowResult<()> {
     }
 
     // Convert to legacy Args format for compatibility
-    let args: Args = cli.into();
+    let mut args: Args = cli.into();
+
+    // Fold vim-style `+N` line arguments into the file list before any
+    // consumer (TUI, GUI, web, attach, nested forward) sees it, so
+    // `fresh +50 file.txt` == `fresh file.txt:50` everywhere (#1926).
+    args.files = apply_plus_line_args(std::mem::take(&mut args.files))?;
+    let args = args;
 
     // Expose `FRESH_INTERACTIVE=1` on the editor's process env when Fresh
     // is launched as a human-interactive editor (stdin is a TTY, not a
@@ -4250,10 +5535,18 @@ fn real_main() -> AnyhowResult<()> {
                 .clone()
                 .or_else(|| std::env::current_dir().ok())
                 .unwrap_or_default();
+            // The placeholder is local by construction, so its own filesystem
+            // is what resolves a linked worktree to the repo that owns its
+            // trust decision.
+            let trust_owner = fresh::services::workspace_trust::trust_owner_root(
+                current_authority.filesystem.as_ref(),
+                &placeholder_root,
+            );
             let placeholder = fresh::services::authority::Authority::local_scoped(
                 fresh::services::authority::SessionScope::for_root(
                     &placeholder_root,
                     &dir_context.project_state_dir(&placeholder_root),
+                    &dir_context.project_state_dir(&trust_owner),
                 ),
             );
             std::mem::replace(&mut current_authority, placeholder)
@@ -4272,6 +5565,11 @@ fn real_main() -> AnyhowResult<()> {
         )
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
+
+        // The quit-time save below already honors `workspace_enabled`; this
+        // extends it to the mid-session checkpoints (window switches,
+        // session-identity finalization) that wrote regardless (#2735).
+        editor.set_workspace_persistence(workspace_enabled);
 
         // Orchestrator cross-restart persistence is now loaded by
         // `Editor::with_options` before construction — it reads
@@ -4476,8 +5774,15 @@ fn real_main() -> AnyhowResult<()> {
                 release_checker::CURRENT_VERSION,
                 update_result.latest_version
             );
-            if let Some(cmd) = update_result.install_method.update_command() {
-                eprintln!("Update with: {}", cmd);
+            let plan = update_result.update_plan();
+            if let Some(cmd) = &plan.command {
+                eprintln!("Update with: {}", cmd.join(" "));
+            } else if matches!(
+                plan.kind,
+                fresh::services::release_checker::UpdateKind::SelfContained
+                    | fresh::services::release_checker::UpdateKind::DownloadPackage
+            ) {
+                eprintln!("Update with: fresh --cmd update");
             } else {
                 eprintln!(
                     "Download from: https://github.com/sinelaw/fresh/releases/tag/v{}",
@@ -4579,7 +5884,7 @@ fn run_event_loop(
     let reader = VtInputReader::spawn();
 
     let mut input_parser = InputParser::new();
-    let mut event_buffer: std::collections::VecDeque<CrosstermEvent> =
+    let mut event_buffer: std::collections::VecDeque<InputEvent> =
         std::collections::VecDeque::new();
 
     let result = run_event_loop_common(
@@ -4588,7 +5893,7 @@ fn run_event_loop(
         workspace_enabled,
         key_translator,
         terminal_modes,
-        |timeout| -> AnyhowResult<Option<CrosstermEvent>> {
+        |timeout| -> AnyhowResult<Option<InputEvent>> {
             // Return buffered events first
             if let Some(event) = event_buffer.pop_front() {
                 return Ok(Some(event));
@@ -4614,16 +5919,16 @@ fn run_event_loop(
                     }
                     Some(VtInputEvent::Resize) => {
                         if let Ok((cols, rows)) = crossterm::terminal::size() {
-                            event_buffer.push_back(CrosstermEvent::Resize(cols, rows));
+                            event_buffer.push_back(InputEvent::Resize(cols, rows));
                         }
                         got_any = true;
                     }
                     Some(VtInputEvent::FocusGained) => {
-                        event_buffer.push_back(CrosstermEvent::FocusGained);
+                        event_buffer.push_back(InputEvent::FocusGained);
                         got_any = true;
                     }
                     Some(VtInputEvent::FocusLost) => {
-                        event_buffer.push_back(CrosstermEvent::FocusLost);
+                        event_buffer.push_back(InputEvent::FocusLost);
                         got_any = true;
                     }
                     None => break,
@@ -4687,7 +5992,7 @@ fn run_event_loop(
 /// consecutive recovered panics and, past a small threshold, surface an error
 /// so the caller shuts the loop down cleanly instead of busy-looping. Any
 /// successful read resets the counter.
-fn safe_event_read() -> std::io::Result<Option<CrosstermEvent>> {
+fn safe_event_read() -> std::io::Result<Option<InputEvent>> {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -4697,7 +6002,7 @@ fn safe_event_read() -> std::io::Result<Option<CrosstermEvent>> {
     match catch_unwind(AssertUnwindSafe(event_read)) {
         Ok(res) => {
             CONSECUTIVE_PANICS.store(0, Ordering::Relaxed);
-            res.map(Some)
+            res.map(|event| Some(InputEvent::from(event)))
         }
         Err(_) => {
             let n = CONSECUTIVE_PANICS.fetch_add(1, Ordering::Relaxed) + 1;
@@ -4726,14 +6031,14 @@ fn run_event_loop_common<F>(
     mut poll_event: F,
 ) -> AnyhowResult<()>
 where
-    F: FnMut(Duration) -> AnyhowResult<Option<CrosstermEvent>>,
+    F: FnMut(Duration) -> AnyhowResult<Option<InputEvent>>,
 {
     use std::time::Instant;
 
     const FRAME_DURATION: Duration = Duration::from_millis(16); // 60fps
     let mut last_render = Instant::now();
     let mut needs_render = true;
-    let mut pending_event: Option<CrosstermEvent> = None;
+    let mut pending_event: Option<InputEvent> = None;
     // Time of the last real input event, used to start the wave-animation
     // screensaver after the configured idle period. Read from the editor's
     // injected time source so tests can drive idle time deterministically.
@@ -4889,8 +6194,8 @@ where
         // Event debug dialog receives ALL RAW events (before any translation or processing)
         // This is essential for diagnosing terminal keybinding issues
         if editor.active_window().is_event_debug_active() {
-            if let CrosstermEvent::Key(key_event) = event {
-                if key_event.kind == KeyEventKind::Press {
+            if let InputEvent::Key(key_event) = &event {
+                if fresh::input::is_keystroke(key_event.kind) {
                     editor
                         .active_window_mut()
                         .handle_event_debug_input(&key_event);
@@ -4907,7 +6212,7 @@ where
         // tracing spans + key-translation that depend on
         // event-loop-local state.
         let _span = match &event {
-            CrosstermEvent::Key(key_event) if key_event.kind == KeyEventKind::Press => Some(
+            InputEvent::Key(key_event) if fresh::input::is_keystroke(key_event.kind) => Some(
                 tracing::trace_span!(
                     "handle_key",
                     code = ?key_event.code,
@@ -4931,7 +6236,7 @@ fn poll_with_gpm(
     reader: &mut fresh::services::tty_input::TtyReader,
     gpm_client: Option<&GpmClient>,
     timeout: Duration,
-) -> AnyhowResult<Option<CrosstermEvent>> {
+) -> AnyhowResult<Option<InputEvent>> {
     use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
     use std::os::unix::io::{AsRawFd, BorrowedFd};
 
@@ -4970,7 +6275,11 @@ fn poll_with_gpm(
     let ready = poll(&mut poll_fds, poll_timeout).unwrap_or(0);
 
     if ready == 0 {
-        return Ok(reader.take_resize());
+        // stdin (and GPM) idle for the whole wait: resolve a buffered lone
+        // `ESC` as the Escape key, mirroring the no-GPM `reader.poll` path so a
+        // pending Escape still registers here (no-op when nothing is pending).
+        reader.flush_pending_escape();
+        return Ok(reader.next_buffered().or_else(|| reader.take_resize()));
     }
 
     let stdin_revents = poll_fds[0].revents();
@@ -4981,7 +6290,7 @@ fn poll_with_gpm(
         match gpm.read_event() {
             Ok(Some(gpm_event)) => {
                 if let Some(mouse_event) = gpm_to_crossterm(&gpm_event) {
-                    return Ok(Some(CrosstermEvent::Mouse(mouse_event)));
+                    return Ok(Some(InputEvent::Mouse(mouse_event)));
                 } else {
                     tracing::debug!("GPM event could not be converted to crossterm event");
                 }
@@ -5006,13 +6315,11 @@ fn poll_with_gpm(
 
 /// Skip stale mouse move events, return the latest one.
 /// If we read a non-move event while draining, return it as pending.
-fn coalesce_mouse_moves(
-    event: CrosstermEvent,
-) -> AnyhowResult<(CrosstermEvent, Option<CrosstermEvent>)> {
+fn coalesce_mouse_moves(event: InputEvent) -> AnyhowResult<(InputEvent, Option<InputEvent>)> {
     use crossterm::event::MouseEventKind;
 
     // Only coalesce mouse moves
-    if !matches!(&event, CrosstermEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
+    if !matches!(&event, InputEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
         return Ok((event, None));
     }
 
@@ -5029,7 +6336,7 @@ fn coalesce_mouse_moves(
         let Some(next) = safe_event_read()? else {
             continue;
         };
-        if matches!(&next, CrosstermEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
+        if matches!(&next, InputEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
             latest = next; // Newer move, skip the old one
         } else {
             return Ok((latest, Some(next))); // Hit a click/key, save it
@@ -5042,46 +6349,157 @@ fn coalesce_mouse_moves(
 mod tests {
     use super::*;
 
+    /// The scripts the convenience verbs submit must parse, and must call
+    /// only API members this build actually has.
+    ///
+    /// These sources never pass through `fresh --cmd script check` — they are
+    /// built in Rust and sent straight down the socket — so without this a
+    /// typo in one would surface as a runtime failure the first time a user
+    /// ran the verb, reported as "script failed" with a QuickJS message about
+    /// a line number in generated source they cannot see.
     #[test]
-    fn test_parse_kv_args_basic() {
-        let args = parse_kv_args(&["direction=vertical", "count=2"]);
-        assert_eq!(args.get("direction").map(String::as_str), Some("vertical"));
-        assert_eq!(args.get("count").map(String::as_str), Some("2"));
-        assert_eq!(args.len(), 2);
+    fn generated_verb_scripts_parse_and_use_real_api_members() {
+        let sources = [
+            ("init reload", init_reload_script().to_string()),
+            (
+                "command run",
+                // A name with a quote and a backslash: the JSON encoding is
+                // the only thing stopping this from ending the JS literal
+                // early and producing a syntax error at the user's expense.
+                command_run_script(r#"Weird " \ Name"#).expect("command run script builds"),
+            ),
+            (
+                "command list",
+                command_list_script(Some("query")).expect("command list script builds"),
+            ),
+            (
+                "command list (no query)",
+                command_list_script(None).expect("command list script builds"),
+            ),
+        ];
+
+        // Wrapped exactly as the host wraps a submitted script, so top-level
+        // `await` and `return` are legal — the same reasoning as `script check`.
+        #[cfg(feature = "plugins")]
+        for (verb, source) in &sources {
+            let wrapped = format!("(async () => {{\n{source}\n}})();");
+            fresh_parser_js::transpile_typescript(&wrapped, "verb.ts")
+                .unwrap_or_else(|e| panic!("`{verb}` submits a script that does not parse: {e}"));
+        }
+
+        // Every `editor.foo(` must exist in the declarations this build ships.
+        let known: std::collections::HashSet<String> =
+            parse_dts_entries(EMBEDDED_FRESH_DTS, "fresh.d.ts")
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
+        for (verb, source) in &sources {
+            let mut rest = source.as_str();
+            while let Some(idx) = rest.find("editor.") {
+                rest = &rest[idx + "editor.".len()..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                    .collect();
+                if name.is_empty() {
+                    continue;
+                }
+                assert!(
+                    known.contains(&name),
+                    "`{verb}` calls editor.{name}(), which this build's fresh.d.ts does not declare"
+                );
+            }
+        }
     }
 
+    /// `help tour`'s field reference must be generated from the embedded
+    /// schema: every property name and description that appears in
+    /// `tour.schema.json` (manifest, step, and overlay levels) must appear
+    /// in the output without being restated by hand. If someone edits the
+    /// schema, the help text follows automatically — this test pins that
+    /// wiring, not any particular field list.
     #[test]
-    fn test_parse_kv_args_ignores_non_kv_and_splits_on_first_eq() {
-        // Tokens without '=' are dropped; only the first '=' splits.
-        let args = parse_kv_args(&["bareword", "expr=a=b=c", "=noval", "k="]);
-        assert_eq!(args.get("expr").map(String::as_str), Some("a=b=c"));
-        assert_eq!(args.get("k").map(String::as_str), Some(""));
-        assert!(!args.contains_key("bareword"));
-        // Empty key is skipped.
-        assert!(!args.contains_key(""));
-        assert_eq!(args.len(), 2);
+    fn test_help_tour_reference_tracks_embedded_schema() {
+        let text = tour_help_text().expect("help tour text builds");
+        let schema: serde_json::Value = serde_json::from_str(TOUR_SCHEMA_JSON).unwrap();
+
+        let mut objects = vec![&schema];
+        if let Some(defs) = schema["definitions"].as_object() {
+            objects.extend(defs.values());
+        }
+        let mut seen_any = false;
+        for obj in objects {
+            let Some(props) = obj["properties"].as_object() else {
+                continue;
+            };
+            for (name, spec) in props {
+                seen_any = true;
+                assert!(
+                    text.contains(name.as_str()),
+                    "schema property '{name}' missing from help tour output"
+                );
+                if let Some(desc) = spec["description"].as_str() {
+                    assert!(
+                        text.contains(desc),
+                        "description of '{name}' missing from help tour output"
+                    );
+                }
+            }
+        }
+        assert!(seen_any, "embedded tour schema had no properties to render");
+        // The machine-readable escape hatch is advertised.
+        assert!(text.contains("--schema"));
+    }
+
+    /// `help tour --schema` output is the embedded schema verbatim — the
+    /// same file the code-tour plugin ships.
+    #[test]
+    fn test_help_tour_schema_is_valid_json() {
+        let schema: serde_json::Value = serde_json::from_str(TOUR_SCHEMA_JSON).unwrap();
+        assert_eq!(schema["title"], "Fresh Code Tour Manifest");
+        assert!(schema["definitions"]["TourStep"].is_object());
+    }
+
+    /// `help script`'s API-surface section is counted from the embedded
+    /// declarations, so it changes when the API does instead of rotting.
+    #[test]
+    fn test_help_script_api_surface_is_generated() {
+        let entries = parse_dts_entries(EMBEDDED_FRESH_DTS, "fresh.d.ts");
+        assert!(
+            entries.len() > 100,
+            "embedded fresh.d.ts parsed to implausibly few entries: {}",
+            entries.len()
+        );
+        let text = script_help_text();
+        assert!(text.contains(&format!("{} documented members", entries.len())));
+        // Every script verb the CLI dispatches is documented.
+        for verb in ["script run", "script check", "script api", "script types"] {
+            assert!(
+                text.contains(verb),
+                "verb '{verb}' missing from help script"
+            );
+        }
     }
 
     #[test]
     fn test_extract_session_flag_removes_pair_anywhere() {
-        let (session, rest) =
-            extract_session_flag(&["cmd", "run", "--session", "proj", "split_vertical"]);
+        let (session, rest) = extract_session_flag(&["script", "run", "--session", "proj", "s.ts"]);
         assert_eq!(session.as_deref(), Some("proj"));
-        assert_eq!(rest, vec!["cmd", "run", "split_vertical"]);
+        assert_eq!(rest, vec!["script", "run", "s.ts"]);
     }
 
     #[test]
     fn test_extract_session_flag_absent() {
-        let (session, rest) = extract_session_flag(&["cmd", "list", "--json"]);
+        let (session, rest) = extract_session_flag(&["script", "types"]);
         assert_eq!(session, None);
-        assert_eq!(rest, vec!["cmd", "list", "--json"]);
+        assert_eq!(rest, vec!["script", "types"]);
     }
 
     #[test]
     fn test_extract_session_flag_dangling_value_ignored() {
-        let (session, rest) = extract_session_flag(&["cmd", "list", "--session"]);
+        let (session, rest) = extract_session_flag(&["script", "types", "--session"]);
         assert_eq!(session, None);
-        assert_eq!(rest, vec!["cmd", "list"]);
+        assert_eq!(rest, vec!["script", "types"]);
     }
 
     #[test]
@@ -5165,7 +6583,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_local_simple() {
-        let loc = parse_location("file.txt");
+        let loc = parse_location("file.txt").unwrap();
         match loc {
             ParsedLocation::Local(fl) => {
                 assert_eq!(fl.path, PathBuf::from("file.txt"));
@@ -5177,7 +6595,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_local_with_line() {
-        let loc = parse_location("/path/to/file.rs:42");
+        let loc = parse_location("/path/to/file.rs:42").unwrap();
         match loc {
             ParsedLocation::Local(fl) => {
                 assert_eq!(fl.path, PathBuf::from("/path/to/file.rs"));
@@ -5189,7 +6607,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_remote_simple() {
-        let loc = parse_location("user@host:/path/to/file.rs");
+        let loc = parse_location("user@host:/path/to/file.rs").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "user");
@@ -5204,7 +6622,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_remote_with_line() {
-        let loc = parse_location("alice@server.com:/home/alice/project/main.rs:42");
+        let loc = parse_location("alice@server.com:/home/alice/project/main.rs:42").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "alice");
@@ -5219,7 +6637,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_remote_with_line_and_col() {
-        let loc = parse_location("bob@example.org:src/lib.rs:100:25");
+        let loc = parse_location("bob@example.org:src/lib.rs:100:25").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "bob");
@@ -5234,7 +6652,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_remote_relative_path() {
-        let loc = parse_location("user@host:relative/path/file.txt");
+        let loc = parse_location("user@host:relative/path/file.txt").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "user");
@@ -5248,7 +6666,7 @@ mod tests {
     #[test]
     fn test_parse_location_email_like_not_remote() {
         // An email-like string without a path should be treated as local
-        let loc = parse_location("user@host");
+        let loc = parse_location("user@host").unwrap();
         match loc {
             ParsedLocation::Local(fl) => {
                 assert_eq!(fl.path, PathBuf::from("user@host"));
@@ -5260,7 +6678,7 @@ mod tests {
     #[test]
     fn test_parse_location_at_in_path_local() {
         // A local path that happens to contain @ should still be local
-        let loc = parse_location("/path/with@sign/file.txt");
+        let loc = parse_location("/path/with@sign/file.txt").unwrap();
         match loc {
             ParsedLocation::Local(fl) => {
                 assert_eq!(fl.path, PathBuf::from("/path/with@sign/file.txt"));
@@ -5270,12 +6688,13 @@ mod tests {
     }
 
     // Tests for the URL-style `ssh://` remote form.  The `$USER`
-    // fallback-dependent cases set the env var explicitly so they
-    // don't depend on the test runner's environment.
+    // fallback-dependent cases inject the default user through
+    // `parse_location_with_default_user` so they don't depend on (or
+    // race over) the test runner's environment.
 
     #[test]
     fn test_parse_location_ssh_url_user_and_path() {
-        let loc = parse_location("ssh://alice@host.example/home/alice/main.rs");
+        let loc = parse_location("ssh://alice@host.example/home/alice/main.rs").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "alice");
@@ -5291,7 +6710,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_ssh_url_with_port() {
-        let loc = parse_location("ssh://bob@server:2222/etc/hosts");
+        let loc = parse_location("ssh://bob@server:2222/etc/hosts").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "bob");
@@ -5305,7 +6724,7 @@ mod tests {
 
     #[test]
     fn test_parse_location_ssh_url_with_port_and_line_col() {
-        let loc = parse_location("ssh://bob@server:2222/src/lib.rs:42:7");
+        let loc = parse_location("ssh://bob@server:2222/src/lib.rs:42:7").unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "bob");
@@ -5320,27 +6739,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_location_ssh_url_default_user_from_env() {
-        // Temporarily override $USER so the test doesn't depend on
-        // whatever the runner has set.
-        let prev_user = std::env::var("USER").ok();
-        let prev_username = std::env::var("USERNAME").ok();
-        // SAFETY: single-threaded test; no other thread reads $USER.
-        unsafe {
-            std::env::set_var("USER", "envuser");
-        }
-        let loc = parse_location("ssh://host.example/tmp/file.txt");
-        // Restore before asserting so a panic doesn't poison later tests.
-        unsafe {
-            match prev_user {
-                Some(ref v) => std::env::set_var("USER", v),
-                None => std::env::remove_var("USER"),
-            }
-            match prev_username {
-                Some(ref v) => std::env::set_var("USERNAME", v),
-                None => std::env::remove_var("USERNAME"),
-            }
-        }
+    fn test_parse_location_ssh_url_default_user_fallback() {
+        // No `user@` in the URL → the injected default (normally
+        // `$USER` / `$USERNAME`) fills in.
+        let loc =
+            parse_location_with_default_user("ssh://host.example/tmp/file.txt", Some("envuser"))
+                .unwrap();
         match loc {
             ParsedLocation::Remote(rl) => {
                 assert_eq!(rl.user, "envuser");
@@ -5353,40 +6757,199 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_location_ssh_url_missing_path_is_local() {
-        // `ssh://host` with no `/path` is malformed — fall through to
-        // the local parser, which stores the whole thing as a filename.
-        let loc = parse_location("ssh://host.example");
+    fn test_parse_location_ssh_url_no_user_no_env_is_error() {
+        // #2221: a userless `ssh://` URL with no `$USER`/`$USERNAME`
+        // fallback must fail loudly — never silently degrade to a
+        // local file named `ssh://...` (typing into that buffer and
+        // saving would write to a bogus local path).
+        let err = parse_location_with_default_user("ssh://localhost/etc/hosts", None)
+            .expect_err("userless ssh:// URL without $USER must be an error, not a local path");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("ssh://"),
+            "error should name the scheme: {msg}"
+        );
+        assert!(
+            msg.contains("$USER"),
+            "error should explain the cause: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_parse_location_ssh_url_missing_path_is_error() {
+        // `ssh://host` with no `/path` is malformed — hard error, not
+        // a local-path fallback.
+        let err = parse_location_with_default_user("ssh://host.example", Some("alice"))
+            .expect_err("ssh:// URL without a path must be an error");
+        assert!(format!("{}", err).contains("path"));
+    }
+
+    #[test]
+    fn test_parse_location_ssh_url_bad_port_is_error() {
+        // Non-numeric port → hard error, not a local-path fallback.
+        let err =
+            parse_location_with_default_user("ssh://alice@host:not-a-port/file", Some("alice"))
+                .expect_err("ssh:// URL with a bad port must be an error");
+        assert!(format!("{}", err).contains("port"));
+    }
+
+    #[test]
+    fn test_parse_location_ssh_url_empty_user_is_error() {
+        // `@` with an empty user is malformed — hard error.
+        assert!(parse_location_with_default_user("ssh://@host/path", Some("alice")).is_err());
+    }
+
+    #[test]
+    fn test_parse_location_ssh_url_userless_with_default_and_port() {
+        // Userless URL + default user still parses ports and line/col.
+        let loc =
+            parse_location_with_default_user("ssh://host:2200/var/log/syslog:12:3", Some("bob"))
+                .unwrap();
         match loc {
-            ParsedLocation::Local(fl) => {
-                assert_eq!(fl.path, PathBuf::from("ssh://host.example"));
+            ParsedLocation::Remote(rl) => {
+                assert_eq!(rl.user, "bob");
+                assert_eq!(rl.host, "host");
+                assert_eq!(rl.port, Some(2200));
+                assert_eq!(rl.path, "/var/log/syslog");
+                assert_eq!(rl.line, Some(12));
+                assert_eq!(rl.column, Some(3));
             }
-            ParsedLocation::Remote(_) => panic!("Expected local, got remote"),
+            ParsedLocation::Local(_) => panic!("Expected remote, got local"),
         }
     }
 
     #[test]
-    fn test_parse_location_ssh_url_bad_port_is_local() {
-        // Non-numeric port → falls through to local.
-        let loc = parse_location("ssh://alice@host:not-a-port/file");
+    fn test_parse_location_scp_style_unaffected_by_missing_user_env() {
+        // scp-style carries its user explicitly; the `$USER` fallback
+        // plays no part.
+        let loc = parse_location_with_default_user("root@localhost:/etc/hosts", None).unwrap();
         match loc {
-            ParsedLocation::Local(fl) => {
-                assert_eq!(fl.path, PathBuf::from("ssh://alice@host:not-a-port/file"));
+            ParsedLocation::Remote(rl) => {
+                assert_eq!(rl.user, "root");
+                assert_eq!(rl.host, "localhost");
+                assert_eq!(rl.path, "/etc/hosts");
             }
-            ParsedLocation::Remote(_) => panic!("Expected local, got remote"),
+            ParsedLocation::Local(_) => panic!("Expected remote, got local"),
         }
     }
 
     #[test]
-    fn test_parse_location_ssh_url_empty_user_is_local() {
-        // `@` with an empty user is malformed — fall through to local.
-        let loc = parse_location("ssh://@host/path");
-        match loc {
-            ParsedLocation::Local(fl) => {
-                assert_eq!(fl.path, PathBuf::from("ssh://@host/path"));
+    fn test_parse_location_weird_local_names_still_local() {
+        // Only the exact `ssh://` scheme is claimed; other odd names
+        // stay local files, even with no `$USER` fallback available.
+        for input in [
+            "ssh:file.txt",
+            "ssh:/host/path",
+            "sshfile",
+            "./ssh://host/path",
+        ] {
+            match parse_location_with_default_user(input, None).unwrap() {
+                ParsedLocation::Local(fl) => {
+                    assert_eq!(fl.path, PathBuf::from(input), "input: {input}");
+                }
+                ParsedLocation::Remote(_) => panic!("Expected local for {input:?}"),
             }
-            ParsedLocation::Remote(_) => panic!("Expected local, got remote"),
         }
+    }
+
+    // Tests for vim-style `+N` CLI line arguments (#1926).  Without
+    // the fold, `+50` used to open as a literal empty buffer named
+    // `+50` (and, trailing, steal focus from the real file).
+
+    fn plus_args(args: &[&str]) -> AnyhowResult<Vec<String>> {
+        apply_plus_line_args(args.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn test_plus_line_arg_before_file() {
+        assert_eq!(
+            plus_args(&["+50", "file.txt"]).unwrap(),
+            vec!["file.txt:50"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_after_file() {
+        // Trailing position used to be the worst case: the stray `+50`
+        // buffer stole focus from file.txt.
+        assert_eq!(
+            plus_args(&["file.txt", "+50"]).unwrap(),
+            vec!["file.txt:50"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_applies_to_first_file() {
+        // Vim-like: the line goes to the first file argument.
+        assert_eq!(
+            plus_args(&["a.txt", "+7", "b.txt"]).unwrap(),
+            vec!["a.txt:7", "b.txt"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_zero_and_huge() {
+        // `+0` is passed through; the jump clamps to line 1 downstream,
+        // same as `file:0`.
+        assert_eq!(plus_args(&["+0", "f"]).unwrap(), vec!["f:0"]);
+        // A line number beyond usize::MAX saturates instead of turning
+        // back into a filename; the jump clamps to the buffer end.
+        assert_eq!(
+            plus_args(&["+99999999999999999999999999", "f"]).unwrap(),
+            vec![format!("f:{}", usize::MAX)]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_explicit_location_wins() {
+        // An explicit file:line on the target beats the `+N`.
+        assert_eq!(
+            plus_args(&["+50", "file.txt:10"]).unwrap(),
+            vec!["file.txt:10"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_remote_specs() {
+        // Remote specs take the same `:line` suffix.
+        assert_eq!(
+            plus_args(&["+9", "user@host:/etc/hosts"]).unwrap(),
+            vec!["user@host:/etc/hosts:9"]
+        );
+        assert_eq!(
+            plus_args(&["+9", "ssh://alice@host/etc/hosts"]).unwrap(),
+            vec!["ssh://alice@host/etc/hosts:9"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_skips_stdin_marker() {
+        assert_eq!(
+            plus_args(&["-", "+3", "file.txt"]).unwrap(),
+            vec!["-", "file.txt:3"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_non_matching_args_untouched() {
+        // Bare `+`, `./+50`, and `+abc` are ordinary filenames, not
+        // line arguments.
+        for name in ["+", "./+50", "+abc", "+5x"] {
+            assert_eq!(plus_args(&[name, "f"]).unwrap(), vec![name, "f"]);
+        }
+        // And with no `+N` at all the list is passed through as-is.
+        assert_eq!(plus_args(&["a", "b"]).unwrap(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_plus_line_arg_without_file_is_error() {
+        assert!(plus_args(&["+50"]).is_err());
+        assert!(plus_args(&["-", "+50"]).is_err());
+    }
+
+    #[test]
+    fn test_plus_line_arg_multiple_is_error() {
+        assert!(plus_args(&["+1", "+2", "file.txt"]).is_err());
     }
 
     // Tests for the client→daemon plumbing: a remote spec on the

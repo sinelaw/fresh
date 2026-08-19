@@ -76,6 +76,32 @@ impl<'a> SelectionActiveSet<'a> {
         self.block_last_line = Some(gutter_num);
     }
 
+    /// Is this cell inside a *linear* selection range (block rects
+    /// excluded)?
+    ///
+    /// The selected-line-break column keys off this rather than
+    /// [`contains`](Self::contains): a block selection's rect can cover the
+    /// column a newline sits in without the line break itself being part of
+    /// the selection — copying the block wouldn't take it.
+    ///
+    /// Safe to call after [`contains`](Self::contains) for the same cell:
+    /// `range_cursor` only ever advances past ranges that ended before `bp`.
+    pub(super) fn contains_linear(&mut self, buffer_byte: usize) -> bool {
+        self.advance_ranges_to(buffer_byte);
+        self.ranges[self.range_cursor..]
+            .iter()
+            .take_while(|r| r.start <= buffer_byte)
+            .any(|r| r.end > buffer_byte)
+    }
+
+    /// Drop ranges that ended before `bp` — the cell loop scans the buffer
+    /// monotonically, so they can never match again.
+    fn advance_ranges_to(&mut self, bp: usize) {
+        while self.range_cursor < self.ranges.len() && self.ranges[self.range_cursor].end <= bp {
+            self.range_cursor += 1;
+        }
+    }
+
     /// Is this cell inside any selection?
     ///
     /// `buffer_byte` is the absolute byte position (used by the
@@ -87,16 +113,10 @@ impl<'a> SelectionActiveSet<'a> {
     /// the block-rect column-span check, matching how
     /// `block_rects` stores its column bounds).
     pub(super) fn contains(&mut self, buffer_byte: Option<usize>, cell_byte_index: usize) -> bool {
-        let linear = buffer_byte.is_some_and(|bp| {
-            while self.range_cursor < self.ranges.len() && self.ranges[self.range_cursor].end <= bp
-            {
-                self.range_cursor += 1;
-            }
-            self.ranges[self.range_cursor..]
-                .iter()
-                .take_while(|r| r.start <= bp)
-                .any(|r| r.end > bp)
-        });
+        let linear = match buffer_byte {
+            Some(bp) => self.contains_linear(bp),
+            None => false,
+        };
         let block = self.active_block.iter().any(|&i| {
             let (_, start_col, _, end_col) = self.blocks[i];
             cell_byte_index >= start_col && cell_byte_index <= end_col

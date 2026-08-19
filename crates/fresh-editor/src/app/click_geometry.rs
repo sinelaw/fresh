@@ -86,6 +86,12 @@ pub(crate) struct ClickTarget {
     /// rendered row). Vertical virtual space uses this to place the cursor
     /// on lines below the end of the buffer.
     pub row_overshoot: usize,
+    /// Visual rows *above* the content area (0 when the click hit a
+    /// rendered row). The row→line lookup clamps to the topmost visible
+    /// line, so without this the caller cannot tell "pointer on the first
+    /// text row" from "pointer six rows up on the menu bar" — which is
+    /// exactly what a drag past the top edge needs to know (issue #3006).
+    pub row_undershoot: usize,
     /// The clicked column within the content area (viewport-relative,
     /// after the gutter).
     pub text_col: usize,
@@ -126,6 +132,10 @@ pub(crate) fn screen_to_buffer_position_with_overshoot(
     // Calculate relative position in content area
     let content_col = col.saturating_sub(content_rect.x);
     let content_row = row.saturating_sub(content_rect.y);
+    // How far the pointer is *above* the first text row. `content_row`
+    // saturates to 0 there, so this is the only record that the pointer
+    // was outside the content area at the top.
+    let row_undershoot = content_rect.y.saturating_sub(row) as usize;
 
     tracing::trace!(
         col,
@@ -221,8 +231,50 @@ pub(crate) fn screen_to_buffer_position_with_overshoot(
         position,
         col_overshoot,
         row_overshoot,
+        row_undershoot,
         text_col,
     })
+}
+
+/// The byte position `lines` buffer lines above (negative) or below
+/// (positive) `position`, keeping `position`'s visual column.
+///
+/// Used to resolve a drag whose pointer is outside the text area
+/// vertically: the row→line lookup can only name lines that are on
+/// screen, so the caller converts the rows past the edge into a line
+/// past the edge here (issue #3006). Returns `position` unchanged for
+/// `lines == 0`, and clamps at the buffer's first/last line.
+pub(crate) fn position_offset_by_lines(
+    buffer: &crate::model::buffer::Buffer,
+    position: usize,
+    lines: isize,
+) -> usize {
+    use crate::primitives::display_width::{grapheme_byte_at_visual_column, visual_column_of};
+
+    if lines == 0 {
+        return position;
+    }
+    let line = buffer.get_line_number(position);
+    let target_line = if lines < 0 {
+        line.saturating_sub(lines.unsigned_abs())
+    } else {
+        line.saturating_add(lines as usize)
+    };
+    if target_line == line {
+        return position;
+    }
+    // Off the end of the buffer: the selection head belongs at the very
+    // last byte, which is what a drag below the last line asks for.
+    let (Some(line_start), Some(content)) = (
+        buffer.line_start_offset(target_line),
+        buffer.get_line(target_line),
+    ) else {
+        return if lines < 0 { 0 } else { buffer.len() };
+    };
+    let column = visual_column_of(buffer, position).unwrap_or(0);
+    let text = String::from_utf8_lossy(&content);
+    let text = text.trim_end_matches(['\n', '\r']);
+    line_start + grapheme_byte_at_visual_column(text, column)
 }
 
 /// Check whether a gutter click at `target_position` should toggle a fold.
@@ -235,6 +287,7 @@ pub(crate) fn fold_toggle_byte_from_position(
     target_position: usize,
     content_col: u16,
     gutter_width: u16,
+    fold_indicators_visible: bool,
 ) -> Option<usize> {
     if content_col >= gutter_width {
         return None;
@@ -243,9 +296,17 @@ pub(crate) fn fold_toggle_byte_from_position(
     use crate::view::folding::indent_folding;
     let line_start = indent_folding::find_line_start_byte(&state.buffer, target_position);
 
-    // Already collapsed → allow toggling (unfold)
+    // Already collapsed → allow toggling (unfold). This stays available even
+    // with the indicators hidden: the collapsed line still renders its "..."
+    // placeholder, so the user can see there is something to expand.
     if collapsed_header_bytes.contains_key(&line_start) {
         return Some(target_position);
+    }
+
+    // With fold indicators hidden in this split there is no arrow to aim at,
+    // so a gutter click must not silently create a fold.
+    if !fold_indicators_visible {
+        return None;
     }
 
     // Check LSP folding ranges first (line-based comparison unavoidable).

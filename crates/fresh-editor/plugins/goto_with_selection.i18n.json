@@ -1,7 +1,7 @@
 {
-  "en": {
-    "cmd.goto_line_with_selection": "Go to Line with Selection",
-    "cmd.goto_line_with_selection_desc": "Select from current position to target line"
+  "bg": {
+    "cmd.goto_line_with_selection": "Към ред с Избор",
+    "cmd.goto_line_with_selection_desc": "Избор от текуща позиция до целеви ред"
   },
   "cs": {
     "cmd.goto_line_with_selection": "Jít na řádek s výběrem",
@@ -10,6 +10,10 @@
   "de": {
     "cmd.goto_line_with_selection": "Zur Zeile mit Auswahl",
     "cmd.goto_line_with_selection_desc": "Von der aktuellen Position zur Zielzeile auswählen"
+  },
+  "en": {
+    "cmd.goto_line_with_selection": "Go to Line with Selection",
+    "cmd.goto_line_with_selection_desc": "Select from current position to target line"
   },
   "es": {
     "cmd.goto_line_with_selection": "Ir a línea con selección",

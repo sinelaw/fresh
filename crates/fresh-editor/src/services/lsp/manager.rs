@@ -1968,9 +1968,7 @@ fn detect_language_by_config(
     path: &std::path::Path,
     languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
 ) -> Option<String> {
-    use crate::primitives::glob_match::{
-        filename_glob_matches, is_glob_pattern, is_path_pattern, path_glob_matches,
-    };
+    use crate::primitives::glob_match::{glob_entry_matches, literal_entry_matches};
 
     if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
         // 1. Exact filename match (highest priority)
@@ -1978,27 +1976,20 @@ fn detect_language_by_config(
             if lang_config
                 .filenames
                 .iter()
-                .any(|f| !is_glob_pattern(f) && f == filename)
+                .any(|f| literal_entry_matches(f, filename))
             {
                 return Some(language_name.clone());
             }
         }
 
         // 2. Glob pattern match
-        // Path patterns (containing `/`) match against the full path;
-        // filename-only patterns match against just the filename.
         let path_str = path.to_str().unwrap_or("");
         for (language_name, lang_config) in languages {
-            if lang_config.filenames.iter().any(|f| {
-                if !is_glob_pattern(f) {
-                    return false;
-                }
-                if is_path_pattern(f) {
-                    path_glob_matches(f, path_str)
-                } else {
-                    filename_glob_matches(f, filename)
-                }
-            }) {
+            if lang_config
+                .filenames
+                .iter()
+                .any(|f| glob_entry_matches(f, path_str, filename))
+            {
                 return Some(language_name.clone());
             }
         }

@@ -37,6 +37,12 @@ pub struct TextEdit {
     pub selection_anchor: Option<(usize, usize)>,
     /// Whether to allow multiline (newlines)
     pub multiline: bool,
+    /// Undo history: `(value, flat_cursor_byte)` snapshots captured
+    /// before each mutating edit. Bounded; deduped against the top so
+    /// repeated no-op edits don't grow it.
+    undo_stack: Vec<(String, usize)>,
+    /// Redo counterpart. Cleared on any fresh mutation.
+    redo_stack: Vec<(String, usize)>,
 }
 
 impl Default for TextEdit {
@@ -54,6 +60,8 @@ impl TextEdit {
             cursor_col: 0,
             selection_anchor: None,
             multiline: true,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -65,6 +73,8 @@ impl TextEdit {
             cursor_col: 0,
             selection_anchor: None,
             multiline: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -82,6 +92,8 @@ impl TextEdit {
             cursor_col: 0,
             selection_anchor: None,
             multiline: true,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -94,6 +106,8 @@ impl TextEdit {
             cursor_col: 0,
             selection_anchor: None,
             multiline: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -105,10 +119,18 @@ impl TextEdit {
     /// Set the text value, resetting cursor to start
     pub fn set_value(&mut self, text: &str) {
         if self.multiline {
-            self.lines = text.lines().map(String::from).collect();
-            if self.lines.is_empty() {
-                self.lines.push(String::new());
-            }
+            // NOT `str::lines()`: that drops a trailing empty line
+            // ("a\n" -> ["a"]), which would delete a trailing newline
+            // on every undo/redo round-trip (snapshots restore through
+            // here and `value()` joins lines with '\n', so ["a", ""]
+            // must survive as "a\n" -> ["a", ""]). Split manually,
+            // keeping the trailing empty segment; tolerate CRLF input
+            // the way `lines()` does. `"".split('\n')` yields [""],
+            // so `lines` is never empty.
+            self.lines = text
+                .split('\n')
+                .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
+                .collect();
         } else {
             self.lines = vec![text.lines().next().unwrap_or("").to_string()];
         }
@@ -379,6 +401,7 @@ impl TextEdit {
 
     /// Delete selection and return the deleted text
     pub fn delete_selection(&mut self) -> Option<String> {
+        self.push_undo_checkpoint();
         let ((start_row, start_col), (end_row, end_col)) = self.selection_range()?;
         let deleted = self.selected_text()?;
 
@@ -480,7 +503,59 @@ impl TextEdit {
     // ========================================================================
 
     /// Insert a character at cursor position
+    /// Capture the current `(value, cursor)` for undo and drop redo
+    /// history. Every mutating edit below calls this first; hosts that
+    /// replace the value wholesale (history navigation) call it
+    /// explicitly before `set_value`, which itself never checkpoints —
+    /// programmatic syncs (suggestion navigation re-filling a field on
+    /// every arrow) must not flood the history.
+    pub fn push_undo_checkpoint(&mut self) {
+        let value = self.value();
+        if self
+            .undo_stack
+            .last()
+            .is_some_and(|(text, _)| *text == value)
+        {
+            return;
+        }
+        // Bound the history so a very long editing session can't grow
+        // it without limit.
+        const MAX_UNDO: usize = 500;
+        if self.undo_stack.len() >= MAX_UNDO {
+            self.undo_stack.remove(0);
+        }
+        self.undo_stack.push((value, self.flat_cursor_byte()));
+        self.redo_stack.clear();
+    }
+
+    /// Undo the last edit. Returns true if the value/cursor changed.
+    pub fn undo(&mut self) -> bool {
+        if let Some((text, cursor)) = self.undo_stack.pop() {
+            self.redo_stack
+                .push((self.value(), self.flat_cursor_byte()));
+            self.set_value(&text);
+            self.set_cursor_from_flat(cursor);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Redo the last undone edit. Returns true if applied.
+    pub fn redo(&mut self) -> bool {
+        if let Some((text, cursor)) = self.redo_stack.pop() {
+            self.undo_stack
+                .push((self.value(), self.flat_cursor_byte()));
+            self.set_value(&text);
+            self.set_cursor_from_flat(cursor);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn insert_char(&mut self, c: char) {
+        self.push_undo_checkpoint();
         // Delete selection first if any
         if self.has_selection() {
             self.delete_selection();
@@ -516,6 +591,7 @@ impl TextEdit {
     /// field" workflow. The space preserves token boundaries and
     /// matches what every other GUI text input does on paste.
     pub fn insert_str(&mut self, text: &str) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
         }
@@ -530,6 +606,7 @@ impl TextEdit {
 
     /// Delete character before cursor (backspace)
     pub fn backspace(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -555,6 +632,7 @@ impl TextEdit {
 
     /// Delete character at cursor (delete key)
     pub fn delete(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -567,11 +645,13 @@ impl TextEdit {
             .unwrap_or(0);
         if self.cursor_col < line_len {
             let line = &mut self.lines[self.cursor_row];
-            // Find next char boundary
-            let mut del_end = self.cursor_col + 1;
-            while del_end < line.len() && !line.is_char_boundary(del_end) {
-                del_end += 1;
-            }
+            // Delete the whole grapheme cluster (same boundary rule as
+            // move_right), so forward-delete on an emoji+modifier or a
+            // Thai base+mark removes the visible glyph rather than
+            // leaving combining-mark residue. Backspace deliberately
+            // stays code-point-based (layer-by-layer deletion).
+            let del_end =
+                crate::primitives::grapheme::next_grapheme_boundary(line, self.cursor_col);
             line.drain(self.cursor_col..del_end);
         } else if self.cursor_row + 1 < self.lines.len() && self.multiline {
             // Join with next line
@@ -582,6 +662,7 @@ impl TextEdit {
 
     /// Delete from cursor to end of word (Ctrl+Delete)
     pub fn delete_word_forward(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -601,6 +682,7 @@ impl TextEdit {
 
     /// Delete from start of word to cursor (Ctrl+Backspace)
     pub fn delete_word_backward(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -621,8 +703,26 @@ impl TextEdit {
         }
     }
 
+    /// Delete from start of line to cursor (Ctrl+U) — readline
+    /// kill-to-start, so a field can be cleared without holding
+    /// Backspace.
+    pub fn delete_to_start(&mut self) {
+        self.push_undo_checkpoint();
+        if self.has_selection() {
+            self.delete_selection();
+            return;
+        }
+        if self.cursor_col > 0 {
+            if let Some(line) = self.lines.get_mut(self.cursor_row) {
+                line.drain(..self.cursor_col);
+            }
+            self.cursor_col = 0;
+        }
+    }
+
     /// Delete from cursor to end of line (Ctrl+K)
     pub fn delete_to_end(&mut self) {
+        self.push_undo_checkpoint();
         if self.has_selection() {
             self.delete_selection();
             return;
@@ -635,6 +735,7 @@ impl TextEdit {
 
     /// Clear all text
     pub fn clear(&mut self) {
+        self.push_undo_checkpoint();
         self.lines = vec![String::new()];
         self.cursor_row = 0;
         self.cursor_col = 0;
@@ -815,5 +916,45 @@ mod tests {
 
         edit.move_word_left();
         assert_eq!(edit.cursor_col, 4); // Start of "two"
+    }
+
+    #[test]
+    fn test_set_value_preserves_trailing_newline() {
+        // "a\n" must round-trip as lines ["a", ""] — `str::lines()`
+        // would drop the trailing empty line and every undo/redo
+        // restore goes through set_value.
+        let mut edit = TextEdit::new();
+        edit.set_value("a\n");
+        assert_eq!(edit.value(), "a\n");
+        edit.set_value("a\r\nb\r\n");
+        assert_eq!(edit.value(), "a\nb\n"); // CRLF tolerated like lines()
+        edit.set_value("");
+        assert_eq!(edit.value(), "");
+        assert!(!edit.lines.is_empty()); // lines invariant holds
+    }
+
+    #[test]
+    fn test_undo_restores_trailing_newline() {
+        // Type 'a', Enter, 'b' in a multiline field, then undo each
+        // step: the "a\n" intermediate state must be reachable — the
+        // regression was undo silently deleting the trailing newline
+        // (first undo gave "a", second was a visible no-op).
+        let mut edit = TextEdit::new();
+        edit.insert_char('a');
+        edit.insert_char('\n');
+        edit.insert_char('b');
+        assert_eq!(edit.value(), "a\nb");
+
+        assert!(edit.undo());
+        assert_eq!(edit.value(), "a\n", "first undo restores the newline");
+        assert!(edit.undo());
+        assert_eq!(edit.value(), "a", "second undo removes the newline");
+        assert!(edit.undo());
+        assert_eq!(edit.value(), "");
+
+        assert!(edit.redo());
+        assert!(edit.redo());
+        assert!(edit.redo());
+        assert_eq!(edit.value(), "a\nb", "redo chain recovers the final state");
     }
 }

@@ -281,7 +281,7 @@ impl KeyContext {
 
     /// Whether this context should allow Normal-context bindings to fall
     /// through when the action is in the curated UI / navigation set
-    /// (`is_terminal_ui_action`): tab/buffer switching, split navigation,
+    /// (`is_ui_fallthrough_action`): tab/buffer switching, split navigation,
     /// palette, settings, etc. These actions don't depend on a text cursor
     /// and naturally apply to whichever buffer is currently active, so
     /// users expect them to work even when keyboard focus is elsewhere
@@ -289,7 +289,7 @@ impl KeyContext {
     ///
     /// Also true for plugin `Mode(_)` contexts so that focus inside a
     /// panel (search/replace, dashboard, git log, …) doesn't swallow
-    /// global navigation keys. `is_terminal_ui_action` is the curated
+    /// global navigation keys. `is_ui_fallthrough_action` is the curated
     /// whitelist (split nav, palette, save, quit, help, …) — none of
     /// which a sensible plugin mode would want to suppress. See §18 of
     /// `docs/internal/search-replace-scope-replan-on-widgets.md`.
@@ -545,6 +545,10 @@ pub enum Action {
     ShowLspStatus,
     ShowRemoteIndicatorMenu,
     ShowReadOnlyMenu,
+    /// Offer/confirm an in-editor update when a new version is available.
+    UpdateFresh,
+    /// Open the background self-update log (always the local copy).
+    OpenUpdateLog,
     ClearWarnings,
     CommandPalette, // Alias for QuickOpen — kept for keymap/plugin compatibility
     /// Quick Open - unified prompt with prefix-based provider routing
@@ -742,6 +746,20 @@ pub enum Action {
     ToggleLineWrapCurrentBuffer,
     /// Toggle virtual space (off ↔ on) for the current buffer only
     ToggleVirtualSpaceCurrentBuffer,
+    /// Toggle indentation guides for the current buffer only (per-buffer
+    /// override that persists across restart, without touching the global
+    /// `editor.indentation_guide` mode or other buffers).
+    ToggleIndentationGuideCurrentBuffer,
+    /// Toggle the gutter folding indicators for the current buffer only
+    /// (per-buffer override that persists across restart). Existing folds are
+    /// left alone; only the ▾/▸ arrows are hidden.
+    ToggleFoldIndicatorsCurrentBuffer,
+    /// Toggle the current-line highlight for the current buffer only
+    /// (per-buffer override that persists across restart).
+    ToggleCurrentLineHighlightCurrentBuffer,
+    /// Toggle occurrence highlighting for the current buffer only
+    /// (per-buffer override that persists across restart).
+    ToggleOccurrenceHighlightCurrentBuffer,
     /// Playful full-screen wave that bounces all painted content around.
     TriggerWaveAnimation,
     ToggleScrollSync,
@@ -810,14 +828,17 @@ pub enum Action {
     SettingsInherit,     // Set nullable setting to null (inherit value)
 
     // Terminal operations
-    OpenTerminal,            // Open a new terminal in the current split
-    OpenTerminalRight,       // Open a new terminal in a split to the right (vertical split)
-    OpenTerminalBelow,       // Open a new terminal in a split below (horizontal split)
-    CloseTerminal,           // Close the current terminal
-    FocusTerminal,           // Focus the terminal buffer (if viewing terminal, focus input)
-    TerminalEscape,          // Escape from terminal mode back to editor
-    ToggleKeyboardCapture,   // Toggle keyboard capture mode (all keys go to terminal)
-    TerminalPaste,           // Paste clipboard contents into terminal as a single batch
+    OpenTerminal,      // Open a new terminal in the current split
+    OpenTerminalRight, // Open a new terminal in a split to the right (vertical split)
+    OpenTerminalBelow, // Open a new terminal in a split below (horizontal split)
+    CloseTerminal,     // Close the current terminal
+    /// Restart the exited terminal process in the current buffer, resuming the
+    /// agent conversation when the terminal carries an agent-resume spec.
+    RestartTerminal,
+    FocusTerminal,  // Focus the terminal buffer (if viewing terminal, focus input)
+    TerminalEscape, // Escape from terminal mode back to editor
+    ToggleKeyboardCapture, // Toggle keyboard capture mode (all keys go to terminal)
+    TerminalPaste,  // Paste clipboard contents into terminal as a single batch
     SendSelectionToTerminal, // Run the selection (or current line) in the last-focused terminal
 
     // Shell command operations
@@ -1083,6 +1104,8 @@ impl Action {
             "show_lsp_status" => ShowLspStatus,
             "show_remote_indicator_menu" => ShowRemoteIndicatorMenu,
             "show_read_only_menu" => ShowReadOnlyMenu,
+            "update_fresh" => UpdateFresh,
+            "open_update_log" => OpenUpdateLog,
             "clear_warnings" => ClearWarnings,
             "command_palette" => CommandPalette,
             "quick_open" => QuickOpen,
@@ -1222,6 +1245,10 @@ impl Action {
             "toggle_line_numbers_current_buffer" => ToggleLineNumbersCurrentBuffer,
             "toggle_line_wrap_current_buffer" => ToggleLineWrapCurrentBuffer,
             "toggle_virtual_space_current_buffer" => ToggleVirtualSpaceCurrentBuffer,
+            "toggle_indentation_guide_current_buffer" => ToggleIndentationGuideCurrentBuffer,
+            "toggle_fold_indicators_current_buffer" => ToggleFoldIndicatorsCurrentBuffer,
+            "toggle_current_line_highlight_current_buffer" => ToggleCurrentLineHighlightCurrentBuffer,
+            "toggle_occurrence_highlight_current_buffer" => ToggleOccurrenceHighlightCurrentBuffer,
             "trigger_wave_animation" => TriggerWaveAnimation,
             "toggle_scroll_sync" => ToggleScrollSync,
             "toggle_mouse_capture" => ToggleMouseCapture,
@@ -1271,6 +1298,7 @@ impl Action {
             "open_terminal_right" => OpenTerminalRight,
             "open_terminal_below" => OpenTerminalBelow,
             "close_terminal" => CloseTerminal,
+            "restart_terminal" => RestartTerminal,
             "focus_terminal" => FocusTerminal,
             "terminal_escape" => TerminalEscape,
             "toggle_keyboard_capture" => ToggleKeyboardCapture,
@@ -1603,6 +1631,45 @@ pub struct KeybindingResolver {
     /// bindings (motion, selection, copy). Populated by `defineMode` when
     /// `inheritNormalBindings: true`.
     inheriting_modes: std::collections::HashSet<String>,
+
+    /// Mirror of `editor.menu_bar_mnemonics`. When false, the menu-bar
+    /// mnemonic bindings (`Alt+letter → menu_open`) are suppressed at
+    /// *resolution* time — they neither fire nor consume the key — so
+    /// whatever they were shadowing becomes reachable. Gating here rather
+    /// than at dispatch is what makes the option's documented promise
+    /// ("frees up Alt+letter keybindings for other actions") true.
+    menu_mnemonics_enabled: bool,
+}
+
+/// One source layer of bindings, in decreasing precedence: the user's
+/// custom overrides, the active built-in keymap, plugin `defineMode`
+/// defaults. Used by [`KeybindingResolver::probe_order`] to spell out the
+/// resolution order once, shared by single-key and chord resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindingSource {
+    Custom,
+    Default,
+    Plugin,
+}
+
+impl BindingSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Custom => "custom",
+            Self::Default => "default",
+            Self::Plugin => "plugin default",
+        }
+    }
+}
+
+/// Log that a configured keybinding entry was dropped because its key name did
+/// not parse, so a rejected binding leaves a trace in the log instead of dying
+/// silently (issue #1128: `"key": "asterisk"` was ignored with no feedback
+/// anywhere).
+fn warn_invalid_key(key: &str, action: &str) {
+    tracing::warn!(
+        "Invalid keybinding in config: unknown key \"{key}\" for action \"{action}\" (binding ignored)"
+    );
 }
 
 impl KeybindingResolver {
@@ -1616,6 +1683,7 @@ impl KeybindingResolver {
             default_chord_bindings: HashMap::new(),
             plugin_chord_defaults: HashMap::new(),
             inheriting_modes: std::collections::HashSet::new(),
+            menu_mnemonics_enabled: config.editor.menu_bar_mnemonics,
         };
 
         // Load bindings from the active keymap (with inheritance resolution) into default_bindings
@@ -1674,6 +1742,7 @@ impl KeybindingResolver {
                             sequence.push((key_code, modifiers));
                         } else {
                             // Invalid key in sequence, skip this binding
+                            warn_invalid_key(&key_press.key, &binding.action);
                             break;
                         }
                     }
@@ -1697,6 +1766,8 @@ impl KeybindingResolver {
                         action,
                         &binding.key,
                     );
+                } else {
+                    warn_invalid_key(&binding.key, &binding.action);
                 }
             }
         }
@@ -1766,6 +1837,7 @@ impl KeybindingResolver {
                             sequence.push((key_code, modifiers));
                         } else {
                             // Invalid key in sequence, skip this binding
+                            warn_invalid_key(&key_press.key, &binding.action);
                             break;
                         }
                     }
@@ -1784,6 +1856,8 @@ impl KeybindingResolver {
                         .entry(context)
                         .or_default()
                         .insert((key_code, modifiers), action);
+                } else {
+                    warn_invalid_key(&binding.key, &binding.action);
                 }
             }
         }
@@ -1857,64 +1931,206 @@ impl KeybindingResolver {
         )
     }
 
-    /// Check if an action is a UI action that should work in terminal mode
-    /// (without keyboard capture). These are general navigation and UI actions
-    /// that don't involve text editing.
-    pub fn is_terminal_ui_action(action: &Action) -> bool {
+    /// Whether an action mutates the active buffer's text, and so needs a
+    /// buffer that accepts edits.
+    ///
+    /// The handlers already refuse when `editing_disabled` is set — this is the
+    /// same question asked one step earlier, so the command palette and the
+    /// menus can grey the entry out instead of letting the user pick it and get
+    /// "editing is disabled for this buffer" back.
+    pub fn is_buffer_mutating_action(action: &Action) -> bool {
         matches!(
             action,
-            // Global UI actions
+            Action::Undo
+                | Action::Redo
+                | Action::Cut
+                | Action::Paste
+                | Action::DeleteLine
+                | Action::DeleteWordBackward
+                | Action::DeleteWordForward
+                | Action::DeleteToLineEnd
+                | Action::TransposeChars
+                | Action::ToUpperCase
+                | Action::ToLowerCase
+                | Action::SortLines
+                | Action::OpenLine
+                | Action::DuplicateLine
+                | Action::ToggleComment
+                | Action::DedentSelection
+                | Action::Replace
+                | Action::QueryReplace
+                | Action::FormatBuffer
+                | Action::TrimTrailingWhitespace
+                | Action::EnsureFinalNewline
+                | Action::LspRename
+                | Action::ShellCommandReplace
+        )
+    }
+
+    fn is_global_ui_action(action: &Action) -> bool {
+        matches!(
+            action,
             Action::CommandPalette
                 | Action::QuickOpen
                 | Action::QuickOpenBuffers
                 | Action::QuickOpenFiles
                 | Action::OpenLiveGrep
                 | Action::ResumeLiveGrep
+                | Action::CycleLiveGrepProvider
                 | Action::ToggleUtilityDock
                 | Action::OpenTerminalInDock
                 | Action::ToggleDockFocus
-                | Action::CycleLiveGrepProvider
                 | Action::OpenSettings
                 | Action::MenuActivate
                 | Action::MenuOpen(_)
+                | Action::ToggleMenuBar
                 | Action::ShowHelp
                 | Action::ShowKeyboardShortcuts
                 | Action::Quit
                 | Action::ForceQuit
-                // Split navigation
-                | Action::NextSplit
+        )
+    }
+
+    fn is_layout_navigation_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::NextSplit
                 | Action::PrevSplit
-                // Pane navigation (cycle through all splits + tabs)
                 | Action::NextPane
                 | Action::PrevPane
-                // Window navigation
                 | Action::NextWindow
                 | Action::PrevWindow
                 | Action::SplitHorizontal
                 | Action::SplitVertical
                 | Action::CloseSplit
                 | Action::ToggleMaximizeSplit
-                // Tab/buffer navigation
                 | Action::NextBuffer
                 | Action::PrevBuffer
                 | Action::Close
                 | Action::CloseTab
                 | Action::ScrollTabsLeft
                 | Action::ScrollTabsRight
-                // Terminal control
-                | Action::TerminalEscape
+        )
+    }
+
+    fn is_terminal_control_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::TerminalEscape
                 | Action::ToggleKeyboardCapture
                 | Action::OpenTerminal
                 | Action::OpenTerminalRight
                 | Action::OpenTerminalBelow
                 | Action::CloseTerminal
                 | Action::TerminalPaste
-                // File explorer
-                | Action::ToggleFileExplorer
-                | Action::ToggleFileExplorerSide
-                // Menu bar
-                | Action::ToggleMenuBar
         )
+    }
+
+    /// Its own group because its default keys are readline's: Ctrl+B is
+    /// backward-char, Ctrl+E is end-of-line.
+    fn is_file_explorer_ui_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::ToggleFileExplorer | Action::ToggleFileExplorerSide
+        )
+    }
+
+    /// UI actions a focused terminal yields to the editor instead of sending to
+    /// the PTY. `terminal_escape` is among them, so what is left out stays one
+    /// keystroke away rather than unreachable.
+    fn is_terminal_ui_action(action: &Action) -> bool {
+        Self::is_global_ui_action(action)
+            || Self::is_layout_navigation_action(action)
+            || Self::is_terminal_control_action(action)
+    }
+
+    /// Adds the explorer's keys back, for contexts the user looks at rather
+    /// than types into ([`KeyContext::allows_ui_fallthrough`] and the lookups
+    /// that draw keybinding hints).
+    pub fn is_ui_fallthrough_action(action: &Action) -> bool {
+        Self::is_terminal_ui_action(action) || Self::is_file_explorer_ui_action(action)
+    }
+
+    /// The context chain for a lookup: the context itself, its ancestors
+    /// (e.g. `SearchPrompt → Prompt`), and finally `Global` as the root
+    /// fallback of every chain.
+    fn context_chain(context: &KeyContext) -> Vec<KeyContext> {
+        let mut chain = vec![context.clone()];
+        let mut current = context.clone();
+        while let Some(parent) = current.parent_context() {
+            chain.push(parent.clone());
+            current = parent;
+        }
+        if *context != KeyContext::Global {
+            chain.push(KeyContext::Global);
+        }
+        chain
+    }
+
+    /// The `(source, context)` probe sequence shared by [`Self::resolve`]
+    /// and [`Self::resolve_chord`], so single-key and chord resolution can
+    /// never disagree about precedence.
+    ///
+    /// Two rules, in order (issue #2941):
+    ///
+    /// 1. **Source**: every user binding outranks every built-in one — a
+    ///    user's override must win no matter which context either side
+    ///    used (issue #2720).
+    /// 2. **Specificity**: within the built-in sources, a narrower context
+    ///    outranks a broader one — exact context, then ancestors, then
+    ///    `Global`. A broad `global` entry is a fallback, not a trump: it
+    ///    must not make a context-specific binding for the same chord
+    ///    unreachable. At equal specificity the active keymap outranks
+    ///    plugin `defineMode` defaults, so a keymap can retune a plugin
+    ///    mode; a plugin's mode bindings still outrank the keymap's
+    ///    *global* entries, which are less specific.
+    fn probe_order(&self, context: &KeyContext) -> Vec<(BindingSource, KeyContext)> {
+        let chain = Self::context_chain(context);
+        let mut probes = Vec::with_capacity(chain.len() * 3);
+        for ctx in &chain {
+            probes.push((BindingSource::Custom, ctx.clone()));
+        }
+        for ctx in &chain {
+            probes.push((BindingSource::Default, ctx.clone()));
+            probes.push((BindingSource::Plugin, ctx.clone()));
+        }
+        probes
+    }
+
+    fn single_key_map(
+        &self,
+        source: BindingSource,
+    ) -> &HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>> {
+        match source {
+            BindingSource::Custom => &self.bindings,
+            BindingSource::Default => &self.default_bindings,
+            BindingSource::Plugin => &self.plugin_defaults,
+        }
+    }
+
+    fn chord_map(
+        &self,
+        source: BindingSource,
+    ) -> &HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>> {
+        match source {
+            BindingSource::Custom => &self.chord_bindings,
+            BindingSource::Default => &self.default_chord_bindings,
+            BindingSource::Plugin => &self.plugin_chord_defaults,
+        }
+    }
+
+    /// Whether this binding is switched off by configuration rather than
+    /// unbound: a menu-bar mnemonic (`Alt+letter → menu_open`) while
+    /// `editor.menu_bar_mnemonics` is disabled. A suppressed binding must
+    /// not resolve — and must not consume the key — so anything it was
+    /// shadowing becomes reachable. Only Alt+letter chords are mnemonics;
+    /// a `menu_open` binding on any other chord (e.g. a user's `F2`)
+    /// stays live regardless of the option.
+    fn is_suppressed(&self, key: &(KeyCode, KeyModifiers), action: &Action) -> bool {
+        !self.menu_mnemonics_enabled
+            && matches!(action, Action::MenuOpen(_))
+            && matches!(key.0, KeyCode::Char(_))
+            && key.1.contains(KeyModifiers::ALT)
     }
 
     /// Resolve a key event with chord state to check for multi-key sequences
@@ -1942,30 +2158,20 @@ impl KeybindingResolver {
             context
         );
 
-        // Check all chord binding sources in priority order
-        let search_order = vec![
-            (&self.chord_bindings, &KeyContext::Global, "custom global"),
-            (
-                &self.default_chord_bindings,
-                &KeyContext::Global,
-                "default global",
-            ),
-            (&self.chord_bindings, &context, "custom context"),
-            (&self.default_chord_bindings, &context, "default context"),
-            (
-                &self.plugin_chord_defaults,
-                &context,
-                "plugin default context",
-            ),
-        ];
-
+        // Check all chord binding sources in the shared precedence order
+        // (see `probe_order`).
         let mut has_partial_match = false;
 
-        for (binding_map, bind_context, label) in search_order {
-            if let Some(context_chords) = binding_map.get(bind_context) {
+        for (source, bind_context) in self.probe_order(&context) {
+            if let Some(context_chords) = self.chord_map(source).get(&bind_context) {
                 // Check for exact match
                 if let Some(action) = context_chords.get(&full_sequence) {
-                    tracing::trace!("  -> Complete chord match in {}: {:?}", label, action);
+                    tracing::trace!(
+                        "  -> Complete chord match in {} {}: {:?}",
+                        source.label(),
+                        bind_context.to_when_clause(),
+                        action
+                    );
                     return ChordResolution::Complete(action.clone());
                 }
 
@@ -1974,7 +2180,11 @@ impl KeybindingResolver {
                     if chord_seq.len() > full_sequence.len()
                         && chord_seq[..full_sequence.len()] == full_sequence[..]
                     {
-                        tracing::trace!("  -> Partial chord match in {}", label);
+                        tracing::trace!(
+                            "  -> Partial chord match in {} {}",
+                            source.label(),
+                            bind_context.to_when_clause()
+                        );
                         has_partial_match = true;
                         break;
                     }
@@ -2003,70 +2213,32 @@ impl KeybindingResolver {
             context
         );
 
-        // Check Global bindings first (highest priority - work in all contexts)
-        if let Some(global_bindings) = self.bindings.get(&KeyContext::Global) {
-            if let Some(action) = global_bindings.get(norm) {
-                tracing::trace!("  -> Found in custom global bindings: {:?}", action);
-                return action.clone();
-            }
-        }
-
-        if let Some(global_bindings) = self.default_bindings.get(&KeyContext::Global) {
-            if let Some(action) = global_bindings.get(norm) {
-                tracing::trace!("  -> Found in default global bindings: {:?}", action);
-                return action.clone();
-            }
-        }
-
-        // Try context-specific custom bindings
-        if let Some(context_bindings) = self.bindings.get(&context) {
-            if let Some(action) = context_bindings.get(norm) {
-                tracing::trace!(
-                    "  -> Found in custom {} bindings: {:?}",
-                    context.to_when_clause(),
-                    action
-                );
-                return action.clone();
-            }
-        }
-
-        // Try context-specific default bindings
-        if let Some(context_bindings) = self.default_bindings.get(&context) {
-            if let Some(action) = context_bindings.get(norm) {
-                tracing::trace!(
-                    "  -> Found in default {} bindings: {:?}",
-                    context.to_when_clause(),
-                    action
-                );
-                return action.clone();
-            }
-        }
-
-        // Try plugin default bindings (mode bindings from defineMode)
-        if let Some(plugin_bindings) = self.plugin_defaults.get(&context) {
-            if let Some(action) = plugin_bindings.get(norm) {
-                tracing::trace!(
-                    "  -> Found in plugin default {} bindings: {:?}",
-                    context.to_when_clause(),
-                    action
-                );
-                return action.clone();
-            }
-        }
-
-        // Fall through to the parent context's bindings (e.g. SearchPrompt →
-        // Prompt) so a narrowed context inherits all of its parent's keys and
-        // only owns/overrides the few it declares. Checked after this context's
-        // own bindings but before the Normal fallthrough below, so the parent's
-        // editing/navigation keys outrank Normal.
-        if let Some(parent) = context.parent_context() {
-            if let Some(parent_bindings) = self.bindings.get(&parent) {
-                if let Some(action) = parent_bindings.get(norm) {
-                    return action.clone();
-                }
-            }
-            if let Some(parent_bindings) = self.default_bindings.get(&parent) {
-                if let Some(action) = parent_bindings.get(norm) {
+        // Probe every binding source in the shared precedence order (see
+        // `probe_order`): all user bindings before all built-in ones
+        // (issue #2720), and within the built-ins, narrower contexts
+        // before broader ones — a `global` entry is the root fallback,
+        // never a trump over a context-specific binding for the same
+        // chord (issue #2941). Bindings suppressed by configuration
+        // (menu mnemonics while disabled) are skipped as if unbound, so
+        // they release the chord instead of consuming it.
+        for (source, bind_context) in self.probe_order(&context) {
+            if let Some(context_bindings) = self.single_key_map(source).get(&bind_context) {
+                if let Some(action) = context_bindings.get(norm) {
+                    if self.is_suppressed(norm, action) {
+                        tracing::trace!(
+                            "  -> Skipping suppressed binding in {} {}: {:?}",
+                            source.label(),
+                            bind_context.to_when_clause(),
+                            action
+                        );
+                        continue;
+                    }
+                    tracing::trace!(
+                        "  -> Found in {} {} bindings: {:?}",
+                        source.label(),
+                        bind_context.to_when_clause(),
+                        action
+                    );
                     return action.clone();
                 }
             }
@@ -2099,7 +2271,7 @@ impl KeybindingResolver {
                 if let Some(action) = normal_bindings.get(norm) {
                     if full_fallthrough
                         || Self::is_application_wide_action(action)
-                        || (ui_fallthrough && Self::is_terminal_ui_action(action))
+                        || (ui_fallthrough && Self::is_ui_fallthrough_action(action))
                     {
                         tracing::trace!(
                             "  -> Found action in custom normal bindings (fallthrough): {:?}",
@@ -2115,7 +2287,7 @@ impl KeybindingResolver {
                     if let Some(action) = normal_bindings.get(norm) {
                         if full_fallthrough
                             || Self::is_application_wide_action(action)
-                            || (ui_fallthrough && Self::is_terminal_ui_action(action))
+                            || (ui_fallthrough && Self::is_ui_fallthrough_action(action))
                         {
                             tracing::trace!(
                                 "  -> Found action in default normal bindings (fallthrough): {:?}",
@@ -2140,9 +2312,10 @@ impl KeybindingResolver {
         Action::None
     }
 
-    /// Resolve a key event looking only in the specified context (no Global fallback).
-    /// This is used when a modal context (like Prompt) needs to check if it has
-    /// a specific binding without being overridden by Global bindings.
+    /// Resolve a key event looking only in the specified context — no parent
+    /// chain, no Global fallback. Used where dispatch needs "does this context
+    /// itself claim this key" (popup/completion routing), as opposed to full
+    /// resolution.
     /// Returns None if no binding found in the specified context.
     pub fn resolve_in_context_only(&self, event: &KeyEvent, context: KeyContext) -> Option<Action> {
         let norm = normalize_key(event.code, event.modifiers);
@@ -2191,8 +2364,9 @@ impl KeybindingResolver {
     }
 
     /// Resolve a key event to a UI action for terminal mode.
-    /// Only returns actions that are classified as UI actions (is_terminal_ui_action).
-    /// Returns Action::None if the key doesn't map to a UI action.
+    /// Only returns actions the terminal yields to the editor
+    /// ([`Self::is_terminal_ui_action`]).
+    /// Returns Action::None if the key doesn't map to such an action.
     pub fn resolve_terminal_ui_action(&self, event: &KeyEvent) -> Action {
         let norm = normalize_key(event.code, event.modifiers);
         tracing::trace!(
@@ -2612,6 +2786,8 @@ impl KeybindingResolver {
             Action::ShowLspStatus => t!("action.show_lsp_status"),
             Action::ShowRemoteIndicatorMenu => t!("action.show_remote_indicator_menu"),
             Action::ShowReadOnlyMenu => t!("action.show_read_only_menu"),
+            Action::UpdateFresh => t!("action.update_fresh"),
+            Action::OpenUpdateLog => t!("action.open_update_log"),
             Action::ClearWarnings => t!("action.clear_warnings"),
             Action::CommandPalette => t!("action.command_palette"),
             Action::QuickOpen => t!("action.quick_open"),
@@ -2750,6 +2926,18 @@ impl KeybindingResolver {
             Action::ToggleVirtualSpaceCurrentBuffer => {
                 t!("action.toggle_virtual_space_current_buffer")
             }
+            Action::ToggleIndentationGuideCurrentBuffer => {
+                t!("action.toggle_indentation_guide_current_buffer")
+            }
+            Action::ToggleFoldIndicatorsCurrentBuffer => {
+                t!("action.toggle_fold_indicators_current_buffer")
+            }
+            Action::ToggleCurrentLineHighlightCurrentBuffer => {
+                t!("action.toggle_current_line_highlight_current_buffer")
+            }
+            Action::ToggleOccurrenceHighlightCurrentBuffer => {
+                t!("action.toggle_occurrence_highlight_current_buffer")
+            }
             Action::TriggerWaveAnimation => t!("action.trigger_wave_animation"),
             Action::ToggleScrollSync => t!("action.toggle_scroll_sync"),
             Action::ToggleMouseCapture => t!("action.toggle_mouse_capture"),
@@ -2800,6 +2988,7 @@ impl KeybindingResolver {
             Action::OpenTerminalRight => t!("action.open_terminal_right"),
             Action::OpenTerminalBelow => t!("action.open_terminal_below"),
             Action::CloseTerminal => t!("action.close_terminal"),
+            Action::RestartTerminal => t!("action.restart_terminal"),
             Action::FocusTerminal => t!("action.focus_terminal"),
             Action::TerminalEscape => t!("action.terminal_escape"),
             Action::ToggleKeyboardCapture => t!("action.toggle_keyboard_capture"),
@@ -2973,7 +3162,7 @@ impl KeybindingResolver {
         if context != KeyContext::Normal
             && (context.allows_normal_fallthrough()
                 || Self::is_application_wide_action(action)
-                || (context.allows_ui_fallthrough() && Self::is_terminal_ui_action(action)))
+                || (context.allows_ui_fallthrough() && Self::is_ui_fallthrough_action(action)))
         {
             // Check custom normal bindings
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
@@ -3176,6 +3365,64 @@ mod tests {
         assert_eq!(action.to_qualified_action_str(), "menu_open:Edit");
     }
 
+    /// Issue #1128: a keybinding whose key name doesn't parse (e.g.
+    /// "asterisk", "kp_multiply") is rejected — the entry must be dropped
+    /// (binding nothing) while a `tracing::warn!` at load time names the key
+    /// and action, and the rest of the config must still load. The warning
+    /// itself is emitted by `warn_invalid_key`; here we assert the
+    /// dropped-but-load-continues behavior.
+    #[test]
+    fn test_unknown_key_name_entry_is_dropped_but_load_continues() {
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "asterisk".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            keys: Vec::new(),
+            action: "duplicate_line".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        // Same failure inside a chord sequence.
+        config.keybindings.push(crate::config::Keybinding {
+            key: String::new(),
+            modifiers: Vec::new(),
+            keys: vec![
+                crate::config::KeyPress {
+                    key: "x".to_string(),
+                    modifiers: vec!["ctrl".to_string()],
+                },
+                crate::config::KeyPress {
+                    key: "kp_multiply".to_string(),
+                    modifiers: Vec::new(),
+                },
+            ],
+            action: "save".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        // A valid entry after the bad ones: loading must not abort mid-config.
+        config.keybindings.push(crate::config::Keybinding {
+            key: "f6".to_string(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            action: "save".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        // Only the valid entry produced custom bindings; both bad entries were
+        // dropped rather than half-registered.
+        let custom_single: usize = resolver.bindings.values().map(|m| m.len()).sum();
+        assert_eq!(custom_single, 1, "bindings: {:?}", resolver.bindings);
+        let custom_chords: usize = resolver.chord_bindings.values().map(|m| m.len()).sum();
+        assert_eq!(custom_chords, 0, "chords: {:?}", resolver.chord_bindings);
+
+        // The valid entry still resolves.
+        let event = KeyEvent::new(KeyCode::F(6), KeyModifiers::empty());
+        assert_eq!(resolver.resolve(&event, KeyContext::Normal), Action::Save);
+    }
+
     #[test]
     fn test_resolve_basic() {
         let config = Config::default();
@@ -3223,7 +3470,7 @@ mod tests {
         );
 
         // Ctrl+S is application-wide (covered by `is_application_wide_action`),
-        // but also `is_terminal_ui_action`-true — verify the UI fallthrough
+        // but also `is_ui_fallthrough_action`-true — verify the UI fallthrough
         // path doesn't accidentally exclude it.
         let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
         assert_eq!(
@@ -3234,7 +3481,7 @@ mod tests {
 
         // Editing actions on the source buffer must NOT pass through.
         // Ctrl+D (add cursor next match) is editor-only and absent from
-        // `is_terminal_ui_action`.
+        // `is_ui_fallthrough_action`.
         let ctrl_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
         assert_ne!(
             resolver.resolve(&ctrl_d, mode_ctx),
@@ -3802,6 +4049,343 @@ mod tests {
         );
     }
 
+    /// Regression guard for issue #2720: a user-defined binding for an
+    /// Alt+letter chord must take precedence over the built-in menu-bar
+    /// mnemonic, which lives in the default keymap as a *global* binding
+    /// (`Alt+H → menu_open Help`). A user binding with no `when` clause loads
+    /// into the Normal context; before the fix the default-global tier was
+    /// checked ahead of the custom-context tier, so the override was shadowed
+    /// (opening the Help menu, or silently no-op'ing when mnemonics were off).
+    #[test]
+    fn test_user_alt_letter_binding_overrides_menu_mnemonic() {
+        use crate::config::Keybinding;
+
+        let alt_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
+
+        // Pin the keymap: on macOS `Config::default()` selects the macos
+        // keymap, which deliberately binds Alt+F to word movement in Normal —
+        // that context-specific binding outranks the File mnemonic there, so
+        // the mnemonic assertions below only hold on the default keymap.
+        let mut baseline = Config::default();
+        baseline.active_keybinding_map = "default".into();
+
+        // Baseline: with no user override, Alt+H is the Help menu mnemonic
+        // (a default *global* binding).
+        let default_resolver = KeybindingResolver::new(&baseline);
+        assert_eq!(
+            default_resolver.resolve(&alt_h, KeyContext::Normal),
+            Action::MenuOpen("Help".to_string()),
+            "unbound Alt+H must still open the Help menu by default"
+        );
+
+        // User binds Alt+H → command_palette (no `when` clause → Normal context).
+        let mut config = baseline.clone();
+        config.keybindings.push(Keybinding {
+            key: "h".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "command_palette".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        assert_eq!(
+            resolver.resolve(&alt_h, KeyContext::Normal),
+            Action::CommandPalette,
+            "a user Alt+H binding must win over the default-global Help mnemonic"
+        );
+
+        // Other unbound Alt-letter mnemonics must remain intact.
+        let alt_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_f, KeyContext::Normal),
+            Action::MenuOpen("File".to_string()),
+            "unrelated Alt+F mnemonic must not regress when Alt+H is overridden"
+        );
+    }
+
+    /// A user override placed explicitly in the `global` context must also win
+    /// over the default-global mnemonic for the same chord.
+    #[test]
+    fn test_user_global_binding_overrides_default_global() {
+        use crate::config::Keybinding;
+
+        let mut config = Config::default();
+        config.keybindings.push(Keybinding {
+            key: "h".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "command_palette".to_string(),
+            args: HashMap::new(),
+            when: Some("global".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        let alt_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_h, KeyContext::Normal),
+            Action::CommandPalette,
+            "a user global Alt+H binding must win over the default-global mnemonic"
+        );
+    }
+
+    /// Issue #2941, core rule: within one source layer, a context-specific
+    /// binding outranks a `global` binding for the same chord. A broad
+    /// global fallback must never make the narrower binding unreachable.
+    #[test]
+    fn test_context_binding_outranks_global_binding_same_source() {
+        use crate::config::Keybinding;
+
+        // User binds Alt+N globally (broad fallback) AND in Normal
+        // (specific job). In Normal the specific one must win.
+        let mut config = Config::default();
+        config.keybindings.push(Keybinding {
+            key: "n".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "move_down".to_string(),
+            args: HashMap::new(),
+            when: Some("global".to_string()),
+        });
+        config.keybindings.push(Keybinding {
+            key: "n".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "move_word_right".to_string(),
+            args: HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        let alt_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_n, KeyContext::Normal),
+            Action::MoveWordRight,
+            "the user's normal-context binding must outrank their own global fallback"
+        );
+        // Where no narrower binding exists, the global fallback applies.
+        assert_eq!(
+            resolver.resolve(&alt_n, KeyContext::Popup),
+            Action::MoveDown,
+            "the global fallback must still apply in contexts without a narrower binding"
+        );
+    }
+
+    /// Issue #2941: the default keymap's own prompt-context bindings
+    /// (Universal Search toggles, file-browser encoding toggle) must be
+    /// reachable over the default-global menu mnemonics on the same chords.
+    /// Before the fix these only worked via a hard-coded Alt+Char bypass in
+    /// the prompt dispatch path.
+    #[test]
+    fn test_default_prompt_bindings_outrank_menu_mnemonics() {
+        // Pin the keymap so the assertions don't depend on the host OS
+        // (macOS defaults to the macos keymap).
+        let mut config = Config::default();
+        config.active_keybinding_map = "default".into();
+        let resolver = KeybindingResolver::new(&config);
+
+        // Alt+G: `live_grep_toggle_regex` (prompt) vs `menu_open Go` (global).
+        let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_g, KeyContext::Prompt),
+            Action::PluginAction("live_grep_toggle_regex".to_string()),
+            "prompt-context Alt+G toggle must outrank the global Go-menu mnemonic"
+        );
+        assert_eq!(
+            resolver.resolve(&alt_g, KeyContext::Normal),
+            Action::MenuOpen("Go".to_string()),
+            "Alt+G must still open the Go menu outside the prompt"
+        );
+
+        // Alt+E: `file_browser_toggle_detect_encoding` (prompt) vs
+        // `menu_open Edit` (global).
+        let alt_e = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_e, KeyContext::Prompt),
+            Action::FileBrowserToggleDetectEncoding,
+            "prompt-context Alt+E toggle must outrank the global Edit-menu mnemonic"
+        );
+
+        // SearchPrompt narrows Prompt and must inherit the same outcome
+        // through the context chain.
+        assert_eq!(
+            resolver.resolve(&alt_g, KeyContext::SearchPrompt),
+            Action::PluginAction("live_grep_toggle_regex".to_string()),
+            "SearchPrompt must inherit Prompt's Alt+G toggle through the context chain"
+        );
+    }
+
+    /// Issue #2941: `editor.menu_bar_mnemonics = false` promises to free the
+    /// Alt+letter chords. The mnemonic bindings must be suppressed at
+    /// resolution — neither firing nor consuming the key — instead of
+    /// resolving to a MenuOpen that dispatch silently drops (a dead key).
+    #[test]
+    fn test_mnemonics_disabled_releases_alt_letter_chords() {
+        use crate::config::Keybinding;
+
+        // Pin the keymap: on macOS `Config::default()` selects the macos
+        // keymap, whose own `normal` Alt+F word-movement binding would
+        // resolve here (correctly) instead of Action::None.
+        let mut baseline = Config::default();
+        baseline.active_keybinding_map = "default".into();
+        baseline.editor.menu_bar_mnemonics = false;
+
+        let resolver = KeybindingResolver::new(&baseline);
+
+        // With nothing else bound, Alt+F is genuinely unbound now — not a
+        // swallowed MenuOpen.
+        let alt_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_f, KeyContext::Normal),
+            Action::None,
+            "with mnemonics off, Alt+F must not resolve to a (dropped) MenuOpen"
+        );
+
+        // The freed chord is available to user bindings.
+        let mut config = baseline.clone();
+        config.keybindings.push(Keybinding {
+            key: "f".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "move_word_right".to_string(),
+            args: HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve(&alt_f, KeyContext::Normal),
+            Action::MoveWordRight,
+            "with mnemonics off, a user Alt+F binding must fire"
+        );
+
+        // The option governs Alt+letter mnemonics only: a menu_open binding
+        // on a non-mnemonic chord (e.g. F2) stays live.
+        let mut config = baseline.clone();
+        config.keybindings.push(Keybinding {
+            key: "f2".to_string(),
+            modifiers: vec![],
+            keys: vec![],
+            action: "menu_open".to_string(),
+            args: [(
+                "name".to_string(),
+                serde_json::Value::String("File".to_string()),
+            )]
+            .into_iter()
+            .collect(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+        let f2 = KeyEvent::new(KeyCode::F(2), KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve(&f2, KeyContext::Normal),
+            Action::MenuOpen("File".to_string()),
+            "menu_open on a non-Alt chord must not be suppressed by the mnemonics option"
+        );
+    }
+
+    /// Issue #2941: a plugin mode's own bindings (specific) must outrank the
+    /// keymap's `global` entries (broad), while the keymap's *mode* bindings
+    /// still outrank the plugin's — at equal specificity the chosen keymap
+    /// wins over plugin defaults.
+    #[test]
+    fn test_plugin_mode_binding_outranks_default_global() {
+        let mut resolver = KeybindingResolver::new(&Config::default());
+        let mode_ctx = KeyContext::Mode("test-mode".to_string());
+        resolver
+            .plugin_defaults
+            .entry(mode_ctx.clone())
+            .or_default()
+            .insert(
+                (KeyCode::Char('h'), KeyModifiers::ALT),
+                Action::PluginAction("test_mode_help".to_string()),
+            );
+
+        // Alt+H is the global Help mnemonic; inside the plugin mode the
+        // mode's own binding must win.
+        let alt_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_h, mode_ctx.clone()),
+            Action::PluginAction("test_mode_help".to_string()),
+            "a plugin mode binding must outrank the default-global mnemonic"
+        );
+
+        // Same specificity, keymap side: a default-keymap binding for the
+        // same mode context outranks the plugin default.
+        resolver
+            .default_bindings
+            .entry(mode_ctx.clone())
+            .or_default()
+            .insert(
+                (KeyCode::Char('h'), KeyModifiers::ALT),
+                Action::CommandPalette,
+            );
+        assert_eq!(
+            resolver.resolve(&alt_h, mode_ctx),
+            Action::CommandPalette,
+            "at equal specificity the active keymap outranks plugin defaults"
+        );
+    }
+
+    /// Issue #2941: chord resolution shares `resolve`'s precedence order. A
+    /// custom context-specific chord must outrank a default global chord for
+    /// the same sequence (the chord path previously kept the pre-#2720
+    /// default-global-first order).
+    #[test]
+    fn test_chord_resolution_context_outranks_global() {
+        let mut resolver = KeybindingResolver::new(&Config::default());
+        let seq = vec![
+            (KeyCode::Char('k'), KeyModifiers::CONTROL),
+            (KeyCode::Char('z'), KeyModifiers::empty()),
+        ];
+        resolver
+            .default_chord_bindings
+            .entry(KeyContext::Global)
+            .or_default()
+            .insert(seq.clone(), Action::Quit);
+        resolver
+            .chord_bindings
+            .entry(KeyContext::Normal)
+            .or_default()
+            .insert(seq.clone(), Action::CommandPalette);
+
+        let chord_state = vec![(KeyCode::Char('k'), KeyModifiers::CONTROL)];
+        let key_z = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve_chord(&chord_state, &key_z, KeyContext::Normal),
+            ChordResolution::Complete(Action::CommandPalette),
+            "a custom context chord must outrank a default global chord"
+        );
+    }
+
+    /// Reachability guard for issue #2941: every binding shipped in every
+    /// built-in keymap must actually fire in its own context — no entry may
+    /// be dead because a broader binding shadows its chord. This is what
+    /// keeps the resolver's precedence rule and the keymap data honest with
+    /// each other (the old global-first order shipped four dead entries).
+    #[test]
+    fn test_builtin_keymap_bindings_are_reachable() {
+        for map_name in crate::config::KeybindingMapName::BUILTIN_OPTIONS {
+            let mut config = Config::default();
+            config.active_keybinding_map = (*map_name).into();
+            let resolver = KeybindingResolver::new(&config);
+
+            for (context, bindings) in &resolver.default_bindings {
+                for ((code, modifiers), action) in bindings {
+                    let event = KeyEvent::new(*code, *modifiers);
+                    let resolved = resolver.resolve(&event, context.clone());
+                    assert_eq!(
+                        &resolved, action,
+                        "keymap '{}': binding {:?}+{:?} → {:?} in context {:?} is \
+                         unreachable — it resolves to {:?} instead (shadowed by a \
+                         broader binding)",
+                        map_name, modifiers, code, action, context, resolved,
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_all_context_default_bindings_exist() {
         let config = Config::default();
@@ -3860,6 +4444,11 @@ mod tests {
             // — handled by the live_grep plugin (Finder panel), dispatched
             // as a plugin action from the prompt context.
             "live_grep_export_quickfix",
+            // Code Tour step navigation — handled by the code-tour plugin;
+            // bound in the default keymap so a tour can be stepped from the
+            // editor split while the tour panel stays docked below.
+            "tour_next",
+            "tour_prev",
         ];
 
         let config = Config::default();

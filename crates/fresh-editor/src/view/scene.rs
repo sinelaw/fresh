@@ -188,12 +188,13 @@ impl Editor {
     /// structure, enabled/checked state and accelerators are derived; the TUI
     /// renderer and the web bridge both consume this rather than recomputing it.
     ///
-    /// Geometry (`x`/`w`, dropdown rects) comes from the pipeline's `MenuLayout`,
-    /// which is populated during render — so this reflects the most recent frame.
+    /// Geometry (`x`/`w`, dropdown rects) comes from `menu_layout_now` — the
+    /// same live-state layout walk the TUI paints from.
     pub fn menu_view(&self) -> MenuView {
-        let chrome = self.active_chrome();
-        let menu_areas: HashMap<usize, Rect> = chrome
-            .menu_layout
+        // Geometry derived from live state — the same layout walk the TUI
+        // paints from (`menu_layout_now`), not a paint recording.
+        let menu_layout = self.menu_layout_now();
+        let menu_areas: HashMap<usize, Rect> = menu_layout
             .as_ref()
             .map(|m| m.menu_areas.iter().cloned().collect())
             .unwrap_or_default();
@@ -213,7 +214,7 @@ impl Editor {
             })
             .collect();
 
-        let dropdown = chrome.menu_layout.as_ref().and_then(|ml| {
+        let dropdown = menu_layout.as_ref().and_then(|ml| {
             if ml.item_areas.is_empty() {
                 return None;
             }
@@ -480,11 +481,11 @@ impl Editor {
             p.suggestions.len(),
             p.suggestions.len(),
         ));
-        // Search-option toggles: mirror the TUI's options row from the layout
-        // the renderer recorded (`search_options_layout`) — same cell spans the
-        // TUI hit-tests — plus the live state and the same label/shortcut
+        // Search-option toggles: mirror the TUI's options row from the same
+        // derived layout the TUI hit-tests (`search_options_layout_now`) —
+        // same cell spans — plus the live state and the same label/shortcut
         // derivation `StatusBarRenderer::render_search_options` uses.
-        let search_options = chrome.search_options_layout.as_ref().map(|lo| {
+        let search_options = self.search_options_layout_now().map(|lo| {
             use crate::input::keybindings::{Action, KeyContext};
             use rust_i18n::t;
             let win = self.active_window();
@@ -546,7 +547,7 @@ impl Editor {
             }
         });
         Some(PaletteView {
-            query: p.input.clone(),
+            query: p.input_str().to_string(),
             message: p.message.clone(),
             prompt_type: prompt_type_tag(&p.prompt_type),
             overlay: p.overlay,
@@ -720,6 +721,8 @@ pub struct FileExplorerView {
     pub scroll_offset: usize,
     pub viewport_height: usize,
     pub selected: Option<usize>,
+    /// Flattened-row indices in screen order, including sticky ancestors.
+    pub viewport_rows: Vec<usize>,
     pub rows: Vec<FileRow>,
 }
 
@@ -755,7 +758,235 @@ impl Editor {
             scroll_offset: view.get_scroll_offset(),
             viewport_height: view.viewport_height,
             selected: view.get_selected_index(),
+            viewport_rows: view.viewport_display_indices(),
             rows,
+        })
+    }
+}
+
+// ──────────────────── file browser (Open File / Save As / Switch Project) ────────────────────
+
+/// One visible file row of the browser popup. The window of rows is the
+/// editor's own (`scroll_offset` … `+ visible_rows`), so `row` — the grid row
+/// the entry was laid out on — routes a click straight back through
+/// `FileBrowserLayout::click_to_index`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBrowserRowView {
+    /// Index into the editor's entry list (not into this window).
+    pub index: usize,
+    /// Grid row this entry occupies.
+    pub row: u16,
+    pub name: String,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    /// Formatted size, empty for directories (the TUI prints "--").
+    pub size: String,
+    /// Formatted modification time, empty when unknown.
+    pub modified: String,
+    pub selected: bool,
+    /// False for entries the current filter text does not match — the TUI dims
+    /// them rather than hiding them.
+    pub matches_filter: bool,
+}
+
+/// A checkbox toggle (Show Hidden / Detect Encoding) with the cell span the
+/// renderer laid it out at, so a native frontend can draw its own checkbox and
+/// route the click back to the cells `FileBrowserLayout::toggle_at` hit-tests.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBrowserToggleView {
+    pub name: &'static str,
+    pub label: String,
+    pub shortcut: Option<String>,
+    pub active: bool,
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+}
+
+/// A navigation shortcut (`..`, `/`, `~`, …) plus its cell span.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBrowserShortcutView {
+    pub index: usize,
+    pub label: String,
+    pub description: String,
+    pub selected: bool,
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+}
+
+/// A sortable column header plus its cell span.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBrowserColumnView {
+    pub name: &'static str,
+    pub label: String,
+    /// This column is the active sort key.
+    pub active: bool,
+    /// Sort direction, meaningful when `active`.
+    pub ascending: bool,
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+}
+
+/// Semantic file-browser popup: the dialog behind Open File, Save File As and
+/// Switch Project. Everything the TUI paints into its bordered band — the
+/// directory, the toggles, the nav shortcuts, the sortable columns and the
+/// visible slice of entries — with the cell span of every interactive element
+/// so a native frontend renders it as DOM and routes clicks back through the
+/// editor's existing hit-tests. `None` unless one of those prompts is active.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBrowserView {
+    /// The popup band (including the TUI's border cells).
+    pub rect: RectView,
+    /// The file-list rows only.
+    pub list_rect: RectView,
+    /// One-cell scrollbar column beside the list.
+    pub scrollbar_rect: RectView,
+    /// Directory being browsed, in full — eliding it is the frontend's call.
+    pub path: String,
+    pub toggles: Vec<FileBrowserToggleView>,
+    pub shortcuts: Vec<FileBrowserShortcutView>,
+    pub columns: Vec<FileBrowserColumnView>,
+    pub rows: Vec<FileBrowserRowView>,
+    pub scroll_offset: usize,
+    pub visible_rows: usize,
+    /// Total entries in the directory (the list scrolls within this).
+    pub total: usize,
+    pub selected: Option<usize>,
+    /// Which section has keyboard focus: `"navigation"` or `"files"`.
+    pub active_section: &'static str,
+    pub loading: bool,
+    pub error: Option<String>,
+    /// Scrollbar thumb, in rows from the top of `scrollbar_rect`.
+    pub thumb_start: usize,
+    pub thumb_end: usize,
+}
+
+impl Editor {
+    /// Semantic file browser, derived from the dialog state plus the layout
+    /// the renderer captured this frame (rects, viewport height and the cell
+    /// span of every interactive element). Rendered natively by the web
+    /// frontend; clicks route back through `handle_mouse` at those spans,
+    /// which the existing file-browser hit-tests resolve — so there is no
+    /// second hit-testing implementation anywhere.
+    pub fn file_browser_view(&self) -> Option<FileBrowserView> {
+        use crate::app::file_open::{format_modified, format_size, FileOpenSection, SortMode};
+        use rust_i18n::t;
+
+        let win = self.active_window();
+        let layout = win.file_browser_layout.as_ref()?;
+        let state = win.file_open_state.as_ref()?;
+
+        let toggles = layout
+            .toggle_spans
+            .iter()
+            .map(|t| FileBrowserToggleView {
+                name: t.id.name(),
+                label: t.label.clone(),
+                shortcut: t.shortcut.clone(),
+                active: t.active,
+                x: t.x,
+                y: layout.nav_area.y,
+                w: t.w,
+            })
+            .collect();
+
+        let nav_selected = state.active_section == FileOpenSection::Navigation;
+        let shortcuts = layout
+            .shortcut_spans
+            .iter()
+            .filter_map(|(idx, x, w)| {
+                let sc = state.shortcuts.get(*idx)?;
+                Some(FileBrowserShortcutView {
+                    index: *idx,
+                    label: sc.label.clone(),
+                    description: sc.description.clone(),
+                    selected: nav_selected && *idx == state.selected_shortcut,
+                    x: *x,
+                    y: layout.nav_area.y + 1,
+                    w: *w,
+                })
+            })
+            .collect();
+
+        let columns = layout
+            .column_spans
+            .iter()
+            .map(|(mode, x, w)| {
+                let (name, label) = match mode {
+                    SortMode::Name => ("name", t!("file_browser.name")),
+                    SortMode::Size => ("size", t!("file_browser.size")),
+                    SortMode::Modified => ("modified", t!("file_browser.modified")),
+                    SortMode::Type => ("type", t!("file_browser.name")),
+                };
+                FileBrowserColumnView {
+                    name,
+                    label: label.to_string(),
+                    active: state.sort_mode == *mode,
+                    ascending: state.sort_ascending,
+                    x: *x,
+                    y: layout.header_area.y,
+                    w: *w,
+                }
+            })
+            .collect();
+
+        // The same window the TUI draws: `visible_rows` entries from the
+        // editor's scroll offset. Rendering a different number of rows would
+        // desync every click from `click_to_index`.
+        let files_active = state.active_section == FileOpenSection::Files;
+        let rows = state
+            .visible_entries(layout.visible_rows)
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let index = state.scroll_offset + i;
+                let meta = e.fs_entry.metadata.as_ref();
+                FileBrowserRowView {
+                    index,
+                    row: layout.list_area.y + i as u16,
+                    name: e.fs_entry.name.clone(),
+                    is_dir: e.fs_entry.is_dir(),
+                    is_symlink: e.fs_entry.is_symlink(),
+                    size: if e.fs_entry.is_dir() {
+                        String::new()
+                    } else {
+                        meta.map(|m| format_size(m.size)).unwrap_or_default()
+                    },
+                    modified: meta
+                        .and_then(|m| m.modified)
+                        .map(format_modified)
+                        .unwrap_or_default(),
+                    selected: files_active && state.selected_index == Some(index),
+                    matches_filter: e.matches_filter,
+                }
+            })
+            .collect();
+
+        Some(FileBrowserView {
+            rect: RectView::from(layout.popup_area),
+            list_rect: RectView::from(layout.list_area),
+            scrollbar_rect: RectView::from(layout.scrollbar_area),
+            path: state.current_dir.display().to_string(),
+            toggles,
+            shortcuts,
+            columns,
+            rows,
+            scroll_offset: state.scroll_offset,
+            visible_rows: layout.visible_rows,
+            total: state.entries.len(),
+            selected: state.selected_index,
+            active_section: if files_active { "files" } else { "navigation" },
+            loading: state.loading,
+            error: state.error.clone(),
+            thumb_start: layout.thumb_start,
+            thumb_end: layout.thumb_end,
         })
     }
 }
@@ -1084,6 +1315,7 @@ impl Editor {
             ContextMenuKind::FileExplorer => "fileExplorer",
             ContextMenuKind::NewTab => "newTab",
             ContextMenuKind::Tab => "tab",
+            ContextMenuKind::CloseSplit => "closeSplit",
         };
         Some(ContextMenuView {
             kind,

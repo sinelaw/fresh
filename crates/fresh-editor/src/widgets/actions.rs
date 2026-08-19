@@ -424,11 +424,12 @@ mod tests {
             nodes: vec![node("old", 0, false)],
             item_keys: vec!["k0".into()],
             selected_index: -1,
-            visible_rows: 5,
+            visible_rows: Some(5),
             expanded_keys: vec![],
             checkable: false,
             item_height: 1,
             card_borders: false,
+            indent_cols: 2,
             key: Some("t".into()),
         };
         let new_nodes = vec![node("new1", 0, false), node("new2", 0, false)];
@@ -462,11 +463,12 @@ mod tests {
             nodes: vec![a, b, c],
             item_keys: vec!["k_a".into(), "k_b".into(), "k_c".into()],
             selected_index: -1,
-            visible_rows: 5,
+            visible_rows: Some(5),
             expanded_keys: vec![],
             checkable: true,
             item_height: 1,
             card_borders: false,
+            indent_cols: 2,
             key: Some("t".into()),
         };
         let ok = set_tree_checked_keys_in_spec(
@@ -501,11 +503,12 @@ mod tests {
             nodes: vec![n_with, n_without],
             item_keys: vec!["k0".into(), "k1".into()],
             selected_index: -1,
-            visible_rows: 5,
+            visible_rows: Some(5),
             expanded_keys: vec![],
             checkable: true,
             item_height: 1,
             card_borders: false,
+            indent_cols: 2,
             key: Some("t".into()),
         };
         let _ok = set_tree_checked_keys_in_spec(
@@ -529,11 +532,12 @@ mod tests {
             nodes: vec![node("a", 0, false)],
             item_keys: vec!["k".into()],
             selected_index: -1,
-            visible_rows: 5,
+            visible_rows: Some(5),
             expanded_keys: vec![],
             checkable: false,
             item_height: 1,
             card_borders: false,
+            indent_cols: 2,
             key: Some("real".into()),
         };
         assert!(!set_tree_nodes_in_spec(&mut spec, "wrong", vec![], vec![]));

@@ -83,6 +83,30 @@ pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>
 /// indexed cell-theme map. Per-window layout (split-leaf rects, tab
 /// rects, file-explorer rects, view-line mappings) lives on
 /// [`WindowLayoutCache`] instead.
+///
+/// ## THE paint-recorded (`screen_space`-class) roster — CLOSED LIST
+///
+/// Most chrome geometry is derived at event time from live state
+/// (slice 7); the surfaces below are the ruled exceptions whose rects
+/// are recorded at PAINT time because their geometry is a paint
+/// product (content-measured popups, dialog layout math), each with
+/// standing debug parity or documented rationale at its site:
+///
+///   - `popup_areas` / `global_popup_areas` (info/message popups)
+///   - `suggestions_area` / `suggestions_outer_area` /
+///     `suggestions_scrollbar_rect` / `prompt_preview_area` (the
+///     prompt's suggestion list, both forms, and the overlay preview)
+///   - `prompt_toolbar_boxes` + `prompt_toolbar_origin` (overlay
+///     toolbar box tree, panel-local coordinates)
+///   - `workspace_trust_dialog` (trust dialog layout)
+///   - `Window::file_browser_layout` (the file-open dialog)
+///
+/// This list is the ONE enumeration of the parallel geometry path
+/// (ruling 7d in `docs/internal/chrome-event-model-plan.md`).
+/// ADDING A SURFACE HERE REQUIRES A RULING in the plan doc — the
+/// event-time derivation is the default, and this class must not
+/// grow surface by surface without one; retiring it entirely is the
+/// paint-time compositing arc (sinelaw/fresh#3024).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChromeLayout {
     /// Popup areas for mouse hit testing
@@ -105,11 +129,17 @@ pub(crate) struct ChromeLayout {
     /// list fits in the visible window. Click/drag handlers in
     /// `mouse_input.rs` read this to update `prompt.scroll_offset`.
     pub suggestions_scrollbar_rect: Option<Rect>,
-    /// Hit rects for the floating-overlay prompt's widget toolbar, as
-    /// (widget_key, screen_rect) pairs. Populated when the prompt carries a
-    /// `toolbar_widget`; a click inside one fires the matching
-    /// `live_grep_toggle_<key>` action. Empty otherwise.
-    pub prompt_toolbar_hits: Vec<(String, Rect)>,
+    /// The toolbar's layout-box tree from its most recent render, plus
+    /// the screen position of the toolbar band's top-left cell. The
+    /// overlay focus ring derives from the tree (document order of
+    /// focusable boxes — any focusable kind the plugin puts in the
+    /// toolbar joins the ring) and clicks hit-test it, the same way
+    /// panel rings and clicks work — no paint-recorded rect list.
+    pub prompt_toolbar_boxes: Vec<crate::widgets::LayoutBox>,
+    /// `(x, y)` of the toolbar band's origin on screen, translating
+    /// clicks into the box tree's (row, col) space. `None` when no
+    /// toolbar is showing.
+    pub prompt_toolbar_origin: Option<(u16, u16)>,
     /// Screen rect of the floating-overlay prompt's results list (issue
     /// #2119). `None` when no overlay is open. The mouse-wheel handler reads
     /// this to scroll the result list (without moving the selection) when the
@@ -127,10 +157,6 @@ pub(crate) struct ChromeLayout {
     /// Status-bar hit-test layout (area, clickable segments, plugin token
     /// areas, semantic segment model). See [`StatusBarChrome`].
     pub status_bar: StatusBarChrome,
-    /// Search options layout for checkbox hit testing
-    pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
-    /// Menu bar layout for hit testing
-    pub menu_layout: Option<crate::view::ui::menu::MenuLayout>,
     /// Dimensions of the last rendered frame. See [`FrameDimensions`].
     pub last_frame: FrameDimensions,
     /// Per-cell theme key provenance recorded during rendering.
@@ -148,51 +174,20 @@ pub(crate) struct FrameDimensions {
     pub height: u16,
 }
 
-/// Status-bar hit-test layout captured each frame by `render_status_bar`.
-/// Grouped so the four related fields travel together rather than as loose
-/// `status_bar_*` members of [`ChromeLayout`].
+/// The status bar's semantic PAINT capture — what the renderer drew last
+/// frame, kept for `status_view` so the web mirrors the painted frame
+/// natively instead of scraping cells. This is paint OUTPUT, not event
+/// geometry: hit-testing, hover, and popup anchoring derive the segment
+/// rects from live state via `Editor::status_bar_layout_now` (the
+/// formerly-cached `clickable` / `plugin_token_areas` fields are retired).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StatusBarChrome {
-    /// Status bar area (row, x, width)
+    /// Status bar area (row, x, width) as painted.
     pub area: Option<(u16, u16, u16)>,
-    /// Every clickable built-in status-bar segment drawn last frame, as
-    /// `(id, row, start_col, end_col)`. One generic list (mirroring
-    /// `StatusBarLayout::clickable`) walked by both the hover hit-test and
-    /// `handle_click_status_bar` — no per-indicator field. See
-    /// `StatusBarClickable`.
-    pub clickable: Vec<(
-        crate::view::ui::status_bar::StatusBarClickable,
-        u16,
-        u16,
-        u16,
-    )>,
-    /// Plugin-registered status-bar token areas, keyed by
-    /// `"<plugin>:<token>"`. Populated by `render_status_bar`; consumed
-    /// by `handle_click_status_bar` which fires the
-    /// `status_bar_token_clicked` hook on a hit so the registering
-    /// plugin can react (typically by re-opening a deferred prompt).
-    /// See `docs/internal/trust-env-devcontainer-ux-plan.md` for the
-    /// design context.
-    pub plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
     /// Semantic status-bar model (rendered elements + text + positions), captured
     /// by the renderer so `status_view` derives the web status bar directly
     /// instead of scraping the drawn cells.
     pub segments: Vec<crate::view::ui::status_bar::StatusSegmentInfo>,
-}
-
-impl StatusBarChrome {
-    /// Screen area `(row, start_col, end_col)` of a given clickable status-bar
-    /// segment from the last frame, if it was drawn. Used to anchor popups to
-    /// their indicator (e.g. the LSP / remote / read-only menus).
-    pub fn clickable_area(
-        &self,
-        id: crate::view::ui::status_bar::StatusBarClickable,
-    ) -> Option<(u16, u16, u16)> {
-        self.clickable
-            .iter()
-            .find(|(cid, _, _, _)| *cid == id)
-            .map(|(_, row, start, end)| (*row, *start, *end))
-    }
 }
 
 impl ChromeLayout {

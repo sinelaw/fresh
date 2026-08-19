@@ -3,6 +3,7 @@
 //! This module contains handlers for popup-related actions like confirmation and cancellation.
 
 use super::Editor;
+use crate::app::window::LspCompletionCandidate;
 use crate::model::event::Event;
 use crate::primitives::snippet::{expand_snippet, is_snippet};
 use crate::primitives::word_navigation::find_completion_word_start;
@@ -28,7 +29,7 @@ impl Editor {
     /// first, and the wrong branch would claim the key.
     ///
     /// Global popups shadow buffer popups for keyboard focus (see
-    /// `input_dispatch::dispatch_modal_input`), so the confirm path
+    /// the Popups component's `dispatch_popup_keys`), so the confirm path
     /// picks the same popup: global first, then the active buffer.
     pub fn handle_popup_confirm(&mut self) -> PopupConfirmResult {
         use crate::view::popup::PopupResolver;
@@ -137,6 +138,20 @@ impl Editor {
                 PopupConfirmResult::EarlyReturn
             }
 
+            Some(PopupResolver::Update) => {
+                let action_key = self
+                    .active_state()
+                    .popups
+                    .top()
+                    .and_then(|p| p.selected_item())
+                    .and_then(|item| item.data.clone());
+                self.hide_popup();
+                if let Some(key) = action_key {
+                    self.handle_update_menu_action(&key);
+                }
+                PopupConfirmResult::EarlyReturn
+            }
+
             Some(PopupResolver::WorkspaceTrust) => {
                 // The trust prompt lives on the global stack; read its
                 // selection there (global-first, matching the resolver lookup).
@@ -154,20 +169,24 @@ impl Editor {
             }
 
             Some(PopupResolver::Completion) => {
-                // Grab the selected item's label + insert-text before we
-                // mutate the popup stack — insert_completion_text edits
-                // the buffer, which invalidates the borrow.
-                let completion_info = self
-                    .active_state()
-                    .popups
-                    .top()
-                    .and_then(|p| p.selected_item())
-                    .map(|item| (item.text.clone(), item.data.clone()));
-                if let Some((label, insert_text)) = completion_info {
+                // Grab the selected *row* — its insert-text and its index —
+                // before we mutate the popup stack: insert_completion_text
+                // edits the buffer, which invalidates the borrow.
+                //
+                // The row index is what identifies the accepted candidate.
+                // Labels don't: an auto-import list offers one `HashMap`
+                // row per crate exporting one, and looking the item back
+                // up by label applied the *first* such row's import
+                // regardless of which one was selected (#2952).
+                let selection = self.active_state().popups.top().and_then(|p| {
+                    p.selected_index()
+                        .zip(p.selected_item().map(|item| item.data.clone()))
+                });
+                if let Some((row, insert_text)) = selection {
                     if let Some(text) = insert_text {
                         self.insert_completion_text(text);
                     }
-                    self.apply_completion_additional_edits(&label);
+                    self.apply_completion_additional_edits(row);
                 }
                 self.hide_popup();
                 PopupConfirmResult::Done
@@ -299,15 +318,21 @@ impl Editor {
     /// If the item already has additional_text_edits, apply them directly.
     /// If not and the server supports completionItem/resolve, send a resolve request
     /// so the server can fill them in (the response is handled asynchronously).
-    fn apply_completion_additional_edits(&mut self, label: &str) {
-        // Find the matching CompletionItem from stored items
-        let item = self
-            .active_window_mut()
-            .completion_items
-            .as_ref()
-            .and_then(|items| items.iter().find(|item| item.label == label).cloned());
+    ///
+    /// `popup_row` is the index of the accepted row in the completion popup;
+    /// `Window::completion_popup_lsp_items` maps it back to the exact
+    /// candidate the row was built from. Rows past the end of that mapping
+    /// are buffer-word candidates and carry no LSP edits.
+    fn apply_completion_additional_edits(&mut self, popup_row: usize) {
+        let candidate = self
+            .active_window()
+            .completion_popup_lsp_items
+            .get(popup_row)
+            .cloned();
 
-        let Some(item) = item else { return };
+        let Some(candidate) = candidate else { return };
+        let item = &candidate.item;
+        let label = item.label.clone();
 
         if let Some(edits) = &item.additional_text_edits {
             if !edits.is_empty() {
@@ -324,14 +349,15 @@ impl Editor {
             }
         }
 
-        // No additional_text_edits present — try resolve if server supports it
-        if self.active_window().server_supports_completion_resolve() {
-            tracing::info!(
-                "Completion '{}' has no additional_text_edits, sending completionItem/resolve",
-                label
-            );
-            self.active_window_mut().send_completion_resolve(item);
-        }
+        // No additional_text_edits present — ask the server that offered
+        // this candidate to fill them in. `send_completion_resolve` gates
+        // on *that* server's capability; a sibling server for the same
+        // language advertising resolve is not an answer.
+        tracing::info!(
+            "Completion '{}' has no additional_text_edits, sending completionItem/resolve",
+            label
+        );
+        self.active_window_mut().send_completion_resolve(&candidate);
     }
 
     /// Handle PopupCancel action.
@@ -380,7 +406,7 @@ impl Editor {
 
             Some(PopupResolver::Completion) => {
                 self.hide_popup();
-                self.active_window_mut().completion_items = None;
+                self.active_window_mut().clear_completion_items();
             }
 
             Some(PopupResolver::RemoteIndicator) => {
@@ -388,6 +414,10 @@ impl Editor {
             }
 
             Some(PopupResolver::ReadOnly) => {
+                self.hide_popup();
+            }
+
+            Some(PopupResolver::Update) => {
                 self.hide_popup();
             }
 
@@ -408,7 +438,7 @@ impl Editor {
 
             Some(PopupResolver::None) | None => {
                 self.hide_popup();
-                self.active_window_mut().completion_items = None;
+                self.active_window_mut().clear_completion_items();
             }
         }
     }
@@ -452,7 +482,7 @@ impl Editor {
     /// events route into the popup's input handler.
     ///
     /// Editor-level (global) popups shadow buffer popups for keyboard
-    /// focus, mirroring the priority encoded in `dispatch_modal_input`,
+    /// focus, mirroring the priority encoded in `dispatch_popup_keys`,
     /// so we focus whichever popup the user actually sees.
     ///
     /// No-op when no popup is visible — the user pressing the
@@ -526,17 +556,9 @@ impl Editor {
         self.refilter_completion_popup();
     }
 
-    /// Re-filter the completion popup based on current prefix.
-    /// If no items match, dismiss the popup.
-    fn refilter_completion_popup(&mut self) {
-        // Get stored LSP completion items (may be empty if no LSP).
-        let lsp_items = self
-            .active_window_mut()
-            .completion_items
-            .clone()
-            .unwrap_or_default();
-
-        // Get current prefix
+    /// Lowercased word prefix at the primary cursor — what completion
+    /// candidates are filtered against.
+    pub(crate) fn completion_word_prefix(&mut self) -> String {
         let (word_start, cursor_pos) = {
             let cursor_pos = self.active_cursors().primary().position;
             let state = self.active_state();
@@ -544,62 +566,126 @@ impl Editor {
             (word_start, cursor_pos)
         };
 
-        let prefix = if word_start < cursor_pos {
+        if word_start < cursor_pos {
             self.active_state_mut()
                 .get_text_range(word_start, cursor_pos)
                 .to_lowercase()
         } else {
             String::new()
-        };
+        }
+    }
 
-        // Filter LSP items
-        let filtered_lsp: Vec<&lsp_types::CompletionItem> = if prefix.is_empty() {
-            lsp_items.iter().collect()
-        } else {
-            lsp_items
-                .iter()
-                .filter(|item| {
-                    item.label.to_lowercase().starts_with(&prefix)
-                        || item
-                            .filter_text
-                            .as_ref()
-                            .map(|ft| ft.to_lowercase().starts_with(&prefix))
-                            .unwrap_or(false)
-                })
-                .collect()
-        };
+    /// Build the rows of the completion popup for the word prefix at the
+    /// cursor: the stored LSP candidates that still match, followed by
+    /// buffer-word candidates the server didn't already offer.
+    ///
+    /// This is the only writer of `Window::completion_popup_lsp_items`, and
+    /// it fills it from the very list it converts into rows — so the accept
+    /// path can turn "the selected row" back into "the candidate that row
+    /// was built from" without guessing. Recovering the item by label
+    /// instead is what shipped the wrong auto-import in #2952: labels
+    /// repeat across auto-import candidates.
+    pub(crate) fn build_completion_popup_rows(
+        &mut self,
+    ) -> Vec<crate::model::event::PopupListItemData> {
+        let prefix = self.completion_word_prefix();
 
-        // Build combined items: LSP first, then buffer-word results.
-        let mut all_popup_items = lsp_items_to_popup_items(&filtered_lsp);
-        let buffer_word_items = self.get_buffer_completion_popup_items();
-        let lsp_labels: std::collections::HashSet<String> = all_popup_items
+        let matching: Vec<LspCompletionCandidate> = self
+            .active_window()
+            .completion_items
             .iter()
-            .map(|i| i.text.to_lowercase())
+            .flatten()
+            .filter(|candidate| completion_matches_prefix(&candidate.item, &prefix))
+            .cloned()
             .collect();
-        all_popup_items.extend(
+
+        let mut rows =
+            lsp_items_to_popup_items(&matching.iter().map(|c| &c.item).collect::<Vec<_>>());
+        self.active_window_mut().completion_popup_lsp_items = matching;
+
+        // Buffer-word candidates go below, minus anything the server
+        // already offers under the same label.
+        let lsp_labels: std::collections::HashSet<String> =
+            rows.iter().map(|i| i.text.to_lowercase()).collect();
+        let buffer_word_items = self.get_buffer_completion_popup_items();
+        rows.extend(
             buffer_word_items
                 .into_iter()
                 .filter(|item| !lsp_labels.contains(&item.text.to_lowercase())),
         );
+        rows
+    }
+
+    /// The candidate behind the highlighted completion row, described in
+    /// terms that survive rebuilding the rows.
+    ///
+    /// Read *before* `build_completion_popup_rows` runs, since that call
+    /// overwrites the row → item mapping this reads.
+    fn selected_completion_row(&self) -> Option<SelectedCompletionRow> {
+        let popup = self.active_state().popups.top()?;
+        let row = popup.selected_index()?;
+        match self.active_window().completion_popup_lsp_items.get(row) {
+            Some(item) => Some(SelectedCompletionRow::Lsp(Box::new(item.clone()))),
+            // No candidate recorded for this row.
+            None => popup
+                .selected_item()
+                .map(|item| SelectedCompletionRow::Text(item.text.clone())),
+        }
+    }
+
+    /// Where the previously selected candidate ended up among the freshly
+    /// built `rows`, or `None` if the new prefix filtered it out.
+    fn completion_row_of(
+        &self,
+        previous: &SelectedCompletionRow,
+        rows: &[crate::model::event::PopupListItemData],
+    ) -> Option<usize> {
+        match previous {
+            SelectedCompletionRow::Lsp(item) => self
+                .active_window()
+                .completion_popup_lsp_items
+                .iter()
+                .position(|i| i == item.as_ref()),
+            // A row with no candidate recorded behind it carries no payload
+            // beyond the text it inserts, so its text is identity enough —
+            // and identity semantics only buy anything where duplicates
+            // exist, which is the LSP rows. Search the whole list rather
+            // than only the buffer-word tail: popups that were not built by
+            // `build_completion_popup_rows` (plugin-supplied lists, and the
+            // ones tests inject) have *no* row → candidate mapping, so
+            // every one of their rows lands here and a tail-only search
+            // would never find them. This cannot quietly promote a plain
+            // buffer word into an auto-import candidate, because
+            // `build_completion_popup_rows` drops any buffer word whose
+            // text an LSP row already occupies — the two never coexist.
+            SelectedCompletionRow::Text(text) => rows.iter().position(|row| row.text == *text),
+        }
+    }
+
+    /// Re-filter the completion popup based on current prefix.
+    /// If no items match, dismiss the popup.
+    fn refilter_completion_popup(&mut self) {
+        // What the user has highlighted, captured before the rows (and the
+        // mapping behind them) are rebuilt.
+        let previous_selection = self.selected_completion_row();
+
+        let all_popup_items = self.build_completion_popup_rows();
 
         // If no items match from either source, dismiss popup.
         if all_popup_items.is_empty() {
             self.hide_popup();
-            self.active_window_mut().completion_items = None;
+            self.active_window_mut().clear_completion_items();
             return;
         }
 
-        // Get current selection to try preserving it
-        let current_selection = self
-            .active_state()
-            .popups
-            .top()
-            .and_then(|p| p.selected_item())
-            .map(|item| item.text.clone());
-
-        // Try to preserve selection
-        let selected = current_selection
-            .and_then(|sel| all_popup_items.iter().position(|item| item.text == sel))
+        // Keep the highlight on the candidate the user picked, identified
+        // by the *item* behind the row rather than by its label: an
+        // auto-import list offers one `HashMap` row per crate exporting
+        // one, and matching on the label snapped the highlight back to the
+        // first of them on every further keystroke (#2952). A candidate
+        // the new prefix filtered out falls back to the first row.
+        let selected = previous_selection
+            .and_then(|previous| self.completion_row_of(&previous, &all_popup_items))
             .unwrap_or(0);
 
         let popup_data = build_completion_popup_from_items(all_popup_items, selected);
@@ -649,6 +735,33 @@ pub(crate) fn build_completion_popup_from_items(
     }
 }
 
+/// The highlighted completion row, in terms that outlive the rows
+/// themselves — so typing another character can put the highlight back on
+/// the same candidate rather than on the first row that happens to share
+/// its label.
+enum SelectedCompletionRow {
+    /// An LSP candidate, identified by the candidate itself. Boxed because
+    /// a `CompletionItem` is large next to the other variant.
+    Lsp(Box<LspCompletionCandidate>),
+    /// A row with no LSP candidate recorded behind it — a buffer word, or
+    /// any row of a popup this module did not build. Identified by its
+    /// text, which is all such a row carries.
+    Text(String),
+}
+
+/// Whether a completion candidate survives the word prefix at the cursor.
+///
+/// `prefix` must already be lowercased (see `Editor::completion_word_prefix`).
+pub(crate) fn completion_matches_prefix(item: &lsp_types::CompletionItem, prefix: &str) -> bool {
+    prefix.is_empty()
+        || item.label.to_lowercase().starts_with(prefix)
+        || item
+            .filter_text
+            .as_ref()
+            .map(|ft| ft.to_lowercase().starts_with(prefix))
+            .unwrap_or(false)
+}
+
 /// Convert LSP `CompletionItem`s to `PopupListItemData`s.
 pub(crate) fn lsp_items_to_popup_items(
     items: &[&lsp_types::CompletionItem],
@@ -669,9 +782,29 @@ pub(crate) fn lsp_items_to_popup_items(
                 _ => None,
             };
 
+            // Prefer `labelDetails` for the dimmed text next to the label:
+            // we advertise `labelDetailsSupport`, so servers put the
+            // import path of an auto-import candidate there (rust-analyzer:
+            // "(use std::collections::HashMap)") while the label stays the
+            // bare identifier the accept path inserts. Fall back to `detail`
+            // when a server doesn't use labelDetails.
+            let detail = item
+                .label_details
+                .as_ref()
+                .and_then(|ld| {
+                    let text = match (&ld.detail, &ld.description) {
+                        (Some(d), Some(desc)) => format!("{} {}", d.trim_start(), desc),
+                        (Some(d), None) => d.trim_start().to_string(),
+                        (None, Some(desc)) => desc.clone(),
+                        (None, None) => return None,
+                    };
+                    Some(text)
+                })
+                .or_else(|| item.detail.clone());
+
             PopupListItemData {
                 text: item.label.clone(),
-                detail: item.detail.clone(),
+                detail,
                 icon,
                 data: item
                     .insert_text
@@ -680,4 +813,47 @@ pub(crate) fn lsp_items_to_popup_items(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Auto-import candidates carry their import path in `labelDetails`
+    /// (we advertise `labelDetailsSupport`, sinelaw/fresh#2603). The popup
+    /// item must show that path as the dimmed detail while keeping the
+    /// bare identifier as both the visible label and the inserted text.
+    #[test]
+    fn lsp_items_to_popup_items_renders_label_details() {
+        let item = lsp_types::CompletionItem {
+            label: "HashMap".to_string(),
+            label_details: Some(lsp_types::CompletionItemLabelDetails {
+                detail: Some(" (use std::collections::HashMap)".to_string()),
+                description: None,
+            }),
+            kind: Some(lsp_types::CompletionItemKind::STRUCT),
+            ..Default::default()
+        };
+        let popup_items = lsp_items_to_popup_items(&[&item]);
+        assert_eq!(popup_items.len(), 1);
+        assert_eq!(popup_items[0].text, "HashMap");
+        assert_eq!(
+            popup_items[0].detail.as_deref(),
+            Some("(use std::collections::HashMap)")
+        );
+        // The accepted insert text must stay the bare identifier.
+        assert_eq!(popup_items[0].data.as_deref(), Some("HashMap"));
+    }
+
+    /// Servers that don't use `labelDetails` keep their `detail` rendering.
+    #[test]
+    fn lsp_items_to_popup_items_falls_back_to_detail() {
+        let item = lsp_types::CompletionItem {
+            label: "test_function".to_string(),
+            detail: Some("fn test_function()".to_string()),
+            ..Default::default()
+        };
+        let popup_items = lsp_items_to_popup_items(&[&item]);
+        assert_eq!(popup_items[0].detail.as_deref(), Some("fn test_function()"));
+    }
 }

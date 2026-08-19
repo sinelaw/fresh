@@ -32,6 +32,27 @@ use std::thread;
 
 pub use fresh_core::TerminalId;
 
+/// What a spawning terminal should do with the on-disk transcripts (rendered
+/// scrollback + raw PTY log) it is handed.
+///
+/// The distinction is the difference between "this terminal *is* the one that
+/// wrote that file" and "that file just happens to sit on this path". Terminal
+/// files are named after the terminal id, and ids restart at 0 every editor
+/// run, so a brand-new terminal is regularly handed a path a *different*
+/// terminal wrote in a previous run (or, after a restore, is still writing —
+/// restored terminals keep their old paths under new ids). Inferring "append
+/// and seed the history" from "the file is non-empty" made that a scrollback
+/// leak between unrelated terminals (fresh#2836); the intent is now explicit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackingMode {
+    /// A new terminal: start its transcripts from empty, discarding whatever
+    /// an earlier terminal left on those paths.
+    Fresh,
+    /// The same terminal continuing (workspace restore, respawn after exit):
+    /// append to its transcripts and treat what's there as its own history.
+    Continue,
+}
+
 /// Messages sent to terminal I/O thread
 enum TerminalCommand {
     /// Write data to PTY
@@ -304,6 +325,8 @@ impl TerminalManager {
     /// * `cwd` - Optional working directory (defaults to current directory)
     /// * `log_path` - Optional path for raw PTY log (for session restore)
     /// * `backing_path` - Optional path for rendered scrollback (incremental streaming)
+    /// * `backing_mode` - Whether this terminal *continues* the transcript
+    ///   already in those files (restore / respawn) or starts a new one
     ///
     /// # Returns
     /// The terminal ID if successful
@@ -315,6 +338,7 @@ impl TerminalManager {
         cwd: Option<std::path::PathBuf>,
         log_path: Option<std::path::PathBuf>,
         backing_path: Option<std::path::PathBuf>,
+        backing_mode: BackingMode,
         terminal_wrapper: crate::services::authority::TerminalWrapper,
         env_delta: crate::services::env_provider::EnvDelta,
         extra_env: HashMap<String, String>,
@@ -329,6 +353,7 @@ impl TerminalManager {
             cwd,
             log_path,
             backing_path,
+            backing_mode,
             terminal_wrapper,
             env_delta,
             extra_env,
@@ -354,6 +379,7 @@ impl TerminalManager {
         cwd: Option<std::path::PathBuf>,
         log_path: Option<std::path::PathBuf>,
         backing_path: Option<std::path::PathBuf>,
+        backing_mode: BackingMode,
         terminal_wrapper: TerminalWrapper,
         env_delta: crate::services::env_provider::EnvDelta,
         extra_env: HashMap<String, String>,
@@ -381,9 +407,13 @@ impl TerminalManager {
 
         let state = Arc::new(Mutex::new(TerminalState::new(cols, rows)));
 
-        // If the backing file already exists (session restore), seed the history
-        // end so entering terminal mode doesn't truncate it to 0.
-        if let Some(p) = backing_path.as_ref() {
+        // A *continuing* terminal (workspace restore, respawn after exit) picks
+        // up the transcript already in its backing file: seed the history end
+        // so entering terminal mode doesn't truncate it to 0. A `Fresh`
+        // terminal never does — whatever is on that path belongs to some
+        // earlier terminal, and inheriting it would show one terminal's
+        // scrollback in another (fresh#2836).
+        if let (BackingMode::Continue, Some(p)) = (backing_mode, backing_path.as_ref()) {
             if let Ok(metadata) = std::fs::metadata(p) {
                 if metadata.len() > 0 {
                     if let Ok(mut s) = state.lock() {
@@ -405,8 +435,8 @@ impl TerminalManager {
             .try_clone_reader()
             .map_err(|e| format!("Failed to get PTY reader: {}", e))?;
 
-        let log_writer = open_log_writer(log_path.as_deref());
-        let backing_writer = open_backing_writer(backing_path.as_deref());
+        let log_writer = open_log_writer(log_path.as_deref(), backing_mode);
+        let backing_writer = open_backing_writer(backing_path.as_deref(), backing_mode);
 
         // Tag output/exit with the owning window so the main loop never has to
         // guess which session a `Terminal-N` belongs to (ids collide across
@@ -651,47 +681,40 @@ fn build_shell_command(
     (cmd, shell)
 }
 
-/// Open the optional raw-PTY log file (append mode) for full-session capture.
+/// Open the optional raw-PTY log file for full-session capture. `Continue`
+/// appends to the existing capture; `Fresh` truncates (see [`BackingMode`]).
 fn open_log_writer(
     log_path: Option<&std::path::Path>,
+    mode: BackingMode,
 ) -> Option<std::io::BufWriter<std::fs::File>> {
-    log_path
-        .and_then(|p| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(p)
-                .ok()
-        })
-        .map(std::io::BufWriter::new)
+    log_path.and_then(|p| open_transcript_file(p, mode))
 }
 
-/// Open the optional scrollback backing file. On session restore (the file
-/// already has content) we append to continue streaming; otherwise we truncate
-/// to start fresh.
+/// Open the optional scrollback backing file. `Continue` (workspace restore,
+/// respawn after exit) appends so the transcript keeps streaming where it left
+/// off; `Fresh` truncates so a new terminal never starts on top of another
+/// terminal's scrollback.
 fn open_backing_writer(
     backing_path: Option<&std::path::Path>,
+    mode: BackingMode,
 ) -> Option<std::io::BufWriter<std::fs::File>> {
-    backing_path
-        .and_then(|p| {
-            let existing_has_content =
-                p.exists() && std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false);
-            if existing_has_content {
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(p)
-                    .ok()
-            } else {
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(p)
-                    .ok()
-            }
-        })
-        .map(std::io::BufWriter::new)
+    backing_path.and_then(|p| open_transcript_file(p, mode))
+}
+
+/// Shared open for the two on-disk transcripts (raw log, rendered scrollback):
+/// append when continuing an existing terminal's story, truncate when starting
+/// a new one.
+fn open_transcript_file(
+    path: &std::path::Path,
+    mode: BackingMode,
+) -> Option<std::io::BufWriter<std::fs::File>> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true);
+    match mode {
+        BackingMode::Continue => options.append(true),
+        BackingMode::Fresh => options.write(true).truncate(true),
+    };
+    options.open(path).ok().map(std::io::BufWriter::new)
 }
 
 /// Wait-thread body: block on the child's exit and fire `TerminalExited` once.

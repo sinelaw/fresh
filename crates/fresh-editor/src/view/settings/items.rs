@@ -369,8 +369,15 @@ impl SettingControl {
                 // 1 for label + items count + 1 for add-new row
                 (state.items.len() + 2) as u16
             }
-            // DualList needs: 1 label + 1 header + body rows
-            Self::DualList(state) => 2 + state.body_rows() as u16,
+            // DualList needs: 1 label + 1 header + body rows, plus the
+            // key-hint row the control grows once it is reachable
+            // (selected or being edited).
+            Self::DualList(state) => {
+                let hint_row = u16::from(
+                    state.editing || state.focus == crate::view::controls::FocusState::Focused,
+                );
+                2 + state.body_rows() as u16 + hint_row
+            }
             // Map needs: 1 label + 1 header (if display_field) + entries + expanded content + 1 add-new row (if allowed)
             Self::Map(state) => {
                 let header_row = if state.display_field.is_some() { 1 } else { 0 };

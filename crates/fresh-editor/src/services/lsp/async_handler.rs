@@ -62,6 +62,12 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 /// LSP error codes that should not surface as user-visible warnings.
 ///
 /// From [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/):
+/// - RequestCancelled (-32800): the spec-mandated reply to a request the
+///   *client* withdrew with `$/cancelRequest`. We withdraw superseded
+///   requests ourselves on every cursor move, edit and scroll (see
+///   `Window::cancel_pending_lsp_requests`) and on request timeout, so this
+///   error is the answer we asked for — warning about it means warning about
+///   our own bookkeeping (sinelaw/fresh#2952).
 /// - ContentModified (-32801): "If clients receive a ContentModified error,
 ///   it generally should not show it in the UI for the end-user."
 /// - ServerCancelled (-32802): Server cancelled the request (e.g. due to newer request).
@@ -73,6 +79,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 /// suppressed: we want genuine protocol mismatches to surface so they can
 /// be diagnosed. The correct way to avoid MethodNotFound is to check the
 /// server's advertised capabilities before sending the request.
+const LSP_ERROR_REQUEST_CANCELLED: i64 = -32800;
 const LSP_ERROR_CONTENT_MODIFIED: i64 = -32801;
 const LSP_ERROR_SERVER_CANCELLED: i64 = -32802;
 
@@ -110,7 +117,9 @@ fn is_informational_method(method: &str) -> bool {
 /// Whether a JSON-RPC error response should be logged at debug rather than warn.
 /// See `LSP_ERROR_*` constants above for the rationale behind each suppressed code.
 fn is_suppressed_error_code(code: i64) -> bool {
-    code == LSP_ERROR_CONTENT_MODIFIED || code == LSP_ERROR_SERVER_CANCELLED
+    code == LSP_ERROR_REQUEST_CANCELLED
+        || code == LSP_ERROR_CONTENT_MODIFIED
+        || code == LSP_ERROR_SERVER_CANCELLED
 }
 
 /// Whether an error response for `method` with `code` should be downgraded from
@@ -357,7 +366,8 @@ impl LspClientState {
 fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
         CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
-        CompletionClientCapabilities, DiagnosticClientCapabilities, DiagnosticTag,
+        CompletionClientCapabilities, CompletionItemCapability,
+        CompletionItemCapabilityResolveSupport, DiagnosticClientCapabilities, DiagnosticTag,
         DiagnosticWorkspaceClientCapabilities, DocumentFormattingClientCapabilities,
         DocumentHighlightClientCapabilities, DocumentRangeFormattingClientCapabilities,
         DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
@@ -432,6 +442,45 @@ fn create_client_capabilities() -> ClientCapabilities {
             // entitled to never register the provider. See sinelaw/fresh#2195.
             completion: Some(CompletionClientCapabilities {
                 dynamic_registration: Some(true),
+                completion_item: Some(CompletionItemCapability {
+                    // Declare that `additionalTextEdits` may be filled in
+                    // lazily via `completionItem/resolve`: on accept we apply
+                    // eager edits directly and otherwise send a resolve
+                    // request whose response is applied in
+                    // `handle_completion_resolved` (auto-imports). Servers
+                    // gate features on this — rust-analyzer only offers
+                    // unimported symbols ("flyimport") when the client can
+                    // resolve `additionalTextEdits` (sinelaw/fresh#2603).
+                    //
+                    // `documentation` is listed because rust-analyzer only
+                    // advertises `resolveProvider` when the client can also
+                    // resolve documentation lazily (verified against
+                    // rust-analyzer 1.94.1: with `additionalTextEdits` alone
+                    // it still defers the import edit to resolve but reports
+                    // `resolveProvider: false`, so a spec-compliant client
+                    // never resolves and the import is lost). Deferring
+                    // documentation costs nothing here: the completion popup
+                    // renders label/detail only, never `documentation`.
+                    resolve_support: Some(CompletionItemCapabilityResolveSupport {
+                        properties: vec![
+                            "documentation".to_string(),
+                            "additionalTextEdits".to_string(),
+                        ],
+                    }),
+                    // We render `labelDetails` next to the label in the
+                    // completion popup (`lsp_items_to_popup_items`). Without
+                    // this flag rust-analyzer folds the import path into the
+                    // label itself ("HashMap (use std::collections::HashMap)"),
+                    // which the accept path would then insert literally into
+                    // the buffer.
+                    label_details_support: Some(true),
+                    // `snippetSupport` is deliberately NOT advertised: the
+                    // accept path only detects snippet syntax heuristically
+                    // (`is_snippet`) and does not track `insertTextFormat`,
+                    // so inviting servers to switch every insertion to
+                    // snippet format is not safe yet.
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
             hover: Some(HoverClientCapabilities {
@@ -5250,6 +5299,62 @@ mod tests {
         serde_json::json!({ "section": section })
     }
 
+    /// Reproducer for sinelaw/fresh#2603: rust-analyzer only offers
+    /// unimported symbols ("flyimport") when the client declares it can
+    /// resolve `additionalTextEdits` lazily via `completionItem/resolve`.
+    /// The client applies those edits (`handle_completion_resolved`), so the
+    /// initialize capabilities must advertise it.
+    #[test]
+    fn client_capabilities_advertise_completion_resolve_additional_text_edits() {
+        let caps = create_client_capabilities();
+        let completion_item = caps
+            .text_document
+            .as_ref()
+            .and_then(|td| td.completion.as_ref())
+            .and_then(|c| c.completion_item.as_ref())
+            .expect("completion.completionItem capabilities must be advertised");
+        let resolve = completion_item
+            .resolve_support
+            .as_ref()
+            .expect("completionItem.resolveSupport must be advertised");
+        assert!(
+            resolve
+                .properties
+                .iter()
+                .any(|p| p == "additionalTextEdits"),
+            "resolveSupport.properties must contain additionalTextEdits, got {:?}",
+            resolve.properties
+        );
+        // rust-analyzer only advertises `resolveProvider` when documentation
+        // is lazily resolvable too; without it the deferred import edit is
+        // unreachable (see create_client_capabilities).
+        assert!(
+            resolve.properties.iter().any(|p| p == "documentation"),
+            "resolveSupport.properties must contain documentation, got {:?}",
+            resolve.properties
+        );
+    }
+
+    /// The completion popup renders `labelDetails` (import path of an
+    /// auto-import candidate) next to the label, so the client must
+    /// advertise `labelDetailsSupport`. Without it rust-analyzer folds
+    /// "(use …)" into the label itself, which the accept path would insert
+    /// literally into the buffer.
+    #[test]
+    fn client_capabilities_advertise_completion_label_details() {
+        let caps = create_client_capabilities();
+        let completion_item = caps
+            .text_document
+            .as_ref()
+            .and_then(|td| td.completion.as_ref())
+            .and_then(|c| c.completion_item.as_ref())
+            .expect("completion.completionItem capabilities must be advertised");
+        assert_eq!(completion_item.label_details_support, Some(true));
+        // Snippet support is intentionally not advertised until the accept
+        // path tracks `insertTextFormat` (see create_client_capabilities).
+        assert_eq!(completion_item.snippet_support, None);
+    }
+
     #[test]
     fn workspace_configuration_resolves_section_from_init_options() {
         // harper-ls pulls the "harper-ls" section; it must receive the inner
@@ -5596,6 +5701,12 @@ mod tests {
         // ContentModified and ServerCancelled are normal during editing.
         assert!(is_suppressed_error_code(LSP_ERROR_CONTENT_MODIFIED));
         assert!(is_suppressed_error_code(LSP_ERROR_SERVER_CANCELLED));
+
+        // RequestCancelled is the answer to *our own* `$/cancelRequest`:
+        // every cursor move withdraws the in-flight completion/semantic-token
+        // requests, and rust-analyzer duly replies `-32800 canceled by
+        // client`. Warning about it warns the user about our bookkeeping.
+        assert!(is_suppressed_error_code(LSP_ERROR_REQUEST_CANCELLED));
 
         // Every other JSON-RPC / LSP error must still surface so genuine
         // protocol mismatches stay debuggable — including MethodNotFound

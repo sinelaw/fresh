@@ -484,7 +484,7 @@ impl EditorTestApi for crate::app::Editor {
     }
 
     fn viewport_top_byte(&self) -> usize {
-        self.active_viewport().top_byte
+        self.active_viewport().top_byte()
     }
 
     fn terminal_width(&self) -> u16 {
@@ -586,8 +586,8 @@ impl EditorTestApi for crate::app::Editor {
         // Lives on `active_window().prompt`, not on the popup stacks.
         let prompt = self.active_window().prompt.as_ref().map(|p| PromptView {
             prompt_type: format!("{:?}", p.prompt_type),
-            input: p.input.clone(),
-            cursor_pos: p.cursor_pos,
+            input: p.input_str().to_string(),
+            cursor_pos: p.cursor_byte(),
             suggestions: p.suggestions.iter().map(|s| s.text.clone()).collect(),
             selected_suggestion: p.selected_suggestion,
         });
@@ -899,7 +899,7 @@ impl EditorTestApi for crate::app::Editor {
     }
 
     fn top_line_number(&mut self) -> usize {
-        let top_byte = self.active_viewport().top_byte;
+        let top_byte = self.active_viewport().top_byte();
         self.active_state_mut().buffer.get_line_number(top_byte)
     }
 

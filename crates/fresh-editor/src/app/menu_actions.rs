@@ -18,24 +18,25 @@ impl Editor {
         self.expanded_menus_cache.invalidate();
     }
 
-    /// Find a built-in or plugin menu by `label`, mutate it via `f`, and
+    /// Find a built-in or plugin menu by its stable `id` ("View", "File",
+    /// …) or, failing that, its display `label`, mutate it via `f`, and
     /// invalidate the expanded-menu cache. Returns `None` if no matching
     /// menu was found (in which case the cache is left alone).
+    ///
+    /// The id is tried first because labels are translated: a plugin
+    /// contributing a row to the View menu (`add_menu_item`) would
+    /// otherwise silently miss on every non-English locale.
     pub fn with_menu_by_label<F, R>(&mut self, label: &str, f: F) -> Option<R>
     where
         F: FnOnce(&mut Menu) -> R,
     {
-        if let Some(idx) = self.menus.menus.iter().position(|m| m.label == label) {
+        let matches = |m: &Menu| m.id.as_deref() == Some(label) || m.label == label;
+        if let Some(idx) = self.menus.menus.iter().position(matches) {
             let r = f(&mut self.menus.menus[idx]);
             self.expanded_menus_cache.invalidate();
             return Some(r);
         }
-        if let Some(idx) = self
-            .menu_state
-            .plugin_menus
-            .iter()
-            .position(|m| m.label == label)
-        {
+        if let Some(idx) = self.menu_state.plugin_menus.iter().position(matches) {
             let r = f(&mut self.menu_state.plugin_menus[idx]);
             self.expanded_menus_cache.invalidate();
             return Some(r);
@@ -179,15 +180,145 @@ impl Editor {
         }
     }
 
+    /// The menu's hover REACTION: an open menu follows the pointer —
+    /// bar hover switches the open menu, dropdown hover opens/closes
+    /// submenus and moves the highlight. Moved verbatim from the
+    /// central `update_hover_target` ladder; called from
+    /// `chrome::Menu::on_hover_change`. Returns true when menu state
+    /// changed (needs a re-render beyond the target diff).
+    pub(crate) fn menu_hover_reaction(&mut self, new_target: Option<&HoverTarget>) -> bool {
+        let Some(active_menu_idx) = self.menu_state.active_menu else {
+            return false;
+        };
+        let all_menus: Vec<crate::config::Menu> = self
+            .menus
+            .menus
+            .iter()
+            .chain(self.menu_state.plugin_menus.iter())
+            .cloned()
+            .collect();
+        if let Some(HoverTarget::MenuBarItem(hovered_menu_idx)) = new_target {
+            if *hovered_menu_idx != active_menu_idx {
+                self.menu_state.open_menu(*hovered_menu_idx);
+                return true; // Force re-render since menu changed
+            }
+        }
+
+        // If hovering over a menu dropdown item, check if it's a submenu and open it
+        if let Some(HoverTarget::MenuDropdownItem(_, item_idx)) = new_target {
+            let item_idx = *item_idx;
+            // If this item is the parent of the currently open submenu, keep it open.
+            // This prevents blinking when hovering over the parent item of an open submenu.
+            if self.menu_state.submenu_path.first() == Some(&item_idx) {
+                tracing::trace!(
+                    "menu hover: staying on submenu parent item_idx={}, submenu_path={:?}",
+                    item_idx,
+                    self.menu_state.submenu_path
+                );
+                return false;
+            }
+
+            // Clear any open submenus since we're at a different item in the main dropdown
+            if !self.menu_state.submenu_path.is_empty() {
+                tracing::trace!(
+                    "menu hover: clearing submenu_path={:?} for different item_idx={}",
+                    self.menu_state.submenu_path,
+                    item_idx
+                );
+                self.menu_state.submenu_path.clear();
+                self.menu_state.highlighted_item = Some(item_idx);
+                return true;
+            }
+
+            // Check if the hovered item is a submenu
+            if let Some(menu) = all_menus.get(active_menu_idx) {
+                if let Some(crate::config::MenuItem::Submenu { items, .. }) =
+                    menu.items.get(item_idx)
+                {
+                    if !items.is_empty() {
+                        tracing::trace!("menu hover: opening submenu at item_idx={}", item_idx);
+                        self.menu_state.submenu_path.push(item_idx);
+                        self.menu_state.highlighted_item = Some(0);
+                        return true;
+                    }
+                }
+            }
+            // Update highlighted item for non-submenu items too
+            if self.menu_state.highlighted_item != Some(item_idx) {
+                self.menu_state.highlighted_item = Some(item_idx);
+                return true;
+            }
+        }
+
+        // If hovering over a submenu item, handle submenu navigation
+        if let Some(HoverTarget::SubmenuItem(depth, item_idx)) = new_target {
+            let (depth, item_idx) = (*depth, *item_idx);
+            // If this item is the parent of a currently open nested submenu, keep it open.
+            // This prevents blinking when hovering over the parent item of an open nested submenu.
+            // submenu_path[depth] stores the index of the nested submenu opened from this level.
+            if self.menu_state.submenu_path.len() > depth
+                && self.menu_state.submenu_path.get(depth) == Some(&item_idx)
+            {
+                tracing::trace!(
+                    "menu hover: staying on nested submenu parent depth={}, item_idx={}, submenu_path={:?}",
+                    depth,
+                    item_idx,
+                    self.menu_state.submenu_path
+                );
+                return false;
+            }
+
+            // Truncate submenu path to this depth (close any deeper submenus)
+            if self.menu_state.submenu_path.len() > depth {
+                tracing::trace!(
+                    "menu hover: truncating submenu_path={:?} to depth={} for item_idx={}",
+                    self.menu_state.submenu_path,
+                    depth,
+                    item_idx
+                );
+                self.menu_state.submenu_path.truncate(depth);
+            }
+
+            // Get the items at this depth
+            if let Some(items) = self
+                .menu_state
+                .get_current_items(&all_menus, active_menu_idx)
+            {
+                // Check if hovered item is a submenu - if so, open it
+                if let Some(crate::config::MenuItem::Submenu {
+                    items: sub_items, ..
+                }) = items.get(item_idx)
+                {
+                    if !sub_items.is_empty() && !self.menu_state.submenu_path.contains(&item_idx) {
+                        tracing::trace!(
+                            "menu hover: opening nested submenu at depth={}, item_idx={}",
+                            depth,
+                            item_idx
+                        );
+                        self.menu_state.submenu_path.push(item_idx);
+                        self.menu_state.highlighted_item = Some(0);
+                        return true;
+                    }
+                }
+                // Update highlighted item
+                if self.menu_state.highlighted_item != Some(item_idx) {
+                    self.menu_state.highlighted_item = Some(item_idx);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Compute hover target for menu dropdown chain (main dropdown and submenus).
-    /// Uses the cached menu layout from the previous render frame.
+    /// Geometry derived from live state (`menu_layout_now`).
     pub(crate) fn compute_menu_dropdown_hover(
         &self,
         col: u16,
         row: u16,
         menu_index: usize,
     ) -> Option<HoverTarget> {
-        let menu_layout = self.active_chrome().menu_layout.as_ref()?;
+        let menu_layout = self.menu_layout_now()?;
 
         // Check submenu items first (they're rendered on top)
         if let Some((depth, item_idx)) = menu_layout.submenu_item_at(col, row) {
@@ -204,7 +335,7 @@ impl Editor {
 
     /// Handle click on menu dropdown chain (main dropdown and any open submenus).
     /// Returns Some(Ok(())) if click was handled, None if click was outside all dropdowns.
-    /// Uses the cached menu layout from the previous render frame for hit testing.
+    /// Hit-tests geometry derived from live state (`menu_layout_now`).
     pub(crate) fn handle_menu_dropdown_click(
         &mut self,
         col: u16,
@@ -213,8 +344,8 @@ impl Editor {
     ) -> AnyhowResult<Option<AnyhowResult<()>>> {
         use crate::view::ui::menu::MenuHit;
 
-        let menu_layout = match &self.active_chrome().menu_layout {
-            Some(layout) => layout.clone(),
+        let menu_layout = match self.menu_layout_now() {
+            Some(layout) => layout,
             None => return Ok(None),
         };
 

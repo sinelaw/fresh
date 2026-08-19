@@ -246,6 +246,46 @@ Ctrl+Space flips to Scrollback. The PTY itself is ephemeral and re-spawned; only
 the backing file (scrollback + screen snapshot) is persisted (design-decisions.md
 #18).
 
+### 4.3.1 Per-buffer restart of an exited terminal
+
+The same rejoin mechanism, scoped to one buffer and driven by the user rather
+than by reactivation. When a terminal's process exits, `handle_terminal_exited`
+snapshots everything a respawn needs — geometry, cwd, backing/log files, launch
+and agent-resume argv, the ephemeral flag — into `Window::exited_terminals`
+(keyed by `BufferId`) *before* closing the PTY handle, since the exit path drops
+the buffer↔terminal binding and the handle that carries the geometry.
+
+`Window::restart_terminal_buffer` replays that record through
+`Window::respawn_terminal_pty`, the single respawn primitive also used by the
+remote-reconnect sweep (`respawn_terminals_through_authority`) — so the two
+cannot drift on argv precedence (agent-resume → launch → shell, gated by
+`terminal.resume_agents`), on composing argv through the window's *current*
+authority, on reusing the backing/log files, or on re-keying the terminal-id-keyed
+maps onto the new id. Restart is offered for **every** exited terminal, not only
+agent ones; a resume spec only changes which argv runs and how the indicator is
+worded.
+
+A live terminal is never restarted: the record exists only in the exited state,
+and `Editor::restart_terminal` reports "still running" instead. Surfaces:
+`Action::RestartTerminal` from the command palette, the View → Terminal menu, and
+the clickable `{terminal_restart}` status-bar element (`StatusBarClickable::RestartTerminal`).
+
+The record is persisted. `capture_workspace` walks `exited_terminals` alongside
+the live `terminal_buffers` (adding their buffer→terminal entries to the layout's
+`terminal_id_map`, which otherwise only covers live bindings) and writes each as a
+`SerializedTerminalWorkspace` carrying an `exited: Some(ExitedTerminalState)`
+marker — skip-serialized, so live terminals are unchanged on disk. On restore
+that marker short-circuits `restore_terminal_from_workspace` into
+`restore_exited_terminal`, which loads the backing file and re-arms the record
+*without spawning*: a workspace must not silently re-run a process the user had
+finished with, and for an agent that would mean resuming the conversation on
+reopen. The same ephemeral-without-command rule applies as for live terminals.
+
+One consequence worth noting in `respawn_terminal_pty`: a terminal restored as
+already-exited holds an id the `TerminalManager` never had, so the allocator can
+hand that very id back to the respawn. The old handle is therefore torn down only
+when the ids differ — an unguarded close would kill the terminal just spawned.
+
 ### 4.4 Plugin-level agent state
 
 The dock additionally shows a coarse agent state inferred from terminal output
@@ -268,6 +308,29 @@ All UI is plugin-side (orchestrator.ts). Shipped surfaces:
 - **New Session form** (`NEW_SESSION_MODE = "orchestrator-new-form"`) — see §7.
 - **Preview pane** — branch, worktree path, working-tree diffstat, PR info, and
   per-session action buttons (Visit / Stop / Archive / Delete).
+
+### 5.0 Dock settings
+
+The dock's opening state is user-configurable through the **plugin** config API
+(`editor.defineConfigBoolean` / `defineConfigEnum` at the top of orchestrator.ts,
+rendered by the Settings UI under **Plugin: orchestrator**, stored at
+`plugins.orchestrator.settings.*`). They're plugin config rather than core
+config because they're meaningless without this plugin loaded, and the plugin
+API already supplies schema validation, the User/Project/Session layering, and
+the generated settings widgets.
+
+| Setting               | Default  | Effect                                              |
+| --------------------- | -------- | --------------------------------------------------- |
+| `autoOpenDock`        | `false`  | Open the dock (unfocused) on the `ready` event.      |
+| `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
+| `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
+| `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
+
+Each is a *default*, not a lock: the dock's own "view" button and the two
+Filters checkboxes still override it for the rest of the session
+(`dockViewOverride`, `lastShowWorktrees`, `lastHideTrivial` — all `null` until
+touched). Settings are re-read on every dock open, so an edit takes effect on
+the next toggle of the dock, no reload required.
 
 ### 5.1 Project scoping (the "yesterday's directories" fix)
 

@@ -8,8 +8,9 @@
 //!   `super::click_geometry`).
 //! - `handle_editor_click`: dispatches mouse clicks to gutter / scrollbar
 //!   / cursor placement / multi-cursor add depending on modifiers.
-//! - `handle_file_explorer_click`: file-browser entry selection and
-//!   expand/collapse.
+//!
+//! (`handle_file_explorer_click` lives with its component in
+//! `chrome/file_explorer.rs`.)
 
 use anyhow::Result as AnyhowResult;
 
@@ -81,7 +82,7 @@ impl Editor {
                 .map(|(_, vs)| vs)
                 .expect("active window must have a populated split layout")
                 .get(split_id)
-                .map(|vs| vs.viewport.top_byte)
+                .map(|vs| vs.viewport.top_byte())
                 .unwrap_or(0);
             let compose_width = self
                 .windows
@@ -114,12 +115,22 @@ impl Editor {
                 .map(|w| &w.buffers)
                 .expect("active window present")
                 .get(buffer_id)?;
+            let fold_indicators_visible = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(split_id)
+                .map(|vs| vs.fold_indicators_visible())
+                .unwrap_or(true);
             if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
                 state,
                 &collapsed_header_bytes,
                 target_position,
                 content_col,
                 gutter_width,
+                fold_indicators_visible,
             ) {
                 return Some((*buffer_id, byte_pos));
             }
@@ -164,7 +175,7 @@ impl Editor {
                 .map(|(_, vs)| vs)
                 .expect("active window must have a populated split layout")
                 .get(&split_id)
-                .map(|vs| vs.viewport.top_byte)
+                .map(|vs| vs.viewport.top_byte())
                 .unwrap_or(0);
             let compose_width = self
                 .windows
@@ -225,11 +236,27 @@ impl Editor {
             // the row (see `hit_test_row_aware`) — the mounted panels
             // (Settings, Search & Replace) get the same full-width rows the
             // floating dock does, from the one shared resolver.
+            // `on_overlay=false` is a KNOWN LIMITATION, not an oversight:
+            // mounted panels drop the overlay/popup channels at mount
+            // (see `handle_mount_widget_panel`), so there is never an
+            // overlay surface to resolve against here.
             if let Some((panel_key, hit)) = self
                 .widget_registry
-                .hit_test_row_aware(buffer_id, brow, bcol)
+                .hit_test_row_aware(buffer_id, brow, bcol, false)
             {
                 self.deliver_widget_hit(&panel_key, &hit, Some(bcol as usize));
+            }
+        }
+
+        // A line that points somewhere (`editor.setLineTargets`) opens its
+        // target on click. Checked before the plugin hook so a declarative
+        // index behaves the same whether or not anything is listening — its
+        // author is typically a script that has already exited.
+        #[cfg(feature = "plugins")]
+        if let Some(brow) = mc_buffer_row {
+            if let Some(target) = self.line_target_at(buffer_id, brow as usize) {
+                self.follow_line_target(target, split_id);
+                return Ok(());
             }
         }
 
@@ -267,11 +294,20 @@ impl Editor {
         // A widget-panel buffer can also be non-scrollable (it owns its own
         // scroll window, e.g. Search & Replace), but it IS an interactive
         // target — its click must still route focus to the split so
-        // keyboard nav works afterward. So only swallow non-scrollable
-        // buffers that don't host a widget panel.
-        if self.active_window().is_non_scrollable_buffer(buffer_id)
-            && self.widget_registry.panels_for_buffer(buffer_id).is_empty()
-        {
+        // keyboard nav works afterward.
+        if self.active_window().is_non_scrollable_buffer(buffer_id) {
+            if self.widget_registry.panels_for_buffer(buffer_id).is_empty() {
+                return Ok(());
+            }
+            // Widget panel: take the focus, then stop. The panel owns every
+            // row it draws, and the hit dispatch above already delivered any
+            // click that landed on a control. A click that missed one — a
+            // `labeledSection` border, the padding under a short list — must
+            // not fall through to cursor placement: the buffer's cursor is
+            // hidden, but the viewport still follows it, so the click scrolls
+            // the panel's own header and buttons out of view with no way to
+            // scroll them back.
+            self.focus_split(split_id, buffer_id);
             return Ok(());
         }
 
@@ -345,7 +381,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
-            .map(|vs| vs.viewport.top_byte)
+            .map(|vs| vs.viewport.top_byte())
             .unwrap_or(0);
 
         // Get compose width for this split (adjusts content rect for centered layout)
@@ -400,12 +436,22 @@ impl Editor {
                         .collapsed_header_bytes(&state.buffer, &state.marker_list)
                 })
                 .unwrap_or_default();
+            let fold_indicators_visible = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&split_id)
+                .map(|vs| vs.fold_indicators_visible())
+                .unwrap_or(true);
             let toggle_fold_byte = super::click_geometry::fold_toggle_byte_from_position(
                 state,
                 &collapsed_header_bytes,
                 target_position,
                 content_col,
                 gutter_width,
+                fold_indicators_visible,
             );
 
             let cursor_snapshot = self
@@ -577,96 +623,6 @@ impl Editor {
         self.active_window_mut().mouse_state.drag_selection_split = Some(split_id);
         self.active_window_mut().mouse_state.drag_selection_anchor =
             Some(new_anchor.unwrap_or(target_position));
-
-        Ok(())
-    }
-
-    /// Handle click in file explorer
-    pub(super) fn handle_file_explorer_click(
-        &mut self,
-        col: u16,
-        row: u16,
-        explorer_area: ratatui::layout::Rect,
-    ) -> AnyhowResult<()> {
-        // Check if click is on the title bar (first row)
-        if row == explorer_area.y {
-            // Check if click is on close button (× at right side of title bar)
-            // Close button is at position: explorer_area.x + explorer_area.width - 3 to -1
-            let close_button_x = explorer_area.x + explorer_area.width.saturating_sub(3);
-            if col >= close_button_x && col < explorer_area.x + explorer_area.width {
-                self.toggle_file_explorer();
-                return Ok(());
-            }
-        }
-
-        // Focus file explorer. `open_file_preview` below routes through
-        // `set_active_buffer`, which detects "leaving a terminal buffer
-        // while terminal_mode is on" and resets `key_context = Normal`
-        // (active_focus.rs:103-107) — clobbering our FileExplorer write
-        // and stealing focus to the previewed editor buffer (issue
-        // #2029, sub-issue 1b). Use `take_focus_for_file_explorer` so
-        // terminal_mode is cleared *before* the preview opens; then
-        // re-assert `key_context = FileExplorer` after the preview in
-        // case `set_active_buffer` reset it via one of its other
-        // branches (e.g. switching to a regular file buffer).
-        self.take_focus_for_file_explorer();
-
-        // Calculate which item was clicked (accounting for border and title)
-        // The file explorer has a 1-line border at top and bottom
-        let relative_row = row.saturating_sub(explorer_area.y + 1); // +1 for top border
-
-        if let Some(explorer) = self.file_explorer_mut().as_mut() {
-            let display_nodes = explorer.get_display_nodes();
-            let scroll_offset = explorer.get_scroll_offset();
-            let clicked_index = (relative_row as usize) + scroll_offset;
-
-            if clicked_index < display_nodes.len() {
-                let (node_id, _indent) = display_nodes[clicked_index];
-
-                // Select this node
-                explorer.set_selected(Some(node_id));
-
-                // Check if it's a file or directory
-                let node = explorer.tree().get_node(node_id);
-                if let Some(node) = node {
-                    if node.is_dir() {
-                        // Toggle expand/collapse using the existing method
-                        self.file_explorer_toggle_expand();
-                    } else if node.is_file() {
-                        // Open the file but keep focus on file explorer (single click).
-                        // Double-click or Enter will focus the editor and promote to
-                        // a permanent tab. Single-click opens in "preview" mode so a
-                        // string of exploratory clicks doesn't accumulate tabs.
-                        let path = node.entry.path.clone();
-                        let name = node.entry.name.clone();
-                        match self.open_file_preview(&path) {
-                            Ok(_) => {
-                                self.set_status_message(
-                                    rust_i18n::t!("explorer.opened_file", name = &name).to_string(),
-                                );
-                            }
-                            Err(e) => {
-                                // Check if this is a large file encoding confirmation error
-                                if let Some(confirmation) = e.downcast_ref::<
-                                    crate::model::buffer::LargeFileEncodingConfirmation,
-                                >() {
-                                    self.start_large_file_encoding_confirmation(confirmation);
-                                } else {
-                                    self.set_status_message(
-                                        rust_i18n::t!("file.error_opening", error = e.to_string())
-                                            .to_string(),
-                                    );
-                                }
-                            }
-                        }
-                        // `set_active_buffer` may have flipped key_context
-                        // back to Normal during the preview open; restore it.
-                        self.active_window_mut().key_context =
-                            crate::input::keybindings::KeyContext::FileExplorer;
-                    }
-                }
-            }
-        }
 
         Ok(())
     }

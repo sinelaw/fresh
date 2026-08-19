@@ -864,6 +864,89 @@ fn bracketed_paste_ignored_when_non_text_widget_focused() {
     );
 }
 
+/// `Ctrl+V` must paste the editor clipboard into the focused dialog
+/// field — same destination as a terminal bracketed paste, different
+/// entry path (a key event resolved through the keybinding table, not
+/// an `Event::Paste`).
+///
+/// Regression: the centered modal's key dispatcher swallowed every
+/// Ctrl-chord that had no mode binding, so Ctrl+V (and Ctrl+A / Ctrl+C /
+/// Ctrl+X) died before reaching the focused Text widget. Text copied
+/// from a buffer with Ctrl+C could not be pasted into the New-Workspace
+/// or Run-Agent dialogs at all.
+#[test]
+fn ctrl_v_pastes_into_focused_dialog_field() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("CTRLV_MARKER".to_string());
+
+    open_new_session_form(&mut harness);
+
+    // The Project Path text field is focused on open.
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()).contains("CTRLV_MARKER"))
+        .unwrap();
+
+    // And it must not have leaked into the buffer underneath.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            !h.screen_to_string()
+                .contains("ORCHESTRATOR :: New Workspace")
+        })
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains("CTRLV_MARKER"),
+        "Ctrl+V must not leak into the buffer behind the dialog. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}
+
+/// `Ctrl+A` selects the focused field's text, so a following paste
+/// replaces it instead of appending — the standard select-all-then-paste
+/// gesture. Same regression class as `ctrl_v_pastes_into_focused_dialog_field`:
+/// the modal swallowed the chord, the selection never happened, and the
+/// paste appended after the old text.
+#[test]
+fn ctrl_a_selects_field_text_so_paste_replaces_it() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+
+    harness.type_text("OLDTEXT").unwrap();
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()).contains("OLDTEXT"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_paste("NEWTEXT").unwrap();
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()).contains("NEWTEXT"))
+        .unwrap();
+
+    let value = project_path_field_value(&harness.screen_to_string());
+    assert!(
+        !value.contains("OLDTEXT"),
+        "paste after Ctrl+A must replace the selected field text, not append. \
+         Field value: {:?}. Screen:\n{}",
+        value,
+        harness.screen_to_string(),
+    );
+}
+
 // ===========================================================================
 // Focus model: visible `▸` marker, linear Tab, ←/→ within selectors,
 // scoped Esc, and the Ctrl+Enter submit shortcut.
@@ -1556,4 +1639,155 @@ fn teach_fresh_cli_toggle_shown_for_agent_hidden_for_terminal() {
          the expanded Advanced fold. Screen:\n{}",
         harness.screen_to_string(),
     );
+}
+
+/// "Run Agent…" and "New Workspace" are one dialog, distinguished only by
+/// where its "Launch in" switch starts — and flipping that switch reshapes the
+/// form in place rather than opening a different one.
+///
+/// This is the structural guard on the unification: two dialogs with two submit
+/// paths is what let the current-workspace path silently drop the agent-resume
+/// argv, so an agent started there restarted as a bare shell.
+///
+/// Driven from the New-Workspace entry point (the reliable one — confirming a
+/// quick-open entry re-computes the suggestion list and indexes it by row while
+/// plugin commands are still registering, so opening by palette twice in one
+/// test is racy). That the *Run Agent* entry point opens this same form
+/// pre-switched is asserted through the frame title, which follows the switch.
+#[test]
+fn run_agent_and_new_workspace_are_one_dialog() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    // Opened as "New Workspace": the workspace-creation fields are all here.
+    harness.assert_screen_contains("Launch in:");
+    harness.assert_screen_contains("New workspace");
+    harness.assert_screen_contains("Project Path");
+    harness.assert_screen_contains("Workspace Name");
+    harness.assert_screen_contains("Advanced");
+    harness.assert_screen_contains("Run in:");
+    harness.assert_screen_contains("Agent:");
+
+    // Flip "Launch in" to the current workspace. The form opens focused on
+    // Project Path, so Shift+Tab twice reaches the switch (via the backend
+    // tab group, which is a single stop).
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    assert!(
+        focused_line(&harness.screen_to_string()).contains("Launch in:"),
+        "Shift+Tab should reach the Launch-in switch. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Everything workspace-shaped is gone — this is exactly what the separate
+    // Run-Agent dialog used to show — and the frame now says so.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Run Agent"))
+        .unwrap();
+    harness.assert_screen_contains("Current workspace");
+    harness.assert_screen_not_contains("Project Path");
+    harness.assert_screen_not_contains("Workspace Name");
+    harness.assert_screen_not_contains("Advanced");
+    harness.assert_screen_not_contains("Run in:");
+    // The agent selector is shared by both shapes, so it stays.
+    harness.assert_screen_contains("Agent:");
+
+    // Focus stayed on the switch, so flipping back is one key — the form
+    // must not fling focus elsewhere when its shape changes under the user.
+    assert!(
+        focused_line(&harness.screen_to_string()).contains("Launch in:"),
+        "flipping the switch must leave focus on it. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    // And back again: same dialog, more of it.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Project Path"))
+        .unwrap();
+    harness.assert_screen_contains("ORCHESTRATOR :: New Workspace");
+    harness.assert_screen_contains("Run in:");
+}
+
+/// The agent list ends in "custom…", whose whole purpose is to let the user
+/// type an arbitrary command — so the Agent Command field has to be present,
+/// and focusable, in the current-workspace shape too.
+///
+/// It wasn't. On a local *new workspace* that field lives under the Advanced
+/// fold, and both the fold and the inline fallback were gated on "creating",
+/// so running in the current workspace rendered no command box at all. Picking
+/// "custom…" then left the form claiming an agent the user had no way to name,
+/// and — because the preset hands focus to a `cmd` field that wasn't in the
+/// focus cycle — dropped focus back to the top of the form, where the next
+/// arrow key silently flipped "Launch in" to "New workspace".
+#[test]
+fn custom_agent_is_typable_when_running_in_the_current_workspace() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    // Flip "Launch in" to the current workspace (as `Run Agent…` opens it).
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Run Agent"))
+        .unwrap();
+
+    // The command box is here even though the workspace-shaped Advanced fold
+    // that normally holds it is not.
+    harness.assert_screen_contains("Agent Command");
+    harness.assert_screen_not_contains("Advanced");
+
+    // Walk to the agent selector and step left, which wraps the list around to
+    // "custom…" — the shortest route, and the one that used to strand focus.
+    let mut guard = 0;
+    while !focused_line(&harness.screen_to_string()).contains("Agent:") {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 20,
+            "Tab never reached the agent selector. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("custom"))
+        .unwrap();
+
+    // Focus followed the preset onto the command field, so the user can just
+    // type — and, critically, is not sitting on the "Launch in" switch.
+    let focused = focused_line(&harness.screen_to_string());
+    assert!(
+        !focused.contains("Launch in:"),
+        "picking 'custom…' must not drop focus onto the Launch-in switch — the \
+         next arrow key would change the workspace target. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    // And what gets typed lands in the command box rather than nowhere.
+    for ch in "zzcustomcmd".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .wait_until(|h| h.screen_to_string().contains("zzcustomcmd"))
+        .unwrap();
 }

@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyEventKind};
+use fresh_input_parser::Event;
 use ratatui::Terminal;
 
 use crate::app::Editor;
@@ -24,7 +24,7 @@ use crate::server::capture_backend::{
     terminal_setup_sequences, terminal_teardown_sequences, CaptureBackend,
 };
 use crate::server::command_access;
-use crate::server::input_parser::InputParser;
+use crate::server::input_parser::ClientInputParser;
 use crate::server::ipc::{ServerConnection, ServerListener, SocketPaths, StreamWrapper};
 use crate::server::protocol::{
     ClientControl, ServerControl, ServerHello, TermSize, VersionMismatch, PROTOCOL_VERSION,
@@ -70,6 +70,17 @@ pub struct EditorServerConfig {
     /// bundles them here and the server just holds on until shutdown.
     /// Local authorities leave this `None`.
     pub session_keepalive: Option<Box<dyn std::any::Any + Send>>,
+    /// Files to open once the editor is up, on top of whatever the workspace
+    /// restore brought back. Empty for the detached daemon — a `fresh -a`
+    /// client sends its file list as `OpenFiles` after the handshake — and
+    /// populated by `fresh --web FILES…`, which has no client to send it.
+    pub startup_files: Vec<crate::server::protocol::FileRequest>,
+    /// When set, the daemon ALSO serves the web UI on this bind address, so a
+    /// browser and any number of `fresh -a` terminals share one editor. This
+    /// is what `fresh --web` runs — the web bridge is a second transport onto
+    /// the same session, not a second editor. `None` = TUI clients only.
+    #[cfg(feature = "web")]
+    pub web_addr: Option<String>,
 }
 
 /// Editor server that manages editor state and client connections
@@ -89,6 +100,11 @@ pub struct EditorServer {
     next_wait_id: u64,
     /// Maps wait_id → client_id for clients waiting on file events
     waiting_clients: std::collections::HashMap<u64, u64>,
+    /// Maps a running script's request_id → the client waiting for its
+    /// result. A script settles on the plugin thread well after it is
+    /// submitted, so its `ScriptResult` is written when the outcome arrives
+    /// rather than at dispatch time.
+    pending_commands: std::collections::HashMap<u64, u64>,
     /// Current authority. Carried across editor rebuilds so plugin-
     /// installed authorities (e.g. a devcontainer attach) survive the
     /// restart-based transition: the old editor is dropped, a new one
@@ -111,6 +127,12 @@ pub struct EditorServer {
     /// server is dropped.
     #[allow(dead_code)]
     session_keepalive: Option<Box<dyn std::any::Any + Send>>,
+    /// The hosted web bridge (`config.web_addr`), bound in `run` once the
+    /// editor exists. Browsers reach the SAME editor the IPC clients do: the
+    /// bridge is polled in the loop below, its viewport joins the shared-grid
+    /// fit, and it gets the scene pushed alongside the terminal broadcast.
+    #[cfg(feature = "web")]
+    web: Option<crate::webui::WebBridge>,
 }
 
 /// Buffered writer for sending data to a client without blocking the server loop.
@@ -177,14 +199,14 @@ struct ConnectedClient {
     term_size: TermSize,
     env: std::collections::HashMap<String, Option<String>>,
     id: u64,
-    input_parser: InputParser,
+    input_parser: ClientInputParser,
     /// Whether this client needs a full screen render on next frame
     needs_full_render: bool,
     /// If set, this client is waiting for a --wait completion signal
     wait_id: Option<u64>,
     /// Per-workspace capability token presented in this client's `Hello`
-    /// (from `$FRESH_CMD_TOKEN`). Authorizes `ListCommands` / `RunCommand`
-    /// against the token's allowlist; `None` for clients that carry no token.
+    /// (from `$FRESH_CMD_TOKEN`). Authorizes `RunScript` against the token's
+    /// grant; `None` for clients that carry no token.
     cmd_token: Option<String>,
 }
 
@@ -237,10 +259,13 @@ impl EditorServer {
             last_input_client: None,
             next_wait_id: 1,
             waiting_clients: std::collections::HashMap::new(),
+            pending_commands: std::collections::HashMap::new(),
             current_authority,
             workspace_trust,
             env_provider,
             session_keepalive,
+            #[cfg(feature = "web")]
+            web: None,
         })
     }
 
@@ -273,6 +298,16 @@ impl EditorServer {
         let mut last_render = Instant::now();
         const FRAME_DURATION: Duration = Duration::from_millis(16); // 60fps
 
+        // Bind the web bridge (`--web`) before the loop: unlike a terminal,
+        // a browser can't be waited for, so the editor is built eagerly here
+        // rather than on the first IPC client.
+        #[cfg(feature = "web")]
+        let mut last_web_push = Instant::now();
+        #[cfg(feature = "web")]
+        let mut web_dirty = true;
+        #[cfg(feature = "web")]
+        self.start_web_bridge()?;
+
         loop {
             // Check for shutdown
             if self.shutdown.load(Ordering::SeqCst) {
@@ -280,11 +315,35 @@ impl EditorServer {
                 break;
             }
 
-            // Check idle timeout
+            // Check idle timeout. A browser on the hosted web bridge counts as
+            // a client: a web-only session has no IPC clients at all, and
+            // without this the daemon would reap itself out from under an open
+            // tab that is merely idle.
             if let Some(timeout) = self.config.idle_timeout {
-                if self.clients.is_empty() && self.last_client_activity.elapsed() > timeout {
+                if self.clients.is_empty()
+                    && !self.web_busy()
+                    && self.last_client_activity.elapsed() > timeout
+                {
                     tracing::info!("Idle timeout reached, shutting down");
                     break;
+                }
+            }
+
+            // Drain nested-forward requests (file/dir opens from a `fresh` run
+            // in an embedded terminal, and the `fresh --cmd` command channel)
+            // before anything else, exactly like the TUI loop (main.rs), the
+            // GUI tick (gui::EditorApp::tick) and the standalone web loop
+            // (webui::run). The daemon hosts terminals of its own — `fresh
+            // --web` runs here — so an agent workspace spawned in one gets a
+            // `FRESH_SESSION` / `FRESH_CMD_TOKEN` pointing at the in-process
+            // control socket. Without this drain the request reached the
+            // editor thread's queue and stayed there: the handler thread parked
+            // on a reply that never came and `fresh --cmd cmd list` hung in the
+            // agent's terminal. Cheap no-op until the socket is bound; never
+            // blocks.
+            if let Some(ref mut editor) = self.editor {
+                if crate::server::local_control::pump(editor) {
+                    needs_render = true;
                 }
             }
 
@@ -302,21 +361,24 @@ impl EditorServer {
                         Ok(client) => {
                             tracing::info!("Client {} connected", client.id);
 
-                            // Initialize editor on first-ever client, or update size if reconnecting
+                            // Initialize the editor on the first-ever client.
+                            // With the web bridge hosted here the editor is
+                            // already up (a browser may have been watching the
+                            // session for hours), so this is the TUI-only path;
+                            // otherwise the new terminal joins the shared-grid
+                            // fit like any other viewport.
                             if self.editor.is_none() {
-                                // First time - initialize editor
                                 self.term_size = client.term_size;
                                 self.initialize_editor()?;
-                            } else if self.clients.is_empty() {
-                                // Reconnecting after all clients disconnected - update terminal size
-                                if self.term_size != client.term_size {
-                                    self.term_size = client.term_size;
+                                self.clients.push(client);
+                            } else {
+                                self.clients.push(client);
+                                if self.recompute_term_size() {
                                     self.update_terminal_size()?;
                                 }
                             }
                             // Note: full redraw is handled via client.needs_full_render flag
 
-                            self.clients.push(client);
                             self.last_client_activity = Instant::now();
                             next_client_id += 1;
                             needs_render = true;
@@ -345,6 +407,15 @@ impl EditorServer {
                 );
             }
 
+            // Browser input reaches the same editor, and by the same rules:
+            // applied before the quit/detach checks below so a browser can
+            // quit the session, and folded into `needs_render` so its effect
+            // is broadcast to the attached terminals in this same pass.
+            #[cfg(feature = "web")]
+            if self.poll_web()? {
+                needs_render = true;
+            }
+
             // Check if editor should quit. `should_quit` is set both
             // by a genuine user quit and by `request_restart`
             // (triggered by `change_working_dir` and by
@@ -370,6 +441,11 @@ impl EditorServer {
                             self.shutdown.store(true, Ordering::SeqCst);
                             continue;
                         }
+                        // The bridge's clipboard mirror was seeded from the
+                        // editor that just went away; re-seed it so the next
+                        // scene doesn't announce a copy nobody made.
+                        #[cfg(feature = "web")]
+                        self.rebind_web_bridge();
                         needs_render = true;
                         continue;
                     }
@@ -448,6 +524,7 @@ impl EditorServer {
 
             // Handle resize
             if resize_occurred {
+                self.recompute_term_size();
                 self.update_terminal_size()?;
                 needs_render = true;
             }
@@ -464,11 +541,34 @@ impl EditorServer {
 
             // Process async messages from editor
             if let Some(ref mut editor) = self.editor {
-                if editor.process_async_messages() {
+                if editor.process_async_messages_budgeted() {
                     needs_render = true;
                 }
                 if editor.process_pending_file_opens() {
                     needs_render = true;
+                }
+
+                // Answer script callers whose script has now settled: what
+                // the script returned becomes the reply's `output` (what
+                // `fresh --cmd script run` prints).
+                let settled = {
+                    let pending = &self.pending_commands;
+                    command_access::take_completed_where(|id| pending.contains_key(&id))
+                };
+                for outcome in settled {
+                    let Some(client_id) = self.pending_commands.remove(&outcome.request_id) else {
+                        continue;
+                    };
+                    if let Some(client) = self.clients.iter_mut().find(|c| c.id == client_id) {
+                        let msg = serde_json::to_string(&ServerControl::ScriptResult {
+                            ok: outcome.ok,
+                            error: outcome.error,
+                            output: outcome.output,
+                        })
+                        .unwrap_or_default();
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = client.conn.write_control(&msg);
+                    }
                 }
 
                 // Process completed --wait operations
@@ -512,6 +612,23 @@ impl EditorServer {
                 // (non-server) loop in `main.rs`.
                 if editor.active_window().animations.is_active() {
                     needs_render = true;
+                }
+            }
+
+            // Push the browser scene on the web bridge's own (gentler) cadence:
+            // a scene rebuild is a JSON model, not a terminal cell diff, and
+            // 25 fps is what the standalone bridge has always run at. Riding
+            // the same `needs_render` signal keeps the two views in step;
+            // `web_dirty` remembers a frame that fell inside the window so the
+            // last keystroke of a burst still lands.
+            #[cfg(feature = "web")]
+            {
+                const WEB_PUSH_INTERVAL: Duration = Duration::from_millis(40);
+                web_dirty |= needs_render;
+                if web_dirty && last_web_push.elapsed() >= WEB_PUSH_INTERVAL {
+                    self.push_web_scene();
+                    last_web_push = Instant::now();
+                    web_dirty = false;
                 }
             }
 
@@ -560,6 +677,132 @@ impl EditorServer {
         Ok(())
     }
 
+    /// The size the shared editor renders at: the element-wise MIN of every
+    /// viewport watching it — the primary attached terminal and, when this
+    /// daemon hosts the web bridge, the smallest connected browser. One editor
+    /// draws one grid, so the grid has to fit them all; a larger window
+    /// letterboxes rather than being shown a grid it can't display. Terminals
+    /// keep the daemon's long-standing "first client sizes the session" rule.
+    ///
+    /// Returns whether the size actually moved (the caller then pushes it into
+    /// the capture backend and the editor via `update_terminal_size`).
+    fn recompute_term_size(&mut self) -> bool {
+        // `mut` is exercised only by the `web` branch below.
+        #[cfg_attr(not(feature = "web"), allow(unused_mut))]
+        let mut fit: Option<TermSize> = self.clients.first().map(|c| c.term_size);
+        #[cfg(feature = "web")]
+        if let Some((wc, wr)) = self.web.as_ref().and_then(|b| b.wanted_size()) {
+            fit = Some(match fit {
+                Some(t) => TermSize::new(t.cols.min(wc), t.rows.min(wr)),
+                None => TermSize::new(wc, wr),
+            });
+        }
+        match fit {
+            Some(t) if t != self.term_size => {
+                self.term_size = t;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// True while a browser is connected to the hosted web bridge.
+    fn web_busy(&self) -> bool {
+        #[cfg(feature = "web")]
+        {
+            self.web.as_ref().is_some_and(|b| b.is_busy())
+        }
+        #[cfg(not(feature = "web"))]
+        {
+            false
+        }
+    }
+
+    /// Bind the web bridge asked for by `--web`.
+    ///
+    /// The editor has to exist first — the bridge seeds its outbound clipboard
+    /// mirror from it — so a web-enabled daemon builds its editor eagerly here
+    /// instead of waiting for a first client the way the TUI-only daemon does.
+    /// A browser never speaks the IPC handshake; it has to find a session
+    /// already rendering. The pre-client grid is the bridge's own default
+    /// (`webui::DEFAULT_SIZE`), refit as soon as a real viewport reports in.
+    #[cfg(feature = "web")]
+    fn start_web_bridge(&mut self) -> io::Result<()> {
+        let Some(addr) = self.config.web_addr.clone() else {
+            return Ok(());
+        };
+        if self.editor.is_none() {
+            let (cols, rows) = crate::webui::DEFAULT_SIZE;
+            self.term_size = TermSize::new(cols, rows);
+            self.initialize_editor()?;
+        }
+        let Some(editor) = self.editor.as_ref() else {
+            return Ok(());
+        };
+        // `/reset` rebuilds the editor from scratch — fine for the standalone
+        // parity harness that owns its editor, not for a session carrying a
+        // recovery log, a restored workspace and attached terminals. Hence
+        // `allow_reset: false` (and no file list for it to reopen).
+        let bridge = crate::webui::WebBridge::bind(&addr, editor, &[], false)
+            .map_err(|e| io::Error::other(format!("failed to serve the web UI on {addr}: {e}")))?;
+        tracing::info!("Web UI bridge listening on {}", addr);
+        self.web = Some(bridge);
+        Ok(())
+    }
+
+    /// Apply everything the browsers sent this pass and refit the shared grid.
+    /// Returns whether the editor changed and needs a render.
+    #[cfg(feature = "web")]
+    fn poll_web(&mut self) -> io::Result<bool> {
+        let before = self.term_size;
+        let (Some(bridge), Some(editor)) = (self.web.as_mut(), self.editor.as_mut()) else {
+            return Ok(false);
+        };
+        let mut cols = before.cols;
+        let mut rows = before.rows;
+        let poll = bridge.poll(editor, &mut cols, &mut rows);
+        // Heartbeat/flush here rather than in the render path: reaping a
+        // half-open browser frees a size constraint, and the refit below is
+        // where that gets acted on.
+        let reaped = bridge.maintain();
+        // The `/resize` HTTP route resizes the editor directly. The refit is
+        // the authority on the shared grid, so note the drift and force the
+        // capture backend and the editor back into agreement afterwards.
+        let route_resized = (cols, rows) != (before.cols, before.rows);
+
+        if poll.resize_dirty || reaped || route_resized {
+            let refit = self.recompute_term_size();
+            if refit || route_resized {
+                self.update_terminal_size()?;
+            }
+        }
+        if poll.mutated {
+            self.last_client_activity = Instant::now();
+        }
+        Ok(poll.mutated || poll.resize_dirty || reaped || route_resized)
+    }
+
+    /// Build the browser scene once and push each connected browser its own
+    /// region diff.
+    #[cfg(feature = "web")]
+    fn push_web_scene(&mut self) {
+        let size = self.term_size;
+        let (Some(bridge), Some(editor)) = (self.web.as_mut(), self.editor.as_mut()) else {
+            return;
+        };
+        bridge.push_scene(editor, size.cols, size.rows);
+    }
+
+    /// Re-seed the web bridge's clipboard mirror after an in-place editor
+    /// rebuild (authority swap / working-directory change), so the browsers'
+    /// next scene doesn't announce a clipboard change nobody made.
+    #[cfg(feature = "web")]
+    fn rebind_web_bridge(&mut self) {
+        if let (Some(bridge), Some(editor)) = (self.web.as_mut(), self.editor.as_ref()) {
+            bridge.rebound_editor(editor);
+        }
+    }
+
     /// Build a fresh `Editor` instance using the current configuration
     /// and stored authority.  Shared between first-boot initialization
     /// and post-restart rebuild.
@@ -604,7 +847,17 @@ impl EditorServer {
         // Enable session mode - use hardware cursor only, no REVERSED software cursor
         editor.set_session_mode(true);
 
-        // Set session name for status bar display
+        // Only a *named* daemon scopes persistence to itself. An unnamed
+        // working-directory daemon is the same editor state a direct-mode
+        // `fresh` in that directory sees, so it must keep the per-directory
+        // workspaces and recovery — handing the directory's basename over as if
+        // it were a daemon name is what made `fresh -a` restore nothing: the
+        // per-directory workspaces boot discovery had enumerated were then
+        // looked up in a daemon-scoped store that nothing had ever written.
+        editor.set_session_name(self.config.session_name.clone());
+
+        // The status bar labels every daemon, named or not: its name, else the
+        // directory it serves.
         let session_display_name = self.config.session_name.clone().unwrap_or_else(|| {
             // Use the directory name as a short display name for unnamed daemons
             self.config
@@ -614,7 +867,7 @@ impl EditorServer {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "session".to_string())
         });
-        editor.set_session_name(Some(session_display_name));
+        editor.set_session_display_name(Some(session_display_name));
 
         Ok((editor, terminal))
     }
@@ -661,6 +914,22 @@ impl EditorServer {
         // Start the recovery session (periodic saves of dirty buffers)
         if let Err(e) = editor.start_recovery_session() {
             tracing::warn!("Failed to start recovery session: {}", e);
+        }
+
+        // Files named on the daemon's own command line (`fresh --web FILES…`).
+        // Queued through the same path the `OpenFiles` control message uses, so
+        // `file:line:col` and range/hover forms behave identically — and after
+        // the restore, so an explicitly requested file ends up active.
+        for req in &self.config.startup_files {
+            editor.queue_file_open(
+                PathBuf::from(&req.path),
+                req.line,
+                req.column,
+                req.end_line,
+                req.end_column,
+                req.message.clone(),
+                None,
+            );
         }
 
         self.terminal = Some(terminal);
@@ -750,11 +1019,10 @@ impl EditorServer {
             self.workspace_trust
                 .set_root(Some(self.config.working_dir.clone()));
             self.workspace_trust.set_store(Some(
-                crate::services::workspace_trust::TrustStore::for_project_dir(
-                    &self
-                        .config
-                        .dir_context
-                        .project_state_dir(&self.config.working_dir),
+                crate::services::workspace_trust::store_for_workspace(
+                    &self.config.dir_context,
+                    self.current_authority.filesystem.as_ref(),
+                    &self.config.working_dir,
                 ),
             ));
             // New project ⇒ the old env recipe no longer applies; deactivate
@@ -905,7 +1173,7 @@ impl EditorServer {
             term_size: hello.term_size,
             env: hello.env,
             id: client_id,
-            input_parser: InputParser::new(),
+            input_parser: ClientInputParser::new(),
             needs_full_render: true,
             wait_id: None,
             cmd_token: hello.cmd_token,
@@ -964,6 +1232,18 @@ impl EditorServer {
                 }
             }
             let _ = data_eof; // Suppress unused warning
+
+            // A lone trailing `ESC` is ambiguous until the next byte says
+            // whether it was the Escape key or the head of a sequence. The
+            // socket read above is non-blocking, so nothing else in this loop
+            // ever decides that — resolve it here once the grace window has
+            // passed with no continuation, or Escape never registers at all
+            // (sinelaw/fresh#2810).
+            let flushed = client.input_parser.flush_idle(Instant::now());
+            if !flushed.is_empty() {
+                input_source_client = Some(idx);
+                input_events.extend(flushed);
+            }
 
             // Check control socket
             // On Windows, don't toggle nonblocking mode - it fails on named pipes
@@ -1055,9 +1335,10 @@ impl EditorServer {
                 ClientControl::Resize { cols, rows } => {
                     if let Some(client) = self.clients.get_mut(idx) {
                         client.term_size = TermSize::new(cols, rows);
-                        // Update server size to match first client
+                        // The first client sizes the session; the main loop
+                        // recomputes the shared grid from it (mins'd against
+                        // any browsers on the hosted web bridge).
                         if idx == 0 {
-                            self.term_size = TermSize::new(cols, rows);
                             resize_occurred = true;
                         }
                     }
@@ -1140,49 +1421,36 @@ impl EditorServer {
                         }
                     }
                 }
-                ClientControl::ListCommands { include_args } => {
-                    // Scope the reply to the caller's token allowlist; a
-                    // client with no/unknown token gets an empty list (the
-                    // channel must not double as a capability probe).
+                ClientControl::RunScript { source } => {
                     let token = self.clients.get(idx).and_then(|c| c.cmd_token.clone());
-                    let commands = match (
-                        token.as_deref().and_then(command_access::lookup),
-                        self.editor.as_ref(),
-                    ) {
-                        (Some(grant), Some(editor)) => {
-                            command_access::list_allowed_commands(editor, &grant, include_args)
+                    let dispatch =
+                        command_access::run_script(self.editor.as_mut(), token.as_deref(), &source);
+                    match dispatch {
+                        // Only a refusal settles here — a script that started
+                        // answers for itself.
+                        command_access::CommandDispatch::Settled { ok, error, output } => {
+                            if let Some(client) = self.clients.get_mut(idx) {
+                                let json = serde_json::to_string(&ServerControl::ScriptResult {
+                                    ok,
+                                    error,
+                                    output,
+                                })
+                                .unwrap_or_default();
+                                // Best-effort reply
+                                #[allow(clippy::let_underscore_must_use)]
+                                let _ = client.conn.write_control(&json);
+                            }
                         }
-                        _ => Vec::new(),
-                    };
-                    if let Some(client) = self.clients.get_mut(idx) {
-                        let json = serde_json::to_string(&ServerControl::CommandList { commands })
-                            .unwrap_or_default();
-                        // Best-effort reply
-                        #[allow(clippy::let_underscore_must_use)]
-                        let _ = client.conn.write_control(&json);
-                    }
-                }
-                ClientControl::RunCommand { id, args } => {
-                    let token = self.clients.get(idx).and_then(|c| c.cmd_token.clone());
-                    let (ok, error) = command_access::run_command_by_id(
-                        self.editor.as_mut(),
-                        token.as_deref(),
-                        &id,
-                        &args,
-                    );
-                    if ok {
-                        resize_occurred = true; // Force re-render
-                    }
-                    if let Some(client) = self.clients.get_mut(idx) {
-                        let json = serde_json::to_string(&ServerControl::CommandResult {
-                            ok,
-                            error,
-                            output: None,
-                        })
-                        .unwrap_or_default();
-                        // Best-effort reply
-                        #[allow(clippy::let_underscore_must_use)]
-                        let _ = client.conn.write_control(&json);
+                        // The script runs on the plugin thread and settles
+                        // later; remember which client is waiting and answer it
+                        // when the outcome comes back (see the drain in `run`).
+                        // Same shape as `waiting_clients` for `--wait` opens.
+                        command_access::CommandDispatch::Pending { request_id } => {
+                            if let Some(client) = self.clients.get(idx) {
+                                self.pending_commands.insert(request_id, client.id);
+                            }
+                            resize_occurred = true; // The script may change the view
+                        }
                     }
                 }
                 ClientControl::Quit => unreachable!(), // Handled above
@@ -1201,7 +1469,17 @@ impl EditorServer {
         disconnected.sort_unstable();
         disconnected.dedup();
 
-        // Remove disconnected clients
+        // Remove disconnected clients. Losing one changes the shared fit: the
+        // primary terminal sizes the session, so when it goes away the next
+        // client inherits that role and the grid has to be recomputed for it —
+        // otherwise a survivor keeps being rendered at the dead client's size
+        // and shows a clipped screen until it happens to send a resize. Flag it
+        // like any other resize so the main loop refits and repaints; when the
+        // fit turns out unchanged the recompute is a no-op and the clients just
+        // get a fresh frame.
+        if !disconnected.is_empty() {
+            resize_occurred = true;
+        }
         for idx in disconnected.into_iter().rev() {
             let client = self.clients.remove(idx);
             // Clean up --wait tracking if this client was waiting
@@ -1255,10 +1533,10 @@ impl EditorServer {
         }
 
         match event {
-            Event::Key(key_event) => {
-                if key_event.kind == KeyEventKind::Press {
+            Event::Key(press) => {
+                if crate::input::is_keystroke(press.kind) {
                     editor
-                        .handle_key(key_event.code, key_event.modifiers)
+                        .handle_key_press(press)
                         .map_err(|e| io::Error::other(e.to_string()))?;
                     Ok(true)
                 } else {
@@ -1273,7 +1551,15 @@ impl EditorServer {
                 Ok(true)
             }
             Event::Paste(text) => {
-                editor.paste_text(text);
+                // Mirror the local terminal loop (`Ev::Paste` in
+                // app/lifecycle.rs): when a floating modal / dock owns the
+                // keyboard, a client's bracketed paste belongs to its focused
+                // text field, not the buffer underneath. Without this, pasting
+                // into the New-Session dialog in daemon mode dumped the text
+                // into the obscured buffer.
+                if !editor.paste_bracketed_into_focused_panel(&text) {
+                    editor.paste_text(text);
+                }
                 Ok(true)
             }
             _ => Ok(false),
@@ -1398,8 +1684,9 @@ mod wave_dismiss_tests {
     use crate::config::Config;
     use crate::config_io::DirectoryContext;
     use crossterm::event::{
-        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
+    use fresh_input_parser::Event;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -1433,10 +1720,126 @@ mod wave_dismiss_tests {
             ),
             env_provider: Arc::new(crate::services::env_provider::EnvProvider::inactive()),
             session_keepalive: None,
+            startup_files: Vec::new(),
+            #[cfg(feature = "web")]
+            web_addr: None,
         };
         let mut server = EditorServer::new(config).expect("EditorServer::new");
         server.initialize_editor().expect("initialize_editor");
         server
+    }
+
+    /// A bracketed paste from a client must land in the focused floating-panel
+    /// text field, not in the buffer obscured behind the modal — the same
+    /// routing the local terminal loop applies (`Ev::Paste` in
+    /// app/lifecycle.rs). Regression: the daemon's `handle_event` called
+    /// `paste_text` directly, so pasting into the New-Session dialog in an
+    /// attached client dumped the text into the underlying buffer.
+    #[test]
+    fn bracketed_paste_routes_to_focused_panel_in_daemon_mode() {
+        use std::collections::HashMap;
+
+        let mut server = server_with_editor("paste-panel");
+        let editor = server.editor_mut().expect("editor present");
+
+        // Mount a centered floating panel whose focused widget is a Text
+        // field — the minimal stand-in for the New-Workspace dialog. The
+        // panel renders into its own (here: nonexistent) buffer, NOT the
+        // active one, mirroring production; rendering into the active
+        // buffer would make the leak assertion below see the panel's own
+        // re-render of the pasted value.
+        let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        let buffer_id = crate::model::event::BufferId(9999);
+        let spec = fresh_core::api::WidgetSpec::Text {
+            value: String::new(),
+            cursor_byte: 0,
+            focused: true,
+            label: String::new(),
+            placeholder: None,
+            rows: 1,
+            field_width: 0,
+            max_visible_chars: 0,
+            full_width: true,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            read_only: false,
+            markdown: false,
+            key: Some("field".to_string()),
+        };
+        editor.widget_registry.mount(
+            panel_key.clone(),
+            buffer_id,
+            spec,
+            Vec::new(),
+            HashMap::new(),
+            "field".to_string(),
+            vec!["field".to_string()],
+            HashMap::new(),
+            Vec::new(),
+        );
+        editor.floating_widget_panel = Some(crate::app::FloatingWidgetState {
+            panel_key: panel_key.clone(),
+            width_pct: 50,
+            height_pct: 50,
+            placement: crate::app::PanelPlacement::Centered,
+            focused: true,
+            entries: Vec::new(),
+            focus_cursor: None,
+            embeds: Vec::new(),
+            overlays: Vec::new(),
+            boxes: Vec::new(),
+            scrollbar_tracks: Vec::new(),
+            scrollbar_mouse: Default::default(),
+            scrollbar_drag_key: None,
+            last_inner_rect: None,
+            scrollbar_hover_zones: Vec::new(),
+            scrollbar_zone_hovered: false,
+            scrollbar_flash_until: None,
+            fullscreen: false,
+            focus_marker: false,
+            title: None,
+            closable: false,
+            close_button_rect: None,
+            hovered_widget_key: String::new(),
+            hovered_item_key: String::new(),
+            popup: None,
+            popup_hits: Vec::new(),
+            popup_rect: None,
+        });
+
+        let consumed = server
+            .handle_event(Event::Paste("SERVER_PASTE".to_string()))
+            .expect("handle_event");
+        assert!(consumed, "a paste should request a re-render");
+
+        let editor = server.editor().expect("editor present");
+        let panel = editor
+            .widget_registry
+            .get(&panel_key)
+            .expect("panel still mounted");
+        match panel.instance_states.get("field") {
+            Some(crate::widgets::WidgetInstanceState::Text { editor: text, .. }) => {
+                assert_eq!(
+                    text.value(),
+                    "SERVER_PASTE",
+                    "the paste must land in the focused Text widget"
+                );
+            }
+            other => panic!(
+                "focused field has no Text instance state: {:?}",
+                other.is_some()
+            ),
+        }
+        let buffer = editor.active_state().buffer.to_string().unwrap_or_default();
+        assert!(
+            !buffer.contains("SERVER_PASTE"),
+            "the paste must not leak into the buffer behind the modal, got: {:?}",
+            buffer
+        );
     }
 
     /// A key press while the wave is running stops it and is consumed — it does
@@ -1453,7 +1856,7 @@ mod wave_dismiss_tests {
         );
 
         let consumed = server
-            .handle_event(Event::Key(KeyEvent::new(
+            .handle_event(Event::key(KeyEvent::new(
                 KeyCode::Char('a'),
                 KeyModifiers::empty(),
             )))

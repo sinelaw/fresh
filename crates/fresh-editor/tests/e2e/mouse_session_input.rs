@@ -14,7 +14,8 @@
 //! into the editor and check nothing leaked into the buffer.
 
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{Event, KeyCode};
+use crossterm::event::KeyCode;
+use fresh::server::input_parser::Event;
 use fresh::server::input_parser::InputParser;
 
 /// Structural bytes of a mouse/CSI sequence — the characters that leaked in

@@ -121,6 +121,12 @@ impl super::Editor {
             if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
                 bs.show_line_numbers = false;
                 bs.highlight_current_line = false;
+                // Panel content is composed by the plugin at a width it
+                // already knows (it truncates or pre-wraps its own rows), so
+                // soft-wrapping it again just re-flows lines the plugin laid
+                // out — a diff row spilling onto three screen rows, say. Panels
+                // never wrap; the horizontal scrollbar handles overflow.
+                bs.viewport.line_wrap_enabled = false;
             }
             self.windows
                 .get_mut(&self.active_window)
@@ -195,6 +201,7 @@ impl super::Editor {
             layout,
             panel_buffers: panel_buffers.clone(),
             panel_splits,
+            hidden_panels: std::collections::HashSet::new(),
             representative_split: Some(group_leaf_id),
         };
 
@@ -484,16 +491,271 @@ impl super::Editor {
         }
     }
 
+    /// Show or hide one panel of a buffer group.
+    ///
+    /// The group is not torn down: the panel's buffer, its content and its
+    /// scroll position all survive being hidden, because only the group's
+    /// inner split tree is rebuilt (from `group.layout`, which always
+    /// describes every panel) with the hidden leaves left out. A split whose
+    /// children are all hidden collapses to the visible side, so the
+    /// remaining panels take over the freed space at their original ratios.
+    ///
+    /// Returns `false` — leaving the group untouched — when the group or
+    /// panel is unknown, or when hiding this panel would leave the group
+    /// with nothing to render.
+    #[cfg(feature = "plugins")]
+    pub(super) fn set_buffer_group_panel_visible(
+        &mut self,
+        group_id: usize,
+        panel_name: &str,
+        visible: bool,
+    ) -> bool {
+        use crate::view::split::SplitNode;
+
+        let bg_id = BufferGroupId(group_id);
+        let Some(group) = self.active_window().buffer_groups.get(&bg_id) else {
+            tracing::warn!("setBufferGroupPanelVisible: group {} not found", group_id);
+            return false;
+        };
+        if !group.panel_buffers.contains_key(panel_name) {
+            tracing::warn!(
+                "setBufferGroupPanelVisible: panel '{}' missing in group {}",
+                panel_name,
+                group_id
+            );
+            return false;
+        }
+        let already_hidden = group.hidden_panels.contains(panel_name);
+        if already_hidden != visible {
+            return true;
+        }
+        let Some(group_leaf_id) = group.representative_split else {
+            return false;
+        };
+        let layout = group.layout.clone();
+        let mut hidden = group.hidden_panels.clone();
+        if visible {
+            hidden.remove(panel_name);
+        } else {
+            hidden.insert(panel_name.to_string());
+        }
+        let existing_leaves = group.panel_splits.clone();
+        let current_buffers = group.panel_buffers.clone();
+
+        // Rebuild the tree first: if the request would empty the group,
+        // nothing has been mutated yet and we can decline it outright.
+        let mut panel_splits: HashMap<String, LeafId> = HashMap::new();
+        let Some(inner_tree) = self.build_visible_split_tree(
+            &layout,
+            &hidden,
+            &existing_leaves,
+            &current_buffers,
+            &mut panel_splits,
+        ) else {
+            tracing::warn!(
+                "setBufferGroupPanelVisible: hiding '{}' would leave group {} empty",
+                panel_name,
+                group_id
+            );
+            return false;
+        };
+
+        // Every panel keeps its leaf id and view state, visible or not, so a
+        // panel that comes back finds its scroll position where it left it.
+        // `panel_splits` therefore stays the full map; only the tree shrinks.
+        let mut all_splits = existing_leaves.clone();
+        all_splits.extend(panel_splits.iter().map(|(k, v)| (k.clone(), *v)));
+        let visible_leaves: std::collections::HashSet<LeafId> =
+            panel_splits.values().copied().collect();
+
+        // Panels shown for the first time need the same view state that
+        // `create_buffer_group` gives every panel at create time.
+        let (tw, th) = (self.terminal_width, self.terminal_height);
+        for (name, leaf_id) in &panel_splits {
+            let has_state = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs.contains_key(leaf_id))
+                .unwrap_or(false);
+            if has_state {
+                continue;
+            }
+            let Some(buffer_id) = self
+                .active_window()
+                .buffer_groups
+                .get(&bg_id)
+                .and_then(|g| g.panel_buffers.get(name).copied())
+            else {
+                continue;
+            };
+            let mut vs = SplitViewState::with_buffer(tw, th, buffer_id);
+            vs.suppress_chrome = true;
+            vs.hide_tilde = true;
+            if let Some(bs) = vs.keyed_states.get_mut(&buffer_id) {
+                bs.show_line_numbers = false;
+                bs.highlight_current_line = false;
+                bs.viewport.line_wrap_enabled = false;
+            }
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .insert(*leaf_id, vs);
+        }
+
+        // Swap the tree in, keeping the group's focus on a leaf that is
+        // still rendered.
+        let mut fallback_leaf = None;
+        if let Some(SplitNode::Grouped {
+            layout: node_layout,
+            active_inner_leaf,
+            ..
+        }) = self
+            .active_window_mut()
+            .grouped_subtrees
+            .get_mut(&group_leaf_id)
+        {
+            **node_layout = inner_tree;
+            if !visible_leaves.contains(active_inner_leaf) {
+                if let Some(leaf) = node_layout.leaf_split_ids().first().copied() {
+                    *active_inner_leaf = leaf;
+                }
+            }
+            fallback_leaf = Some(*active_inner_leaf);
+        }
+
+        if let Some(group) = self.active_window_mut().buffer_groups.get_mut(&bg_id) {
+            group.hidden_panels = hidden;
+            group.panel_splits = all_splits;
+        }
+
+        for vs in self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .values_mut()
+        {
+            vs.layout_dirty = true;
+            if let (Some(focused), Some(fallback)) = (vs.focused_group_leaf, fallback_leaf) {
+                if !visible_leaves.contains(&focused)
+                    && existing_leaves.values().any(|l| *l == focused)
+                {
+                    vs.focused_group_leaf = Some(fallback);
+                }
+            }
+        }
+        self.plugin_render_requested = true;
+        true
+    }
+
+    /// Build a group's inner split tree from its layout, skipping hidden
+    /// panels and reusing each visible panel's existing leaf id (so its view
+    /// state — and with it the scroll position — carries over). Returns
+    /// `None` when every leaf in the subtree is hidden.
+    #[cfg(feature = "plugins")]
+    fn build_visible_split_tree(
+        &mut self,
+        node: &GroupLayoutNode,
+        hidden: &std::collections::HashSet<String>,
+        existing: &HashMap<String, LeafId>,
+        current_buffers: &HashMap<String, BufferId>,
+        panel_splits: &mut HashMap<String, LeafId>,
+    ) -> Option<crate::view::split::SplitNode> {
+        use crate::view::split::SplitNode;
+
+        match node {
+            GroupLayoutNode::Scrollable { id, buffer_id, .. }
+            | GroupLayoutNode::Fixed { id, buffer_id, .. } => {
+                if hidden.contains(id) {
+                    return None;
+                }
+                // `layout` records the buffer each panel was *created*
+                // with. A panel that has since been retargeted
+                // (`setBufferGroupPanelBuffer` — the review diff swaps its
+                // center panel to a composite for the side-by-side view)
+                // must keep the buffer it holds now; rebuilding from the
+                // layout's id would silently revert it.
+                let buffer_id = current_buffers.get(id).copied().or(*buffer_id)?;
+                let leaf_id = existing.get(id).copied().unwrap_or_else(|| {
+                    LeafId(
+                        self.windows
+                            .get_mut(&self.active_window)
+                            .and_then(|w| w.split_manager_mut())
+                            .expect("active window must have a populated split layout")
+                            .allocate_split_id(),
+                    )
+                });
+                panel_splits.insert(id.clone(), leaf_id);
+                Some(SplitNode::leaf(buffer_id, leaf_id.0))
+            }
+            GroupLayoutNode::Split {
+                direction,
+                ratio,
+                first,
+                second,
+            } => {
+                let first_node = self.build_visible_split_tree(
+                    first,
+                    hidden,
+                    existing,
+                    current_buffers,
+                    panel_splits,
+                );
+                let second_node = self.build_visible_split_tree(
+                    second,
+                    hidden,
+                    existing,
+                    current_buffers,
+                    panel_splits,
+                );
+                match (first_node, second_node) {
+                    (Some(f), Some(s)) => {
+                        let split_id = self
+                            .windows
+                            .get_mut(&self.active_window)
+                            .and_then(|w| w.split_manager_mut())
+                            .expect("active window must have a populated split layout")
+                            .allocate_split_id();
+                        let mut split = SplitNode::split(*direction, f, s, *ratio, split_id);
+                        let fixed_first_size = fixed_height_of(first);
+                        let fixed_second_size = fixed_height_of(second);
+                        if let SplitNode::Split {
+                            fixed_first,
+                            fixed_second,
+                            ..
+                        } = &mut split
+                        {
+                            *fixed_first = fixed_first_size;
+                            *fixed_second = fixed_second_size;
+                        }
+                        Some(split)
+                    }
+                    // One side hidden: the survivor takes the whole rect.
+                    (Some(only), None) | (None, Some(only)) => Some(only),
+                    (None, None) => None,
+                }
+            }
+        }
+    }
+
     /// Focus a specific panel in a buffer group.
     ///
     /// If the panel's inner leaf is not in the main split tree (side-map
     /// approach), this activates the group tab on whichever split hosts it
     /// and marks the panel's leaf as the focused inner leaf.
+    ///
+    /// Focusing a hidden panel is a no-op — there is no rect to put a cursor
+    /// in, and routing keys at an unrendered panel would strand input.
     #[cfg(feature = "plugins")]
     pub(super) fn focus_panel(&mut self, group_id: usize, panel_name: String) {
         let bg_id = BufferGroupId(group_id);
         let (group_leaf_id, inner_leaf) = match self.active_window_mut().buffer_groups.get(&bg_id) {
             Some(group) => {
+                if group.hidden_panels.contains(&panel_name) {
+                    return;
+                }
                 let Some(&inner) = group.panel_splits.get(&panel_name) else {
                     return;
                 };
@@ -702,9 +964,14 @@ impl super::Editor {
                 });
                 // Match the panel-buffer presentation set in
                 // `build_group_layout` (no line numbers, no current-
-                // line highlight inside grouped panels).
+                // line highlight, no soft wrap inside grouped panels).
+                // The wrap flag must be cleared *after*
+                // `apply_config_defaults`, which would otherwise stamp
+                // the global `editor.line_wrap` (on by default) onto a
+                // panel the plugin already laid out to the panel width.
                 buf_state.show_line_numbers = false;
                 buf_state.highlight_current_line = false;
+                buf_state.viewport.line_wrap_enabled = false;
             }
             // 2) Now flip the active pointer.
             vs.active_buffer = new_buffer_id;
@@ -856,7 +1123,10 @@ impl crate::app::window::Window {
         use crate::view::split::SplitNode;
         for node in self.grouped_subtrees.values_mut() {
             if let Some(SplitNode::Split { ratio, .. }) = node.find_mut(container.into()) {
-                *ratio = new_ratio.clamp(0.1, 0.9);
+                // Raw-storage clamp only: the sibling is kept usable by the
+                // layout-time min-pane-size guard (see `clamp_first_to_min`),
+                // matching `SplitManager::set_ratio` — not a fixed percentage floor.
+                *ratio = new_ratio.clamp(0.0, 1.0);
                 return true;
             }
         }

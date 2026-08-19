@@ -10,6 +10,9 @@ repository.workspace = true
 homepage.workspace = true
 keywords = ["editor", "terminal", "tui", "text-editor", "lsp"]
 categories = ["command-line-utilities", "text-editors"]
+# web-ui/ itself must ship — build.rs assembles the embedded page from it under
+# the `web` feature — but its Playwright harness is dev-only.
+exclude = ["web-ui/test/**"]
 
 [[bin]]
 name = "fresh"
@@ -50,11 +53,10 @@ path = "tests/scene_parity.rs"
 required-features = ["web"]
 
 [features]
-default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http"]
+default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http", "self-update"]
 plugins = [
     "dep:fresh-plugin-runtime",
     "dep:fresh-parser-js",
-    "dep:fresh-plugin-api-macros",
     # oxc parses init.ts, which only the plugin runtime can execute.
     "dep:oxc_allocator",
     "dep:oxc_parser",
@@ -116,9 +118,17 @@ runtime = [
 # telemetry, and the `editor.httpFetch` plugin API. Enabled by default.
 # When disabled, those paths become no-ops / return errors and the whole
 # TLS stack (ureq + rustls + ring + webpki) is dropped from the binary.
-http = ["dep:ureq"]
+http = ["dep:ureq", "fresh-update/net"]
+# In-place self-update for self-contained installs (raw tarball / AppImage):
+# download the release asset, verify its SHA-256, extract, and atomically swap
+# the binary. Needs HTTP plus archive extraction (tar + xz + zip). Enabled by
+# default; dropped from min-size/no-default builds so they stay small and never
+# link the extraction/TLS stack.
+self-update = ["http", "fresh-update/engine"]
 # Web UI: `fresh --web [ADDR]` serves the real editor to a browser over a
-# local HTTP + WebSocket bridge (the `webui` module). The frontend (the page
+# local HTTP + WebSocket bridge (the `webui` module), hosted inside the session
+# daemon so `fresh -a` can attach a terminal to the same editor. The frontend
+# (the page
 # build.rs assembles from web-ui/) is embedded into the binary so the build
 # is self-contained. Opt-in (not in `default`) because it embeds ~140 KiB of
 # HTML and pulls in the sha1 WebSocket-handshake dep. Requires the full
@@ -152,6 +162,7 @@ wasm = [
 [dependencies]
 # Local crates
 fresh-core.workspace = true
+fresh-update.workspace = true
 fresh-parser-js = { workspace = true, optional = true }
 # Provides the shared `Language` / `HighlightCategory` types (small, always
 # needed by the syntect grammar catalog). The heavy tree-sitter grammar
@@ -215,9 +226,6 @@ libc = { version = "0.2", optional = true }
 libloading = { version = "0.9", optional = true }
 nix = { version = "0.31", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
 
-# Plugin API proc macros for type-safe bindings
-fresh-plugin-api-macros = { workspace = true, optional = true }
-
 # anyhow is always needed for model error handling
 anyhow = { workspace = true }
 # base64 for remote protocol encoding (and the webui WebSocket handshake)
@@ -238,6 +246,7 @@ arboard = { version = "3.6", default-features = false, features = ["wayland-data
 syntect = { version = "5.3", default-features = false, optional = true }
 
 ureq = { version = "3.1.4", default-features = false, features = ["rustls", "platform-verifier"], optional = true }
+# Archive extraction for self-update (behind the `self-update` feature).
 # Unicode handling - always needed for primitives
 unicode-width = { version = "0.2" }
 unicode-segmentation = { version = "1.12" }
@@ -247,7 +256,7 @@ encoding_rs = "0.8"
 chardetng = "0.1"
 
 # Terminal emulation (optional)
-alacritty_terminal = { version = "0.25", optional = true }
+alacritty_terminal = { version = "0.26", optional = true }
 portable-pty = { version = "0.9", optional = true }
 
 # Session persistence / client-server IPC
@@ -264,6 +273,10 @@ vt100 = { version = "0.16", optional = true }
 fresh-gui = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Also a normal dependency; declared here so integration tests can reach
+# TARGET_TRIPLE / archive_ext when driving the built binary against a fake
+# release (tests/self_update_spine.rs).
+fresh-update.workspace = true
 proptest = "1.9"
 tempfile = "3.25"
 insta = { version = "1.46", features = ["yaml"] }
@@ -316,4 +329,8 @@ assets = [
     { source = "resources/fresh.desktop", dest = "/usr/share/applications/fresh.desktop", mode = "644" },
     # Man page
     { source = "resources/fresh.1", dest = "/usr/share/man/man1/fresh.1", mode = "644" },
+    # Provenance receipt (generated in CI before `cargo generate-rpm`; see
+    # .github/workflows/linux-packages.yml). Tells the editor it was installed
+    # via dnf/rpm so updates defer to the system package manager.
+    { source = "target/install-receipt.toml", dest = "/usr/share/fresh-editor/install-receipt.toml", mode = "644" },
 ]

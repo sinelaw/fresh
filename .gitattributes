@@ -1,0 +1,9 @@
+# Force LF line endings for the help manual — it's embedded at compile time
+# and CRLF causes literal <0D> display artifacts in the terminal.
+crates/fresh-editor/docs/fresh.txt text eol=lf
+
+# Force LF for the fresh-ui golden screens. They are recorded with LF and
+# compared against freshly rendered output, which is always LF — a CRLF
+# checkout on Windows makes every golden test fail on the line terminator
+# rather than on anything the picture shows.
+crates/fresh-ui/tests/golden/*.txt text eol=lf

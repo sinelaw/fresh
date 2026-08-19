@@ -296,13 +296,6 @@
       "when": "normal"
     },
     {
-      "key": "f",
-      "modifiers": ["alt"],
-      "action": "move_word_right",
-      "args": {},
-      "when": "normal"
-    },
-    {
       "comment": "Normal context - Selection",
       "key": "Left",
       "modifiers": ["shift"],
@@ -620,6 +613,29 @@
       "when": "normal"
     },
     {
+      "comment": "Step through matches without closing the search bar (VS Code / browser find)",
+      "key": "F3",
+      "modifiers": [],
+      "action": "find_next",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "key": "F3",
+      "modifiers": ["shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "comment": "Alternative for Shift-F3 with the search bar open (works in more terminals)",
+      "key": "n",
+      "modifiers": ["ctrl", "shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
       "comment": "Quick find - search for next occurrence of selection",
       "key": "F3",
       "modifiers": ["ctrl"],
@@ -885,6 +901,21 @@
       "key": "Escape",
       "modifiers": [],
       "action": "remove_secondary_cursors",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Step through an open Code Tour without leaving the editor split, so you can read the code the step is about and still advance. Mnemonic n/p, matching the keys the tour panel itself uses. NOT Ctrl+Alt+brackets: terminals send Ctrl+[ as ESC, so Ctrl+Alt+[ arrived as Escape and closed the tour instead of stepping back — the same pitfall the Search & Replace binding below avoids. Alt+n/p are find-selection, plain Alt+brackets are split navigation. No-ops when no tour is open.",
+      "key": "n",
+      "modifiers": ["ctrl", "alt"],
+      "action": "tour_next",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "p",
+      "modifiers": ["ctrl", "alt"],
+      "action": "tour_prev",
       "args": {},
       "when": "normal"
     },
@@ -1287,13 +1318,6 @@
       "comment": "Prompt context - Additional confirm bindings",
       "key": "f",
       "modifiers": ["ctrl"],
-      "action": "prompt_confirm",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "F3",
-      "modifiers": [],
       "action": "prompt_confirm",
       "args": {},
       "when": "prompt"

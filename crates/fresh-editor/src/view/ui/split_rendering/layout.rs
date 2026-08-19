@@ -12,7 +12,6 @@ use crate::view::split::{SplitViewState, TabTarget};
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::ViewLine;
 use crate::view::viewport::Viewport;
-use fresh_core::api::ViewTransformPayload;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
@@ -47,7 +46,6 @@ pub(super) struct ViewPreferences {
     pub view_mode: ViewMode,
     pub compose_width: Option<u16>,
     pub compose_column_guides: Option<Vec<u16>>,
-    pub view_transform: Option<ViewTransformPayload>,
     pub rulers: Vec<usize>,
     /// Per-split line number visibility (from BufferViewState).
     pub show_line_numbers: bool,
@@ -158,8 +156,8 @@ pub(super) fn sync_viewport_to_content(
     // hidden cursor and push the panel's header chrome off-screen
     // (issue #2434 follow-up).
     if pin_to_top {
-        viewport.top_byte = 0;
-        viewport.top_view_line_offset = 0;
+        viewport.set_top_byte(0);
+        viewport.set_top_view_line_offset(0);
         viewport.left_column = 0;
         return;
     }
@@ -183,7 +181,6 @@ pub(super) fn resolve_view_preferences(
                 view_mode: view_state.view_mode.clone(),
                 compose_width: view_state.compose_width,
                 compose_column_guides: view_state.compose_column_guides.clone(),
-                view_transform: view_state.view_transform.clone(),
                 rulers: view_state.rulers.clone(),
                 show_line_numbers: view_state.show_line_numbers,
                 highlight_current_line: view_state.highlight_current_line,
@@ -195,7 +192,6 @@ pub(super) fn resolve_view_preferences(
         view_mode: ViewMode::Source,
         compose_width: None,
         compose_column_guides: None,
-        view_transform: None,
         rulers: Vec::new(),
         show_line_numbers: true,
         highlight_current_line: true,
@@ -331,6 +327,37 @@ pub(super) fn calculate_viewport_end(
         }
     }
     viewport_end
+}
+
+/// Source-byte span actually covered by `rows` — the visual rows that will
+/// be drawn this frame.
+///
+/// With soft wrap on, `calculate_viewport_end` cannot describe the visible
+/// window: one logical line can occupy *every* row, and the top row can sit
+/// thousands of wrap segments into it (`top_view_line_offset`), so the
+/// decoration pass needs a span that starts where the drawn rows start, not
+/// at the line's `top_byte`. The rows already carry a source byte per
+/// character, so read the window off them (issue #2843: past the first few
+/// wrapped rows of a 441 KB single-line JSON the request stayed at
+/// `0..952`, and every row below rendered in whatever single span happened
+/// to overlap it).
+///
+/// Cost is proportional to the screen, not the line. Returns `None` when no
+/// drawn row carries source bytes (all-virtual rows, past-EOF filler), so
+/// callers keep their previous window.
+pub(super) fn visible_source_span(rows: &[ViewLine]) -> Option<(usize, usize)> {
+    let mut span: Option<(usize, usize)> = None;
+    for row in rows {
+        for (ch, src) in row.text.chars().zip(row.char_source_bytes.iter()) {
+            let Some(start) = *src else { continue };
+            let end = start.saturating_add(ch.len_utf8());
+            span = Some(match span {
+                Some((lo, hi)) => (lo.min(start), hi.max(end)),
+                None => (start, end),
+            });
+        }
+    }
+    span
 }
 
 /// Draw the separator line between two splits.

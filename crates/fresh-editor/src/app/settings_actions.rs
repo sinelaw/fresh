@@ -217,6 +217,7 @@ impl Editor {
             let patterns = explorer.ignore_patterns_mut();
             patterns.set_show_hidden(self.config.file_explorer.show_hidden);
             patterns.set_show_gitignored(self.config.file_explorer.show_gitignored);
+            patterns.set_respect_gitignore(self.config.file_explorer.respect_gitignore);
             // Apply configured custom ignore patterns (this wiring was missing, so the
             // `custom_ignore_patterns` config field had no effect).
             patterns.clear_custom_patterns();
@@ -267,6 +268,17 @@ impl Editor {
                     self.refresh_open_buffer_settings_from_config();
                     self.invalidate_live_editor_layout_after_settings_save();
                 }
+                // Tell plugins the config moved under them. Fired once,
+                // here, rather than from the earlier `set_config` above:
+                // that one holds the pre-normalization tree, and a
+                // handler reacting to a value the resolver is about to
+                // rewrite would act on a state the user never saved.
+                // Everything above this line only re-applies config to
+                // *host* subsystems (theme, keybindings, LSP, bars,
+                // explorer); plugins that expose settings — including
+                // every `defineConfigX` field — have no other way to
+                // learn a save happened.
+                self.fire_config_changed_hook();
                 self.set_status_message(
                     t!("settings.saved_to_layer", layer = layer_name).to_string(),
                 );
@@ -305,8 +317,7 @@ impl Editor {
     fn invalidate_live_editor_layout_after_settings_save(&mut self) {
         for window in self.windows.values_mut() {
             for state in window.buffers.as_map_mut().values_mut() {
-                state.line_wrap_cache.clear();
-                state.visual_row_index.clear();
+                state.wrap_indices.clear();
             }
 
             if let Some((_, view_states)) = window.buffers.splits_mut() {

@@ -1,0 +1,64 @@
+=== opened
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │»[x┌──────────────────────┐
+( ) Done    │»[ │command…▪▪▪▪▪▪▪▪▪▪▪▪▪▪│
+            │»[ │Toggle theme░░░░░░░░░░│
+            │»[ │Toggle preview        │
+            │   │Clear done            │
+            │   │Sync                  │
+            │   └──────────────────────┘
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+
+=== filtered to matches containing p
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │»[x] build the reconciler
+( ) Done    │»[ ] lay it out
+            │»[ ┌──────────────────────┐
+            │»[ │p▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪│
+            │   │Toggle preview░░░░░░░░│
+            │   └──────────────────────┘
+            │
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+
+=== filtered to matches containing t
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │»[x] build the reconciler
+( ) Done    │»[ ┌──────────────────────┐
+            │»[ │t▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪│
+            │»[ │Toggle theme░░░░░░░░░░│
+            │   │Toggle preview        │
+            │   └──────────────────────┘
+            │
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+
+=== ran Toggle theme: the accent and the status change
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│▸[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │▸[x] build the reconciler
+( ) Done    │▸[ ] lay it out
+            │▸[ ] route the pointer
+            │▸[ ] wire up focus
+            │
+            │
+            │
+            │
+            │
+            │
+5 tasks · dark · synced 0 · theme dark
+

@@ -1,42 +1,40 @@
 {
-  "en": {
+  "bg": {
     "cmd.git_blame": "Git Blame",
-    "cmd.git_blame_desc": "Show git blame for current file (magit-style)",
-    "cmd.git_blame_close": "Git Blame: Close",
-    "cmd.git_blame_close_desc": "Close the git blame panel",
-    "cmd.git_blame_go_back": "Git Blame: Go Back",
-    "cmd.git_blame_go_back_desc": "Show blame at parent commit of current line",
-
-    "status.already_open": "Git blame already open",
-    "status.loading": "Loading git blame...",
-    "status.no_file": "No file open to blame",
-    "status.no_blame_info": "No blame information available (not a git file or error)",
-    "status.failed_open": "Failed to open git blame panel",
-    "status.closed": "Git blame closed",
-    "status.blame_ready": "Git blame: %{count} blocks | b: blame at parent | q: close",
-    "status.move_to_line": "Move cursor to a blame line first",
-    "status.not_committed": "This line is not yet committed",
-    "status.loading_parent": "Loading blame at %{hash}^...",
-    "status.cannot_go_back": "Cannot get blame at %{hash}^ (may be initial commit or file didn't exist)",
-    "status.blame_at_parent": "Git blame at %{hash}^ | depth: %{depth} | b: go deeper | q: close",
-    "status.hash_copied": "Copied: %{short} (%{full})",
-    "status.hash_display": "Hash: %{hash}",
-    "status.git_error": "Git blame error: %{error}",
-    "status.ready": "Git Blame ready",
-
-    "time.just_now": "just now",
-    "time.minutes_ago": "%{count} minute ago",
-    "time.minutes_ago_plural": "%{count} minutes ago",
-    "time.hours_ago": "%{count} hour ago",
-    "time.hours_ago_plural": "%{count} hours ago",
-    "time.days_ago": "%{count} day ago",
-    "time.days_ago_plural": "%{count} days ago",
-    "time.weeks_ago": "%{count} week ago",
-    "time.weeks_ago_plural": "%{count} weeks ago",
-    "time.months_ago": "%{count} month ago",
-    "time.months_ago_plural": "%{count} months ago",
-    "time.years_ago": "%{count} year ago",
-    "time.years_ago_plural": "%{count} years ago"
+    "cmd.git_blame_desc": "Показване на git blame за текущия файл (в стил magit)",
+    "cmd.git_blame_close": "Git Blame: Затваряне",
+    "cmd.git_blame_close_desc": "Затваряне на the git blame panel",
+    "cmd.git_blame_go_back": "Git Blame: Обратно",
+    "cmd.git_blame_go_back_desc": "Показване на blame от родителски коммит на текущия ред",
+    "status.already_open": "Git blame е отворен вече",
+    "status.loading": "Зареждане на git blame...",
+    "status.no_file": "Няма отворен файл за blame",
+    "status.no_blame_info": "Няма достъпна информация за blame (не е git файл или грешка)",
+    "status.failed_open": "Неуспешно отваряне на панел на git blame",
+    "status.closed": "Git blame затворен",
+    "status.blame_ready": "Git blame: %{count} блока | b: blame родител | q: затвори",
+    "status.move_to_line": "Преместване на курсора към ред за blame",
+    "status.not_committed": "Няма коммит за този ред",
+    "status.loading_parent": "Зареждане на blameкъм %{hash}^...",
+    "status.cannot_go_back": "Не мога да получа blame at %{hash}^ (може би начален коммит или файлът не съществува)",
+    "status.blame_at_parent": "Git blame към %{hash}^ | дълбочна: %{depth} | b: слез по-надолу | q: затворѝ",
+    "status.hash_copied": "Копирано: %{short} (%{full})",
+    "status.hash_display": "Хеш: %{hash}",
+    "status.git_error": "Git blame грешка: %{error}",
+    "status.ready": "Git Blame е готов",
+    "time.just_now": "точно сега",
+    "time.minutes_ago": "преди %{count} минути",
+    "time.minutes_ago_plural": "преди %{count} минути",
+    "time.hours_ago": "преди %{count} часа",
+    "time.hours_ago_plural": "преди %{count} часа",
+    "time.days_ago": "преди %{count} дни",
+    "time.days_ago_plural": "преди %{count} дни",
+    "time.weeks_ago": "преди %{count} седмици",
+    "time.weeks_ago_plural": "преди %{count} седмици",
+    "time.months_ago": "преди %{count} месеци",
+    "time.months_ago_plural": "преди %{count} месеци",
+    "time.years_ago": "преди %{count} години",
+    "time.years_ago_plural": "преди %{count} години"
   },
   "cs": {
     "cmd.git_blame": "Git Blame",
@@ -45,7 +43,6 @@
     "cmd.git_blame_close_desc": "Zavrit panel git blame",
     "cmd.git_blame_go_back": "Git Blame: Zpet",
     "cmd.git_blame_go_back_desc": "Zobrazit blame v rodicovskem commitu aktualniho radku",
-
     "status.already_open": "Git blame je jiz otevreny",
     "status.loading": "Nacitam git blame...",
     "status.no_file": "Zadny soubor neni otevren pro blame",
@@ -62,7 +59,6 @@
     "status.hash_display": "Hash: %{hash}",
     "status.git_error": "Chyba git blame: %{error}",
     "status.ready": "Git Blame pripraveny",
-
     "time.just_now": "prave ted",
     "time.minutes_ago": "pred %{count} minutou",
     "time.minutes_ago_plural": "pred %{count} minutami",
@@ -84,7 +80,6 @@
     "cmd.git_blame_close_desc": "Git blame Panel schliessen",
     "cmd.git_blame_go_back": "Git Blame: Zurueck",
     "cmd.git_blame_go_back_desc": "Blame beim Eltern-Commit der aktuellen Zeile anzeigen",
-
     "status.already_open": "Git blame bereits geoeffnet",
     "status.loading": "Lade git blame...",
     "status.no_file": "Keine Datei zum Blamen geoeffnet",
@@ -101,7 +96,6 @@
     "status.hash_display": "Hash: %{hash}",
     "status.git_error": "Git blame Fehler: %{error}",
     "status.ready": "Git Blame bereit",
-
     "time.just_now": "gerade eben",
     "time.minutes_ago": "vor %{count} Minute",
     "time.minutes_ago_plural": "vor %{count} Minuten",
@@ -116,6 +110,43 @@
     "time.years_ago": "vor %{count} Jahr",
     "time.years_ago_plural": "vor %{count} Jahren"
   },
+  "en": {
+    "cmd.git_blame": "Git Blame",
+    "cmd.git_blame_desc": "Show git blame for current file (magit-style)",
+    "cmd.git_blame_close": "Git Blame: Close",
+    "cmd.git_blame_close_desc": "Close the git blame panel",
+    "cmd.git_blame_go_back": "Git Blame: Go Back",
+    "cmd.git_blame_go_back_desc": "Show blame at parent commit of current line",
+    "status.already_open": "Git blame already open",
+    "status.loading": "Loading git blame...",
+    "status.no_file": "No file open to blame",
+    "status.no_blame_info": "No blame information available (not a git file or error)",
+    "status.failed_open": "Failed to open git blame panel",
+    "status.closed": "Git blame closed",
+    "status.blame_ready": "Git blame: %{count} blocks | b: blame at parent | q: close",
+    "status.move_to_line": "Move cursor to a blame line first",
+    "status.not_committed": "This line is not yet committed",
+    "status.loading_parent": "Loading blame at %{hash}^...",
+    "status.cannot_go_back": "Cannot get blame at %{hash}^ (may be initial commit or file didn't exist)",
+    "status.blame_at_parent": "Git blame at %{hash}^ | depth: %{depth} | b: go deeper | q: close",
+    "status.hash_copied": "Copied: %{short} (%{full})",
+    "status.hash_display": "Hash: %{hash}",
+    "status.git_error": "Git blame error: %{error}",
+    "status.ready": "Git Blame ready",
+    "time.just_now": "just now",
+    "time.minutes_ago": "%{count} minute ago",
+    "time.minutes_ago_plural": "%{count} minutes ago",
+    "time.hours_ago": "%{count} hour ago",
+    "time.hours_ago_plural": "%{count} hours ago",
+    "time.days_ago": "%{count} day ago",
+    "time.days_ago_plural": "%{count} days ago",
+    "time.weeks_ago": "%{count} week ago",
+    "time.weeks_ago_plural": "%{count} weeks ago",
+    "time.months_ago": "%{count} month ago",
+    "time.months_ago_plural": "%{count} months ago",
+    "time.years_ago": "%{count} year ago",
+    "time.years_ago_plural": "%{count} years ago"
+  },
   "es": {
     "cmd.git_blame": "Git Blame",
     "cmd.git_blame_desc": "Mostrar git blame del archivo actual (estilo magit)",
@@ -123,7 +154,6 @@
     "cmd.git_blame_close_desc": "Cerrar el panel de git blame",
     "cmd.git_blame_go_back": "Git Blame: Retroceder",
     "cmd.git_blame_go_back_desc": "Mostrar blame en el commit padre de la linea actual",
-
     "status.already_open": "Git blame ya esta abierto",
     "status.loading": "Cargando git blame...",
     "status.no_file": "No hay archivo abierto para blame",
@@ -140,7 +170,6 @@
     "status.hash_display": "Hash: %{hash}",
     "status.git_error": "Error de git blame: %{error}",
     "status.ready": "Git Blame listo",
-
     "time.just_now": "ahora mismo",
     "time.minutes_ago": "hace %{count} minuto",
     "time.minutes_ago_plural": "hace %{count} minutos",
@@ -162,7 +191,6 @@
     "cmd.git_blame_close_desc": "Fermer le panneau git blame",
     "cmd.git_blame_go_back": "Git Blame: Retour",
     "cmd.git_blame_go_back_desc": "Afficher le blame au commit parent de la ligne actuelle",
-
     "status.already_open": "Git blame deja ouvert",
     "status.loading": "Chargement de git blame...",
     "status.no_file": "Aucun fichier ouvert pour blame",
@@ -179,7 +207,6 @@
     "status.hash_display": "Hash: %{hash}",
     "status.git_error": "Erreur git blame: %{error}",
     "status.ready": "Git Blame pret",
-
     "time.just_now": "a l'instant",
     "time.minutes_ago": "il y a %{count} minute",
     "time.minutes_ago_plural": "il y a %{count} minutes",
@@ -201,7 +228,6 @@
     "cmd.git_blame_close_desc": "Chiudi il pannello git blame",
     "cmd.git_blame_go_back": "Git Blame: Torna indietro",
     "cmd.git_blame_go_back_desc": "Mostra il blame al commit genitore della riga corrente",
-
     "status.already_open": "Git blame già aperto",
     "status.loading": "Caricamento git blame...",
     "status.no_file": "Nessun file aperto per il blame",
@@ -218,7 +244,6 @@
     "status.hash_display": "Hash: %{hash}",
     "status.git_error": "Errore git blame: %{error}",
     "status.ready": "Git Blame pronto",
-
     "time.just_now": "proprio ora",
     "time.minutes_ago": "%{count} minuto fa",
     "time.minutes_ago_plural": "%{count} minuti fa",
@@ -240,7 +265,6 @@
     "cmd.git_blame_close_desc": "git blameパネルを閉じる",
     "cmd.git_blame_go_back": "Git Blame: 戻る",
     "cmd.git_blame_go_back_desc": "現在の行の親コミットでblameを表示",
-
     "status.already_open": "Git blameは既に開いています",
     "status.loading": "Git blameを読み込み中...",
     "status.no_file": "blameするファイルが開かれていません",
@@ -257,7 +281,6 @@
     "status.hash_display": "ハッシュ: %{hash}",
     "status.git_error": "Git blameエラー: %{error}",
     "status.ready": "Git Blame準備完了",
-
     "time.just_now": "たった今",
     "time.minutes_ago": "%{count}分前",
     "time.minutes_ago_plural": "%{count}分前",
@@ -279,7 +302,6 @@
     "cmd.git_blame_close_desc": "git blame 패널 닫기",
     "cmd.git_blame_go_back": "Git Blame: 뒤로",
     "cmd.git_blame_go_back_desc": "현재 줄의 부모 커밋에서 blame 표시",
-
     "status.already_open": "Git blame이 이미 열려 있습니다",
     "status.loading": "Git blame 로딩 중...",
     "status.no_file": "blame할 파일이 열려 있지 않습니다",
@@ -296,7 +318,6 @@
     "status.hash_display": "해시: %{hash}",
     "status.git_error": "Git blame 오류: %{error}",
     "status.ready": "Git Blame 준비됨",
-
     "time.just_now": "방금",
     "time.minutes_ago": "%{count}분 전",
     "time.minutes_ago_plural": "%{count}분 전",
@@ -318,7 +339,6 @@
     "cmd.git_blame_close_desc": "Fechar o painel git blame",
     "cmd.git_blame_go_back": "Git Blame: Voltar",
     "cmd.git_blame_go_back_desc": "Mostrar blame no commit pai da linha atual",
-
     "status.already_open": "Git blame ja esta aberto",
     "status.loading": "Carregando git blame...",
     "status.no_file": "Nenhum arquivo aberto para blame",
@@ -335,7 +355,6 @@
     "status.hash_display": "Hash: %{hash}",
     "status.git_error": "Erro git blame: %{error}",
     "status.ready": "Git Blame pronto",
-
     "time.just_now": "agora mesmo",
     "time.minutes_ago": "ha %{count} minuto",
     "time.minutes_ago_plural": "ha %{count} minutos",
@@ -357,7 +376,6 @@
     "cmd.git_blame_close_desc": "Zakryt' panel' git blame",
     "cmd.git_blame_go_back": "Git Blame: Nazad",
     "cmd.git_blame_go_back_desc": "Pokazat' blame v roditel'skom kommite tekushchey stroki",
-
     "status.already_open": "Git blame uzhe otkryt",
     "status.loading": "Zagruzka git blame...",
     "status.no_file": "Net otkrytogo fayla dlya blame",
@@ -374,7 +392,6 @@
     "status.hash_display": "Khesh: %{hash}",
     "status.git_error": "Oshibka git blame: %{error}",
     "status.ready": "Git Blame gotov",
-
     "time.just_now": "tol'ko chto",
     "time.minutes_ago": "%{count} minutu nazad",
     "time.minutes_ago_plural": "%{count} minut nazad",
@@ -396,7 +413,6 @@
     "cmd.git_blame_close_desc": "ปิดแผง git blame",
     "cmd.git_blame_go_back": "Git Blame: ย้อนกลับ",
     "cmd.git_blame_go_back_desc": "แสดง blame ที่คอมมิตหลักของบรรทัดปัจจุบัน",
-
     "status.already_open": "Git blame เปิดอยู่แล้ว",
     "status.loading": "กำลังโหลด git blame...",
     "status.no_file": "ไม่มีไฟล์เปิดอยู่สำหรับ blame",
@@ -413,7 +429,6 @@
     "status.hash_display": "แฮช: %{hash}",
     "status.git_error": "ข้อผิดพลาด Git blame: %{error}",
     "status.ready": "Git Blame พร้อม",
-
     "time.just_now": "เมื่อกี้",
     "time.minutes_ago": "%{count} นาทีที่แล้ว",
     "time.minutes_ago_plural": "%{count} นาทีที่แล้ว",
@@ -435,7 +450,6 @@
     "cmd.git_blame_close_desc": "Zakryty panel' git blame",
     "cmd.git_blame_go_back": "Git Blame: Nazad",
     "cmd.git_blame_go_back_desc": "Pokazaty blame v bat'kivs'komu komiti potochnoho ryadka",
-
     "status.already_open": "Git blame vzhe vidkryto",
     "status.loading": "Zavantazhennya git blame...",
     "status.no_file": "Nemaye vidkrytoho failu dlya blame",
@@ -452,7 +466,6 @@
     "status.hash_display": "Khesh: %{hash}",
     "status.git_error": "Pomylka git blame: %{error}",
     "status.ready": "Git Blame hotovyy",
-
     "time.just_now": "shchoyno",
     "time.minutes_ago": "%{count} khvylynu tomu",
     "time.minutes_ago_plural": "%{count} khvylyn tomu",
@@ -474,7 +487,6 @@
     "cmd.git_blame_close_desc": "Đóng bảng git blame",
     "cmd.git_blame_go_back": "Git Blame: Quay lại",
     "cmd.git_blame_go_back_desc": "Hiển thị blame tại commit cha của dòng hiện tại",
-
     "status.already_open": "Git blame đã mở",
     "status.loading": "Đang tải git blame...",
     "status.no_file": "Không có tệp mở để blame",
@@ -491,7 +503,6 @@
     "status.hash_display": "Hash: %{hash}",
     "status.git_error": "Lỗi git blame: %{error}",
     "status.ready": "Git Blame sẵn sàng",
-
     "time.just_now": "vừa xong",
     "time.minutes_ago": "%{count} phút trước",
     "time.minutes_ago_plural": "%{count} phút trước",
@@ -513,7 +524,6 @@
     "cmd.git_blame_close_desc": "关闭git blame面板",
     "cmd.git_blame_go_back": "Git Blame: 返回",
     "cmd.git_blame_go_back_desc": "显示当前行的父提交的blame",
-
     "status.already_open": "Git blame已经打开",
     "status.loading": "正在加载git blame...",
     "status.no_file": "没有打开的文件可以blame",
@@ -530,7 +540,6 @@
     "status.hash_display": "哈希: %{hash}",
     "status.git_error": "Git blame错误: %{error}",
     "status.ready": "Git Blame就绪",
-
     "time.just_now": "刚刚",
     "time.minutes_ago": "%{count}分钟前",
     "time.minutes_ago_plural": "%{count}分钟前",

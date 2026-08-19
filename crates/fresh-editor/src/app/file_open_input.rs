@@ -113,8 +113,7 @@ impl Editor {
                     } else {
                         // Just autocomplete the filename
                         if let Some(prompt) = &mut self.active_window_mut().prompt {
-                            prompt.input = name;
-                            prompt.cursor_pos = prompt.input.len();
+                            prompt.set_input_plain(name);
                         }
                         // Update the filter to match
                         self.update_file_open_filter();
@@ -135,7 +134,7 @@ impl Editor {
                     .active_window()
                     .prompt
                     .as_ref()
-                    .map(|p| p.input.is_empty())
+                    .map(|p| p.input_str().is_empty())
                     .unwrap_or(true);
 
                 if filter_empty && prompt_empty {
@@ -179,7 +178,7 @@ impl Editor {
             .active_window()
             .prompt
             .as_ref()
-            .map(|p| p.input.clone())
+            .map(|p| p.input_str().to_string())
             .unwrap_or_default();
         let (path_input, line, column) = parse_path_line_col(&prompt_input);
 
@@ -218,6 +217,17 @@ impl Editor {
                 // File exists - open it directly (handles pasted paths before async load completes)
                 // Only allowed in file mode, not folder mode
                 self.file_open_open_file_at_location(expanded_path, line, column);
+                return;
+            } else if !is_folder_mode
+                && self.active_window().pending_file_pick_callback.is_some()
+                && Self::should_create_new_file(&path_input)
+            {
+                // Pick mode (`editor.pickFile`): the typed path names nothing
+                // on disk, and a pick has nothing to create — resolving with a
+                // path that does not exist only moves the failure into the
+                // plugin, after the browser is already gone. Reject the
+                // confirm silently: the browser stays open with the input
+                // intact, and the user fixes the name or Escapes out.
                 return;
             } else if !is_folder_mode && Self::should_create_new_file(&path_input) {
                 // File doesn't exist but input looks like a filename - create new file
@@ -294,8 +304,7 @@ impl Editor {
     fn file_open_navigate_to(&mut self, path: std::path::PathBuf) {
         // Clear prompt input
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-            prompt.input.clear();
-            prompt.cursor_pos = 0;
+            prompt.set_input_plain(String::new());
         }
 
         // Load the new directory
@@ -308,12 +317,34 @@ impl Editor {
     }
 
     /// Open a file from the file browser and optionally jump to line/column
+    /// When the browser was opened by `editor.pickFile`, a confirmed
+    /// path is *delivered*, not opened: tear down the browser, resolve
+    /// the plugin's promise with the absolute path, and report handled.
+    fn resolve_pending_file_pick(&mut self, path: &std::path::Path) -> bool {
+        let Some(callback_id) = self.active_window_mut().pending_file_pick_callback.take() else {
+            return false;
+        };
+        self.active_window_mut().file_open_state = None;
+        self.active_window_mut().prompt = None;
+        self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
+        let json = serde_json::to_string(&path.display().to_string())
+            .unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager
+            .read()
+            .unwrap()
+            .resolve_callback(callback_id, json);
+        true
+    }
+
     fn file_open_open_file_at_location(
         &mut self,
         path: std::path::PathBuf,
         line: Option<usize>,
         column: Option<usize>,
     ) {
+        if self.resolve_pending_file_pick(&path) {
+            return;
+        }
         // Check if encoding detection is disabled - if so, prompt for encoding first
         let detect_encoding = self
             .active_window_mut()
@@ -445,14 +476,16 @@ impl Editor {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(0); // UTF-8 is first
                 let enc = Encoding::Utf8;
-                prompt.input = format!("{} ({})", enc.display_name(), enc.description());
-                prompt.cursor_pos = prompt.input.len();
+                prompt.set_input_plain(format!("{} ({})", enc.display_name(), enc.description()));
             }
         }
     }
 
     /// Create a new file (opens an unsaved buffer that will create the file on save)
     fn file_open_create_new_file(&mut self, path: std::path::PathBuf) {
+        // Unreachable in pick mode: `file_open_confirm` rejects a typed
+        // path that names nothing on disk before it gets here, so a pick
+        // never resolves with a file that does not exist.
         // Close the file browser
         self.active_window_mut().file_open_state = None;
         self.active_window_mut().prompt = None;
@@ -520,7 +553,7 @@ impl Editor {
             .active_window()
             .prompt
             .as_ref()
-            .map(|p| p.input.clone())
+            .map(|p| p.input_str().to_string())
             .unwrap_or_default();
 
         // Check if user typed/pasted a path containing directory separators
@@ -563,8 +596,7 @@ impl Editor {
             if target_dir.is_dir() && target_dir != current_dir {
                 // Update prompt to only show the filename (directory is shown separately)
                 if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.input = filename.clone();
-                    prompt.cursor_pos = prompt.input.len();
+                    prompt.set_input_plain(filename.clone());
                 }
                 self.load_file_open_directory(target_dir);
 
@@ -702,8 +734,7 @@ impl Editor {
                 // Update prompt text to show the selected entry name
                 if let Some(name) = entry_name {
                     if let Some(prompt) = &mut self.active_window_mut().prompt {
-                        prompt.input = name;
-                        prompt.cursor_pos = prompt.input.len();
+                        prompt.set_input_plain(name);
                     }
                 }
             }
@@ -724,15 +755,7 @@ impl Editor {
 
         // Check if click is in navigation area
         if layout.is_in_nav(x, y) {
-            // Get shortcut labels for hit testing
-            let shortcut_labels: Vec<&str> = self
-                .active_window_mut()
-                .file_open_state
-                .as_ref()
-                .map(|s| s.shortcuts.iter().map(|sc| sc.label.as_str()).collect())
-                .unwrap_or_default();
-
-            if let Some(shortcut_idx) = layout.nav_shortcut_at(x, y, &shortcut_labels) {
+            if let Some(shortcut_idx) = layout.nav_shortcut_at(x, y) {
                 // Get the path from the shortcut and navigate there
                 let target_path = self
                     .active_window_mut()
@@ -843,14 +866,7 @@ impl Editor {
 
         // Check navigation shortcuts
         if layout.is_in_nav(x, y) {
-            let shortcut_labels: Vec<&str> = self
-                .active_window()
-                .file_open_state
-                .as_ref()
-                .map(|s| s.shortcuts.iter().map(|sc| sc.label.as_str()).collect())
-                .unwrap_or_default();
-
-            if let Some(idx) = layout.nav_shortcut_at(x, y, &shortcut_labels) {
+            if let Some(idx) = layout.nav_shortcut_at(x, y) {
                 return Some(HoverTarget::FileBrowserNavShortcut(idx));
             }
         }

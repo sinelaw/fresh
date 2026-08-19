@@ -489,7 +489,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte, vs.viewport.left_column))
+            .map(|vs| (vs.viewport.top_byte(), vs.viewport.left_column))
             .unwrap_or((0, 0));
         let old_cursors = self.active_cursors().clone();
 
@@ -560,7 +560,9 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
         {
-            view_state.viewport.top_byte = old_top_byte.min(new_file_size);
+            view_state
+                .viewport
+                .set_top_byte(old_top_byte.min(new_file_size));
             view_state.viewport.left_column = old_left_column;
         }
 
@@ -581,6 +583,17 @@ impl Editor {
 
         // Notify LSP that the file was changed
         self.notify_lsp_file_changed(&path);
+
+        // Fire AfterFileRevert hook — the reload replaced the buffer content
+        // without going through the save path, so plugins tracking
+        // disk-derived state (git gutter, etc.) need this to re-scan.
+        self.plugin_manager.read().unwrap().run_hook(
+            "after_file_revert",
+            crate::services::plugins::hooks::HookArgs::AfterFileRevert {
+                buffer_id,
+                path: path.clone(),
+            },
+        );
 
         self.active_window_mut().status_message = Some(t!("status.reverted").to_string());
         Ok(true)
@@ -1240,6 +1253,17 @@ impl Editor {
 
         // Notify LSP that the file was changed
         self.notify_lsp_file_changed(path);
+
+        // Fire AfterFileRevert hook — same contract as the active-buffer
+        // revert path: a reload is not a save, and plugins tracking
+        // disk-derived state need to re-scan the reloaded buffer.
+        self.plugin_manager.read().unwrap().run_hook(
+            "after_file_revert",
+            crate::services::plugins::hooks::HookArgs::AfterFileRevert {
+                buffer_id,
+                path: path.to_path_buf(),
+            },
+        );
 
         Ok(())
     }

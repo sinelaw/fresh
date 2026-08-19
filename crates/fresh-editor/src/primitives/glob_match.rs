@@ -3,6 +3,8 @@
 //! Supports `*` (matches any sequence of characters) and `?` (matches exactly one character)
 //! for filename matching, plus `**` (matches across directory boundaries) for path matching.
 
+use std::path::Path;
+
 /// Check if a pattern string contains glob characters (`*` or `?`).
 pub fn is_glob_pattern(pattern: &str) -> bool {
     pattern.contains('*') || pattern.contains('?')
@@ -46,6 +48,48 @@ pub fn filename_glob_matches(pattern: &str, filename: &str) -> bool {
 /// - `"**/rc.*"` matches `"/etc/rc.conf"`, `"rc.conf"`
 pub fn path_glob_matches(pattern: &str, path: &str) -> bool {
     path_glob_match_bytes(pattern.as_bytes(), path.as_bytes())
+}
+
+// ---------------------------------------------------------------------------
+// Config pattern lists
+//
+// Several config keys hold a list of file patterns (`languages.*.filenames`,
+// `editor.ephemeral_file_patterns`). They all share one dialect so a pattern
+// a user learns in one place works in the other: a literal entry must equal
+// the file *name* exactly, a wildcard entry is a glob matched against the
+// full path when it names directories and against the file name otherwise.
+// ---------------------------------------------------------------------------
+
+/// Does a literal (wildcard-free) pattern entry match `filename` exactly?
+/// `false` for glob entries, which [`glob_entry_matches`] handles.
+pub fn literal_entry_matches(pattern: &str, filename: &str) -> bool {
+    !is_glob_pattern(pattern) && pattern == filename
+}
+
+/// Does a wildcard pattern entry match? `false` for literal entries.
+pub fn glob_entry_matches(pattern: &str, path: &str, filename: &str) -> bool {
+    is_glob_pattern(pattern)
+        && if is_path_pattern(pattern) {
+            path_glob_matches(pattern, path)
+        } else {
+            filename_glob_matches(pattern, filename)
+        }
+}
+
+/// Does `path` match any entry of a pattern list?
+///
+/// For callers that just need a yes/no. Consumers that must rank matches
+/// (language detection prefers a literal hit in *any* language over a glob
+/// hit in another) use the two entry predicates directly instead.
+pub fn matches_any_entry(patterns: &[String], path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    let filename = path
+        .file_name()
+        .map(|f| f.to_string_lossy())
+        .unwrap_or_default();
+    patterns
+        .iter()
+        .any(|p| literal_entry_matches(p, &filename) || glob_entry_matches(p, &path_str, &filename))
 }
 
 /// Iterative glob matching on byte slices using a backtracking algorithm.

@@ -76,7 +76,8 @@ jobs:
           $dst = "fresh-gui-${{ matrix.target }}.exe"
           Copy-Item $src $dst
           $hash = (Get-FileHash $dst -Algorithm SHA256).Hash.ToLower()
-          "$hash  $dst" | Out-File -Encoding ASCII "$dst.sha256"
+          # LF, not CRLF: `sha256sum -c` folds a trailing \r into the filename.
+          Set-Content -Path "$dst.sha256" -Encoding ascii -NoNewline -Value "$hash  $dst`n"
 
       # ── macOS: .app bundle → .pkg installer ──────────────────────────
       - name: Package GUI (macOS)

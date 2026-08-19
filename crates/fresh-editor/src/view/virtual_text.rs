@@ -154,7 +154,7 @@ pub struct VirtualTextManager {
     /// Monotonic version, bumped on every mutation.  Folded into
     /// `pipeline_inputs_version` so that adding / removing virtual
     /// lines (e.g. markdown_compose's table borders) invalidates
-    /// `LineWrapCache` / `VisualRowIndex` entries — same mechanism
+    /// `LineWrapCache` / `WrapIndex` entries — same mechanism
     /// `SoftBreakManager` and `ConcealManager` use.
     version: u32,
 }
@@ -214,7 +214,7 @@ impl VirtualTextManager {
     ) -> VirtualTextId {
         // Create marker at position
         // Use right affinity (false) so the marker stays with the following character
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -265,7 +265,7 @@ impl VirtualTextManager {
             "add_with_theme_keys requires BeforeChar or AfterChar"
         );
 
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -306,7 +306,7 @@ impl VirtualTextManager {
         priority: i32,
         string_id: String,
     ) -> VirtualTextId {
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -353,7 +353,7 @@ impl VirtualTextManager {
             "add_with_id_and_theme_keys requires BeforeChar or AfterChar"
         );
 
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -446,7 +446,7 @@ impl VirtualTextManager {
             "add_line requires LineAbove or LineBelow"
         );
 
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -726,6 +726,66 @@ impl VirtualTextManager {
                 } else {
                     None
                 }
+            })
+            .collect();
+
+        let removed = !to_remove.is_empty();
+        for id in to_remove {
+            if let Some(vtext) = self.texts.remove(&id) {
+                marker_list.delete(vtext.marker_id);
+            }
+        }
+        if removed {
+            self.bump_version();
+        }
+    }
+
+    /// Remove INLINE virtual texts (BeforeChar/AfterChar) whose string id
+    /// starts with `id_prefix` and whose anchor falls in `[start, end)`.
+    ///
+    /// The inline counterpart of [`clear_lines_in_range`], and it exists for
+    /// the same reason: a plugin rebuilding one line's decorations needs to
+    /// drop that line's — and only that line's — previous ones, in the same
+    /// command batch as the re-add, or the decoration strobes for a frame.
+    /// Neither of the existing inline removals can do that: `remove_by_id`
+    /// needs the exact id, which a plugin can only reconstruct from the
+    /// position the decoration was *last* placed at, and `remove_by_prefix`
+    /// takes the whole set, dropping the lines outside the current batch.
+    ///
+    /// Matching is by id prefix rather than namespace because the inline add
+    /// path stores no namespace (only virtual *lines* carry one); the string
+    /// id plugins already supply serves the same grouping purpose.
+    ///
+    /// Anchors are resolved live from the marker list, so a line that has
+    /// shifted since the decoration was placed is matched at its current
+    /// position — which is what makes the clear tolerant of the lag between a
+    /// `lines_changed` hook and the plugin's reply.
+    pub fn clear_inline_in_range(
+        &mut self,
+        marker_list: &mut MarkerList,
+        id_prefix: &str,
+        start: usize,
+        end: usize,
+    ) {
+        if start >= end {
+            return;
+        }
+        let to_remove: Vec<VirtualTextId> = self
+            .texts
+            .iter()
+            .filter_map(|(id, vtext)| {
+                if !vtext.position.is_inline() {
+                    return None;
+                }
+                if !vtext
+                    .string_id
+                    .as_ref()
+                    .is_some_and(|s| s.starts_with(id_prefix))
+                {
+                    return None;
+                }
+                let pos = marker_list.get_position(vtext.marker_id)?;
+                (pos >= start && pos < end).then_some(*id)
             })
             .collect();
 

@@ -1,17 +1,20 @@
-//! Release checker module for checking if a new version is available.
+//! Release checker: is a newer version available, and how should the user get
+//! it?
 //!
-//! This module provides functionality to:
-//! - Check for new releases by fetching a GitHub releases API endpoint
-//! - Detect the installation method (Homebrew, npm, cargo, etc.) based on executable path
-//! - Provide appropriate update commands based on installation method
-//! - Daily update checking (debounced via stamp file)
+//! The provenance resolution ("how was this copy installed?") and the
+//! update-command registry now live in the `fresh-update` crate; version
+//! comparison and release-feed parsing moved there too. This module keeps only
+//! the editor-side concerns: the HTTP fetch (`services::http`), the daily
+//! debounce (`services::telemetry` stamp file), and the background thread that
+//! surfaces the result to the UI.
 
 use super::time_source::SharedTimeSource;
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+pub use fresh_update::{Provenance, UpdateKind, UpdatePlan};
 
 /// The current version of the editor
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -19,34 +22,72 @@ pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Default GitHub releases API URL for the fresh editor
 pub const DEFAULT_RELEASES_URL: &str = "https://api.github.com/repos/sinelaw/fresh/releases/latest";
 
-/// Installation method detection result
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InstallMethod {
-    /// Installed via Homebrew
-    Homebrew,
-    /// Installed via cargo
-    Cargo,
-    /// Installed via npm
-    Npm,
-    /// Installed via a Linux package manager (apt, dnf, etc.)
-    PackageManager,
-    /// Installed via AUR (Arch User Repository)
-    Aur,
-    /// Unknown installation method or manually installed
-    Unknown,
+/// Environment overrides for the release feed and asset host, matching the
+/// `--releases-url` / `--download-base` flags on `fresh --cmd update`.
+///
+/// The env var is what makes the override reach the *whole* editor rather than
+/// one CLI invocation: the background check reads it here, and the update child
+/// the popup spawns inherits it through the environment, so the version the
+/// indicator offers and the artifact that gets installed come from the same
+/// place. Pointing only the CLI at a mirror while the UI still asked GitHub
+/// would be worse than no override at all.
+pub use fresh_update::endpoint::{DOWNLOAD_BASE_ENV, RELEASES_URL_ENV};
+
+/// The release feed to poll.
+///
+/// Resolution and the https-only host policy live in
+/// `fresh_update::endpoint`, so the background check, the `fresh --cmd update`
+/// child and the engine cannot disagree about where a release comes from. An
+/// override the policy refuses falls back to the pinned default here rather
+/// than failing the poll: a background check is not worth a startup error, and
+/// the CLI path reports the same rejection loudly.
+pub fn releases_url() -> String {
+    fresh_update::endpoint::Endpoints::from_env()
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "ignoring an unusable release endpoint override");
+            fresh_update::endpoint::Endpoints::production()
+        })
+        .releases_url
 }
 
-impl InstallMethod {
-    /// Get the update command for this installation method
-    pub fn update_command(&self) -> Option<&'static str> {
-        Some(match self {
-            Self::Homebrew => "brew upgrade fresh-editor",
-            Self::Cargo => "cargo install --locked fresh-editor",
-            Self::Npm => "npm update -g @fresh-editor/fresh-editor",
-            Self::Aur => "yay -Syu fresh-editor  # or use your AUR helper",
-            Self::PackageManager => "Update using your system package manager",
-            Self::Unknown => return None,
-        })
+/// Lifecycle of an interactive in-editor self-update, surfaced through the
+/// status-bar update indicator (never a transient status message). Stays
+/// [`SelfUpdatePhase::Idle`] unless the `self-update` feature actually launches
+/// a background update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SelfUpdatePhase {
+    /// No update running; the indicator shows "Update: vX.Y.Z" when one is available.
+    #[default]
+    Idle,
+    /// A background `fresh --cmd update --yes` is in flight.
+    Running,
+    /// The background update finished successfully; a restart applies it.
+    Succeeded,
+    /// The update ran cleanly but did **not** install anything: it needs a step
+    /// the editor won't take for the user (a root `apt-get install`/`dnf install`, or a
+    /// package-manager command we only print). Neither a success nor a failure
+    /// — the pending command is waiting in the update output.
+    ActionRequired,
+    /// The background update failed; the log has details.
+    Failed,
+}
+
+impl SelfUpdatePhase {
+    /// The terminal phase for an update child that exited with `code`.
+    ///
+    /// Three outcomes, not two: `fresh --cmd update` reports "you must finish
+    /// this yourself" with [`fresh_update::EXIT_ACTION_REQUIRED`], which is
+    /// neither success nor failure. Collapsing it into either one produces a
+    /// visibly wrong indicator — "Update failed" when nothing failed, or
+    /// "Updated — restart fresh" when nothing was installed.
+    ///
+    /// `None` (killed by a signal) is a failure.
+    pub fn from_exit_code(code: Option<i32>) -> Self {
+        match code {
+            Some(0) => SelfUpdatePhase::Succeeded,
+            Some(c) if c == fresh_update::EXIT_ACTION_REQUIRED => SelfUpdatePhase::ActionRequired,
+            _ => SelfUpdatePhase::Failed,
+        }
     }
 }
 
@@ -57,8 +98,16 @@ pub struct ReleaseCheckResult {
     pub latest_version: String,
     /// Whether an update is available
     pub update_available: bool,
-    /// The detected installation method
-    pub install_method: InstallMethod,
+    /// How this copy of `fresh` was installed (drives the update command).
+    pub provenance: Provenance,
+}
+
+impl ReleaseCheckResult {
+    /// The concrete update action for this install (command to run, or the
+    /// self-contained/manual fallback). See `fresh_update::registry`.
+    pub fn update_plan(&self) -> UpdatePlan {
+        fresh_update::plan(&self.provenance)
+    }
 }
 
 /// Handle to a background update check (one-shot)
@@ -248,139 +297,64 @@ pub fn fetch_latest_version(url: &str) -> Result<String, String> {
     Ok(version)
 }
 
-/// Parse version from GitHub API JSON response
+/// Parse the version from a GitHub releases API body.
+///
+/// Thin wrapper over `fresh_update::feed::Release` kept because callers/tests
+/// use the `Result` shape.
 fn parse_version_from_json(json: &str) -> Result<String, String> {
-    let tag_name_key = "\"tag_name\"";
-    let start = json
-        .find(tag_name_key)
-        .ok_or_else(|| "tag_name not found in response".to_string())?;
-
-    let after_key = &json[start + tag_name_key.len()..];
-
-    let value_start = after_key
-        .find('"')
-        .ok_or_else(|| "Invalid JSON: missing quote after tag_name".to_string())?;
-
-    let value_content = &after_key[value_start + 1..];
-    let value_end = value_content
-        .find('"')
-        .ok_or_else(|| "Invalid JSON: unclosed quote".to_string())?;
-
-    let tag = &value_content[..value_end];
-
-    // Strip 'v' prefix if present
-    Ok(tag.strip_prefix('v').unwrap_or(tag).to_string())
+    Ok(fresh_update::feed::Release::parse(json)?
+        .version()
+        .to_string())
 }
 
-/// Detect the installation method based on the current executable path
-pub fn detect_install_method() -> InstallMethod {
-    match env::current_exe() {
-        Ok(path) => detect_install_method_from_path(&path),
-        Err(_) => InstallMethod::Unknown,
-    }
-}
-
-/// Detect installation method from a given executable path
-pub fn detect_install_method_from_path(exe_path: &Path) -> InstallMethod {
-    let path_str = exe_path.to_string_lossy();
-
-    // Check for Homebrew paths (macOS and Linux)
-    if path_str.contains("/opt/homebrew/")
-        || path_str.contains("/usr/local/Cellar/")
-        || path_str.contains("/home/linuxbrew/")
-        || path_str.contains("/.linuxbrew/")
-    {
-        return InstallMethod::Homebrew;
-    }
-
-    // Check for Cargo installation
-    if path_str.contains("/.cargo/bin/") || path_str.contains("\\.cargo\\bin\\") {
-        return InstallMethod::Cargo;
-    }
-
-    // Check for npm global installation
-    if path_str.contains("/node_modules/")
-        || path_str.contains("\\node_modules\\")
-        || path_str.contains("/npm/")
-        || path_str.contains("/lib/node_modules/")
-    {
-        return InstallMethod::Npm;
-    }
-
-    // Check for AUR installation (Arch Linux)
-    if path_str.starts_with("/usr/bin/") && is_arch_linux() {
-        return InstallMethod::Aur;
-    }
-
-    // Check for package manager installation (standard system paths)
-    if path_str.starts_with("/usr/bin/")
-        || path_str.starts_with("/usr/local/bin/")
-        || path_str.starts_with("/bin/")
-    {
-        return InstallMethod::PackageManager;
-    }
-
-    InstallMethod::Unknown
-}
-
-/// Check if we're running on Arch Linux
-fn is_arch_linux() -> bool {
-    std::fs::read_to_string("/etc/os-release")
-        .map(|content| content.contains("Arch Linux") || content.contains("ID=arch"))
-        .unwrap_or(false)
-}
-
-/// Compare two semantic versions
-/// Returns true if `latest` is newer than `current`
+/// Compare two versions; `true` if `latest` is newer than `current`.
+/// Delegates to `fresh_update::version`.
 pub fn is_newer_version(current: &str, latest: &str) -> bool {
-    let parse_version = |v: &str| -> Option<(u32, u32, u32)> {
-        let parts: Vec<&str> = v.split('.').collect();
-        if parts.len() >= 3 {
-            Some((
-                parts[0].parse().ok()?,
-                parts[1].parse().ok()?,
-                parts[2].split('-').next()?.parse().ok()?,
-            ))
-        } else if parts.len() == 2 {
-            Some((parts[0].parse().ok()?, parts[1].parse().ok()?, 0))
-        } else {
-            None
-        }
-    };
-
-    match (parse_version(current), parse_version(latest)) {
-        (Some((c_major, c_minor, c_patch)), Some((l_major, l_minor, l_patch))) => {
-            (l_major, l_minor, l_patch) > (c_major, c_minor, c_patch)
-        }
-        _ => false,
-    }
+    fresh_update::version::is_newer(current, latest)
 }
 
-/// Check for a new release (blocking)
+/// Detect how this copy of `fresh` was installed.
+///
+/// Delegates entirely to `fresh_update::resolve()` (override → receipt →
+/// embedded channel; no path guessing, so an install that recorded nothing
+/// resolves to Unknown). See `docs/internal/packaging-self-update.md`.
+pub fn detect_provenance() -> Provenance {
+    fresh_update::resolve()
+}
+
+/// The update plan for a given provenance (thin re-export of the registry).
+pub fn plan_for(prov: &Provenance) -> UpdatePlan {
+    fresh_update::plan(prov)
+}
+
+/// Check for a new release (blocking).
+///
+/// Fetches the release feed here (HTTP lives in `services::http`) and hands the
+/// body to `fresh_update::check::evaluate`, which parses it, compares versions,
+/// and resolves provenance.
 pub fn check_for_update(releases_url: &str) -> Result<ReleaseCheckResult, String> {
-    let latest_version = fetch_latest_version(releases_url)?;
-    let install_method = detect_install_method();
-    let update_available = is_newer_version(CURRENT_VERSION, &latest_version);
+    let body = super::http::get_release_json(releases_url)?;
+    let check = fresh_update::check::evaluate(CURRENT_VERSION, &body)?;
 
     tracing::debug!(
         current = CURRENT_VERSION,
-        latest = %latest_version,
-        update_available,
-        install_method = ?install_method,
+        latest = %check.latest_version,
+        update_available = check.update_available,
+        channel = %check.provenance.channel,
+        confidence = ?check.provenance.confidence,
         "Release check complete"
     );
 
     Ok(ReleaseCheckResult {
-        latest_version,
-        update_available,
-        install_method,
+        latest_version: check.latest_version,
+        update_available: check.update_available,
+        provenance: check.provenance,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_is_newer_version() {
@@ -407,42 +381,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_detect_install_method() {
-        let cases = [
-            (
-                "/opt/homebrew/Cellar/fresh/0.1.26/bin/fresh",
-                InstallMethod::Homebrew,
-            ),
-            (
-                "/usr/local/Cellar/fresh/0.1.26/bin/fresh",
-                InstallMethod::Homebrew,
-            ),
-            (
-                "/home/linuxbrew/.linuxbrew/bin/fresh",
-                InstallMethod::Homebrew,
-            ),
-            ("/home/user/.cargo/bin/fresh", InstallMethod::Cargo),
-            (
-                "C:\\Users\\user\\.cargo\\bin\\fresh.exe",
-                InstallMethod::Cargo,
-            ),
-            (
-                "/usr/local/lib/node_modules/fresh-editor/bin/fresh",
-                InstallMethod::Npm,
-            ),
-            ("/usr/local/bin/fresh", InstallMethod::PackageManager),
-            ("/home/user/downloads/fresh", InstallMethod::Unknown),
-        ];
-        for (path, expected) in cases {
-            assert_eq!(
-                detect_install_method_from_path(&PathBuf::from(path)),
-                expected,
-                "detect_install_method({:?})",
-                path
-            );
-        }
-    }
+    // Install-method detection lives in `fresh_update::provenance` (see that
+    // crate's tests). release_checker only delegates, so there is nothing to
+    // test here — and nothing path-specific anywhere, since provenance is read
+    // from what the installer recorded rather than inferred from the exe path.
 
     #[test]
     fn test_parse_version_from_json() {
@@ -582,5 +524,75 @@ mod tests {
         assert!(checker.get_cached_result().is_none());
 
         stop_tx.send(()).ok();
+    }
+
+    /// The update child reports three distinct outcomes, and the indicator has
+    /// to keep them apart. Collapsing them into a success/failure pair produced
+    /// both possible lies: `ManualRequired` exited 1 and rendered as "Update
+    /// failed" when nothing had failed, and a delegated run that only *printed*
+    /// a command exited 0 and rendered as "Updated — restart fresh" when
+    /// nothing had been installed.
+    #[test]
+    fn exit_code_maps_to_three_distinct_terminal_phases() {
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(Some(0)),
+            SelfUpdatePhase::Succeeded
+        );
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(Some(fresh_update::EXIT_ACTION_REQUIRED)),
+            SelfUpdatePhase::ActionRequired
+        );
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(Some(1)),
+            SelfUpdatePhase::Failed
+        );
+
+        // All three are distinct — the whole point of the third state.
+        let phases = [
+            SelfUpdatePhase::from_exit_code(Some(0)),
+            SelfUpdatePhase::from_exit_code(Some(fresh_update::EXIT_ACTION_REQUIRED)),
+            SelfUpdatePhase::from_exit_code(Some(1)),
+        ];
+        for (i, a) in phases.iter().enumerate() {
+            for b in &phases[i + 1..] {
+                assert_ne!(a, b, "terminal phases collapsed into one another");
+            }
+        }
+    }
+
+    /// The override has to reach the whole editor, not one CLI invocation:
+    /// the background check that decides whether to show the indicator, and
+    /// the update child the popup spawns, must agree on where releases come
+    /// from. They share one env var so they cannot drift.
+    #[test]
+    fn the_release_feed_override_is_shared_by_check_and_update() {
+        // Not set: both fall back to the GitHub API.
+        std::env::remove_var(RELEASES_URL_ENV);
+        assert_eq!(releases_url(), DEFAULT_RELEASES_URL);
+
+        std::env::set_var(RELEASES_URL_ENV, "http://mirror:8080/releases/latest");
+        assert_eq!(releases_url(), "http://mirror:8080/releases/latest");
+
+        // Blank is treated as unset rather than as an empty URL.
+        std::env::set_var(RELEASES_URL_ENV, "   ");
+        assert_eq!(releases_url(), DEFAULT_RELEASES_URL);
+        std::env::remove_var(RELEASES_URL_ENV);
+    }
+
+    /// Signals and unrecognised codes are failures, not silent successes.
+    #[test]
+    fn unknown_exit_codes_are_failures() {
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(None),
+            SelfUpdatePhase::Failed
+        );
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(Some(101)),
+            SelfUpdatePhase::Failed
+        );
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(Some(-1)),
+            SelfUpdatePhase::Failed
+        );
     }
 }

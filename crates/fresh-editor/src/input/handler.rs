@@ -1,43 +1,25 @@
-//! Hierarchical Input Handling System
+//! Flat per-surface input handlers for the bespoke modal interiors.
 //!
-//! This module provides a tree-based input dispatch system where input events
-//! flow through a hierarchy of handlers. The design follows these principles:
+//! Each [`InputHandler`] is one surface's keyboard interior — Settings,
+//! the menu, the prompt, the popup stacks, the file browser, the
+//! query-replace confirm, terminal mode — invoked FROM its owning
+//! chrome component's `on_layer_key` (or, for terminal mode, the
+//! documented pre-band stage). Between-surface routing does NOT happen
+//! here: precedence lives in the derived overlay-layer walk
+//! (`Editor::dispatch_layer_keyboard`), and a handler's `Ignored`
+//! becomes the walk's fall-through. Principles:
 //!
-//! 1. **Leaf-first, bubble up**: Input is dispatched to the deepest focused
-//!    element first. If not consumed, it bubbles up to parents.
+//! 1. **Explicit consumption**: return `InputResult::Consumed` to stop
+//!    the walk or `InputResult::Ignored` to fall through.
+//! 2. **Modals consume by default**: modal interiors return `Consumed`
+//!    for unhandled keys to prevent input leakage, opting out per key
+//!    (e.g. Ctrl+P toggling Quick Open closed while it's open).
 //!
-//! 2. **Explicit consumption**: Handlers return `InputResult::Consumed` to stop
-//!    propagation or `InputResult::Ignored` to let parents try.
-//!
-//! 3. **Modals consume by default**: Modal dialogs (Settings, Prompts) should
-//!    return `Consumed` for unhandled keys to prevent input leakage.
-//!
-//! 4. **No capture phase**: Unlike DOM events, there's no capture phase.
-//!    This keeps the model simple and predictable.
-//!
-//! ## Example
-//!
-//! ```ignore
-//! impl InputHandler for MyPanel {
-//!     fn handle_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
-//!         // Let focused child try first
-//!         if let Some(child) = self.focused_child_mut() {
-//!             if child.handle_input(event, ctx) == InputResult::Consumed {
-//!                 return InputResult::Consumed;
-//!             }
-//!         }
-//!
-//!         // Handle at this level
-//!         match event.code {
-//!             KeyCode::Up => { self.move_up(); InputResult::Consumed }
-//!             KeyCode::Down => { self.move_down(); InputResult::Consumed }
-//!             _ => InputResult::Ignored // Let parent handle
-//!         }
-//!     }
-//! }
-//! ```
+//! (This module once described a tree-based leaf-first/bubble-up
+//! hierarchy; no handler ever had a child, and keyboard bubbling is
+//! the layer walk's job — the hierarchy half is deleted.)
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 
 /// Mouse event kinds for terminal forwarding.
 /// Simplified from crossterm's MouseEventKind to capture what we need.
@@ -55,6 +37,10 @@ pub enum TerminalMouseEventKind {
     ScrollUp,
     /// Scroll down
     ScrollDown,
+    /// Horizontal scroll left (xterm button 6)
+    ScrollLeft,
+    /// Horizontal scroll right (xterm button 7)
+    ScrollRight,
 }
 
 /// Mouse buttons for terminal forwarding.
@@ -78,15 +64,6 @@ impl InputResult {
     /// Returns true if the input was consumed.
     pub fn is_consumed(self) -> bool {
         self == InputResult::Consumed
-    }
-
-    /// Combines two results - consumed if either is consumed.
-    pub fn or(self, other: InputResult) -> InputResult {
-        if self == InputResult::Consumed || other == InputResult::Consumed {
-            InputResult::Consumed
-        } else {
-            InputResult::Ignored
-        }
     }
 }
 
@@ -198,44 +175,24 @@ pub enum DeferredAction {
     InsertCharAndUpdate(char),
 }
 
-/// Trait for elements that can handle input events.
+/// Trait for one surface's keyboard interior (see module doc).
 ///
 /// Implementors should:
-/// 1. First delegate to `focused_child_mut()` if it exists
-/// 2. Handle keys relevant to this element
-/// 3. Return `Consumed` or `Ignored` appropriately
-/// 4. Modal elements should return `Consumed` for unhandled keys
+/// 1. Handle keys relevant to this surface
+/// 2. Return `Consumed` or `Ignored` appropriately
+/// 3. Modal surfaces should return `Consumed` for unhandled keys
 pub trait InputHandler {
     /// Handle a key event. Returns whether the event was consumed.
     fn handle_key_event(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult;
-
-    /// Get the currently focused child handler, if any.
-    fn focused_child(&self) -> Option<&dyn InputHandler> {
-        None
-    }
-
-    /// Get the currently focused child handler mutably, if any.
-    fn focused_child_mut(&mut self) -> Option<&mut dyn InputHandler> {
-        None
-    }
 
     /// Whether this handler is modal (consumes all unhandled input).
     fn is_modal(&self) -> bool {
         false
     }
 
-    /// Dispatch input through this handler and its children.
-    /// This is the main entry point - it handles the bubble-up logic.
+    /// Dispatch input through this handler — the entry point the
+    /// owning component calls.
     fn dispatch_input(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
-        // First, let the deepest focused child try
-        if let Some(child) = self.focused_child_mut() {
-            let result = child.dispatch_input(event, ctx);
-            if result == InputResult::Consumed {
-                return InputResult::Consumed;
-            }
-        }
-
-        // Child didn't consume, try this handler
         let result = self.handle_key_event(event, ctx);
         if result == InputResult::Consumed {
             return InputResult::Consumed;
@@ -257,46 +214,10 @@ pub trait InputHandler {
     }
 }
 
-/// Helper to check for common key combinations.
-pub fn is_key(event: &KeyEvent, code: KeyCode) -> bool {
-    event.code == code && event.modifiers.is_empty()
-}
-
-pub fn is_key_with_ctrl(event: &KeyEvent, c: char) -> bool {
-    event.code == KeyCode::Char(c) && event.modifiers == KeyModifiers::CONTROL
-}
-
-pub fn is_key_with_shift(event: &KeyEvent, code: KeyCode) -> bool {
-    event.code == code && event.modifiers == KeyModifiers::SHIFT
-}
-
-pub fn is_key_with_alt(event: &KeyEvent, code: KeyCode) -> bool {
-    event.code == code && event.modifiers == KeyModifiers::ALT
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_input_result_or() {
-        assert_eq!(
-            InputResult::Consumed.or(InputResult::Consumed),
-            InputResult::Consumed
-        );
-        assert_eq!(
-            InputResult::Consumed.or(InputResult::Ignored),
-            InputResult::Consumed
-        );
-        assert_eq!(
-            InputResult::Ignored.or(InputResult::Consumed),
-            InputResult::Consumed
-        );
-        assert_eq!(
-            InputResult::Ignored.or(InputResult::Ignored),
-            InputResult::Ignored
-        );
-    }
+    use crossterm::event::{KeyCode, KeyModifiers};
 
     #[test]
     fn test_is_consumed() {

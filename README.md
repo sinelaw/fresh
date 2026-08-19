@@ -20,6 +20,12 @@ One shortcut to find files, run commands, switch buffers, and jump to any line.
 
 ![Command Palette](docs/blog/productivity/command-palette/showcase.gif)
 
+### Multitask with the Orchestrator
+
+Start each task in its own worktree, hop between them with an arrow key, and leave the rest running.
+
+![Orchestrator](docs/blog/orchestrator-worktrees/showcase.gif)
+
 ### Multi-Cursor Editing
 
 Select and edit multiple occurrences simultaneously — the same workflow you know from graphical editors.
@@ -47,35 +53,86 @@ See more feature demos: [Editing](https://getfresh.dev/docs/blog/editing) (searc
 | **Views & Layout** | split panes, line numbers, line wrap, backgrounds, markdown preview |
 | **Language Server (LSP)** | go to definition, references, hover, code actions, rename, diagnostics, autocompletion |
 | **Productivity** | command palette, menu bar, keyboard macros, git log, diagnostics panel |
+| **Multitasking (Orchestrator)** | one workspace per git worktree, terminals and long-running commands per workspace, coding agents (claude, codex, opencode, aider) with resumable sessions, dock switcher, remote/SSH workspaces |
 | **Extensibility** | TypeScript plugins (sandboxed QuickJS), color highlighter, TODO highlighter, merge conflicts, path complete, keymaps |
 | **Internationalization** | Multiple language support (see [`locales/`](locales/)), plugin translation system |
 
 ## Installation
 
-Quick install (autodetect best method):
+Quick install:
 
 `curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh`
+
+On Linux this installs the **universal build**: one statically linked binary
+that runs on every distro, unpacked under `~/.local`, owned by you. It needs no
+root, and it updates itself — `fresh --cmd update`, or the update prompt in the
+editor. On macOS it uses Homebrew.
+
+Prefer your distro's package manager? Ask for it explicitly:
+
+```bash
+curl -sL .../install.sh | sh -s -- --method=deb    # also: rpm, aur, nix, cargo, npm, brew, appimage
+```
+
+Packages are fully supported — they are opt-in rather than the default because
+installing one needs root and hands updates to that package manager. `fresh`
+records how it was installed either way, and updates through that same
+mechanism. `--method=auto` restores the old autodetecting behaviour, and
+`install.sh --help` lists everything.
 
 Or, pick your preferred method:
 
 | Platform | Method |
 |----------|--------|
+| Linux (any distro) | [universal build](#universal-build-linux) — self-updating, no root |
 | macOS | [brew](#brew) |
 | Bazzite/Bluefin/Aurora Linux | [brew](#brew) |
 | Windows | [winget](#windows-winget) |
 | Arch Linux | [AUR](#arch-linux-aur) |
 | Debian/Ubuntu | [.deb](#debianubuntu-deb) |
 | Fedora/RHEL | [.rpm](#fedorarhel-rpm), [Terra](https://terra.fyralabs.com/) |
-| OpenSUSE | [zypper](#opensuse-zypper), [.rpm](#fedorarhel-rpm) |
+| OpenSUSE | [.rpm](#opensuse-rpm) |
 | FreeBSD | [ports / pkg](https://www.freshports.org/editors/fresh) |
 | Gentoo | [GURU](#gentoo-guru) |
-| Linux (any distro) | [AppImage](#appimage), [Flatpak](#flatpak) |
+| Linux (sandboxed / portable) | [AppImage](#appimage), [Flatpak](#flatpak) |
 | All platforms | [Pre-built binaries](#pre-built-binaries) |
 | npm | [npm / npx](#npm) |
 | Rust users (Fast) | [cargo-binstall](#using-cargo-binstall) |
 | Rust users | [crates.io](#from-cratesio) |
 | Nix | [Nix flakes](#nix-flakes) |
 | Developers | [From source](#from-source) |
+
+### Universal build (Linux)
+
+```bash
+curl -sL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh
+```
+
+A single static (musl) binary for `x86_64` and `aarch64` with every feature
+compiled in, including plugins. It unpacks to `~/.local/share/fresh-editor` and
+symlinks `~/.local/bin/fresh`; set `FRESH_INSTALL_DIR` / `FRESH_BIN_DIR` to put
+them elsewhere. Ensure `~/.local/bin` is in your `PATH`.
+
+Because nothing else owns these files, this is the one Linux install that can
+replace itself: `fresh --cmd update` downloads the next release, verifies it
+against both its published checksum and GitHub's release attestation, and swaps
+the binary in place.
+
+The archive also carries the same desktop entry and icon theme the `.deb` and
+`.rpm` install, and the installer copies them into `$XDG_DATA_HOME`
+(`~/.local/share` by default) so Fresh shows up in your application menu. Pass
+`--no-desktop-integration`, or set `FRESH_NO_DESKTOP=1`, to skip that — usually
+what you want on a server or in a container. Every file written outside the
+install directory is listed in
+`~/.local/share/fresh-editor/installed-files.txt`, so re-running the installer
+cleans up after the previous run and uninstalling is `rm` over that list plus
+the install directory and the symlink.
+
+Downloading the archive by hand from the [releases
+page](https://github.com/sinelaw/fresh/releases) works the same way — it ships
+the same install receipt, so a hand-unpacked copy self-updates too. Only the
+binary is swapped on update, so the desktop entry and icons are refreshed by
+re-running the installer, not by `fresh --cmd update`.
 
 ### Brew
 
@@ -143,11 +200,16 @@ curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | 
 
 Or download the `.rpm` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
 
-### OpenSUSE (zypper)
+### OpenSUSE (.rpm)
+
+There is no openSUSE repository for `fresh` yet, so install the `.rpm` from the
+release directly:
 
 ```bash
-zypper install fresh-editor
+curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep "browser_download_url.*\.$(uname -m)\.rpm" | cut -d '"' -f 4) -o fresh-editor.rpm && sudo zypper --no-gpg-checks install ./fresh-editor.rpm
 ```
+
+Or download the `.rpm` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
 
 ### Gentoo ([GURU](https://wiki.gentoo.org/wiki/Project:GURU))
 
@@ -159,6 +221,11 @@ emerge --ask app-editors/fresh
 ```
 
 ### AppImage
+
+> On most systems the [universal build](#universal-build-linux) is the better
+> choice: same "runs anywhere" property, no FUSE dependency, and no mount
+> overhead on each launch. `install.sh` no longer selects AppImage
+> automatically — pass `--method=appimage` if you specifically want it.
 
 Download the `.AppImage` file from the [releases page](https://github.com/sinelaw/fresh/releases) and run:
 
@@ -192,6 +259,11 @@ See [flatpak/README.md](flatpak/README.md) for building from source.
 ### Pre-built binaries
 
 Download the latest release for your platform from the [releases page](https://github.com/sinelaw/fresh/releases).
+
+On Linux, prefer the `-unknown-linux-musl` archives: they are statically linked,
+so they run on any distro regardless of its glibc version, and they are gzipped
+so a stock `tar` can unpack them without `xz-utils`. Every archive carries an
+install receipt, so an unpacked copy knows how to update itself.
 
 ### Using mise
 

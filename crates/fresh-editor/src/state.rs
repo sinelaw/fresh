@@ -17,6 +17,7 @@ use crate::primitives::reference_highlighter::ReferenceHighlighter;
 use crate::primitives::text_property::TextPropertyManager;
 use crate::view::bracket_highlight_overlay::BracketHighlightOverlay;
 use crate::view::conceal::ConcealManager;
+use crate::view::cursor_line_overlay::CursorLineOverlay;
 use crate::view::folding::LspFoldRanges;
 use crate::view::margin::{MarginAnnotation, MarginContent, MarginManager, MarginPosition};
 use crate::view::overlay::{Overlay, OverlayFace, OverlayManager, UnderlineStyle};
@@ -94,9 +95,38 @@ pub struct BufferSettings {
     /// Set based on global + language config; can be toggled per-buffer by user
     pub whitespace: crate::config::WhitespaceVisibility,
 
+    /// Whether whitespace inside a selection draws its `·` / `→` indicators
+    /// even when `whitespace` hides them. Mirrors
+    /// `editor.whitespace_in_selection`; deliberately independent of the
+    /// per-buffer whitespace overrides, so hiding the indicators for a buffer
+    /// still leaves a selection's own whitespace legible.
+    pub whitespace_in_selection: bool,
+
     /// Whether pressing Tab should insert a tab character instead of spaces.
     /// Set based on language config; can be toggled per-buffer by user
     pub use_tabs: bool,
+
+    /// Explicit per-buffer indentation-style override, set by "Toggle
+    /// Indentation: Spaces ↔ Tabs (Current Buffer)". `None` = follow the
+    /// resolved language config. Persisted in the per-file workspace state.
+    pub use_tabs_override: Option<bool>,
+
+    /// Explicit per-buffer whitespace-indicator master override, set by
+    /// "Toggle Whitespace Indicators (Current Buffer)" / "Toggle Tab
+    /// Indicators (Current Buffer)". `Some(false)` hides every indicator
+    /// regardless of config; `Some(true)` shows the configured set; `None`
+    /// follows config. Persisted in the per-file workspace state.
+    ///
+    /// A single bool rather than a full [`WhitespaceVisibility`](crate::config::WhitespaceVisibility):
+    /// the command is a master on/off, and storing the resolved struct would
+    /// freeze the buffer against later config edits.
+    pub whitespace_override: Option<bool>,
+    /// Explicit per-buffer override for the tab indicators alone (the `tabs_*`
+    /// trio of [`WhitespaceVisibility`](crate::config::WhitespaceVisibility)),
+    /// layered on top of `whitespace_override`: the master toggle answers "any
+    /// indicators at all?", this answers "tab arrows specifically?". `None` =
+    /// follow whatever the master/config resolution produced.
+    pub tab_indicators_override: Option<bool>,
 
     /// Tab size (number of spaces per tab character) for rendering.
     /// Used for visual display of tab characters and indent calculations.
@@ -131,13 +161,23 @@ pub struct BufferSettings {
     /// `languages.<id>.indentation_guide`). Set based on global + language
     /// config.
     pub indentation_guide: bool,
+
+    /// Explicit per-buffer occurrence-highlight override, set by "Toggle
+    /// Occurrence Highlight (Current Buffer)". `None` = follow the global
+    /// `editor.highlight_occurrences` setting. Persisted in the per-file
+    /// workspace state.
+    pub highlight_occurrences_override: Option<bool>,
 }
 
 impl Default for BufferSettings {
     fn default() -> Self {
         Self {
             whitespace: crate::config::WhitespaceVisibility::default(),
+            whitespace_in_selection: true,
             use_tabs: false,
+            use_tabs_override: None,
+            whitespace_override: None,
+            tab_indicators_override: None,
             tab_size: 4,
             auto_close: true,
             auto_surround: true,
@@ -145,6 +185,7 @@ impl Default for BufferSettings {
             virtual_space_override: None,
             word_characters: String::new(),
             indentation_guide: true,
+            highlight_occurrences_override: None,
         }
     }
 }
@@ -159,18 +200,65 @@ impl BufferSettings {
     /// config reload) picks it up automatically.
     ///
     /// Explicit per-buffer user overrides are preserved: `virtual_space`
-    /// keeps following `virtual_space_override` when one is set.
+    /// keeps following `virtual_space_override`, `use_tabs` follows
+    /// `use_tabs_override` and `whitespace` follows `whitespace_override`
+    /// when one is set. (The indentation-guide and fold-indicator pins live
+    /// on `BufferViewState` — per split — and are consulted at render time,
+    /// so re-stamping the language gate below can't clear them.)
     pub fn apply_config(&mut self, resolved: &crate::config::BufferConfig) {
         self.tab_size = resolved.tab_size;
-        self.use_tabs = resolved.use_tabs;
+        self.use_tabs = self.use_tabs_override.unwrap_or(resolved.use_tabs);
         self.auto_close = resolved.auto_close;
         self.auto_surround = resolved.auto_surround;
         self.virtual_space = self
             .virtual_space_override
             .unwrap_or(resolved.virtual_space);
-        self.whitespace = resolved.whitespace;
+        self.apply_whitespace_override(resolved.whitespace);
+        self.whitespace_in_selection = resolved.whitespace_in_selection;
         self.word_characters = resolved.word_characters.clone();
         self.indentation_guide = resolved.indentation_guide;
+    }
+
+    /// Drop every explicit per-buffer override, so the buffer goes back to
+    /// following the global + per-language configuration.
+    ///
+    /// The counterpart to [`apply_config`](Self::apply_config), which
+    /// deliberately *preserves* these: "Reset Buffer Settings" is the one place
+    /// that must clear them, and it re-applies the config afterwards. Every
+    /// `*_override` field belongs here — one left out is a setting the user can
+    /// pin but never un-pin.
+    pub fn clear_user_overrides(&mut self) {
+        self.virtual_space_override = None;
+        self.use_tabs_override = None;
+        self.whitespace_override = None;
+        self.tab_indicators_override = None;
+        self.highlight_occurrences_override = None;
+    }
+
+    /// Resolve `whitespace` from the buffer's configured visibility and the
+    /// per-buffer master override.
+    ///
+    /// THE single place the override semantics live, so a restored session and
+    /// a later `apply_config` can't disagree. `Some(true)` has to mirror what
+    /// `WhitespaceVisibility::toggle_all` does when nothing is configured
+    /// visible — fall back to the default set — otherwise turning indicators on
+    /// in a language that hides them (Go hides tabs) would silently restore to
+    /// "hidden" and lose the user's choice.
+    pub fn apply_whitespace_override(&mut self, configured: crate::config::WhitespaceVisibility) {
+        use crate::config::WhitespaceVisibility;
+        self.whitespace = match self.whitespace_override {
+            Some(false) => WhitespaceVisibility::hidden(),
+            Some(true) if !configured.any_visible() => WhitespaceVisibility::default(),
+            _ => configured,
+        };
+        // The tab pin layers on top of the master resolution, so "hide the
+        // arrows but keep the space dots" (and the reverse) survives both a
+        // config re-application and a session restore.
+        if let Some(tabs) = self.tab_indicators_override {
+            self.whitespace.tabs_leading = tabs;
+            self.whitespace.tabs_inner = tabs;
+            self.whitespace.tabs_trailing = tabs;
+        }
     }
 }
 
@@ -289,6 +377,11 @@ pub struct EditorState {
     /// Bracket matching highlight overlay
     pub bracket_highlight_overlay: BracketHighlightOverlay,
 
+    /// Host-placed bar following this buffer's cursor. Off unless a plugin
+    /// declares one (`setCursorLineOverlay`); placed from the cursor at
+    /// paint time, so it can never lag the caret it marks.
+    pub cursor_line_overlay: CursorLineOverlay,
+
     /// Cached LSP semantic tokens (converted to buffer byte ranges)
     pub semantic_tokens: Option<SemanticTokenStore>,
 
@@ -307,23 +400,13 @@ pub struct EditorState {
     // instead of copying its fields, to avoid duplication between the two structs.
     pub display_name: String,
 
-    /// Per-logical-line visual-row-count cache (pipeline-output).
-    /// Populated by both the renderer (as a side effect of rendering a
-    /// visible frame) and the scroll-math miss handler.  Entries are
-    /// keyed on every pipeline input; mutations to any input produce a
-    /// different key so stale entries are never returned — see
-    /// `docs/internal/line-wrap-cache-plan.md`.
-    pub line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache,
-
-    /// Whole-buffer prefix-sum index over per-line visual row counts.
-    /// Sits one tier above `line_wrap_cache`: answers
-    /// "what visual row contains byte B?" / "what byte sits at row R?"
-    /// in O(log N_lines) for scrollbar drag, scrollbar render, and
-    /// `ensure_visible` wrapped scrolling.  Built lazily from
-    /// `line_wrap_cache`; same invalidation source (pipeline-input
-    /// version + geometry).  See
-    /// `crate::view::visual_row_index` for invariants.
-    pub visual_row_index: crate::view::visual_row_index::VisualRowIndex,
+    /// Row structure per rendered geometry.
+    ///
+    /// Lives with the buffer because damage is a buffer event, but is keyed by
+    /// geometry because row boundaries are a property of the *view* — two splits
+    /// on this buffer at different widths hold different entries and each is
+    /// repaired independently. See `crate::view::wrap_index`.
+    pub wrap_indices: crate::view::wrap_index::WrapIndexSet,
 
     /// Forward coordinate mapper: remaps a byte coordinate captured at an older
     /// buffer `version()` to the current version. Fed at the marker-adjustment
@@ -332,6 +415,16 @@ pub struct EditorState {
     /// stale coordinates that plugins echo back from fire-and-forget
     /// `lines_changed` hooks. See `crate::model::coord_map`.
     pub coord_map: crate::model::coord_map::CoordMap,
+
+    /// Plugin-owned markers painted on the vertical scrollbar track, and the
+    /// cached projection of those markers onto a track column. Byte-anchored
+    /// on their own marker list, so they ride edits like gutter indicators do;
+    /// see `crate::view::scrollbar_marker`.
+    pub scrollbar_markers: crate::view::scrollbar_marker::ScrollbarMarkerManager,
+
+    /// Cached marker→track-cell projection. Rebuilt only when the marker set,
+    /// buffer content, geometry, or coordinate basis changes.
+    pub scrollbar_marker_buckets: crate::view::scrollbar_marker::ScrollbarMarkerBuckets,
 }
 
 /// The fields of an [`Event::AddOverlay`], grouped so
@@ -376,6 +469,20 @@ impl EditorState {
         self.buffer_settings.apply_config(&resolved);
     }
 
+    /// Point this buffer's occurrence highlighting at the editor-wide default,
+    /// unless the user pinned it with "Toggle Occurrence Highlight (Current
+    /// Buffer)".
+    ///
+    /// THE single place `reference_highlight_overlay.enabled` is derived from
+    /// config. Every file-open path stamps it, so a pin that only the toggle
+    /// knew about would be erased the next time the buffer was (re)opened.
+    pub fn apply_occurrence_highlight(&mut self, global_default: bool) {
+        self.reference_highlight_overlay.enabled = self
+            .buffer_settings
+            .highlight_occurrences_override
+            .unwrap_or(global_default);
+    }
+
     /// Create a new state with a buffer and default (plain text) language.
     /// All other fields are initialized to their defaults.
     fn new_from_buffer(buffer: Buffer) -> Self {
@@ -411,13 +518,16 @@ impl EditorState {
             debug_highlight_mode: false,
             reference_highlight_overlay: ReferenceHighlightOverlay::new(),
             bracket_highlight_overlay: BracketHighlightOverlay::new(),
+            cursor_line_overlay: CursorLineOverlay::new(),
             semantic_tokens: None,
             folding_ranges: LspFoldRanges::new(),
             language: "text".to_string(),
             display_name: "Text".to_string(),
-            line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache::default(),
-            visual_row_index: crate::view::visual_row_index::VisualRowIndex::default(),
+            wrap_indices: crate::view::wrap_index::WrapIndexSet::default(),
             coord_map: crate::model::coord_map::CoordMap::default(),
+            scrollbar_markers: crate::view::scrollbar_marker::ScrollbarMarkerManager::default(),
+            scrollbar_marker_buckets:
+                crate::view::scrollbar_marker::ScrollbarMarkerBuckets::default(),
         }
     }
 
@@ -570,7 +680,138 @@ impl EditorState {
         ))
     }
 
+    /// Snapshot the decorations that move row boundaries, for a wrap-index
+    /// build.
+    ///
+    /// Owned data, resolved before the build takes `&mut Buffer` — the build
+    /// cannot hold a `&EditorState` alongside that. Queried over the whole
+    /// buffer, since the index covers every line, and with **no cursors**:
+    /// cursor-dependent activation is the renderer's business, and letting it
+    /// reach the index would mean scroll position changed when a cursor moved.
+    ///
+    /// `view_mode` decides the one namespace that is mode-specific:
+    /// markdown_compose's `md-syntax` conceals are emitted whenever any split
+    /// composes the buffer, so a Source-mode split must ignore them — the same
+    /// gate `build_view_data` applies.
+    /// Collapsed byte ranges for `folds`, sorted — the form the index and the
+    /// renderer both want. Folds live on the split, so they arrive as an
+    /// argument rather than off `self`.
+    pub fn fold_ranges(
+        &self,
+        folds: &crate::view::folding::FoldManager,
+    ) -> Vec<std::ops::Range<usize>> {
+        crate::view::ui::split_rendering::fold_skip_set(&self.buffer, &self.marker_list, folds)
+    }
+
+    /// Resolve the decorations the wrap index builds from.
+    ///
+    /// `cursors` must be empty for the index itself — the index is canonical,
+    /// or scroll position would change when a cursor moved. The one legitimate
+    /// non-empty caller is the render path's cursor-line expansion, which
+    /// re-wraps a single line the way the frame will draw it.
+    pub fn index_decorations(
+        &self,
+        view_mode: crate::view::line_wrap_cache::CacheViewMode,
+        folds: Vec<std::ops::Range<usize>>,
+        cursors: &[usize],
+    ) -> crate::view::wrap_index::IndexDecorations {
+        use crate::view::line_wrap_cache::CacheViewMode;
+        let end = self.buffer.len().saturating_add(1);
+        let no_cursors = cursors;
+
+        let soft_breaks = if self.soft_breaks.is_empty() {
+            Vec::new()
+        } else {
+            // `theme: None` — the index measures and never draws, so a
+            // continuation prefix contributes its width here but no colour.
+            self.soft_breaks
+                .query_viewport_rendered(0, end, &self.marker_list, &no_cursors, None)
+        };
+
+        let conceals = if self.conceals.is_empty() {
+            Vec::new()
+        } else {
+            let exclude = (!matches!(view_mode, CacheViewMode::Compose))
+                .then(|| fresh_core::overlay::OverlayNamespace::from_string("md-syntax".into()));
+            self.conceals
+                .query_viewport_excluding(0, end, &self.marker_list, exclude.as_ref(), &no_cursors)
+                .into_iter()
+                .map(|(r, t)| (r, t.map(str::to_owned)))
+                .collect()
+        };
+
+        let inline_hints = if self.virtual_texts.is_empty() {
+            Vec::new()
+        } else {
+            crate::view::ui::split_rendering::transforms::resolve_inline_hints(self, None, 0, end)
+        };
+
+        let virtual_lines = if self.virtual_texts.is_empty() {
+            Vec::new()
+        } else {
+            let mut v: Vec<usize> = self
+                .virtual_texts
+                .query_lines_in_range(&self.marker_list, 0, end)
+                .into_iter()
+                .map(|(pos, _)| pos)
+                .collect();
+            v.sort_unstable();
+            v
+        };
+
+        crate::view::wrap_index::IndexDecorations {
+            soft_breaks,
+            conceals,
+            inline_hints,
+            folds,
+            virtual_lines,
+        }
+    }
+
+    /// The versions of everything that feeds line layout, as one value — the
+    /// currency `WrapIndex` and its callers trade in.
+    pub fn pipeline_inputs(&self) -> crate::view::line_wrap_cache::PipelineInputs {
+        crate::view::line_wrap_cache::PipelineInputs {
+            buffer: self.buffer.version(),
+            soft_breaks: self.soft_breaks.version(),
+            conceals: self.conceals.version(),
+            virtual_text: self.virtual_texts.version(),
+        }
+    }
+
     /// Handle an Insert event - adjusts markers, buffer, highlighter, cursors, and line numbers
+    /// Pre-edit line coordinates the wrap index's repair needs.
+    ///
+    /// Captured *before* the buffer changes: repair locates the damaged row in
+    /// the old layout, so it needs the old line numbering. Reconstructing it
+    /// afterwards would mean keeping a shadow copy of the line index.
+    fn wrap_damage_coords(&self, start: usize, removed: usize) -> (usize, usize, usize) {
+        let line_before = self.buffer.get_line_number(start);
+        let line_start_before = self.buffer.line_start_offset(line_before).unwrap_or(0);
+        let line_end_before = self.buffer.get_line_number(start + removed);
+        (line_before, line_start_before, line_end_before)
+    }
+
+    /// Repair every geometry's row structure after a buffer edit.
+    ///
+    /// Local by construction: boundaries before the edit's row are untouched,
+    /// and the rest resynchronises within a row or two. This is what makes a
+    /// keystroke on a 500 KB single-line file cost rows rather than the line.
+    fn repair_wrap_indices(&mut self, damage: crate::view::wrap_index::EditDamage) {
+        if self.wrap_indices.is_empty() {
+            return;
+        }
+        let line_ending = self.buffer.line_ending();
+        // Computed after the edit, so the repaired index is marked current and
+        // the next render reuses it instead of rebuilding. Virtual-line
+        // positions are no longer snapshotted here — each index carries them
+        // in its decoration snapshot, which the repair shifts along with the
+        // edit.
+        let new_inputs = self.pipeline_inputs();
+        self.wrap_indices
+            .damage_bytes(&mut self.buffer, damage, line_ending, new_inputs);
+    }
+
     fn apply_insert(
         &mut self,
         cursors: &mut Cursors,
@@ -579,13 +820,26 @@ impl EditorState {
         cursor_id: crate::model::event::CursorId,
     ) {
         let newlines_inserted = text.matches('\n').count();
+        let (line_before, line_start_before, line_end_before) =
+            self.wrap_damage_coords(position, 0);
 
         // CRITICAL: Adjust markers BEFORE modifying buffer
         self.marker_list.adjust_for_insert(position, text.len());
         self.margins.adjust_for_insert(position, text.len());
+        self.scrollbar_markers
+            .adjust_for_insert(position, text.len());
 
         // Insert text into buffer
         self.buffer.insert(position, text);
+
+        self.repair_wrap_indices(crate::view::wrap_index::EditDamage {
+            start: position,
+            removed: 0,
+            inserted: text.len(),
+            line_before,
+            line_start_before,
+            line_end_before,
+        });
 
         // Record the edit for forward coordinate mapping, keyed by the
         // post-edit version — same shift the marker tree just applied.
@@ -639,6 +893,8 @@ impl EditorState {
         deleted_text: &str,
     ) {
         let len = range.len();
+        let (line_before, line_start_before, line_end_before) =
+            self.wrap_damage_coords(range.start, len);
 
         // Count newlines deleted BEFORE the primary cursor's original position.
         // For backspace: cursor was at range.end, so all deleted newlines are before it.
@@ -665,9 +921,19 @@ impl EditorState {
         // CRITICAL: Adjust markers BEFORE modifying buffer
         self.marker_list.adjust_for_delete(range.start, len);
         self.margins.adjust_for_delete(range.start, len);
+        self.scrollbar_markers.adjust_for_delete(range.start, len);
 
         // Delete from buffer
         self.buffer.delete(range.clone());
+
+        self.repair_wrap_indices(crate::view::wrap_index::EditDamage {
+            start: range.start,
+            removed: len,
+            inserted: 0,
+            line_before,
+            line_start_before,
+            line_end_before,
+        });
 
         // Record the edit for forward coordinate mapping, keyed by the
         // post-edit version — same shift the marker tree just applied.
@@ -1017,8 +1283,9 @@ impl EditorState {
     /// callers that need the handle back for later removal — e.g. the hover /
     /// rename symbol highlights. Returning the handle from the add itself is
     /// what `OverlayManager::add` already provides; callers must **not** try to
-    /// recover it via `overlays.all().last()`, which returns the
-    /// highest-priority overlay (priority-sorted), not the one just added.
+    /// recover it via `overlays.all().last()` — the set is unordered and a
+    /// removal swaps entries around, so the last one is not the one just
+    /// added.
     #[allow(clippy::too_many_arguments)]
     pub fn add_overlay(
         &mut self,
@@ -1095,6 +1362,14 @@ impl EditorState {
         // consolidate_after_save() can replace buffers between snapshot and restore.
         if let Some(snapshot) = new_snapshot {
             self.buffer.restore_buffer_state(snapshot);
+            // Swapping the piece tree replaces the document without ever
+            // describing the change as edit damage, so any built row index
+            // now describes a document that no longer exists. The version
+            // bump would route the next `ensure_built` to a rebuild anyway,
+            // but `damage_bytes` checks only whether a build exists — an edit
+            // arriving before the next render would repair the stale one and
+            // then mark it current. See `WrapIndex::damage_all`.
+            self.wrap_indices.damage_all();
 
             // A snapshot restore with no per-edit triples (hot-exit recovery,
             // logs loaded from disk) changes content opaquely: the ring can't
@@ -1163,29 +1438,14 @@ impl EditorState {
             // descending-position order, all sharing the post-bulk version.
             self.coord_map
                 .record_replace(version, pos, del_len, ins_len);
-            match (del_len, ins_len) {
-                (d, i) if d > 0 && i > 0 => {
-                    // Replacement: adjust by net delta only.
-                    if i > d {
-                        self.marker_list.adjust_for_insert(pos, i - d);
-                        self.margins.adjust_for_insert(pos, i - d);
-                    } else if d > i {
-                        self.marker_list.adjust_for_delete(pos, d - i);
-                        self.margins.adjust_for_delete(pos, d - i);
-                    }
-                    // Equal lengths: net delta 0, no adjustment needed.
-                }
-                (d, _) if d > 0 => {
-                    self.marker_list.adjust_for_delete(pos, d);
-                    self.margins.adjust_for_delete(pos, d);
-                }
-                (_, i) if i > 0 => {
-                    self.marker_list.adjust_for_insert(pos, i);
-                    self.margins.adjust_for_insert(pos, i);
-                }
-                _ => {}
-            }
         }
+
+        // Adjust each marker owner once for the whole batch. Doing it per edit
+        // costs O(markers) for every deletion, which made a replace-all over
+        // tens of thousands of matches quadratic (issue #2893).
+        self.marker_list.adjust_for_bulk_edits(edits);
+        self.margins.adjust_for_bulk_edits(edits);
+        self.scrollbar_markers.adjust_for_bulk_edits(edits);
     }
 
     /// Capture positions of markers strictly inside a deleted range.
@@ -1235,6 +1495,18 @@ impl EditorState {
     }
 
     /// Restore displaced markers to their exact original positions.
+    ///
+    /// This teleports marker positions rather than shifting them, so it is the
+    /// one mutation that moves a decoration without any manager's version
+    /// moving with it. `WrapIndex` mirrors those positions and repairs itself
+    /// by diffing snapshots *keyed on those versions*, so it cannot notice
+    /// this on its own: undoing a deletion that displaced a conceal's markers
+    /// would otherwise leave the index laid out against positions the
+    /// renderer no longer uses, and nothing would ever correct it.
+    ///
+    /// Dropping the builds is the honest response — a teleport has no local
+    /// damage to describe — and it is rare enough (only undo, and only for
+    /// deletions that displaced markers) to be worth a rebuild.
     pub fn restore_displaced_markers(&mut self, displaced: &[(u64, usize)]) {
         for &(tagged_id, original_pos) in displaced {
             let dm = DisplacedMarker::decode(tagged_id, original_pos);
@@ -1246,6 +1518,9 @@ impl EditorState {
                     self.margins.set_indicator_position(MarkerId(id), position);
                 }
             }
+        }
+        if !displaced.is_empty() {
+            self.wrap_indices.damage_all();
         }
     }
 
@@ -1548,7 +1823,7 @@ impl EditorState {
         }
         // query_viewport already returns pairs sorted by ascending position.
         // Cursor-blind: scroll math consumers see the canonical "no cursor
-        // anywhere" break set, consistent with `VisualRowIndex`.
+        // anywhere" break set, consistent with `WrapIndex`.
         self.soft_breaks
             .query_viewport(0, self.buffer.len() + 1, &self.marker_list, &[])
     }

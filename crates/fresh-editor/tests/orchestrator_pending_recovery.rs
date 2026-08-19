@@ -35,11 +35,24 @@ fn interrupted_local_workspace_is_restored_paused_on_launch() {
     copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "orchestrator");
 
+    // Card density: the affordance asserted at the end of this test rides on
+    // the card's name row, and the dock opens compact by default.
+    let mut config = fresh::config::Config::default();
+    config.plugins.insert(
+        "orchestrator".to_string(),
+        fresh::config::PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "defaultView": "card" }),
+        },
+    );
+
     let mut h = EditorTestHarness::create(
         160,
         50,
         HarnessOptions::new()
             .with_working_dir(project.clone())
+            .with_config(config)
             .with_shared_dir_context(dir_context),
     )
     .unwrap();
@@ -81,7 +94,8 @@ fn interrupted_local_workspace_is_restored_paused_on_launch() {
             plugin_name: "orchestrator".to_string(),
             key: "orchestrator.pending".to_string(),
             value: Some(pending),
-        });
+        })
+        .unwrap();
 
     // Push the just-set global state into the shared snapshot the plugin thread
     // reads before firing `ready`. In production this ordering is guaranteed —
@@ -112,6 +126,17 @@ fn interrupted_local_workspace_is_restored_paused_on_launch() {
         !h.screen_to_string().contains("stale-default"),
         "restored row must show the persisted resolved name, not the stale \
          capture-time default. Screen:\n{}",
+        h.screen_to_string(),
+    );
+    // The card keeps its one-key way out of the interrupted state. The
+    // two-row card has no spare line for the old sentence-long hint, so
+    // the affordance rides at the right of the name row — losing it
+    // would leave a stuck row with no visible way to resume it. Stated in
+    // card density, which the dock no longer opens at; the compact row
+    // carries the same affordance in place of its (unfittable) message.
+    assert!(
+        h.screen_to_string().contains("↵ Retry"),
+        "an interrupted workspace's card must still offer its retry key. Screen:\n{}",
         h.screen_to_string(),
     );
 }

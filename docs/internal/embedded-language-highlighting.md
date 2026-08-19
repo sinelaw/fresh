@@ -135,6 +135,110 @@ string color), so nothing regresses.
   same documented trade-off the engine already makes for all multi-line
   constructs (strings, block comments, HTML `<style>`).
 
+### Region membership as an exported fact
+
+The per-line classification in the table above is not only used to pick a
+parser — it is the editor's *only* authoritative answer to "is this line
+inside a fence", and `TextMateEngine::region_lines_in` exports it (a thin
+projection of `structure_lines_in`, which also classifies tables — see
+"Generalizing the pattern" below). The
+`lines_changed` plugin hook carries it per line as
+`region: "open" | "body" | "close"`, and compose mode's fenced-code framing
+is built on it.
+
+Why it has to come from here. Region membership is the one property of a
+Markdown line that cannot be derived from the line's own text: a bare
+` ``` ` opens or closes depending on every fence above it (only a fence
+*with* an info string is unambiguously an opener, per CommonMark). A
+decoration plugin sees one `lines_changed` batch — the lines an edit or a
+scroll touched — and cannot read the buffer above it synchronously, so any
+plugin-side rule frames a block whose opening fence happens to be visible
+and gives up on one that isn't: a frame that appears and disappears with
+scroll position. Nor can it be memoised plugin-side; a memo of fence
+extents carries *structure*, and stale structure means framing the wrong
+lines (contrast the compose table-width memo, which carries only numbers).
+
+Driving it off the same classification that picks the parser also means the
+frame can never disagree with the colouring inside it. A fence the grammar
+does not recognize as a region — a ` ```js ` abutting a table row with no
+blank line between, which the Markdown grammar does not open a region for —
+is left unhighlighted *and* unframed, rather than framing a block the
+highlighter does not believe in.
+
+### Generalizing the pattern: tables
+
+Tables are the first case that borrowed the *pattern* without belonging to
+the mechanism. A Markdown table embeds no second language, so it has no
+`EMBEDDING_SPECS` entry and `region_lines_in` correctly reports nothing for
+its lines. What transfers is the shape of the answer: a per-line structural
+classification the host grammar already makes while parsing, delivered on
+the `lines_changed` payload, so the consumer stores no block model.
+
+`structure_lines_in` is the single walk that produces both. Tables get
+their own tiny spec table (`TABLE_SPECS`: host syntax → table *body*
+scope, `meta.table` for Markdown) and their own vocabulary, because
+`open`/`body`/`close` does not describe a table:
+
+| line | `meta.table` before → after | reported as |
+|---|---|---|
+| header row | absent → absent | `header` (the line *above* a delimiter) |
+| delimiter row | absent → present | `delimiter` |
+| data row | present → present | `row` (`first_row` on the one below the delimiter) |
+| line below the table | present → absent | nothing; the line above it is marked `last` |
+
+Two things fall out of that table and are worth stating plainly:
+
+- **The header is not covered by the body scope.** The grammar opens
+  `meta.table` on the *delimiter* row, so a pure before/after test cannot
+  see the header at all. It is identified positionally, as the line above
+  the delimiter — which also means a walk that resumes from a checkpoint
+  *inside* a table never claims to know where that table began. That is
+  the honest answer, and it costs nothing: a header above the resume
+  anchor is off-screen anyway.
+- **`last` needs the line below.** It is the one fact here that a forward
+  walk cannot settle in place, so the walk runs one line past the range it
+  was asked about (`TABLE_LOOKAHEAD_BYTES`). Where it cannot — the range
+  ends at the lookahead bound, or the walk stopped early — `last` stays
+  false, which draws no closing edge rather than one in the wrong place.
+
+The consequence for consumers is different from regions, and the
+difference is the point. Region membership has no fallback: absence must
+be read as *unknown*, because a bare ` ``` ` tells you nothing on its own.
+"Is this line a table row" **is** line-local, so a consumer may fall back
+to its own text rule — and compose mode does, deliberately. The grammar
+scopes fewer things as tables than the plugin renders as tables (a table
+inside a blockquote is not scoped; a table interrupting a paragraph is
+correctly not scoped, since GFM tables cannot interrupt one), and a buffer
+too large to resolve would otherwise lose every frame it has today. So the
+editor's answer is authoritative *when present*, and the batch-local rules
+stay as the degradation path.
+
+What this does **not** fix is column widths. Knowing a table's extent is
+not the same as being able to read its off-screen rows, which a plugin
+still cannot do synchronously, so compose mode's grow-only width memo
+stays. That memo is safe for the reason it always was: it carries only
+numbers, where staleness costs a column width for one frame.
+
+`region_lines_in` is a probe, not a cache: it resumes from the nearest
+checkpoint and discards what it computes, so it stays out of the three
+incremental cache paths and cannot perturb highlighting. Two rules keep it
+from answering confidently-wrong, both stricter than the highlight paths'
+own resume logic, because a wrong region is a wrong *frame* rather than a
+wrong colour:
+
+- it never resumes from a fresh state mid-file (a fresh state reads as
+  "outside a region"), only from a real checkpoint or byte 0;
+- it never resumes from a checkpoint at or after `dirty_from`.
+  `notify_insert`/`notify_delete` shift checkpoint *positions* but leave
+  their stored states for `try_partial_update` to repair lazily, so a
+  checkpoint past an unrepaired edit can still hold pre-edit region state.
+
+When neither is available — a buffer past `MAX_PARSE_BYTES` whose viewport
+has no checkpoint before it yet — it reports nothing, and consumers must
+read that as *unknown*, not as "outside a region". That is the same
+cold-start trade-off this engine already makes for styling inside a huge
+region.
+
 ### Adding a new host
 
 Add one `EmbeddingSpecDef` entry per region kind (host syntax name, the

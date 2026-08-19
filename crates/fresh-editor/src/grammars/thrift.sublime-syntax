@@ -1,0 +1,91 @@
+%YAML 1.2
+---
+name: Thrift
+file_extensions: [thrift]
+scope: source.thrift
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: declarations
+    - include: annotations
+    - include: keywords
+    - include: numbers
+    - include: identifiers
+    - include: operators
+
+  comments:
+    - match: '//.*$'
+      scope: comment.line.double-slash.thrift
+    - match: '#.*$'
+      scope: comment.line.number-sign.thrift
+    - match: '/\*'
+      push:
+        - meta_scope: comment.block.thrift
+        - match: '\*/'
+          pop: true
+
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.thrift
+        - match: '\\.'
+          scope: constant.character.escape.thrift
+        - match: '"'
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.thrift
+        - match: '\\.'
+          scope: constant.character.escape.thrift
+        - match: "'"
+          pop: true
+
+  declarations:
+    - match: '\b(namespace)\s+([*A-Za-z_][\w-]*)'
+      captures:
+        1: keyword.declaration.namespace.thrift
+        2: support.constant.namespace.thrift
+    - match: '\b(struct|union|exception|enum|senum|service|typedef)\s+([A-Za-z_]\w*)'
+      captures:
+        1: keyword.declaration.thrift
+        2: entity.name.type.thrift
+    - match: '\b(const)\s+([A-Za-z_]\w*(?:\s*<[^>]+>)?)\s+([A-Za-z_]\w*)'
+      captures:
+        1: keyword.declaration.thrift
+        2: storage.type.thrift
+        3: constant.other.thrift
+
+  annotations:
+    - match: '@[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*'
+      scope: variable.annotation.thrift
+
+  keywords:
+    - match: '\b(include|cpp_include|namespace|const|typedef|enum|senum|struct|union|exception|service|extends|throws)\b'
+      scope: keyword.declaration.thrift
+    - match: '\b(required|optional|oneway)\b'
+      scope: storage.modifier.thrift
+    - match: '\b(void|bool|byte|i8|i16|i32|i64|double|string|binary|map|set|list)\b'
+      scope: storage.type.thrift
+    - match: '\b(true|false)\b'
+      scope: constant.language.thrift
+
+  numbers:
+    - match: '(?<![\w.])-?0[xX][0-9a-fA-F]+\b'
+      scope: constant.numeric.hex.thrift
+    - match: '(?<![\w.])-?(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?\b'
+      scope: constant.numeric.float.thrift
+    - match: '(?<![\w.])-?\d+(?:[eE][+-]?\d+)?\b'
+      scope: constant.numeric.thrift
+
+  identifiers:
+    - match: '\b[A-Z][A-Z0-9_]*\b'
+      scope: constant.other.thrift
+    - match: '\b[A-Za-z_]\w*(?=\s*\()'
+      scope: entity.name.function.thrift
+    - match: '\b[A-Z]\w*\b'
+      scope: entity.name.type.thrift
+
+  operators:
+    - match: '[=:,;{}()\[\]<>]'
+      scope: punctuation.separator.thrift

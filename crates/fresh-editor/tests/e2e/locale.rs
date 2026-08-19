@@ -144,24 +144,13 @@ fn test_locale_switch_via_command_palette() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Open command palette with Ctrl+P
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Type to filter for locale command
-    harness.type_text("Select Locale").unwrap();
-    harness.render().unwrap();
-
-    // Execute the command
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
+    // Open the locale picker. Via `run_palette_command` so Enter fires on the
+    // filtered row rather than on whatever happened to be selected when the
+    // last keystroke landed — Quick Open re-filters on input change only.
+    harness.run_palette_command("Select Locale").unwrap();
 
     // Should show locale selection prompt
-    harness.assert_screen_contains("Select locale:");
+    harness.wait_for_screen_contains("Select locale:").unwrap();
 
     // Navigate to Spanish - the prompt starts with "en" selected
     // Type to filter
@@ -182,7 +171,12 @@ fn test_locale_switch_via_command_palette() {
 
     // Verify locale changed status message (shown in the new locale)
     // After switching to Spanish, the message is shown in Spanish: "Idioma cambiado a"
-    harness.assert_screen_contains("Idioma cambiado");
+    //
+    // Waited for, not sampled: confirming the picker re-inits i18n and
+    // repaints, and a wrong row would leave this message absent — so the wait
+    // is a real gate on the switch having happened, and its periodic screen
+    // dumps name the problem if it didn't.
+    harness.wait_for_screen_contains("Idioma cambiado").unwrap();
 
     // Open search again to verify Spanish is now active
     harness
@@ -191,7 +185,7 @@ fn test_locale_switch_via_command_palette() {
     harness.render().unwrap();
 
     // Search UI should now show Spanish labels
-    harness.assert_screen_contains("Distinguir");
+    harness.wait_for_screen_contains("Distinguir").unwrap();
     harness.assert_screen_not_contains("Case Sensitive");
 }
 
@@ -323,6 +317,7 @@ fn test_multiple_locales_can_be_loaded() {
         ("ko", "전"),
         ("ru", "Слово"),
         ("pt-BR", "Palavra"),
+        ("bg", "Цяла дума"),
     ];
 
     for (locale, expected_text) in locales_and_expected {
@@ -346,21 +341,13 @@ fn test_multiple_locales_can_be_loaded() {
 
 /// Helper function to switch locale via command palette
 fn switch_locale(harness: &mut EditorTestHarness, locale: &str, search_command: &str) {
-    // Open command palette with Ctrl+P
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Type to filter for locale command
-    harness.type_text(search_command).unwrap();
-    harness.render().unwrap();
-
-    // Execute the command
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
+    // Open the picker through `run_palette_command`, which waits for the
+    // command to be listed as a *result* before confirming. Typing the name
+    // and pressing Enter blind fires on whichever row was selected when the
+    // last keystroke was processed — Quick Open re-filters on input change,
+    // not per frame — so on a loaded runner this could run some other command
+    // and leave the locale untouched.
+    harness.run_palette_command(search_command).unwrap();
 
     // Clear the default "en" and type the new locale code (matching existing test pattern)
     harness

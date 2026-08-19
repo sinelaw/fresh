@@ -1,0 +1,64 @@
+=== pressed the divider
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open    │»[x] build the reconciler
+( ) Done    │»[ ] lay it out
+            │»[ ] route the pointer
+            │»[ ] wire up focus
+            │
+            │
+            │
+            │
+            │
+            │
+5 tasks · light · synced 0 · ready
+
+=== dragged right — the pointer left the divider's own column
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter              │new task…                      Add
+(o) All░░░░░░░░░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░
+( ) Open            │»[x] build the reconciler
+( ) Done            │»[ ] lay it out
+                    │»[ ] route the pointer
+                    │»[ ] wire up focus
+                    │
+                    │
+                    │
+                    │
+                    │
+                    │
+5 tasks · light · synced 0 · ready
+
+=== and back left, over an unrelated widget
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter  │new task…                                  Add
+(o) All░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open│»[x] build the reconciler
+( ) Done│»[ ] lay it out
+        │»[ ] route the pointer
+        │»[ ] wire up focus
+        │
+        │
+        │
+        │
+        │
+        │
+5 tasks · light · synced 0 · ready
+
+=== released: moving no longer resizes
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter  │new task…                                  Add
+(o) All░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+( ) Open│»[x] build the reconciler
+( ) Done│»[ ] lay it out
+        │»[ ] route the pointer
+        │»[ ] wire up focus
+        │
+        │
+        │
+        │
+        │
+        │
+5 tasks · light · synced 0 · ready
+

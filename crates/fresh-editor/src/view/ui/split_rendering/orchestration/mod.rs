@@ -25,8 +25,8 @@ use super::layout::{
     sync_viewport_to_content, SplitLayout,
 };
 use super::scrollbar::{
-    compute_max_line_length, render_composite_scrollbar, render_horizontal_scrollbar,
-    render_scrollbar, scrollbar_line_counts,
+    compute_max_line_length, project_scrollbar_markers, render_composite_scrollbar,
+    render_horizontal_scrollbar, render_scrollbar, scrollbar_line_counts,
 };
 use super::EditorRenderConfig;
 use crate::app::types::ViewLineMapping;
@@ -35,6 +35,7 @@ use crate::config::IndentationGuideMode;
 use crate::model::buffer::Buffer;
 use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
 use crate::state::EditorState;
+use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::folding::FoldManager;
 use crate::view::split::SplitManager;
 use crate::view::ui::tabs::TabsRenderer;
@@ -448,34 +449,67 @@ pub(crate) fn render_content(
             };
 
             // Indentation guides are a source-code editing aid, like the column
-            // rulers above. Resolve the effective mode per buffer: an explicit
-            // plugin override (`setIndentationGuide`) wins; otherwise virtual
-            // buffers (grep results, *Diagnostics*, the Git Log commit list, …)
-            // default off because they aren't code, while ordinary file buffers
-            // follow the buffer's resolved `indentation_guide` gate (plain text
-            // defaults off; any language can opt out — see
-            // `BufferSettings::apply_config`) and then the global setting.
-            // A file-backed tool view the virtual default can't catch — the Git
-            // Log commit-detail diff — opts out via the override. This is
-            // independent of the line-number gutter, so an ordinary buffer
-            // keeps its guides with line numbers turned off.
+            // rulers above. Resolve the effective mode per buffer: the user's
+            // per-buffer toggle wins, then an explicit plugin override
+            // (`setIndentationGuide`); otherwise virtual buffers (grep results,
+            // *Diagnostics*, the Git Log commit list, …) default off because
+            // they aren't code, while ordinary file buffers follow the buffer's
+            // resolved `indentation_guide` gate (plain text defaults off; any
+            // language can opt out — see `BufferSettings::apply_config`) and
+            // then the global setting. A file-backed tool view the virtual
+            // default can't catch — the Git Log commit-detail diff — opts out
+            // via the plugin override. This is independent of the line-number
+            // gutter, so an ordinary buffer keeps its guides with line numbers
+            // turned off.
             let mut style = style;
-            style.cfg.indentation_guide = match state.indentation_guide_override {
-                Some(true) => style.cfg.indentation_guide,
-                Some(false) => IndentationGuideMode::None,
-                None if is_virtual_buffer => IndentationGuideMode::None,
-                None if !state.buffer_settings.indentation_guide => IndentationGuideMode::None,
-                None => style.cfg.indentation_guide,
-            };
+            style.cfg.indentation_guide = crate::config::resolve_indentation_guide_mode(
+                crate::config::IndentationGuideInputs {
+                    global: style.cfg.indentation_guide,
+                    // The user pin is per (split, buffer) on the view state,
+                    // so the same buffer in another split keeps its own guides.
+                    user_override: split_view_states
+                        .as_deref()
+                        .and_then(|vs| vs.get(&split_id))
+                        .and_then(|vs| vs.indentation_guide_user_override),
+                    plugin_override: state.indentation_guide_override,
+                    language_gate: state.buffer_settings.indentation_guide,
+                    is_virtual_buffer,
+                },
+            );
 
+            // Per-(split, buffer) pin, read before the mutable folds borrow.
+            let fold_indicators_visible = split_view_states
+                .as_deref()
+                .and_then(|vs| vs.get(&split_id))
+                .map(|vs| vs.fold_indicators_visible())
+                .unwrap_or(true);
             let mut empty_folds = FoldManager::new();
             let folds = split_view_states
                 .as_deref_mut()
                 .and_then(|vs| vs.get_mut(&split_id))
                 .map(|vs| &mut vs.folds)
                 .unwrap_or(&mut empty_folds);
+            // Resolved here, while the split's folds are in hand: the scrollbar
+            // reads the same row space the render does, and that space now
+            // excludes collapsed lines.
+            let scrollbar_fold_ranges = state.fold_ranges(folds);
 
             let _render_buf_span = tracing::trace_span!("render_buffer_in_split").entered();
+
+            // Use a previously discovered bound so an extra wheel step cannot
+            // paint a blank frame before the post-render scan refreshes it.
+            if show_horizontal_scrollbar
+                && !viewport.line_wrap_enabled
+                && viewport.max_line_length_seen > 0
+            {
+                let visible_width = viewport.width as usize;
+                let max_scroll = viewport
+                    .max_line_length_seen
+                    .max(visible_width)
+                    .saturating_sub(visible_width);
+                viewport.left_column = viewport.left_column.min(max_scroll);
+            }
+
             let split_view_mappings = render_buffer_in_split(
                 buf,
                 state,
@@ -490,13 +524,13 @@ pub(crate) fn render_content(
                 view_prefs.view_mode,
                 view_prefs.compose_width,
                 view_prefs.compose_column_guides,
-                view_prefs.view_transform,
                 buffer_id,
                 hide_cursor,
                 session_mode,
                 effective_rulers,
                 view_prefs.show_line_numbers,
                 effective_highlight_current_line,
+                fold_indicators_visible,
                 split_show_tilde,
                 highlight_current_column && state.show_cursors,
                 cell_theme_map,
@@ -512,13 +546,27 @@ pub(crate) fn render_content(
             // For small files, count actual lines for accurate scrollbar
             // For large files, we'll use a constant thumb size
             let buffer_len = state.buffer.len();
-            let (total_lines, top_line) = {
+            let (total_lines, top_line, marker_basis) = {
                 let _span = tracing::trace_span!("scrollbar_line_counts").entered();
-                scrollbar_line_counts(state, &viewport, large_file_threshold_bytes, buffer_len)
+                scrollbar_line_counts(
+                    state,
+                    &viewport,
+                    large_file_threshold_bytes,
+                    buffer_len,
+                    scrollbar_fold_ranges,
+                )
             };
 
             // Render vertical scrollbar for this split and get thumb position
             let (thumb_start, thumb_end) = if panel_show_vscroll {
+                let marker_cells = {
+                    let _span = tracing::trace_span!("scrollbar_markers").entered();
+                    project_scrollbar_markers(
+                        state,
+                        marker_basis,
+                        layout.scrollbar_rect.height as usize,
+                    )
+                };
                 render_scrollbar(
                     buf,
                     state,
@@ -529,6 +577,7 @@ pub(crate) fn render_content(
                     large_file_threshold_bytes,
                     total_lines,
                     top_line,
+                    &marker_cells,
                 )
             } else {
                 (0, 0)
@@ -570,8 +619,8 @@ pub(crate) fn render_content(
                 if let Some(view_state) = view_states.get_mut(&split_id) {
                     tracing::trace!(
                         "Writing back viewport: top_byte={}, top_view_line_offset={}, skip_ensure_visible={}",
-                        viewport.top_byte,
-                        viewport.top_view_line_offset,
+                        viewport.top_byte(),
+                        viewport.top_view_line_offset(),
                         viewport.should_skip_ensure_visible()
                     );
                     view_state.viewport = viewport.clone();
@@ -755,15 +804,37 @@ fn render_split_tab_bar(
             }
         })
         .collect();
+    // Split control buttons live at the right side of the tabs row.
+    //   Maximize/unmaximize: shown when multiple splits exist OR maximized.
+    //   Close: shown when multiple splits exist AND not maximized.
+    let show_maximize_btn = has_multiple_splits || is_maximized;
+    let show_close_btn = has_multiple_splits && !is_maximized;
+    // When a split has any control button the right cluster (`> □ ×`) is owned
+    // here (drawn on top after the tabs); the tab renderer then skips only its
+    // own right-overflow `>`, but still draws the `+` inline right after the
+    // last tab. A single, unmaximized split has no cluster and lets the tab
+    // renderer draw its own inline `+`/`>` (fresh#2768 follow-up).
+    let external_controls = show_maximize_btn || show_close_btn;
+
+    // Reserve the cluster columns from the tab bar's width so the scrolling
+    // tabs and the `<` left indicator never render underneath the cluster.
+    let reserve = crate::view::ui::tabs::split_control_reserve(show_maximize_btn, show_close_btn);
+    let tabs_area = Rect::new(
+        layout.tabs_rect.x,
+        layout.tabs_rect.y,
+        layout.tabs_rect.width.saturating_sub(reserve),
+        layout.tabs_rect.height,
+    );
+
     // Render tabs for this split and collect hit areas. The tab bar records its
     // theme-key runs into a local vec as it paints; apply them to the per-cell
     // map afterward (the map isn't borrowed here).
     let mut tab_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-    let tab_layout = {
+    let mut tab_layout = {
         let mut rec = crate::app::types::CellThemeRecorder::new(&mut tab_runs);
         TabsRenderer::render_for_split(
             buf,
-            layout.tabs_rect,
+            tabs_area,
             split_buffers,
             buffers,
             buffer_metadata,
@@ -777,37 +848,58 @@ fn render_split_tab_bar(
             preview_buffer,
             Some(&mut rec),
             draw_tab_bar,
+            external_controls,
         )
     };
     crate::app::types::apply_theme_runs(cell_theme_map, screen_width, &tab_runs);
 
-    tab_layouts.insert(split_id, tab_layout);
     let tab_row = layout.tabs_rect.y;
 
-    // Split control buttons at the right side of the tabs row.
-    //   Maximize/unmaximize: shown when multiple splits exist OR maximized.
-    //   Close: shown when multiple splits exist AND not maximized.
-    let show_maximize_btn = has_multiple_splits || is_maximized;
-    let show_close_btn = has_multiple_splits && !is_maximized;
-    if !show_maximize_btn && !show_close_btn {
+    // Single, unmaximized split: no cluster — the tab renderer already drew its
+    // own `+`/`<`/`>`. Record the layout and stop.
+    if !external_controls {
+        tab_layouts.insert(split_id, tab_layout);
         return;
     }
 
-    // Layout from the right edge: [maximize] [space] [close] |
-    let mut btn_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(2);
-    if show_close_btn {
-        let is_hovered = hovered_close_split == Some(split_id);
-        let close_fg = if is_hovered {
-            theme.tab_close_hover_fg
-        } else {
-            theme.line_number_fg
-        };
-        let close_button =
-            Paragraph::new("×").style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
-        close_button.render(Rect::new(btn_x, tab_row, 1, 1), buf);
-        close_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
-        btn_x = btn_x.saturating_sub(2); // 1 space before the next button
+    // Draw the right-side control cluster on top of the reserved columns, in
+    // visual order `> □ ×` (fresh#2768 follow-up):
+    //
+    //   [gap] > □ ×  [trail]
+    //
+    // `□` (maximize) is present only when `show_maximize_btn`, `×` (close) only
+    // when `show_close_btn`, and the `>` right-overflow indicator is drawn only
+    // when the tabs overflow (its column is reserved either way). The `+`
+    // new-buffer button is *not* part of this cluster — the tab renderer already
+    // drew it inline right after the last tab and set `new_tab_area`. Hit areas
+    // are stored so a click on each glyph routes to its action: `>` →
+    // `right_scroll_area`, `□` → `maximize_split_areas`, `×` → `close_split_areas`
+    // (which pops a confirm menu rather than closing immediately).
+    let overflow = tab_layout.right_overflow;
+    let cluster_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(reserve);
+    // Paint the whole cluster background first (separator surface) so the gap /
+    // trailing columns are clean regardless of prior cell content.
+    Paragraph::new(" ".repeat(reserve as usize))
+        .style(Style::default().bg(theme.tab_separator_bg))
+        .render(Rect::new(cluster_x, tab_row, reserve, 1), buf);
+
+    // Skip the leading gap.
+    let mut cx = cluster_x + 1;
+    // ">" right-overflow indicator — glyph only when tabs overflow; the column
+    // is reserved either way so the cluster never shifts as you scroll.
+    if overflow {
+        let gt_rect = Rect::new(cx, tab_row, 1, 1);
+        Paragraph::new(">")
+            .style(
+                Style::default()
+                    .fg(theme.line_number_fg)
+                    .bg(theme.tab_separator_bg),
+            )
+            .render(gt_rect, buf);
+        tab_layout.right_scroll_area = Some(gt_rect);
     }
+    cx += 1;
+    // "□" maximize / "⧉" unmaximize (restore) — just before the close button.
     if show_maximize_btn {
         let is_hovered = hovered_maximize_split == Some(split_id);
         let max_fg = if is_hovered {
@@ -815,13 +907,27 @@ fn render_split_tab_bar(
         } else {
             theme.line_number_fg
         };
-        // □ = maximize, ⧉ = unmaximize (restore).
         let icon = if is_maximized { "⧉" } else { "□" };
-        let max_button =
-            Paragraph::new(icon).style(Style::default().fg(max_fg).bg(theme.tab_separator_bg));
-        max_button.render(Rect::new(btn_x, tab_row, 1, 1), buf);
-        maximize_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
+        Paragraph::new(icon)
+            .style(Style::default().fg(max_fg).bg(theme.tab_separator_bg))
+            .render(Rect::new(cx, tab_row, 1, 1), buf);
+        maximize_split_areas.push((split_id, tab_row, cx, cx + 1));
+        cx += 1;
     }
+    if show_close_btn {
+        let is_hovered = hovered_close_split == Some(split_id);
+        let close_fg = if is_hovered {
+            theme.tab_close_hover_fg
+        } else {
+            theme.line_number_fg
+        };
+        Paragraph::new("×")
+            .style(Style::default().fg(close_fg).bg(theme.tab_separator_bg))
+            .render(Rect::new(cx, tab_row, 1, 1), buf);
+        close_split_areas.push((split_id, tab_row, cx, cx + 1));
+    }
+
+    tab_layouts.insert(split_id, tab_layout);
 }
 
 /// Render a composite (side-by-side panes) buffer for one split, plus its
@@ -1056,6 +1162,7 @@ pub(crate) fn compute_content_layout(
     show_horizontal_scrollbar: bool,
     diagnostics_inline_text: bool,
     show_tilde: bool,
+    bracket_highlight: BracketHighlightSettings,
 ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
     let visible_buffers = split_manager.get_visible_buffers(area);
     let active_split_id = split_manager.active_split();
@@ -1139,6 +1246,10 @@ pub(crate) fn compute_content_layout(
         let effective_highlight_current_line =
             view_prefs.highlight_current_line && state.show_cursors;
 
+        let fold_indicators_visible = split_view_states
+            .get(&split_id)
+            .map(|vs| vs.fold_indicators_visible())
+            .unwrap_or(true);
         let mut empty_folds = FoldManager::new();
         let folds = split_view_states
             .get_mut(&split_id)
@@ -1156,7 +1267,6 @@ pub(crate) fn compute_content_layout(
             lsp_waiting,
             view_prefs.view_mode,
             view_prefs.compose_width,
-            view_prefs.view_transform,
             estimated_line_length,
             highlight_context_bytes,
             relative_line_numbers,
@@ -1165,11 +1275,13 @@ pub(crate) fn compute_content_layout(
             software_cursor_only,
             view_prefs.show_line_numbers,
             effective_highlight_current_line,
+            fold_indicators_visible,
             diagnostics_inline_text,
             show_tilde,
             IndentationGuideMode::None,
             "▏",
             false,
+            bracket_highlight,
             None, // No cell theme map for layout-only computation
         );
 
@@ -1184,7 +1296,7 @@ pub(crate) fn compute_content_layout(
     view_line_mappings
 }
 
-/// Public wrapper for building base tokens - used by render.rs for the view_transform_request hook
+/// Public wrapper for building base tokens.
 pub(crate) fn build_base_tokens_for_hook(
     buffer: &mut Buffer,
     top_byte: usize,
@@ -1201,6 +1313,10 @@ pub(crate) fn build_base_tokens_for_hook(
         is_binary,
         line_ending,
         &[],
+        // The hook hands this stream to a plugin, which may wrap it at a width
+        // of its own choosing; budget by source lines only.
+        None,
+        false,
     )
 }
 

@@ -9,6 +9,12 @@ use crate::model::marker::{MarkerId, MarkerList};
 /// A collapsed fold range tracked by markers.
 #[derive(Debug, Clone)]
 pub struct FoldRange {
+    /// Marker at the first byte of the header line — the visible line that
+    /// owns the fold. Recorded at creation rather than re-derived from
+    /// `start_marker` on every query, so the fold keeps an identity for the
+    /// line it was collapsed on and [`FoldManager::prune_orphaned`] can tell
+    /// when that line is gone.
+    header_marker: MarkerId,
     /// Marker at the first hidden byte (start of line after header)
     start_marker: MarkerId,
     /// Marker at the end of the hidden range (start of line after fold end)
@@ -50,6 +56,17 @@ pub struct CollapsedFoldLineRange {
     pub header_text: Option<String>,
 }
 
+/// Whether the line starting at `line_start` has no non-whitespace content.
+///
+/// Shared by [`FoldManager::prune_orphaned`] and session restore, which
+/// enforce the same invariant from opposite ends: a blank line never owns a
+/// fold, whether it got there by an edit or by stale saved coordinates.
+fn header_line_is_blank(buffer: &Buffer, line_start: usize) -> bool {
+    let line_end = indent_folding::find_line_end_byte(buffer, line_start);
+    let bytes = buffer.slice_bytes(line_start..line_end);
+    indent_folding::slice_indent(&bytes, 1).1
+}
+
 /// Manages collapsed fold ranges for a buffer.
 #[derive(Debug, Clone)]
 pub struct FoldManager {
@@ -68,8 +85,16 @@ impl FoldManager {
     }
 
     /// Add a collapsed fold range.
+    ///
+    /// The header is the line immediately before the hidden range — that is
+    /// what every creation path (indent folding, LSP ranges, plugin
+    /// `addFold`) means by a fold's header — and it is pinned with its own
+    /// marker here so later edits can be told apart: one that merely moves
+    /// the header keeps the fold, one that deletes it retires the fold (see
+    /// [`Self::prune_orphaned`]).
     pub fn add(
         &mut self,
+        buffer: &Buffer,
         marker_list: &mut MarkerList,
         start: usize,
         end: usize,
@@ -79,10 +104,16 @@ impl FoldManager {
             return;
         }
 
-        let start_marker = marker_list.create(start, true); // left affinity
-        let end_marker = marker_list.create(end, false); // right affinity
+        // All right gravity, like every `MarkerList::create` marker.
+        let header_marker = marker_list.create(indent_folding::find_line_start_byte(
+            buffer,
+            start.saturating_sub(1),
+        ));
+        let start_marker = marker_list.create(start);
+        let end_marker = marker_list.create(end);
 
         self.ranges.push(FoldRange {
+            header_marker,
             start_marker,
             end_marker,
             placeholder,
@@ -92,10 +123,67 @@ impl FoldManager {
     /// Remove all fold ranges and their markers.
     pub fn clear(&mut self, marker_list: &mut MarkerList) {
         for range in &self.ranges {
+            marker_list.delete(range.header_marker);
             marker_list.delete(range.start_marker);
             marker_list.delete(range.end_marker);
         }
         self.ranges.clear();
+    }
+
+    /// Retire folds whose header line no longer exists, expanding them.
+    ///
+    /// A collapsed fold is a statement about one line: "the block opening
+    /// here is folded away". Delete that line and the statement has no
+    /// subject left — but the markers on the *hidden* range survive the
+    /// edit (the interval tree clamps markers into a deletion rather than
+    /// dropping them), so without this the fold silently adopts whatever
+    /// line now precedes the body and keeps someone's code hidden under a
+    /// header they never folded (#3031).
+    ///
+    /// Two shapes of "the opener is gone", both retired:
+    ///
+    /// * the header line was deleted outright — its marker has collapsed
+    ///   into the hidden range's start, so the fold no longer has a visible
+    ///   line of its own;
+    /// * the header line survives but its text does not. A blank line can
+    ///   never own a fold — indent folding refuses a blank header outright,
+    ///   and an LSP range starts on the construct it folds — so a fold that
+    ///   ends up on one is tracking something that has been edited away.
+    ///
+    /// Returns true when anything was retired, so callers can flag a redraw.
+    pub fn prune_orphaned(&mut self, buffer: &Buffer, marker_list: &mut MarkerList) -> bool {
+        if self.ranges.is_empty() {
+            return false;
+        }
+
+        let mut to_delete = Vec::new();
+
+        self.ranges.retain(|range| {
+            let header_byte = marker_list.get_position(range.header_marker);
+            let start_byte = marker_list.get_position(range.start_marker);
+            let orphaned = match (header_byte, start_byte) {
+                // The header line was deleted: its marker has been clamped
+                // to (or past) the first hidden byte, so no visible line is
+                // left to own the fold.
+                (Some(header), Some(start)) => {
+                    header >= start || header_line_is_blank(buffer, header)
+                }
+                // A marker that no longer resolves cannot be re-anchored.
+                _ => true,
+            };
+            if orphaned {
+                to_delete.push((range.header_marker, range.start_marker, range.end_marker));
+            }
+            !orphaned
+        });
+
+        for (header, start, end) in &to_delete {
+            marker_list.delete(*header);
+            marker_list.delete(*start);
+            marker_list.delete(*end);
+        }
+
+        !to_delete.is_empty()
     }
 
     /// Remove any fold that contains the given byte position.
@@ -111,14 +199,15 @@ impl FoldManager {
                 return true;
             };
             if start_byte <= byte && byte < end_byte {
-                to_delete.push((range.start_marker, range.end_marker));
+                to_delete.push((range.header_marker, range.start_marker, range.end_marker));
                 false
             } else {
                 true
             }
         });
 
-        for (start, end) in &to_delete {
+        for (header, start, end) in &to_delete {
+            marker_list.delete(*header);
             marker_list.delete(*start);
             marker_list.delete(*end);
         }
@@ -154,11 +243,18 @@ impl FoldManager {
                 continue;
             }
 
-            let header_byte =
-                indent_folding::find_line_start_byte(buffer, start_byte.saturating_sub(1));
+            // The recorded header, not one re-derived from `start_byte`: the
+            // two agree while the fold is intact, and when they don't the
+            // fold is stale and `prune_orphaned` retires it.
+            let Some(header_byte) = marker_list.get_position(range.header_marker) else {
+                continue;
+            };
+            if header_byte >= start_byte {
+                continue;
+            }
 
             ranges.push(ResolvedFoldRange {
-                header_line: start_line - 1,
+                header_line: buffer.get_line_number(header_byte),
                 start_line,
                 end_line,
                 start_byte,
@@ -188,27 +284,26 @@ impl FoldManager {
     /// Returns true if a fold was removed.
     pub fn remove_by_header_byte(
         &mut self,
-        buffer: &Buffer,
+        _buffer: &Buffer,
         marker_list: &mut MarkerList,
         target_header_byte: usize,
     ) -> bool {
         let mut to_delete = Vec::new();
 
         self.ranges.retain(|range| {
-            let Some(start_byte) = marker_list.get_position(range.start_marker) else {
+            let Some(current_header) = marker_list.get_position(range.header_marker) else {
                 return true;
             };
-            let current_header =
-                indent_folding::find_line_start_byte(buffer, start_byte.saturating_sub(1));
             if current_header == target_header_byte {
-                to_delete.push((range.start_marker, range.end_marker));
+                to_delete.push((range.header_marker, range.start_marker, range.end_marker));
                 false
             } else {
                 true
             }
         });
 
-        for (start, end) in &to_delete {
+        for (header, start, end) in &to_delete {
+            marker_list.delete(*header);
             marker_list.delete(*start);
             marker_list.delete(*end);
         }
@@ -339,8 +434,8 @@ impl LspFoldRanges {
             // Right affinity: text inserted at the line start pushes the marker
             // down with the content (so it keeps pointing at the same *code*,
             // not the same *byte offset*).
-            let start_marker = marker_list.create(start_byte, false);
-            let end_marker = marker_list.create(end_byte, false);
+            let start_marker = marker_list.create(start_byte);
+            let end_marker = marker_list.create(end_byte);
             self.ranges.push(LspFoldEntry {
                 start_marker,
                 end_marker,
@@ -396,27 +491,27 @@ impl Default for FoldManager {
 /// ([`PatternIndentCalculator::count_leading_indent`]).
 pub mod indent_folding {
     use crate::model::buffer::Buffer;
-    use crate::primitives::indent_pattern::PatternIndentCalculator;
+
+    /// Chunk size for the line-boundary scans below.  Scanning via
+    /// per-byte `byte_at` calls costs a full `slice_bytes` round-trip
+    /// per byte, which is what made cursor movement inside a very long
+    /// line slow (these scans run per rendered frame); block reads make
+    /// the scans effectively memchr-speed.
+    const LINE_SCAN_CHUNK: usize = 4096;
 
     /// Find the byte offset of the start of the line containing `pos`.
     /// Scans backward for `\n` (or returns 0).
     pub fn find_line_start_byte(buffer: &Buffer, pos: usize) -> usize {
-        if pos == 0 {
-            return 0;
-        }
-        let mut p = pos.min(buffer.len()).saturating_sub(1);
-        loop {
-            match PatternIndentCalculator::byte_at(buffer, p) {
-                Some(b'\n') => return p + 1,
-                None => return 0,
-                _ => {
-                    if p == 0 {
-                        return 0;
-                    }
-                    p -= 1;
-                }
+        let mut end = pos.min(buffer.len());
+        while end > 0 {
+            let start = end.saturating_sub(LINE_SCAN_CHUNK);
+            let bytes = buffer.slice_bytes(start..end);
+            if let Some(i) = bytes.iter().rposition(|&b| b == b'\n') {
+                return start + i + 1;
             }
+            end = start;
         }
+        0
     }
 
     /// Find the exclusive byte offset just past the line containing `pos`
@@ -424,13 +519,14 @@ pub mod indent_folding {
     /// line has no trailing newline). Scans forward for `\n`.
     pub fn find_line_end_byte(buffer: &Buffer, pos: usize) -> usize {
         let buf_len = buffer.len();
-        let mut p = pos;
-        while p < buf_len {
-            match PatternIndentCalculator::byte_at(buffer, p) {
-                Some(b'\n') => return p + 1,
-                None => return buf_len,
-                _ => p += 1,
+        let mut start = pos.min(buf_len);
+        while start < buf_len {
+            let end = (start + LINE_SCAN_CHUNK).min(buf_len);
+            let bytes = buffer.slice_bytes(start..end);
+            if let Some(i) = bytes.iter().position(|&b| b == b'\n') {
+                return start + i + 1;
             }
+            start = end;
         }
         buf_len
     }
@@ -582,16 +678,7 @@ pub mod indent_folding {
     /// Scans forward for `\n` and returns the byte after it. If no `\n` is
     /// found, returns `buffer.len()`.
     pub fn find_next_line_start_byte(buffer: &Buffer, pos: usize) -> usize {
-        let mut p = pos;
-        let len = buffer.len();
-        while p < len {
-            match PatternIndentCalculator::byte_at(buffer, p) {
-                Some(b'\n') => return p + 1,
-                None => return len,
-                _ => p += 1,
-            }
-        }
-        len
+        find_line_end_byte(buffer, pos)
     }
 
     /// Byte-range of a fold that contains `target_byte`.

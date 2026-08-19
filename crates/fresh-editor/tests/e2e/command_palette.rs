@@ -400,37 +400,103 @@ fn test_quick_open_goto_line_live_preview_mouse_click_commits() {
     // the popup's outer rect absorbs clicks across its full chrome, so
     // reading coordinates on a transient taller-popup frame would have
     // the click silently no-op against the wrong layout.
+    //
+    // `wait_until_stable` (not plain `wait_until`): on slow CI runners
+    // this test failed fast three times (macOS ×1, Windows ×2 — never
+    // reproduced locally, 25/25 green under load) with no diagnostic
+    // output. The stability phase rules out clicking on a frame that
+    // met the condition mid-transition while a late async suggestion
+    // refresh was still reshaping the popup; the panic paths below all
+    // dump the screen so a fourth failure explains itself.
+    // Drain the background Quick Open file scan BEFORE reading click
+    // coordinates: on slow CI runners (the strike-4 evidence — Windows,
+    // screen showing the restored pre-preview `Ln 1` after Esc) the
+    // scan's `files_loaded` delivery lands seconds after Ctrl+P, inside
+    // the click window, and its suggestion refresh re-enters
+    // `apply_goto_line_preview` between the observed frame and the
+    // click's hit-test. Locally the scan completes in milliseconds,
+    // which is why this never reproduced (25/25 under load). Quiescence
+    // first makes the interleaving impossible rather than unlikely.
     harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains(" 78 │ LINE78") && s.contains("Go to line 80")
-        })
-        .expect("Goto-line preview popup should be fully rendered with LINE78 visible");
+        .wait_for_async_quiescence(3)
+        .expect("async pipeline should go quiet after the file scan");
+
+    if let Err(e) = harness.wait_until_stable(|h| {
+        let s = h.screen_to_string();
+        s.contains(" 78 │ LINE78") && s.contains("Go to line 80")
+    }) {
+        panic!(
+            "Goto-line preview wait errored: {e:#}\nscreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
 
     // Locate the click target by the unique editor-body pattern
     // "│ LINE78": the `│` gutter separator only appears in the editor
     // body, never in popup chrome or hint bars. Click in the LINE78 text
     // (skip past "│ ") so the coordinate is unambiguously over editor
     // content rather than gutter or popup.
-    let (anchor_col, target_row) = harness
-        .find_text_on_screen("│ LINE78")
-        .expect("Editor row containing LINE78 should be visible");
+    let (anchor_col, target_row) = match harness.find_text_on_screen("│ LINE78") {
+        Some(hit) => hit,
+        None => panic!(
+            "LINE78 row vanished between the stable wait and the click — screen:\n{}",
+            harness.screen_to_string()
+        ),
+    };
     // find_text_on_screen returns the column of the matched substring's
     // first byte ('│', 1 cell wide). "LINE78" starts 2 columns to the
     // right of the separator (`│ LINE78`).
     let click_col = anchor_col + 2;
-    harness.mouse_click(click_col, target_row).unwrap();
+    if let Err(e) = harness.mouse_click(click_col, target_row) {
+        panic!(
+            "mouse_click({click_col},{target_row}) errored: {e:#}\nscreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
 
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    // Post-click evidence for any future failure (nextest surfaces
+    // captured stderr only when the test fails): the byte position
+    // tells whether the click committed (line 78 ≈ byte 540) or was
+    // absorbed (still at the preview target, line 80), and the frame
+    // shows the popup/viewport state the click was hit-tested against.
+    if let Err(e) = harness.render() {
+        panic!("post-click render errored: {e:#}");
+    }
+    eprintln!(
+        "post-click: cursor_byte={} screen:\n{}",
+        harness.cursor_position(),
+        harness.screen_to_string()
+    );
+
+    if let Err(e) = harness.send_key(KeyCode::Esc, KeyModifiers::NONE) {
+        panic!(
+            "Esc after click errored: {e:#}\nscreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
 
     // The pre-preview snapshot (line 1) must NOT overwrite the click target
     // (line 78) — status bar must report line 78 after the prompt closes.
+    //
+    // Wait for the status bar to report *a* line, then assert which one,
+    // rather than waiting for line 78 itself. The click and the Esc are both
+    // fully dispatched by the time we get here, so the cursor's line is
+    // already decided: if the click did not land where this test intends —
+    // absorbed by the suggestion popup's outer rect, or a row off — the
+    // status bar will say so on its first frame and no later frame will
+    // change it. Waiting on "Ln 78," in that case is a wait for a state that
+    // can no longer arrive, i.e. a 180 s nextest timeout with no failed
+    // assertion to point at (CONTRIBUTING Code §16); this way the same
+    // failure names the line the cursor actually ended on.
     harness
-        .wait_until(|h| h.screen_to_string().contains("Ln 78,"))
-        .expect(
-            "Cursor should stay on the clicked line 78 — pre-preview snapshot must be \
-             dropped on editor click",
-        );
+        .wait_until(|h| h.screen_to_string().contains(", Col "))
+        .expect("Status bar should be visible once the prompt closes");
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 78,"),
+        "Cursor should stay on the clicked line 78 — pre-preview snapshot must be \
+         dropped on editor click; screen:\n{screen}"
+    );
 }
 
 /// A buffer edit that shifts the cursor via `adjust_for_edit` while the
@@ -1559,6 +1625,11 @@ fn test_command_palette_shows_shortcuts() {
 fn test_command_palette_shortcuts_with_filtering() {
     use crossterm::event::{KeyCode, KeyModifiers};
     let mut harness = EditorTestHarness::new(120, 30).unwrap();
+
+    // Give the buffer something to save: Save File is only offered when there
+    // are unsaved changes, and disabled entries sort below the visible rows.
+    harness.type_text("EDITED").unwrap();
+    harness.render().unwrap();
 
     // Trigger the command palette
     harness

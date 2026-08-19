@@ -174,9 +174,26 @@ parser exists to prevent — each is covered by a test that fails without the fi
   The old decoder mapped it to a left button-down, flooding clicks on every move.
 - **SGR reports tolerate a trailing separator** before the terminator; the
   decoder now reads the first three fields instead of requiring exactly three.
-- **Kitty event types are honoured.** The modifier field's press/repeat/release
-  sub-parameter becomes the key event's kind, so a release is no longer reported
-  as a fresh press (which would double every keystroke with event reporting on).
+- **Kitty event types are honoured, in every form a key can arrive in.** The
+  modifier field's press/repeat/release sub-parameter becomes the key event's
+  kind, so a release is no longer reported as a fresh press (which would double
+  every keystroke with event reporting on). This covers the CSI-u form *and* the
+  legacy forms, which the flag does not migrate to CSI-u: the arrows and
+  Home/End/keypad-Begin (`CSI 1;<mods>:<event-type> {ABCDEFHPQS}`) and the
+  editing/function keys (`CSI <n>;<mods>:<event-type> ~`) keep their legacy final
+  byte and merely gain the sub-parameter. Decoding it for CSI-u alone left every
+  arrow keypress moving the cursor twice and every Delete removing two characters
+  (#2796) while typing was unaffected — the asymmetry that hid the gap.
+- **`0x1F` reports as `Ctrl+/`, matching the kitty form.** A terminal without
+  the kitty keyboard protocol has one byte for that chord and sends it for
+  Ctrl+/, Ctrl+7 and Ctrl+_ alike, so the parser has to pick one spelling. It
+  picks `/`: the key people actually press for it (no Shift needed), and the
+  key a kitty terminal reports for the same chord via `CSI 47;5u`. Deriving the
+  whole `0x1C..=0x1F` range arithmetically instead gave `Ctrl+_`, which no
+  keymap binds — so `ctrl+/` (toggle-comment in the default keymap, undo in the
+  emacs one) fired under kitty and nowhere else (#2933). `0x1C`/`0x1D`/`0x1E`
+  keep `\`, `]`, `^`: those *are* the keys bound to them, and `ctrl+]` and
+  `ctrl+\` are live bindings.
 - **Modifier decoding is complete.** Shift/Alt/Ctrl/Super/Hyper/Meta are all
   mapped, and the modifier field is parsed as `u16` so its maximum legal value
   (256) no longer overflows and fails closed. Caps Lock / Num Lock have no

@@ -132,6 +132,7 @@ impl Editor {
                 let buf = self.active_buffer();
                 let win = self.active_window_mut();
                 win.invalidate_layouts_for_buffer(buf);
+                win.prune_orphaned_folds(buf);
                 win.schedule_semantic_tokens_full_refresh(buf);
                 win.schedule_folding_ranges_refresh(buf);
             }
@@ -143,6 +144,7 @@ impl Editor {
                     let buf = self.active_buffer();
                     let win = self.active_window_mut();
                     win.invalidate_layouts_for_buffer(buf);
+                    win.prune_orphaned_folds(buf);
                     win.schedule_semantic_tokens_full_refresh(buf);
                     win.schedule_folding_ranges_refresh(buf);
                 }
@@ -391,15 +393,21 @@ impl Editor {
         }
         position_deltas.sort_by_key(|(pos, _)| *pos);
 
+        // Prefix-summed deltas so the shift for a position is a binary search
+        // rather than a walk over every edit. Re-summing the whole list per
+        // cursor event made a replace-all quadratic in the match count — one
+        // edit per match, one event per match (issue #2893).
+        let delta_positions: Vec<usize> = position_deltas.iter().map(|(pos, _)| *pos).collect();
+        let delta_prefix: Vec<isize> = std::iter::once(0)
+            .chain(position_deltas.iter().scan(0isize, |acc, (_, delta)| {
+                *acc += delta;
+                Some(*acc)
+            }))
+            .collect();
+
         // Helper: calculate cumulative shift for a position based on edits at lower positions
         let calc_shift = |original_pos: usize| -> isize {
-            let mut shift: isize = 0;
-            for (edit_pos, delta) in &position_deltas {
-                if *edit_pos < original_pos {
-                    shift += delta;
-                }
-            }
-            shift
+            delta_prefix[delta_positions.partition_point(|pos| *pos < original_pos)]
         };
 
         // Apply adjustments to cursor positions
@@ -776,7 +784,7 @@ impl Editor {
         // `seen_byte_ranges`, re-fire `lines_changed` for all visible
         // lines, and rebuild every conceal/soft-break marker — bumping the
         // manager versions and invalidating the whole `LineWrapCache` and
-        // `VisualRowIndex` per keypress (the compose-mode arrow-key lag).
+        // the wrap index per keypress (the compose-mode arrow-key lag).
         //
         // A structure-changing edit (a newline inserted or deleted) still
         // needs a full refresh, for a subtler reason: it renumbers every row

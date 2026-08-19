@@ -48,6 +48,36 @@ const cfg = editor.getPluginConfig() as { autoEnable?: boolean };
 if (cfg.autoEnable) { /* ... */ }
 ```
 
+## Reacting to changes
+
+The value a `defineConfigX(...)` call returns is a snapshot from plugin
+load time. If you keep it in a variable instead of re-reading it at the
+point of use, subscribe to `config_changed` — otherwise your setting
+will appear to do nothing until the editor restarts:
+
+```ts
+let autoEnable = editor.defineConfigBoolean("autoEnable", { default: false });
+
+editor.on("config_changed", () => {
+  const cfg = (editor.getPluginConfig() ?? {}) as { autoEnable?: boolean };
+  autoEnable = cfg.autoEnable === true;
+});
+```
+
+The hook fires after the user saves from the Settings UI and after a
+config reload from disk, once the new config is live — so
+`getPluginConfig()` and `getConfig()` already return the new values when
+your handler runs. It carries no payload: re-read the keys you care
+about and compare against what you were holding.
+
+It does **not** fire for your own `editor.setSetting(...)` writes, so a
+plugin that re-configures itself from this handler won't wake itself
+back up.
+
+Plugins that already read the setting at point of use (as in the
+`getPluginConfig()` example above) need no subscription — they pick up
+the change on the next read.
+
 ## Available methods
 
 | Method                          | TS return type     | Settings UI widget |

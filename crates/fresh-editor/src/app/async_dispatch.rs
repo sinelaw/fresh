@@ -13,6 +13,12 @@ use crate::view::prompt::PromptType;
 
 use super::Editor;
 
+/// How long the editor thread may spend dispatching async messages in one
+/// tick. A pathology guard rather than a frame pacer (see
+/// `PLUGIN_COMMAND_FRAME_BUDGET`): normal bursts drain in a pass or two;
+/// only a flood is deferred.
+const ASYNC_MESSAGE_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(50);
+
 impl Editor {
     /// Resolve the `attachRemoteAgent` promise behind `request_id` — the
     /// session (authority + window) is fully constructed. Resolves with `null`;
@@ -79,14 +85,42 @@ impl Editor {
         self.remote_attach_cancelled.remove(&request_id)
     }
 
-    /// Process pending async messages from the async bridge
+    /// Drain pending async messages and plugin commands to completion.
     ///
-    /// This should be called each frame in the main loop to handle:
+    /// This is the historical contract of this method and what direct
+    /// callers (tests, the test API, one-shot tools) rely on: after it
+    /// returns, everything that was pending at call time — including work
+    /// the per-pass frame budget deferred — has been dispatched. The
+    /// interactive loops must NOT use this; they call
+    /// [`Self::process_async_messages_budgeted`] so one burst is spread
+    /// across frames instead of stalling one.
+    pub fn process_async_messages(&mut self) -> bool {
+        let mut needs_render = false;
+        // The cap is a backstop against a plugin that emits continuously —
+        // each pass drains everything that had arrived when it started, so
+        // legitimate cascades settle in a handful of passes.
+        for _ in 0..64 {
+            needs_render |= self.process_async_messages_budgeted();
+            if self.async_message_backlog.is_empty() && !self.plugin_backlog_pending() {
+                break;
+            }
+        }
+        needs_render
+    }
+
+    /// Process pending async messages from the async bridge, against a
+    /// frame budget.
+    ///
+    /// This is what the interactive loops call each frame:
     /// - LSP diagnostics
     /// - LSP initialization/errors
     /// - File system changes (future)
     /// - Git status updates
-    pub fn process_async_messages(&mut self) -> bool {
+    ///
+    /// A burst larger than the budget is deferred in arrival order and the
+    /// return value stays `true` until the backlog drains, keeping the loop
+    /// on its frame cadence.
+    pub fn process_async_messages_budgeted(&mut self) -> bool {
         // Check plugin thread health - will panic if thread died due to error
         // This ensures plugin errors surface quickly instead of causing silent hangs
         self.plugin_manager.write().unwrap().check_thread_health();
@@ -96,6 +130,12 @@ impl Editor {
         // per-frame connection-state poll: the forwarder awaits the channel's
         // reconnect notification and posts `RemoteReconnected`.
         self.ensure_remote_reconnect_forwarders();
+
+        // Kick off off-loop content loads for any freshly-restored remote
+        // placeholder buffers (idempotent; drains each window's queue). This is
+        // what makes a dived-into remote session's files fill in without ever
+        // reading them on the editor loop.
+        self.drive_pending_content_loads();
 
         let Some(bridge) = &self.async_bridge else {
             return false;
@@ -107,10 +147,12 @@ impl Editor {
         // Order matters only for cosmetic message ordering on a
         // very-busy frame; semantically the dispatcher is the same
         // for every source.
-        let mut messages = {
+        let mut messages: Vec<AsyncMessage> =
+            std::mem::take(&mut self.async_message_backlog).into();
+        {
             let _s = tracing::info_span!("try_recv_all").entered();
-            bridge.try_recv_all()
-        };
+            messages.extend(bridge.try_recv_all());
+        }
         for window in self.windows.values() {
             messages.extend(window.bridge.try_recv_all());
         }
@@ -134,7 +176,14 @@ impl Editor {
             "received async messages"
         );
 
-        for message in messages {
+        // Frame budget, same contract as the plugin command drain: dispatch
+        // against a deadline, then defer the tail in arrival order. A burst
+        // (spawn storm, LSP flood) is spread over frames instead of being
+        // fully absorbed before the next one.
+        let deadline = std::time::Instant::now() + ASYNC_MESSAGE_FRAME_BUDGET;
+        let mut handled = 0usize;
+        let mut messages = messages.into_iter();
+        for message in messages.by_ref() {
             match message {
                 AsyncMessage::LspDiagnostics {
                     uri,
@@ -220,12 +269,9 @@ impl Editor {
                 } => {
                     self.handle_lsp_code_action_resolved(action);
                 }
-                AsyncMessage::LspCompletionResolved {
-                    request_id: _,
-                    item,
-                } => {
+                AsyncMessage::LspCompletionResolved { request_id, item } => {
                     if let Ok(resolved) = item {
-                        self.handle_completion_resolved(resolved);
+                        self.handle_completion_resolved(request_id, resolved);
                     }
                 }
                 AsyncMessage::LspFormatting {
@@ -382,6 +428,13 @@ impl Editor {
                     terminal,
                     exit_code,
                 } => {
+                    // If this is the interactive self-update terminal, move the
+                    // status-bar indicator to its terminal state. The exit code
+                    // distinguishes all three: installed, action-required, failed.
+                    if self.self_update_terminal == Some(terminal.terminal) {
+                        self.finish_self_update(exit_code);
+                        self.self_update_terminal = None;
+                    }
                     self.handle_terminal_exited(terminal, exit_code);
                 }
 
@@ -405,6 +458,13 @@ impl Editor {
                 }
                 AsyncMessage::RemoteReconnected { connection_id } => {
                     self.handle_remote_reconnected(connection_id);
+                }
+                AsyncMessage::RemoteBufferContentLoaded {
+                    window_id,
+                    buffer_id,
+                    content,
+                } => {
+                    self.handle_remote_buffer_content_loaded(window_id, buffer_id, content);
                 }
                 AsyncMessage::RemoteAttachFailed {
                     error,
@@ -461,6 +521,19 @@ impl Editor {
                     self.handle_plugin_init_script_loaded(outcome);
                 }
             }
+            handled += 1;
+            // Same floor as the plugin-command drain: a message whose handler
+            // overruns the budget must not throttle the queue to 1/frame.
+            if handled >= super::DRAIN_MIN_PER_PASS && std::time::Instant::now() >= deadline {
+                break;
+            }
+        }
+        self.async_message_backlog = messages.collect();
+        if !self.async_message_backlog.is_empty() {
+            tracing::debug!(
+                deferred = self.async_message_backlog.len(),
+                "async message frame budget exhausted — deferring tail"
+            );
         }
 
         // Update plugin state snapshot BEFORE processing commands
@@ -529,7 +602,29 @@ impl Editor {
         };
 
         // Trigger render if any async messages, plugin commands were processed, or plugin requested render
-        needs_render || processed_any_commands || plugin_render || file_changes || tree_changes
+        //
+        // A non-empty backlog also counts: the frame budget deferred work, and
+        // returning `true` keeps the main loop on its frame cadence so the tail
+        // drains at ~60Hz instead of at the 50ms idle poll.
+        let backlogged = !self.async_message_backlog.is_empty() || self.plugin_backlog_pending();
+        needs_render
+            || processed_any_commands
+            || plugin_render
+            || file_changes
+            || tree_changes
+            || backlogged
+    }
+
+    /// Whether the plugin command frame budget left work for the next tick.
+    fn plugin_backlog_pending(&self) -> bool {
+        #[cfg(feature = "plugins")]
+        {
+            !self.plugin_command_backlog.is_empty()
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            false
+        }
     }
 
     /// Handle a server's `initialize` response: record capabilities and kick off
@@ -724,6 +819,16 @@ impl Editor {
             PluginAsyncMessage::PluginResponse(response) => {
                 self.handle_plugin_response(response);
             }
+            PluginAsyncMessage::OffLoopSettled {
+                callback_id,
+                result,
+            } => {
+                let pm = self.plugin_manager.read().unwrap();
+                match result {
+                    Ok(json) => pm.resolve_callback(JsCallbackId::from(callback_id), json),
+                    Err(e) => pm.reject_callback(JsCallbackId::from(callback_id), e),
+                }
+            }
         }
     }
 
@@ -914,6 +1019,97 @@ impl Editor {
     /// channel id and a fresh forwarder; the old forwarder parks forever on a
     /// notify that can no longer fire (its channel is dropped) — a single idle
     /// task per rebuild, which is rare. Cleaning those up is a future refinement.
+    /// Start off-loop content reads for any window's freshly-restored remote
+    /// placeholder buffers, delivering each via `RemoteBufferContentLoaded`.
+    /// Idempotent: it drains each window's `pending_content_load`, so a buffer
+    /// is scheduled exactly once. Runs the blocking `read_file` on a plain
+    /// thread (never a runtime worker — the remote read uses `block_on`), so a
+    /// slow link never touches the editor loop.
+    fn drive_pending_content_loads(&mut self) {
+        if self.async_bridge.is_none() {
+            return;
+        }
+        type Job = (
+            fresh_core::WindowId,
+            fresh_core::BufferId,
+            std::path::PathBuf,
+            std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+        );
+        let mut jobs: Vec<Job> = Vec::new();
+        for (wid, window) in self.windows.iter_mut() {
+            if window.pending_content_load.is_empty() {
+                continue;
+            }
+            let fs = std::sync::Arc::clone(&window.authority().filesystem);
+            for (bid, path) in window.pending_content_load.drain(..) {
+                jobs.push((*wid, bid, path, std::sync::Arc::clone(&fs)));
+            }
+        }
+        if jobs.is_empty() {
+            return;
+        }
+        let sender = self.async_bridge.as_ref().unwrap().sender();
+        for (window_id, buffer_id, path, fs) in jobs {
+            let sender = sender.clone();
+            std::thread::Builder::new()
+                .name("remote-buffer-load".to_string())
+                .spawn(move || {
+                    let content = fs.read_file(&path).map_err(|e| e.to_string());
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(AsyncMessage::RemoteBufferContentLoaded {
+                        window_id,
+                        buffer_id,
+                        content,
+                    });
+                })
+                .ok();
+        }
+    }
+
+    /// Install content read off-loop into a remote session's placeholder buffer
+    /// (see `drive_pending_content_loads`). Skips a buffer that has since closed
+    /// or that the user already edited, so a late load never clobbers input.
+    fn handle_remote_buffer_content_loaded(
+        &mut self,
+        window_id: fresh_core::WindowId,
+        buffer_id: fresh_core::BufferId,
+        content: Result<Vec<u8>, String>,
+    ) {
+        let content = match content {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("remote buffer {buffer_id:?} content load failed: {e}");
+                return;
+            }
+        };
+        let Some(window) = self.windows.get_mut(&window_id) else {
+            return;
+        };
+        let (modified, path) = {
+            let Some(state) = window.buffers.get(&buffer_id) else {
+                return;
+            };
+            (
+                state.buffer.is_modified(),
+                state.buffer.file_path().map(|p| p.to_path_buf()),
+            )
+        };
+        if modified {
+            return;
+        }
+        let Some(path) = path else {
+            return;
+        };
+        // Build the buffer from the off-loop content, then run the *same*
+        // finalize the synchronous open path runs — so an async-filled remote
+        // buffer is identical to a normally-opened one (LSP didOpen, read-only,
+        // editorconfig, metadata). The only difference is the content arrived
+        // from a background read. For a remote session the path is already the
+        // canonical remote path, so it doubles as display / canonical here.
+        let state = window.build_workspace_file_state(&path, Some(content));
+        window.finalize_file_buffer(buffer_id, state, &path, &path, &path, true);
+    }
+
     fn ensure_remote_reconnect_forwarders(&mut self) {
         let (Some(runtime), Some(bridge)) =
             (self.tokio_runtime.as_ref(), self.async_bridge.as_ref())
@@ -1005,6 +1201,44 @@ impl Editor {
         self.reattach_window(window_id);
     }
 
+    /// Snapshot a just-exited terminal into the record `restart_terminal_buffer`
+    /// replays from. Reads the live handle for geometry/cwd (valid only until
+    /// `terminal_manager.close`) and the terminal-id-keyed maps for the
+    /// scrollback files and launch/resume argv.
+    fn exited_terminal_record(
+        &self,
+        terminal_id: crate::services::terminal::TerminalId,
+        exit_code: Option<i32>,
+    ) -> crate::app::window::ExitedTerminal {
+        let window = self.active_window();
+        let handle = window.terminal_manager.get(terminal_id);
+        let (cols, rows) = handle
+            .map(|h| h.size())
+            .unwrap_or_else(|| window.get_terminal_dimensions());
+        crate::app::window::ExitedTerminal {
+            terminal_id,
+            exit_code,
+            cols,
+            rows,
+            cwd: handle.and_then(|h| h.cwd()),
+            backing_path: window.terminal_backing_files.get(&terminal_id).cloned(),
+            log_path: window.terminal_log_files.get(&terminal_id).cloned(),
+            command: window
+                .terminal_commands
+                .get(&terminal_id)
+                .filter(|argv| !argv.is_empty())
+                .cloned(),
+            resume: window
+                .terminal_resume_commands
+                .get(&terminal_id)
+                .filter(|argv| !argv.is_empty())
+                .cloned(),
+            ephemeral: window.ephemeral_terminals.contains(&terminal_id),
+            script_access: window.terminal_has_script_access(terminal_id),
+            title: None,
+        }
+    }
+
     fn handle_terminal_exited(
         &mut self,
         terminal: fresh_core::WindowTerminalId,
@@ -1076,63 +1310,18 @@ impl Editor {
                     crate::input::keybindings::KeyContext::Normal;
             }
 
-            // Sync terminal content to buffer (final screen state)
+            // Sync terminal content to buffer (final screen state). This pins
+            // the viewport to the start of the visible screen, so the dead
+            // terminal is pixel-identical to its last live frame.
+            //
+            // Nothing is appended after it, deliberately. This used to write a
+            // "[Terminal process exited]" line into the backing file and then
+            // scroll past the pin to reveal it — which pushed the top of the
+            // screen out of view, and the first line of an agent's last answer
+            // is often the part you wanted. The exit is reported on the tab
+            // title and by the status-bar restart indicator instead, neither of
+            // which costs a row of output.
             self.active_window_mut().sync_terminal_to_buffer(buffer_id);
-
-            // Append exit message to the backing file and reload
-            let exit_msg = "\n[Terminal process exited]\n";
-
-            if let Some(backing_path) = self
-                .active_window()
-                .terminal_backing_files
-                .get(&terminal_id)
-                .cloned()
-            {
-                if let Ok(mut file) =
-                    crate::app::terminal::terminal_backing_fs().open_file_for_append(&backing_path)
-                {
-                    use std::io::Write;
-                    if let Err(e) = file.write_all(exit_msg.as_bytes()) {
-                        tracing::warn!("Failed to write terminal exit message: {}", e);
-                    }
-                }
-
-                // Force reload buffer from file to pick up the exit message
-                if let Err(e) = self.revert_buffer_by_id(buffer_id, &backing_path) {
-                    tracing::warn!("Failed to revert terminal buffer: {}", e);
-                }
-
-                // After revert, scroll the viewport so the just-
-                // appended exit message is visible. sync_terminal_to_buffer
-                // pinned the viewport to the start of the visible screen
-                // (so exit is pixel-identical to the last live frame); the
-                // exit message is appended *after* that pinned region,
-                // so we have to deliberately scroll past the pin to bring
-                // it on-screen. Move the cursor to the new end-of-buffer
-                // and clear the skip_ensure_visible flag the sync path
-                // armed; the next render's ensure_visible will then scroll
-                // the cursor (and the exit-message line above it) into
-                // view.
-                let new_total = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.get(&buffer_id))
-                    .map(|s| s.buffer.total_bytes())
-                    .unwrap_or(0);
-                if let Some((mgr, view_states)) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .map(|w| &mut w.buffers)
-                    .expect("active window present")
-                    .splits_mut()
-                {
-                    let active_split = mgr.active_split();
-                    if let Some(view_state) = view_states.get_mut(&active_split) {
-                        view_state.cursors.primary_mut().position = new_total;
-                        view_state.viewport.clear_skip_ensure_visible();
-                    }
-                }
-            }
 
             // Ensure buffer remains read-only with no line numbers
             if let Some(state) = self
@@ -1152,6 +1341,31 @@ impl Editor {
             // reconnect to respawn in place (see above).
             if !preserve_for_reconnect {
                 self.active_window_mut().terminal_buffers.remove(&buffer_id);
+                // Snapshot everything a restart needs *before* the handle is
+                // closed below, so the buffer can be brought back live in
+                // place (palette command / status-bar indicator) with the
+                // same argv precedence a workspace restore would use. The
+                // reconnect path doesn't need this: it keeps the binding and
+                // respawns from the still-intact terminal-id-keyed maps.
+                let mut record = self.exited_terminal_record(terminal_id, exit_code);
+                // Report the exit on the tab instead of in the output. An
+                // explicitly-titled tab (an agent, a named plugin terminal)
+                // keeps its name with a marker appended; an auto-named one has
+                // no live process left to read a name from, so it gets the
+                // marker on its current name and stops being auto-updated
+                // (`sync_terminal_titles` only walks live `terminal_buffers`).
+                let window = self.active_window_mut();
+                record.title = window
+                    .terminal_explicit_titles
+                    .contains(&buffer_id)
+                    .then(|| window.buffer_metadata.get(&buffer_id))
+                    .flatten()
+                    .map(|meta| meta.display_name.clone());
+                if let Some(meta) = window.buffer_metadata.get_mut(&buffer_id) {
+                    meta.display_name =
+                        t!("terminal.tab_exited", name = meta.display_name).to_string();
+                }
+                window.exited_terminals.insert(buffer_id, record);
             }
 
             self.set_status_message(t!("terminal.exited", id = terminal_id.0).to_string());
@@ -1372,9 +1586,10 @@ impl Editor {
         // channel, so we're the sole owner here. Assert rather
         // than silently drop config.
         let mut registry = registry;
-        std::sync::Arc::get_mut(&mut registry)
-            .expect("freshly-received grammar registry Arc must be uniquely owned")
-            .apply_language_config(&self.config.languages);
+        crate::primitives::grammar::GrammarRegistry::apply_languages(
+            &mut registry,
+            &self.config.languages,
+        );
         crate::config::reload_indent_overrides(&self.config.languages);
         self.grammar_registry = registry;
         // Propagate the new grammar registry to every window's
@@ -1455,7 +1670,7 @@ impl Editor {
         // Refresh the Quick Open suggestions if the prompt is open
         if let Some(prompt) = &self.active_window_mut().prompt {
             if prompt.prompt_type == PromptType::QuickOpen {
-                let input = prompt.input.clone();
+                let input = prompt.input_str().to_string();
                 self.update_quick_open_suggestions(&input);
             }
         }

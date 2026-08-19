@@ -209,7 +209,7 @@ Some LSP servers expect a different `languageId` than Fresh's internal language 
 
 ### Rust LSP Mode Switching
 
-Use "Switch Rust Analyzer Mode" from the command palette to toggle between Full and Reduced Memory modes for rust-analyzer.
+Use "Rust LSP: Configure Mode" from the command palette to toggle between Full and Reduced Memory modes for rust-analyzer.
 
 ## Configuring Language Detection via Settings UI
 

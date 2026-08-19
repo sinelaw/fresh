@@ -14,6 +14,7 @@
 //! The Editor will automatically convert colors during rendering based on the capability.
 
 use ratatui::style::Color;
+use std::sync::{LazyLock, OnceLock};
 
 /// Terminal color capability levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,14 +340,36 @@ const MIN_CONTRAST_RATIO: f64 = 3.0;
 /// The 6 discrete values used in the 256-color cube (indices 16-231)
 const CUBE_VALUES: [u8; 6] = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff];
 
+/// sRGB -> linear for every possible channel value.
+///
+/// The conversion is a `powf` per channel and luminance needs three of them, so
+/// a contrast comparison costs six. The input is a `u8`, so the entire domain
+/// fits in a 256-entry table and the `powf` calls disappear from the render
+/// path entirely.
+static LINEAR_CHANNEL: LazyLock<[f64; 256]> = LazyLock::new(|| {
+    std::array::from_fn(|c| {
+        let s = c as f64 / 255.0;
+        if s <= 0.04045 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
+    })
+});
+
+/// Relative luminance of every 256-color palette entry, so the candidate scan
+/// in `find_readable_256_color` is table lookups rather than recomputed
+/// luminance for all 240 candidates.
+static PALETTE_LUMINANCE: LazyLock<[f64; 256]> = LazyLock::new(|| {
+    std::array::from_fn(|idx| {
+        let (r, g, b) = idx_to_rgb(idx as u8);
+        relative_luminance(r, g, b)
+    })
+});
+
 /// Convert a sRGB component to linear for luminance calculation
 fn srgb_to_linear(c: u8) -> f64 {
-    let s = c as f64 / 255.0;
-    if s <= 0.04045 {
-        s / 12.92
-    } else {
-        ((s + 0.055) / 1.055).powf(2.4)
-    }
+    LINEAR_CHANNEL[c as usize]
 }
 
 /// Compute relative luminance per WCAG 2.x
@@ -401,29 +424,52 @@ fn idx_to_rgb(idx: u8) -> (u8, u8, u8) {
     }
 }
 
+/// Resolve any Color to its 256-color palette index.
+///
+/// Every color we can reason about has an exact index: the named ANSI colors
+/// *are* palette entries 0-15 (`ANSI_COLORS` is the leading slice of
+/// `idx_to_rgb`), and RGB quantizes through `rgb_to_256`. Returns None for
+/// `Reset`, whose appearance belongs to the terminal.
+///
+/// This is what reduces the contrast fixup to a two-`u8` lookup — see
+/// `readable_fg_row`.
+fn color_to_palette_index(color: Color) -> Option<u8> {
+    Some(match color {
+        Color::Indexed(idx) => idx,
+        Color::Rgb(r, g, b) => rgb_to_256(r, g, b),
+        Color::Black => 0,
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Yellow => 3,
+        Color::Blue => 4,
+        Color::Magenta => 5,
+        Color::Cyan => 6,
+        Color::Gray => 7,
+        Color::DarkGray => 8,
+        Color::LightRed => 9,
+        Color::LightGreen => 10,
+        Color::LightYellow => 11,
+        Color::LightBlue => 12,
+        Color::LightMagenta => 13,
+        Color::LightCyan => 14,
+        Color::White => 15,
+        _ => return None, // Reset or other variants we can't resolve
+    })
+}
+
 /// Resolve any Color to an RGB tuple for contrast computation.
 /// Returns None for Reset/default colors (which we can't reason about).
+///
+/// RGB colors keep their exact channels; everything else resolves through its
+/// palette index, so the named-color mapping lives in exactly one place.
+///
+/// The render path works in palette indices and reaches for `idx_to_rgb`
+/// directly, so this now only backs the tests that assert the two agree.
+#[cfg(test)]
 fn color_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
     match color {
         Color::Rgb(r, g, b) => Some((r, g, b)),
-        Color::Indexed(idx) => Some(idx_to_rgb(idx)),
-        Color::Black => Some((0, 0, 0)),
-        Color::Red => Some((128, 0, 0)),
-        Color::Green => Some((0, 128, 0)),
-        Color::Yellow => Some((128, 128, 0)),
-        Color::Blue => Some((0, 0, 128)),
-        Color::Magenta => Some((128, 0, 128)),
-        Color::Cyan => Some((0, 128, 128)),
-        Color::Gray => Some((192, 192, 192)),
-        Color::DarkGray => Some((128, 128, 128)),
-        Color::LightRed => Some((255, 0, 0)),
-        Color::LightGreen => Some((0, 255, 0)),
-        Color::LightYellow => Some((255, 255, 0)),
-        Color::LightBlue => Some((0, 0, 255)),
-        Color::LightMagenta => Some((255, 0, 255)),
-        Color::LightCyan => Some((0, 255, 255)),
-        Color::White => Some((255, 255, 255)),
-        _ => None, // Reset or other variants we can't resolve
+        other => Some(idx_to_rgb(color_to_palette_index(other)?)),
     }
 }
 
@@ -450,7 +496,7 @@ fn find_readable_256_color(fg_idx: u8, bg_rgb: (u8, u8, u8)) -> u8 {
     // Search color cube (16-231) and grayscale ramp (232-255)
     for candidate in 16..=255u8 {
         let c_rgb = idx_to_rgb(candidate);
-        let c_lum = relative_luminance(c_rgb.0, c_rgb.1, c_rgb.2);
+        let c_lum = PALETTE_LUMINANCE[candidate as usize];
 
         // Skip candidates in the wrong direction (optimization)
         if need_lighter && c_lum <= bg_lum {
@@ -508,37 +554,54 @@ pub fn convert_buffer_colors(buffer: &mut ratatui::buffer::Buffer, capability: C
     }
 }
 
+/// Readable-foreground answers for a single background, indexed by foreground.
+type ReadableRow = [u8; 256];
+
+/// `(foreground, background) -> readable foreground` is a pure function of two
+/// palette indices, so it is a lookup table rather than something to recompute
+/// per cell. One row per background, filled on first use: a session paints only
+/// a handful of distinct backgrounds, and a row is built once and then amortized
+/// over every frame for the rest of the process.
+///
+/// This is what keeps the pass proportional to the number of cells instead of
+/// cells x 240 palette candidates (issue #2982). The per-cell search cost ~12.7us
+/// for every cell falling short of the threshold, and on a dimmed full-screen
+/// modal that is every cell on screen, on every frame.
+static READABLE_FG: [OnceLock<ReadableRow>; 256] = [const { OnceLock::new() }; 256];
+
+/// The readable-foreground row for `bg_idx`, computing it on first use.
+fn readable_fg_row(bg_idx: u8) -> &'static ReadableRow {
+    READABLE_FG[bg_idx as usize].get_or_init(|| {
+        let bg_rgb = idx_to_rgb(bg_idx);
+        std::array::from_fn(|fg_idx| find_readable_256_color(fg_idx as u8, bg_rgb))
+    })
+}
+
+/// The foreground to actually paint for `fg` on `bg`.
+///
+/// Returns `fg` untouched when the pair already clears `MIN_CONTRAST_RATIO`, or
+/// when either color is the terminal default. Leaving readable colors alone
+/// matters beyond tidiness: rewriting a named color to `Indexed` would emit a
+/// longer escape sequence for no visual difference.
+fn readable_fg(fg: Color, bg: Color) -> Color {
+    let (Some(fg_idx), Some(bg_idx)) = (color_to_palette_index(fg), color_to_palette_index(bg))
+    else {
+        return fg; // Can't enforce contrast against the terminal default
+    };
+
+    let readable = readable_fg_row(bg_idx)[fg_idx as usize];
+    if readable == fg_idx {
+        fg
+    } else {
+        Color::Indexed(readable)
+    }
+}
+
 /// Post-conversion pass: ensure every fg/bg pair in the buffer has sufficient
 /// WCAG contrast ratio. Adjusts fg colors when contrast is too low.
 fn enforce_minimum_contrast(buffer: &mut ratatui::buffer::Buffer) {
     for cell in buffer.content.iter_mut() {
-        let bg_rgb = match color_to_rgb(cell.bg) {
-            Some(rgb) => rgb,
-            None => continue, // Can't enforce contrast on unknown bg
-        };
-        let fg_rgb = match color_to_rgb(cell.fg) {
-            Some(rgb) => rgb,
-            None => continue,
-        };
-
-        if contrast_ratio(fg_rgb, bg_rgb) >= MIN_CONTRAST_RATIO {
-            continue;
-        }
-
-        // Try to fix the foreground color
-        match cell.fg {
-            Color::Indexed(idx) => {
-                cell.fg = Color::Indexed(find_readable_256_color(idx, bg_rgb));
-            }
-            _ => {
-                // For named ANSI colors that somehow have low contrast,
-                // convert to indexed and fix
-                if let Some((r, g, b)) = color_to_rgb(cell.fg) {
-                    let idx = rgb_to_256(r, g, b);
-                    cell.fg = Color::Indexed(find_readable_256_color(idx, bg_rgb));
-                }
-            }
-        }
+        cell.fg = readable_fg(cell.fg, cell.bg);
     }
 }
 
@@ -783,6 +846,75 @@ mod tests {
         assert!(solarized_bg <= 17, "solarized bg={}", solarized_bg);
         assert!(nord_bg <= 17, "nord bg={}", nord_bg);
         assert!(dracula_bg <= 17, "dracula bg={}", dracula_bg);
+    }
+
+    /// The lookup table must agree with the search it replaced, for every
+    /// foreground/background pair that exists.
+    #[test]
+    fn readable_fg_agrees_with_direct_search_for_every_pair() {
+        for bg_idx in 0..=255u8 {
+            let bg_rgb = idx_to_rgb(bg_idx);
+            for fg_idx in 0..=255u8 {
+                let expected = find_readable_256_color(fg_idx, bg_rgb);
+                assert_eq!(
+                    readable_fg(Color::Indexed(fg_idx), Color::Indexed(bg_idx)),
+                    Color::Indexed(expected),
+                    "fg {} on bg {}",
+                    fg_idx,
+                    bg_idx
+                );
+            }
+        }
+    }
+
+    /// The named ANSI colors are palette entries 0-15, so routing them through
+    /// an index must not change the color they resolve to.
+    #[test]
+    fn named_colors_resolve_to_their_palette_entry() {
+        for color in [
+            Color::Black,
+            Color::Red,
+            Color::Green,
+            Color::Yellow,
+            Color::Blue,
+            Color::Magenta,
+            Color::Cyan,
+            Color::Gray,
+            Color::DarkGray,
+            Color::LightRed,
+            Color::LightGreen,
+            Color::LightYellow,
+            Color::LightBlue,
+            Color::LightMagenta,
+            Color::LightCyan,
+            Color::White,
+        ] {
+            let idx = color_to_palette_index(color).expect("named colors have an index");
+            assert_eq!(
+                color_to_rgb(color),
+                Some(idx_to_rgb(idx)),
+                "{:?} must resolve to palette entry {}",
+                color,
+                idx
+            );
+        }
+    }
+
+    /// A foreground that is already readable keeps its exact representation —
+    /// rewriting it to `Indexed` would emit a longer escape sequence for no
+    /// visual difference.
+    #[test]
+    fn readable_fg_leaves_readable_named_colors_alone() {
+        assert_eq!(readable_fg(Color::White, Color::Black), Color::White);
+    }
+
+    /// Terminal-default colors are the `terminal` theme's whole basis, and the
+    /// early-out for them is what keeps that theme cheap to render.
+    #[test]
+    fn readable_fg_ignores_terminal_defaults() {
+        assert_eq!(readable_fg(Color::Reset, Color::Reset), Color::Reset);
+        assert_eq!(readable_fg(Color::White, Color::Reset), Color::White);
+        assert_eq!(readable_fg(Color::Reset, Color::Black), Color::Reset);
     }
 
     /// Verify that contrast enforcement works end-to-end via convert_buffer_colors

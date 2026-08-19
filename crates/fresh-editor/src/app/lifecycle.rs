@@ -47,11 +47,22 @@ impl Editor {
         self.software_cursor_only = enabled;
     }
 
-    /// Set the session name for display in status bar.
+    /// Set the daemon name that scopes this editor's persistence.
     ///
-    /// When a session name is set, the recovery service is reinitialized
-    /// to use a session-scoped recovery directory so each named session's
-    /// recovery data is isolated.
+    /// `Some` means a *named* daemon (`fresh --cmd daemon new NAME`), which owns
+    /// its own workspace collection and recovery directory: two named daemons
+    /// over one project must not share a layout. It must stay `None` for an
+    /// unnamed working-directory daemon (`fresh -a`), which is the same editor
+    /// state a direct-mode `fresh` in that directory sees and therefore shares
+    /// its per-directory workspaces and recovery. Passing a directory *label*
+    /// here is what made `fresh -a` come up with empty workspaces.
+    ///
+    /// For the status-bar label — which every daemon has, named or not — see
+    /// [`Self::set_session_display_name`].
+    ///
+    /// When a name is set, the recovery service is reinitialized to use a
+    /// session-scoped recovery directory so each named daemon's recovery data is
+    /// isolated.
     pub fn set_session_name(&mut self, name: Option<String>) {
         if let Some(ref session_name) = name {
             let base_recovery_dir = self.dir_context.recovery_dir();
@@ -71,9 +82,28 @@ impl Editor {
         self.session_name = name;
     }
 
-    /// Get the session name (for status bar display)
+    /// Get the daemon name that scopes persistence (`None` for a
+    /// working-directory daemon and for direct mode).
     pub fn session_name(&self) -> Option<&str> {
         self.session_name.as_deref()
+    }
+
+    /// Set the label shown in the status bar for a daemon-backed editor.
+    ///
+    /// Purely cosmetic, and set for *every* daemon: a named one shows its name,
+    /// an unnamed working-directory one shows the directory. Deliberately
+    /// separate from [`Self::set_session_name`], which decides where workspaces
+    /// and recovery data live.
+    pub fn set_session_display_name(&mut self, name: Option<String>) {
+        self.session_display_name = name;
+    }
+
+    /// The status-bar label for a daemon-backed editor, falling back to the
+    /// persistence-scoping name when no distinct label was set.
+    pub fn session_display_name(&self) -> Option<&str> {
+        self.session_display_name
+            .as_deref()
+            .or_else(|| self.session_name.as_deref())
     }
 
     /// Queue escape sequences to be sent to the client (session mode only)
@@ -273,17 +303,21 @@ impl Editor {
     /// disturbing the live cursor.
     ///
     /// Returns whether the editor wants the next frame redrawn.
-    pub fn handle_input_event(&mut self, event: crossterm::event::Event) -> anyhow::Result<bool> {
-        use crossterm::event::{Event as Ev, KeyEventKind};
+    pub fn handle_input_event(&mut self, event: fresh_input_parser::Event) -> anyhow::Result<bool> {
+        use crate::input::is_keystroke;
+        use fresh_input_parser::{Event as Ev, KeyPress};
 
         match event {
-            Ev::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                let key_code = format!("{:?}", key_event.code);
-                let modifiers = format!("{:?}", key_event.modifiers);
+            Ev::Key(press) if is_keystroke(press.kind) => {
+                let key_code = format!("{:?}", press.code);
+                let modifiers = format!("{:?}", press.modifiers);
                 self.active_window_mut()
                     .log_keystroke(&key_code, &modifiers);
-                let translated = self.key_translator().translate(key_event);
-                self.handle_key(translated.code, translated.modifiers)?;
+                // The calibration translator rewrites the physical chord only;
+                // the layout character rides along untouched, since it says
+                // what the key types rather than which chord arrived.
+                let translated = self.key_translator().translate(press.event);
+                self.handle_key_press(KeyPress::with_layout_char(translated, press.layout_char))?;
                 // If `paste()` just took the async placeholder path,
                 // skip the otherwise-automatic render for this
                 // keystroke. The placeholder is sitting in the
@@ -350,6 +384,28 @@ impl Editor {
     /// plugin hook is signature-deduped, so callers never need to decide
     /// "did this actually change the layout?" — they just call `relayout`.
     pub fn relayout(&mut self) {
+        // Geometry moved: every chrome box the tree would derive may have a
+        // different rect now, so spoil the per-generation UI memos.
+        self.bump_ui_gen();
+        self.push_layout_geometry();
+        self.notify_layout_changed();
+    }
+
+    /// The geometry half of [`Editor::relayout`]: derive the authoritative
+    /// dimensions and push them down to every window's viewports and
+    /// terminal PTYs, *without* notifying plugins.
+    ///
+    /// Callers that are themselves running inside a plugin command must use
+    /// this rather than `relayout`. The notify half fires the `resize` hook
+    /// re-entrantly into the plugin thread, and a plugin part-way through its
+    /// own command — still awaiting the callback that hands it the buffer id
+    /// it just asked the host to create — will service that hook against its
+    /// pre-await state. `search_replace.ts` does exactly this: its `resize`
+    /// handler re-renders the panel through `panel.resultsBufferId`, which is
+    /// still its initial `0` until `createVirtualBufferInSplit` resolves, so
+    /// the panel mounts into `BufferId(0)` ("Buffer not found") and its body
+    /// never paints. Everything the terminals need lives in this half.
+    pub(crate) fn push_layout_geometry(&mut self) {
         // Derive the dock width from its placement (the source of truth),
         // exactly as the renderer's `compute_dock_split` does, so the
         // geometry we push down matches what gets painted.
@@ -363,8 +419,6 @@ impl Editor {
         for window in self.windows.values_mut() {
             window.apply_layout(width, height, dock_cols);
         }
-
-        self.notify_layout_changed();
     }
 
     /// Effective width (cols) the left dock currently claims, or `0` when
@@ -451,26 +505,73 @@ impl Editor {
         {
             self.rerender_widget_panel(&panel_key);
         }
+
+        // Buffer-mounted (split) panels too: their auto-sized lists/trees
+        // window against the split viewport height the renderer captured,
+        // so a resize must re-run the layout even when the plugin never
+        // re-emits its spec. The dock / floating panels handled above are
+        // also in the registry, so they render twice on a resize — a
+        // benign cost on an event this rare, kept for the explicit
+        // ordering the Bug-13 fix established.
+        for panel_key in self.widget_registry.panel_keys() {
+            self.rerender_widget_panel(&panel_key);
+        }
     }
 }
 
 impl crate::app::window::Window {
     /// Adopt the geometry handed down by [`Editor::relayout`]: cache the
     /// screen dimensions and the editor-global dock width, reseed every
-    /// split viewport against the post-dock editor width, and resize the
-    /// visible terminal PTYs. Per-split viewport dimensions are refined
-    /// again at paint time by `sync_viewport_to_content`; terminals have
-    /// no such paint-time sync, which is why their PTY size must be pushed
-    /// here.
+    /// split viewport against the pane rect that split will actually be
+    /// painted into, and resize the visible terminal PTYs. Per-split
+    /// viewport dimensions are refined again at paint time by
+    /// `sync_viewport_to_content` (which subtracts each pane's own chrome —
+    /// gutter, tab bar, scrollbars); terminals have no such paint-time sync,
+    /// which is why their PTY size must be pushed here.
     pub fn apply_layout(&mut self, width: u16, height: u16, dock_cols: u16) {
         self.terminal_width = width;
         self.terminal_height = height;
         self.dock_cols = dock_cols;
 
-        let editor_width = width.saturating_sub(dock_cols);
+        // Per-split pane rects, derived from the same content area the
+        // renderer and `resize_visible_terminals` lay out against — so the
+        // file explorer's columns (and a sibling split's) are already carved
+        // out of them.
+        let visible: Vec<(
+            crate::model::event::LeafId,
+            crate::model::event::BufferId,
+            ratatui::layout::Rect,
+        )> = match self.buffers.splits() {
+            Some((mgr, _)) => mgr.get_visible_buffers(self.editor_content_area()),
+            None => Vec::new(),
+        };
+
+        // Seed each visible split's viewport from its own pane rect. Seeding
+        // every split with the whole post-dock editor width instead — which is
+        // what this did — ignored the file explorer entirely, so toggling it
+        // changed no viewport here at all. Nothing downstream noticed the
+        // narrower panes until the *next* paint corrected them, and by then
+        // `notify_layout_changed` had already refreshed the plugin-facing
+        // snapshot and fired its hooks off the stale, too-wide geometry: a
+        // plugin panel that re-lays itself out in reaction (the code tour's
+        // dock panel) saw no width change, kept its old layout, and spilled
+        // out of the region it had been given until something else forced a
+        // re-layout. Toggling the *dock* never had that problem, because
+        // `dock_cols` was the one piece of chrome this did subtract.
+        //
+        // Splits that aren't on screen keep the coarse full-content-width
+        // seed; they have no rect of their own until they are laid out.
+        let content_width = self.editor_content_area().width;
+        let visible_rects: std::collections::HashMap<_, _> = visible
+            .iter()
+            .map(|(split_id, _, area)| (*split_id, *area))
+            .collect();
         if let Some(view_states) = self.split_view_states_mut() {
-            for view_state in view_states.values_mut() {
-                view_state.viewport.resize(editor_width, height);
+            for (split_id, view_state) in view_states.iter_mut() {
+                match visible_rects.get(split_id) {
+                    Some(area) => view_state.viewport.resize(area.width, area.height),
+                    None => view_state.viewport.resize(content_width, height),
+                }
             }
         }
 
@@ -483,20 +584,8 @@ impl crate::app::window::Window {
         // tab-scroll offset is never revisited. Use each split's real area
         // width (dock/explorer/split-aware), not the whole-window width, so
         // a half-width vertical split scrolls correctly too.
-        let visible: Vec<(
-            crate::model::event::LeafId,
-            crate::model::event::BufferId,
-            u16,
-        )> = match self.buffers.splits() {
-            Some((mgr, _)) => mgr
-                .get_visible_buffers(self.editor_content_area())
-                .into_iter()
-                .map(|(split_id, buffer_id, area)| (split_id, buffer_id, area.width))
-                .collect(),
-            None => Vec::new(),
-        };
-        for (split_id, buffer_id, tab_width) in visible {
-            self.ensure_active_tab_visible(split_id, buffer_id, tab_width);
+        for (split_id, buffer_id, area) in visible {
+            self.ensure_active_tab_visible(split_id, buffer_id, area.width);
         }
     }
 }

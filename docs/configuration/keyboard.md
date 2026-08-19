@@ -57,13 +57,13 @@ The macOS keymap is designed around these constraints:
 
 **Ctrl+Shift combinations don't work.** Some macOS terminals cannot reliably send Ctrl+Shift sequences. For example, Ctrl+Shift+Z produces a caron character (ˇ) instead of being recognized as a key chord. The macOS keymap uses Ctrl+Alt as an alternative modifier.
 
-**Some Ctrl keys are ASCII control characters.** In terminal protocols, Ctrl+J is Line Feed (newline), Ctrl+M is Carriage Return (Enter), and Ctrl+I is Tab. Binding actions to these keys causes erratic behavior. The macOS keymap avoids these collisions.
+**Some Ctrl keys are ASCII control characters.** In terminal protocols, Ctrl+J is Line Feed (newline), Ctrl+M is Carriage Return (Enter), Ctrl+I is Tab, and Ctrl+H is Backspace. Binding actions to these keys causes erratic behavior. The macOS keymap avoids these collisions. This is also why find-and-replace is on **Ctrl+R** rather than Ctrl+H: most terminals transmit Ctrl+H as Backspace, so Fresh treats it as Ctrl+Backspace (delete previous word) in every keymap.
 
 **International keyboards use Alt for essential characters.** On German, French, and other ISO layouts, Alt (Option) combined with letters produces characters like @, [, ], {, and }. The macOS keymap avoids Alt+letter combinations that would block character input.
 
 **Unix readline conventions are preserved.** Terminal users expect Ctrl+Y to "yank" (paste from the kill ring), Ctrl+K to kill to end of line, and Ctrl+U to kill to start of line. The macOS keymap respects these conventions rather than overriding them with GUI editor shortcuts.
 
-Use the **Command Palette** (Ctrl+P) or **Show Keybindings** (Ctrl+H) to discover the actual key bindings, or view the keymap file directly at `keymaps/macos.json`.
+Use the **Command Palette** (Ctrl+P) or run **Show Keyboard Shortcuts** from it to discover the actual key bindings, or view the keymap file directly at `keymaps/macos.json`.
 
 #### Recommended Terminal Emulators
 

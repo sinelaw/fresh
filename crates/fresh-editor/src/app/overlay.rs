@@ -17,8 +17,13 @@
 //! (`resolve_unfocused_popup_action`), the terminal-input gate
 //! (`dispatch_terminal_input`) and the mouse early-capture ladder
 //! (`handle_mouse`) — reads from the *same* `Editor::overlay_layers()`
-//! list, so the precedence rules live in one place.
+//! list, so the precedence rules live in one place. The `impl Editor`
+//! block at the bottom of this file is that source of truth: it builds
+//! the layer stack from live editor state and answers the shared focus
+//! queries (`popups_capture_keys`, `get_key_context`, …) every input
+//! path consults.
 
+use super::Editor;
 use crate::input::keybindings::KeyContext;
 
 /// Identifies a concrete overlay. The ordering of `overlay_layers`
@@ -43,20 +48,15 @@ pub(crate) enum LayerKind {
     Menu,
     Prompt,
     Popup,
-    /// The tab bar's "+" new-tab popup (`active_window().new_tab_menu`). A
-    /// modal chrome menu with a custom key dispatcher
-    /// (`handle_context_menu_key`), so it's transparent to `KeyContext`
-    /// resolution but still blocks PTY routing while open.
-    NewTabMenu,
-    /// The tab right-click context menu (`active_window().tab_context_menu`),
-    /// same treatment as `NewTabMenu`.
-    TabContextMenu,
-    /// The file-explorer right-click context menu
-    /// (`active_window().file_explorer_context_menu`), same treatment as
-    /// `NewTabMenu` / `TabContextMenu`: a modal chrome menu with a custom key
-    /// dispatcher, transparent to `KeyContext` resolution but blocking PTY
-    /// routing while open.
-    FileExplorerContextMenu,
+    /// A native context menu — the tab right-click menu, the "+"
+    /// new-tab popup, the file-explorer right-click menu, or the
+    /// close-split confirmation (`Window::open_context_menu` resolves
+    /// which). One kind for all four: they share the geometry core,
+    /// are mutually exclusive, and get identical treatment — a modal
+    /// chrome menu whose custom key dispatcher (the chrome
+    /// `ContextMenu` component's `on_key`) makes it transparent to
+    /// `KeyContext` resolution while it blocks PTY routing.
+    ContextMenu,
     /// The centered widget modal (`floating_widget_panel`).
     FloatingModal,
     /// The editor-global left dock (`dock`).
@@ -67,7 +67,7 @@ pub(crate) enum LayerKind {
 
 /// One entry in the overlay stack: a present overlay (or the always-present
 /// editor base), with the per-layer flags the dispatchers need.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Layer {
     pub kind: LayerKind,
     /// Whether this layer currently owns the keyboard. Modal layers set
@@ -89,6 +89,18 @@ pub(crate) struct Layer {
     pub blocks_terminal_input: bool,
 }
 
+/// One entry in the owner-stamped overlay stack: a [`Layer`] plus the
+/// registry index of the chrome component that declared it — the
+/// keyboard analogue of `chrome::ChromeBox::owner`. The key walk
+/// (`Editor::dispatch_layer_keyboard`) dispatches each layer to its
+/// owner's `on_layer_key`. `owner` is `None` only for the hardcoded
+/// event-debug head, which is a pre-walk intercept, not a component.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct OwnedLayer {
+    pub owner: Option<usize>,
+    pub layer: Layer,
+}
+
 /// Resolve the keyboard-owning `KeyContext` from an ordered (top-first)
 /// layer list: the first owning layer that has a `KeyContext` wins.
 /// Layers without a `KeyContext` (custom-dispatch modals) are skipped —
@@ -108,6 +120,203 @@ pub(crate) fn resolve_focus_context(layers: &[Layer]) -> Option<KeyContext> {
 /// child of a terminal buffer underneath.
 pub(crate) fn any_layer_blocks_terminal_input(layers: &[Layer]) -> bool {
     layers.iter().any(|l| l.blocks_terminal_input)
+}
+
+/// True iff a layer ranked *above* the popup layer currently owns the
+/// keyboard. Used by the unfocused-popup key interception: the layers
+/// ranked above `Popup` (840) are the capture-all modals (Settings /
+/// KeybindingEditor / CalibrationWizard 880-900), WorkspaceTrust
+/// (870), Menu (860), Prompt (850), and the hardcoded event-debug
+/// head — the walk derives the set from the real stack, so this list
+/// is documentation, not an encoding. While one of those owns the
+/// keyboard the popup must not intercept keys. Callers guarantee a
+/// `Popup` layer is present, so the `take_while` stops before the
+/// editor base layer.
+pub(crate) fn popup_blocked_by_higher_modal(layers: &[Layer]) -> bool {
+    layers
+        .iter()
+        .take_while(|l| l.kind != LayerKind::Popup)
+        .any(|l| l.owns_keyboard)
+}
+
+impl Editor {
+    /// Whether editor-pane popups (LSP completion, hover, signature help,
+    /// global plugin popups, …) should intercept keyboard input.
+    ///
+    /// Returns `false` when:
+    ///   - the user has focus on the file explorer pane (popups belong
+    ///     to the editor pane, and the explorer must own its own
+    ///     keystrokes), or
+    ///   - the topmost visible popup is unfocused (LSP popups appear
+    ///     unfocused so they don't silently swallow the next keystroke;
+    ///     the user grabs focus explicitly with `popup_focus`,
+    ///     default `Alt+T`).
+    ///
+    /// Buffer-switch handlers (e.g. `open_file_preview`) clear stale
+    /// popups so a popup tied to the previous preview doesn't follow the
+    /// user across buffers.
+    ///
+    /// Single source of truth for both `get_key_context` (binding resolution)
+    /// and `dispatch_popup_keys` (handler routing) so the two cannot drift.
+    /// True while the workspace-trust prompt is the TOP of the global
+    /// popup stack — the state in which its dedicated mouse/key
+    /// handlers (and its dedicated overlay layer) take over from the
+    /// generic popup treatment.
+    pub(crate) fn workspace_trust_on_top(&self) -> bool {
+        self.global_popups.top().is_some_and(|p| {
+            matches!(
+                p.resolver,
+                crate::view::popup::PopupResolver::WorkspaceTrust
+            )
+        })
+    }
+
+    pub(crate) fn popups_capture_keys(&self) -> bool {
+        use crate::input::keybindings::KeyContext;
+        use crate::view::popup::PopupResolver;
+        // The workspace-trust prompt is an editor-wide modal shown at startup:
+        // it must own the keyboard regardless of which pane is focused.
+        // Opening a *directory* focuses the file-explorer pane, which would
+        // otherwise short-circuit below and leave the (rendered) prompt
+        // un-interactable.
+        let trust_prompt_up = self
+            .global_popups
+            .top()
+            .is_some_and(|p| p.focused && matches!(p.resolver, PopupResolver::WorkspaceTrust));
+        if trust_prompt_up {
+            return true;
+        }
+        if matches!(self.active_window().key_context, KeyContext::FileExplorer) {
+            return false;
+        }
+        self.topmost_popup_focused()
+    }
+
+    /// Whether the topmost visible popup (global stack first, then the
+    /// active buffer's stack) has been marked focused. Returns `false`
+    /// when no popup is visible — the caller is responsible for
+    /// short-circuiting that case.
+    pub(crate) fn topmost_popup_focused(&self) -> bool {
+        if let Some(popup) = self.global_popups.top() {
+            return popup.focused;
+        }
+        if let Some(popup) = self.active_state().popups.top() {
+            return popup.focused;
+        }
+        // No popup → no capture. Returning `false` here is safe because
+        // every caller gates on visibility before reaching this path.
+        false
+    }
+
+    /// Build the editor's overlay stack, ordered top-first (highest
+    /// keyboard-focus precedence first), ending with the always-present
+    /// editor base layer.
+    ///
+    /// This is the single source of truth for overlay precedence: focus
+    /// resolution (`get_key_context`), the unfocused-popup modal guard
+    /// (`resolve_unfocused_popup_action`), the terminal-input gate
+    /// (`dispatch_terminal_input`), and the mouse early-capture ladder
+    /// (`handle_mouse`) all read from this list rather than keeping their
+    /// own conditional ladders.
+    pub(crate) fn overlay_layers(&self) -> Vec<crate::app::overlay::Layer> {
+        self.overlay_stack().into_iter().map(|o| o.layer).collect()
+    }
+
+    /// The owner-stamped overlay stack, ordered top-first: each layer
+    /// paired with the registry index of the component that declared
+    /// it (the keyboard analogue of `chrome_tree` stamping box
+    /// owners). DERIVED from the chrome component registry: each
+    /// component declares its own layer contributions (presence,
+    /// keyboard ownership, `KeyContext`, PTY blocking) with an
+    /// explicit rank (`chrome::layer_rank`), and this concatenates
+    /// and sorts them top-first. No central conditional ladder — a
+    /// new overlay surface registers a component and appears here,
+    /// and the key walk reaches its `on_layer_key` with no edit to
+    /// any dispatcher.
+    /// DELIBERATELY NOT MEMOIZED: this build is ~17 cheap activity
+    /// predicates and one small Vec — and it is the ground truth every
+    /// derived cache validates against. Any Editor API can flip a layer
+    /// predicate (plugin dispatch, tests driving methods directly), so a
+    /// counter-keyed memo here would need a bump at every such site — a
+    /// hand-maintained roster this model exists to avoid, and exactly
+    /// what CI's oracle caught when it was tried. The expensive
+    /// derivation (`chrome_tree`) memoizes by comparing THIS stack
+    /// instead: staleness is checked, not trusted.
+    pub(crate) fn overlay_stack(&self) -> Vec<crate::app::overlay::OwnedLayer> {
+        let mut ranked: Vec<(u16, Layer)> = Vec::new();
+        let mut owners: Vec<Option<usize>> = Vec::new();
+        // Event-debug intercepts every key ahead of every other path
+        // (see `handle_key_event`) — a debugging instrument with a
+        // custom dispatcher, deliberately not a registered component.
+        if self.active_window().is_event_debug_active() {
+            ranked.push((
+                1000,
+                Layer {
+                    kind: LayerKind::EventDebug,
+                    owns_keyboard: true,
+                    key_context: None,
+                    blocks_terminal_input: true,
+                },
+            ));
+            owners.push(None);
+        }
+        for (i, c) in crate::app::chrome::components().iter().enumerate() {
+            let before = ranked.len();
+            c.layers(self, &mut ranked);
+            owners.extend(std::iter::repeat(Some(i)).take(ranked.len() - before));
+        }
+        let mut stack: Vec<(u16, OwnedLayer)> = ranked
+            .into_iter()
+            .zip(owners)
+            .map(|((rank, layer), owner)| (rank, OwnedLayer { owner, layer }))
+            .collect();
+        // Stable sort: within a rank, declaration (registry) order is
+        // preserved — same ordering `overlay_layers` always had.
+        stack.sort_by(|a, b| b.0.cmp(&a.0));
+        stack.into_iter().map(|(_, o)| o).collect()
+    }
+
+    /// True iff any overlay layer is currently blocking key routing to a
+    /// terminal buffer's PTY child. The single source of truth for the
+    /// "is anything modal up?" question.
+    pub(crate) fn presents_blocking_overlay(&self) -> bool {
+        crate::app::overlay::any_layer_blocks_terminal_input(&self.overlay_layers())
+    }
+
+    /// True iff a modal overlay — a prompt (Open File dialog, command
+    /// palette, …), the menu, a full-screen modal (settings, keybinding
+    /// editor, calibration wizard, workspace trust), a native context menu,
+    /// or the centered widget modal — currently covers the editor content.
+    ///
+    /// Derived from the same [`Editor::overlay_layers`] stack the keyboard
+    /// and mouse dispatchers consult, so there is a single notion of
+    /// modality. The popup band is deliberately excluded: the hover and
+    /// completion popups themselves live there, and mouse hover has its own
+    /// popup-aware handling (`update_lsp_hover_state`). The dock and the
+    /// editor base are not modal.
+    ///
+    /// Used to suppress mouse-hover LSP requests while a modal overlay is
+    /// up: positions under the pointer map to the buffer *behind* the
+    /// overlay, so a hover there would query — and render a popup for —
+    /// content the user cannot see (sinelaw/fresh#2912).
+    pub(crate) fn modal_overlay_active(&self) -> bool {
+        use crate::app::overlay::LayerKind;
+        self.overlay_layers().iter().any(|l| {
+            !matches!(
+                l.kind,
+                LayerKind::Popup | LayerKind::Dock | LayerKind::Editor
+            )
+        })
+    }
+
+    /// Determine the current keybinding context based on UI state.
+    ///
+    /// Returns the `KeyContext` of the topmost overlay layer that owns the
+    /// keyboard (see [`Editor::overlay_layers`]).
+    pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
+        crate::app::overlay::resolve_focus_context(&self.overlay_layers())
+            .expect("editor base layer always owns the keyboard")
+    }
 }
 
 #[cfg(test)]

@@ -125,11 +125,16 @@ impl crate::app::window::Window {
                 .expect("active window must have a populated split layout")
                 .get(&split_id)?
                 .viewport;
-            Some((vp.top_byte, vp.top_view_line_offset))
+            Some((vp.top_byte(), vp.top_view_line_offset()))
         };
 
         let old_pos = viewport_pos(self)?;
-        self.handle_scroll_event(delta);
+        // Scroll *this* leaf: `split_id` is the effective active split, which
+        // for a grouped buffer's inner panel is not the split manager's
+        // active leaf. Scrolling the latter left the panel's viewport where
+        // it was, so this always fell through to the logical-line fallback
+        // below — fold-blind, so a page landed inside a collapsed body.
+        self.handle_scroll_event_for_split(split_id, delta);
         let new_pos = viewport_pos(self)?;
 
         if new_pos == old_pos {
@@ -147,12 +152,7 @@ impl crate::app::window::Window {
         // start (landing the cursor there would re-introduce the overshoot
         // / jump-to-top bugs).
         let target_byte = {
-            let buffer_id = self
-                .buffers
-                .splits()
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .buffer_for_split(split_id)?;
+            let buffer_id = self.buffer_for_leaf(split_id)?;
             self.buffers
                 .with_buffer_and_split(buffer_id, split_id, |state, vs| {
                     let soft_breaks = state.collect_soft_break_positions();
@@ -201,6 +201,18 @@ impl crate::app::window::Window {
         Some(events)
     }
 
+    /// Whether `split_id` currently soft-wraps. Falls back to the global
+    /// `editor.line_wrap` for a split with no view state yet, so a cursor
+    /// motion arriving before the first render behaves as configured.
+    fn split_line_wrap(&self, split_id: LeafId) -> bool {
+        self.buffers
+            .splits()
+            .map(|(_, vs)| vs)
+            .and_then(|vs| vs.get(&split_id))
+            .map(|vs| vs.viewport.line_wrap_enabled)
+            .unwrap_or_else(|| self.config().editor.line_wrap)
+    }
+
     /// Handle visual line movement actions using the cached layout
     /// Returns Some(events) if the action was handled, None if it should fall through
     fn handle_visual_line_movement(
@@ -238,16 +250,22 @@ impl crate::app::window::Window {
             // When line wrapping is off, Home/End should move to the physical line
             // start/end, not the visual (horizontally-scrolled) row boundary.
             // Fall through to the standard handler which uses line_iterator.
-            Action::MoveLineEnd if self.config().editor.line_wrap => {
+            //
+            // Ask the split the cursor is actually in, not the global config:
+            // a plugin panel can turn wrap off for itself (`setLineWrap`, and
+            // every buffer-group panel does), and reading the global default
+            // there sent Home walking a wrap boundary that the unwrapped view
+            // never draws — one press landed mid-line instead of at column 1.
+            Action::MoveLineEnd if self.split_line_wrap(split_id) => {
                 VisualAction::LineEnd { is_select: false }
             }
-            Action::SelectLineEnd if self.config().editor.line_wrap => {
+            Action::SelectLineEnd if self.split_line_wrap(split_id) => {
                 VisualAction::LineEnd { is_select: true }
             }
-            Action::MoveLineStart if self.config().editor.line_wrap => {
+            Action::MoveLineStart if self.split_line_wrap(split_id) => {
                 VisualAction::LineStart { is_select: false }
             }
-            Action::SelectLineStart if self.config().editor.line_wrap => {
+            Action::SelectLineStart if self.split_line_wrap(split_id) => {
                 VisualAction::LineStart { is_select: true }
             }
             _ => return None, // Not a visual line action
@@ -651,6 +669,10 @@ impl crate::app::window::Window {
         let active_buffer = self.active_buffer();
         let state = self.buffers.get(&active_buffer)?;
         let vs = self.buffers.splits().map(|(_, vs)| vs)?.get(&split_id)?;
+        // Terminal-grid wrap (fresh#2649): rows are exactly the grid width.
+        if vs.viewport.grid_wrap {
+            return Some(vs.viewport.grid_cols());
+        }
         let gutter = vs.viewport.gutter_width(&state.buffer);
         let wrap = WrapConfig::new(
             vs.viewport.effective_width() as usize,

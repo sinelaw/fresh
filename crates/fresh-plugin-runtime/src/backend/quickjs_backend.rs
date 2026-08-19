@@ -90,8 +90,8 @@ use anyhow::{anyhow, Result};
 use fresh_core::api::{
     ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditorStateSnapshot,
     GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig, LspServerPackConfig, OverlayOptions,
-    PluginCommand, PluginMarker, PluginResponse, SearchHandleRegistry, SearchHandleState,
-    SearchTakeResult,
+    PluginCommand, PluginMarker, PluginResponse, ScrollbarMarker, SearchHandleRegistry,
+    SearchHandleState, SearchTakeResult, SplitWindowOptions,
 };
 use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
@@ -662,6 +662,8 @@ pub struct PluginTrackedState {
     pub virtual_line_namespaces: Vec<(BufferId, String)>,
     /// (buffer_id, namespace) pairs used for line indicators
     pub line_indicator_namespaces: Vec<(BufferId, String)>,
+    /// (buffer_id, namespace) pairs used for scrollbar markers
+    pub scrollbar_marker_namespaces: Vec<(BufferId, String)>,
     /// (buffer_id, virtual_text_id) pairs
     pub virtual_text_ids: Vec<(BufferId, String)>,
     /// File explorer decoration namespaces
@@ -683,6 +685,10 @@ pub struct PluginTrackedState {
     /// `editor.watchPath`. Cleaned up by sending UnwatchPath on
     /// plugin unload.
     pub watch_handles: Vec<u64>,
+    /// Timer ids from `editor.setInterval` / `setTimeout`. Cancelled on
+    /// unload, so a hot-reload during plugin development doesn't leave the
+    /// previous copy's timers ticking against the new one.
+    pub timer_ids: Vec<u64>,
 }
 
 /// Type alias for the shared async resource owner map.
@@ -1081,6 +1087,42 @@ impl JsEditorApi {
             scope_end: end as usize,
         })
     }
+
+    /// Build `addSoftBreak`'s optional continuation-row prefix from its JS
+    /// object. A missing or empty `text` yields `None` — an empty prefix is
+    /// indistinguishable from no prefix, and storing one would make the
+    /// renderer emit a zero-width token per wrapped row for nothing.
+    fn parse_soft_break_prefix(
+        obj: rquickjs::Object<'_>,
+    ) -> Option<fresh_core::api::SoftBreakPrefix> {
+        use fresh_core::api::OverlayColorSpec;
+
+        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+            if let Ok(theme_key) = obj.get::<_, String>(key) {
+                if !theme_key.is_empty() {
+                    return Some(OverlayColorSpec::ThemeKey(theme_key));
+                }
+            }
+            if let Ok(arr) = obj.get::<_, Vec<u8>>(key) {
+                if arr.len() >= 3 {
+                    return Some(OverlayColorSpec::Rgb(arr[0], arr[1], arr[2]));
+                }
+            }
+            None
+        }
+
+        let text: String = obj.get("text").ok()?;
+        if text.is_empty() {
+            return None;
+        }
+        Some(fresh_core::api::SoftBreakPrefix {
+            text,
+            fg: parse_color_spec("fg", &obj),
+            bg: parse_color_spec("bg", &obj),
+            bold: obj.get("bold").unwrap_or(false),
+            italic: obj.get("italic").unwrap_or(false),
+        })
+    }
 }
 
 #[plugin_api_impl]
@@ -1401,19 +1443,19 @@ impl JsEditorApi {
             },
         );
 
-        // Extract `options.terminalBypass`. JS shape: `{ terminalBypass: true }`
-        // or omitted/null. Anything else is ignored — wrong shape stays at the
-        // safe default of `false`.
-        let terminal_bypass: bool = options
-            .0
-            .and_then(|v| {
-                if v.is_null() || v.is_undefined() {
-                    None
-                } else {
-                    v.into_object()
-                        .and_then(|obj| obj.get::<&str, bool>("terminalBypass").ok())
-                }
-            })
+        // Extract the options bag. JS shape: `{ terminalBypass: true }` or
+        // omitted/null. Anything of the wrong shape is ignored — each field
+        // stays at its safe default (no bypass).
+        let options_obj = options.0.and_then(|v| {
+            if v.is_null() || v.is_undefined() {
+                None
+            } else {
+                v.into_object()
+            }
+        });
+        let terminal_bypass: bool = options_obj
+            .as_ref()
+            .and_then(|obj| obj.get::<&str, bool>("terminalBypass").ok())
             .unwrap_or(false);
 
         // Register with editor
@@ -1469,6 +1511,32 @@ impl JsEditorApi {
     pub fn execute_action(&self, action_name: String) -> bool {
         self.command_sender
             .send(PluginCommand::ExecuteAction { action_name })
+            .is_ok()
+    }
+
+    /// Answer a command that was dispatched with a request id (a `RunCommand`
+    /// from the agent command channel).
+    ///
+    /// Plugins do not normally call this: the host wraps every such dispatch so
+    /// that whatever the handler *returns* — or the promise it returns, once it
+    /// resolves — becomes the answer, and a throw becomes the failure. Call it
+    /// directly only to answer early, or to answer from somewhere other than
+    /// the handler's own return path. `output` is the JSON-encoded result the
+    /// caller prints; answering an unknown or already-answered id is a no-op.
+    pub fn complete_command(
+        &self,
+        request_id: f64,
+        ok: bool,
+        output: Option<String>,
+        error: Option<String>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::CompleteCommand {
+                request_id: request_id as u64,
+                ok,
+                output,
+                error,
+            })
             .is_ok()
     }
 
@@ -1888,13 +1956,31 @@ impl JsEditorApi {
 
     // === File Operations ===
 
-    /// Open a file, optionally at a specific line/column
-    pub fn open_file(&self, path: String, line: Option<u32>, column: Option<u32>) -> bool {
+    /// Open a file, optionally at a specific line/column.
+    ///
+    /// `editor.openFile(path)` is the whole request most of the time.
+    pub fn open_file(
+        &self,
+        path: String,
+        line: rquickjs::function::Opt<Option<u32>>,
+        column: rquickjs::function::Opt<Option<u32>>,
+    ) -> bool {
+        // `Opt<Option<T>>` accepts all three forms callers actually write:
+        // omitted, explicit `null`, and a number.
+        //
+        // A bare `Option<T>` is optional in the *declaration* but still
+        // required at the bridge, so `openFile(path)` failed with "Error
+        // calling function with 1 argument(s) while 3 where expected" — an
+        // arity error naming no function, from a call whose own signature
+        // said the trailing arguments were optional. A bare `Opt<T>` fixes
+        // that but breaks the other direction: `openFile(path, null, null)`,
+        // which is what every existing caller writes, then fails converting
+        // null into a number. Only the nested form accepts both.
         self.command_sender
             .send(PluginCommand::OpenFileAtLocation {
                 path: PathBuf::from(path),
-                line: line.map(|l| l as usize),
-                column: column.map(|c| c as usize),
+                line: line.0.flatten().map(|l| l as usize),
+                column: column.0.flatten().map(|c| c as usize),
             })
             .is_ok()
     }
@@ -1920,13 +2006,24 @@ impl JsEditorApi {
     }
 
     /// Open a file in a specific split
-    pub fn open_file_in_split(&self, split_id: u32, path: String, line: u32, column: u32) -> bool {
+    pub fn open_file_in_split(
+        &self,
+        split_id: u32,
+        path: String,
+        line: rquickjs::function::Opt<u32>,
+        column: rquickjs::function::Opt<u32>,
+    ) -> bool {
+        // `line` and `column` are optional: "show this file in that pane" is
+        // the whole request most of the time, and requiring a cursor position
+        // for it meant the natural two-argument call failed with an arity
+        // error that named no function — indistinguishable, from the caller's
+        // side, from the file simply not opening.
         self.command_sender
             .send(PluginCommand::OpenFileInSplit {
                 split_id: split_id as usize,
                 path: PathBuf::from(path),
-                line: Some(line as usize),
-                column: Some(column as usize),
+                line: line.0.map(|l| l as usize),
+                column: column.0.map(|c| c as usize),
             })
             .is_ok()
     }
@@ -1987,11 +2084,33 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Close a buffer
-    pub fn close_buffer(&self, buffer_id: u32) -> bool {
+    /// Close a buffer. Pass `force: true` to discard unsaved changes.
+    ///
+    /// **A modified buffer is not closed** unless `force` is set — the user's
+    /// unsaved edits are not a plugin's to throw away. A scratch buffer the
+    /// plugin created and filled itself counts as modified, so disposing of
+    /// one needs `closeBuffer(id, true)`.
+    ///
+    /// The returned boolean is **"the request was delivered"**, not "the
+    /// buffer closed": this call is fire-and-forget, and the editor decides
+    /// afterwards. A refusal is logged editor-side but is invisible here, so
+    /// confirm with `listBuffers()` (after `await editor.flush()`) when it
+    /// matters. Without `force` the sequence that used to be required was
+    /// delete-the-contents, `saveBufferToPath`, then close — three
+    /// round-trips, the first two of which returned `true` while achieving
+    /// nothing.
+    pub fn close_buffer(
+        &self,
+        buffer_id: u32,
+        force: rquickjs::function::Opt<Option<bool>>,
+    ) -> bool {
+        // Nested `Opt<Option<_>>` so omitted, `null`, and `true`/`false` all
+        // work — see `open_file` for why the two simpler spellings each
+        // reject one of the forms callers write.
         self.command_sender
             .send(PluginCommand::CloseBuffer {
                 buffer_id: BufferId(buffer_id as usize),
+                force: force.0.flatten().unwrap_or(false),
             })
             .is_ok()
     }
@@ -2337,6 +2456,29 @@ impl JsEditorApi {
     /// lengths / regex match indices to the byte offsets the editor expects.
     pub fn utf8_byte_length(&self, text: String) -> u32 {
         text.len() as u32
+    }
+
+    /// Line-level diff of two texts (native patience diff; see
+    /// `fresh_core::diff`). Returns hunks of differing line ranges in
+    /// increasing order; equal regions are not reported. Lines are
+    /// 0-indexed `\n`-terminated segments (a final unterminated segment
+    /// counts as a line), matching the `text.split("\n")`-and-drop-
+    /// trailing-empty convention plugins already use for line arrays.
+    ///
+    /// Never refuses an input: pathological chunks degrade to coarser
+    /// hunks instead of failing, so callers don't need a "diff too
+    /// large" path. Runs synchronously on the plugin thread — cost is
+    /// near-linear in input size, far below the JS it replaces.
+    #[plugin_api(ts_return = "LineDiffHunk[]")]
+    pub fn compute_line_diff<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        old_text: String,
+        new_text: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        let hunks = fresh_core::diff::compute_line_diff(&old_text, &new_text);
+        rquickjs_serde::to_value(ctx, &hunks)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     // === File System ===
@@ -3402,6 +3544,210 @@ impl JsEditorApi {
         self.services.translate(&plugin_name, &key, &args_map)
     }
 
+    /// Move a buffer into `splitId`: show it there, and remove its tab from
+    /// the pane that held it before.
+    ///
+    /// Use this to *rearrange* what is where. `setSplitBuffer` only changes
+    /// which of a pane's existing tabs is visible, so building a move out of
+    /// it leaves the original tab stranded in its old pane.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that it took effect, and a read issued right
+    /// after it still sees the old state. `await editor.flush()` before
+    /// reading back.
+    #[plugin_api(js_name = "moveBufferToSplit", ts_return = "boolean")]
+    pub fn move_buffer_to_split(&self, buffer_id: u32, split_id: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::MoveBufferToSplit {
+                buffer_id: BufferId(buffer_id as usize),
+                split_id: fresh_core::SplitId(split_id as usize),
+            })
+            .is_ok()
+    }
+
+    /// Make lines of a buffer clickable: a click or Enter on a listed line
+    /// opens what it points at.
+    ///
+    /// ```js
+    /// editor.setLineTargets(bufferId, [
+    ///   { line: 0, path: "src/main.rs", target: 41, into: "code" },
+    ///   { line: 1, path: "src/lib.rs",  target: 12, into: "code" },
+    /// ]);
+    /// ```
+    ///
+    /// `line` is the row *in this buffer*; `target` is the line to land on in
+    /// the file, both 0-indexed. `into` names a pane by its `setSplitLabel`
+    /// label; when it names no live pane the target opens beside this one, so
+    /// an index never replaces itself with what you clicked.
+    ///
+    /// The editor owns the behaviour, which is the point: a script that builds
+    /// an index — a search result list, an error list, a review map — exits
+    /// immediately, and a `mouse_click` handler would die with it. These
+    /// targets keep working.
+    ///
+    /// Replaces any previous targets for the buffer; pass `[]` to clear.
+    #[plugin_api(js_name = "setLineTargets", ts_return = "boolean")]
+    pub fn set_line_targets(
+        &self,
+        buffer_id: u32,
+        targets: Vec<fresh_core::api::LineTarget>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetLineTargets {
+                buffer_id: BufferId(buffer_id as usize),
+                targets,
+            })
+            .is_ok()
+    }
+
+    // === Orientation ===
+
+    /// Describe the editor as it is right now: the panes of the active
+    /// window in visual order with their geometry and contents, which one
+    /// has focus, the working directory, and every open workspace.
+    ///
+    /// This is the call to start from. It answers "which pane is on the
+    /// left", "is that a terminal or a file", and "what am I pointed at"
+    /// in one read, instead of stitching `listSplits` + `getBufferInfo` +
+    /// `getActiveSplitId` together and still not knowing pane order.
+    ///
+    /// Reads the snapshot, so it is cheap and synchronous — but it
+    /// observes the state as of the last applied batch. After a mutation,
+    /// `await editor.flush()` first (or await the mutation itself, if it
+    /// returns a promise) or this reports what was true before it.
+    ///
+    /// ```js
+    /// const ws = editor.describeWorkspace();
+    /// const left = ws.panes[0];               // leftmost pane
+    /// const term = ws.panes.find(p => p.kind === "terminal");
+    /// ```
+    #[plugin_api(js_name = "describeWorkspace", ts_return = "WorkspaceDescription")]
+    pub fn describe_workspace<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        let snapshot = match self.state_snapshot.read() {
+            Ok(s) => s,
+            Err(_) => return Ok(rquickjs::Value::new_null(ctx)),
+        };
+        let active_split_id = snapshot.active_split_id;
+        let panes: Vec<fresh_core::api::PaneDescription> = snapshot
+            .splits
+            .iter()
+            .map(|split| {
+                let info = snapshot.buffers.get(&split.buffer_id);
+                let is_terminal = info.map(|i| i.is_terminal).unwrap_or(false);
+                let kind = match info {
+                    Some(i) if i.is_terminal => "terminal",
+                    Some(i) if i.path.is_some() => "file",
+                    Some(i) if i.is_virtual => "virtual",
+                    Some(_) => "file",
+                    None => "unknown",
+                };
+                // A terminal is backed by a scratch file for its scrollback.
+                // Reporting that path would invite a caller to treat a shell
+                // as a document, so a terminal pane has no path and says what
+                // it is.
+                let path = if is_terminal {
+                    None
+                } else {
+                    info.and_then(|i| i.path.clone())
+                };
+                let name = if is_terminal {
+                    "terminal".to_string()
+                } else {
+                    path.as_ref()
+                        .and_then(|p| p.file_name())
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| format!("buffer {}", split.buffer_id.0))
+                };
+                fresh_core::api::PaneDescription {
+                    split_id: split.split_id,
+                    buffer_id: split.buffer_id,
+                    kind: kind.to_string(),
+                    label: split.label.clone(),
+                    path,
+                    name,
+                    active: split.split_id == active_split_id,
+                    modified: info.map(|i| i.modified).unwrap_or(false),
+                    x: split.x,
+                    y: split.y,
+                    width: split.width,
+                    height: split.height,
+                }
+            })
+            .collect();
+
+        let active = snapshot
+            .windows
+            .iter()
+            .find(|w| w.id == snapshot.active_window_id);
+        let description = fresh_core::api::WorkspaceDescription {
+            cwd: snapshot.working_dir.clone(),
+            window_id: snapshot.active_window_id.0,
+            stable_id: active.map(|w| w.stable_id.clone()).unwrap_or_default(),
+            windows: snapshot.windows.clone(),
+            panes,
+            active_split_id,
+        };
+        rquickjs_serde::to_value(ctx, &description)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    // === Layout ===
+
+    /// Split the active pane and resolve with the new pane.
+    ///
+    /// This is the primitive for arranging panes. `direction` names the
+    /// *divider*: `"vertical"` puts panes side by side (left | right),
+    /// `"horizontal"` stacks them (top / bottom). `place` says which side
+    /// the new pane lands on — `"before"` is left/top, `"after"` (the
+    /// default, and what the keyboard split does) is right/bottom.
+    ///
+    /// Resolves *after* the layout has been applied and the readable
+    /// snapshot refreshed, with the new pane's id and geometry — so
+    /// `listSplits()` / `describeWorkspace()` called next observe the split
+    /// that was just made, and "did it land on the left" is answered by the
+    /// `x` that comes back rather than by guessing.
+    ///
+    /// ```js
+    /// // Terminal on the left, README on the right:
+    /// const left = await editor.splitWindow({ direction: "vertical", place: "before" });
+    /// await editor.createTerminal({ splitId: left.splitId });
+    /// ```
+    ///
+    /// Rejects when the pane could not be created.
+    #[plugin_api(async_promise, js_name = "splitWindow", ts_return = "SplitCreated")]
+    #[qjs(rename = "_splitWindowStart")]
+    pub fn split_window_start(&self, opts: SplitWindowOptions) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::SplitWindow {
+            options: opts,
+            request_id: id,
+        });
+        id
+    }
+
+    /// Wait for every mutation queued so far to be applied, then resolve.
+    ///
+    /// Commands are queued and drained on the editor thread, so a read
+    /// issued right after a mutation reports the state from *before* it:
+    /// `setSplitRatio(...)` followed by `listSplits()` returns the old
+    /// widths. Awaiting this closes that window, which is what lets a
+    /// single script change the layout and then verify what it changed.
+    ///
+    /// ```js
+    /// editor.setSplitRatio(splitId, 0.3);
+    /// await editor.flush();
+    /// return editor.describeWorkspace();   // reflects the new ratio
+    /// ```
+    #[plugin_api(async_promise, js_name = "flush", ts_return = "void")]
+    #[qjs(rename = "_flushStart")]
+    pub fn flush_start(&self) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::SyncSnapshot { request_id: id });
+        id
+    }
+
     // === Composite Buffers ===
 
     /// Create a composite buffer (async)
@@ -3458,6 +3804,30 @@ impl JsEditorApi {
     /// rendering (e.g., `compositeNextHunk`) will work correctly.
     pub fn flush_layout(&self) -> bool {
         self.command_sender.send(PluginCommand::FlushLayout).is_ok()
+    }
+
+    /// Put a composite buffer's cursor on the row showing `line`
+    /// (0-indexed) of pane `pane` — 0 is the left/OLD pane — and scroll
+    /// it into view.
+    ///
+    /// `initialFocusHunk` on `createCompositeBuffer` lands the view on a
+    /// hunk; this lands it on a *line*, which is what a plugin holding a
+    /// concrete file position wants (following a review comment, or
+    /// keeping the reader's place when a diff view flips between its
+    /// unified and side-by-side layouts). No-op if that pane has no such
+    /// line.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports
+    /// that the command was sent.
+    #[qjs(rename = "setCompositeCursorLine")]
+    pub fn set_composite_cursor_line(&self, buffer_id: u32, pane: u32, line: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetCompositeCursorLine {
+                buffer_id: BufferId(buffer_id as usize),
+                pane: pane as usize,
+                line: line as usize,
+            })
+            .is_ok()
     }
 
     /// Navigate to the next hunk in a composite buffer
@@ -3592,6 +3962,71 @@ impl JsEditorApi {
             range: (start as usize)..(end as usize),
             options,
         });
+
+        Ok(true)
+    }
+
+    /// Declare a one-line overlay that follows this buffer's cursor.
+    ///
+    /// Takes the same options as `addOverlay` and paints the same way — the
+    /// difference is who places it. The host re-derives the range from the
+    /// cursor while drawing each frame, so the bar marks the row the caret
+    /// is on in that very frame. Painting it by hand from `cursor_moved`
+    /// cannot: the hook fires after the move that already drew, so the bar
+    /// lands a frame late and visibly trails a held arrow key.
+    ///
+    /// Pass `null` to withdraw it.
+    ///
+    /// ```typescript
+    /// editor.setCursorLineOverlay(bufferId, {
+    ///   bg: "editor.selection_bg",
+    ///   extendToLineEnd: true,
+    /// });
+    /// ```
+    #[qjs(rename = "setCursorLineOverlay")]
+    pub fn set_cursor_line_overlay<'js>(
+        &self,
+        _ctx: rquickjs::Ctx<'js>,
+        buffer_id: u32,
+        options: rquickjs::Value<'js>,
+    ) -> rquickjs::Result<bool> {
+        use fresh_core::api::OverlayColorSpec;
+
+        // Same parser shape as addOverlay; accepts `[r, g, b]` arrays or
+        // theme-key strings.
+        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+            if let Ok(theme_key) = obj.get::<_, String>(key) {
+                if !theme_key.is_empty() {
+                    return Some(OverlayColorSpec::ThemeKey(theme_key));
+                }
+            }
+            if let Ok(arr) = obj.get::<_, Vec<u8>>(key) {
+                if arr.len() >= 3 {
+                    return Some(OverlayColorSpec::Rgb(arr[0], arr[1], arr[2]));
+                }
+            }
+            None
+        }
+
+        let parsed = options.as_object().map(|obj| OverlayOptions {
+            fg: parse_color_spec("fg", obj),
+            bg: parse_color_spec("bg", obj),
+            underline: obj.get("underline").unwrap_or(false),
+            bold: obj.get("bold").unwrap_or(false),
+            italic: obj.get("italic").unwrap_or(false),
+            strikethrough: obj.get("strikethrough").unwrap_or(false),
+            extend_to_line_end: obj.get("extendToLineEnd").unwrap_or(false),
+            reversed: obj.get("reversed").unwrap_or(false),
+            fg_on_collision_only: obj.get("fgOnCollisionOnly").unwrap_or(false),
+            url: obj.get("url").ok(),
+        });
+
+        let _ = self
+            .command_sender
+            .send(PluginCommand::SetCursorLineOverlay {
+                buffer_id: BufferId(buffer_id as usize),
+                options: parsed,
+            });
 
         Ok(true)
     }
@@ -3848,15 +4283,23 @@ impl JsEditorApi {
     ///
     /// `activation` optionally makes the break cursor-dependent — same
     /// semantics as `addConceal`'s activation parameters.
-    pub fn add_soft_break(
+    ///
+    /// `prefix` optionally draws a glyph run at the head of the continuation
+    /// row, shaped `{ text, fg?, bg?, bold?, italic? }` with the same colour
+    /// spec `addOverlay` takes (a theme key string or an `[r, g, b]` array).
+    /// It is drawn *inside* the `indent` columns rather than in addition to
+    /// them, so a wrapped block quote can keep its `▌` down every row without
+    /// shifting the text. `indent` grows to fit a prefix wider than it.
+    pub fn add_soft_break<'js>(
         &self,
         buffer_id: u32,
         namespace: String,
         position: u32,
         indent: u32,
-        activation: rquickjs::function::Opt<String>,
-        scope_start: rquickjs::function::Opt<u32>,
-        scope_end: rquickjs::function::Opt<u32>,
+        activation: rquickjs::function::Opt<Option<String>>,
+        scope_start: rquickjs::function::Opt<Option<u32>>,
+        scope_end: rquickjs::function::Opt<Option<u32>>,
+        prefix: rquickjs::function::Opt<Option<rquickjs::Object<'js>>>,
     ) -> bool {
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
@@ -3873,7 +4316,16 @@ impl JsEditorApi {
                 position: position as usize,
                 indent: indent as u16,
                 epoch: self.hook_epoch_for(buffer_id),
-                activation: Self::parse_activation(activation.0, scope_start.0, scope_end.0),
+                // `Opt<Option<T>>` rather than `Opt<T>`: `Opt` alone only
+                // covers a *missing* argument, so a caller that wants a later
+                // parameter (a `prefix` with no activation, say) and passes
+                // `undefined` for these would hit a conversion error.
+                activation: Self::parse_activation(
+                    activation.0.flatten(),
+                    scope_start.0.flatten(),
+                    scope_end.0.flatten(),
+                ),
+                prefix: prefix.0.flatten().and_then(Self::parse_soft_break_prefix),
             })
             .is_ok()
     }
@@ -3900,77 +4352,8 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    // === View Transform ===
-
-    /// Submit a view transform for a buffer/split
-    ///
-    /// Accepts tokens in the simple format:
-    ///   {kind: "text"|"newline"|"space"|"break", text: "...", sourceOffset: N, style?: {...}}
-    ///
-    /// Also accepts the TypeScript-defined format for backwards compatibility:
-    ///   {kind: {Text: "..."} | "Newline" | "Space" | "Break", source_offset: N, style?: {...}}
-    #[allow(clippy::too_many_arguments)]
-    pub fn submit_view_transform<'js>(
-        &self,
-        _ctx: rquickjs::Ctx<'js>,
-        buffer_id: u32,
-        split_id: Option<u32>,
-        start: u32,
-        end: u32,
-        tokens: Vec<rquickjs::Object<'js>>,
-        layout_hints: rquickjs::function::Opt<rquickjs::Object<'js>>,
-    ) -> rquickjs::Result<bool> {
-        use fresh_core::api::{LayoutHints, ViewTokenWire, ViewTransformPayload};
-
-        let tokens: Vec<ViewTokenWire> = tokens
-            .into_iter()
-            .enumerate()
-            .map(|(idx, obj)| {
-                // Try to parse the token, with detailed error messages
-                parse_view_token(&obj, idx)
-            })
-            .collect::<rquickjs::Result<Vec<_>>>()?;
-
-        // Parse layout hints if provided
-        let parsed_layout_hints = if let Some(hints_obj) = layout_hints.into_inner() {
-            let compose_width: Option<u16> = hints_obj.get("composeWidth").ok();
-            let column_guides: Option<Vec<u16>> = hints_obj.get("columnGuides").ok();
-            Some(LayoutHints {
-                compose_width,
-                column_guides,
-            })
-        } else {
-            None
-        };
-
-        let payload = ViewTransformPayload {
-            range: (start as usize)..(end as usize),
-            tokens,
-            layout_hints: parsed_layout_hints,
-        };
-
-        Ok(self
-            .command_sender
-            .send(PluginCommand::SubmitViewTransform {
-                buffer_id: BufferId(buffer_id as usize),
-                split_id: split_id.map(|id| SplitId(id as usize)),
-                payload,
-            })
-            .is_ok())
-    }
-
-    /// Clear view transform for a buffer/split
-    pub fn clear_view_transform(&self, buffer_id: u32, split_id: Option<u32>) -> bool {
-        self.command_sender
-            .send(PluginCommand::ClearViewTransform {
-                buffer_id: BufferId(buffer_id as usize),
-                split_id: split_id.map(|id| SplitId(id as usize)),
-            })
-            .is_ok()
-    }
-
     /// Set layout hints (compose width, column guides) for a buffer/split
-    /// without going through the view_transform pipeline.
+    /// directly.
     pub fn set_layout_hints<'js>(
         &self,
         buffer_id: u32,
@@ -4279,6 +4662,28 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Clear *inline* virtual texts whose id starts with `idPrefix` and whose
+    /// anchor byte falls in `[start, end)`. The inline analogue of
+    /// `clearVirtualLinesInRange`, so a per-line pass can rebuild one line's
+    /// inline decorations without dropping the rest of the set.
+    pub fn clear_virtual_texts_in_range(
+        &self,
+        buffer_id: u32,
+        id_prefix: String,
+        start: u32,
+        end: u32,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearVirtualTextsInRange {
+                buffer_id: BufferId(buffer_id as usize),
+                id_prefix,
+                start: start as usize,
+                end: end as usize,
+                epoch: self.hook_epoch_for(buffer_id),
+            })
+            .is_ok()
+    }
+
     /// Add a virtual line (full line above/below a position)
     ///
     /// The `options` object accepts:
@@ -4394,6 +4799,45 @@ impl JsEditorApi {
         let _ = self.command_sender.send(PluginCommand::StartPromptAsync {
             label,
             initial_value,
+            callback_id: JsCallbackId::new(id),
+        });
+
+        id
+    }
+
+    /// Open the editor's native Open File browser and wait for a pick
+    /// (async) — the terminal analogue of a browser's file-input dialog.
+    /// Resolves with the chosen file's absolute path, or null if the
+    /// user cancels. The browser anchors where Open File does (the
+    /// active file's directory, else the window's working directory),
+    /// with the same navigation: Backspace walks up the tree, Tab
+    /// descends into directories, and typed input filters or resolves
+    /// as a path. No buffer is opened — the path is only returned.
+    ///
+    /// `directory` anchors the browser somewhere else (a relative path
+    /// resolves against the window's working directory) and typed
+    /// relative input then resolves there too. `showHidden` overrides
+    /// the config's dotfile visibility for this pick — pass `true` when
+    /// the file being picked is itself a dotfile (a tour manifest, an
+    /// editorconfig), which the default would hide.
+    // `Opt<Option<..>>` like `set_prompt_suggestions`: `Opt` accepts the
+    // argument being omitted entirely, `Option` accepts an explicit
+    // `undefined`/`null`, so `pickFile(label)` keeps working unchanged.
+    #[plugin_api(async_promise, js_name = "pickFile", ts_return = "string | null")]
+    #[qjs(rename = "_pickFileStart")]
+    pub fn pick_file_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        label: String,
+        directory: rquickjs::function::Opt<Option<String>>,
+        show_hidden: rquickjs::function::Opt<Option<bool>>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+
+        let _ = self.command_sender.send(PluginCommand::StartFilePickAsync {
+            label,
+            directory: directory.0.flatten(),
+            show_hidden: show_hidden.0.flatten(),
             callback_id: JsCallbackId::new(id),
         });
 
@@ -4646,17 +5090,23 @@ impl JsEditorApi {
         }
 
         // If allow_text_input is set, register a wildcard handler for text input
-        // so the plugin can receive arbitrary character input
+        // so the plugin can receive arbitrary character input.
+        //
+        // Register it twice: once under the mode-qualified name, which is
+        // what the host dispatches, and once under the bare name as a
+        // fallback. The bare name is a single global slot — every
+        // text-input mode overwrites it — so without the qualified entry
+        // the plugin that happened to call `defineMode` last would receive
+        // the characters typed into *every* other plugin's text field.
         let allow_text = allow_text_input.0.unwrap_or(false);
         if allow_text {
+            let handler = PluginHandler {
+                plugin_name: self.plugin_name.clone(),
+                handler_name: "mode_text_input".to_string(),
+            };
             let mut registered = self.registered_actions.borrow_mut();
-            registered.insert(
-                "mode_text_input".to_string(),
-                PluginHandler {
-                    plugin_name: self.plugin_name.clone(),
-                    handler_name: "mode_text_input".to_string(),
-                },
-            );
+            registered.insert(format!("mode_text_input@{}", name), handler.clone());
+            registered.insert("mode_text_input".to_string(), handler);
         }
 
         self.command_sender
@@ -4688,7 +5138,12 @@ impl JsEditorApi {
 
     // === Splits ===
 
-    /// Close a split
+    /// Close a split.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that it took effect, and a read issued right
+    /// after it still sees the old state. `await editor.flush()` before
+    /// reading back.
     pub fn close_split(&self, split_id: u32) -> bool {
         self.command_sender
             .send(PluginCommand::CloseSplit {
@@ -4697,7 +5152,13 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Set the buffer displayed in a split
+    /// Show one of a split's existing tabs. To *move* a buffer into a pane —
+    /// and take it out of the pane it was in — use `moveBufferToSplit`.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that it took effect, and a read issued right
+    /// after it still sees the old state. `await editor.flush()` before
+    /// reading back.
     pub fn set_split_buffer(&self, split_id: u32, buffer_id: u32) -> bool {
         self.command_sender
             .send(PluginCommand::SetSplitBuffer {
@@ -4707,7 +5168,16 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Focus a specific split
+    /// Move focus to a split.
+    ///
+    /// To open something without taking focus in the first place, prefer
+    /// `splitWindow({ keepFocus: true })` — one call, and the user's cursor
+    /// never moves.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that it took effect, and a read issued right
+    /// after it still sees the old state. `await editor.flush()` before
+    /// reading back.
     pub fn focus_split(&self, split_id: u32) -> bool {
         self.command_sender
             .send(PluginCommand::FocusSplit {
@@ -4747,24 +5217,60 @@ impl JsEditorApi {
     /// already active. Errors (id not found) are logged on the
     /// editor side; the JS caller can verify by reading
     /// `activeWindow()` after.
-    pub fn set_active_window(&self, id: u64) -> bool {
+    ///
+    /// **Not every id you can read is a window id.** The orchestrator's
+    /// `listWorkspaces()` reports a *negative* `windowId` for a workspace it
+    /// discovered on disk but has never activated — there is no window yet,
+    /// so the negative value is a placeholder, not a handle. Passing one here
+    /// returns `false`; to open such a workspace use
+    /// `getPluginApi("orchestrator").focusWorkspace(workspaceId)`, which
+    /// attaches a session at the worktree first.
+    ///
+    /// Returns `false` for any non-positive id rather than throwing. It used
+    /// to be declared as an unsigned integer, so a negative id failed inside
+    /// the JS→Rust conversion with `Error converting from js 'f64' into type
+    /// 'u64': Underflow` — an exception, from a line that looked fine, naming
+    /// nothing the caller had written.
+    pub fn set_active_window(&self, id: i64) -> bool {
+        let Some(id) = Self::window_id_arg(id, "setActiveWindow") else {
+            return false;
+        };
         self.command_sender
-            .send(PluginCommand::SetActiveWindow {
-                id: fresh_core::WindowId(id),
-            })
+            .send(PluginCommand::SetActiveWindow { id })
             .is_ok()
+    }
+
+    /// Validate a JS-supplied window id.
+    ///
+    /// Shared by the two `setActiveWindow*` entry points so they cannot
+    /// disagree about what a negative id means.
+    #[plugin_api(skip)]
+    #[qjs(skip)]
+    fn window_id_arg(id: i64, api: &str) -> Option<fresh_core::WindowId> {
+        if id > 0 {
+            return Some(fresh_core::WindowId(id as u64));
+        }
+        tracing::warn!(
+            "{api}: {id} is not a window id. Negative ids come from \
+             listWorkspaces() for workspaces that have never been activated \
+             (no window exists yet) — open those with the orchestrator's \
+             focusWorkspace(workspaceId) instead."
+        );
+        None
     }
 
     /// Switch the active window with a directional wipe on the
     /// incoming content. `from_edge`: "top" | "bottom" | "left" |
     /// "right". See `PluginCommand::SetActiveWindowAnimated`.
+    ///
+    /// Same id rules as `setActiveWindow`: a non-positive id returns `false`.
     #[qjs(rename = "setActiveWindowAnimated")]
-    pub fn set_active_window_animated(&self, id: u64, from_edge: String) -> bool {
+    pub fn set_active_window_animated(&self, id: i64, from_edge: String) -> bool {
+        let Some(id) = Self::window_id_arg(id, "setActiveWindowAnimated") else {
+            return false;
+        };
         self.command_sender
-            .send(PluginCommand::SetActiveWindowAnimated {
-                id: fresh_core::WindowId(id),
-                from_edge,
-            })
+            .send(PluginCommand::SetActiveWindowAnimated { id, from_edge })
             .is_ok()
     }
 
@@ -4791,6 +5297,21 @@ impl JsEditorApi {
         self.command_sender
             .send(PluginCommand::CloseWindow {
                 id: fresh_core::WindowId(id),
+            })
+            .is_ok()
+    }
+
+    /// Forget a directory's persisted workspace so a permanently deleted
+    /// or archived in-place session does not reappear on the next launch.
+    /// `closeWindow` only drops the live window — this removes the on-disk
+    /// registry file the session discovery would otherwise rediscover.
+    /// Call it *after* `closeWindow` for a session whose directory stays
+    /// on disk (a worktree-owning session is forgotten by removing its
+    /// worktree instead). No-op if nothing is persisted for `root`.
+    pub fn delete_workspace(&self, root: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::DeleteWorkspace {
+                root: PathBuf::from(root),
             })
             .is_ok()
     }
@@ -4897,7 +5418,12 @@ impl JsEditorApi {
             .unwrap_or(1)
     }
 
-    /// Set scroll position of a split
+    /// Set the scroll position of a split.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that it took effect, and a read issued right
+    /// after it still sees the old state. `await editor.flush()` before
+    /// reading back.
     pub fn set_split_scroll(&self, split_id: u32, top_byte: u32) -> bool {
         self.command_sender
             .send(PluginCommand::SetSplitScroll {
@@ -4907,7 +5433,20 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Set the ratio of a split (0.0 to 1.0, 0.5 = equal)
+    /// Resize the split that `split_id` lives in.
+    ///
+    /// `split_id` is a leaf id (as returned by `getActiveSplitId`,
+    /// `listSplits`, `BufferInfo.splits`, `createTerminal`); the editor
+    /// resolves it to its parent split container and sets that container's
+    /// ratio, moving the divider between this pane and its sibling. `ratio`
+    /// is the fraction of space given to the container's FIRST child
+    /// (0.0–1.0, 0.5 = equal), clamped to [0.1, 0.9]. A leaf with no parent
+    /// container (the only pane) is a no-op.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that the resize succeeded, and a read issued
+    /// right after it still sees the old widths. `await editor.flush()` before
+    /// reading back.
     pub fn set_split_ratio(&self, split_id: u32, ratio: f32) -> bool {
         self.command_sender
             .send(PluginCommand::SetSplitRatio {
@@ -5064,10 +5603,102 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Replace this namespace's scrollbar markers for a buffer.
+    ///
+    /// Markers are painted on the vertical scrollbar track at positions
+    /// proportional to their location in the buffer, so marked content is
+    /// visible at a glance even when it is scrolled off screen. Each marker is
+    /// positioned by byte offset (`position`, preferred — it is exact on files
+    /// of any size) or by 0-based `line`, optionally spans to `end`, and
+    /// carries an RGB triple or a theme key as its `color`.
+    ///
+    /// The set is replaced atomically, so a refresh never renders a partially
+    /// rebuilt set.
+    pub fn set_scrollbar_markers(
+        &self,
+        buffer_id: u32,
+        namespace: String,
+        markers: Vec<ScrollbarMarker>,
+    ) -> bool {
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .scrollbar_marker_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+        self.command_sender
+            .send(PluginCommand::SetScrollbarMarkers {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace,
+                markers,
+            })
+            .is_ok()
+    }
+
+    /// Replace only the scrollbar markers currently anchored in
+    /// `[start, end)`, leaving this namespace's markers elsewhere in the
+    /// buffer untouched.
+    ///
+    /// This is the primitive for plugins that decorate the viewport as it
+    /// scrolls (a `lines_changed` producer): publish the region you just
+    /// scanned without resending — or losing — the rest of the file.
+    pub fn set_scrollbar_markers_in_range(
+        &self,
+        buffer_id: u32,
+        namespace: String,
+        start: u32,
+        end: u32,
+        markers: Vec<ScrollbarMarker>,
+    ) -> bool {
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .scrollbar_marker_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+        self.command_sender
+            .send(PluginCommand::SetScrollbarMarkersInRange {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace,
+                start: start as usize,
+                end: end as usize,
+                markers,
+            })
+            .is_ok()
+    }
+
+    /// Remove all scrollbar markers in a namespace
+    pub fn clear_scrollbar_markers(&self, buffer_id: u32, namespace: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearScrollbarMarkers {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace,
+            })
+            .is_ok()
+    }
+
     /// Enable or disable line numbers for a buffer
     pub fn set_line_numbers(&self, buffer_id: u32, enabled: bool) -> bool {
         self.command_sender
             .send(PluginCommand::SetLineNumbers {
+                buffer_id: BufferId(buffer_id as usize),
+                enabled,
+            })
+            .is_ok()
+    }
+
+    /// Show or hide the gutter's fold indicators (`▾` / `▸`) for a buffer in
+    /// the active split, the way `setLineNumbers` does for line numbers.
+    ///
+    /// Pass `null` to withdraw the plugin's opinion and fall back to the
+    /// user's own setting. The plugin's value is stored separately from that
+    /// setting and is never persisted, so it can neither overwrite a
+    /// deliberate choice — "Toggle Folding Indicators (Current Buffer)" still
+    /// wins while this is set — nor leak into the saved session. A mode that
+    /// hides them should still clear its value on the way out.
+    pub fn set_fold_indicators(&self, buffer_id: u32, enabled: Option<bool>) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetFoldIndicators {
                 buffer_id: BufferId(buffer_id as usize),
                 enabled,
             })
@@ -5541,6 +6172,25 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Contribute a row to one of the menu bar's menus (e.g. a "Show Dock"
+    /// toggle under "View"). The target menu and the neighbour named by
+    /// `after` / `before` are matched by stable id (a menu `id`, an item's
+    /// `action`) as well as by display label, so the placement survives a
+    /// locale change. Naming a menu that doesn't exist is a no-op.
+    ///
+    /// Takes a typed AddMenuItemOptions struct - serde validates field
+    /// names at runtime.
+    pub fn add_menu_item(&self, opts: fresh_core::api::AddMenuItemOptions) -> bool {
+        let (menu_label, item, position) = opts.into_parts();
+        self.command_sender
+            .send(PluginCommand::AddMenuItem {
+                menu_label,
+                item,
+                position,
+            })
+            .is_ok()
+    }
+
     /// Contribute (or replace, or clear) menu rows for the LSP-Servers
     /// popup. Pass an empty `items` to clear this plugin's slice for
     /// the given language. See `PluginCommand::SetLspMenuContributions`.
@@ -5670,34 +6320,46 @@ impl JsEditorApi {
     pub fn create_virtual_buffer_start(
         &self,
         _ctx: rquickjs::Ctx<'_>,
-        opts: fresh_core::api::CreateVirtualBufferOptions,
+        mut opts: fresh_core::api::CreateVirtualBufferOptions,
     ) -> rquickjs::Result<u64> {
         let id = self.alloc_request_id();
 
-        // Convert JsTextPropertyEntry to TextPropertyEntry
-        let entries: Vec<TextPropertyEntry> = opts
-            .entries
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| TextPropertyEntry {
-                text: e.text,
-                properties: e.properties.unwrap_or_default(),
-                style: e.style,
-                inline_overlays: e.inline_overlays.unwrap_or_default(),
-                segments: e.segments.unwrap_or_default(),
-                pad_to_chars: e.pad_to_chars,
-                truncate_to_chars: e.truncate_to_chars,
-            })
-            .collect();
+        let entries = initial_entries(opts.entries.take());
+
+        // Track request_id → plugin_name for async resource tracking
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
+
+        // An explicit `splitId` means "put it there", which is the
+        // existing-split path. Without this the option was accepted and
+        // ignored, and the buffer took over the focused pane instead —
+        // clobbering whatever the user was looking at.
+        if let Some(split_id) = opts.split_id {
+            let _ = self
+                .command_sender
+                .send(PluginCommand::CreateVirtualBufferInExistingSplit {
+                    name: opts.name,
+                    mode: opts.mode.unwrap_or_default(),
+                    read_only: opts.read_only.unwrap_or(false),
+                    entries,
+                    split_id: fresh_core::SplitId(split_id),
+                    show_line_numbers: opts.show_line_numbers.unwrap_or(false),
+                    show_cursors: opts.show_cursors.unwrap_or(true),
+                    editing_disabled: opts.editing_disabled.unwrap_or(false),
+                    // The plain constructor has no line-wrap option; the
+                    // existing-split command does, so pass its default.
+                    line_wrap: None,
+                    initial_cursor_line: opts.initial_cursor_line,
+                    request_id: Some(id),
+                });
+            return Ok(id);
+        }
 
         tracing::debug!(
             "_createVirtualBufferStart: sending CreateVirtualBufferWithContent command, request_id={}",
             id
         );
-        // Track request_id → plugin_name for async resource tracking
-        if let Ok(mut owners) = self.async_resource_owners.lock() {
-            owners.insert(id, self.plugin_name.clone());
-        }
         let _ = self
             .command_sender
             .send(PluginCommand::CreateVirtualBufferWithContent {
@@ -5726,25 +6388,11 @@ impl JsEditorApi {
     pub fn create_virtual_buffer_in_split_start(
         &self,
         _ctx: rquickjs::Ctx<'_>,
-        opts: fresh_core::api::CreateVirtualBufferInSplitOptions,
+        mut opts: fresh_core::api::CreateVirtualBufferInSplitOptions,
     ) -> rquickjs::Result<u64> {
         let id = self.alloc_request_id();
 
-        // Convert JsTextPropertyEntry to TextPropertyEntry
-        let entries: Vec<TextPropertyEntry> = opts
-            .entries
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| TextPropertyEntry {
-                text: e.text,
-                properties: e.properties.unwrap_or_default(),
-                style: e.style,
-                inline_overlays: e.inline_overlays.unwrap_or_default(),
-                segments: e.segments.unwrap_or_default(),
-                pad_to_chars: e.pad_to_chars,
-                truncate_to_chars: e.truncate_to_chars,
-            })
-            .collect();
+        let entries = initial_entries(opts.entries.take());
 
         // Track request_id → plugin_name for async resource tracking
         if let Ok(mut owners) = self.async_resource_owners.lock() {
@@ -5782,25 +6430,11 @@ impl JsEditorApi {
     pub fn create_virtual_buffer_in_existing_split_start(
         &self,
         _ctx: rquickjs::Ctx<'_>,
-        opts: fresh_core::api::CreateVirtualBufferInExistingSplitOptions,
+        mut opts: fresh_core::api::CreateVirtualBufferInExistingSplitOptions,
     ) -> rquickjs::Result<u64> {
         let id = self.alloc_request_id();
 
-        // Convert JsTextPropertyEntry to TextPropertyEntry
-        let entries: Vec<TextPropertyEntry> = opts
-            .entries
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| TextPropertyEntry {
-                text: e.text,
-                properties: e.properties.unwrap_or_default(),
-                style: e.style,
-                inline_overlays: e.inline_overlays.unwrap_or_default(),
-                segments: e.segments.unwrap_or_default(),
-                pad_to_chars: e.pad_to_chars,
-                truncate_to_chars: e.truncate_to_chars,
-            })
-            .collect();
+        let entries = initial_entries(opts.entries.take());
 
         // Track request_id → plugin_name for async resource tracking
         if let Ok(mut owners) = self.async_resource_owners.lock() {
@@ -5879,6 +6513,58 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Switch a virtual buffer's mode — the keybinding set that applies
+    /// while it is focused.
+    ///
+    /// A panel that grows a text field (an in-panel filter) needs the
+    /// single-key commands of its normal mode to stop firing while the
+    /// user types; giving the panel a text-input mode for the duration
+    /// does that without the plugin re-registering bindings. Modes are
+    /// declared with `defineMode`; a mode name with no definition falls
+    /// back to the global bindings.
+    #[qjs(rename = "setBufferMode")]
+    pub fn set_buffer_mode(&self, buffer_id: u32, mode: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBufferMode {
+                buffer_id: BufferId(buffer_id as usize),
+                mode,
+            })
+            .is_ok()
+    }
+
+    /// Show or hide one panel of a buffer group, without tearing the
+    /// group down.
+    ///
+    /// The panel's buffer, its content and its scroll position all
+    /// survive being hidden — only the group's split tree changes, so
+    /// the remaining panels take over the freed space and a re-shown
+    /// panel comes back where it was. Use it for optional sidebars a
+    /// mode wants to toggle (a file list, a comments rail) instead of
+    /// closing and recreating the group.
+    ///
+    /// Hiding a panel that holds focus moves focus to a panel that is
+    /// still rendered; focusing a hidden panel is a no-op. Returns
+    /// `false` if the group or panel is unknown, or if the call would
+    /// hide the group's last visible panel.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports
+    /// that the command was sent.
+    #[qjs(rename = "setBufferGroupPanelVisible")]
+    pub fn set_buffer_group_panel_visible(
+        &self,
+        group_id: u32,
+        panel_name: String,
+        visible: bool,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBufferGroupPanelVisible {
+                group_id: group_id as usize,
+                panel_name,
+                visible,
+            })
+            .is_ok()
+    }
+
     /// Focus a specific panel within a buffer group
     #[qjs(rename = "focusBufferGroupPanel")]
     pub fn focus_buffer_group_panel(&self, group_id: u32, panel_name: String) -> bool {
@@ -5921,9 +6607,22 @@ impl JsEditorApi {
         id
     }
 
-    /// Set virtual buffer content (takes array of entry objects)
+    /// Replace a virtual buffer's content with a list of styled **spans**.
     ///
-    /// Note: entries should be TextPropertyEntry[] - uses manual parsing for HashMap support
+    /// Spans are concatenated *verbatim*: they are runs of text, not lines,
+    /// and nothing inserts separators for you. `[{text:"a"},{text:"b"}]` is
+    /// the single line `ab`; for two lines, write `[{text:"a\n"},{text:"b\n"}]`.
+    /// A buffer built without those newlines reports a plausible `length` and
+    /// a `lineCount` of 1 — read it back from `getBufferInfo` if it matters,
+    /// since otherwise the mistake is only visible on screen.
+    ///
+    /// If you are an agent putting text in front of a human, prefer writing a
+    /// file and opening it (`splitWindow({ file })` /
+    /// `openFileInSplit(splitId, path)`). A file buffer gives you syntax
+    /// highlighting, search, save, and renders ANSI escape codes as colour —
+    /// so command output can go straight in. Virtual buffers exist for
+    /// plugin-owned panels: ephemeral, styled per span, driven by a mode's
+    /// keybindings.
     pub fn set_virtual_buffer_content<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
@@ -6112,6 +6811,9 @@ impl JsEditorApi {
         // back-compat with existing mount calls.
         title: rquickjs::function::Opt<String>,
         closable: rquickjs::function::Opt<bool>,
+        // Mount without taking keyboard focus (the auto-opened dock).
+        // Optional trailing arg, default false, for call-site back-compat.
+        start_blurred: rquickjs::function::Opt<bool>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
@@ -6135,6 +6837,7 @@ impl JsEditorApi {
                 focus_marker: focus_marker.0.unwrap_or(false),
                 title: title.0.filter(|s| !s.is_empty()),
                 closable: closable.0.unwrap_or(false),
+                start_blurred: start_blurred.0.unwrap_or(false),
             })
             .is_ok())
     }
@@ -6196,6 +6899,26 @@ impl JsEditorApi {
     // === Async Operations ===
 
     /// Spawn a process (async, returns request_id)
+    ///
+    /// **No shell is involved.** `command` is executed directly, so quoting,
+    /// globbing, `|`, `&&`, `>` and `$VAR` are not interpreted — pass the
+    /// program and its arguments already split:
+    ///
+    /// ```js
+    /// await editor.spawnProcess("gh", ["api", "graphql", "-f", query], repoDir);
+    /// ```
+    ///
+    /// Wrapping the call in `/bin/sh -lc "…"` to get shell behaviour is
+    /// usually a mistake: a login shell sources the user's profile, which is
+    /// slow and can block outright.
+    ///
+    /// The child inherits the **editor's** environment, including `PATH`, so
+    /// `git`, `gh` and anything else the user can run from their shell
+    /// resolves by bare name — no absolute paths needed.
+    ///
+    /// `cwd` is the third argument; without it the child inherits the
+    /// editor's working directory, which is not necessarily the workspace you
+    /// meant.
     ///
     /// Optional 4th argument `stdoutTo: string` pipes the child's stdout
     /// directly into the named file instead of buffering it. The
@@ -6466,27 +7189,330 @@ impl JsEditorApi {
         id
     }
 
-    /// Get buffer text range (async, returns request_id)
+    /// Read buffer text.
+    ///
+    /// `getBufferText(id)` returns the **whole buffer** — the common case,
+    /// and the one that used to require reading `length` from
+    /// `getBufferInfo` and passing it back. `getBufferText(id, start, end)`
+    /// still reads a byte range, so existing callers are unaffected.
+    ///
+    /// Byte offsets, not character or line offsets.
     #[plugin_api(async_promise, js_name = "getBufferText", ts_return = "string")]
     #[qjs(rename = "_getBufferTextStart")]
     pub fn get_buffer_text_start(
         &self,
         _ctx: rquickjs::Ctx<'_>,
         buffer_id: u32,
-        start: u32,
-        end: u32,
+        start: rquickjs::function::Opt<u32>,
+        end: rquickjs::function::Opt<u32>,
     ) -> u64 {
         let id = self.alloc_request_id();
+        // No end offset means "to the end of the buffer": resolve it from the
+        // snapshot so the caller doesn't have to make that round trip itself.
+        let buffer_len = || {
+            self.state_snapshot
+                .read()
+                .ok()
+                .and_then(|s| {
+                    s.buffers
+                        .get(&BufferId(buffer_id as usize))
+                        .map(|b| b.length)
+                })
+                .unwrap_or(usize::MAX)
+        };
         let _ = self.command_sender.send(PluginCommand::GetBufferText {
             buffer_id: BufferId(buffer_id as usize),
-            start: start as usize,
-            end: end as usize,
+            start: start.0.unwrap_or(0) as usize,
+            end: end.0.map(|e| e as usize).unwrap_or_else(buffer_len),
             request_id: id,
         });
         id
     }
 
+    /// Register a diff baseline for a buffer (async). `kind` is one of
+    /// "saved" | "disk" | "gitRef" | "gitIndex"; `gitRef` carries the ref
+    /// for kind "gitRef". Resolves with the baseline id once the
+    /// reference content is loaded host-side — no file content ever
+    /// crosses the plugin bridge. Baselines are dropped automatically
+    /// when their buffer closes, or explicitly via
+    /// `releaseDiffBaseline`.
+    #[plugin_api(async_promise, js_name = "registerDiffBaseline", ts_return = "number")]
+    #[qjs(rename = "_registerDiffBaselineStart")]
+    pub fn register_diff_baseline_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        buffer_id: u32,
+        kind: String,
+        git_ref: Option<String>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::RegisterDiffBaseline {
+                buffer_id: BufferId(buffer_id as usize),
+                kind,
+                git_ref,
+                callback_id: JsCallbackId::new(id),
+            });
+        id
+    }
+
+    /// Diff a buffer's live content against a registered baseline
+    /// (async). Resolves with a `DiffBaselineResult`; check its
+    /// `revision` against the buffer's current version before anchoring
+    /// decorations on the hunks.
+    #[plugin_api(
+        async_promise,
+        js_name = "diffAgainstBaseline",
+        ts_return = "DiffBaselineResult"
+    )]
+    #[qjs(rename = "_diffAgainstBaselineStart")]
+    pub fn diff_against_baseline_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        buffer_id: u32,
+        baseline_id: u64,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::DiffAgainstBaseline {
+                buffer_id: BufferId(buffer_id as usize),
+                baseline_id,
+                callback_id: JsCallbackId::new(id),
+            });
+        id
+    }
+
+    /// Diff two registered baselines against each other (async) — e.g.
+    /// disk vs HEAD, the git-gutter comparison. Resolves with a
+    /// `DiffBaselineResult` whose `revision` is 0.
+    #[plugin_api(
+        async_promise,
+        js_name = "diffBaselinePair",
+        ts_return = "DiffBaselineResult"
+    )]
+    #[qjs(rename = "_diffBaselinePairStart")]
+    pub fn diff_baseline_pair_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        old_baseline_id: u64,
+        new_baseline_id: u64,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::DiffBaselinePair {
+            old_baseline_id,
+            new_baseline_id,
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Fetch baseline lines for `(startLine, count)` ranges in one
+    /// batched call (async). Lines come back without trailing newlines,
+    /// grouped per requested range — fetch only the old-side lines a
+    /// diff view actually renders.
+    #[plugin_api(async_promise, js_name = "getBaselineLines", ts_return = "string[][]")]
+    #[qjs(rename = "_getBaselineLinesStart")]
+    pub fn get_baseline_lines_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        baseline_id: u64,
+        ranges: Vec<Vec<u32>>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let ranges: Vec<(u32, u32)> = ranges
+            .into_iter()
+            .filter_map(|r| match r.as_slice() {
+                [start, count] => Some((*start, *count)),
+                _ => None,
+            })
+            .collect();
+        let _ = self.command_sender.send(PluginCommand::GetBaselineLines {
+            baseline_id,
+            ranges,
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Reload a baseline's reference content (async; call after a HEAD
+    /// move or an external write). Resolves once the fresh content is
+    /// serving.
+    #[plugin_api(async_promise, js_name = "refreshDiffBaseline", ts_return = "void")]
+    #[qjs(rename = "_refreshDiffBaselineStart")]
+    pub fn refresh_diff_baseline_start(&self, _ctx: rquickjs::Ctx<'_>, baseline_id: u64) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::RefreshDiffBaseline {
+                baseline_id,
+                callback_id: JsCallbackId::new(id),
+            });
+        id
+    }
+
+    /// Drop a registered diff baseline.
+    pub fn release_diff_baseline(&self, baseline_id: u64) {
+        let _ = self
+            .command_sender
+            .send(PluginCommand::ReleaseDiffBaseline { baseline_id });
+    }
+
+    /// Run `handlerName` every `intervalMs` milliseconds until cancelled.
+    /// Returns a timer id for `clearInterval`.
+    ///
+    /// The alternative — a detached `while (alive) { await editor.delay(ms);
+    /// … }` loop — does work, and the bundled dashboard plugin uses one. But
+    /// it puts three obligations on you that a timer discharges for free:
+    ///
+    /// 1. **A throw anywhere in the loop body ends it, silently.** The loop
+    ///    is a detached async function, so the rejection has nowhere to
+    ///    surface; the panel simply stops updating, with nothing in the log
+    ///    pointing at why. Every `await` inside must be individually
+    ///    guarded. A timer handler's throw is caught and logged by the host,
+    ///    and the *next* tick still fires.
+    /// 2. **You must cancel it yourself.** A loop keeps running after its
+    ///    plugin is unloaded or reloaded until its own guard notices, so it
+    ///    needs a liveness check that survives a reload — an identity check
+    ///    (`myBufferId === currentBufferId`), not a boolean, or a reopened
+    ///    panel ends up with two loops. Timers are cancelled on unload.
+    /// 3. **The first iteration is one period late** unless you also do the
+    ///    work once before entering the loop.
+    ///
+    /// A loop is still the better shape when each iteration's decision
+    /// depends on the last one's result, or when you want a single ticker
+    /// driving many items on their own schedules (again: see dashboard.ts,
+    /// which ticks at 1s and re-runs a section only once its own TTL has
+    /// expired, so cost scales with the sum of the sections' rates rather
+    /// than tick-rate × section-count).
+    ///
+    /// The handler is named, not passed as a function, for the same reason
+    /// `registerCommand` takes a name: the host invokes it by looking it up
+    /// on `globalThis`. Declare it with `registerHandler("myTick", fn)`.
+    ///
+    /// The handler may be `async`; a fire is not awaited, and a slow handler
+    /// does not delay the editor. Ticks are *not* queued — if a fire is
+    /// still outstanding when the next is due, the next simply happens, so
+    /// guard re-entrancy yourself (`if (inFlight) return;`) when a tick can
+    /// outlast its period.
+    ///
+    /// Timers are cancelled automatically when the owning plugin is unloaded
+    /// or reloaded, so a hot-reload during development does not leave the
+    /// previous copy ticking alongside the new one.
+    ///
+    /// `intervalMs` is clamped to a floor (see `MIN_PLUGIN_TIMER_MS` in the
+    /// host) so a `0` cannot spin the editor.
+    #[plugin_api(js_name = "setInterval", ts_return = "number")]
+    pub fn set_interval(&self, interval_ms: u64, handler_name: String) -> u64 {
+        self.register_timer(interval_ms, handler_name, true)
+    }
+
+    /// Run `handlerName` once, `delayMs` from now. Returns a timer id, so a
+    /// pending one-shot can still be cancelled with `clearInterval`.
+    ///
+    /// Same contract as `setInterval` — named handler, host-driven, cancelled
+    /// on plugin unload. Use it when the continuation should happen whether
+    /// or not the code that scheduled it is still around; use
+    /// `await editor.delay(ms)` when you are pausing work you are already
+    /// inside of and want to keep the local variables.
+    #[plugin_api(js_name = "setTimeout", ts_return = "number")]
+    pub fn set_timeout(&self, delay_ms: u64, handler_name: String) -> u64 {
+        self.register_timer(delay_ms, handler_name, false)
+    }
+
+    /// Cancel a timer from `setInterval` / `setTimeout`.
+    ///
+    /// Returns `false` when this plugin holds no live timer under that id —
+    /// which covers a typo, a double-cancel, and a one-shot that has already
+    /// fired. None of those is an error, so none throws.
+    ///
+    /// Only your own timers are cancellable: ids come from a counter shared
+    /// across plugins, so accepting an arbitrary id would let one plugin stop
+    /// another's refresh.
+    #[plugin_api(js_name = "clearInterval", ts_return = "boolean")]
+    pub fn clear_interval(&self, timer_id: u64) -> bool {
+        let owned = {
+            let mut tracked = self.plugin_tracked_state.borrow_mut();
+            match tracked.get_mut(&self.plugin_name) {
+                Some(state) => {
+                    let before = state.timer_ids.len();
+                    state.timer_ids.retain(|id| *id != timer_id);
+                    state.timer_ids.len() != before
+                }
+                None => false,
+            }
+        };
+        if !owned {
+            return false;
+        }
+        self.command_sender
+            .send(PluginCommand::ClearPluginTimer { timer_id })
+            .is_ok()
+    }
+
+    /// Shared body of `setInterval` / `setTimeout`: mint an id, record it
+    /// against the plugin so unload can cancel it, and tell the host.
+    #[plugin_api(skip)]
+    #[qjs(skip)]
+    fn register_timer(&self, interval_ms: u64, handler_name: String, repeat: bool) -> u64 {
+        let timer_id = self.alloc_animation_id();
+        // Same bookkeeping `registerCommand` does, and for the same reason:
+        // a fire arrives from the host as a bare handler name, and this map
+        // is what tells the runtime *which realm* to look that name up in.
+        // Without it the lookup falls back to the main context, where a
+        // plugin's own function does not exist.
+        self.registered_actions.borrow_mut().insert(
+            handler_name.clone(),
+            PluginHandler {
+                plugin_name: self.plugin_name.clone(),
+                handler_name: handler_name.clone(),
+            },
+        );
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .timer_ids
+            .push(timer_id);
+        let _ = self.command_sender.send(PluginCommand::SetPluginTimer {
+            timer_id,
+            plugin_name: self.plugin_name.clone(),
+            handler_name,
+            interval_ms,
+            repeat,
+        });
+        timer_id
+    }
+
     /// Delay/sleep (async, returns request_id)
+    ///
+    /// Resolves after `durationMs`. Two things it is very good at:
+    ///
+    /// - a pause inside work you are already inside of — a debounce, a retry
+    ///   backoff, a settle before reading state back;
+    /// - a **timeout**, by racing it against the real work:
+    ///   ```js
+    ///   const timedOut = Symbol("timeout");
+    ///   const outcome = await Promise.race([
+    ///       doTheWork().then(() => "ok"),
+    ///       editor.delay(8000).then(() => timedOut),
+    ///   ]);
+    ///   ```
+    ///   which is how the bundled dashboard stops one slow section from
+    ///   stalling the panel.
+    ///
+    /// For a *periodic background* task, weigh it against
+    /// `editor.setInterval(ms, "handlerName")`. A detached
+    /// `while (…) { await editor.delay(ms); … }` loop works, but it dies
+    /// silently on the first unguarded throw, is not cancelled when the
+    /// plugin unloads, and does its first iteration one period late — see
+    /// `setInterval` for when each shape is the right one.
+    ///
+    /// Note the loop keeps running after the plugin that created it is
+    /// unloaded or reloaded, until its own guard notices. Gate it on an
+    /// identity (`myBufferId === currentBufferId`) rather than a boolean, or
+    /// reloading leaves two loops racing.
     #[plugin_api(async_promise, js_name = "delay", ts_return = "void")]
     #[qjs(rename = "_delayStart")]
     pub fn delay_start(&self, _ctx: rquickjs::Ctx<'_>, duration_ms: u64) -> u64 {
@@ -6514,6 +7540,7 @@ impl JsEditorApi {
     ) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::GrepProject {
+            plugin_name: self.plugin_name.clone(),
             pattern,
             fixed_string: fixed_string.unwrap_or(true),
             case_sensitive: case_sensitive.unwrap_or(true),
@@ -6771,8 +7798,9 @@ impl JsEditorApi {
             window_id: None,
             command: None,
             title: None,
+            resume: None,
             env: None,
-            command_allowlist: None,
+            allow_script: None,
         });
 
         // Track request_id → plugin_name for async resource tracking
@@ -6791,8 +7819,9 @@ impl JsEditorApi {
             persistent: opts.persistent.unwrap_or(false),
             command: opts.command,
             title: opts.title,
+            resume: opts.resume,
             env: opts.env,
-            command_allowlist: opts.command_allowlist,
+            allow_script: opts.allow_script.unwrap_or(false),
             request_id: id,
         });
         Ok(id)
@@ -6828,10 +7857,72 @@ impl JsEditorApi {
                 title: opts.title,
                 resume: opts.resume,
                 env: opts.env,
-                command_allowlist: opts.command_allowlist,
+                allow_script: opts.allow_script.unwrap_or(false),
+                adopt_window: opts.adopt_window.map(fresh_core::WindowId),
                 request_id: id,
             });
         Ok(id)
+    }
+
+    /// Open a workspace *before* its contents exist: a real window (own id,
+    /// durable stable id, label, authority) showing a "still being built"
+    /// placeholder page. Focus can move into it right away, and the dock
+    /// row is a full workspace — renameable, filable, closable — while the
+    /// slow part (a `git worktree add`, say) runs behind it.
+    ///
+    /// Narrate progress with `setWindowPreparing`, then hand the id to
+    /// `createWindowWithTerminal` as `adoptWindow` to turn the placeholder
+    /// into the live session in place, ids and all.
+    #[plugin_api(
+        async_promise,
+        js_name = "createPreparingWindow",
+        ts_return = "PreparingWindowResult"
+    )]
+    #[qjs(rename = "_createPreparingWindowStart")]
+    pub fn create_preparing_window_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        opts: fresh_core::api::CreatePreparingWindowOptions,
+    ) -> rquickjs::Result<u64> {
+        let id = self.alloc_request_id();
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
+        let _ = self
+            .command_sender
+            .send(PluginCommand::CreatePreparingWindow {
+                root: std::path::PathBuf::from(opts.root),
+                label: opts.label,
+                message: opts.message,
+                activate: opts.activate.unwrap_or(false),
+                request_id: id,
+            });
+        Ok(id)
+    }
+
+    /// Update the progress line (and displayed name) on a preparing window
+    /// — `failed` switches it to the error copy — or clear the preparing
+    /// state with `done` so the window renders as an ordinary session
+    /// again. An empty `label` leaves the displayed name alone.
+    ///
+    /// Returns `false` only when the channel to the editor is closed.
+    pub fn set_window_preparing(
+        &self,
+        id: u64,
+        message: String,
+        label: Option<String>,
+        failed: bool,
+        done: bool,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetWindowPreparing {
+                id: fresh_core::WindowId(id),
+                message,
+                label: label.unwrap_or_default(),
+                failed,
+                done,
+            })
+            .is_ok()
     }
 
     /// Send input data to a terminal
@@ -6937,168 +8028,111 @@ impl JsEditorApi {
         });
         id
     }
-}
 
-// =============================================================================
-// View Token Parsing Helpers
-// =============================================================================
-
-/// Parse a single view token from JS object
-/// Supports both simple format and TypeScript format
-fn parse_view_token(
-    obj: &rquickjs::Object<'_>,
-    idx: usize,
-) -> rquickjs::Result<fresh_core::api::ViewTokenWire> {
-    use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-
-    // Try to get the 'kind' field - could be string or object
-    let kind_value: rquickjs::Value = obj.get("kind").map_err(|_| rquickjs::Error::FromJs {
-        from: "object",
-        to: "ViewTokenWire",
-        message: Some(format!("token[{}]: missing required field 'kind'", idx)),
-    })?;
-
-    // Parse source_offset - try both camelCase and snake_case
-    let source_offset: Option<usize> = obj
-        .get("sourceOffset")
-        .ok()
-        .or_else(|| obj.get("source_offset").ok());
-
-    // Parse the kind field - support both formats
-    let kind = if kind_value.is_string() {
-        // Simple format: kind is a string like "text", "newline", etc.
-        // OR TypeScript format for non-text: "Newline", "Space", "Break"
-        let kind_str: String = kind_value.get().map_err(|_| rquickjs::Error::FromJs {
-            from: "value",
-            to: "string",
-            message: Some(format!("token[{}]: 'kind' is not a valid string", idx)),
-        })?;
-
-        match kind_str.to_lowercase().as_str() {
-            "text" => {
-                let text: String = obj.get("text").unwrap_or_default();
-                ViewTokenWireKind::Text(text)
-            }
-            "newline" => ViewTokenWireKind::Newline,
-            "space" => ViewTokenWireKind::Space,
-            "break" => ViewTokenWireKind::Break,
-            _ => {
-                // Unknown kind string - log warning and return error
-                tracing::warn!(
-                    "token[{}]: unknown kind string '{}', expected one of: text, newline, space, break",
-                    idx, kind_str
-                );
-                return Err(rquickjs::Error::FromJs {
-                    from: "string",
-                    to: "ViewTokenWireKind",
-                    message: Some(format!(
-                        "token[{}]: unknown kind '{}', expected: text, newline, space, break, or {{Text: \"...\"}}",
-                        idx, kind_str
-                    )),
-                });
-            }
-        }
-    } else if kind_value.is_object() {
-        // TypeScript format: kind is an object like {Text: "..."} or {BinaryByte: N}
-        let kind_obj: rquickjs::Object = kind_value.get().map_err(|_| rquickjs::Error::FromJs {
-            from: "value",
-            to: "object",
-            message: Some(format!("token[{}]: 'kind' is not an object", idx)),
-        })?;
-
-        if let Ok(text) = kind_obj.get::<_, String>("Text") {
-            ViewTokenWireKind::Text(text)
-        } else if let Ok(byte) = kind_obj.get::<_, u8>("BinaryByte") {
-            ViewTokenWireKind::BinaryByte(byte)
-        } else {
-            // Check what keys are present for a helpful error
-            let keys: Vec<String> = kind_obj.keys::<String>().filter_map(|k| k.ok()).collect();
-            tracing::warn!(
-                "token[{}]: kind object has unknown keys: {:?}, expected 'Text' or 'BinaryByte'",
-                idx,
-                keys
-            );
-            return Err(rquickjs::Error::FromJs {
-                from: "object",
-                to: "ViewTokenWireKind",
-                message: Some(format!(
-                    "token[{}]: kind object must have 'Text' or 'BinaryByte' key, found: {:?}",
-                    idx, keys
-                )),
-            });
-        }
-    } else {
-        tracing::warn!(
-            "token[{}]: 'kind' field must be a string or object, got: {:?}",
-            idx,
-            kind_value.type_of()
-        );
-        return Err(rquickjs::Error::FromJs {
-            from: "value",
-            to: "ViewTokenWireKind",
-            message: Some(format!(
-                "token[{}]: 'kind' must be a string (e.g., \"text\") or object (e.g., {{Text: \"...\"}})",
-                idx
-            )),
+    /// Re-read `~/.config/fresh/init.ts` and run it — the scriptable form of
+    /// the "init: Reload" palette command, and the same thing
+    /// `fresh --cmd init reload` sends.
+    ///
+    /// Use this rather than `reloadPlugin("init.ts")`: init.ts is not loaded
+    /// from a path (its plugin path is the sentinel `<buffer:init.ts>`), so
+    /// the by-name plugin reload cannot find it.
+    ///
+    /// Reloading drops the previous init.ts's commands, handlers, event
+    /// subscriptions and settings before the new source runs, so the
+    /// author → reload → test loop needs no editor restart. Resolves `true`
+    /// once the new source has run; rejects with the parse error if the file
+    /// does not compile (the old init.ts stays live in that case).
+    ///
+    /// Calling this *from* init.ts re-enters the reload; guard it if you do.
+    #[plugin_api(async_promise, js_name = "reloadInit", ts_return = "boolean")]
+    #[qjs(rename = "_reloadInitStart")]
+    pub fn reload_init_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::ReloadInit {
+            callback_id: JsCallbackId::new(id),
         });
-    };
-
-    // Parse style if present
-    let style = parse_view_token_style(obj, idx)?;
-
-    Ok(ViewTokenWire {
-        source_offset,
-        kind,
-        style,
-    })
-}
-
-/// Parse optional style from a token object
-fn parse_view_token_style(
-    obj: &rquickjs::Object<'_>,
-    idx: usize,
-) -> rquickjs::Result<Option<fresh_core::api::ViewTokenStyle>> {
-    use fresh_core::api::{TokenColor, ViewTokenStyle};
-
-    let style_obj: Option<rquickjs::Object> = obj.get("style").ok();
-    let Some(s) = style_obj else {
-        return Ok(None);
-    };
-
-    // fg/bg accept either `[r, g, b]` (legacy) or a string — a named
-    // ANSI color (`"Red"`, `"Default"`, …) or a theme key
-    // (`"editor.diff_remove_bg"`). Try the array form first, then fall
-    // back to a string.
-    fn parse_color(
-        s: &rquickjs::Object<'_>,
-        field: &str,
-        idx: usize,
-    ) -> rquickjs::Result<Option<TokenColor>> {
-        if let Ok(arr) = s.get::<_, Vec<u8>>(field) {
-            if arr.len() < 3 {
-                tracing::warn!(
-                    "token[{}]: style.{} has {} elements, expected 3 (RGB)",
-                    idx,
-                    field,
-                    arr.len()
-                );
-                return Ok(None);
-            }
-            return Ok(Some(TokenColor::Rgb(arr[0], arr[1], arr[2])));
-        }
-        if let Ok(name) = s.get::<_, String>(field) {
-            return Ok(Some(TokenColor::Named(name)));
-        }
-        Ok(None)
+        id
     }
 
-    Ok(Some(ViewTokenStyle {
-        fg: parse_color(&s, "fg", idx)?,
-        bg: parse_color(&s, "bg", idx)?,
-        bold: s.get("bold").unwrap_or(false),
-        italic: s.get("italic").unwrap_or(false),
-        underline: s.get("underline").unwrap_or(false),
-    }))
+    /// Run a registered command by the exact name it shows in the command
+    /// palette — the same dispatch the palette performs on that row, so a
+    /// command handler is exercised through its real path rather than by
+    /// calling the plugin function directly.
+    ///
+    /// Resolves `true` when the command was found and dispatched; rejects
+    /// when no command carries that name (so a typo is an error, not a
+    /// silent no-op). The command's *own* async work is not awaited — this
+    /// resolves once dispatch happened, exactly like a keypress would.
+    ///
+    /// `fresh --cmd command run "<name>"` is this call from a shell.
+    #[plugin_api(async_promise, js_name = "runCommand", ts_return = "boolean")]
+    #[qjs(rename = "_runCommandStart")]
+    pub fn run_command_start(&self, _ctx: rquickjs::Ctx<'_>, name: String) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::RunEditorCommand {
+            name,
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Every registered command — built-ins and plugin commands together —
+    /// as `{ name, description, source, plugin }`, where `source` is
+    /// `"builtin"` or `"plugin"` and `plugin` names the owner (empty for
+    /// built-ins).
+    ///
+    /// The point of this from a plugin's own script: confirming that your
+    /// `registerCommand` actually landed, under the name you expect, before
+    /// hunting for why the palette "doesn't show it".
+    #[plugin_api(
+        async_promise,
+        js_name = "listCommands",
+        ts_return = "Array<{name: string, description: string, source: string, plugin: string}>"
+    )]
+    #[qjs(rename = "_listCommandsStart")]
+    pub fn list_commands_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::ListEditorCommands {
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+}
+
+/// Interpret the value `setVirtualBufferContent` was handed: a string, an
+/// array of strings, or an array of styled-span objects.
+/// Convert the `entries` option — styled spans — into what the editor stores.
+///
+/// Shared by the three `createVirtualBuffer*` entry points, which previously
+/// carried three identical copies of this mapping.
+fn initial_entries(
+    entries: Option<Vec<fresh_core::api::JsTextPropertyEntry>>,
+) -> Vec<TextPropertyEntry> {
+    entries
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| TextPropertyEntry {
+            text: e.text,
+            properties: e.properties.unwrap_or_default(),
+            style: e.style,
+            inline_overlays: e.inline_overlays.unwrap_or_default(),
+            segments: e.segments.unwrap_or_default(),
+            pad_to_chars: e.pad_to_chars,
+            truncate_to_chars: e.truncate_to_chars,
+        })
+        .collect()
+}
+
+/// The request id behind an agent script's context, if this context belongs to
+/// one.
+///
+/// `Editor::eval_agent_script` names each script's plugin `agent-script-<id>`,
+/// and `setup_context_api` publishes that name as `__pluginName__`. Reading it
+/// back is what lets a runtime-level event — which knows a context but no
+/// request — be attributed to the caller waiting on it.
+fn agent_script_request_id(ctx: &rquickjs::Ctx<'_>) -> Option<u64> {
+    let name: String = ctx.globals().get("__pluginName__").ok()?;
+    name.strip_prefix("agent-script-")?.parse().ok()
 }
 
 /// QuickJS-based JavaScript runtime for plugins
@@ -7430,13 +8464,47 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.unloadPlugin = _wrapAsync("_unloadPluginStart", "unloadPlugin");
                 editor.reloadPlugin = _wrapAsync("_reloadPluginStart", "reloadPlugin");
                 editor.listPlugins = _wrapAsync("_listPluginsStart", "listPlugins");
+                editor.reloadInit = _wrapAsync("_reloadInitStart", "reloadInit");
+                editor.runCommand = _wrapAsync("_runCommandStart", "runCommand");
+                editor.listCommands = _wrapAsync("_listCommandsStart", "listCommands");
                 editor.prompt = _wrapAsync("_promptStart", "prompt");
                 editor.getNextKey = _wrapAsync("_getNextKeyStart", "getNextKey");
                 editor.getLineStartPosition = _wrapAsync("_getLineStartPositionStart", "getLineStartPosition");
                 editor.getLineEndPosition = _wrapAsync("_getLineEndPositionStart", "getLineEndPosition");
                 editor.createTerminal = _wrapAsync("_createTerminalStart", "createTerminal");
                 editor.createWindowWithTerminal = _wrapAsync("_createWindowWithTerminalStart", "createWindowWithTerminal");
+                editor.createPreparingWindow = _wrapAsync("_createPreparingWindowStart", "createPreparingWindow");
                 editor.reloadGrammars = _wrapAsync("_reloadGrammarsStart", "reloadGrammars");
+
+                // Everything else that follows the `_<name>Start` convention
+                // gets its promise wrapper automatically. The explicit lines
+                // above run first, so the handful that need a different
+                // wrapper (`_wrapAsyncThenable`) keep it; this only fills in
+                // what nothing has claimed.
+                //
+                // Without this, adding an async method to the Rust API left it
+                // callable only as `_fooStart` — the method existed, the types
+                // advertised it, and `editor.foo(...)` threw "not a function".
+                // From the outside that is indistinguishable from a capability
+                // the editor simply doesn't have, which is the worst kind of
+                // gap: it sends a caller off to build a workaround for
+                // something already implemented.
+                (function autoWrapAsyncMethods() {
+                    const seen = new Set();
+                    let obj = editor;
+                    while (obj && obj !== Object.prototype) {
+                        for (const key of Object.getOwnPropertyNames(obj)) {
+                            if (seen.has(key)) continue;
+                            seen.add(key);
+                            const match = /^_(.+)Start$/.exec(key);
+                            if (!match) continue;
+                            const name = match[1].charAt(0).toLowerCase() + match[1].slice(1);
+                            if (typeof editor[name] === "function") continue;
+                            editor[name] = _wrapAsync(key, name);
+                        }
+                        obj = Object.getPrototypeOf(obj);
+                    }
+                })();
                 editor.grepProject = _wrapAsync("_grepProjectStart", "grepProject");
                 editor.replaceInFile = _wrapAsync("_replaceInFileStart", "replaceInFile");
                 editor.openFileStreaming = _wrapAsync("_openFileStreamingStart", "openFileStreaming");
@@ -7580,8 +8648,9 @@ impl QuickJsBackend {
             Runtime::new().map_err(|e| anyhow!("Failed to create QuickJS runtime: {}", e))?;
 
         // Set up promise rejection tracker to catch unhandled rejections
+        let rejection_sender = command_sender.clone();
         runtime.set_host_promise_rejection_tracker(Some(Box::new(
-            |_ctx, _promise, reason, is_handled| {
+            move |ctx, _promise, reason, is_handled| {
                 if !is_handled {
                     // Format the rejection reason
                     let error_msg = if let Some(exc) = reason.as_exception() {
@@ -7595,6 +8664,27 @@ impl QuickJsBackend {
                     };
 
                     tracing::error!("Unhandled Promise rejection: {}", error_msg);
+
+                    // An agent-submitted script has a caller waiting on a
+                    // socket, and a rejection that escaped its wrapper would
+                    // otherwise settle nothing: the editor logs this line and
+                    // the agent — a different process, reading its own stderr —
+                    // sees only a timeout. Answer the request instead, so the
+                    // failure reaches the caller that asked for it.
+                    //
+                    // The script's context is named for its request id (see
+                    // `Editor::eval_agent_script`), which is how a rejection
+                    // with no other provenance finds its way home. Settling an
+                    // already-settled id is a no-op, so a late rejection after
+                    // a successful return changes nothing.
+                    if let Some(request_id) = agent_script_request_id(&ctx) {
+                        let _ = rejection_sender.send(PluginCommand::CompleteCommand {
+                            request_id,
+                            ok: false,
+                            output: None,
+                            error: Some(error_msg.clone()),
+                        });
+                    }
 
                     if should_panic_on_js_errors() {
                         // Don't panic here - we're inside an FFI callback and rquickjs catches panics.
@@ -7945,6 +9035,20 @@ impl QuickJsBackend {
                 }
             }
 
+            // Clear scrollbar marker namespaces
+            let mut seen_sb_ns: std::collections::HashSet<(usize, String)> =
+                std::collections::HashSet::new();
+            for (buf_id, ns) in &tracked.scrollbar_marker_namespaces {
+                if seen_sb_ns.insert((buf_id.0, ns.clone())) {
+                    let _ = self
+                        .command_sender
+                        .send(PluginCommand::ClearScrollbarMarkers {
+                            buffer_id: *buf_id,
+                            namespace: ns.clone(),
+                        });
+                }
+            }
+
             // Remove virtual text items
             let mut seen_vt: std::collections::HashSet<(usize, String)> =
                 std::collections::HashSet::new();
@@ -8006,10 +9110,13 @@ impl QuickJsBackend {
                     });
             }
 
-            // Close virtual buffers created by this plugin
+            // Close virtual buffers created by this plugin. Forced: a panel
+            // the plugin wrote into counts as modified, and without this an
+            // unloaded plugin left its panels behind — one more per reload.
             for buffer_id in &tracked.virtual_buffer_ids {
                 let _ = self.command_sender.send(PluginCommand::CloseBuffer {
                     buffer_id: *buffer_id,
+                    force: true,
                 });
             }
 
@@ -8036,6 +9143,16 @@ impl QuickJsBackend {
                 let _ = self
                     .command_sender
                     .send(PluginCommand::UnwatchPath { handle: *handle });
+            }
+
+            // Stop this plugin's timers. Without this a hot-reload — the
+            // normal inner loop of plugin development — would leave the
+            // previous copy's `setInterval` ticking into a handler that no
+            // longer exists, once per reload, forever.
+            for timer_id in &tracked.timer_ids {
+                let _ = self.command_sender.send(PluginCommand::ClearPluginTimer {
+                    timer_id: *timer_id,
+                });
             }
         }
 
@@ -8142,19 +9259,121 @@ impl QuickJsBackend {
     /// Start an action without waiting for async operations to complete.
     /// This is useful when the calling thread needs to continue processing
     /// ResolveCallback requests that the action may be waiting for.
-    pub fn start_action(&mut self, action_name: &str) -> Result<()> {
-        // Handle mode_text_input:<char> — route to the plugin that registered
-        // "mode_text_input" and pass the character as an argument.
-        let (lookup_name, text_input_char) =
-            if let Some(ch) = action_name.strip_prefix("mode_text_input:") {
-                ("mode_text_input", Some(ch.to_string()))
-            } else {
-                (action_name, None)
-            };
+    /// Start a registered action. `args_json`, when set, must be a JSON object
+    /// literal; it is handed to the handler as its single argument, which is
+    /// how a `RunCommand` over the agent command channel passes its `k=v` args
+    /// to a plugin command. `None` calls the handler with no arguments.
+    ///
+    /// `request_id`, when set, makes the call *answerable*: the handler's
+    /// return value — awaited first if it is a promise — is reported back to
+    /// the editor under that id via `editor.completeCommand`, and a throw or
+    /// rejection is reported as a failure. The wrapper lives here rather than
+    /// in every plugin because a handler should stay an ordinary function that
+    /// returns a value; and it cannot be an `await` on the Rust side, because
+    /// the handler's own host calls only resolve on later editor ticks, which
+    /// this thread must stay free to service.
+    pub fn start_action(
+        &mut self,
+        action_name: &str,
+        args_json: Option<&str>,
+        request_id: Option<u64>,
+    ) -> Result<()> {
+        // Handle text input from a mode that was defined with
+        // `allowTextInput`. The host dispatches the mode-qualified form
+        // `mode_text_input@<mode>:<char>`; resolve it to the plugin that
+        // defined *that* mode, and fall back to the bare `mode_text_input`
+        // registration for the unqualified form (and for a mode defined
+        // before this qualification existed). The character is everything
+        // after the first `:`, so a typed `:` survives intact.
+        let qualified = action_name
+            .strip_prefix("mode_text_input@")
+            .and_then(|rest| rest.split_once(':'));
+        if qualified.is_some() || action_name.starts_with("mode_text_input:") {
+            // Nothing in-tree produces this string encoding anymore —
+            // the host dispatches typed ModeTextInput requests. This
+            // parse survives only for user keymaps that bound the
+            // string form directly; the warning is the signal for when
+            // it can be deleted.
+            tracing::warn!(
+                action = action_name,
+                "deprecated mode_text_input string encoding — bind the mode's \
+                 text-input action instead; this compatibility parse will be removed"
+            );
+        }
+        let (lookup_name, fallback_name, text_input_char) = match qualified {
+            Some((mode, ch)) => (
+                format!("mode_text_input@{}", mode),
+                Some("mode_text_input"),
+                Some(ch.to_string()),
+            ),
+            None => match action_name.strip_prefix("mode_text_input:") {
+                Some(ch) => ("mode_text_input".to_string(), None, Some(ch.to_string())),
+                None => (action_name.to_string(), None, None),
+            },
+        };
+        self.start_action_resolved(
+            action_name,
+            lookup_name,
+            fallback_name,
+            text_input_char,
+            args_json,
+            request_id,
+        )
+    }
 
-        let pair = self.registered_actions.borrow().get(lookup_name).cloned();
+    /// Typed fast lane for a mode's printable text input. Carries the
+    /// mode and the typed text as structured fields instead of the
+    /// legacy `mode_text_input@<mode>:<char>` action-name encoding
+    /// (which `start_action` still parses for keymap-bound plugin
+    /// actions). Rides the same request channel as every other
+    /// dispatched action, so a mode's own bindings (Backspace, Space,
+    /// ...) and plain characters stay strictly ordered.
+    pub fn start_mode_text_input(&mut self, mode: Option<&str>, text: &str) -> Result<()> {
+        let (lookup_name, fallback_name) = match mode {
+            // A mode-qualified dispatch resolves to the plugin that
+            // defined that mode, falling back to the bare registration
+            // (and finally to a main-context global of the bare name).
+            Some(m) => (format!("mode_text_input@{}", m), Some("mode_text_input")),
+            None => ("mode_text_input".to_string(), None),
+        };
+        self.start_action_resolved(
+            "mode_text_input",
+            lookup_name,
+            fallback_name,
+            Some(text.to_string()),
+            None,
+            None,
+        )
+    }
+
+    /// Shared tail of [`start_action`] / [`start_mode_text_input`]:
+    /// resolve the handler registration and invoke it. `lookup_name` is
+    /// the primary registration key, `fallback_name` the secondary; a
+    /// `text_input_char` is passed to the handler as `({text})`.
+    fn start_action_resolved(
+        &mut self,
+        action_name: &str,
+        lookup_name: String,
+        fallback_name: Option<&str>,
+        text_input_char: Option<String>,
+        args_json: Option<&str>,
+        request_id: Option<u64>,
+    ) -> Result<()> {
+        let pair = {
+            let registered = self.registered_actions.borrow();
+            registered
+                .get(&lookup_name)
+                .or_else(|| fallback_name.and_then(|n| registered.get(n)))
+                .cloned()
+        };
         let (plugin_name, function_name) = match pair {
             Some(handler) => (handler.plugin_name, handler.handler_name),
+            // No registration: fall back to a global function of the same
+            // name in the main context. For text input that is the bare
+            // handler name — the qualified lookup key is not a function.
+            None if text_input_char.is_some() => {
+                ("main".to_string(), "mode_text_input".to_string())
+            }
             None => ("main".to_string(), lookup_name.to_string()),
         };
 
@@ -8173,17 +9392,52 @@ impl QuickJsBackend {
             function_name
         );
 
-        // Just call the function - don't try to await or drive Promises
-        // For mode_text_input, pass the character as a JSON-encoded argument
+        // Just call the function - don't try to await or drive Promises.
+        // For mode_text_input, pass the character as a JSON-encoded argument;
+        // for a caller-supplied args object (the command channel), pass that.
         let call_args = if let Some(ref ch) = text_input_char {
             let escaped = ch.replace('\\', "\\\\").replace('\"', "\\\"");
             format!("({{text:\"{}\"}})", escaped)
+        } else if let Some(json) = args_json {
+            format!("({})", json)
         } else {
             "()".to_string()
         };
 
-        let code = format!(
-            r#"
+        let code = match request_id {
+            // Answerable call: settle the request with whatever the handler
+            // returns (awaiting a promise), or with its error.
+            Some(rid) => format!(
+                r#"
+            (function() {{
+                var __rid = {rid};
+                var __done = function(ok, value, err) {{
+                    var out = null;
+                    if (ok && value !== undefined && value !== null) {{
+                        try {{ out = JSON.stringify(value); }} catch (e) {{ out = String(value); }}
+                    }}
+                    editor.completeCommand(__rid, ok, out, err);
+                }};
+                try {{
+                    if (typeof globalThis.{fn} === 'function') {{
+                        Promise.resolve(globalThis.{fn}{args}).then(
+                            function(r) {{ __done(true, r, null); }},
+                            function(e) {{ __done(false, null, (e && e.message) ? String(e.message) : String(e)); }}
+                        );
+                    }} else {{
+                        __done(false, null, 'command handler {fn} is not defined');
+                    }}
+                }} catch (e) {{
+                    __done(false, null, (e && e.message) ? String(e.message) : String(e));
+                }}
+            }})();
+            "#,
+                rid = rid,
+                fn = function_name,
+                args = call_args
+            ),
+            None => format!(
+                r#"
             (function() {{
                 console.log('[JS] start_action: calling {fn}');
                 try {{
@@ -8199,10 +9453,11 @@ impl QuickJsBackend {
                 }}
             }})();
             "#,
-            fn = function_name,
-            action = action_name,
-            args = call_args
-        );
+                fn = function_name,
+                action = action_name,
+                args = call_args
+            ),
+        };
 
         tracing::info!("start_action: evaluating JS code");
         context.with(|ctx| {
@@ -8358,6 +9613,42 @@ impl QuickJsBackend {
             tracing::warn!("resolve_callback: No plugin found for callback_id={}", id);
             return;
         };
+
+        // Record a virtual buffer against the plugin that asked for it, so
+        // unload can close it.
+        //
+        // This has to happen here rather than in the `PluginResponse`
+        // handler, because every `createVirtualBuffer*` path answers by
+        // resolving the callback directly and never emits
+        // `PluginResponse::VirtualBufferCreated` — so the tracking that
+        // cleanup relies on was never populated, and `virtual_buffer_ids`
+        // stayed empty. The visible cost was that `edit → reload → run`, the
+        // documented plugin dev loop, left the previous panel open and
+        // stacked a new one every iteration.
+        //
+        // `async_resource_owners` holds an entry only for the calls that
+        // create a tracked resource, and the kinds that *do* answer through
+        // `PluginResponse` have already removed theirs by now — so an entry
+        // still present here, whose result carries a `bufferId`, is a
+        // virtual buffer.
+        let owned_resource = self
+            .async_resource_owners
+            .lock()
+            .ok()
+            .and_then(|mut owners| owners.remove(&id));
+        if owned_resource.is_some() {
+            if let Some(buffer_id) = serde_json::from_str::<serde_json::Value>(result_json)
+                .ok()
+                .and_then(|v| v.get("bufferId").and_then(serde_json::Value::as_u64))
+            {
+                self.plugin_tracked_state
+                    .borrow_mut()
+                    .entry(name.clone())
+                    .or_default()
+                    .virtual_buffer_ids
+                    .push(BufferId(buffer_id as usize));
+            }
+        }
 
         let plugin_contexts = self.plugin_contexts.borrow();
         let Some(context) = plugin_contexts.get(&name) else {
@@ -9176,25 +10467,39 @@ mod tests {
     fn test_api_open_file() {
         let (mut backend, rx) = create_test_backend();
 
-        // openFile takes (path, line?, column?)
+        // All three forms a caller actually writes must work: the trailing
+        // arguments omitted, passed as explicit `null`, and passed as
+        // numbers. Omitting them used to be an arity error (an exception
+        // naming no function), and the obvious fix for that — a plain
+        // `Opt<u32>` — breaks `null`, which is what every existing caller
+        // passes. Both directions are pinned here.
         backend
             .execute_js(
                 r#"
             const editor = getEditor();
-            editor.openFile("/path/to/file.txt", null, null);
+            editor.openFile("/omitted.txt");
+            editor.openFile("/explicit-null.txt", null, null);
+            editor.openFile("/with-position.txt", 12, 3);
         "#,
                 "test.js",
             )
             .unwrap();
 
-        let cmd = rx.try_recv().unwrap();
-        match cmd {
-            PluginCommand::OpenFileAtLocation { path, line, column } => {
-                assert_eq!(path.to_str().unwrap(), "/path/to/file.txt");
-                assert!(line.is_none());
-                assert!(column.is_none());
+        let expected = [
+            ("/omitted.txt", None, None),
+            ("/explicit-null.txt", None, None),
+            ("/with-position.txt", Some(12), Some(3)),
+        ];
+        for (want_path, want_line, want_col) in expected {
+            let cmd = rx.try_recv().unwrap();
+            match cmd {
+                PluginCommand::OpenFileAtLocation { path, line, column } => {
+                    assert_eq!(path.to_str().unwrap(), want_path);
+                    assert_eq!(line, want_line, "line for {want_path}");
+                    assert_eq!(column, want_col, "column for {want_path}");
+                }
+                _ => panic!("Expected OpenFileAtLocation, got {:?}", cmd),
             }
-            _ => panic!("Expected OpenFileAtLocation, got {:?}", cmd),
         }
     }
 
@@ -10591,8 +11896,10 @@ mod tests {
 
         let cmd = rx.try_recv().unwrap();
         match cmd {
-            PluginCommand::CloseBuffer { buffer_id } => {
+            PluginCommand::CloseBuffer { buffer_id, force } => {
                 assert_eq!(buffer_id.0, 3);
+                // The one-argument call must not silently discard edits.
+                assert!(!force, "force defaults off when the caller omits it");
             }
             _ => panic!("Expected CloseBuffer, got {:?}", cmd),
         }
@@ -10679,6 +11986,7 @@ mod tests {
             state.windows = vec![
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(1),
+                    stable_id: "ws-main".into(),
                     label: "main".into(),
                     root: std::path::PathBuf::from("/repo"),
                     project_path: std::path::PathBuf::from("/repo"),
@@ -10687,6 +11995,7 @@ mod tests {
                 },
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(2),
+                    stable_id: "ws-feat-auth".into(),
                     label: "feat-auth".into(),
                     root: std::path::PathBuf::from("/wt/feat-auth"),
                     project_path: std::path::PathBuf::from("/wt/feat-auth"),
@@ -10746,9 +12055,12 @@ mod tests {
                 BufferInfo {
                     id: BufferId(0),
                     path: Some(PathBuf::from("/test1.txt")),
+                    name: "test1.txt".to_string(),
                     modified: false,
                     length: 100,
                     is_virtual: false,
+                    is_terminal: false,
+                    line_count: Some(1),
                     editing_disabled: false,
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
@@ -10763,9 +12075,12 @@ mod tests {
                 BufferInfo {
                     id: BufferId(1),
                     path: Some(PathBuf::from("/test2.txt")),
+                    name: "test2.txt".to_string(),
                     modified: true,
                     length: 200,
                     is_virtual: false,
+                    is_terminal: false,
+                    line_count: Some(1),
                     editing_disabled: false,
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
