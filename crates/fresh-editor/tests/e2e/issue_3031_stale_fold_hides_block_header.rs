@@ -1,18 +1,28 @@
-//! E2E test for issue #3031: opening a Niri KDL config, the line
+//! E2E tests for issue #3031: opening a Niri KDL config, the line
 //! `debug {` renders as a bare `...` — as if the editor had swallowed the
 //! word. The file on disk is fine (`nano` shows it), and nothing about KDL
 //! is special here: what the reporter is looking at is a *collapsed fold*
 //! whose header landed on the blank line above `debug {`, so the block
 //! opener itself is inside the hidden range.
 //!
-//! How a fold gets there: a session file written before `header_text` was
-//! recorded (issue #1568) carries only line numbers, which restore trusts
-//! blindly. Edit the file between sessions and the saved header slides onto
-//! a blank line, putting the real block opener into the hidden range.
+//! Two independent defects conspire, and each gets a test here:
+//!
+//! 1. Session restore accepted a stale fold. A session file written before
+//!    `header_text` was recorded (issue #1568) carries only line numbers,
+//!    which restore trusts blindly. Edit the file between sessions and the
+//!    saved header slides onto a blank line, putting the real block opener
+//!    (`debug {`) into the folded — hidden — range.
+//!
+//! 2. Rendering then hid the evidence. The placeholder `apply_folding`
+//!    appends lands in front of a blank header row's only source character,
+//!    which reads as an injected row: no line number, and no `▸` arrow to
+//!    click. All that is left on screen is `...` where a line of the user's
+//!    config used to be.
 //!
 //! <https://github.com/sinelaw/fresh/issues/3031>
 
-use crate::common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::fixtures::TestFixture;
+use crate::common::harness::{layout, EditorTestHarness, HarnessOptions};
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
 use fresh::workspace::Workspace;
@@ -50,6 +60,16 @@ fn collapsed_fold_rows(harness: &EditorTestHarness) -> Vec<usize> {
                 .unwrap_or(false)
         })
         .collect()
+}
+
+/// Byte range covering exactly `line` (its text plus its newline).
+fn line_byte_range(harness: &mut EditorTestHarness, line: usize) -> (usize, usize) {
+    let buffer = &mut harness.editor_mut().active_state_mut().buffer;
+    let start = buffer.line_start_offset(line).expect("line exists");
+    let end = buffer
+        .line_start_offset(line + 1)
+        .unwrap_or_else(|| buffer.len());
+    (start, end)
 }
 
 /// Age the session Fresh just wrote into the shape an older Fresh wrote:
@@ -174,4 +194,56 @@ fn test_stale_legacy_fold_on_blank_line_is_dropped_on_restore() {
             screen
         );
     }
+}
+
+/// Defence in depth for the same symptom: whatever put a collapsed fold on
+/// a blank header line (a stale session, marker drift after an edit, a
+/// plugin calling `addFold`), the header row must still say so — line
+/// number in the gutter and a `▸` to click — instead of showing a bare
+/// `...` that reads as vanished text.
+#[test]
+fn test_collapsed_fold_on_blank_header_keeps_its_line_number_and_arrow() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let fixture = TestFixture::new("config.kdl", NIRI_CONFIG).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    // Plant a fold that hides exactly the `debug {` line, which makes the
+    // blank line above it the fold's header.
+    let (start, end) = line_byte_range(&mut harness, DEBUG_HEADER_LINE);
+    let buffer_id = harness.editor().active_buffer();
+    assert!(harness
+        .editor_mut()
+        .active_window_mut()
+        .add_fold(buffer_id, start, end, None));
+    harness.render().unwrap();
+
+    let header_row = layout::CONTENT_START_ROW + BLANK_LINE;
+    let row_text = harness.get_row_text(header_row as u16);
+    let screen = harness.screen_to_string();
+
+    assert!(
+        row_text.contains("..."),
+        "Precondition: the fold placeholder should render on the blank \
+         header row {}. Screen:\n{}",
+        header_row,
+        screen
+    );
+    assert!(
+        row_text.contains(&(BLANK_LINE + 1).to_string()),
+        "Issue #3031: the collapsed fold's header row lost its line \
+         number, so the hidden line reads as text the editor replaced with \
+         `...`. Row {} text: {:?}. Screen:\n{}",
+        header_row,
+        row_text,
+        screen
+    );
+    assert_eq!(
+        harness.get_cell(0, header_row as u16).as_deref(),
+        Some("▸"),
+        "Issue #3031: the collapsed fold's header row lost its fold arrow, \
+         leaving no way to see — or click open — the fold hiding \
+         `debug {{`. Screen:\n{}",
+        screen
+    );
 }
