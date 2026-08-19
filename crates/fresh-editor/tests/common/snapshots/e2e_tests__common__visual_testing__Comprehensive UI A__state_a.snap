@@ -9,7 +9,7 @@ expression: "&screen_text"
 │      main.rs               │  3 │     let hello = "world";                                        
 │    Cargo.toml              │  4 │     let hello = "again";                                        
 │    README.md               │  5 │     let hello = "once more";                                    
-│                            │  6 │     println!("{}", hello);                                      
+│                            │  6 │ ····println!("{}", hello);                                      
 │                            │  7 │ }                                                               
 │                            │  8 │                                                                 
 │                            │  9 │ // Helper function                                              
@@ -21,8 +21,8 @@ expression: "&screen_text"
 │                            │ 15 │                                                                 
 │                            │ 16 │ // More code to enable scrolling                                
 │                            │▾17 │ fn long_function() {                                            
-│                            │ 18 │     println!("Line 1");                                         
-│                            │ 19 │     println!("Line 2");                                         
+│                            │ 18 │ ····println!("Line 1");                                         
+│                            │ 19 │ ····println!("Line 2");                                         
 │                            │ 20 │     println!("Line 3");                                         
 │                            │ 21 │     println!("Line 4");                                         
 │                            │ 22 │     println!("Line 5");                                         

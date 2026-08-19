@@ -70,12 +70,20 @@ fn drag_to(harness: &mut EditorTestHarness, col: u16, row: u16) {
     harness.render().unwrap();
 }
 
+/// The screen with the in-selection whitespace indicators folded back to
+/// spaces: `editor.whitespace_in_selection` draws `·` over a selected space,
+/// so a selected `LINE nnn` marker reads as `LINE·nnn` until it is undone.
+/// Each indicator occupies one cell, so columns are unaffected.
+fn screen_text(harness: &EditorTestHarness) -> String {
+    harness.screen_to_string().replace('·', " ")
+}
+
 /// The number of the topmost `LINE nnn` marker on screen. That marker is
 /// the buffer's first visible line, so this *is* the rendered scroll
 /// position — it changes the instant the viewport moves by one line and is
 /// identical frame-to-frame while it stays put.
 fn top_line(harness: &EditorTestHarness) -> u32 {
-    let screen = harness.screen_to_string();
+    let screen = screen_text(harness);
     screen
         .lines()
         .flat_map(|line| line.split("LINE ").skip(1))
@@ -101,7 +109,7 @@ fn selected_cells_in_row(harness: &EditorTestHarness, row: u16) -> usize {
 /// The `LINE nnn` marker rendered on screen `row`, or `None` for a row
 /// that carries no buffer line.
 fn line_number_at_row(harness: &EditorTestHarness, row: u16) -> Option<u32> {
-    let screen = harness.screen_to_string();
+    let screen = screen_text(harness);
     let rest = screen.lines().nth(row as usize)?.split("LINE ").nth(1)?;
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse::<u32>().ok()

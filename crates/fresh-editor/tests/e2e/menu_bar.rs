@@ -509,11 +509,13 @@ fn test_copy_with_formatting_submenu_activates_on_enter() {
         .unwrap();
     harness.render().unwrap();
 
-    // Verify text is selected (status bar should show selection)
+    // Verify text is selected: Ctrl+A selects the line, and selected
+    // whitespace draws its indicator (`editor.whitespace_in_selection`), so
+    // the space between the words renders as `·`.
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Hello World"),
-        "Text should be visible in the editor"
+        screen.contains("Hello·World"),
+        "Selected text should be visible in the editor:\n{screen}"
     );
 
     // Open Edit menu
@@ -567,9 +569,10 @@ fn test_copy_with_formatting_submenu_activates_on_enter() {
         "Menu should close after activating copy action. Screen:\n{}",
         screen_after
     );
-    // The editor content should still be visible
+    // The editor content should still be visible (still selected, so the
+    // space between the words keeps its `·` indicator).
     assert!(
-        screen_after.contains("Hello World"),
+        screen_after.contains("Hello·World"),
         "Editor content should still be visible after copy. Screen:\n{}",
         screen_after
     );
