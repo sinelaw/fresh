@@ -132,6 +132,7 @@ impl Editor {
                 let buf = self.active_buffer();
                 let win = self.active_window_mut();
                 win.invalidate_layouts_for_buffer(buf);
+                win.prune_orphaned_folds(buf);
                 win.schedule_semantic_tokens_full_refresh(buf);
                 win.schedule_folding_ranges_refresh(buf);
             }
@@ -143,6 +144,7 @@ impl Editor {
                     let buf = self.active_buffer();
                     let win = self.active_window_mut();
                     win.invalidate_layouts_for_buffer(buf);
+                    win.prune_orphaned_folds(buf);
                     win.schedule_semantic_tokens_full_refresh(buf);
                     win.schedule_folding_ranges_refresh(buf);
                 }

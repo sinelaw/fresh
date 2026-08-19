@@ -1258,7 +1258,13 @@ mod tests {
         let start = state.buffer.line_start_offset(1).unwrap();
         let end = state.buffer.line_start_offset(3).unwrap();
         let mut folds = FoldManager::new();
-        folds.add(&mut state.marker_list, start, end, Some("...".to_string()));
+        folds.add(
+            &state.buffer,
+            &mut state.marker_list,
+            start,
+            end,
+            Some("...".to_string()),
+        );
 
         let viewport = Viewport::new(40, 6);
         let gutter_width = state.margins.left_total_width();
@@ -1366,7 +1372,7 @@ mod tests {
         let start = state.buffer.line_start_offset(1).unwrap();
         let end = state.buffer.line_start_offset(2).unwrap();
         let mut folds = FoldManager::new();
-        folds.add(&mut state.marker_list, start, end, None);
+        folds.add(&state.buffer, &mut state.marker_list, start, end, None);
 
         let line1_byte = state.buffer.line_start_offset(1).unwrap();
         let view_lines = vec![ViewLine {

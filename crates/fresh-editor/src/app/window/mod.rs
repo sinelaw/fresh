@@ -1785,6 +1785,7 @@ impl Window {
                     if vs.keyed_states.contains_key(&buffer_id) {
                         let buf_state = vs.ensure_buffer_state(buffer_id);
                         buf_state.folds.add(
+                            &state.buffer,
                             &mut state.marker_list,
                             start,
                             end,
@@ -1809,6 +1810,30 @@ impl Window {
                 }
             })
             .is_some()
+    }
+
+    /// Expand any fold on `buffer_id` whose header line the last edit took
+    /// away, across every view state hosting the buffer. Returns `true` when
+    /// a fold was retired, so the caller can flag a redraw.
+    ///
+    /// Runs from the edit path rather than the render path deliberately: the
+    /// folds are view state but the edit that orphans them is buffer state,
+    /// and retiring one changes what the buffer shows, so it belongs with the
+    /// edit that caused it (see [`FoldManager::prune_orphaned`]).
+    pub fn prune_orphaned_folds(&mut self, buffer_id: BufferId) -> bool {
+        self.buffers
+            .with_buffer_and_view_states(buffer_id, |state, vs_map| {
+                let mut pruned = false;
+                for vs in vs_map.values_mut() {
+                    if let Some(buf_state) = vs.keyed_states.get_mut(&buffer_id) {
+                        pruned |= buf_state
+                            .folds
+                            .prune_orphaned(&state.buffer, &mut state.marker_list);
+                    }
+                }
+                pruned
+            })
+            .unwrap_or(false)
     }
 
     /// Move every supplied split's primary cursor to `position` in
