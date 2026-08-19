@@ -16,6 +16,7 @@
 use std::path::PathBuf;
 
 mod support;
+use fresh_ui::Axis;
 use fresh_ui::{Input, KeyCode, KeyPress, Mods, MouseButton, Point, Size};
 use support::demo::{App, Demo, Msg};
 
@@ -119,9 +120,14 @@ impl Session {
     }
 
     fn wheel(&mut self, x: i32, y: i32, delta: i32) -> &mut Self {
+        self.wheel_on(x, y, delta, Axis::Vertical)
+    }
+
+    fn wheel_on(&mut self, x: i32, y: i32, delta: i32, axis: Axis) -> &mut Self {
         self.feed(Input::Wheel {
             pos: Point::new(x, y),
             delta,
+            axis,
             mods: Mods::NONE,
         });
         self
@@ -261,6 +267,7 @@ fn the_display_list_stays_bounded_over_a_million_rows() {
     demo.input(Input::Wheel {
         pos: Point::new(30, 6),
         delta: 700_000,
+        axis: Axis::Vertical,
         mods: Mods::NONE,
     });
     assert!(

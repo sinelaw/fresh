@@ -147,9 +147,24 @@ pub enum Input {
     Wheel {
         pos: Point,
         delta: i32,
+        /// Which way the notches run. Terminals report one axis per event and
+        /// browsers report two deltas; both resolve to this.
+        axis: Axis,
         mods: Mods,
     },
     Key(KeyPress),
+}
+
+/// Which way a wheel turns, and which way an offset moves.
+///
+/// The scroll model has always been two-dimensional — a `Viewport`'s offset
+/// and its maximum are both points — so this is the axis that was already
+/// implied by the geometry, named so input can address it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum Axis {
+    #[default]
+    Vertical,
+    Horizontal,
 }
 
 impl Input {
@@ -196,8 +211,10 @@ pub struct Event {
     pub local: Point,
     pub button: MouseButton,
     pub mods: Mods,
-    /// Wheel notches; negative is up.
+    /// Wheel notches; negative is up (or left).
     pub delta: i32,
+    /// Which axis `delta` moves along. `Vertical` for everything else.
+    pub axis: Axis,
     pub key: Option<KeyPress>,
     /// On a focus event, what the acquisition asked the target to do with its
     /// selection.
@@ -223,6 +240,7 @@ impl Event {
             button: MouseButton::Left,
             mods: Mods::NONE,
             delta: 0,
+            axis: Axis::Vertical,
             key: None,
             selection: SelectionOnFocus::None,
             target: at,
