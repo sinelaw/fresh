@@ -26,11 +26,29 @@ fn open_fixture(harness: &mut EditorTestHarness, temp_dir: &TempDir) {
     harness.render().unwrap();
 }
 
+/// Locate `line` on screen, folding the in-selection whitespace indicators
+/// (`editor.whitespace_in_selection` draws `·` over a selected space) back to
+/// plain spaces first — a partly selected line renders a mix of the two, so a
+/// literal match would miss it. Each indicator occupies exactly one cell, so
+/// the column arithmetic is unaffected.
+fn find_line_on_screen(harness: &EditorTestHarness, line: &str) -> Option<(u16, u16)> {
+    harness
+        .screen_to_string()
+        .lines()
+        .enumerate()
+        .find_map(|(row, text)| {
+            let plain = text.replace('·', " ");
+            plain
+                .find(line)
+                .map(|byte_idx| (plain[..byte_idx].chars().count() as u16, row as u16))
+        })
+}
+
 /// Is the cell `offset` columns into the on-screen rendering of `line` painted
 /// with the theme's selection background?
 fn cell_is_selected(harness: &EditorTestHarness, line: &str, offset: u16) -> bool {
     let selection_bg = harness.editor().theme().selection_bg;
-    let (col, row) = harness.find_text_on_screen(line).unwrap_or_else(|| {
+    let (col, row) = find_line_on_screen(harness, line).unwrap_or_else(|| {
         panic!(
             "line {line:?} not on screen:\n{}",
             harness.screen_to_string()
