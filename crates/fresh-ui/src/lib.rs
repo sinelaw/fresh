@@ -50,7 +50,8 @@ pub use desc::{
 };
 pub use element::ElementId;
 pub use event::{
-    Event, Flow, GestureKind, Input, KeyCode, KeyPress, Mods, MouseButton, Phase, SelectionOnFocus,
+    Axis, Event, Flow, GestureKind, Input, KeyCode, KeyPress, Mods, MouseButton, Phase,
+    SelectionOnFocus,
 };
 pub use focus::{
     default_shortcuts, Directional, FocusDir, FocusEntry, FocusScope, Focusable, Intent,

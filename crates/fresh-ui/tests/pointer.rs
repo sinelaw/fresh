@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use fresh_ui::Axis;
 use fresh_ui::{
     col, gesture, stack, text, viewport, BuildCx, Component, ComponentExt, Event, GestureKind,
     Input, Mods, MouseButton, Node, Point, PointerMode, Size, Sizing, Ui,
@@ -256,6 +257,7 @@ fn a_viewport_at_its_bound_lets_the_wheel_through() {
     ui.dispatch(Input::Wheel {
         pos: over_inner,
         delta: 1,
+        axis: Axis::Vertical,
         mods: Mods::NONE,
     });
     ui.tick();
@@ -266,6 +268,7 @@ fn a_viewport_at_its_bound_lets_the_wheel_through() {
     ui.dispatch(Input::Wheel {
         pos: over_inner,
         delta: 1,
+        axis: Axis::Vertical,
         mods: Mods::NONE,
     });
     ui.tick();
@@ -278,6 +281,7 @@ fn a_viewport_at_its_bound_lets_the_wheel_through() {
     ui.dispatch(Input::Wheel {
         pos: over_inner,
         delta: 1,
+        axis: Axis::Vertical,
         mods: Mods::NONE,
     });
     ui.tick();
@@ -307,6 +311,7 @@ fn preventing_the_default_suppresses_scrolling_without_claiming() {
     ui.dispatch(Input::Wheel {
         pos: Point::new(1, 1),
         delta: 1,
+        axis: Axis::Vertical,
         mods: Mods::NONE,
     });
     ui.tick();
@@ -437,5 +442,105 @@ fn pressing_and_dragging_the_scrollbar_gutter_scrolls_the_viewport() {
         ui.scroll(vp).0.y,
         0,
         "a bare move after release does not scroll"
+    );
+}
+
+/// The chain honours the axis it is given — and the built-in `Viewport` has
+/// nothing to move along `x`.
+///
+/// The scroll model has always been two-dimensional: a viewport's offset and
+/// its maximum are both points, and the maximum's `x` is computed. But a
+/// viewport lays its child out under `Constraints::new(0, w, ..)`, bounding the
+/// child to the window's own width, so the content can never be wider than the
+/// window and that maximum is always zero. `Viewport` is a vertical scroller by
+/// construction.
+///
+/// That is deliberate and unchanged here. What this test pins is the boundary:
+/// the routing understands both axes, so a horizontally scrollable viewport
+/// would work the day one exists — and until then a horizontal wheel reaching a
+/// viewport correctly does nothing rather than scrolling the wrong way.
+#[test]
+fn a_viewport_has_no_horizontal_extent_to_scroll() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        viewport(text("x".repeat(60)))
+            .w(Sizing::Cells(10))
+            .h(Sizing::Cells(1)),
+        FRAME,
+    );
+    let vp = ui.root().unwrap();
+    let (offset, content) = ui.scroll(vp);
+    assert_eq!(offset, Point::new(0, 0));
+    assert!(
+        content.w <= 10,
+        "the child is bounded to the window's width, so there is no overflow \
+         to scroll: content {content:?}"
+    );
+
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(2, 0),
+        delta: 3,
+        axis: Axis::Horizontal,
+        mods: Mods::NONE,
+    });
+    assert_eq!(
+        ui.scroll(vp).0,
+        Point::new(0, 0),
+        "nothing to scroll, and in particular the vertical offset is untouched"
+    );
+}
+
+/// A vertical wheel still scrolls, and leaves `x` alone.
+#[test]
+fn a_vertical_wheel_moves_only_y() {
+    let mut ui: Ui<()> = Ui::new();
+    let rows: Vec<Node<()>> = (0..40).map(|i| text(format!("row {i}"))).collect();
+    ui.frame(
+        viewport(col().children(rows))
+            .w(Sizing::Cells(10))
+            .h(Sizing::Cells(4)),
+        FRAME,
+    );
+    let vp = ui.root().unwrap();
+
+    ui.dispatch(Input::Wheel {
+        pos: Point::new(2, 2),
+        delta: 2,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    assert_eq!(ui.scroll(vp).0, Point::new(0, 2));
+}
+
+/// A `Wheel` listener can tell the axes apart, so a widget that handles its own
+/// scrolling is not forced to guess.
+#[test]
+fn a_wheel_listener_sees_the_axis() {
+    let seen: Rc<RefCell<Vec<(i32, Axis)>>> = Rc::new(RefCell::new(Vec::new()));
+    let s = seen.clone();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        gesture(text("row")).on(
+            GestureKind::Wheel,
+            Rc::new(move |e: &Event| {
+                s.borrow_mut().push((e.delta, e.axis));
+                e.stop();
+                None
+            }),
+        ),
+        FRAME,
+    );
+
+    for (delta, axis) in [(1, Axis::Vertical), (-2, Axis::Horizontal)] {
+        ui.dispatch(Input::Wheel {
+            pos: Point::new(1, 0),
+            delta,
+            axis,
+            mods: Mods::NONE,
+        });
+    }
+    assert_eq!(
+        *seen.borrow(),
+        vec![(1, Axis::Vertical), (-2, Axis::Horizontal)]
     );
 }

@@ -16,7 +16,8 @@ use std::rc::Rc;
 use crate::desc::{resolve, Desc, ElemType};
 use crate::element::ElementId;
 use crate::event::{
-    Ctl, Event, Flow, GestureKind, Input, KeyPress, Mods, MouseButton, Phase, SelectionOnFocus,
+    Axis, Ctl, Event, Flow, GestureKind, Input, KeyPress, Mods, MouseButton, Phase,
+    SelectionOnFocus,
 };
 use crate::render::geom::Point;
 use crate::render::object::{Hit, RenderId};
@@ -42,7 +43,7 @@ impl<M: 'static> Ui<M> {
                     pos,
                     MouseButton::Left,
                     mods,
-                    0,
+                    Wheel::NONE,
                     &mut out,
                 );
             }
@@ -65,14 +66,30 @@ impl<M: 'static> Ui<M> {
                 let targets: Vec<ElementId> =
                     paths.iter().filter_map(|p| p.last().copied()).collect();
                 self.press = Some((targets, button));
-                self.propagate_all(&paths, GestureKind::Press, pos, button, mods, 0, &mut out);
+                self.propagate_all(
+                    &paths,
+                    GestureKind::Press,
+                    pos,
+                    button,
+                    mods,
+                    Wheel::NONE,
+                    &mut out,
+                );
             }
             Input::Release { pos, button, mods } => {
                 if self.scrollbar_drag.take().is_some() {
                     return out;
                 }
                 let paths = self.route(pos);
-                self.propagate_all(&paths, GestureKind::Release, pos, button, mods, 0, &mut out);
+                self.propagate_all(
+                    &paths,
+                    GestureKind::Release,
+                    pos,
+                    button,
+                    mods,
+                    Wheel::NONE,
+                    &mut out,
+                );
                 // A click is a press and a release over the same element, one
                 // per stacked path.
                 if let Some((pressed, b)) = self.press.take() {
@@ -86,12 +103,26 @@ impl<M: 'static> Ui<M> {
                             .filter(|p| p.last().is_some_and(|t| pressed.contains(t)))
                             .cloned()
                             .collect();
-                        self.propagate_all(&click_paths, kind, pos, button, mods, 0, &mut out);
+                        self.propagate_all(
+                            &click_paths,
+                            kind,
+                            pos,
+                            button,
+                            mods,
+                            Wheel::NONE,
+                            &mut out,
+                        );
                     }
                 }
                 self.captured = None;
             }
-            Input::Wheel { pos, delta, mods } => {
+            Input::Wheel {
+                pos,
+                delta,
+                axis,
+                mods,
+            } => {
+                let wheel = Wheel { delta, axis };
                 let paths = self.route(pos);
                 let (claimed, prevented) = self.propagate_all(
                     &paths,
@@ -99,7 +130,7 @@ impl<M: 'static> Ui<M> {
                     pos,
                     MouseButton::Left,
                     mods,
-                    delta,
+                    wheel,
                     &mut out,
                 );
                 if !claimed && !prevented {
@@ -108,7 +139,7 @@ impl<M: 'static> Ui<M> {
                     // not claim, so the wheel continues outward.
                     if let Some(p) = paths.first() {
                         let p = p.clone();
-                        self.scroll_chain(&p, delta);
+                        self.scroll_chain(&p, wheel);
                     }
                 }
             }
@@ -116,6 +147,8 @@ impl<M: 'static> Ui<M> {
         out
     }
 
+    /// How far a wheel turned and along which axis, as one parameter — so the
+    /// gestures that are not wheels pass [`Wheel::NONE`] rather than a bare zero.
     /// Run the stacked paths in order until one claims the event. A
     /// transparent region is why there is more than one.
     #[allow(clippy::too_many_arguments)]
@@ -126,12 +159,12 @@ impl<M: 'static> Ui<M> {
         pos: Point,
         button: MouseButton,
         mods: Mods,
-        delta: i32,
+        wheel: Wheel,
         out: &mut Vec<M>,
     ) -> (bool, bool) {
         let mut prevented = false;
         for path in paths {
-            let (claimed, p) = self.propagate(path, kind, pos, button, mods, delta, None, out);
+            let (claimed, p) = self.propagate(path, kind, pos, button, mods, wheel, None, out);
             prevented |= p;
             if claimed {
                 return (true, prevented);
@@ -304,7 +337,7 @@ impl<M: 'static> Ui<M> {
         pos: Point,
         button: MouseButton,
         mods: Mods,
-        delta: i32,
+        wheel: Wheel,
         key: Option<KeyPress>,
         out: &mut Vec<M>,
     ) -> (bool, bool) {
@@ -331,7 +364,8 @@ impl<M: 'static> Ui<M> {
                     local: Point::new(pos.x - rect.x, pos.y - rect.y),
                     button,
                     mods,
-                    delta,
+                    delta: wheel.delta,
+                    axis: wheel.axis,
                     key,
                     selection: SelectionOnFocus::None,
                     target: self.retarget(target, n),
@@ -447,6 +481,7 @@ impl<M: 'static> Ui<M> {
             button: MouseButton::Left,
             mods,
             delta: 0,
+            axis: Axis::Vertical,
             key: None,
             selection: SelectionOnFocus::None,
             target: n,
@@ -511,7 +546,7 @@ impl<M: 'static> Ui<M> {
         self.mark_render_dirty(r);
     }
 
-    fn scroll_chain(&mut self, path: &[ElementId], delta: i32) {
+    fn scroll_chain(&mut self, path: &[ElementId], wheel: Wheel) {
         for &n in path.iter().rev() {
             let Some(r) = self.render_for(n) else {
                 continue;
@@ -525,10 +560,17 @@ impl<M: 'static> Ui<M> {
             if !clips {
                 continue;
             }
-            let next = (scroll.y + delta).clamp(0, max.y.max(0));
-            if next != scroll.y {
+            let (at, limit) = match wheel.axis {
+                Axis::Vertical => (scroll.y, max.y),
+                Axis::Horizontal => (scroll.x, max.x),
+            };
+            let next = (at + wheel.delta).clamp(0, limit.max(0));
+            if next != at {
                 if let Some(node) = self.render.get_mut(r) {
-                    node.data.scroll.y = next;
+                    match wheel.axis {
+                        Axis::Vertical => node.data.scroll.y = next,
+                        Axis::Horizontal => node.data.scroll.x = next,
+                    }
                 }
                 self.mark_render_dirty(r);
                 return;
@@ -573,6 +615,7 @@ impl<M: 'static> Ui<M> {
                     button: MouseButton::Left,
                     mods: Mods::NONE,
                     delta: 0,
+                    axis: Axis::Vertical,
                     key: None,
                     selection: SelectionOnFocus::None,
                     target: lid,
@@ -614,6 +657,7 @@ impl<M: 'static> Ui<M> {
                     button: MouseButton::Left,
                     mods: k.mods,
                     delta: 0,
+                    axis: Axis::Vertical,
                     key: Some(k),
                     selection: SelectionOnFocus::None,
                     target: lid,
@@ -629,4 +673,22 @@ impl<M: 'static> Ui<M> {
         }
         any
     }
+}
+
+/// How far a wheel turned, and along which axis.
+///
+/// One parameter rather than two, so the gestures that are not wheels pass
+/// [`Wheel::NONE`] instead of a bare zero whose meaning has to be inferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct Wheel {
+    pub delta: i32,
+    pub axis: Axis,
+}
+
+impl Wheel {
+    /// No wheel movement: what a press, release or click carries.
+    pub const NONE: Wheel = Wheel {
+        delta: 0,
+        axis: Axis::Vertical,
+    };
 }

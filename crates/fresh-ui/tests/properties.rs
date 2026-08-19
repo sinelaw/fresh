@@ -7,6 +7,7 @@
 use proptest::prelude::*;
 
 mod support;
+use fresh_ui::Axis;
 use fresh_ui::{
     col, distribute, row, text, Input, Key, KeyCode, KeyPress, Mods, MouseButton, Node, Point,
     Rect, Size, Sizing, Ui,
@@ -339,6 +340,7 @@ fn apply(demo: &mut Demo, act: &Act) {
             demo.input(Input::Wheel {
                 pos: Point::new(30, 6),
                 delta: *d as i32,
+                axis: Axis::Vertical,
                 mods: m,
             });
         }

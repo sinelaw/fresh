@@ -25,6 +25,7 @@ use crossterm::event::{
 use crossterm::style::{Color, Print, SetBackgroundColor, SetForegroundColor};
 use crossterm::{cursor, execute, queue, terminal};
 
+use fresh_ui::Axis;
 use fresh_ui::{
     Draw, Input, KeyCode, KeyPress, Mods, MouseButton, Point, Rect, Scrim, Size, ThemeKey,
 };
@@ -138,11 +139,13 @@ fn translate_mouse(m: event::MouseEvent) -> Option<Input> {
         MouseEventKind::ScrollDown => Input::Wheel {
             pos,
             delta: 1,
+            axis: Axis::Vertical,
             mods,
         },
         MouseEventKind::ScrollUp => Input::Wheel {
             pos,
             delta: -1,
+            axis: Axis::Vertical,
             mods,
         },
         _ => return None,
