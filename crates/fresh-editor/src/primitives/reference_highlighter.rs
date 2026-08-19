@@ -34,8 +34,27 @@ use ratatui::style::Color;
 use std::ops::Range;
 
 /// Default subtle background color for occurrence highlights
-/// A dark gray that's visible but not distracting
-pub const DEFAULT_HIGHLIGHT_COLOR: Color = Color::Rgb(60, 60, 80);
+/// A neutral gray that stays distinct from the selection background
+pub const DEFAULT_HIGHLIGHT_COLOR: Color = Color::Rgb(87, 87, 87);
+
+/// Longest selection (in bytes) whose matches are highlighted.
+///
+/// A selection is arbitrary text, so matching it has to be bounded: beyond
+/// this the selection is treated as "not matchable" (the cursor-word
+/// highlight still stays suppressed, there is simply nothing to search for).
+pub const MAX_SELECTION_MATCH_BYTES: usize = 512;
+
+/// Whether the matches of a selection should be highlighted.
+///
+/// Mirrors the VSCode/Zed rule: a single-line, non-blank, bounded selection
+/// highlights its other occurrences; anything else (multi-line, whitespace
+/// only, oversized) only suppresses the cursor-word highlight.
+pub fn is_matchable_selection(text: &str) -> bool {
+    !text.trim().is_empty()
+        && !text.contains('\n')
+        && !text.contains('\r')
+        && text.len() <= MAX_SELECTION_MATCH_BYTES
+}
 
 /// Semantic highlighter for word occurrences
 pub struct ReferenceHighlighter {
@@ -372,6 +391,39 @@ impl ReferenceHighlighter {
             viewport_end,
             context_bytes,
         )
+    }
+
+    /// Get highlights for every occurrence of the selected text in the viewport
+    ///
+    /// This is the "selection highlight" of VSCode/Zed: while a selection is
+    /// active it replaces the cursor-word occurrence highlight. Matching is
+    /// literal rather than whole-word, because a selection can be any run of
+    /// characters (`bet` inside `beta` counts). The selection's own range is
+    /// skipped — it already carries the selection background.
+    ///
+    /// Like the cursor-word path, the search is confined to the viewport.
+    pub fn selection_matches(
+        &self,
+        buffer: &Buffer,
+        selected_text: &str,
+        selection: &Range<usize>,
+        viewport_start: usize,
+        viewport_end: usize,
+    ) -> Vec<HighlightSpan> {
+        if !self.enabled || !is_matchable_selection(selected_text) {
+            return Vec::new();
+        }
+
+        self.find_matches_in_range(buffer, selected_text, viewport_start, viewport_end, false)
+            .into_iter()
+            .filter(|range| range != selection)
+            .map(|range| HighlightSpan {
+                range,
+                color: self.highlight_color,
+                bg: None,
+                category: None,
+            })
+            .collect()
     }
 
     /// Locals-based highlighting that respects variable scoping
@@ -812,6 +864,22 @@ impl ReferenceHighlighter {
         start: usize,
         end: usize,
     ) -> Vec<Range<usize>> {
+        self.find_matches_in_range(buffer, word, start, end, true)
+    }
+
+    /// Find all matches of `needle` overlapping the `start..end` byte range
+    ///
+    /// With `whole_word`, matches that continue into a surrounding word are
+    /// rejected (the cursor-word highlight); without it every literal match
+    /// counts (the selection highlight).
+    fn find_matches_in_range(
+        &self,
+        buffer: &Buffer,
+        needle: &str,
+        start: usize,
+        end: usize,
+        whole_word: bool,
+    ) -> Vec<Range<usize>> {
         // Skip if search range is too large (e.g., huge single-line files)
         if end.saturating_sub(start) > Self::MAX_SEARCH_RANGE {
             return Vec::new();
@@ -819,9 +887,18 @@ impl ReferenceHighlighter {
 
         let mut occurrences = Vec::new();
 
-        // Get the text in the range (with some padding for edge words)
-        let search_start = start.saturating_sub(word.len());
-        let search_end = (end + word.len()).min(buffer.len());
+        // Get the text in the range (with some padding for edge matches),
+        // kept on character boundaries so the slice stays valid UTF-8.
+        let search_start = buffer.snap_to_char_boundary(start.saturating_sub(needle.len()));
+        let padded_end = (end + needle.len()).min(buffer.len());
+        let search_end = {
+            let snapped = buffer.snap_to_char_boundary(padded_end);
+            if snapped == padded_end {
+                padded_end
+            } else {
+                buffer.next_char_boundary(snapped)
+            }
+        };
 
         let bytes = buffer.slice_bytes(search_start..search_end);
         let text = match std::str::from_utf8(&bytes) {
@@ -832,17 +909,17 @@ impl ReferenceHighlighter {
         // Use match_indices for single-pass searching (creates StrSearcher once)
         // This is much more efficient than repeatedly calling find() which creates
         // a new searcher each time
-        for (rel_pos, _) in text.match_indices(word) {
+        for (rel_pos, _) in text.match_indices(needle) {
             let abs_start = search_start + rel_pos;
-            let abs_end = abs_start + word.len();
+            let abs_end = abs_start + needle.len();
 
             // Check if this is a whole word match (not part of a larger word)
-            let is_word_start = abs_start == 0 || {
+            let is_word_start = !whole_word || abs_start == 0 || {
                 let prev_byte = buffer.slice_bytes(abs_start - 1..abs_start);
                 prev_byte.first().map(|&b| !is_word_char(b)).unwrap_or(true)
             };
 
-            let is_word_end = abs_end >= buffer.len() || {
+            let is_word_end = !whole_word || abs_end >= buffer.len() || {
                 let next_byte = buffer.slice_bytes(abs_end..abs_end + 1);
                 next_byte.first().map(|&b| !is_word_char(b)).unwrap_or(true)
             };
@@ -974,6 +1051,49 @@ mod tests {
         let spans = highlighter.highlight_occurrences(&buffer, 8, 4, 12, 100_000);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].range, 8..11);
+    }
+
+    #[test]
+    fn test_selection_matches_are_literal_and_skip_the_selection() {
+        // "bet" is selected inside the first "beta": every other "bet" in the
+        // viewport is highlighted, including the ones inside longer words,
+        // and the selection itself is left to the selection background.
+        let buffer = Buffer::from_str_test("alpha beta gamma\nbeta betting");
+        let highlighter = ReferenceHighlighter::new();
+
+        let selection = 6..9; // "bet" of the first "beta"
+        let spans = highlighter.selection_matches(&buffer, "bet", &selection, 0, buffer.len());
+
+        let ranges: Vec<_> = spans.into_iter().map(|s| s.range).collect();
+        assert_eq!(ranges, vec![17..20, 22..25]);
+    }
+
+    #[test]
+    fn test_selection_matches_limited_to_viewport() {
+        let buffer = Buffer::from_str_test("bet bet bet bet");
+        let highlighter = ReferenceHighlighter::new();
+
+        // Viewport covers only the first two matches.
+        let selection = 0..3;
+        let spans = highlighter.selection_matches(&buffer, "bet", &selection, 0, 7);
+        let ranges: Vec<_> = spans.into_iter().map(|s| s.range).collect();
+        assert_eq!(ranges, vec![4..7]);
+    }
+
+    #[test]
+    fn test_multiline_and_blank_selections_are_not_matched() {
+        let buffer = Buffer::from_str_test("foo\nfoo\nfoo");
+        let highlighter = ReferenceHighlighter::new();
+
+        assert!(highlighter
+            .selection_matches(&buffer, "foo\nfoo", &(0..7), 0, buffer.len())
+            .is_empty());
+        assert!(highlighter
+            .selection_matches(&buffer, "   ", &(0..3), 0, buffer.len())
+            .is_empty());
+        assert!(!is_matchable_selection(
+            &"x".repeat(MAX_SELECTION_MATCH_BYTES + 1)
+        ));
     }
 
     #[test]

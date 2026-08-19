@@ -519,6 +519,7 @@ pub(crate) fn compute_buffer_layout(
         viewport_start,
         viewport_end,
         selection.primary_cursor_position,
+        selection.primary_selection.clone(),
         folds,
         theme,
         highlight_context_bytes,

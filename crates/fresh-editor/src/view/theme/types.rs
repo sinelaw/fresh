@@ -1175,7 +1175,10 @@ fn default_compose_margin_bg() -> ColorDef {
     ColorDef::Rgb(18, 18, 18) // Darker than editor_bg for "desk" effect
 }
 fn default_semantic_highlight_bg() -> ColorDef {
-    ColorDef::Rgb(60, 60, 80) // Subtle dark highlight for word occurrences
+    // Neutral gray: legible on dark backgrounds and, unlike a dark blue tint,
+    // still distinct from the selection background after 256-color
+    // quantization (#3011).
+    ColorDef::Rgb(87, 87, 87)
 }
 fn default_terminal_bg() -> ColorDef {
     ColorDef::Named("Default".to_string()) // Use terminal's default background (preserves transparency)
@@ -3374,6 +3377,98 @@ mod tests {
                      (highlight would be invisible) and no modifier compensates (#2312)",
                     builtin.name
                 );
+            }
+        }
+    }
+
+    /// The RGB a terminal actually paints for `color` at a given capability.
+    /// `None` for named/default colors, whose value belongs to the terminal.
+    fn painted_rgb(
+        color: Color,
+        capability: crate::view::color_support::ColorCapability,
+    ) -> Option<(u8, u8, u8)> {
+        // The 6x6x6 cube's per-component levels, and the 24-step gray ramp.
+        const CUBE: [u8; 6] = [0, 95, 135, 175, 215, 255];
+        match crate::view::color_support::convert_color(color, capability) {
+            Color::Rgb(r, g, b) => Some((r, g, b)),
+            Color::Indexed(i @ 16..=231) => {
+                let i = i - 16;
+                Some((
+                    CUBE[(i / 36) as usize],
+                    CUBE[((i % 36) / 6) as usize],
+                    CUBE[(i % 6) as usize],
+                ))
+            }
+            Color::Indexed(i @ 232..=255) => {
+                let v = 8 + (i - 232) * 10;
+                Some((v, v, v))
+            }
+            _ => None,
+        }
+    }
+
+    /// Perceived brightness (ITU-R BT.709 luma) on the 0..255 scale.
+    fn brightness((r, g, b): (u8, u8, u8)) -> f32 {
+        0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32
+    }
+
+    /// Regression for #3011: a selection now suppresses the cursor-word
+    /// highlight and highlights the *matches of the selected text* instead —
+    /// so both backgrounds are on screen at once, right next to each other,
+    /// and a theme whose highlight is merely a slightly different shade of the
+    /// selection makes the selection's extent unreadable. The two must differ
+    /// in perceived brightness, and the highlight must stand out from the
+    /// editor background, both in truecolor and after the 256-color
+    /// quantization a plain `xterm-256color`/tmux session applies (where the
+    /// original dark/light/dracula highlights collapsed onto the selection or
+    /// onto the background entirely).
+    #[test]
+    fn test_builtin_highlight_is_distinguishable_from_selection() {
+        use crate::view::color_support::ColorCapability;
+
+        // Two backgrounds are treated as telling apart when their luma differs
+        // by this much; smaller gaps read as "the same dark tint" on screen.
+        const MIN_BRIGHTNESS_DELTA: f32 = 20.0;
+
+        for builtin in BUILTIN_THEMES {
+            let theme = Theme::from_json(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
+
+            // Modifier-driven highlights (e.g. the terminal theme's
+            // bold+underline) carry their own contrast and own no color.
+            if !theme
+                .modifier_for_bg_key("ui.semantic_highlight_bg")
+                .is_empty()
+            {
+                continue;
+            }
+
+            for capability in [ColorCapability::TrueColor, ColorCapability::Color256] {
+                let Some(highlight) = painted_rgb(theme.semantic_highlight_bg, capability) else {
+                    continue;
+                };
+                for (name, other) in [
+                    ("selection background", theme.selection_bg),
+                    ("editor background", theme.editor_bg),
+                ] {
+                    let Some(other_rgb) = painted_rgb(other, capability) else {
+                        continue;
+                    };
+                    let delta = (brightness(highlight) - brightness(other_rgb)).abs();
+                    assert!(
+                        delta >= MIN_BRIGHTNESS_DELTA,
+                        "Theme '{}' at {:?}: occurrence highlight {:?} is indistinguishable from \
+                         the {} {:?} (brightness delta {:.1} < {:.1}) — a selection and its \
+                         highlighted matches must be tellable apart (#3011)",
+                        builtin.name,
+                        capability,
+                        highlight,
+                        name,
+                        other_rgb,
+                        delta,
+                        MIN_BRIGHTNESS_DELTA
+                    );
+                }
             }
         }
     }

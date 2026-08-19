@@ -25,6 +25,7 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
             block_rects: Vec::new(),
             cursor_positions: Vec::new(),
             primary_cursor_position: cursors.primary().position,
+            primary_selection: None,
             primary_virtual_cols: 0,
             primary_virtual_lines: 0,
             primary_virtual_line_col: 0,
@@ -113,11 +114,20 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
         0
     };
 
+    // Block selections span disjoint column runs rather than one text run, so
+    // they suppress the cursor-word highlight without contributing a run to
+    // match (the overlay pass ignores multi-line selection text anyway).
+    let primary_selection = cursors
+        .primary()
+        .selection_range()
+        .filter(|range| !range.is_empty());
+
     SelectionContext {
         ranges,
         block_rects,
         cursor_positions,
         primary_cursor_position: cursors.primary().position,
+        primary_selection,
         primary_virtual_cols,
         primary_virtual_lines,
         primary_virtual_line_col,
@@ -134,6 +144,7 @@ pub(crate) fn decoration_context(
     viewport_start: usize,
     viewport_end: usize,
     primary_cursor_position: usize,
+    primary_selection: Option<Range<usize>>,
     folds: &FoldManager,
     theme: &Theme,
     highlight_context_bytes: usize,
@@ -170,6 +181,7 @@ pub(crate) fn decoration_context(
         &mut state.marker_list,
         &mut state.reference_highlighter,
         primary_cursor_position,
+        primary_selection,
         viewport_start,
         viewport_end,
         highlight_context_bytes,

@@ -322,9 +322,9 @@
           18
         ],
         "semantic_highlight_bg": [
-          60,
-          60,
-          80
+          87,
+          87,
+          87
         ],
         "semantic_highlight_modifier": null,
         "terminal_bg": "Default",
@@ -1358,9 +1358,9 @@
           "description": "Word under cursor highlight",
           "$ref": "#/$defs/ColorDef",
           "default": [
-            60,
-            60,
-            80
+            87,
+            87,
+            87
           ]
         },
         "semantic_highlight_modifier": {

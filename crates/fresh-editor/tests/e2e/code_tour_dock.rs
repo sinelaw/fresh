@@ -234,14 +234,14 @@ fn load_tour(harness: &mut EditorTestHarness, manifest: &str, tab_marker: &str) 
 
 /// Screen rows (within the editor area) whose column 20 carries the step
 /// highlight's background colour — the theme key `ui.semantic_highlight_bg`,
-/// which the harness's high-contrast theme resolves to rgb(0, 25, 55). The
+/// which the harness's high-contrast theme resolves to rgb(100, 100, 100). The
 /// highlight is painted `extendToLineEnd`, so column 20 is covered for every
 /// fixture file in this module.
 fn highlighted_rows(h: &EditorTestHarness) -> Vec<u16> {
     (2..30u16)
         .filter(|row| {
             h.get_cell_style(20, *row)
-                .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(0, 25, 55)))
+                .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(100, 100, 100)))
         })
         .collect()
 }
@@ -1327,7 +1327,7 @@ fn test_step_highlight_bands_are_full_width_on_every_line() {
         (2..25u16)
             .filter(|row| {
                 h.get_cell_style(60, *row)
-                    .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(0, 25, 55)))
+                    .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(100, 100, 100)))
             })
             .collect()
     };
@@ -1486,7 +1486,7 @@ fn test_blank_line_in_range_keeps_band_under_indent_guides() {
     harness
         .wait_until(|h| {
             h.get_cell_style(x, blank_row)
-                .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(0, 25, 55)))
+                .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(100, 100, 100)))
         })
         .unwrap();
 }
