@@ -4,6 +4,7 @@
 //! read the messages and the display list. Nothing reaches into the framework.
 
 mod support;
+use fresh_ui::Axis;
 use fresh_ui::{
     col, Button, ComponentExt, Draw, Dropdown, Input, KeyCode, KeyPress, List, Mods, MouseButton,
     Node, Number, Point, RadioGroup, Size, Sizing, TextField, Toggle, Tree, TreeNode, Ui,
@@ -286,6 +287,7 @@ fn a_million_row_list_does_a_screenful_of_work_per_frame() {
     ui.dispatch(Input::Wheel {
         pos: Point::new(1, 1),
         delta: 40,
+        axis: Axis::Vertical,
         mods: Mods::NONE,
     });
     ui.tick();

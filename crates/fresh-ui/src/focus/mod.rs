@@ -126,7 +126,7 @@ use std::rc::Rc;
 use crate::desc::{resolve, Desc, Modality};
 use crate::element::ElementId;
 use crate::event::{
-    Ctl, Event, Flow, GestureKind, KeyPress, Mods, MouseButton, Phase, SelectionOnFocus,
+    Axis, Ctl, Event, Flow, GestureKind, KeyPress, Mods, MouseButton, Phase, SelectionOnFocus,
 };
 use crate::render::geom::Point;
 use crate::schedule::{DirtyCause, Ui};
@@ -265,6 +265,7 @@ impl<M: 'static> Ui<M> {
             button: MouseButton::Left,
             mods: key.map(|k| k.mods).unwrap_or(Mods::NONE),
             delta: 0,
+            axis: Axis::Vertical,
             key,
             selection: SelectionOnFocus::None,
             target: id,

@@ -6,6 +6,7 @@
 
 #[path = "../tests/support/mod.rs"]
 mod support;
+use fresh_ui::Axis;
 use fresh_ui::{Input, KeyCode, KeyPress, Mods, MouseButton, Point, Size};
 use support::demo::Demo;
 
@@ -107,6 +108,7 @@ fn main() {
     huge.input(Input::Wheel {
         pos: Point::new(30, 6),
         delta: 400_000,
+        axis: Axis::Vertical,
         mods: Mods::NONE,
     });
     println!("── one million rows ───────────────────────────────────────────");
