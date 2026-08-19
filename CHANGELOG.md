@@ -1,6 +1,6 @@
 # Release Notes
 
-## 0.4.9
+## 0.4.10
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
@@ -9,6 +9,43 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 ### Features
 
 * **A selection that spans empty lines is visible** - every selected line break highlights the column it occupies (column 0 on an empty line), and whitespace inside a selection draws its `·` / `→` indicators even when the indicators are otherwise off (`whitespace_in_selection`, on by default) (#2797, reported by @akarinotomoshibi).
+* **Compose/Markdown preview renders instead of showing raw syntax** - headings, block quotes, and horizontal rules get proper styling instead of literal `#`/`>`/`---`, lists get bullets and spacing, fenced code blocks are framed with side rails, and the default preview width is a readable centered measure instead of the full pane (#2967, requested by @mommysgoodpuppy).
+* **Review Diff is full-width and toggleable** - no soft wrap, side panels (file list, comments) can be hidden, and the sidebar nests files by directory like the File Explorer instead of repeating the full path on every row.
+* **Review Diff handles very large ranges** - a review spanning a hundred commits now lays out completely and stays responsive: cursor movement, hunk jumps, and flipping between the unified and side-by-side views no longer lag behind a stale frame.
+* **Linux musl installs register a desktop entry and icons**, so Fresh shows up in your app launcher - continuing 0.4.9's move to a single self-updating musl binary.
+
+### Bug Fixes
+
+* **Selection now reaches the buffer edges** - Shift+Up on the first line and Shift+Down on the last line extend the selection to the buffer start/end, and dragging the mouse past the top or bottom edge keeps selecting and auto-scrolls instead of stopping dead (#3006, #3017, reported by @akarinotomoshibi).
+* **Folding**
+  * A misplaced fold no longer swallows a line's text behind `...` - seen as a KDL file's `debug {` vanishing (#3031, reported by @rsramkis).
+  * A collapsed fold's header row stays legible when the folded line itself is empty.
+  * Deleting the line a fold was folded on now expands the fold instead of leaving a dangling marker.
+* **Search & Replace** no longer opens with every input field missing when invoked a second time while the panel is still opening (#3019).
+* **Git Log**: diff colours in the commit detail panel no longer drift off their rows for commits containing non-ASCII text (#3014).
+* **Markdown**
+  * Heading marks appear on the scrollbar as soon as a file opens, not only after scrolling past them, and stay stable and limited to top-level headings (#2990).
+  * Compose mode no longer frames the paragraph after a fenced code block as code when the buffer opens or scrolls into view mid-document (#3001).
+  * Bold, italic, and inline-code markup no longer stay visible as raw `**`/`` ` `` until you click elsewhere (#2968, reported by @mommysgoodpuppy).
+  * Comments inside fenced code blocks are no longer misdetected as Markdown syntax, and scrolling a large file in Compose mode is smooth on the first pass instead of only after it's been scrolled through once.
+* **Rendering**: the 256-color contrast pass no longer stalls large terminal windows or the Settings dialog, and a dimmed dialog no longer paints a fixed dark gray instead of following the active theme (#2982).
+* **Terminals**: a focused terminal keeps `Ctrl+B`/`Ctrl+E` for the shell instead of them toggling/focusing the File Explorer, and File Explorer keys (like Enter) no longer leak into a terminal's PTY sitting behind it.
+* **File Explorer**: the sidebar caret no longer blinks through modal dialogs.
+* **Review Diff**: `PageDown`/`PageUp` no longer stalls with the cursor off-screen while paging over a collapsed file (#3029); a panel like the git-log commit view now word-wraps correctly no matter which split shows it.
+* **Editing near a fold, concealed span, or virtual line** no longer corrupts the rendered layout (wrong hidden text, row count, or scrollbar position) after certain edit sequences, or leaves it stuck stale after a file reload or undo past a bulk edit.
+
+### Internals
+
+* A large rewrite unifies mouse, wheel, and keyboard dispatch across the editor's chrome and panels behind one registration/dispatch model, and lays groundwork with a new backend-independent widget library crate; overlay indexing, plugin-state-snapshot, and Markdown-decoration performance work; flaky-test stabilization across settings, mouse, review-diff, and markdown suites.
+
+## 0.4.9
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+
+### Features
+
 * **Installing and updating Fresh** - the preferred install method for Linux is now a single self-contained, self-updating, statically linked (musl) binary - one install that works everywhere, instead of a dozen fragile packaging channels.
 * **LSP completions can offer auto-imports** - servers like rust-analyzer now suggest unimported symbols, and accepting one inserts the `use`/import line (#2603).
 * **The scripting API can manage the whole Orchestrator dock** - create, rename, move, archive, delete and list workspaces, including over SSH, not just create them.
