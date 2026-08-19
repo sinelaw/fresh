@@ -5990,9 +5990,9 @@ impl Config {
         languages.insert(
             "coq".to_string(),
             LanguageConfig {
-                // Keep `.v` assigned to V for compatibility (see #1528).
-                // Coq/Rocq files can use `.coq`, a project filename below,
-                // or manual language selection for conventional `.v` files.
+                // Keep `.v` assigned to V by default for compatibility (see
+                // #1528). Language detection promotes it to Coq/Rocq when an
+                // ancestor contains `_CoqProject` or `_RocqProject`.
                 extensions: vec!["coq".to_string()],
                 filenames: vec!["_CoqProject".to_string(), "_RocqProject".to_string()],
                 grammar: "Coq/Rocq".to_string(),

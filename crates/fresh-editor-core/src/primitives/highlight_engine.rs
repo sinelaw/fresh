@@ -2661,7 +2661,18 @@ mod tests {
 
         let coq = "(* outer (* nested *) comment *)\nTheorem identity : forall x, x = x.\nProof. intros. reflexivity. Qed.\n";
         let coq_buffer = Buffer::from_str(coq, 0, test_fs());
-        let mut coq_engine = HighlightEngine::for_file(Path::new("identity.coq"), None, &registry);
+        let coq_project = tempfile::tempdir().unwrap();
+        std::fs::write(coq_project.path().join("_CoqProject"), "").unwrap();
+        let coq_path = coq_project.path().join("identity.v");
+        let detected = crate::primitives::detected_language::DetectedLanguage::from_path(
+            &coq_path,
+            None,
+            &registry,
+            &crate::config::Config::default().languages,
+        );
+        assert_eq!(detected.name, "coq");
+        assert_eq!(detected.display_name, "Coq/Rocq");
+        let mut coq_engine = detected.highlighter;
         assert_eq!(coq_engine.backend_name(), "textmate");
         coq_engine.highlight_viewport(&coq_buffer, 0, coq_buffer.len(), &theme, 0);
         for (needle, expected) in [

@@ -2263,6 +2263,38 @@ mod tests {
     }
 
     #[test]
+    fn test_v_file_stays_vlang_without_coq_project_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("main.v");
+        std::fs::write(&source, "module main\n").unwrap();
+
+        let languages = crate::config::Config::default().languages;
+        assert_eq!(
+            detect_language(&source, &languages),
+            Some("vlang".to_string())
+        );
+    }
+
+    #[test]
+    fn test_v_file_promotes_to_coq_with_ancestor_project_marker() {
+        for marker in ["_CoqProject", "_RocqProject"] {
+            let temp = tempfile::tempdir().unwrap();
+            let theories = temp.path().join("theories").join("nested");
+            std::fs::create_dir_all(&theories).unwrap();
+            std::fs::write(temp.path().join(marker), "-Q theories Example\n").unwrap();
+            let source = theories.join("Identity.v");
+            std::fs::write(&source, "Theorem identity : forall x, x = x.\n").unwrap();
+
+            let languages = crate::config::Config::default().languages;
+            assert_eq!(
+                detect_language(&source, &languages),
+                Some("coq".to_string()),
+                "{marker} should identify conventional .v files as Coq/Rocq"
+            );
+        }
+    }
+
+    #[test]
     fn test_detect_language_path_glob() {
         let mut languages = test_languages();
         languages.insert(
