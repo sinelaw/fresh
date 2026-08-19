@@ -25,6 +25,7 @@ use crate::common::fixtures::TestFixture;
 use crate::common::harness::{layout, EditorTestHarness, HarnessOptions};
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
+use fresh::model::event::Event;
 use fresh::workspace::Workspace;
 use tempfile::TempDir;
 
@@ -70,6 +71,12 @@ fn line_byte_range(harness: &mut EditorTestHarness, line: usize) -> (usize, usiz
         .line_start_offset(line + 1)
         .unwrap_or_else(|| buffer.len());
     (start, end)
+}
+
+/// The full text of `line`, newline included.
+fn header_line_text(harness: &mut EditorTestHarness, line: usize) -> String {
+    let buffer = &mut harness.editor_mut().active_state_mut().buffer;
+    String::from_utf8_lossy(&buffer.get_line(line).expect("line exists")).to_string()
 }
 
 /// Age the session Fresh just wrote into the shape an older Fresh wrote:
@@ -244,6 +251,105 @@ fn test_collapsed_fold_on_blank_header_keeps_its_line_number_and_arrow() {
         "Issue #3031: the collapsed fold's header row lost its fold arrow, \
          leaving no way to see — or click open — the fold hiding \
          `debug {{`. Screen:\n{}",
+        screen
+    );
+}
+
+/// A collapsed fold is a claim about one line: "the block opening here is
+/// folded away". Delete that line and the claim has no subject — so the fold
+/// must retire and give the body back, rather than re-anchoring onto whatever
+/// line now precedes it and keeping the code hidden under a header nobody
+/// folded.
+#[test]
+fn test_deleting_the_fold_header_line_expands_the_fold() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let fixture = TestFixture::new("config.kdl", NIRI_CONFIG).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    let buffer_id = harness.editor().active_buffer();
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .toggle_fold_at_line(buffer_id, DEBUG_HEADER_LINE);
+    harness.render().unwrap();
+    assert_eq!(
+        collapsed_fold_rows(&harness).len(),
+        1,
+        "Precondition: the `debug` block should be collapsed. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Delete the whole header line, newline included.
+    let (start, end) = line_byte_range(&mut harness, DEBUG_HEADER_LINE);
+    let deleted_text = header_line_text(&mut harness, DEBUG_HEADER_LINE);
+    let cursor_id = harness.editor().active_cursors().primary_id();
+    harness
+        .apply_event(Event::Delete {
+            range: start..end,
+            deleted_text,
+            cursor_id,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("honor-xdg-activation-with-invalid-serial"),
+        "Deleting a collapsed fold's header line must expand the fold and \
+         give its body back; the body is still hidden. Screen:\n{}",
+        screen
+    );
+    assert!(
+        collapsed_fold_rows(&harness).is_empty(),
+        "The fold should be gone with its header, not re-anchored onto the \
+         line above. Screen:\n{}",
+        screen
+    );
+}
+
+/// Same claim, emptied rather than removed: the header line survives but its
+/// text is deleted. A blank line can never own a fold — indent folding
+/// refuses a blank header outright — so this retires the fold too.
+#[test]
+fn test_emptying_the_fold_header_line_expands_the_fold() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let fixture = TestFixture::new("config.kdl", NIRI_CONFIG).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    let buffer_id = harness.editor().active_buffer();
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .toggle_fold_at_line(buffer_id, DEBUG_HEADER_LINE);
+    harness.render().unwrap();
+
+    // Delete the header line's text but leave its newline in place.
+    let (start, _) = line_byte_range(&mut harness, DEBUG_HEADER_LINE);
+    let text = header_line_text(&mut harness, DEBUG_HEADER_LINE);
+    let text_len = text.trim_end_matches('\n').len();
+    let cursor_id = harness.editor().active_cursors().primary_id();
+    harness
+        .apply_event(Event::Delete {
+            range: start..start + text_len,
+            deleted_text: text.trim_end_matches('\n').to_string(),
+            cursor_id,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("honor-xdg-activation-with-invalid-serial"),
+        "Emptying a collapsed fold's header line must expand the fold: a \
+         blank line owns nothing. Screen:\n{}",
+        screen
+    );
+    assert!(
+        collapsed_fold_rows(&harness).is_empty(),
+        "No collapsed fold should survive on a blank header line. \
+         Screen:\n{}",
         screen
     );
 }

@@ -154,6 +154,7 @@ impl Editor {
                                     .line_start_offset(end_line.saturating_add(1))
                                     .unwrap_or_else(|| state.buffer.len());
                                 buf_state.folds.add(
+                                    &state.buffer,
                                     &mut state.marker_list,
                                     start_byte,
                                     end_byte,
