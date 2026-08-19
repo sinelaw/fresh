@@ -1397,6 +1397,7 @@
   "settings.field.editor.whitespace_tabs_inner": "แท็บภายใน",
   "settings.field.editor.whitespace_tabs_leading": "แท็บนำหน้า",
   "settings.field.editor.whitespace_tabs_trailing": "แท็บต่อท้าย",
+  "settings.field.editor.whitespace_in_selection": "ช่องว่างในส่วนที่เลือก",
   "settings.help_default": "↑↓:นำทาง  Tab:ถัดไป  Enter:แก้ไข  /:ค้นหา  Esc:ปิด",
   "settings.help_footer": "Tab:ถัดไป  Enter:เปิดใช้งาน  Esc:ปิด",
   "settings.help_search": "ค้นหา, ↑↓:นำทาง  Enter:ไป  Esc:ยกเลิก",

@@ -98,6 +98,7 @@
         "whitespace_tabs_trailing": true,
         "whitespace_newlines": false,
         "whitespace_carriage_returns": false,
+        "whitespace_in_selection": true,
         "use_tabs": false,
         "tab_size": 4,
         "auto_indent": true,
@@ -668,6 +669,12 @@
           "description": "Show carriage-return indicators (␍) for the CR half of CRLF line\nendings, next to the newline position. Stray CR bytes that are not\npart of the buffer's line ending always render as `<0D>` escapes.\nDefault: false",
           "type": "boolean",
           "default": false,
+          "x-section": "Whitespace"
+        },
+        "whitespace_in_selection": {
+          "description": "Show whitespace indicators (·, →) for whitespace *inside a\nselection*, even when the per-position settings above (or the\n`whitespace_show` master toggle) keep them hidden elsewhere. Makes the\nexact extent of a selection legible without turning indicators on for\nthe whole buffer.\nDefault: true",
+          "type": "boolean",
+          "default": true,
           "x-section": "Whitespace"
         },
         "use_tabs": {

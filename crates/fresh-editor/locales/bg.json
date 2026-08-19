@@ -1451,6 +1451,7 @@
   "settings.field.editor.whitespace_tabs_inner": "Вътрешни табулации",
   "settings.field.editor.whitespace_tabs_leading": "Начални табулации",
   "settings.field.editor.whitespace_tabs_trailing": "Крайни табулации",
+  "settings.field.editor.whitespace_in_selection": "Интервали в селекцията",
   "settings.help_default": "↑↓:Навигация  Tab:Следващ  Enter:Редактиране  /:Търсене  Esc:Затваряне",
   "settings.help_duallist": "↑↓:Избор  ←→:Колона  Shift+←→:Преместване  Shift+↑↓:Пренареждане  Esc:Готово",
   "settings.help_footer": "Tab:Следващ бутон  Enter:Активиране  Esc:Затваряне",

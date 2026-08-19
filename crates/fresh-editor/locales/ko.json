@@ -1397,6 +1397,7 @@
   "settings.field.editor.whitespace_tabs_inner": "내부 탭",
   "settings.field.editor.whitespace_tabs_leading": "선행 탭",
   "settings.field.editor.whitespace_tabs_trailing": "후행 탭",
+  "settings.field.editor.whitespace_in_selection": "선택 영역의 공백",
   "settings.help_default": "↑↓:이동  Tab:다음  Enter:편집  /:검색  Esc:닫기",
   "settings.help_footer": "Tab:다음  Enter:실행  Esc:닫기",
   "settings.help_search": "검색, ↑↓:이동  Enter:이동  Esc:취소",

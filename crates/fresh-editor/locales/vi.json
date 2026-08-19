@@ -1397,6 +1397,7 @@
   "settings.field.editor.whitespace_tabs_inner": "Tab bên trong",
   "settings.field.editor.whitespace_tabs_leading": "Tab đầu dòng",
   "settings.field.editor.whitespace_tabs_trailing": "Tab cuối dòng",
+  "settings.field.editor.whitespace_in_selection": "Khoảng trắng trong vùng chọn",
   "settings.help_default": "↑↓:Điều hướng  Tab:Tiếp theo  Enter:Chỉnh sửa  /:Tìm kiếm  Esc:Đóng",
   "settings.help_footer": "Tab:Nút tiếp theo  Enter:Kích hoạt  Esc:Đóng",
   "settings.help_search": "Gõ để tìm, ↑↓:Điều hướng  Enter:Nhảy  Esc:Hủy",

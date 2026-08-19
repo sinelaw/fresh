@@ -1463,6 +1463,7 @@
   "settings.field.editor.whitespace_tabs_leading": "Leading Tabs",
   "settings.field.editor.whitespace_tabs_inner": "Inner Tabs",
   "settings.field.editor.whitespace_tabs_trailing": "Trailing Tabs",
+  "settings.field.editor.whitespace_in_selection": "Whitespace In Selection",
   "shell.command_failed": "Command failed: %{error}",
   "shell.command_prompt": "Shell command: ",
   "shell.command_replace_prompt": "Shell command (replace): ",

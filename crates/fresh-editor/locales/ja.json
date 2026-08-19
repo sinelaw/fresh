@@ -1397,6 +1397,7 @@
   "settings.field.editor.whitespace_tabs_inner": "内部のタブ",
   "settings.field.editor.whitespace_tabs_leading": "先頭のタブ",
   "settings.field.editor.whitespace_tabs_trailing": "末尾のタブ",
+  "settings.field.editor.whitespace_in_selection": "選択範囲内の空白",
   "settings.help_default": "↑↓:移動  Tab:次へ  Enter:編集  /:検索  Esc:閉じる",
   "settings.help_footer": "Tab:次へ  Enter:実行  Esc:閉じる",
   "settings.help_search": "検索, ↑↓:移動  Enter:ジャンプ  Esc:キャンセル",

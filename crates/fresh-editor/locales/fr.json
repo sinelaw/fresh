@@ -1397,6 +1397,7 @@
   "settings.field.editor.whitespace_tabs_inner": "Tabulations intérieures",
   "settings.field.editor.whitespace_tabs_leading": "Tabulations en début",
   "settings.field.editor.whitespace_tabs_trailing": "Tabulations en fin",
+  "settings.field.editor.whitespace_in_selection": "Espaces dans la sélection",
   "settings.help_default": "↑↓:Naviguer  Tab:Suivant  Entrée:Modifier  /:Rechercher  Échap:Fermer",
   "settings.help_footer": "Tab:Suivant  Entrée:Activer  Échap:Fermer",
   "settings.help_search": "Rechercher, ↑↓:Naviguer  Entrée:Aller  Échap:Annuler",

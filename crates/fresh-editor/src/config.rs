@@ -1439,6 +1439,16 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_carriage_returns: bool,
 
+    /// Show whitespace indicators (·, →) for whitespace *inside a
+    /// selection*, even when the per-position settings above (or the
+    /// `whitespace_show` master toggle) keep them hidden elsewhere. Makes the
+    /// exact extent of a selection legible without turning indicators on for
+    /// the whole buffer.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_in_selection: bool,
+
     // ===== Editing =====
     /// Whether pressing Tab inserts a tab character instead of spaces.
     /// This is the global default; individual languages can override it
@@ -2012,6 +2022,7 @@ impl Default for EditorConfig {
             whitespace_tabs_trailing: true,
             whitespace_newlines: false,
             whitespace_carriage_returns: false,
+            whitespace_in_selection: true,
         }
     }
 }
@@ -2916,6 +2927,11 @@ pub struct BufferConfig {
     /// Resolved whitespace indicator visibility
     pub whitespace: WhitespaceVisibility,
 
+    /// Whether whitespace inside a selection draws its indicators even when
+    /// `whitespace` keeps them hidden. Global (`editor.whitespace_in_selection`);
+    /// no per-language override, so it rides along resolution unchanged.
+    pub whitespace_in_selection: bool,
+
     /// Formatter command for this buffer
     pub formatter: Option<FormatterConfig>,
 
@@ -2966,6 +2982,7 @@ impl BufferConfig {
             line_wrap: editor.line_wrap,
             wrap_column: editor.wrap_column,
             whitespace,
+            whitespace_in_selection: editor.whitespace_in_selection,
             formatter: None,
             format_on_save: false,
             on_save: Vec::new(),
