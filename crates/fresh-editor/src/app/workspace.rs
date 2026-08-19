@@ -55,43 +55,61 @@ use super::Editor;
 ///   local external edit.
 /// - If still not found, return `None` so the caller drops the fold rather
 ///   than re-attaching it to unrelated content.
+///
+/// Whatever the route, a candidate that is blank is rejected (issue #3031).
+/// No fold-creation path puts a header on a blank line: indent folding
+/// refuses a blank header outright, and an LSP range starts on the
+/// construct it folds. A saved fold that resolves onto one is therefore
+/// stale — and restoring it is worse than dropping it, because the first
+/// hidden line is then the *real* block opener while the blank header row
+/// shows nothing but the placeholder, with no text and no line number to
+/// say a fold is there at all.
 fn resolve_fold_header_line(
     buffer: &crate::model::buffer::Buffer,
     saved_line: usize,
     header_text: Option<&str>,
 ) -> Option<usize> {
-    let Some(expected) = header_text else {
+    let line_text = |line: usize| -> Option<String> {
+        buffer.get_line(line).map(|bytes| {
+            String::from_utf8_lossy(&bytes)
+                .trim_end_matches('\n')
+                .trim_end_matches('\r')
+                .trim()
+                .to_string()
+        })
+    };
+    let candidate = match header_text {
         // Backward compatibility: no recorded text, trust the line number.
-        return Some(saved_line);
-    };
-    let expected_trimmed = expected.trim();
-    let line_matches = |line: usize| -> bool {
-        buffer
-            .get_line(line)
-            .map(|bytes| {
-                let text = String::from_utf8_lossy(&bytes);
-                text.trim_end_matches('\n').trim_end_matches('\r').trim() == expected_trimmed
-            })
-            .unwrap_or(false)
-    };
-    if line_matches(saved_line) {
-        return Some(saved_line);
-    }
-    // Search nearby (expanding outward) for the displaced header.
-    const SEARCH_WINDOW: usize = 32;
-    for delta in 1..=SEARCH_WINDOW {
-        let above = saved_line.checked_sub(delta);
-        if let Some(l) = above {
-            if line_matches(l) {
-                return Some(l);
+        None => Some(saved_line),
+        Some(expected) => {
+            let expected_trimmed = expected.trim();
+            let line_matches =
+                |line: usize| -> bool { line_text(line).as_deref() == Some(expected_trimmed) };
+            if line_matches(saved_line) {
+                Some(saved_line)
+            } else {
+                // Search nearby (expanding outward) for the displaced header.
+                const SEARCH_WINDOW: usize = 32;
+                let mut found = None;
+                for delta in 1..=SEARCH_WINDOW {
+                    let above = saved_line.checked_sub(delta);
+                    if let Some(l) = above {
+                        if line_matches(l) {
+                            found = Some(l);
+                            break;
+                        }
+                    }
+                    let below = saved_line.saturating_add(delta);
+                    if line_matches(below) {
+                        found = Some(below);
+                        break;
+                    }
+                }
+                found
             }
         }
-        let below = saved_line.saturating_add(delta);
-        if line_matches(below) {
-            return Some(below);
-        }
-    }
-    None
+    };
+    candidate.filter(|line| line_text(*line).is_some_and(|text| !text.is_empty()))
 }
 
 /// Workspace persistence state tracker
@@ -1636,8 +1654,8 @@ impl crate::app::window::Window {
                                 fold.header_text.as_deref(),
                             ) else {
                                 tracing::debug!(
-                                    "Dropping stale fold: header_line={} no longer matches stored \
-                             header_text after external edit",
+                                    "Dropping stale fold: header_line={} no longer resolves to a \
+                             usable header (text drift, or the line it lands on is blank)",
                                     fold.header_line,
                                 );
                                 continue;
