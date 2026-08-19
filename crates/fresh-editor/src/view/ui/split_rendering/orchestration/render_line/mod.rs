@@ -641,7 +641,24 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
         // Use the elegant pipeline's should_show_line_number function
         // This correctly handles: injected content, wrapped continuations, and source lines
-        let show_line_number = should_show_line_number(current_view_line);
+        let mut show_line_number = should_show_line_number(current_view_line);
+
+        // A collapsed fold's header row always owns a source line, even when
+        // that line is empty: the placeholder `apply_folding` appends then
+        // sits *in front of* the row's only source character (its newline),
+        // which reads to `should_show_line_number` as an injected row. Left
+        // alone it costs the row both its number and — because the fold
+        // indicator is keyed off `line_start_byte` — its `▸` arrow, so the
+        // hidden line looks like text the editor silently replaced with
+        // "..." rather than a fold anyone can see or click open (#3031).
+        if !show_line_number && !line_start_type.is_continuation() {
+            show_line_number = current_view_line.source_start_byte.is_some_and(|byte| {
+                decorations
+                    .fold_indicators
+                    .get(&byte)
+                    .is_some_and(|indicator| indicator.collapsed)
+            });
+        }
 
         // is_continuation means "don't show line number" for rendering purposes
         let is_continuation = !show_line_number;
