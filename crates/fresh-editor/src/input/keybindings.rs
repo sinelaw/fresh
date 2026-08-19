@@ -2593,7 +2593,9 @@ impl KeybindingResolver {
             "pageup" => Some(KeyCode::PageUp),
             "pagedown" => Some(KeyCode::PageDown),
 
-            s if s.len() == 1 => s.chars().next().map(KeyCode::Char),
+            // One Unicode scalar, not one UTF-8 byte: "ü"/"ö"/"ä" are two
+            // bytes and used to be dropped, so German Ctrl+ü bindings never loaded.
+            s if s.chars().count() == 1 => s.chars().next().map(KeyCode::Char),
             // Handle function keys like "f1", "f2", ..., "f12"
             s if s.starts_with('f') && s.len() >= 2 => s[1..].parse::<u8>().ok().map(KeyCode::F),
             _ => None,
@@ -3256,6 +3258,31 @@ mod tests {
             Some(KeyCode::BackTab)
         );
         assert_eq!(KeybindingResolver::parse_key("a"), Some(KeyCode::Char('a')));
+        assert_eq!(KeybindingResolver::parse_key("ü"), Some(KeyCode::Char('ü')));
+        assert_eq!(KeybindingResolver::parse_key("ö"), Some(KeyCode::Char('ö')));
+        assert_eq!(KeybindingResolver::parse_key("ä"), Some(KeyCode::Char('ä')));
+        assert_eq!(KeybindingResolver::parse_key("Ü"), Some(KeyCode::Char('ü')));
+        assert_eq!(KeybindingResolver::parse_key("ab"), None);
+    }
+
+    #[test]
+    fn test_umlaut_key_from_config_resolves() {
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "ü".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            keys: Vec::new(),
+            action: "lsp_hover".to_string(),
+            args: HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+        let event = KeyEvent::new(KeyCode::Char('ü'), KeyModifiers::CONTROL);
+        assert_eq!(
+            resolver.resolve(&event, KeyContext::Normal),
+            Action::LspHover,
+            "Ctrl+ü from config must resolve after parse_key accepts a Unicode scalar"
+        );
     }
 
     #[test]
