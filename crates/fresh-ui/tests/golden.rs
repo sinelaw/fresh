@@ -41,6 +41,11 @@ fn check(name: &str, session: &str) {
             path.display()
         )
     });
+    // A golden is a picture of a screen; its line terminator is not part of
+    // what it asserts. `.gitattributes` keeps these files LF, and normalising
+    // here means a stray CRLF checkout reports the frame that actually differs
+    // instead of failing every test on invisible bytes.
+    let expected = expected.replace("\r\n", "\n");
     if expected != session {
         panic!(
             "{name} differs from its recording.\n\
