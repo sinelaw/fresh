@@ -197,6 +197,15 @@ impl Editor {
                 "buffer_activated",
                 crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
             );
+
+            // The active *file* changed even though the active *buffer* did
+            // not, so `set_active_buffer` — where the follow-the-active-buffer
+            // sync normally hangs — was a no-op. Run the gate here too, or the
+            // very first file opened into a fresh session's scratch buffer
+            // never moves the explorer. Most visible when something opens that
+            // first file for you: a code tour's opening step left the tree
+            // parked at the root for the rest of the tour (issue #2988).
+            self.active_window_mut().follow_active_buffer_in_explorer();
         }
 
         // Use display_name from metadata for relative path display

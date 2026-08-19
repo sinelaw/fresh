@@ -692,6 +692,12 @@ pub struct Window {
     /// Whether a file-explorer rebuild is in flight (debounce flag).
     pub file_explorer_sync_in_progress: bool,
 
+    /// Path an expand-to-path request named while
+    /// `file_explorer_sync_in_progress` was already set. Replayed when the
+    /// in-flight expand lands, so an open that overlaps an earlier one still
+    /// reaches the tree (issue #2988).
+    pub file_explorer_sync_deferred: Option<PathBuf>,
+
     /// Width of the file-explorer panel.
     pub file_explorer_width: crate::config::ExplorerWidth,
 
@@ -2313,6 +2319,7 @@ impl Window {
             scroll_sync_manager: crate::view::scroll_sync::ScrollSyncManager::new(),
             file_explorer_visible: false,
             file_explorer_sync_in_progress: false,
+            file_explorer_sync_deferred: None,
             file_explorer_width: resources.config.file_explorer.width,
             file_explorer_side: resources.config.file_explorer.side,
             pending_file_explorer_show_hidden: None,
