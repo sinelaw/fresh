@@ -167,11 +167,56 @@ pub struct BoxProps {
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct TextProps {
-    pub text: Rc<str>,
+    /// The run's content, in pieces. One piece for ordinary text; several when
+    /// parts of it are styled differently.
+    ///
+    /// The pieces are one logical string: measurement, wrapping and truncation
+    /// treat them as a unit, and a wrap point may fall inside a piece. That is
+    /// the difference between this and laying separate `TextRun`s side by side,
+    /// which wrap and truncate independently.
+    pub runs: Rc<[Run]>,
     pub wrap: bool,
     /// Where the text cursor sits within this run, in columns. Set by whatever
     /// is being edited; the library places it and the backend shows it.
     pub cursor: Option<u16>,
+}
+
+/// One piece of a text run, and the theme it paints in.
+///
+/// A piece with no theme of its own inherits the node's — so an unstyled run is
+/// a single piece with `theme: None`, and adding styling means splitting the
+/// content into more pieces rather than switching to a different mechanism.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Run {
+    pub text: Rc<str>,
+    pub theme: Option<crate::render::spec::ThemeKey>,
+}
+
+impl Run {
+    /// A piece that paints in the node's own theme.
+    pub fn plain(text: impl AsRef<str>) -> Run {
+        Run {
+            text: Rc::from(text.as_ref()),
+            theme: None,
+        }
+    }
+
+    /// A piece that paints in a theme of its own.
+    pub fn themed(text: impl AsRef<str>, theme: impl AsRef<str>) -> Run {
+        Run {
+            text: Rc::from(text.as_ref()),
+            theme: Some(crate::render::spec::ThemeKey(Some(Rc::from(
+                theme.as_ref(),
+            )))),
+        }
+    }
+}
+
+impl TextProps {
+    /// The whole content as one string — what measurement and wrapping work on.
+    pub fn plain(&self) -> String {
+        self.runs.iter().map(|r| &*r.text).collect()
+    }
 }
 
 /// What a viewport's scroll offset counts.
@@ -676,7 +721,26 @@ pub fn stack<M>() -> Node<M> {
 
 pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
     Node::new(Desc::TextRun(TextProps {
-        text: Rc::from(s.as_ref()),
+        runs: Rc::from(vec![Run::plain(s)]),
+        wrap: false,
+        cursor: None,
+    }))
+}
+
+/// A text run whose pieces are styled independently.
+///
+/// One logical string: it wraps and measures as a whole, and a wrap point may
+/// fall inside a piece. Use this when the styling is *inside* the text —
+/// a match highlight, a mnemonic, inline code in a sentence. When the pieces
+/// are independently positioned instead, they are separate nodes in a `row()`,
+/// which is layout rather than styling.
+///
+/// ```ignore
+/// text_runs([Run::plain("Op"), Run::themed("e", "mnemonic"), Run::plain("n")])
+/// ```
+pub fn text_runs<M>(runs: impl IntoIterator<Item = Run>) -> Node<M> {
+    Node::new(Desc::TextRun(TextProps {
+        runs: Rc::from(runs.into_iter().collect::<Vec<_>>()),
         wrap: false,
         cursor: None,
     }))

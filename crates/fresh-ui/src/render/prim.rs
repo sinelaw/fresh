@@ -124,6 +124,105 @@ pub fn wrap_text(text: &str, width: u16) -> Vec<String> {
     out
 }
 
+/// One painted fragment: a piece of a row, and the theme it paints in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Frag {
+    pub text: Rc<str>,
+    pub theme: Option<crate::render::spec::ThemeKey>,
+}
+
+/// Wrap a run's pieces as one logical string, reporting each output row as the
+/// fragments that compose it.
+///
+/// The pieces are concatenated, wrapped by the same [`wrap_text`] the unstyled
+/// path uses — so styled and unstyled text break identically — and the result
+/// is then cut back into fragments along the original piece boundaries. A wrap
+/// point inside a piece splits it; a row crossing three pieces is three
+/// fragments.
+pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: bool) -> Vec<Vec<Frag>> {
+    use unicode_width::UnicodeWidthStr;
+
+    let whole: String = runs.iter().map(|r| &*r.text).collect();
+    let rows: Vec<String> = if wrap {
+        wrap_text(&whole, width)
+    } else {
+        whole.split('\n').map(|s| s.to_string()).collect()
+    };
+
+    // Walk the pieces alongside the rows. Wrapping can drop a separator at a
+    // break, so rows are matched by content length rather than by byte offset
+    // into the original.
+    let mut piece = 0usize;
+    let mut used = 0usize; // chars of the current piece already emitted
+    let mut out: Vec<Vec<Frag>> = Vec::with_capacity(rows.len());
+
+    for row in &rows {
+        let mut frags: Vec<Frag> = Vec::new();
+        let mut want: usize = row.chars().count();
+        let mut at = 0usize; // chars of this row already taken
+
+        while want > 0 && piece < runs.len() {
+            let piece_chars: Vec<char> = runs[piece].text.chars().collect();
+            let left = piece_chars.len().saturating_sub(used);
+            if left == 0 {
+                piece += 1;
+                used = 0;
+                continue;
+            }
+            let take = left.min(want);
+            // Take the text from the *row*, not the piece: the row is what
+            // wrapping produced, and it is what must appear on screen.
+            let seg: String = row.chars().skip(at).take(take).collect();
+            if !seg.is_empty() {
+                frags.push(Frag {
+                    text: Rc::from(seg.as_str()),
+                    theme: runs[piece].theme.clone(),
+                });
+            }
+            at += take;
+            want -= take;
+            used += take;
+            if used >= piece_chars.len() {
+                piece += 1;
+                used = 0;
+            }
+        }
+
+        // A separator consumed by the wrap: step past it so the next row starts
+        // at the right place in the piece list.
+        if want == 0 && piece < runs.len() {
+            let piece_chars = runs[piece].text.chars().count();
+            if used < piece_chars {
+                let next: Option<char> = runs[piece].text.chars().nth(used);
+                if next == Some(' ') {
+                    used += 1;
+                    if used >= piece_chars {
+                        piece += 1;
+                        used = 0;
+                    }
+                }
+            }
+        }
+
+        if frags.is_empty() {
+            frags.push(Frag {
+                text: Rc::from(""),
+                theme: None,
+            });
+        }
+        out.push(frags);
+    }
+
+    let _ = UnicodeWidthStr::width("");
+    if out.is_empty() {
+        out.push(vec![Frag {
+            text: Rc::from(""),
+            theme: None,
+        }]);
+    }
+    out
+}
+
 /// Lay children out one on top of another, each honouring its own size
 /// request. What a node with no layout of its own does.
 fn stack_in(c: Constraints, cx: &mut dyn LayoutCx, align: Align, inset: Point) -> Size {
@@ -334,15 +433,15 @@ impl RenderObject for BoxRender {
 pub struct TextRender {
     pub props: TextProps,
     /// The wrapped rows, computed at measure time and reused by paint so the
-    /// two cannot disagree.
-    lines: Vec<Rc<str>>,
+    /// two cannot disagree. Each row is its fragments, in order.
+    rows: Vec<Vec<Frag>>,
 }
 
 impl TextRender {
     pub fn new(props: TextProps) -> Self {
         TextRender {
             props,
-            lines: Vec::new(),
+            rows: Vec::new(),
         }
     }
 }
@@ -350,26 +449,66 @@ impl TextRender {
 impl RenderObject for TextRender {
     fn layout(&mut self, c: Constraints, _cx: &mut dyn LayoutCx) -> Size {
         use unicode_width::UnicodeWidthStr;
-        let natural = UnicodeWidthStr::width(&*self.props.text) as u16;
+        // Measured as one string, whatever it is made of: the pieces are one
+        // logical run, so styling never changes where the text breaks.
+        let whole = self.props.plain();
+        let natural = UnicodeWidthStr::width(whole.as_str()) as u16;
         if self.props.wrap {
             let w = if c.min_w > 0 {
                 c.max_w
             } else {
                 c.max_w.min(natural.max(1))
             };
-            self.lines = wrap_text(&self.props.text, w)
-                .iter()
-                .map(|l| Rc::from(l.as_str()))
-                .collect();
-            c.constrain(Size::new(w, self.lines.len().min(u16::MAX as usize) as u16))
+            self.rows = wrap_runs(&self.props.runs, w, true);
+            c.constrain(Size::new(w, self.rows.len().min(u16::MAX as usize) as u16))
         } else {
-            self.lines = self.props.text.split('\n').map(Rc::from).collect();
-            c.constrain(Size::new(natural, self.lines.len().max(1) as u16))
+            self.rows = wrap_runs(&self.props.runs, 0, false);
+            c.constrain(Size::new(natural, self.rows.len().max(1) as u16))
         }
     }
 
     fn paint(&self, g: Geom, out: &mut DrawList) {
-        out.push(Draw::Lines(self.lines.clone()), g);
+        // An unstyled run is one item, exactly as before. A styled one emits an
+        // item per fragment, each carrying its own theme — so the display list
+        // keeps its one-theme-per-item contract and no backend has to learn
+        // about spans. `LayoutSpec::index` already maps a key to a *range* of
+        // items, so several items for one node is the existing model.
+        if self
+            .rows
+            .iter()
+            .all(|r| r.iter().all(|f| f.theme.is_none()))
+        {
+            let lines: Vec<Rc<str>> = self
+                .rows
+                .iter()
+                .map(|r| {
+                    r.first()
+                        .map(|f| f.text.clone())
+                        .unwrap_or_else(|| Rc::from(""))
+                })
+                .collect();
+            out.push(Draw::Lines(lines), g);
+        } else {
+            use unicode_width::UnicodeWidthStr;
+            for (i, row) in self.rows.iter().enumerate() {
+                let mut x = g.rect.x;
+                for frag in row {
+                    let w = UnicodeWidthStr::width(&*frag.text) as u16;
+                    if w == 0 {
+                        continue;
+                    }
+                    let rect = Rect::new(x, g.rect.y + i as i32, w, 1);
+                    let draw = Draw::Lines(vec![frag.text.clone()]);
+                    match &frag.theme {
+                        // A piece with its own theme names it; one without
+                        // inherits the node's, which is what `push_at` uses.
+                        Some(t) => out.push_themed(draw, rect, g.clip, t.clone()),
+                        None => out.push_at(draw, rect, g.clip),
+                    }
+                    x += w as i32;
+                }
+            }
+        }
         if let Some(col) = self.props.cursor {
             out.set_cursor(Point::new(g.rect.x + col as i32, g.rect.y));
         }

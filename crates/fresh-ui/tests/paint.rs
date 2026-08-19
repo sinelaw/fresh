@@ -230,3 +230,140 @@ fn theme_provenance_is_inherited_and_overridden() {
         .collect();
     assert_eq!(themes, vec!["outer".to_string(), "inner".to_string()]);
 }
+
+// -- styled runs -------------------------------------------------------------
+
+/// Rows of painted text, keyed by screen row.
+///
+/// Handles both shapes a text run can take: an unstyled run is one item whose
+/// `Lines` holds successive rows, and a styled one is an item per fragment,
+/// several of which may share a row.
+fn painted_rows(spec: &fresh_ui::LayoutSpec) -> Vec<String> {
+    let mut rows: std::collections::BTreeMap<i32, String> = Default::default();
+    for it in &spec.items {
+        if let Draw::Lines(lines) = &it.draw {
+            for (i, line) in lines.iter().enumerate() {
+                rows.entry(it.rect.y + i as i32).or_default().push_str(line);
+            }
+        }
+    }
+    rows.into_values().collect()
+}
+
+/// A run whose pieces are styled independently emits one item per piece, each
+/// carrying its own theme. The display list keeps its one-theme-per-item
+/// contract, so no backend has to learn about spans.
+#[test]
+fn a_styled_run_emits_one_item_per_piece() {
+    use fresh_ui::{text_runs, Run};
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        text_runs([
+            Run::plain("Op"),
+            Run::themed("e", "mnemonic"),
+            Run::plain("n"),
+        ]),
+        Size::new(20, 1),
+    );
+
+    let items: Vec<(String, String, i32, u16)> = spec
+        .items
+        .iter()
+        .filter_map(|it| match &it.draw {
+            Draw::Lines(l) => Some((
+                l.join(""),
+                it.theme.as_str().to_string(),
+                it.rect.x,
+                it.rect.w,
+            )),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        items,
+        vec![
+            ("Op".to_string(), String::new(), 0, 2),
+            ("e".to_string(), "mnemonic".to_string(), 2, 1),
+            ("n".to_string(), String::new(), 3, 1),
+        ],
+        "pieces should tile left to right, each with its own theme"
+    );
+}
+
+/// An unstyled run is still a single item — the common case pays nothing.
+#[test]
+fn an_unstyled_run_is_still_one_item() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(text("plain text"), Size::new(20, 1));
+    let lines: Vec<&Draw> = spec
+        .items
+        .iter()
+        .map(|i| &i.draw)
+        .filter(|d| matches!(d, Draw::Lines(_)))
+        .collect();
+    assert_eq!(lines.len(), 1);
+}
+
+/// **The reason spans exist rather than sibling nodes.** The pieces are one
+/// logical string, so wrapping runs across the boundaries between them: a break
+/// may fall inside a piece, and a row may be composed of several.
+#[test]
+fn wrapping_runs_across_piece_boundaries() {
+    use fresh_ui::{text_runs, Run};
+    let mut ui: Ui<()> = Ui::new();
+    // "hello " + "brave " + "world" = 17 cells, wrapped at 12.
+    let spec = ui.frame(
+        text_runs([
+            Run::plain("hello "),
+            Run::themed("brave ", "em"),
+            Run::plain("world"),
+        ])
+        .wrap()
+        .w(Sizing::Cells(12)),
+        Size::new(12, 4),
+    );
+
+    let text = painted_rows(spec);
+    assert_eq!(
+        text,
+        vec!["hello brave".to_string(), "world".to_string()],
+        "the pieces wrap as one string"
+    );
+
+    // The styled piece kept its theme even though the wrap fell inside it.
+    let em: Vec<String> = spec
+        .items
+        .iter()
+        .filter(|it| it.theme.as_str() == "em")
+        .filter_map(|it| match &it.draw {
+            Draw::Lines(l) => Some(l.join("")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(em, vec!["brave".to_string()]);
+}
+
+/// Styling never changes where text breaks: a styled run and the same text
+/// unstyled wrap to identical rows.
+#[test]
+fn styling_does_not_change_where_text_breaks() {
+    use fresh_ui::{text_runs, Run};
+    let rows_of = |node: Node<()>| -> Vec<String> {
+        let mut ui: Ui<()> = Ui::new();
+        painted_rows(ui.frame(node, Size::new(12, 6)))
+    };
+
+    let sentence = "the quick brown fox jumps";
+    let plain = rows_of(text(sentence).wrap().w(Sizing::Cells(12)));
+    let styled = rows_of(
+        text_runs([
+            Run::plain("the quick "),
+            Run::themed("brown", "em"),
+            Run::plain(" fox jumps"),
+        ])
+        .wrap()
+        .w(Sizing::Cells(12)),
+    );
+    assert_eq!(plain, styled);
+}

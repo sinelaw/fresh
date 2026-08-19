@@ -41,7 +41,7 @@ impl<M: 'static> Ui<M> {
     /// this is how a test reads what a component actually produced.
     pub fn text_of(&self, id: ElementId) -> Option<std::rc::Rc<str>> {
         match &crate::desc::resolve(&self.arena.get(id)?.desc).desc {
-            crate::desc::Desc::TextRun(p) => Some(p.text.clone()),
+            crate::desc::Desc::TextRun(p) => Some(std::rc::Rc::from(p.plain().as_str())),
             _ => None,
         }
     }
