@@ -29,6 +29,36 @@ fn has_ruler_bg(harness: &EditorTestHarness, x: u16, y: u16) -> bool {
         .unwrap_or(false)
 }
 
+/// Screen x of the cell a ruler at 1-based `column` must mark: the cell that
+/// holds the `column`-th character of the line, i.e. `column - 1` cells after
+/// the gutter.
+fn ruler_x(harness: &EditorTestHarness, column: u16) -> u16 {
+    gutter_width(harness) + column - 1
+}
+
+/// All screen x positions on `row` that carry the ruler background.
+fn ruler_cells_in_row(harness: &EditorTestHarness, row: u16, width: u16) -> Vec<u16> {
+    (0..width)
+        .filter(|&x| has_ruler_bg(harness, x, row))
+        .collect()
+}
+
+/// A line whose every 10th character is a letter marker:
+/// `123456789A123456789B…` — so the `n`-th group's letter sits at column
+/// `n * 10`, letting a test name the character a ruler is expected to mark.
+fn marker_line(columns: usize) -> String {
+    (1..=columns)
+        .map(|col| {
+            if col % 10 == 0 {
+                // 10 -> 'A', 20 -> 'B', ...
+                char::from(b'A' + ((col / 10 - 1) % 26) as u8)
+            } else {
+                char::from(b'0' + (col % 10) as u8)
+            }
+        })
+        .collect()
+}
+
 /// Helper to run a command from the command palette.
 fn run_command(harness: &mut EditorTestHarness, command_name: &str) {
     harness
@@ -58,24 +88,24 @@ fn test_rulers_render_at_correct_columns() {
 
     // Ruler at column 10 should have ruler bg
     assert!(
-        has_ruler_bg(&harness, gutter_width(&harness) + 10, row),
+        has_ruler_bg(&harness, ruler_x(&harness, 10), row),
         "Ruler bg should appear at column 10"
     );
 
     // Ruler at column 20 should have ruler bg
     assert!(
-        has_ruler_bg(&harness, gutter_width(&harness) + 20, row),
+        has_ruler_bg(&harness, ruler_x(&harness, 20), row),
         "Ruler bg should appear at column 20"
     );
 
     // Column 15 should NOT have ruler bg
     assert!(
-        !has_ruler_bg(&harness, gutter_width(&harness) + 15, row),
+        !has_ruler_bg(&harness, ruler_x(&harness, 15), row),
         "Column 15 should not have ruler bg"
     );
 
     // Rulers should preserve text content (not overwrite with │)
-    let cell_10 = harness.get_cell(gutter_width(&harness) + 10, row);
+    let cell_10 = harness.get_cell(ruler_x(&harness, 10), row);
     assert_eq!(
         cell_10.as_deref(),
         Some("X"),
@@ -95,11 +125,11 @@ fn test_rulers_span_full_height() {
     harness.render().unwrap();
 
     let (content_first_row, content_last_row) = harness.content_area_rows();
-    let ruler_x = gutter_width(&harness) + 10;
+    let ruler_screen_x = ruler_x(&harness, 10);
 
     for row in content_first_row..=content_last_row {
         assert!(
-            has_ruler_bg(&harness, ruler_x, row as u16),
+            has_ruler_bg(&harness, ruler_screen_x, row as u16),
             "Ruler bg should appear on row {row}"
         );
     }
@@ -122,13 +152,13 @@ fn test_rulers_span_full_height_short_buffer() {
     harness.render().unwrap();
 
     let (content_first_row, content_last_row) = harness.content_area_rows();
-    let ruler_x = gutter_width(&harness) + 10;
+    let ruler_screen_x = ruler_x(&harness, 10);
 
     // The ruler must appear on every content row, including the empty rows
     // below the last line of text.
     for row in content_first_row..=content_last_row {
         assert!(
-            has_ruler_bg(&harness, ruler_x, row as u16),
+            has_ruler_bg(&harness, ruler_screen_x, row as u16),
             "Ruler bg should appear on row {row} (short buffer, {content_first_row}..={content_last_row})"
         );
     }
@@ -150,7 +180,7 @@ fn test_rulers_horizontal_scroll() {
     let row = content_first_row as u16;
 
     // Initially ruler at column 5 should be visible at screen x = gutter + 5
-    let ruler_screen_x = gutter_width(&harness) + 5;
+    let ruler_screen_x = ruler_x(&harness, 5);
     assert!(
         has_ruler_bg(&harness, ruler_screen_x, row),
         "Ruler at col 5 should be visible initially"
@@ -216,11 +246,11 @@ fn test_no_rulers_on_virtual_buffer() {
     let row = content_first_row as u16;
 
     assert!(
-        !has_ruler_bg(&harness, gutter_width(&harness) + 10, row),
+        !has_ruler_bg(&harness, ruler_x(&harness, 10), row),
         "Virtual buffer should not paint a ruler at column 10"
     );
     assert!(
-        !has_ruler_bg(&harness, gutter_width(&harness) + 20, row),
+        !has_ruler_bg(&harness, ruler_x(&harness, 20), row),
         "Virtual buffer should not paint a ruler at column 20"
     );
 }
@@ -236,9 +266,9 @@ fn test_ruler_uses_theme_color() {
     harness.render().unwrap();
 
     let (content_first_row, _) = harness.content_area_rows();
-    let ruler_x = gutter_width(&harness) + 10;
+    let ruler_screen_x = ruler_x(&harness, 10);
 
-    let style = harness.get_cell_style(ruler_x, content_first_row as u16);
+    let style = harness.get_cell_style(ruler_screen_x, content_first_row as u16);
     assert!(style.is_some(), "Ruler cell should have a style");
 
     let style = style.unwrap();
@@ -270,10 +300,10 @@ fn test_per_buffer_ruler_independence() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let ruler_x = gutter_width(&harness) + 15;
+    let ruler_screen_x = ruler_x(&harness, 15);
 
     assert!(
-        has_ruler_bg(&harness, ruler_x, row),
+        has_ruler_bg(&harness, ruler_screen_x, row),
         "File1 should have a ruler at column 15"
     );
 
@@ -282,7 +312,7 @@ fn test_per_buffer_ruler_independence() {
     harness.render().unwrap();
 
     assert!(
-        has_ruler_bg(&harness, ruler_x, row),
+        has_ruler_bg(&harness, ruler_screen_x, row),
         "File2 should also have rulers initialized from config"
     );
 
@@ -293,7 +323,7 @@ fn test_per_buffer_ruler_independence() {
     harness.render().unwrap();
 
     assert!(
-        has_ruler_bg(&harness, ruler_x, row),
+        has_ruler_bg(&harness, ruler_screen_x, row),
         "File1 should still have ruler after switching back"
     );
 }
@@ -307,11 +337,11 @@ fn test_add_ruler_command() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let ruler_x = gutter_width(&harness) + 25;
+    let ruler_screen_x = ruler_x(&harness, 25);
 
     // Before: no ruler at column 25
     assert!(
-        !has_ruler_bg(&harness, ruler_x, row),
+        !has_ruler_bg(&harness, ruler_screen_x, row),
         "No ruler should exist at column 25 initially"
     );
 
@@ -327,7 +357,7 @@ fn test_add_ruler_command() {
 
     // Verify ruler now exists at column 25
     assert!(
-        has_ruler_bg(&harness, ruler_x, row),
+        has_ruler_bg(&harness, ruler_screen_x, row),
         "Ruler should appear at column 25 after Add Ruler command"
     );
 }
@@ -344,8 +374,8 @@ fn test_remove_ruler_command() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let ruler_x_10 = gutter_width(&harness) + 10;
-    let ruler_x_20 = gutter_width(&harness) + 20;
+    let ruler_x_10 = ruler_x(&harness, 10);
+    let ruler_x_20 = ruler_x(&harness, 20);
 
     // Verify both rulers exist
     assert!(
@@ -392,8 +422,8 @@ fn test_remove_ruler_selects_specific() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let ruler_x_10 = gutter_width(&harness) + 10;
-    let ruler_x_20 = gutter_width(&harness) + 20;
+    let ruler_x_10 = ruler_x(&harness, 10);
+    let ruler_x_20 = ruler_x(&harness, 20);
 
     // Both rulers exist
     assert!(has_ruler_bg(&harness, ruler_x_10, row));
@@ -473,11 +503,11 @@ fn test_add_then_remove_ruler_bad_then_good_input() {
 
     let (content_first_row, _) = harness.content_area_rows();
     let row = content_first_row as u16;
-    let ruler_x = gutter_width(&harness) + 80;
+    let ruler_screen_x = ruler_x(&harness, 80);
 
     // Step 1: Add a ruler at column 80 via command palette
     assert!(
-        !has_ruler_bg(&harness, ruler_x, row),
+        !has_ruler_bg(&harness, ruler_screen_x, row),
         "No ruler at column 80 before adding"
     );
 
@@ -490,7 +520,7 @@ fn test_add_then_remove_ruler_bad_then_good_input() {
 
     // Verify the ruler renders at column 80
     assert!(
-        has_ruler_bg(&harness, ruler_x, row),
+        has_ruler_bg(&harness, ruler_screen_x, row),
         "Ruler should render at column 80 after adding"
     );
 
@@ -509,7 +539,7 @@ fn test_add_then_remove_ruler_bad_then_good_input() {
     harness.render().unwrap();
 
     assert!(
-        has_ruler_bg(&harness, ruler_x, row),
+        has_ruler_bg(&harness, ruler_screen_x, row),
         "Ruler at 80 should still exist after rejected remove with '32'"
     );
 
@@ -524,7 +554,7 @@ fn test_add_then_remove_ruler_bad_then_good_input() {
 
     // Ruler at 80 should now be gone
     assert!(
-        !has_ruler_bg(&harness, ruler_x, row),
+        !has_ruler_bg(&harness, ruler_screen_x, row),
         "Ruler at 80 should be removed after correct input"
     );
 }
@@ -552,4 +582,140 @@ fn test_add_ruler_zero_column() {
             "No ruler should exist after adding column 0"
         );
     }
+}
+
+/// Regression (#2928): a ruler at column N must mark the cell holding the
+/// N-th character, not the one after it. Ruler columns are 1-based (the
+/// "Add Ruler" prompt rejects 0, and the status bar numbers columns from 1),
+/// so a ruler at 80 is the "line must not exceed 80 characters" guide.
+///
+/// Before the fix the tinted cell was one to the right: on a line whose 80th
+/// character is `H`, the tint landed on the `1` that starts the next group.
+#[test]
+fn test_ruler_marks_configured_column_not_the_next_one() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![80];
+
+    let mut harness = EditorTestHarness::with_config(120, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text(&marker_line(100)).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+
+    let marked = ruler_cells_in_row(&harness, row, 120);
+    assert_eq!(
+        marked.len(),
+        1,
+        "exactly one cell should carry the ruler tint, got {marked:?}"
+    );
+    assert_eq!(
+        harness.get_cell(marked[0], row).as_deref(),
+        Some("H"),
+        "the ruler at column 80 must tint the 80th character ('H'), \
+         not its neighbour"
+    );
+}
+
+/// The ruler column must not depend on the length of the line it crosses:
+/// a line shorter than the ruler column, and an empty line, keep the guide in
+/// the same screen column as the line that reaches past it.
+#[test]
+fn test_ruler_column_is_stable_on_short_and_empty_lines() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![80];
+
+    let mut harness = EditorTestHarness::with_config(120, 24, config).unwrap();
+    let text = format!("{}\nshort\n\ntail", marker_line(100));
+    let _fixture = harness.load_buffer_from_text(&text).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let long_row = content_first_row as u16;
+
+    let marked_long = ruler_cells_in_row(&harness, long_row, 120);
+    assert_eq!(marked_long.len(), 1, "long line: got {marked_long:?}");
+    assert_eq!(
+        harness.get_cell(marked_long[0], long_row).as_deref(),
+        Some("H"),
+        "the ruler must tint the 80th character of the long line"
+    );
+
+    for (offset, what) in [(1u16, "short line"), (2, "empty line"), (3, "last line")] {
+        let row = long_row + offset;
+        let marked = ruler_cells_in_row(&harness, row, 120);
+        assert_eq!(
+            marked, marked_long,
+            "{what}: ruler should stay in the same screen column"
+        );
+    }
+}
+
+/// With horizontal scrolling the ruler must keep marking the same buffer
+/// column: it scrolls with the text rather than staying put or drifting by one.
+#[test]
+fn test_ruler_tracks_its_character_when_scrolled_horizontally() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![40];
+    config.editor.line_wrap = false;
+
+    let mut harness = EditorTestHarness::with_config(60, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text(&marker_line(100)).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+
+    let before = ruler_cells_in_row(&harness, row, 60);
+    assert_eq!(before.len(), 1, "unscrolled: got {before:?}");
+    assert_eq!(
+        harness.get_cell(before[0], row).as_deref(),
+        Some("D"),
+        "the ruler at column 40 must tint the 40th character ('D')"
+    );
+
+    // Walk the cursor past the right edge of the viewport so the content
+    // scrolls horizontally, while keeping column 40 on screen.
+    for _ in 0..60 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let after = ruler_cells_in_row(&harness, row, 60);
+    assert_eq!(after.len(), 1, "scrolled: got {after:?}");
+    assert!(
+        after[0] < before[0],
+        "the view should have scrolled horizontally (ruler at {after:?}, was {before:?})"
+    );
+    assert_eq!(
+        harness.get_cell(after[0], row).as_deref(),
+        Some("D"),
+        "after scrolling, the ruler must still tint the 40th character ('D')"
+    );
+}
+
+/// Double-width characters: the ruler counts display columns, so a ruler at
+/// column 3 lands on the start of the second CJK character (which occupies
+/// display columns 3 and 4) rather than inside the first one's trailing cell.
+#[test]
+fn test_ruler_column_with_wide_characters() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![3];
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text("你好世界").unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+
+    let marked = ruler_cells_in_row(&harness, row, 80);
+    assert_eq!(marked.len(), 1, "got {marked:?}");
+    assert_eq!(
+        harness.get_cell(marked[0], row).as_deref(),
+        Some("好"),
+        "the ruler should sit on the character starting at display column 3"
+    );
 }

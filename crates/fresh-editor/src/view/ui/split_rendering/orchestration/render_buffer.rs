@@ -715,7 +715,15 @@ pub(crate) fn draw_buffer_in_split(
     // show the ruler only on written lines, leaving the rest of the pane blank
     // and the guide looking truncated (#2631).
     if !rulers.is_empty() {
-        let ruler_cols: Vec<u16> = rulers.iter().map(|&r| r as u16).collect();
+        // Ruler columns are 1-based — the same numbering the status bar shows
+        // and the "Add Ruler" prompt accepts (it rejects 0). Screen offsets
+        // within the content area are 0-based, so a ruler at column N marks
+        // the cell holding the Nth character (#2928). Values of 0 are not
+        // valid rulers and are skipped rather than wrapping around.
+        let ruler_cols: Vec<u16> = rulers
+            .iter()
+            .filter_map(|&r| u16::try_from(r.checked_sub(1)?).ok())
+            .collect();
         render_ruler_bg(
             buf,
             &ruler_cols,
