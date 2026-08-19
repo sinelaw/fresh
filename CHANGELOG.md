@@ -23,6 +23,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * Deleting the line a fold was folded on now expands the fold instead of leaving a dangling marker.
 * **Search & Replace** no longer opens with every input field missing when invoked a second time while the panel is still opening (#3019).
 * **Git Log**: diff colours in the commit detail panel no longer drift off their rows for commits containing non-ASCII text (#3014).
+* **Diff files**: a hunk header's coloured bar now covers the whole row - the enclosing-section name `git diff` appends after the closing `@@` no longer sits in an uncoloured gap (#3021).
 * **Markdown**
   * Heading marks appear on the scrollbar as soon as a file opens, not only after scrolling past them, and stay stable and limited to top-level headings (#2990).
   * Compose mode no longer frames the paragraph after a fenced code block as code when the buffer opens or scrolls into view mid-document (#3001).
