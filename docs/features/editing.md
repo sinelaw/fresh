@@ -18,6 +18,8 @@ Some keybindings may not work or may differ on your system due to differences in
 
 Add column rulers at any position via "Add Ruler" from the command palette. Useful for enforcing line length limits. Remove with "Remove Ruler". Rulers are per-buffer. The `rulers` config setting can also set default rulers (e.g. `[80, 120]`).
 
+Ruler columns are 1-based, like the column shown in the status bar: a ruler at 80 highlights the 80th character of a line — the last column the text may occupy.
+
 ## Indentation Guides
 
 Enable vertical indentation guides in the Settings UI. The default is off; choose to draw every indentation level, or only the innermost guide for the cursor's current block. The glyph (default `▏`) is also configurable there.

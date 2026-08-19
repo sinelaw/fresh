@@ -1334,6 +1334,8 @@ pub struct EditorConfig {
 
     /// Vertical ruler lines at specific column positions.
     /// Draws subtle vertical lines to help with line length conventions.
+    /// Columns are 1-based, matching the status bar: a ruler at 80 marks the
+    /// 80th character of a line — the last column text may occupy.
     /// Example: [80, 120] draws rulers at columns 80 and 120.
     /// Default: [] (no rulers)
     #[serde(default)]

@@ -589,7 +589,7 @@
           "x-section": "Display"
         },
         "rulers": {
-          "description": "Vertical ruler lines at specific column positions.\nDraws subtle vertical lines to help with line length conventions.\nExample: [80, 120] draws rulers at columns 80 and 120.\nDefault: [] (no rulers)",
+          "description": "Vertical ruler lines at specific column positions.\nDraws subtle vertical lines to help with line length conventions.\nColumns are 1-based, matching the status bar: a ruler at 80 marks the\n80th character of a line — the last column text may occupy.\nExample: [80, 120] draws rulers at columns 80 and 120.\nDefault: [] (no rulers)",
           "type": "array",
           "items": {
             "type": "integer",
