@@ -20,6 +20,7 @@ A **massive** refactoring is included in this release, hopefully without any reg
 * **Shaded pane edges** - text fades out at the top/bottom instead of cutting mid-line (`editor.viewport_edge_fade`)
 * **Smooth wheel scrolling**, a line at a time instead of jumpy notches (`editor.smooth_scroll`, #3091)
 * **Git Blame readability** - better contrast, and blame keeps your place on `b`/`q` (#3088)
+* **OCaml ecosystem highlighting** - new built-in grammars highlight Coq/Rocq (`.coq`, `_CoqProject`, `_RocqProject`) and Dune files (`dune`, `dune-project`, `dune-workspace*`, `*.dune`), and `.ocamlinit` is now detected as OCaml. The shared `.v` extension remains mapped to the V language for compatibility; conventional Coq/Rocq `.v` files can use manual language selection.
 
 ### Bug Fixes
 

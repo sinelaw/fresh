@@ -1,7 +1,7 @@
 %YAML 1.2
 ---
 name: Coq/Rocq
-file_extensions: [v, coq]
+file_extensions: [coq]
 scope: source.coq
 contexts:
   main:
@@ -106,4 +106,3 @@ contexts:
       scope: punctuation.separator.coq
     - match: '\.(?![[:alnum:]_''])'
       scope: punctuation.terminator.coq
-
