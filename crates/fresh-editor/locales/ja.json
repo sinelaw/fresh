@@ -1681,5 +1681,6 @@
   "status.terminal_restart": "⟳ %{program} を再起動",
   "status.terminal_restart_shell": "⟳ ターミナルを再起動",
   "status.terminal_restart_code": "%{label} (終了 %{code})",
-  "terminal.tab_exited": "%{name}（終了）"
+  "terminal.tab_exited": "%{name}（終了）",
+  "cli.arg.skill": "シェルからこのエディタを操作するためのガイドを表示します。トピック（省略可）: script（既定）、tour、plugin"
 }

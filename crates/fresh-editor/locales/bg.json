@@ -1681,5 +1681,6 @@
   "workspace.extract_already_rooted": "Вече сте в работна област с корен %{root}",
   "workspace.extract_no_file_path": "Не може да се извлече: буферът няма път до файл",
   "workspace.extract_terminal_dormant": "Не може да се извлече: терминалът няма активна сесия",
-  "workspace.extracted_tab": "Извлечен %{name} в работна област %{label}"
+  "workspace.extracted_tab": "Извлечен %{name} в работна област %{label}",
+  "cli.arg.skill": "Отпечатва ръководството за управление на редактора от обвивка. Незадължителна тема: script (по подразбиране), tour, plugin"
 }

@@ -56,6 +56,11 @@ struct Cli {
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
+    /// Print the guide for driving this editor from a shell
+    /// The one entry point an agent needs; defaults to the scripting guide.
+    #[arg(long, value_name = "TOPIC", num_args = 0..=1, default_missing_value = "")]
+    skill: Option<String>,
+
     /// Files to open (supports file:line:col, ranges, and @"message" syntax)
     #[arg(value_name = "FILES")]
     files: Vec<String>,
@@ -3737,7 +3742,7 @@ const EMBEDDED_FRESH_DTS: &str = include_str!("../plugins/lib/fresh.d.ts");
 fn help_command(topic: &[&str]) -> AnyhowResult<()> {
     match topic {
         [] | ["topics"] => {
-            println!("usage: fresh --cmd help <topic>");
+            println!("usage: fresh --cmd help <topic>   (short form: fresh --skill [<topic>])");
             println!();
             println!("topics:");
             println!(
@@ -5337,6 +5342,7 @@ fn build_localized_cli_command() -> clap::Command {
         .before_help(BEFORE_HELP_EN)
         .after_help(build_localized_after_help())
         .mut_arg("cmd", |a| a.help(t("cli.arg.cmd")))
+        .mut_arg("skill", |a| a.help(t("cli.arg.skill")))
         .mut_arg("files", |a| a.help(t("cli.arg.files")))
         .mut_arg("attach", |a| a.help(t("cli.arg.attach")))
         .mut_arg("stdin", |a| a.help(t("cli.arg.stdin")))
@@ -5387,6 +5393,16 @@ fn real_main() -> AnyhowResult<()> {
 
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);
+
+    // `--skill` is the shortcut an agent is told to run first: one short,
+    // stable flag that resolves to whichever guide is currently the best
+    // introduction, so the injected contract never has to name a topic.
+    // Static output — no daemon, no editor, and it works inside a sandbox.
+    if let Some(topic) = cli.skill.as_deref() {
+        let topic = if topic.is_empty() { "script" } else { topic };
+        help_command(&[topic])?;
+        return Ok(());
+    }
 
     // The agent script verbs run against a live editor and never spawn a
     // daemon, so handle them here — before the `Args` conversion, whose slice
