@@ -2,7 +2,6 @@
 
 import {
   hintBar,
-  key,
   list,
   parseHintString,
   WidgetPanel,
@@ -2591,6 +2590,17 @@ function renderPkgList(): void {
       key: "pkg-list",
     }),
   );
+  // The spec's `selectedIndex` only takes effect on the first mount:
+  // `updateWidgetPanel` preserves the host's instance state by design,
+  // so every later render leaves the widget's selection wherever it
+  // was. State it explicitly instead. Without this, a panel that
+  // mounted before the registry finished loading — an empty list, so
+  // selection -1 — kept that -1 once the packages arrived, and the
+  // first two arrow presses went into catching the widget up rather
+  // than moving the selection.
+  if (rowSel >= 0) {
+    pkgState.listPanel.setSelectedIndex("pkg-list", rowSel);
+  }
 }
 
 function buildPkgDetailEntries(): TextPropertyEntry[] {
@@ -2667,6 +2677,13 @@ function renderPkgFooter(): void {
 
 function updatePkgManagerView(): void {
   if (pkgState.groupId === null) return;
+  // The item set changes under the selection — the background registry
+  // sync lands, a filter narrows it, a package is uninstalled — so pin
+  // it back into range before anything renders against it.
+  const itemCount = getFilteredItems().length;
+  pkgState.selectedIndex = itemCount === 0
+    ? 0
+    : Math.min(pkgState.selectedIndex, itemCount - 1);
   // Header + detail still flow through the legacy `setPanelContent`
   // path — their UI shape (filter/sync/search inputs in the header,
   // action buttons in the detail) spans cross-panel focus, which
@@ -2714,7 +2731,10 @@ async function openPackageManager(): Promise<void> {
 
   // Build package list immediately with installed packages and cached registry
   pkgState.items = buildPackageList();
-  pkgState.isLoading = false;
+  // With nothing installed and no cached registry the first paint has
+  // no rows at all. Say so, rather than claiming "No packages found"
+  // while the background sync below is still fetching them.
+  pkgState.isLoading = !isRegistrySynced();
 
   // Create buffer group with layout:
   // vertical: [header(fixed 4), horizontal: [list, detail], footer(fixed 1)]
@@ -2760,12 +2780,24 @@ async function openPackageManager(): Promise<void> {
 
   // Sync registry in background and update view when done
   // User can still interact with installed packages during sync
-  syncRegistry().then(() => {
-    if (pkgState.isOpen) {
-      pkgState.items = buildPackageList();
-      updatePkgManagerView();
-    }
-  });
+  syncRegistry()
+    .then(() => {
+      if (pkgState.isOpen) {
+        pkgState.isLoading = false;
+        pkgState.items = buildPackageList();
+        updatePkgManagerView();
+      }
+    })
+    // Detached, so it needs its own catch: an unhandled rejection here
+    // takes down the plugin runtime, and the browser is perfectly
+    // usable for installed packages without the registry.
+    .catch((e) => {
+      editor.warn(`[pkg] Background registry sync failed: ${e}`);
+      if (pkgState.isOpen) {
+        pkgState.isLoading = false;
+        updatePkgManagerView();
+      }
+    });
 }
 
 /** Whether `bufferId` is still a live buffer. */
@@ -2892,21 +2924,43 @@ function getCurrentFocusIndex(): number {
 }
 
 // Navigation commands
+
+/**
+ * Move the list selection by `delta` packages.
+ *
+ * The plugin owns the selection and pushes it to the List widget
+ * (`renderPkgList`), rather than forwarding the arrow key and adopting
+ * whichever row the host lands on. That indirection is what made Down
+ * look dead: the widget's rows include non-selectable section headers
+ * and a spacer, and its instance state survives every re-render, so a
+ * key press could move the widget's highlight without moving
+ * `pkgState.selectedIndex` at all. Counting in packages makes one
+ * press move the selection by exactly one package, every time.
+ */
+function moveSelection(delta: number): void {
+  pkgState.focus = { type: "list" };
+  const items = getFilteredItems();
+  if (items.length === 0) return;
+  const next = Math.min(
+    items.length - 1,
+    Math.max(0, pkgState.selectedIndex + delta),
+  );
+  if (next === pkgState.selectedIndex) return;
+  pkgState.selectedIndex = next;
+  // The error belongs to the package it happened on.
+  pkgState.error = null;
+  updatePkgManagerView();
+}
+
 function pkg_nav_up(): void {
   if (!pkgState.isOpen) return;
-  // Always snap focus back to the list and let the host move the
-  // List widget's selection. The resulting `widget_event "select"`
-  // updates `pkgState.selectedIndex` and refreshes the detail
-  // panel — see the `widget_event` listener installed below.
-  pkgState.focus = { type: "list" };
-  pkgState.listPanel?.command(key("Up"));
+  moveSelection(-1);
 }
 registerHandler("pkg_nav_up", pkg_nav_up);
 
 function pkg_nav_down(): void {
   if (!pkgState.isOpen) return;
-  pkgState.focus = { type: "list" };
-  pkgState.listPanel?.command(key("Down"));
+  moveSelection(1);
 }
 registerHandler("pkg_nav_down", pkg_nav_down);
 
@@ -2922,7 +2976,17 @@ editor.on("widget_event", (data) => {
       typeof data.payload?.index === "number" ? data.payload.index : -1;
     if (rowIdx < 0) return;
     const itemIdx = selectedRowToItemIndex(rowIdx);
-    if (itemIdx < 0) return; // selection landed on a section header
+    if (itemIdx < 0) {
+      // A click landed on a section header or the blank spacer between
+      // sections. Those aren't packages, so put the highlight back on
+      // the selected one instead of leaving it parked on a row the
+      // detail panel has nothing to say about.
+      const rowSel = itemIndexToRow(pkgState.selectedIndex);
+      if (rowSel >= 0) {
+        pkgState.listPanel?.setSelectedIndex("pkg-list", rowSel);
+      }
+      return;
+    }
     if (itemIdx === pkgState.selectedIndex) return;
     pkgState.selectedIndex = itemIdx;
     pkgState.focus = { type: "list" };
