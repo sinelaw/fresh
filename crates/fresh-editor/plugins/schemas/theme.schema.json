@@ -322,11 +322,16 @@
           18
         ],
         "semantic_highlight_bg": [
-          87,
-          87,
-          87
+          60,
+          60,
+          80
         ],
         "semantic_highlight_modifier": null,
+        "tour_step_bg": [
+          60,
+          60,
+          80
+        ],
         "terminal_bg": "Default",
         "terminal_fg": "Default",
         "status_warning_indicator_bg": [
@@ -1355,12 +1360,12 @@
           ]
         },
         "semantic_highlight_bg": {
-          "description": "Word under cursor highlight",
+          "description": "Occurrence highlight (word under cursor, or the selected text)",
           "$ref": "#/$defs/ColorDef",
           "default": [
-            87,
-            87,
-            87
+            60,
+            60,
+            80
           ]
         },
         "semantic_highlight_modifier": {
@@ -1374,6 +1379,15 @@
             }
           ],
           "default": null
+        },
+        "tour_step_bg": {
+          "description": "Code tour step band background",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            60,
+            60,
+            80
+          ]
         },
         "terminal_bg": {
           "description": "Embedded terminal background (use Default for transparency)",
