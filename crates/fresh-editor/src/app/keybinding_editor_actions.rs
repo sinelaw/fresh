@@ -80,6 +80,10 @@ impl Editor {
                 !(kb.action == remove.action
                     && kb.key == remove.key
                     && kb.modifiers == remove.modifiers
+                    // Chords carry an empty key/modifiers pair, so without
+                    // this every custom chord for the same action+context
+                    // would match and be dropped together.
+                    && kb.keys == remove.keys
                     && kb.when == remove.when)
             });
         }

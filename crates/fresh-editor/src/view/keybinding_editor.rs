@@ -1452,6 +1452,9 @@ fn handle_edit_dialog_input(
                 let (norm_code, norm_mods) = normalize_key(event.code, event.modifiers);
                 dialog.key_code = Some(norm_code);
                 dialog.modifiers = norm_mods;
+                // A recorded key replaces whatever the row held — including a
+                // chord sequence, which must not linger and win at save time.
+                dialog.chord_keys.clear();
                 dialog.key_display = format_keybinding(&norm_code, &norm_mods);
                 dialog.conflicts = editor.find_conflicts(norm_code, norm_mods, &dialog.context);
                 dialog.capturing_special = false;
