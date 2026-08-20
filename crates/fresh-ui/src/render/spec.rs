@@ -20,6 +20,21 @@ pub struct LayoutSpec {
     pub frame: Size,
     /// Paint order *is* list order.
     pub items: Vec<Item>,
+    /// Where the out-of-flow half begins.
+    ///
+    /// Layers paint after the tree they were declared in, so every item a
+    /// `Layer` produced — including a scrim, which belongs to no keyed
+    /// subtree — sits in one contiguous tail starting here. `items.len()` when
+    /// no layer painted.
+    ///
+    /// A backend that draws content of its own *between* in-flow and
+    /// out-of-flow content needs this: a host mid-migration paints its own
+    /// surfaces between the two, and one covering the other is exactly what
+    /// the split decides. Deriving it from the outside is not possible — a
+    /// layer need not be keyed (`widgets::Dropdown` is not) and a scrim never
+    /// is — which is why the library reports it rather than leaving each
+    /// backend to guess.
+    pub layers_from: usize,
     /// Key to the range of items its subtree produced. Used for hit-testing
     /// shortcuts, for patching a retained backend, and by tests.
     pub index: Vec<(Key, Range<usize>)>,
@@ -30,7 +45,18 @@ impl LayoutSpec {
     pub fn clear(&mut self) {
         self.items.clear();
         self.index.clear();
+        self.layers_from = 0;
         self.cursor = None;
+    }
+
+    /// The in-flow half: everything the tree itself painted.
+    pub fn in_flow(&self) -> &[Item] {
+        &self.items[..self.layers_from.min(self.items.len())]
+    }
+
+    /// The out-of-flow half: everything the layers painted, scrims included.
+    pub fn layers(&self) -> &[Item] {
+        &self.items[self.layers_from.min(self.items.len())..]
     }
 
     /// The items a keyed subtree produced.

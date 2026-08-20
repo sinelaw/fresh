@@ -21,6 +21,11 @@ impl<M: 'static> Ui<M> {
         spec.frame = frame;
         if let Some(root) = self.render_root {
             self.paint_render(root, &mut spec);
+            // Everything from here on came out of a layer. Recorded before the
+            // loop rather than derived after it, because a scrim carries no key
+            // and an unkeyed layer leaves no index entry — nothing outside can
+            // tell the two halves apart. See `LayoutSpec::layers_from`.
+            spec.layers_from = spec.items.len();
             // Layers paint above the content they were declared in, in the
             // order the arrange walk found them.
             for i in 0..self.pending_layers.len() {
@@ -44,6 +49,9 @@ impl<M: 'static> Ui<M> {
                 // emitting it would make the backend draw and then overdraw.
                 spec.items.clear();
                 spec.index.clear();
+                // The in-flow half is gone with it, so the whole list is now
+                // out of flow.
+                spec.layers_from = 0;
             }
             spec.items.push(Item {
                 key: None,
