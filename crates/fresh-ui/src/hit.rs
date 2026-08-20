@@ -23,29 +23,83 @@ use crate::render::geom::Point;
 use crate::render::object::{Hit, RenderId};
 use crate::schedule::Ui;
 
+/// What one dispatch did.
+///
+/// Messages and *claim* are different answers. A handler claims an event with
+/// [`Event::stop`] and may return no message at all; another produces a message
+/// without claiming anything. A host routing between this tree and its own
+/// older pipeline needs to know which happened, and cannot infer it from the
+/// messages — so it is reported.
+pub struct Dispatch<M> {
+    /// What the handlers returned, in the order they ran.
+    pub msgs: Vec<M>,
+    /// Whether a node claimed the event, so nothing behind this tree should
+    /// also act on it.
+    pub claimed: bool,
+}
+
+impl<M> std::ops::Deref for Dispatch<M> {
+    type Target = [M];
+    fn deref(&self) -> &[M] {
+        &self.msgs
+    }
+}
+
+impl<M> IntoIterator for Dispatch<M> {
+    type Item = M;
+    type IntoIter = std::vec::IntoIter<M>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.msgs.into_iter()
+    }
+}
+
+impl<M: PartialEq> PartialEq<Vec<M>> for Dispatch<M> {
+    fn eq(&self, other: &Vec<M>) -> bool {
+        self.msgs == *other
+    }
+}
+
+impl<M: std::fmt::Debug> std::fmt::Debug for Dispatch<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Dispatch")
+            .field("msgs", &self.msgs)
+            .field("claimed", &self.claimed)
+            .finish()
+    }
+}
+
 impl<M: 'static> Ui<M> {
-    /// Route one host input into the tree and collect the messages handlers
-    /// produced. Handlers run during this call; the tree is not rebuilt by it.
-    pub fn dispatch(&mut self, input: Input) -> Vec<M> {
+    /// Route one host input into the tree, reporting the messages handlers
+    /// produced and whether the event was claimed. Handlers run during this
+    /// call; the tree is not rebuilt by it.
+    pub fn dispatch(&mut self, input: Input) -> Dispatch<M> {
         let mut out = Vec::new();
+        let claimed = self.route_input(input, &mut out);
+        Dispatch { msgs: out, claimed }
+    }
+
+    /// The routing itself, reporting whether anything claimed the event.
+    fn route_input(&mut self, input: Input, out: &mut Vec<M>) -> bool {
         match input {
-            Input::Key(k) => self.dispatch_key(k, &mut out),
+            Input::Key(k) => self.dispatch_key(k, out),
             Input::Move { pos, mods } => {
                 if let Some(r) = self.scrollbar_drag {
+                    // A drag in progress owns the pointer.
                     self.scroll_to_pointer(r, pos.y);
-                    return out;
+                    return true;
                 }
                 let paths = self.route(pos);
-                self.update_hover(&paths, pos, mods, &mut out);
-                self.propagate_all(
+                self.update_hover(&paths, pos, mods, out);
+                let (claimed, _) = self.propagate_all(
                     &paths,
                     GestureKind::Move,
                     pos,
                     MouseButton::Left,
                     mods,
                     Wheel::NONE,
-                    &mut out,
+                    out,
                 );
+                claimed
             }
             Input::Press { pos, button, mods } => {
                 // A press on a viewport's scrollbar gutter drives its scroll
@@ -55,10 +109,20 @@ impl<M: 'static> Ui<M> {
                     if let Some(r) = self.scrollbar_hit(pos) {
                         self.scrollbar_drag = Some(r);
                         self.scroll_to_pointer(r, pos.y);
-                        return out;
+                        return true;
                     }
                 }
-                self.dismiss_for_pointer(pos, &mut out);
+                // Dismissal happens for any button; it *claims* only for the
+                // primary one.
+                //
+                // A left click outside a menu is spent closing it — that is
+                // the whole gesture. A right click outside is not: every
+                // platform closes the open menu and opens the new one from
+                // that same press, so consuming it would cost the user a
+                // click. Same rule a viewport applies to the wheel: act, and
+                // claim only when the act was the whole of it.
+                let dismissed = self.dismiss_for_pointer(pos, out);
+                let dismiss_claims = dismissed && button == MouseButton::Left;
                 let paths = self.route(pos);
                 // Every stacked path's target, so a click is derived per path:
                 // a transparent overlay and what is behind it were both
@@ -66,29 +130,30 @@ impl<M: 'static> Ui<M> {
                 let targets: Vec<ElementId> =
                     paths.iter().filter_map(|p| p.last().copied()).collect();
                 self.press = Some((targets, button));
-                self.propagate_all(
+                let (claimed, _) = self.propagate_all(
                     &paths,
                     GestureKind::Press,
                     pos,
                     button,
                     mods,
                     Wheel::NONE,
-                    &mut out,
+                    out,
                 );
+                claimed || dismiss_claims
             }
             Input::Release { pos, button, mods } => {
                 if self.scrollbar_drag.take().is_some() {
-                    return out;
+                    return true;
                 }
                 let paths = self.route(pos);
-                self.propagate_all(
+                let (mut claimed, _) = self.propagate_all(
                     &paths,
                     GestureKind::Release,
                     pos,
                     button,
                     mods,
                     Wheel::NONE,
-                    &mut out,
+                    out,
                 );
                 // A click is a press and a release over the same element, one
                 // per stacked path.
@@ -103,18 +168,20 @@ impl<M: 'static> Ui<M> {
                             .filter(|p| p.last().is_some_and(|t| pressed.contains(t)))
                             .cloned()
                             .collect();
-                        self.propagate_all(
+                        let (c, _) = self.propagate_all(
                             &click_paths,
                             kind,
                             pos,
                             button,
                             mods,
                             Wheel::NONE,
-                            &mut out,
+                            out,
                         );
+                        claimed |= c;
                     }
                 }
                 self.captured = None;
+                claimed
             }
             Input::Wheel {
                 pos,
@@ -131,7 +198,7 @@ impl<M: 'static> Ui<M> {
                     MouseButton::Left,
                     mods,
                     wheel,
-                    &mut out,
+                    out,
                 );
                 if !claimed && !prevented {
                     // Scroll chaining: the first viewport along the path whose
@@ -142,9 +209,9 @@ impl<M: 'static> Ui<M> {
                         self.scroll_chain(&p, wheel);
                     }
                 }
+                claimed
             }
         }
-        out
     }
 
     /// How far a wheel turned and along which axis, as one parameter — so the
@@ -587,7 +654,9 @@ impl<M: 'static> Ui<M> {
         }
     }
 
-    fn dismiss_for_pointer(&mut self, pos: Point, out: &mut Vec<M>) {
+    /// Reports whether any layer was dismissed.
+    fn dismiss_for_pointer(&mut self, pos: Point, out: &mut Vec<M>) -> bool {
+        let mut dismissed = false;
         let path = self.hit_test(pos);
         let layers: Vec<ElementId> = self
             .pending_layers
@@ -627,7 +696,11 @@ impl<M: 'static> Ui<M> {
                     out.push(m);
                 }
             }
+            // A layer that declared the dismissal was dismissed, whether or
+            // not it also had something to say about it.
+            dismissed = true;
         }
+        dismissed
     }
 
     pub(crate) fn dismiss_for_key(&mut self, k: KeyPress, out: &mut Vec<M>) -> bool {

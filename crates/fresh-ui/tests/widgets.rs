@@ -28,21 +28,26 @@ enum Msg {
 
 fn click(ui: &mut Ui<Msg>, x: i32, y: i32) -> Vec<Msg> {
     let pos = Point::new(x, y);
-    let mut out = ui.dispatch(Input::Press {
-        pos,
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
-    out.extend(ui.dispatch(Input::Release {
-        pos,
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    }));
+    let mut out = ui
+        .dispatch(Input::Press {
+            pos,
+            button: MouseButton::Left,
+            mods: Mods::NONE,
+        })
+        .msgs;
+    out.extend(
+        ui.dispatch(Input::Release {
+            pos,
+            button: MouseButton::Left,
+            mods: Mods::NONE,
+        })
+        .msgs,
+    );
     out
 }
 
 fn key(ui: &mut Ui<Msg>, code: KeyCode) -> Vec<Msg> {
-    ui.dispatch(Input::Key(KeyPress::new(code)))
+    ui.dispatch(Input::Key(KeyPress::new(code))).msgs
 }
 
 fn texts(ui: &Ui<Msg>) -> Vec<String> {

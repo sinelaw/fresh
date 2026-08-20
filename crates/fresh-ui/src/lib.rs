@@ -57,6 +57,7 @@ pub use focus::{
     default_shortcuts, Directional, FocusDir, FocusEntry, FocusScope, Focusable, Intent,
     ReadingOrder, Shortcut, TraversalPolicy,
 };
+pub use hit::Dispatch;
 pub use key::{Key, KeyPath};
 pub use render::geom::{distribute, Constraints, Point, Rect, Size};
 pub use render::object::{

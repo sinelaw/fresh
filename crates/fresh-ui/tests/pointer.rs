@@ -34,16 +34,21 @@ fn traced(name: &'static str, log: &Log, child: Node<()>) -> Node<()> {
 
 fn click(ui: &mut Ui<()>, x: i32, y: i32) -> Vec<()> {
     let pos = Point::new(x, y);
-    let mut out = ui.dispatch(Input::Press {
-        pos,
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
-    out.extend(ui.dispatch(Input::Release {
-        pos,
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    }));
+    let mut out = ui
+        .dispatch(Input::Press {
+            pos,
+            button: MouseButton::Left,
+            mods: Mods::NONE,
+        })
+        .msgs;
+    out.extend(
+        ui.dispatch(Input::Release {
+            pos,
+            button: MouseButton::Left,
+            mods: Mods::NONE,
+        })
+        .msgs,
+    );
     out
 }
 
@@ -543,4 +548,48 @@ fn a_wheel_listener_sees_the_axis() {
         *seen.borrow(),
         vec![(1, Axis::Vertical), (-2, Axis::Horizontal)]
     );
+}
+
+// -- what a dispatch reports -------------------------------------------------
+
+/// Claiming and saying something are different answers, and a host routing
+/// between this tree and an older pipeline of its own needs both.
+#[test]
+fn a_claim_is_reported_separately_from_the_messages() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        gesture(text("row")).on(
+            GestureKind::Press,
+            Rc::new(|e: &Event| {
+                // Claims, and has nothing to say about it.
+                e.stop();
+                None
+            }),
+        ),
+        FRAME,
+    );
+    let d = ui.dispatch(Input::Press {
+        pos: Point::new(1, 0),
+        button: MouseButton::Left,
+        mods: Mods::NONE,
+    });
+    assert!(d.msgs.is_empty(), "the handler returned no message");
+    assert!(d.claimed, "but it claimed the press");
+}
+
+/// And the converse: a message without a claim.
+#[test]
+fn a_message_without_a_claim_is_reported_as_unclaimed() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        gesture(text("row")).on(GestureKind::Press, Rc::new(|_: &Event| Some(()))),
+        FRAME,
+    );
+    let d = ui.dispatch(Input::Press {
+        pos: Point::new(1, 0),
+        button: MouseButton::Left,
+        mods: Mods::NONE,
+    });
+    assert_eq!(d.msgs.len(), 1);
+    assert!(!d.claimed, "producing a message is not claiming the event");
 }
