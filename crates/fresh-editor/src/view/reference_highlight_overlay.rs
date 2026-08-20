@@ -111,11 +111,9 @@ impl ReferenceHighlightOverlay {
         let now = Instant::now();
 
         let target = match selection {
-            Some(range) if !range.is_empty() => Some(selection_target(
-                buffer,
-                range,
-                highlighter.min_word_length,
-            )),
+            Some(range) if !range.is_empty() => {
+                Some(selection_target(buffer, range, highlighter.min_word_length))
+            }
             _ => get_word_at_position(buffer, cursor_position).map(HighlightTarget::Word),
         };
 
@@ -445,8 +443,7 @@ mod tests {
     /// only once would pass with or without it.
     #[test]
     fn multiline_selection_only_suppresses() {
-        let buffer =
-            Buffer::from_str_test("beta gamma\nalpha delta\nbeta gamma\nalpha delta\n");
+        let buffer = Buffer::from_str_test("beta gamma\nalpha delta\nbeta gamma\nalpha delta\n");
         let mut overlays = OverlayManager::new();
         let mut markers = MarkerList::new();
         let mut highlighter = ReferenceHighlighter::new();
