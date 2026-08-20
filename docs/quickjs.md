@@ -110,7 +110,8 @@ The following methods need to be added to `JsEditorApi` in `quickjs_backend.rs`:
 - `setSplitScroll(split_id, top_byte)`
 - `setSplitRatio(split_id, ratio)`
 - `distributeSplitsEvenly()`
-- `setLineNumbers(buffer_id, enabled)`
+- `setLineNumbers(buffer_id, enabled)` — the user's pin
+- `setLineNumbersDefault(buffer_id, enabled | null)` — a mode's default, which loses to that pin
 
 **Priority 7 - File Explorer:**
 - `setFileExplorerDecorations(namespace, decorations)`

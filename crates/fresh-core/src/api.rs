@@ -3429,8 +3429,29 @@ pub enum PluginCommand {
         hints: LayoutHints,
     },
 
-    /// Enable/disable line numbers for a buffer
+    /// Show/hide line numbers for a buffer *on the user's behalf*.
+    ///
+    /// Records the same explicit per-buffer pin as "Toggle Line Numbers
+    /// (Current Buffer)", so it wins over any mode default and is persisted
+    /// with the rest of the per-file workspace state. This is what vi's
+    /// `:set number` / `:set nonumber` are: a command the user typed, which
+    /// happens to arrive through a plugin. A mode announcing its own default
+    /// wants [`PluginCommand::SetLineNumbersDefault`] instead.
     SetLineNumbers { buffer_id: BufferId, enabled: bool },
+
+    /// Set the plugin's line-number default for a buffer's view state.
+    ///
+    /// `None` withdraws the plugin's opinion, restoring whatever the user's
+    /// own setting resolves to. Stored apart from the user's pin and never
+    /// persisted, so a mode that hides the gutter (markdown compose) can
+    /// neither overwrite a deliberate choice nor outlive itself in the saved
+    /// workspace — the same arrangement as
+    /// [`PluginCommand::SetFoldIndicators`], and for the same reasons
+    /// (issue #2931).
+    SetLineNumbersDefault {
+        buffer_id: BufferId,
+        enabled: Option<bool>,
+    },
 
     /// Set the plugin's fold-indicator default for a buffer's view state.
     ///

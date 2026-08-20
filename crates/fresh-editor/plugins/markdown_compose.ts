@@ -1099,14 +1099,16 @@ function enableMarkdownCompose(bufferId: number): void {
   // Tell Rust side this buffer is in compose mode (idempotent)
   editor.setViewMode(bufferId, "compose");
 
-  // Hide line numbers in compose mode
-  editor.setLineNumbers(bufferId, false);
+  // Hide line numbers in compose mode. This runs again on every
+  // `buffer_activated`, including switching back to a tab that is already
+  // composing, so it passes an opinion rather than a setting: the editor keeps
+  // it apart from the user's own "Toggle Line Numbers (Current Buffer)" pin,
+  // which still wins here and is what comes back on the way out (issue #2931).
+  editor.setLineNumbersDefault(bufferId, false);
 
   // Same for the gutter's fold arrows: they are a code-editor affordance, and
   // a document preview with no line numbers has no use for them — they only
-  // break up the clean left edge. Compose passes an opinion, not a setting:
-  // the editor keeps it apart from the user's own "Toggle Folding Indicators"
-  // choice, which still wins here and is what comes back on the way out.
+  // break up the clean left edge.
   editor.setFoldIndicators(bufferId, false);
 
   // Enable native line wrapping so that long lines without whitespace
@@ -1151,12 +1153,13 @@ function disableMarkdownCompose(bufferId: number): void {
     // Tell Rust side this buffer is back in source mode
     editor.setViewMode(bufferId, "source");
 
-    // Re-enable line numbers
-    editor.setLineNumbers(bufferId, true);
-
-    // Withdraw the fold-indicator opinion rather than forcing them back on:
+    // Withdraw the line-number opinion rather than forcing the gutter back on:
     // `null` restores whatever the user's own setting resolves to, which for
-    // someone who had deliberately turned the arrows off is still off.
+    // someone who had `editor.line_numbers` off, or who pinned this buffer, is
+    // not necessarily "on".
+    editor.setLineNumbersDefault(bufferId, null);
+
+    // Same for the fold indicators.
     editor.setFoldIndicators(bufferId, null);
 
     // Clear layout hints, emphasis overlays, conceals, and soft breaks

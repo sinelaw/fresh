@@ -513,7 +513,16 @@ clearNamespace(buffer_id: number, namespace: string): boolean
 
 #### `setLineNumbers`
 
-Enable/disable line numbers for a buffer
+Show or hide line numbers for a buffer **on the user's behalf**.
+
+Records the same explicit per-buffer pin as the "Toggle Line Numbers (Current
+Buffer)" command: it beats any mode default, and is persisted with the rest of
+the per-file workspace state. Use it for a setting the user asked for — vi's
+`:set number` / `:set nonumber` are exactly that, a typed command that happens
+to arrive through a plugin.
+
+A mode stating its own preference for the buffers it has taken over wants
+[`setLineNumbersDefault`](#setlinenumbersdefault) instead.
 
 ```typescript
 setLineNumbers(buffer_id: number, enabled: boolean): boolean
@@ -525,6 +534,40 @@ setLineNumbers(buffer_id: number, enabled: boolean): boolean
 |------|------|-------------|
 | `buffer_id` | `number` | The buffer ID |
 | `enabled` | `boolean` | Whether to show line numbers |
+
+The return value says the command was queued, not that the gutter ended up
+visible.
+
+#### `setLineNumbersDefault`
+
+Set this plugin's line-number *default* for a buffer, the way
+`setFoldIndicators` does for the gutter's fold arrows.
+
+Three things have an opinion about the gutter, and they resolve in this order:
+
+1. the user's per-buffer pin — "Toggle Line Numbers (Current Buffer)", or
+   `setLineNumbers` above;
+2. this plugin default;
+3. the global `editor.line_numbers` setting.
+
+Pass `null` to withdraw the plugin's opinion and fall back to whatever the
+user's own setting resolves to. The plugin's value is stored separately from
+that setting and is never persisted, so a mode can neither overwrite a
+deliberate choice nor leak a forced value into the saved session — and needs no
+save/restore dance on the way out, because the user's setting is still sitting
+there untouched. A mode that hides the gutter should still clear its value when
+it exits.
+
+```typescript
+setLineNumbersDefault(buffer_id: number, enabled: boolean | null): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `buffer_id` | `number` | The buffer ID |
+| `enabled` | `boolean \| null` | The mode's default, or `null` to withdraw it |
 
 #### `addVirtualLine`
 

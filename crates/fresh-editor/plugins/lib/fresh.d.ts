@@ -4236,9 +4236,33 @@ interface EditorAPI {
 	*/
 	clearScrollbarMarkers(bufferId: number, namespace: string): boolean;
 	/**
-	* Enable or disable line numbers for a buffer
+	* Show or hide line numbers for a buffer **on the user's behalf**.
+	* 
+	* This records the same explicit per-buffer pin as "Toggle Line Numbers
+	* (Current Buffer)": it beats any mode default, and is persisted with the
+	* rest of the per-file workspace state. Use it for a setting the user
+	* asked for — vi's `:set number` / `:set nonumber` are exactly that, a
+	* typed command that happens to arrive through a plugin.
+	* 
+	* A mode stating its own preference for the buffers it has taken over
+	* wants `setLineNumbersDefault` instead: re-asserting the pin from a
+	* `buffer_activated` handler overwrites whatever the user chose
+	* (issue #2931).
 	*/
 	setLineNumbers(bufferId: number, enabled: boolean): boolean;
+	/**
+	* Set this plugin's line-number *default* for a buffer, the way
+	* `setFoldIndicators` does for the gutter's fold arrows.
+	* 
+	* Pass `null` to withdraw the plugin's opinion and fall back to the
+	* user's own setting. The plugin's value is stored separately from that
+	* setting and is never persisted, so it can neither overwrite a
+	* deliberate choice — "Toggle Line Numbers (Current Buffer)" and
+	* `setLineNumbers` still win while this is set — nor leak into the saved
+	* session. A mode that hides the gutter should still clear its value on
+	* the way out.
+	*/
+	setLineNumbersDefault(bufferId: number, enabled: boolean | null): boolean;
 	/**
 	* Show or hide the gutter's fold indicators (`▾` / `▸`) for a buffer in
 	* the active split, the way `setLineNumbers` does for line numbers.
