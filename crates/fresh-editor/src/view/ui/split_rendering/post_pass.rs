@@ -70,9 +70,15 @@ pub(super) fn render_cursor_column_bg(
 /// Render vertical rulers as a subtle background color tint.
 /// Unlike `render_column_guides` which draws │ characters (for compose guides),
 /// this preserves the existing text content and only adjusts the background color.
+///
+/// `columns` holds ruler columns exactly as configured: **1-based** display
+/// columns, so a ruler at N tints the cell holding the Nth display column of
+/// the line (#2928). The 1-based -> 0-based conversion lives here rather than
+/// at the call site so a caller cannot reintroduce the off-by-one; values
+/// below 1 are not valid columns and are skipped.
 pub(super) fn render_ruler_bg(
     buf: &mut ratatui::buffer::Buffer,
-    columns: &[u16],
+    columns: &[usize],
     color: Color,
     render_area: Rect,
     gutter_width: usize,
@@ -80,11 +86,24 @@ pub(super) fn render_ruler_bg(
     left_column: usize,
 ) {
     let guide_height = content_height.min(render_area.height as usize);
-    for &col in columns {
-        let Some(scrolled_col) = (col as usize).checked_sub(left_column) else {
+    let content_x = render_area.x + gutter_width as u16;
+    for &column in columns {
+        // 1-based -> 0-based; `0` (and anything scrolled off the left edge)
+        // is not a column this pane can draw.
+        let Some(col) = column.checked_sub(1) else {
             continue;
         };
-        let guide_x = render_area.x + gutter_width as u16 + scrolled_col as u16;
+        let Some(scrolled_col) = col.checked_sub(left_column) else {
+            continue;
+        };
+        // A ruler far off the right edge must stay off-screen rather than
+        // wrap around when narrowed to the buffer's `u16` coordinates.
+        let Some(guide_x) = u16::try_from(scrolled_col)
+            .ok()
+            .and_then(|c| content_x.checked_add(c))
+        else {
+            continue;
+        };
         if guide_x < render_area.x + render_area.width {
             for row in 0..guide_height {
                 let cell = &mut buf[(guide_x, render_area.y + row as u16)];

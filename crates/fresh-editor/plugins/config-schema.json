@@ -589,12 +589,12 @@
           "x-section": "Display"
         },
         "rulers": {
-          "description": "Vertical ruler lines at specific column positions.\nDraws subtle vertical lines to help with line length conventions.\nColumns are 1-based, matching the status bar: a ruler at 80 marks the\n80th character of a line — the last column text may occupy.\nExample: [80, 120] draws rulers at columns 80 and 120.\nDefault: [] (no rulers)",
+          "description": "Vertical ruler lines at specific column positions.\nDraws subtle vertical lines to help with line length conventions.\nColumns are 1-based *display* columns — screen cells, not characters:\na ruler at 80 marks the 80th display column, the last one text may\noccupy. A tab advances to the next tab stop and a full-width character\n(CJK, most emoji) takes two cells, so on lines containing either, the\nruler column is not the character count the status bar reports; for\nplain ASCII text the two numbers agree.\nValues below 1 are not valid columns and are ignored.\nExample: [80, 120] draws rulers at columns 80 and 120.\nDefault: [] (no rulers)",
           "type": "array",
           "items": {
             "type": "integer",
             "format": "uint",
-            "minimum": 0
+            "minimum": 1
           },
           "default": [],
           "x-section": "Display"

@@ -584,6 +584,39 @@ fn test_add_ruler_zero_column() {
     }
 }
 
+/// A `0` reaching the renderer through the *config* (rather than the "Add
+/// Ruler" prompt, which rejects it) is not a valid 1-based column and must be
+/// dropped, leaving the other rulers untouched.
+///
+/// Before #2928 the renderer treated config values as 0-based screen offsets,
+/// so `[0, 10]` tinted two cells: the first content column and the 11th. Now
+/// only column 10 is drawn.
+#[test]
+fn test_config_ruler_zero_column_is_skipped() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![0, 10];
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text(&marker_line(40)).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+
+    let marked = ruler_cells_in_row(&harness, row, 80);
+    assert_eq!(
+        marked,
+        vec![ruler_x(&harness, 10)],
+        "only the ruler at column 10 should be tinted; 0 is not a valid \
+         1-based column, got {marked:?}"
+    );
+    assert_eq!(
+        harness.get_cell(marked[0], row).as_deref(),
+        Some("A"),
+        "the surviving ruler must still mark the 10th character"
+    );
+}
+
 /// Regression (#2928): a ruler at column N must mark the cell holding the
 /// N-th character, not the one after it. Ruler columns are 1-based (the
 /// "Add Ruler" prompt rejects 0, and the status bar numbers columns from 1),
@@ -696,9 +729,14 @@ fn test_ruler_tracks_its_character_when_scrolled_horizontally() {
     );
 }
 
-/// Double-width characters: the ruler counts display columns, so a ruler at
-/// column 3 lands on the start of the second CJK character (which occupies
-/// display columns 3 and 4) rather than inside the first one's trailing cell.
+/// Double-width characters: the ruler counts *display* columns, not
+/// characters. `你好世界` puts `你` on display columns 1-2 and `好` on 3-4, so
+/// a ruler at column 3 tints the cell holding `好`.
+///
+/// Nothing snaps a ruler to a grapheme boundary — column 3 simply happens to
+/// be the leading half of a double-width cell here. See
+/// `test_ruler_on_even_column_over_wide_characters` for what an odd column
+/// does.
 #[test]
 fn test_ruler_column_with_wide_characters() {
     let mut config = Config::default();
@@ -717,5 +755,76 @@ fn test_ruler_column_with_wide_characters() {
         harness.get_cell(marked[0], row).as_deref(),
         Some("好"),
         "the ruler should sit on the character starting at display column 3"
+    );
+}
+
+/// Pins the documented coordinate space: ruler columns are *display* columns
+/// (screen cells), not the grapheme count the status bar reports.
+///
+/// With `tab_size = 4` the two leading tabs of `\t\tab…` cover display columns
+/// 1-8, so display column 10 holds `b` — the *fourth* character of the line.
+/// A ruler at 10 therefore marks `b`, which is what the config docs must say;
+/// "matching the status bar" would have promised the 10th character instead.
+#[test]
+fn test_ruler_counts_display_columns_not_characters() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![10];
+    config.editor.tab_size = 4;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text("\t\tabcdefghij").unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+
+    let marked = ruler_cells_in_row(&harness, row, 80);
+    assert_eq!(
+        marked,
+        vec![ruler_x(&harness, 10)],
+        "the ruler should tint display column 10, got {marked:?}"
+    );
+    assert_eq!(
+        harness.get_cell(marked[0], row).as_deref(),
+        Some("b"),
+        "display column 10 is the 4th character of `\\t\\tab…` at tab_size 4"
+    );
+}
+
+/// Documents a **known limitation** (pre-existing, not introduced by #2928):
+/// rulers address display columns and are not snapped to grapheme
+/// boundaries, so over full-width text an *even* ruler column falls on the
+/// trailing half of a double-width cell.
+///
+/// `你` occupies display columns 1-2, so a ruler at 2 tints the continuation
+/// cell — which ratatui has `reset()` to a blank. The tint is present in the
+/// frame buffer (asserted below), but `Buffer::diff` skips the cells covered
+/// by a preceding wide symbol, so it is not guaranteed to reach the terminal.
+///
+/// The assertion here is deliberately a description of today's behaviour, not
+/// a statement that it is desirable; fixing it means snapping rulers to the
+/// grapheme that covers the column, which is out of scope for #2928.
+#[test]
+fn test_ruler_on_even_column_over_wide_characters() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![2];
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text("你好世界").unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+
+    let marked = ruler_cells_in_row(&harness, row, 80);
+    assert_eq!(
+        marked,
+        vec![ruler_x(&harness, 2)],
+        "the ruler at column 2 tints display column 2, got {marked:?}"
+    );
+    assert_ne!(
+        harness.get_cell(marked[0], row).as_deref(),
+        Some("你"),
+        "column 2 is the trailing half of `你`, not the cell carrying its symbol"
     );
 }

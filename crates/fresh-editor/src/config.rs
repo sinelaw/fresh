@@ -1334,12 +1334,17 @@ pub struct EditorConfig {
 
     /// Vertical ruler lines at specific column positions.
     /// Draws subtle vertical lines to help with line length conventions.
-    /// Columns are 1-based, matching the status bar: a ruler at 80 marks the
-    /// 80th character of a line — the last column text may occupy.
+    /// Columns are 1-based *display* columns — screen cells, not characters:
+    /// a ruler at 80 marks the 80th display column, the last one text may
+    /// occupy. A tab advances to the next tab stop and a full-width character
+    /// (CJK, most emoji) takes two cells, so on lines containing either, the
+    /// ruler column is not the character count the status bar reports; for
+    /// plain ASCII text the two numbers agree.
+    /// Values below 1 are not valid columns and are ignored.
     /// Example: [80, 120] draws rulers at columns 80 and 120.
     /// Default: [] (no rulers)
     #[serde(default)]
-    #[schemars(extend("x-section" = "Display"))]
+    #[schemars(extend("x-section" = "Display"), inner(range(min = 1)))]
     pub rulers: Vec<usize>,
 
     /// Vertical indentation guide rendering mode.

@@ -715,18 +715,14 @@ pub(crate) fn draw_buffer_in_split(
     // show the ruler only on written lines, leaving the rest of the pane blank
     // and the guide looking truncated (#2631).
     if !rulers.is_empty() {
-        // Ruler columns are 1-based — the same numbering the status bar shows
-        // and the "Add Ruler" prompt accepts (it rejects 0). Screen offsets
-        // within the content area are 0-based, so a ruler at column N marks
-        // the cell holding the Nth character (#2928). Values of 0 are not
-        // valid rulers and are skipped rather than wrapping around.
-        let ruler_cols: Vec<u16> = rulers
-            .iter()
-            .filter_map(|&r| u16::try_from(r.checked_sub(1)?).ok())
-            .collect();
+        // `rulers` are 1-based *display* columns — the numbering the "Add
+        // Ruler" prompt accepts (it rejects 0), counted in screen cells, so a
+        // tab spans to the next tab stop and a full-width character takes two
+        // (#2928). `render_ruler_bg` owns the conversion to the 0-based screen
+        // offsets it paints, and skips values below 1.
         render_ruler_bg(
             buf,
-            &ruler_cols,
+            rulers,
             theme.ruler_bg,
             render_area,
             gutter_width,
