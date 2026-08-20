@@ -4385,11 +4385,6 @@ mod tests {
         );
     }
 
-    /// Reachability guard for issue #2941: every binding shipped in every
-    /// built-in keymap must actually fire in its own context — no entry may
-    /// be dead because a broader binding shadows its chord. This is what
-    /// keeps the resolver's precedence rule and the keymap data honest with
-    /// each other (the old global-first order shipped four dead entries).
     /// A keymap that rebinds a chord must take its terminal-equivalent
     /// spelling with it. `default` binds Ctrl+/ (which also registers the
     /// Ctrl+7 alias many terminals send); `emacs` rebinds Ctrl+/ to Undo, so
@@ -4498,14 +4493,41 @@ mod tests {
             ('<', Action::MoveDocumentStart),
             ('>', Action::MoveDocumentEnd),
             ('%', Action::QueryReplace),
+            ('_', Action::Redo),
         ];
         for (ch, expected) in cases {
-            let event = KeyEvent::new(KeyCode::Char(*ch), KeyModifiers::ALT);
+            for modifiers in [
+                KeyModifiers::ALT,
+                // Terminals on the kitty protocol report Shift alongside the
+                // shifted glyph; legacy ones send the glyph alone.
+                KeyModifiers::ALT | KeyModifiers::SHIFT,
+            ] {
+                let event = KeyEvent::new(KeyCode::Char(*ch), modifiers);
+                assert_eq!(
+                    &resolver.resolve(&event, KeyContext::Normal),
+                    expected,
+                    "M-{} must fire with modifiers {:?}",
+                    ch,
+                    modifiers
+                );
+            }
+        }
+
+        // Undo's three terminal spellings: C-/ , C-_ (as ctrl+- plus the alias
+        // `terminal_key_equivalents` derives) and the kitty ctrl+shift+_ form.
+        for (ch, modifiers) in [
+            ('/', KeyModifiers::CONTROL),
+            ('-', KeyModifiers::CONTROL),
+            ('_', KeyModifiers::CONTROL),
+            ('_', KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+        ] {
+            let event = KeyEvent::new(KeyCode::Char(ch), modifiers);
             assert_eq!(
-                &resolver.resolve(&event, KeyContext::Normal),
-                expected,
-                "M-{} must fire",
-                ch
+                resolver.resolve(&event, KeyContext::Normal),
+                Action::Undo,
+                "C-{} ({:?}) must undo",
+                ch,
+                modifiers
             );
         }
     }
@@ -4562,6 +4584,11 @@ mod tests {
         }
     }
 
+    /// Reachability guard for issue #2941: every binding shipped in every
+    /// built-in keymap must actually fire in its own context — no entry may
+    /// be dead because a broader binding shadows its chord. This is what
+    /// keeps the resolver's precedence rule and the keymap data honest with
+    /// each other (the old global-first order shipped four dead entries).
     #[test]
     fn test_builtin_keymap_bindings_are_reachable() {
         for map_name in crate::config::KeybindingMapName::BUILTIN_OPTIONS {

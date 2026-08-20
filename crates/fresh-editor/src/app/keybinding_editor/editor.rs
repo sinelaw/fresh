@@ -1,6 +1,8 @@
 //! KeybindingEditor - the main editor state and logic.
 
-use super::helpers::{format_chord_keys, key_code_to_config_name, modifiers_to_config_names};
+use super::helpers::{
+    canonical_context, format_chord_keys, key_code_to_config_name, modifiers_to_config_names,
+};
 use super::types::*;
 use crate::config::{Config, Keybinding};
 use crate::input::command_registry::CommandRegistry;
@@ -376,7 +378,13 @@ impl KeybindingEditor {
         source: BindingSource,
         _resolver: &KeybindingResolver,
     ) -> Option<ResolvedBinding> {
-        let context = kb.when.as_deref().unwrap_or("normal").to_string();
+        // Canonicalise the `when` spelling. `KeyContext` accepts aliases
+        // (`file_explorer` / `fileExplorer`, `search_prompt` / `searchPrompt`,
+        // `composite_buffer` / `compositeBuffer`) and `default.json` uses both,
+        // so a raw string here would split one context into two: two rows for
+        // the same key, and an edit dialog whose dropdown can't find the
+        // context it was opened on — silently reassigning it on save.
+        let context = canonical_context(kb.when.as_deref().unwrap_or("normal"));
 
         // Store the qualified form (e.g. `menu_open:File`) on ResolvedBinding
         // so the dropdown round-trips faithfully and "still-bound" checks
@@ -773,17 +781,15 @@ impl KeybindingEditor {
 
     /// Cycle context filter
     pub fn cycle_context_filter(&mut self) {
-        let mut contexts = vec![
-            ContextFilter::All,
-            ContextFilter::Specific("global".to_string()),
-            ContextFilter::Specific("normal".to_string()),
-            ContextFilter::Specific("prompt".to_string()),
-            ContextFilter::Specific("popup".to_string()),
-            ContextFilter::Specific("completion".to_string()),
-            ContextFilter::Specific("file_explorer".to_string()),
-            ContextFilter::Specific("menu".to_string()),
-            ContextFilter::Specific("terminal".to_string()),
-        ];
+        // Canonical spellings, matching `ResolvedBinding::context` — the filter
+        // compares the two directly, so `file_explorer` here would select
+        // nothing now that rows carry `fileExplorer`.
+        let mut contexts = vec![ContextFilter::All];
+        contexts.extend(
+            EditBindingState::base_context_options()
+                .into_iter()
+                .map(ContextFilter::Specific),
+        );
         // Add mode contexts dynamically
         for mode_ctx in &self.mode_contexts {
             contexts.push(ContextFilter::Specific(mode_ctx.clone()));
@@ -1426,12 +1432,18 @@ mod tests {
     fn an_overriding_keymap_replaces_the_inherited_row() {
         // `emacs` inherits `default` and rebinds Ctrl+S from Save to Find.
         // Only the winning action may be listed, or the editor advertises a
-        // binding that never fires.
+        // binding that never fires. Matched on the parsed key rather than
+        // `key_display`, which renders as "⌃S" on macOS and "Ctrl+S" elsewhere.
         let editor = make_emacs_editor();
         let ctrl_s: Vec<&str> = editor
             .bindings
             .iter()
-            .filter(|b| b.key_display == "Ctrl+S" && b.context == "normal")
+            .filter(|b| {
+                !b.is_chord
+                    && b.key_code == KeyCode::Char('s')
+                    && b.modifiers == KeyModifiers::CONTROL
+                    && b.context == "normal"
+            })
             .map(|b| b.action.as_str())
             .collect();
         assert_eq!(
@@ -1443,28 +1455,41 @@ mod tests {
 
     #[test]
     fn dropdown_context_options_cover_every_keymap_context() {
-        // Contexts that appear in the built-in keymaps must be pickable in
-        // the add/edit dialog, otherwise those bindings can't be authored.
+        // Every context the built-in keymaps actually use must be pickable in
+        // the add/edit dialog: a binding whose context isn't offered can't be
+        // authored, and editing one falls back to "normal" — silently
+        // reassigning it on save. Read off the keymaps rather than a hand
+        // written list, which is how four of them went missing.
         let dialog = EditBindingState::new_add();
-        for ctx in [
-            "global",
-            "normal",
-            "prompt",
-            "searchPrompt",
-            "popup",
-            "completion",
-            "file_explorer",
-            "dock",
-            "menu",
-            "terminal",
-            "settings",
-            "compositeBuffer",
-        ] {
-            assert!(
-                dialog.context_options.iter().any(|c| c == ctx),
-                "context `{}` missing from the dialog dropdown",
-                ctx
-            );
+        let config = Config::default();
+        for map_name in crate::config::KeybindingMapName::BUILTIN_OPTIONS {
+            for kb in config.resolve_keymap(map_name) {
+                let ctx = canonical_context(kb.when.as_deref().unwrap_or("normal"));
+                assert!(
+                    dialog.context_options.contains(&ctx),
+                    "keymap `{}` binds `{}` in context `{}`, which the dialog \
+                     dropdown does not offer",
+                    map_name,
+                    kb.action,
+                    ctx,
+                );
+            }
         }
+    }
+
+    #[test]
+    fn context_spellings_are_folded_together() {
+        // `default.json` writes both `fileExplorer` and `file_explorer`. Rows
+        // must land on one canonical spelling, or the same context shows up
+        // twice and the dropdown can't match either.
+        let editor = make_editor(&[]);
+        assert!(
+            editor.bindings.iter().all(|b| b.context != "file_explorer"),
+            "the alias spelling must be folded into `fileExplorer`"
+        );
+        assert!(
+            editor.bindings.iter().any(|b| b.context == "fileExplorer"),
+            "file-explorer bindings should still be listed"
+        );
     }
 }

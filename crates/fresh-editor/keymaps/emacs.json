@@ -335,7 +335,7 @@
     },
 
     {
-      "comment": "Undo - C-/ (and its C-_ / C-7 terminal spellings)",
+      "comment": "Undo - C-/ and C-_ . `ctrl+-` picks up the `ctrl+_` alias `terminal_key_equivalents` adds for legacy terminals; the explicit `ctrl+shift+-`/`ctrl+shift+_` entries cover terminals (kitty protocol) that report Shift alongside the shifted glyph.",
       "key": "/",
       "modifiers": ["ctrl"],
       "action": "undo",
@@ -350,9 +350,23 @@
       "when": "normal"
     },
     {
-      "comment": "Redo - M-_ . Emacs has no redo; this mirrors C-_ so the editor's redo stays reachable (C-y is yank here).",
+      "key": "_",
+      "modifiers": ["ctrl", "shift"],
+      "action": "undo",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Redo - M-_ . Emacs has no redo; this mirrors C-_ so the editor's redo stays reachable (C-y is yank here). Both Alt spellings, as above.",
       "key": "_",
       "modifiers": ["alt"],
+      "action": "redo",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "_",
+      "modifiers": ["alt", "shift"],
       "action": "redo",
       "args": {},
       "when": "normal"
