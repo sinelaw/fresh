@@ -86,6 +86,7 @@
     "compose_margin_bg": "Default",
     "semantic_highlight_bg": "Default",
     "semantic_highlight_modifier": ["bold", "underlined"],
+    "tour_step_bg": "DarkGray",
     "terminal_bg": "Default",
     "terminal_fg": "Default",
     "status_warning_indicator_bg": "Yellow",

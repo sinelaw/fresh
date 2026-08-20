@@ -17,9 +17,7 @@ use ratatui::style::Color;
 use std::ops::Range;
 
 /// Default highlight color for word occurrences
-///
-/// A neutral gray, kept distinct from the selection background (#3011).
-pub const DEFAULT_HIGHLIGHT_COLOR: Color = Color::Rgb(87, 87, 87);
+pub const DEFAULT_HIGHLIGHT_COLOR: Color = Color::Rgb(60, 60, 80);
 
 /// Text-based reference highlighter (WASM-compatible)
 ///

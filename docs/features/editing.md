@@ -45,7 +45,7 @@ The row the cursor is on is highlighted for quick visual tracking. Enabled by de
 
 ## Occurrence Highlighting
 
-Every occurrence of the word under the cursor is highlighted in the viewport. While text is selected the selection takes over: the word highlight is dropped and every other instance of the *selected* text in the viewport is highlighted instead (single-line selections; the highlight uses the `semantic_highlight_bg` theme key, kept distinct from `selection_bg`). Enabled by default; toggle with **Toggle Occurrence Highlight** from the command palette or in the Settings UI.
+Every occurrence of the word under the cursor is highlighted in the viewport. While text is selected the selection takes over: the word highlight is dropped and every other instance of the *selected* text in the viewport is highlighted instead. Only single-line selections of at least `min_word_length` characters are matched - a one-character selection would mark most of the screen. The highlight uses the `ui.semantic_highlight_bg` theme key together with `ui.semantic_highlight_modifier`, which the builtin themes set to `["underlined"]` so the highlight stays distinguishable from `editor.selection_bg` without moving its background into the range where syntax colours live. Enabled by default; toggle with **Toggle Occurrence Highlight** from the command palette or in the Settings UI.
 
 ## Post-EOF Background
 
