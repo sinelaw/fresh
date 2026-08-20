@@ -168,12 +168,7 @@ impl Window {
         let tabs_width = self.split_tabs_width(active_split);
         self.ensure_active_tab_visible(active_split, buffer_id, tabs_width);
 
-        if self.file_explorer_visible
-            && self.resources.config.file_explorer.follow_active_buffer
-            && self.key_context != crate::input::keybindings::KeyContext::FileExplorer
-        {
-            self.sync_file_explorer_to_active_file();
-        }
+        self.follow_active_buffer_in_explorer();
 
         true
     }

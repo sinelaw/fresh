@@ -31,7 +31,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * Comments inside fenced code blocks are no longer misdetected as Markdown syntax, and scrolling a large file in Compose mode is smooth on the first pass instead of only after it's been scrolled through once.
 * **Rendering**: the 256-color contrast pass no longer stalls large terminal windows or the Settings dialog, and a dimmed dialog no longer paints a fixed dark gray instead of following the active theme (#2982).
 * **Terminals**: a focused terminal keeps `Ctrl+B`/`Ctrl+E` for the shell instead of them toggling/focusing the File Explorer, and File Explorer keys (like Enter) no longer leak into a terminal's PTY sitting behind it.
-* **File Explorer**: the sidebar caret no longer blinks through modal dialogs.
+* **File Explorer**: the sidebar caret no longer blinks through modal dialogs. With `file_explorer.follow_active_buffer` on, the tree now also follows the first file a session opens — previously a code tour's opening step (or any first open into the empty `[No Name]` buffer) left the explorer parked at the root — and a follow request no longer gets thrown away when it arrives while the tree is still expanding for the previous one (#2988).
 * **Review Diff**: `PageDown`/`PageUp` no longer stalls with the cursor off-screen while paging over a collapsed file (#3029); a panel like the git-log commit view now word-wraps correctly no matter which split shows it.
 * **Editing near a fold, concealed span, or virtual line** no longer corrupts the rendered layout (wrong hidden text, row count, or scrollbar position) after certain edit sequences, or leaves it stuck stale after a file reload or undo past a bulk edit.
 
