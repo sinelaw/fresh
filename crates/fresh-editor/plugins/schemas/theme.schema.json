@@ -117,6 +117,7 @@
           70,
           70
         ],
+        "whitespace_indicator_selected_fg": null,
         "bracket_match_fg": [
           255,
           215,
@@ -773,6 +774,18 @@
             70,
             70
           ]
+        },
+        "whitespace_indicator_selected_fg": {
+          "description": "Whitespace indicator foreground color *inside a selection*. Selected\ncells keep their own foreground, so the plain\n`whitespace_indicator_fg` — picked to sit on the editor background —\nis often invisible on `selection_bg` (several themes use the very\nsame color for both). When omitted, this is derived from\n`selection_bg` by shifting it toward contrast: legible against the\nselection, still clearly dimmer than the selected text.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "bracket_match_fg": {
           "description": "Bracket match highlight color (used when rainbow is disabled)",

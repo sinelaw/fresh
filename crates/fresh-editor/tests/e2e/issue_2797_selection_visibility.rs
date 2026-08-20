@@ -10,6 +10,10 @@
 //! * whitespace inside a selection draws its `·` / `→` indicators even
 //!   when the whitespace indicators are otherwise off
 //!   (`editor.whitespace_in_selection`, on by default).
+//!
+//! Those in-selection indicators are marks, not content, so they are drawn
+//! in the theme's subdued `whitespace_indicator_selected_fg` rather than in
+//! the selected text's own foreground.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -180,4 +184,61 @@ fn whitespace_in_selection_can_be_turned_off() {
             harness.screen_to_string()
         );
     }
+}
+
+#[test]
+fn whitespace_indicators_inside_a_selection_use_the_subdued_theme_color() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.load_buffer_from_text("ab  cd\n").unwrap();
+
+    // Select the whole of "ab  cd", so both the letters and the two spaces
+    // between them are inside the selection.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    for _ in 0..6 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let (col0, row) = content_origin(&harness);
+    let screen = harness.screen_to_string();
+    let theme = harness.editor().theme();
+    let indicator_fg = Some(theme.whitespace_indicator_selected_fg);
+    let selection_bg = Some(theme.selection_bg);
+
+    assert_eq!(
+        harness.get_cell(col0 + 2, row).as_deref(),
+        Some("·"),
+        "the selected space should render an indicator\n{screen}"
+    );
+    let indicator = harness
+        .get_cell_style(col0 + 2, row)
+        .expect("cell inside the viewport");
+    assert_eq!(
+        indicator.bg, selection_bg,
+        "the indicator still sits on the selection background\n{screen}"
+    );
+    assert_eq!(
+        indicator.fg, indicator_fg,
+        "a whitespace indicator inside a selection is drawn in the subdued \
+         `whitespace_indicator_selected_fg`, not in the selected text's own \
+         foreground\n{screen}"
+    );
+
+    // The letters next to it keep their normal (full-contrast) foreground —
+    // that is what the indicator must not look like.
+    let letter = harness
+        .get_cell_style(col0 + 1, row)
+        .expect("cell inside the viewport");
+    assert_eq!(
+        letter.bg, selection_bg,
+        "the letter is selected too\n{screen}"
+    );
+    assert_ne!(
+        indicator.fg, letter.fg,
+        "the indicator must be dimmer than the selected text around it\n{screen}"
+    );
 }

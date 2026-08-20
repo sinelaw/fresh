@@ -74,7 +74,7 @@ Control visibility of space (`·`) and tab (`→`) characters. Configure indepen
 
 Line endings can be shown too: `whitespace_newlines` renders `↵` at the end of every line, and `whitespace_carriage_returns` renders `␍` for the CR half of CRLF (and Classic-Mac CR) line endings — so a CRLF file shows `␍↵` where an LF file shows `↵`. Both are off by default and follow the same master toggle.
 
-Inside a selection the indicators appear regardless of the settings above, so selected runs of spaces and tabs stay legible without turning indicators on for the whole buffer. Set `whitespace_in_selection` to `false` to switch that off; it is independent of the master toggle and of the per-buffer whitespace overrides.
+Inside a selection the indicators appear regardless of the settings above, so selected runs of spaces and tabs stay legible without turning indicators on for the whole buffer. Set `whitespace_in_selection` to `false` to switch that off; it is independent of the master toggle and of the per-buffer whitespace overrides. Selected indicators are drawn in `whitespace_indicator_selected_fg`, a subdued color that a theme may set explicitly and that is otherwise derived from `selection_bg` — without it they would take the selected text's own foreground and read as content rather than as marks.
 
 ## Inline Diagnostics
 

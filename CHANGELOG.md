@@ -34,6 +34,8 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **File Explorer**: the sidebar caret no longer blinks through modal dialogs. With `file_explorer.follow_active_buffer` on, the tree now also follows the first file a session opens — previously a code tour's opening step (or any first open into the empty `[No Name]` buffer) left the explorer parked at the root — and a follow request no longer gets thrown away when it arrives while the tree is still expanding for the previous one (#2988).
 * **Review Diff**: `PageDown`/`PageUp` no longer stalls with the cursor off-screen while paging over a collapsed file (#3029); a panel like the git-log commit view now word-wraps correctly no matter which split shows it.
 * **Editing near a fold, concealed span, or virtual line** no longer corrupts the rendered layout (wrong hidden text, row count, or scrollbar position) after certain edit sequences, or leaves it stuck stale after a file reload or undo past a bulk edit.
+* **Whitespace indicators**
+  * Indicators inside a selection are drawn in a subdued colour of their own (`whitespace_indicator_selected_fg`, derived from the selection background when a theme doesn't set it) instead of taking the selected text's full-contrast foreground, where they were louder than the code around them.
 
 ### Internals
 
