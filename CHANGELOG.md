@@ -37,6 +37,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Editing near a fold, concealed span, or virtual line** no longer corrupts the rendered layout (wrong hidden text, row count, or scrollbar position) after certain edit sequences, or leaves it stuck stale after a file reload or undo past a bulk edit.
 * **Whitespace indicators**
   * Indicators inside a selection are drawn in a subdued colour of their own (`whitespace_indicator_selected_fg`, derived from the selection background when a theme doesn't set it) instead of taking the selected text's full-contrast foreground, where they were louder than the code around them.
+  * **Toggle Whitespace Indicators (Current Buffer)** now marks every space when switched on, so it does something visible in a space-indented file — with the default settings (spaces off, tabs on) both halves of the toggle looked identical. Tab and line-ending indicators still follow the configuration.
 
 ### Internals
 
