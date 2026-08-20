@@ -147,17 +147,6 @@ impl Editor {
 
         let (is_double_click, is_triple_click) = self.detect_multi_click(&mouse_event, col, row);
 
-        // The shell sees the pointer before the chrome tree does — stage two
-        // of three, with the legacy modal-capture band still ahead of it and
-        // the existing walk still the floor. Inert while every region is a
-        // `Host` leaf: nothing in the tree claims, so the walk below runs on
-        // every event exactly as before.
-        if let Some(input) = crate::view::shell::input::mouse(mouse_event) {
-            if self.shell_dispatch(input) {
-                return Ok(true);
-            }
-        }
-
         // Modal mouse-capture, offered in RANK order over the derived
         // overlay stack: the first component whose modal surface is up
         // claims the whole mouse channel. Every capturing component
@@ -185,6 +174,23 @@ impl Editor {
                 ) {
                     return result;
                 }
+            }
+        }
+
+        // Then the migration shell — stage two of three, and deliberately
+        // *after* the capture band above. A full-screen modal (Settings, the
+        // keybinding editor, workspace trust) must outrank anything in the
+        // tree; running the shell first would invert that, letting a layer
+        // answer a pointer the modal had already claimed. The legacy walk
+        // below stays the floor.
+        //
+        // Whether the tree took the event is reported by `dispatch`, not
+        // inferred from whether it had anything to say: a hover moves a
+        // highlight without claiming, and a right-click outside a menu closes
+        // it while staying available to open the next one.
+        if let Some(input) = crate::view::shell::input::mouse(mouse_event) {
+            if self.shell_dispatch(input) {
+                return Ok(true);
             }
         }
 
@@ -244,22 +250,22 @@ impl Editor {
         // this gate the terminal-forward path below would swallow clicks/moves
         // aimed at the menu, so menu items couldn't be selected (they'd inject
         // mouse escape codes into the PTY instead). Skipping forwarding lets
-        // the event fall through to the normal pipeline, where
-        // `handle_click_context_menus` (select / dismiss) and the hover
-        // hit-test (highlight-follows-pointer) already handle it. The menu's
-        // precedence itself lives in the chrome walk/capture ordering (its
-        // boxes ride the top routable band); this fork only keeps the PTY
-        // from swallowing the events first.
+        // the event fall through, where the shell's context-menu `Layer`
+        // handles it: its rows take the click and the hover, and its
+        // `Modality::Inert` plus `OUTSIDE_POINTER` dismissal cover everything
+        // outside. That layer is offered the pointer before this walk, so its
+        // precedence is tree position rather than a band — this fork only
+        // keeps the PTY from swallowing the events before either sees them.
         let context_menu_open = self.active_window().context_menu_core().is_some();
         // DERIVED suppression for everything with opaque geometry: a
         // pointer-opaque chrome box over the cell (an info popup, the
         // suggestions dropdown, the theme-info popup) must take the
         // event in the walk — forwarding it would inject mouse codes
         // into the PTY *through* the popup. This replaces growing the
-        // hand list one surface at a time; the context-menu check
-        // above stays NAMED by ruling because its boxes are
-        // deliberately not opaque (its close-guard backdrop owns
-        // outside clicks), so opacity cannot express it.
+        // hand list one surface at a time; the context-menu check above
+        // stays NAMED by ruling because the menu contributes no chrome
+        // boxes at all any more — it is a `Layer` in the shell's tree,
+        // whose modality is not visible to this walk's opacity test.
         // ONE tree per event, built AFTER the pre-band observers above
         // (the LSP-rename cancel can close a prompt, which changes the
         // geometry) and shared by the forward gate and every dispatch

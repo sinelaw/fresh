@@ -223,13 +223,13 @@ impl Editor {
             view_state.viewport.clear_skip_ensure_visible();
         }
 
-        // Chrome keyboard grabs — the pre-band's LAST stage, now only
-        // two components: the theme inspector's dismiss-and-continue
-        // observer (a keyboard PassAfter, not a claim) and the native
-        // context menus' navigation grab (a custom-dispatcher modal
-        // whose layer deliberately exposes no `KeyContext`; ruling at
-        // its site, #2587). Grabs as a CLASS outrank every layer rank
-        // by pipeline position — that is exactly why membership is
+        // Chrome keyboard grabs — the pre-band's LAST stage, now a
+        // single component: the theme inspector's dismiss-and-continue
+        // observer (a keyboard PassAfter, not a claim). The context
+        // menus' navigation grab used to sit here too; its keyboard
+        // half is a `Layer` in the shell tree now, answered by the
+        // stage below. Grabs as a CLASS outrank every layer rank by
+        // pipeline position — that is exactly why membership is
         // restricted to whole-pipeline observers and custom-dispatch
         // modals: any surface whose precedence is expressible as a
         // rank rides the walk below instead (the dock and the
@@ -278,10 +278,14 @@ impl Editor {
             }
         }
 
-        // The migration shell is offered the key first. It declines
-        // everything today — no node in its tree carries a handler yet — so
-        // the walk below still sees every key. A surface starts answering its
-        // own keys the moment it stops being a `Host` leaf.
+        // The migration shell is offered the key, and answers only for
+        // surfaces that have migrated their keyboard half — the context menus
+        // so far, whose open layer is modal and swallows everything it does
+        // not act on. Every other key falls through to the walk below.
+        // `dispatch` reports whether the tree claimed it rather than the
+        // caller inferring it from the messages: a modal swallow produces no
+        // message at all, and inferring claim from "said something" would let
+        // those keys straight through.
         if let Some(input) =
             crate::view::shell::input::key(&fresh_input_parser::KeyPress::new(key_event))
         {

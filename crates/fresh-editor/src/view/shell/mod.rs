@@ -9,12 +9,14 @@
 //! - [`fold`] — the backend: a walk over `LayoutSpec::items` that writes cells
 //!   into a `ratatui::Buffer`, calling back into the host for `Draw::Host`.
 //!
-//! Neither is on the render path yet. `Editor::render` still paints the frame
-//! itself; this module is the seam that will replace it, built and tested
-//! first so the mechanism is proven before any surface depends on it.
+//! Both are on the render path. The frame's geometry is the shell's, and the
+//! fold paints everything the tree owns outright; regions that have not
+//! migrated are `Host` leaves, painted by the code that always painted them,
+//! into the rectangles this same layout produced.
 
+pub mod context_menu;
 pub mod fold;
 pub mod frame;
 pub mod input;
+pub mod menu;
 pub mod msg;
-pub mod status_bar;

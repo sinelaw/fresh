@@ -277,19 +277,23 @@ impl Editor {
         // The shell's tree is retained across frames — element state, focus and
         // the dirty set live on it — so it is moved out for the duration of the
         // frame rather than borrowed from `self`. See `Editor::shell_ui`.
-        let mut ui = self.shell_ui.take().unwrap_or_default();
+        // `expect`, not `unwrap_or_default`: silently substituting a fresh
+        // `Ui` would discard every element's state, the focus position and the
+        // dirty set, and the frame would still render — the retained tree's
+        // whole point, lost without a symptom. If this is ever `None` a
+        // re-entrant path took it and did not put it back, which is a bug in
+        // that path.
+        let mut ui = self
+            .shell_ui
+            .take()
+            .expect("the shell tree is taken and returned within one frame");
         let regions = {
             let spec = ui.frame(
-                crate::view::shell::frame::frame_tree(shell),
+                crate::view::shell::frame::frame_tree(shell.clone()),
                 fresh_ui::Size::new(size.width, size.height),
             );
             crate::view::shell::frame::regions_of(spec, size)
         };
-        // Paint whatever the tree owns outright. Host regions are skipped here
-        // and painted by their existing painters below, at the rectangles the
-        // same layout just produced — that is what lets regions migrate one at
-        // a time instead of all at once.
-        crate::view::shell::fold::fold_native(ui.spec(), frame.buffer_mut(), &self.shell_palette());
         self.shell_ui = Some(ui);
         let region = |r: crate::view::shell::frame::HostRegion| -> ratatui::layout::Rect {
             regions
@@ -1189,8 +1193,46 @@ impl Editor {
         // Menu bar, drawn last so its dropdowns sit above all other content.
         self.render_menu_bar(frame, menu_bar_area);
 
-        // Tab / file-explorer / new-tab context menus (TUI cell drawing only).
-        self.render_context_menus(frame);
+        // Everything the shell's tree owns outright, painted here rather than
+        // straight after layout: the tree now carries overlays, and an overlay
+        // sits above the content around it. Layout runs early because the
+        // regions need their rectangles; paint runs late because paint order
+        // is what puts a menu on top. Host regions are skipped — they were
+        // painted above, into the rectangles this same layout produced.
+        //
+        // This replaced `render_context_menus`: a context menu is an ordinary
+        // `Layer` in the tree now, not a separately-ranked surface painted by
+        // its own function.
+        //
+        // Suppression is a *fold* decision, not a tree one. The web bridge
+        // draws chrome natively and wants the cells to carry buffer interiors
+        // only — but it still needs the geometry, and the tree is where
+        // geometry lives now. So the description is built either way and only
+        // the cell-writing half is skipped, which is what "backends are folds
+        // over the display list" buys: two backends, one layout.
+        if !self.suppress_chrome_cells {
+            let palette = self.shell_palette();
+            let ui = self
+                .shell_ui
+                .take()
+                .expect("the shell tree is taken and returned within one frame");
+            let shell_caret =
+                crate::view::shell::fold::fold_native(ui.spec(), frame.buffer_mut(), &palette);
+            // A native widget that places a cursor (a focused `TextField`)
+            // wins over the buffer's, which is the rule §4.4 states and the
+            // behaviour `cursor_suppressed_by_late_overlay` encodes by hand.
+            // No migrated surface places one yet, so this is `None` on every
+            // frame today — but taking it and asserting that is how it stays
+            // true, rather than being silently dropped until the first field
+            // migrates and nobody notices it has no caret.
+            debug_assert!(
+                shell_caret.is_none(),
+                "a migrated surface placed a caret ({shell_caret:?}); wire it \
+                 into the end-of-frame cursor commit before relying on it"
+            );
+            let _ = shell_caret;
+            self.shell_ui = Some(ui);
+        }
 
         // Chrome theme-key provenance (status bar, menu, tabs, file explorer,
         // scrollbars) is now recorded during each region's own paint.
@@ -2421,7 +2463,7 @@ impl Editor {
     /// suggestions popup is up, whether the file-browser dialog is up,
     /// and whether the prompt line reserves its row. The paint-time
     /// `Layout` split (`render`), the event-time derivations
-    /// (`chrome_rows_now`, `status_bar_area_now`,
+    /// (`shell_frame`, `status_bar_area_now`,
     /// `search_options_layout_now`) all read THIS — these conditions
     /// used to be hand-copied at four sites, three of them outside the
     /// paint-vs-derived parity oracle's reach.
@@ -2457,7 +2499,7 @@ impl Editor {
     /// same description, so paint-time and event-time geometry cannot disagree
     /// — they are the same computation.
     ///
-    /// This replaced `chrome_rows_now`, which ran its own copy of the vertical
+    /// This replaced `shell_frame`, which ran its own copy of the vertical
     /// `Layout` split at event time. Two implementations of one layout is the
     /// condition this migration exists to remove.
     pub(crate) fn shell_frame(
@@ -2479,26 +2521,83 @@ impl Editor {
             prompt_line: prompt_row_visible,
             dock: dock_area.map(|d| d.width),
             explorer: self.file_explorer_layout_request(chrome_area.width),
+            menu: self.open_context_menu_for_shell(),
+            // From the same walk that decides the dropdowns' geometry, so the
+            // description and the rectangles the not-yet-migrated hit-testing
+            // uses cannot disagree — they are one computation.
+            // Gated on a menu actually being open: the walk expands every
+            // menu (config + plugin) and lays out the whole chain, which is
+            // pure waste on the frames where nothing is open — the same gate
+            // `chrome::Menu::collect` applies for the same reason.
+            dropdowns: if self.menu_state.active_menu.is_some() {
+                self.menu_layout_now()
+                    .map(|l| l.shell_dropdowns)
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            },
         }
     }
 
+    /// The open context menu as the shell describes it: the point it was
+    /// opened at, what is in it, which row is highlighted.
+    ///
+    /// The point is raw. Keeping the box on screen is the layer's `Fit::CLAMP`,
+    /// so the placement is decided once, by layout, and read back by everyone
+    /// who needs it ([`Editor::shell_menu_rect`]).
+    ///
+    /// Derived whether or not chrome cells are suppressed: the web bridge does
+    /// not want the menu's *cells*, but it does want its rectangle, and the
+    /// tree is where rectangles come from. The fold is what skips the cells.
+    fn open_context_menu_for_shell(&self) -> Option<crate::view::shell::context_menu::Menu> {
+        let (_, core) = self.active_window().open_context_menu()?;
+        let items = self.active_window().context_menu_labels()?;
+        Some(crate::view::shell::context_menu::Menu {
+            x: core.position.0,
+            y: core.position.1,
+            width: core.width,
+            highlighted: core.highlighted,
+            items,
+        })
+    }
+
     /// One region's rectangle THIS instant.
+    ///
+    /// Read off the retained tree — the layout the last frame produced — not
+    /// recomputed. Goal 5 of the library is that layout computes rectangles
+    /// and everything else *reads* them; building a throwaway `Ui` here would
+    /// be a second layout of the same tree, per query, several times per
+    /// pointer event, with all element state discarded.
     pub(crate) fn shell_region_now(
         &self,
         region: crate::view::shell::frame::HostRegion,
     ) -> ratatui::layout::Rect {
         let frame = self.active_chrome().last_frame;
         let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
-        crate::view::shell::frame::region_rects(self.shell_frame(size), size)
+        let Some(ui) = self.shell_ui.as_ref() else {
+            return ratatui::layout::Rect::default();
+        };
+        crate::view::shell::frame::regions_of(ui.spec(), size)
             .into_iter()
             .find(|(r, _)| *r == region)
             .map(|(_, rect)| rect)
             .unwrap_or_default()
     }
 
+    /// Where the open context menu landed, read off the retained tree.
+    ///
+    /// The partner of [`Self::shell_region_now`] for a surface that is not a
+    /// host region: layout placed the menu (its anchor point, pulled inside
+    /// the frame by `Fit::CLAMP`) and this reads the answer back. The web
+    /// `Scene` draws its own menu and needs the cells it covers; asking here
+    /// is what keeps the two frontends on one rectangle.
+    pub(crate) fn shell_menu_rect(&self) -> Option<fresh_ui::Rect> {
+        crate::view::shell::context_menu::menu_rect(self.shell_ui.as_ref()?.spec())
+    }
+
     /// The status bar's screen area THIS instant, derived from live state:
     /// the same visibility conditions and vertical frame split `render`
-    /// uses ([`Self::chrome_rows_now`]; asserted against the paint pass in
+    /// uses ([`Self::shell_frame`]; asserted against the paint pass in
     /// debug builds). `None` when the bar is hidden (toggled off, or a
     /// suggestions / file-browser popup takes the bottom rows) — gated on
     /// the CONDITIONS, not the chunk height: on a tiny terminal the paint
@@ -2738,24 +2837,6 @@ impl Editor {
                 "menu event-time layout and paint walk must agree"
             );
         }
-    }
-
-    /// Render the tab, file-explorer, and new-tab context menus. TUI-only
-    /// cell drawing; the web projects these natively from `context_menu_view`.
-    fn render_context_menus(&mut self, frame: &mut Frame) {
-        if self.suppress_chrome_cells {
-            return;
-        }
-        // Only one native context menu is ever open at a time; the shared
-        // core + item labels drive a single generic renderer.
-        let Some((_, core)) = self.active_window().open_context_menu() else {
-            return;
-        };
-        let core = core.clone();
-        let Some(items) = self.active_window().context_menu_labels() else {
-            return;
-        };
-        self.render_context_menu(frame, &core, &items);
     }
 
     /// Drain plugin commands enqueued before this frame's layout pass.
@@ -4719,69 +4800,6 @@ impl Editor {
             // Menu hover is handled by MenuRenderer
             _ => {}
         }
-    }
-
-    /// Render a native context menu (tab / "+" new-tab / file-explorer) from
-    /// its shared geometry core and pre-resolved item labels.
-    ///
-    /// All three menus draw an identical bordered list — a `Clear`ed box, one
-    /// padded row per item, the highlighted row in the highlight colours — so
-    /// this is the single renderer for every one of them. The `ContextMenu`
-    /// core supplies the fixed width and the edge-clamped position, keeping
-    /// the drawn box aligned with the hover/click hit-test that reads the same
-    /// core.
-    fn render_context_menu(
-        &self,
-        frame: &mut Frame,
-        core: &super::types::ContextMenu,
-        items: &[String],
-    ) {
-        use ratatui::style::Style;
-        use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-
-        let menu_width = core.width;
-        let menu_height = core.height();
-        let (menu_x, menu_y) = core.clamped_position(frame.area().width, frame.area().height);
-
-        let area = ratatui::layout::Rect::new(menu_x, menu_y, menu_width, menu_height);
-
-        // Clear the area first so the menu box paints over the content beneath.
-        frame.render_widget(Clear, area);
-
-        let (highlight_fg, highlight_bg, dropdown_fg, dropdown_bg, border_fg) = {
-            let theme = self.theme.read().unwrap();
-            (
-                theme.menu_highlight_fg,
-                theme.menu_highlight_bg,
-                theme.menu_dropdown_fg,
-                theme.menu_dropdown_bg,
-                theme.menu_border_fg,
-            )
-        };
-
-        let mut lines = Vec::new();
-        for (idx, label) in items.iter().enumerate() {
-            let style = if idx == core.highlighted {
-                Style::default().fg(highlight_fg).bg(highlight_bg)
-            } else {
-                Style::default().fg(dropdown_fg).bg(dropdown_bg)
-            };
-
-            // Pad the label to fill the menu width (minus the two border cells).
-            let content_width = (menu_width as usize).saturating_sub(2);
-            let padded_label = format!(" {:<width$}", label, width = content_width - 1);
-
-            lines.push(Line::from(vec![Span::styled(padded_label, style)]));
-        }
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_fg))
-            .style(Style::default().bg(dropdown_bg));
-
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(paragraph, area);
     }
 
     /// Render the tab drag drop zone overlay
