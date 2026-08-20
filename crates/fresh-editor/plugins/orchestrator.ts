@@ -6831,14 +6831,18 @@ interface AgentResumeSpec {
 type AgentPromptArg =
   | { style: "positional" }
   | { style: "flag"; flag: string };
-// How to hand an agent the "drive the Fresh editor from the shell" system
-// prompt when "Teach Fresh CLI" is on: either appended to launch argv behind a
-// flag (`claude --append-system-prompt "…"`), or written into a file the agent
-// reads at startup (`AGENTS.md` for codex/opencode). Absent ⇒ the agent has no
+// How to hand an agent the "drive the Fresh editor from the shell" contract
+// when "Teach Fresh CLI" is on: appended to launch argv behind a flag
+// (`claude --append-system-prompt "…"`), or — for agents with no such flag
+// (codex/opencode) — prepended to the launch prompt. Absent ⇒ the agent has no
 // autonomous shell to drive the editor with, so the checkbox stays hidden.
+//
+// Deliberately not a file: an instruction file written into the workspace
+// lands in the user's repo, where it collides with their own and shows up in
+// `git status`.
 type AgentSystemPrompt =
   | { via: "flag"; flag: string }
-  | { via: "file"; path: string };
+  | { via: "prompt" };
 interface AgentEntry {
   // The command the New Session dropdown fills in and the basename the matcher
   // keys on.
@@ -6903,18 +6907,19 @@ const AGENT_REGISTRY: AgentEntry[] = [
     spec: { continue: { resumeArgs: ["resume", "--last"] } },
     auto: ["--sandbox", "workspace-write", "--ask-for-approval", "never"],
     prompt: { style: "positional" },
-    systemPrompt: { via: "file", path: "AGENTS.md" },
+    systemPrompt: { via: "prompt" },
   },
   {
     // opencode (SST): `--continue` resumes the latest session in the cwd.
     // "Auto"/YOLO mode is config-driven (permissions in opencode.json), so it
-    // has no launch flag — the checkbox is hidden. `--prompt` pre-seeds the TUI.
+    // has no launch flag — the checkbox is hidden. `--prompt` submits the text as
+    // the first message (it does not merely seed the input box).
     id: "opencode",
     label: "opencode",
     match: /^opencode$/,
     spec: { continue: { resumeArgs: ["--continue"] } },
     prompt: { style: "flag", flag: "--prompt" },
-    systemPrompt: { via: "file", path: "AGENTS.md" },
+    systemPrompt: { via: "prompt" },
   },
   {
     // aider keeps its conversation in the repo and reloads it with
@@ -6941,95 +6946,31 @@ const AGENT_REGISTRY: AgentEntry[] = [
 // window its token is bound to, not a list of verbs.
 const FRESH_CLI_ALLOW_SCRIPT = true;
 
-// System prompt injected (via flag or AGENTS.md) when "Teach Fresh CLI" is on.
-// Teaches the agent the verbatim `fresh` CLI verbs it can drive the editor
-// with. Keep the command strings exact — they're the agent's only reference.
+// Contract injected on launch when "Teach Fresh CLI" is on.
+// Deliberately a pointer, not a manual: the editor API is large and moves, so
+// the agent looks each call up with `script api` instead of trusting this text.
 const FRESH_CLI_SYSTEM_PROMPT = [
   "You are running inside a Fresh editor workspace and can drive it \u2014 arrange panes, open files, show output, start other agents \u2014 by submitting TypeScript to the editor's plugin runtime.",
-  "Always invoke the CLI through $FRESH_BIN: it is the exact binary running this workspace.",
+  "Always invoke the CLI through $FRESH_BIN: it is the exact binary running this workspace. FRESH_WINDOW_ID is your window.",
   "",
-  "Run a script (the body is an async function: top-level `await` works, `return value` is the answer and prints as JSON, a throw exits non-zero):",
-  "    \"$FRESH_BIN\" --cmd script run <<'EOF'",
-  "    return editor.describeWorkspace();",
-  "    EOF",
+  "    \"$FRESH_BIN\" --cmd script api <query>    search the editor API by name and docs",
+  "    \"$FRESH_BIN\" --cmd script types          paths of the API declaration files",
+  "    \"$FRESH_BIN\" --cmd script check [FILE]   flag unknown editor.* names without running",
+  "    \"$FRESH_BIN\" --cmd script run [FILE]     evaluate against this workspace (default: stdin)",
   "",
-  "The loop: orient with describeWorkspace(), find the call with `script api <query>`, then act and verify in one script.",
-  "",
-  "RECIPES \u2014 copy and adapt:",
-  "",
-  "  // current layout: panes left-to-right, with geometry, kind (terminal/file/virtual) and focus",
-  "  return editor.describeWorkspace();",
-  "",
-  "  // README in a new pane to the RIGHT of what is there now",
-  "  await editor.splitWindow({ direction: \"vertical\", place: \"after\", file: \"README.md\" });",
-  "",
-  "  // ...to the LEFT instead, or stacked below",
-  "  await editor.splitWindow({ direction: \"vertical\", place: \"before\", file: \"README.md\" });",
-  "  await editor.splitWindow({ direction: \"horizontal\", place: \"after\", file: \"notes.md\" });",
-  "",
-  "  // ...without stealing focus from the pane the user is working in",
-  "  await editor.splitWindow({ direction: \"horizontal\", place: \"after\", file: \"notes.md\", keepFocus: true });",
-  "",
-  "  // open a file at a line, in a pane you name",
-  "  const ws = editor.describeWorkspace();",
-  "  editor.openFileInSplit(ws.panes[0].splitId, \"src/main.rs\", 42);",
-  "",
-  "  // show text you produced: write a file, then open it \u2014 you get highlighting, search, save, and ANSI colour",
-  "  await editor.splitWindow({ file: \"/tmp/report.md\" });",
-  "",
-  "  // new workspace on its own git worktree, running an agent; resolves once it is up",
-  "  const orch = editor.getPluginApi(\"orchestrator\");",
-  "  return await orch.newWorkspace({ path: \"/repo\", agent: \"claude\", prompt: \"fix the flaky test\", newBranch: \"fix/flaky\" });",
-  "",
-  "  // teach a human the code you just wrote: author a tour, then open it in the dock",
-  "  // steps are {step_id, title, file_path, lines: [from, to] (1-indexed, inclusive), explanation (markdown)}",
-  "  editor.writeFile(\"/repo/.fresh-tour.json\", JSON.stringify({",
-  "    title: \"Request pipeline\", description: \"How a request reaches the handler\",",
-  "    schema_version: \"1.0\", steps: [",
-  "      { step_id: 1, title: \"Entry point\", file_path: \"src/main.rs\", lines: [1, 40],",
-  "        explanation: \"## Where it starts\\n\\nThe listener is built here.\\n\\n- binds the socket\\n- spawns the accept loop\" },",
-  "    ],",
-  "  }, null, 2));",
-  "  return await editor.getPluginApi(\"code-tour\").openTour(\".fresh-tour.json\");",
-  "",
-  "  // an agent in THIS workspace, and what workspaces exist",
-  "  await orch.runAgent({ agent: \"claude\", prompt: \"...\" });",
-  "  return orch.listWorkspaces();",
-  "",
-  "  // after a mutation that does not answer, flush before reading",
-  "  editor.setSplitRatio(splitId, 0.3);",
-  "  await editor.flush();",
-  "  return editor.describeWorkspace();",
-  "",
-  "`direction` names the divider: \"vertical\" = side by side, \"horizontal\" = stacked. `place` is \"before\" (left/top) or \"after\" (right/bottom, the default).",
-  "Mutations are queued, so a read in the same script sees the state from before them \u2014 await the mutation (those that answer resolve once applied) or `await editor.flush()`.",
-  "Finding anything else: `\"$FRESH_BIN\" --cmd script api <query>` searches the whole API by name and docs; `--cmd script check <file>` flags unknown editor.* names without running; `--cmd script types` prints the .d.ts paths.",
-  "Launches answer with {\"workspaceId\",\"windowId\",\"root\"} \u2014 record workspaceId, it survives editor restarts; windowId does not.",
-  "FRESH_WINDOW_ID is your window. After an `await` the focused pane may be someone else's, so prefer calls taking an explicit id.",
+  "Look up every call with `script api` before you use it \u2014 do not guess names or signatures, and do not assume this message lists what exists.",
+  "A script body is an async function: top-level `await` works, `return value` is the answer and prints as JSON, a throw exits non-zero. Mutations are queued, so a read in the same script sees the state from before them \u2014 await the mutation, or `await editor.flush()`.",
   "You are changing a workspace a human is watching: prefer reversible moves, do not close or overwrite panes you were not asked to touch, and read back what you changed before reporting success.",
-  "Scripts run to completion and are then forgotten; whatever they create outlives them.",
 ].join("\n");
 
-// Marker wrapping the injected block so an existing user file (codex/opencode
-// `AGENTS.md`) is amended, never clobbered, and a retry/recovery run stays
-// idempotent (the block is added at most once).
-const FRESH_CLI_BLOCK_START = "<!-- fresh-cli:start -->";
-const FRESH_CLI_BLOCK_END = "<!-- fresh-cli:end -->";
-
-// Write (or append) the Fresh CLI system prompt into an agent-read file
-// (`AGENTS.md`). If the file already exists, append a clearly-marked block
-// rather than overwriting the user's content; otherwise create it fresh.
-function writeFreshCliPromptFile(path: string): void {
-  const block = `${FRESH_CLI_BLOCK_START}\n${FRESH_CLI_SYSTEM_PROMPT}\n${FRESH_CLI_BLOCK_END}\n`;
-  if (editor.fileExists(editor.localPath(path))) {
-    const existing = editor.readFile(editor.localPath(path)) ?? "";
-    // Idempotent on retry / restart-recovery: never stack duplicate blocks.
-    if (existing.includes(FRESH_CLI_BLOCK_START)) return;
-    const sep = existing.length === 0 || existing.endsWith("\n") ? "\n" : "\n\n";
-    editor.writeFile(editor.localPath(path), existing + sep + block);
-  } else {
-    editor.writeFile(editor.localPath(path), block);
+// Fold the contract into an agent's launch prompt, for agents with no
+// append-system-prompt flag. A bare contract with no user prompt would leave
+// the agent with nothing to do, so it is told to acknowledge and wait.
+function combineFreshCliPrompt(contract: string, userPrompt: string): string {
+  if (!userPrompt) {
+    return `${contract}\n\nAcknowledge in one line, then wait for the user's request.`;
   }
+  return `${contract}\n\n---\n\n${userPrompt}`;
 }
 
 // The registry entry a typed command resolves to (by argv0 basename), or null
@@ -7160,16 +7101,19 @@ function resolveAgentLaunch(
   // the first turn and must never be replayed when rejoining the conversation.
   const autoArgs = opts?.auto && entry.auto ? entry.auto : [];
   const prompt = (opts?.prompt ?? "").trim();
-  const promptArgs = prompt && entry.prompt
-    ? agentPromptArgs(entry.prompt, prompt)
-    : [];
-  // "Teach Fresh CLI" for a flag-style agent (claude) rides launch only —
-  // like the start prompt, it seeds the first turn and must not replay on
-  // resume. File-style agents (codex/opencode) get the text written into a
-  // file instead, so they never reach here.
+  // "Teach Fresh CLI" rides launch only — like the start prompt, it seeds the
+  // first turn and must not replay on resume. Flag-style agents (claude) get
+  // it behind their flag; prompt-style agents (codex/opencode) get it in front
+  // of the user's first message, which is why it must stay short.
   const sysPrompt = (opts?.systemPrompt ?? "").trim();
   const sysPromptArgs = sysPrompt && entry.systemPrompt?.via === "flag"
     ? [entry.systemPrompt.flag, sysPrompt]
+    : [];
+  const launchPrompt = sysPrompt && entry.systemPrompt?.via === "prompt"
+    ? combineFreshCliPrompt(sysPrompt, prompt)
+    : prompt;
+  const promptArgs = launchPrompt && entry.prompt
+    ? agentPromptArgs(entry.prompt, launchPrompt)
     : [];
   // Flags first (auto + system prompt), then the (trailing) positional prompt
   // so a positional start-prompt stays last.
@@ -9522,20 +9466,16 @@ async function runLocalCreate(id: number): Promise<void> {
   if (cmd) appendHistory("cmd", cmd);
   if (createWorktree) appendHistory("branch", reportedBranch);
 
-  // "Teach Fresh CLI": inject the CLI system prompt and (below) mint a
-  // capability token. `via: "file"` writes an AGENTS.md the agent reads at
-  // startup; `via: "flag"` rides the launch argv (resolved just below).
+  // "Teach Fresh CLI": inject the CLI contract and (below) mint a capability
+  // token. Both `via` forms ride the launch argv, resolved just below.
   const teachEntry = spec.teachFreshCli ? agentEntryForCmd(cmd) : null;
   const teach = teachEntry?.systemPrompt ?? null;
-  if (teach?.via === "file") {
-    writeFreshCliPromptFile(editor.pathJoin(root, teach.path));
-  }
 
   const argv = splitAgentCmd(cmd);
   const { launch: launchArgv, resume: resumeArgv } = resolveAgentLaunch(argv, {
     auto: spec.auto,
     prompt: spec.startPrompt,
-    systemPrompt: teach?.via === "flag" ? FRESH_CLI_SYSTEM_PROMPT : undefined,
+    systemPrompt: teach ? FRESH_CLI_SYSTEM_PROMPT : undefined,
   });
   const sharedWorktree = !createWorktree && !isLinkedAttach;
 
@@ -9938,10 +9878,9 @@ interface RunAgentLaunchOpts {
 
 // Launch `cmd` as a terminal in the CURRENT window — no new worktree, no new
 // window. Reuses `resolveAgentLaunch` for the argv (session-id pin, auto
-// flags, flag-style system prompt) and mints the same capability token the
+// flags, the Fresh CLI contract) and mints the same capability token the
 // dialogue does via the extended `createTerminal`, so the agent can drive the
-// editor exactly like a dialogue-launched one. File-style system prompts
-// (codex/opencode `AGENTS.md`) are written into the current cwd.
+// editor exactly like a dialogue-launched one.
 async function launchAgentInCurrentWorkspace(
   cmd: string,
   opts: RunAgentLaunchOpts,
@@ -9949,13 +9888,10 @@ async function launchAgentInCurrentWorkspace(
   const trimmedCmd = cmd.trim();
   const cwd = editor.getCwd();
   const entry = agentEntryForCmd(trimmedCmd);
-  // "Teach Fresh CLI": inject the CLI system prompt (via flag on launch, or by
-  // writing AGENTS.md for file-style agents). The capability token is minted
-  // regardless (see `allowScript` below) — `teach` only gates the prompt.
+  // "Teach Fresh CLI": inject the CLI contract on launch. The capability token
+  // is minted regardless (see `allowScript` below) — `teach` only gates the
+  // contract.
   const teach = opts.teachFreshCli && entry?.systemPrompt ? entry.systemPrompt : null;
-  if (teach?.via === "file") {
-    writeFreshCliPromptFile(editor.pathJoin(cwd, teach.path));
-  }
   const argv = splitAgentCmd(trimmedCmd);
   // Keep the resume argv: it is what lets a finished agent be picked back up
   // (status-bar "Resume claude", or a workspace restore) instead of relaunching
@@ -9964,7 +9900,7 @@ async function launchAgentInCurrentWorkspace(
   const { launch, resume } = resolveAgentLaunch(argv, {
     auto: opts.auto,
     prompt: opts.prompt,
-    systemPrompt: teach?.via === "flag" ? FRESH_CLI_SYSTEM_PROMPT : undefined,
+    systemPrompt: teach ? FRESH_CLI_SYSTEM_PROMPT : undefined,
   });
   if (trimmedCmd) editor.setGlobalState("orchestrator.last_cmd", trimmedCmd);
   try {
