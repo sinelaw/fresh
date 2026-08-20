@@ -1,23 +1,26 @@
 {
-  "inherits": null,
+  "inherits": "default",
+  "comment": "Emacs keymap. Inherits the default keymap so every context (settings, completion, terminal, search prompt, dock, file explorer, LSP, multi-cursor, ...) keeps a working set of keys, then overrides the ones Emacs users reach for. Only the Emacs-specific bindings live here; anything not listed behaves like the default keymap.",
   "bindings": [
     {
-      "comment": "M-x - execute extended command (command palette)",
+      "comment": "M-x - execute extended command. Overrides the default Alt+X menu mnemonic. Bound to `quick_open` rather than the identical `command_palette` so the status bar's palette hint (which looks up `quick_open`) names M-x.",
       "key": "x",
       "modifiers": ["alt"],
-      "action": "command_palette",
+      "action": "quick_open",
       "args": {},
       "when": "global"
     },
     {
-      "key": "F10",
-      "modifiers": [],
-      "action": "menu_activate",
+      "comment": "C-p is previous-line, everywhere — not the default global palette shortcut, which would leave the status bar advertising a key that moves the cursor instead.",
+      "key": "p",
+      "modifiers": ["ctrl"],
+      "action": "noop",
       "args": {},
       "when": "global"
     },
+
     {
-      "comment": "Emacs movement - C-f/b/n/p",
+      "comment": "Character/line movement - C-f/C-b/C-n/C-p, C-a/C-e",
       "key": "f",
       "modifiers": ["ctrl"],
       "action": "move_right",
@@ -60,7 +63,24 @@
       "when": "normal"
     },
     {
-      "comment": "Word movement - M-f/b and Ctrl+arrows",
+      "comment": "Home behaves like C-a (true beginning of line), not the default smart-home",
+      "key": "Home",
+      "modifiers": [],
+      "action": "move_line_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-m - back-to-indentation",
+      "key": "m",
+      "modifiers": ["alt"],
+      "action": "smart_home",
+      "args": {},
+      "when": "normal"
+    },
+
+    {
+      "comment": "Word movement - M-f/M-b and Ctrl+arrows",
       "key": "f",
       "modifiers": ["alt"],
       "action": "move_word_right",
@@ -75,21 +95,114 @@
       "when": "normal"
     },
     {
-      "key": "Left",
-      "modifiers": ["ctrl"],
-      "action": "move_word_left",
-      "args": {},
-      "when": "normal"
-    },
-    {
       "key": "Right",
       "modifiers": ["ctrl"],
       "action": "move_word_right",
       "args": {},
       "when": "normal"
     },
+
     {
-      "comment": "Clipboard - C-w (kill), M-w (copy), C-y (yank)",
+      "comment": "M-< / M-> - beginning/end of buffer. Bound on the shifted character itself: a terminal sends Alt+Shift+, as ESC '<', so `key: \",\"` never matches. The alt+shift variant covers terminals (kitty protocol) that do report Shift alongside the shifted glyph.",
+      "key": "<",
+      "modifiers": ["alt"],
+      "action": "move_document_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "<",
+      "modifiers": ["alt", "shift"],
+      "action": "move_document_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": ">",
+      "modifiers": ["alt"],
+      "action": "move_document_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": ">",
+      "modifiers": ["alt", "shift"],
+      "action": "move_document_end",
+      "args": {},
+      "when": "normal"
+    },
+
+    {
+      "comment": "M-{ / M-} - backward/forward paragraph",
+      "key": "{",
+      "modifiers": ["alt"],
+      "action": "move_to_paragraph_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "{",
+      "modifiers": ["alt", "shift"],
+      "action": "move_to_paragraph_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "}",
+      "modifiers": ["alt"],
+      "action": "move_to_paragraph_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "}",
+      "modifiers": ["alt", "shift"],
+      "action": "move_to_paragraph_down",
+      "args": {},
+      "when": "normal"
+    },
+
+    {
+      "comment": "C-v / M-v - page down/up",
+      "key": "v",
+      "modifiers": ["ctrl"],
+      "action": "move_page_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "v",
+      "modifiers": ["alt"],
+      "action": "move_page_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Scrolling without moving the cursor - Alt+arrows",
+      "key": "Up",
+      "modifiers": ["alt"],
+      "action": "scroll_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["alt"],
+      "action": "scroll_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-l - recenter",
+      "key": "l",
+      "modifiers": ["ctrl"],
+      "action": "recenter",
+      "args": {},
+      "when": "normal"
+    },
+
+    {
+      "comment": "Clipboard - C-w (kill region), M-w (copy region), C-y (yank)",
       "key": "w",
       "modifiers": ["ctrl"],
       "action": "cut",
@@ -110,59 +223,189 @@
       "args": {},
       "when": "normal"
     },
+
     {
-      "comment": "C-g - keyboard quit",
+      "comment": "C-SPC - set mark (start selection)",
+      "key": " ",
+      "modifiers": ["ctrl"],
+      "action": "set_mark",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-g - keyboard quit: drops extra cursors and cancels mark mode",
       "key": "g",
       "modifiers": ["ctrl"],
       "action": "remove_secondary_cursors",
       "args": {},
       "when": "normal"
     },
+
     {
-      "key": "g",
+      "comment": "C-d - delete char forward, M-d - kill word forward, M-DEL - kill word backward",
+      "key": "d",
       "modifiers": ["ctrl"],
-      "action": "prompt_cancel",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "g",
-      "modifiers": ["ctrl"],
-      "action": "popup_cancel",
-      "args": {},
-      "when": "popup"
-    },
-    {
-      "comment": "Transfer keyboard focus to the topmost popup (LSP popups appear unfocused so they don't swallow the next keystroke). Scoped to non-modal contexts so a user-overridden alt+t in normal/fileExplorer still wins at the same precedence level.",
-      "key": "t",
-      "modifiers": ["alt"],
-      "action": "popup_focus",
+      "action": "delete_forward",
       "args": {},
       "when": "normal"
     },
     {
-      "key": "t",
+      "key": "d",
       "modifiers": ["alt"],
-      "action": "popup_focus",
+      "action": "delete_word_forward",
       "args": {},
-      "when": "fileExplorer"
+      "when": "normal"
     },
     {
-      "key": "g",
+      "key": "Backspace",
+      "modifiers": ["alt"],
+      "action": "delete_word_backward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-k - kill to end of line (Emacs kill-line), not the whole line",
+      "key": "k",
       "modifiers": ["ctrl"],
-      "action": "focus_editor",
+      "action": "delete_to_line_end",
       "args": {},
-      "when": "file_explorer"
+      "when": "normal"
     },
     {
-      "key": "g",
+      "comment": "C-S-DEL - kill whole line. On the Delete key: `normalize_key` folds Shift off Backspace, so Ctrl+Shift+Backspace would be unreachable behind Ctrl+Backspace.",
+      "key": "Delete",
+      "modifiers": ["ctrl", "shift"],
+      "action": "delete_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-t - transpose chars, C-o - open line",
+      "key": "t",
       "modifiers": ["ctrl"],
-      "action": "menu_close",
+      "action": "transpose_chars",
       "args": {},
-      "when": "menu"
+      "when": "normal"
     },
     {
-      "comment": "C-x prefix commands (chords)",
+      "key": "o",
+      "modifiers": ["ctrl"],
+      "action": "open_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-; - comment-dwim",
+      "key": ";",
+      "modifiers": ["alt"],
+      "action": "toggle_comment",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-/ - dabbrev-expand (overrides the default Alt+/ live grep, which stays on the palette and the Search menu)",
+      "key": "/",
+      "modifiers": ["alt"],
+      "action": "dabbrev_expand",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-TAB (C-M-i) - completion at point",
+      "key": "Tab",
+      "modifiers": ["alt"],
+      "action": "lsp_completion",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "M-. / M-, - xref find definition / pop back",
+      "key": ".",
+      "modifiers": ["alt"],
+      "action": "lsp_goto_definition",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": ",",
+      "modifiers": ["alt"],
+      "action": "navigate_back",
+      "args": {},
+      "when": "normal"
+    },
+
+    {
+      "comment": "Undo - C-/ (and its C-_ / C-7 terminal spellings)",
+      "key": "/",
+      "modifiers": ["ctrl"],
+      "action": "undo",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "-",
+      "modifiers": ["ctrl"],
+      "action": "undo",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Redo - M-_ . Emacs has no redo; this mirrors C-_ so the editor's redo stays reachable (C-y is yank here).",
+      "key": "_",
+      "modifiers": ["alt"],
+      "action": "redo",
+      "args": {},
+      "when": "normal"
+    },
+
+    {
+      "comment": "C-s - isearch forward (opens the search prompt), C-r - search backwards",
+      "key": "s",
+      "modifiers": ["ctrl"],
+      "action": "search",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "r",
+      "modifiers": ["ctrl"],
+      "action": "find_previous",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-s / C-r repeat the search while the search prompt is open (isearch style)",
+      "key": "s",
+      "modifiers": ["ctrl"],
+      "action": "find_next",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "key": "r",
+      "modifiers": ["ctrl"],
+      "action": "find_previous",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "comment": "M-% - query replace. Bound on the shifted character; see the M-< note above.",
+      "key": "%",
+      "modifiers": ["alt"],
+      "action": "query_replace",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "%",
+      "modifiers": ["alt", "shift"],
+      "action": "query_replace",
+      "args": {},
+      "when": "normal"
+    },
+
+    {
+      "comment": "C-x C-s - save buffer",
       "keys": [
         {"key": "x", "modifiers": ["ctrl"]},
         {"key": "s", "modifiers": ["ctrl"]}
@@ -172,6 +415,27 @@
       "when": "normal"
     },
     {
+      "comment": "C-x s - save some buffers",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "s", "modifiers": []}
+      ],
+      "action": "save_all",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x C-w - write file (save as)",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "w", "modifiers": ["ctrl"]}
+      ],
+      "action": "save_as",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x C-f - find file",
       "keys": [
         {"key": "x", "modifiers": ["ctrl"]},
         {"key": "f", "modifiers": ["ctrl"]}
@@ -181,6 +445,7 @@
       "when": "normal"
     },
     {
+      "comment": "C-x C-c - save buffers and quit",
       "keys": [
         {"key": "x", "modifiers": ["ctrl"]},
         {"key": "c", "modifiers": ["ctrl"]}
@@ -196,6 +461,74 @@
         {"key": "k", "modifiers": []}
       ],
       "action": "close",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x b / C-x C-b - switch to buffer / list buffers",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "b", "modifiers": []}
+      ],
+      "action": "quick_open_buffers",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "b", "modifiers": ["ctrl"]}
+      ],
+      "action": "quick_open_buffers",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x Right / C-x Left - next / previous buffer",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "Right", "modifiers": []}
+      ],
+      "action": "next_buffer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "Left", "modifiers": []}
+      ],
+      "action": "prev_buffer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x u - undo",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "u", "modifiers": []}
+      ],
+      "action": "undo",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x h - mark whole buffer (select all)",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "h", "modifiers": []}
+      ],
+      "action": "select_all",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "C-x d - dired (file explorer)",
+      "keys": [
+        {"key": "x", "modifiers": ["ctrl"]},
+        {"key": "d", "modifiers": []}
+      ],
+      "action": "toggle_file_explorer",
       "args": {},
       "when": "normal"
     },
@@ -240,7 +573,7 @@
       "when": "normal"
     },
     {
-      "comment": "M-g g - goto line",
+      "comment": "M-g g / M-g M-g - goto line",
       "keys": [
         {"key": "g", "modifiers": ["alt"]},
         {"key": "g", "modifiers": []}
@@ -250,352 +583,20 @@
       "when": "normal"
     },
     {
-      "comment": "M-d - kill word forward",
-      "key": "d",
-      "modifiers": ["alt"],
-      "action": "delete_word_forward",
+      "keys": [
+        {"key": "g", "modifiers": ["alt"]},
+        {"key": "g", "modifiers": ["alt"]}
+      ],
+      "action": "goto_line",
       "args": {},
       "when": "normal"
     },
+
     {
-      "comment": "M-Backspace - kill word backward",
-      "key": "Backspace",
-      "modifiers": ["alt"],
-      "action": "delete_word_backward",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "M-< - beginning of buffer",
-      "key": ",",
-      "modifiers": ["alt", "shift"],
-      "action": "move_document_start",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "M-> - end of buffer",
-      "key": ".",
-      "modifiers": ["alt", "shift"],
-      "action": "move_document_end",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "M-% - query replace",
-      "key": "5",
-      "modifiers": ["alt", "shift"],
-      "action": "query_replace",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "C-t - transpose chars",
-      "key": "t",
+      "comment": "Minibuffer (prompt) - Emacs line editing",
+      "key": "g",
       "modifiers": ["ctrl"],
-      "action": "transpose_chars",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "C-o - open line (insert newline, stay on line)",
-      "key": "o",
-      "modifiers": ["ctrl"],
-      "action": "open_line",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "C-l - recenter (scroll cursor to center)",
-      "key": "l",
-      "modifiers": ["ctrl"],
-      "action": "recenter",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "C-SPC - set mark (start selection)",
-      "key": " ",
-      "modifiers": ["ctrl"],
-      "action": "set_mark",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "Arrow keys still work",
-      "key": "Left",
-      "modifiers": [],
-      "action": "move_left",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Right",
-      "modifiers": [],
-      "action": "move_right",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Up",
-      "modifiers": [],
-      "action": "move_up",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Down",
-      "modifiers": [],
-      "action": "move_down",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "Shift+arrows for selection",
-      "key": "Left",
-      "modifiers": ["shift"],
-      "action": "select_left",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Right",
-      "modifiers": ["shift"],
-      "action": "select_right",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Up",
-      "modifiers": ["shift"],
-      "action": "select_up",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Down",
-      "modifiers": ["shift"],
-      "action": "select_down",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "Scrolling - Alt+arrows",
-      "key": "Up",
-      "modifiers": ["alt"],
-      "action": "scroll_up",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Down",
-      "modifiers": ["alt"],
-      "action": "scroll_down",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "C-v/M-v - page down/up",
-      "key": "v",
-      "modifiers": ["ctrl"],
-      "action": "move_page_down",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "v",
-      "modifiers": ["alt"],
-      "action": "move_page_up",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "C-s - isearch forward",
-      "key": "s",
-      "modifiers": ["ctrl"],
-      "action": "search",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "C-d - delete char forward",
-      "key": "d",
-      "modifiers": ["ctrl"],
-      "action": "delete_forward",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "C-k - kill line",
-      "key": "k",
-      "modifiers": ["ctrl"],
-      "action": "delete_line",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "Basic editing",
-      "key": "Backspace",
-      "modifiers": [],
-      "action": "delete_backward",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Delete",
-      "modifiers": [],
-      "action": "delete_forward",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Enter",
-      "modifiers": [],
-      "action": "insert_newline",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Tab",
-      "modifiers": [],
-      "action": "insert_tab",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "Home/End keys",
-      "key": "Home",
-      "modifiers": [],
-      "action": "move_line_start",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "End",
-      "modifiers": [],
-      "action": "move_line_end",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "Home",
-      "modifiers": ["ctrl"],
-      "action": "move_document_start",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "End",
-      "modifiers": ["ctrl"],
-      "action": "move_document_end",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "PageUp",
-      "modifiers": [],
-      "action": "move_page_up",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "key": "PageDown",
-      "modifiers": [],
-      "action": "move_page_down",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "Undo - C-/ or C-_",
-      "key": "/",
-      "modifiers": ["ctrl"],
-      "action": "undo",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "Escape - cancel/quit",
-      "key": "Escape",
-      "modifiers": [],
-      "action": "remove_secondary_cursors",
-      "args": {},
-      "when": "normal"
-    },
-    {
-      "comment": "Prompt context bindings",
-      "key": "Enter",
-      "modifiers": [],
-      "action": "prompt_confirm",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "Escape",
-      "modifiers": [],
       "action": "prompt_cancel",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "Backspace",
-      "modifiers": [],
-      "action": "prompt_backspace",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "Left",
-      "modifiers": [],
-      "action": "prompt_move_left",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "Right",
-      "modifiers": [],
-      "action": "prompt_move_right",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "Up",
-      "modifiers": [],
-      "action": "prompt_select_prev",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "Down",
-      "modifiers": [],
-      "action": "prompt_select_next",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "Home",
-      "modifiers": [],
-      "action": "prompt_move_start",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "End",
-      "modifiers": [],
-      "action": "prompt_move_end",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "Tab",
-      "modifiers": [],
-      "action": "prompt_accept_suggestion",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "y",
-      "modifiers": ["ctrl"],
-      "action": "prompt_paste",
       "args": {},
       "when": "prompt"
     },
@@ -614,35 +615,92 @@
       "when": "prompt"
     },
     {
-      "comment": "Popup context bindings",
-      "key": "Enter",
-      "modifiers": [],
-      "action": "popup_confirm",
+      "key": "f",
+      "modifiers": ["ctrl"],
+      "action": "prompt_move_right",
       "args": {},
-      "when": "popup"
+      "when": "prompt"
     },
     {
-      "key": "Escape",
-      "modifiers": [],
-      "action": "popup_cancel",
+      "key": "b",
+      "modifiers": ["ctrl"],
+      "action": "prompt_move_left",
       "args": {},
-      "when": "popup"
+      "when": "prompt"
     },
     {
-      "key": "Up",
-      "modifiers": [],
-      "action": "popup_select_prev",
+      "key": "f",
+      "modifiers": ["alt"],
+      "action": "prompt_move_word_right",
       "args": {},
-      "when": "popup"
+      "when": "prompt"
     },
     {
-      "key": "Down",
-      "modifiers": [],
-      "action": "popup_select_next",
+      "key": "b",
+      "modifiers": ["alt"],
+      "action": "prompt_move_word_left",
       "args": {},
-      "when": "popup"
+      "when": "prompt"
     },
     {
+      "key": "n",
+      "modifiers": ["ctrl"],
+      "action": "prompt_select_next",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "p",
+      "modifiers": ["ctrl"],
+      "action": "prompt_select_prev",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "d",
+      "modifiers": ["ctrl"],
+      "action": "prompt_delete",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "d",
+      "modifiers": ["alt"],
+      "action": "prompt_delete_word_forward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Backspace",
+      "modifiers": ["alt"],
+      "action": "prompt_delete_word_backward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "k",
+      "modifiers": ["ctrl"],
+      "action": "prompt_delete_to_line_end",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "w",
+      "modifiers": ["ctrl"],
+      "action": "prompt_cut",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "y",
+      "modifiers": ["ctrl"],
+      "action": "prompt_paste",
+      "args": {},
+      "when": "prompt"
+    },
+
+    {
+      "comment": "Popups - C-n/C-p to move, C-g to dismiss",
       "key": "n",
       "modifiers": ["ctrl"],
       "action": "popup_select_next",
@@ -657,154 +715,101 @@
       "when": "popup"
     },
     {
-      "comment": "File explorer context",
-      "key": "Escape",
-      "modifiers": [],
-      "action": "focus_editor",
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "popup_cancel",
       "args": {},
-      "when": "file_explorer"
+      "when": "popup"
+    },
+
+    {
+      "comment": "Completion popup - C-n/C-p to move, C-g to dismiss",
+      "key": "n",
+      "modifiers": ["ctrl"],
+      "action": "popup_select_next",
+      "args": {},
+      "when": "completion"
     },
     {
-      "key": "Up",
-      "modifiers": [],
-      "action": "file_explorer_up",
+      "key": "p",
+      "modifiers": ["ctrl"],
+      "action": "popup_select_prev",
       "args": {},
-      "when": "file_explorer"
+      "when": "completion"
     },
     {
-      "key": "Down",
-      "modifiers": [],
-      "action": "file_explorer_down",
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "completion_dismiss",
       "args": {},
-      "when": "file_explorer"
+      "when": "completion"
     },
+
     {
-      "key": "Enter",
-      "modifiers": [],
-      "action": "file_explorer_open",
-      "args": {},
-      "when": "file_explorer"
-    },
-    {
-      "key": "Right",
-      "modifiers": [],
-      "action": "file_explorer_expand",
-      "args": {},
-      "when": "file_explorer"
-    },
-    {
-      "key": "Left",
-      "modifiers": [],
-      "action": "file_explorer_collapse",
-      "args": {},
-      "when": "file_explorer"
-    },
-    {
-      "comment": "Menu context",
-      "key": "Escape",
-      "modifiers": [],
-      "action": "menu_close",
-      "args": {},
-      "when": "menu"
-    },
-    {
-      "key": "Enter",
-      "modifiers": [],
-      "action": "menu_execute",
-      "args": {},
-      "when": "menu"
-    },
-    {
-      "key": "Up",
-      "modifiers": [],
-      "action": "menu_up",
-      "args": {},
-      "when": "menu"
-    },
-    {
-      "key": "Down",
-      "modifiers": [],
+      "comment": "Menus - C-n/C-p/C-f/C-b to move, C-g to close",
+      "key": "n",
+      "modifiers": ["ctrl"],
       "action": "menu_down",
       "args": {},
       "when": "menu"
     },
     {
-      "key": "Left",
-      "modifiers": [],
-      "action": "menu_left",
+      "key": "p",
+      "modifiers": ["ctrl"],
+      "action": "menu_up",
       "args": {},
       "when": "menu"
     },
     {
-      "key": "Right",
-      "modifiers": [],
+      "key": "f",
+      "modifiers": ["ctrl"],
       "action": "menu_right",
       "args": {},
       "when": "menu"
     },
     {
-      "comment": "Play last recorded macro (F4)",
-      "key": "F4",
-      "modifiers": [],
-      "action": "play_last_macro",
+      "key": "b",
+      "modifiers": ["ctrl"],
+      "action": "menu_left",
       "args": {},
-      "when": "normal"
+      "when": "menu"
     },
     {
-      "comment": "Open the Remote Indicator menu (Local / SSH / Container actions)",
-      "key": "F6",
-      "modifiers": [],
-      "action": "show_remote_indicator_menu",
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "menu_close",
       "args": {},
-      "when": "global"
+      "when": "menu"
+    },
+
+    {
+      "comment": "File explorer - C-n/C-p to move, C-g / Esc back to the editor",
+      "key": "n",
+      "modifiers": ["ctrl"],
+      "action": "file_explorer_down",
+      "args": {},
+      "when": "file_explorer"
     },
     {
-      "comment": "Composite buffer context - Close view (q)",
-      "key": "q",
-      "modifiers": [],
-      "action": "close",
+      "key": "p",
+      "modifiers": ["ctrl"],
+      "action": "file_explorer_up",
       "args": {},
-      "when": "compositeBuffer"
+      "when": "file_explorer"
     },
     {
-      "comment": "Composite buffer context - Close view (Esc)",
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "focus_editor",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
       "key": "Escape",
       "modifiers": [],
-      "action": "close",
+      "action": "focus_editor",
       "args": {},
-      "when": "compositeBuffer"
-    },
-    {
-      "comment": "Composite buffer context - Next hunk (n)",
-      "key": "n",
-      "modifiers": [],
-      "action": "composite_next_hunk",
-      "args": {},
-      "when": "compositeBuffer"
-    },
-    {
-      "comment": "Composite buffer context - Previous hunk (p)",
-      "key": "p",
-      "modifiers": [],
-      "action": "composite_prev_hunk",
-      "args": {},
-      "when": "compositeBuffer"
-    },
-    {
-      "comment": "Composite buffer context - Next hunk (])",
-      "key": "]",
-      "modifiers": [],
-      "action": "composite_next_hunk",
-      "args": {},
-      "when": "compositeBuffer"
-    },
-    {
-      "comment": "Composite buffer context - Previous hunk ([)",
-      "key": "[",
-      "modifiers": [],
-      "action": "composite_prev_hunk",
-      "args": {},
-      "when": "compositeBuffer"
+      "when": "file_explorer"
     }
   ]
 }

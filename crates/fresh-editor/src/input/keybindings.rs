@@ -1627,6 +1627,14 @@ pub struct KeybindingResolver {
     /// Plugin default chord bindings (for mode chord bindings from defineMode)
     plugin_chord_defaults: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
 
+    /// Entries of `default_bindings` that were not written by the keymap
+    /// itself but synthesized by [`terminal_key_equivalents`] (e.g. the
+    /// `Ctrl+7` alias a `Ctrl+/` binding registers). An explicit binding
+    /// outranks such an alias no matter which order they load in, so a
+    /// child keymap that rebinds `Ctrl+/` also takes over `Ctrl+7`
+    /// instead of leaving the parent's action stranded on the alias.
+    default_binding_aliases: std::collections::HashSet<(KeyContext, (KeyCode, KeyModifiers))>,
+
     /// Plugin modes that want unbound keys to fall through to Normal
     /// bindings (motion, selection, copy). Populated by `defineMode` when
     /// `inheritNormalBindings: true`.
@@ -1682,6 +1690,7 @@ impl KeybindingResolver {
             chord_bindings: HashMap::new(),
             default_chord_bindings: HashMap::new(),
             plugin_chord_defaults: HashMap::new(),
+            default_binding_aliases: std::collections::HashSet::new(),
             inheriting_modes: std::collections::HashSet::new(),
             menu_mnemonics_enabled: config.editor.menu_bar_mnemonics,
         };
@@ -1783,18 +1792,32 @@ impl KeybindingResolver {
         action: Action,
         key_name: &str,
     ) {
-        let context_bindings = self.default_bindings.entry(context.clone()).or_default();
-
-        // Insert the primary binding
-        context_bindings.insert((key_code, modifiers), action.clone());
+        // Insert the primary binding. It is explicit, so it also reclaims
+        // the slot from any alias a previously loaded binding synthesized
+        // for it (a parent keymap's `Ctrl+/` registers `Ctrl+7`; a child
+        // rebinding `Ctrl+/` must take `Ctrl+7` with it).
+        self.default_bindings
+            .entry(context.clone())
+            .or_default()
+            .insert((key_code, modifiers), action.clone());
+        self.default_binding_aliases
+            .remove(&(context.clone(), (key_code, modifiers)));
 
         // Get terminal key equivalents and add them as aliases
         let equivalents = terminal_key_equivalents(key_code, modifiers);
         for (equiv_key, equiv_mods) in equivalents {
-            // Check if this equivalent is already bound
-            if let Some(existing_action) = context_bindings.get(&(equiv_key, equiv_mods)) {
+            let slot = (context.clone(), (equiv_key, equiv_mods));
+            // An *explicit* binding for the equivalent chord wins; another
+            // alias does not, so the newer binding's alias replaces it.
+            let existing_explicit = self
+                .default_bindings
+                .get(&context)
+                .and_then(|m| m.get(&(equiv_key, equiv_mods)))
+                .filter(|_| !self.default_binding_aliases.contains(&slot))
+                .cloned();
+            if let Some(existing_action) = existing_explicit {
                 // Only warn if bound to a DIFFERENT action
-                if existing_action != &action {
+                if existing_action != action {
                     let equiv_name = format!("{:?}", equiv_key);
                     tracing::warn!(
                         "Terminal key equivalent conflict in {:?} context: {} (equivalent of {}) \
@@ -1810,8 +1833,12 @@ impl KeybindingResolver {
                 }
                 // Don't override explicit bindings with auto-generated equivalents
             } else {
-                // Add the equivalent binding
-                context_bindings.insert((equiv_key, equiv_mods), action.clone());
+                // Add (or refresh) the equivalent binding
+                self.default_bindings
+                    .entry(context.clone())
+                    .or_default()
+                    .insert((equiv_key, equiv_mods), action.clone());
+                self.default_binding_aliases.insert(slot);
             }
         }
     }
@@ -4363,6 +4390,178 @@ mod tests {
     /// be dead because a broader binding shadows its chord. This is what
     /// keeps the resolver's precedence rule and the keymap data honest with
     /// each other (the old global-first order shipped four dead entries).
+    /// A keymap that rebinds a chord must take its terminal-equivalent
+    /// spelling with it. `default` binds Ctrl+/ (which also registers the
+    /// Ctrl+7 alias many terminals send); `emacs` rebinds Ctrl+/ to Undo, so
+    /// Ctrl+7 must be Undo too — otherwise the same physical keypress means
+    /// Undo or Toggle Comment depending on the terminal.
+    #[test]
+    fn child_keymap_override_claims_the_terminal_equivalent() {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+
+        for key in ['/', '7'] {
+            let event = KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL);
+            assert_eq!(
+                resolver.resolve(&event, KeyContext::Normal),
+                Action::Undo,
+                "Ctrl+{} must resolve to the emacs binding, not default's",
+                key
+            );
+        }
+        // Same for the Ctrl+Space / Ctrl+@ pair: default binds it to LSP
+        // completion, emacs to set-mark.
+        for key in [' ', '@'] {
+            let event = KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL);
+            assert_eq!(
+                resolver.resolve(&event, KeyContext::Normal),
+                Action::SetMark,
+                "Ctrl+{:?} must resolve to the emacs binding, not default's",
+                key
+            );
+        }
+    }
+
+    /// The emacs keymap inherits `default`, so every context the editor can
+    /// put the keyboard into keeps a working set of keys. Before this it was
+    /// the one built-in map with `inherits: null` and left whole contexts
+    /// (completion, search prompt, terminal, dock, settings) unbound.
+    #[test]
+    fn emacs_keymap_inherits_the_default_contexts() {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+
+        let cases: &[(KeyContext, KeyCode, KeyModifiers, Action)] = &[
+            (
+                KeyContext::Completion,
+                KeyCode::Tab,
+                KeyModifiers::NONE,
+                Action::CompletionAccept,
+            ),
+            (
+                KeyContext::SearchPrompt,
+                KeyCode::Char('c'),
+                KeyModifiers::ALT,
+                Action::ToggleSearchCaseSensitive,
+            ),
+            (
+                KeyContext::Terminal,
+                KeyCode::Char(']'),
+                KeyModifiers::CONTROL,
+                Action::TerminalEscape,
+            ),
+            (
+                KeyContext::Normal,
+                KeyCode::Char(']'),
+                KeyModifiers::CONTROL,
+                Action::GoToMatchingBracket,
+            ),
+            (
+                KeyContext::Normal,
+                KeyCode::Down,
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+                Action::AddCursorBelow,
+            ),
+        ];
+        for (context, code, modifiers, expected) in cases {
+            let event = KeyEvent::new(*code, *modifiers);
+            assert_eq!(
+                &resolver.resolve(&event, context.clone()),
+                expected,
+                "emacs keymap lost the inherited {:?} binding for {:?}+{:?}",
+                context,
+                modifiers,
+                code
+            );
+        }
+    }
+
+    /// The Emacs bindings whose key was previously spelled as the *unshifted*
+    /// character plus a `shift` modifier (`M-<` as `alt+shift+,`). A terminal
+    /// sends `ESC <`, so those entries never matched and the commands were
+    /// dead. Guard the shifted spelling that actually fires.
+    #[test]
+    fn emacs_shifted_symbol_bindings_resolve() {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+
+        let cases: &[(char, Action)] = &[
+            ('<', Action::MoveDocumentStart),
+            ('>', Action::MoveDocumentEnd),
+            ('%', Action::QueryReplace),
+        ];
+        for (ch, expected) in cases {
+            let event = KeyEvent::new(KeyCode::Char(*ch), KeyModifiers::ALT);
+            assert_eq!(
+                &resolver.resolve(&event, KeyContext::Normal),
+                expected,
+                "M-{} must fire",
+                ch
+            );
+        }
+    }
+
+    /// Emacs `C-k` is kill-line: it kills from point to end of line. Binding
+    /// it to `delete_line` threw away the text *before* the cursor too.
+    #[test]
+    fn emacs_ctrl_k_kills_to_end_of_line() {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+        let event = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+        assert_eq!(
+            resolver.resolve(&event, KeyContext::Normal),
+            Action::DeleteToLineEnd
+        );
+    }
+
+    /// The `C-x` prefix commands an Emacs user reaches for first.
+    #[test]
+    fn emacs_ctrl_x_chords_are_bound() {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+        let ctrl_x = [(KeyCode::Char('x'), KeyModifiers::CONTROL)];
+
+        let cases: &[(KeyCode, KeyModifiers, Action)] = &[
+            (KeyCode::Char('s'), KeyModifiers::CONTROL, Action::Save),
+            (KeyCode::Char('f'), KeyModifiers::CONTROL, Action::Open),
+            (KeyCode::Char('w'), KeyModifiers::CONTROL, Action::SaveAs),
+            (KeyCode::Char('s'), KeyModifiers::NONE, Action::SaveAll),
+            (KeyCode::Char('u'), KeyModifiers::NONE, Action::Undo),
+            (KeyCode::Char('h'), KeyModifiers::NONE, Action::SelectAll),
+            (
+                KeyCode::Char('b'),
+                KeyModifiers::NONE,
+                Action::QuickOpenBuffers,
+            ),
+        ];
+        for (code, modifiers, expected) in cases {
+            let event = KeyEvent::new(*code, *modifiers);
+            assert_eq!(
+                resolver.resolve_chord(&ctrl_x, &event, KeyContext::Normal),
+                ChordResolution::Complete(expected.clone()),
+                "C-x {:?}+{:?} must run {:?}",
+                modifiers,
+                code,
+                expected
+            );
+        }
+    }
+
     #[test]
     fn test_builtin_keymap_bindings_are_reachable() {
         for map_name in crate::config::KeybindingMapName::BUILTIN_OPTIONS {
