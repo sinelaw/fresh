@@ -125,7 +125,7 @@ pub struct EditBindingState {
 }
 
 impl EditBindingState {
-    fn base_context_options() -> Vec<String> {
+    pub(crate) fn base_context_options() -> Vec<String> {
         vec![
             "global".to_string(),
             "normal".to_string(),
@@ -133,7 +133,7 @@ impl EditBindingState {
             "searchPrompt".to_string(),
             "popup".to_string(),
             "completion".to_string(),
-            "file_explorer".to_string(),
+            "fileExplorer".to_string(),
             "dock".to_string(),
             "menu".to_string(),
             "terminal".to_string(),

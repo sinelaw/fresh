@@ -1,8 +1,21 @@
 //! Helper/utility functions for the keybinding editor.
 
 use crate::config::KeyPress;
-use crate::input::keybindings::{format_keybinding, KeybindingResolver};
+use crate::input::keybindings::{format_keybinding, KeyContext, KeybindingResolver};
 use crossterm::event::{KeyCode, KeyModifiers};
+
+/// The canonical spelling of a `when` clause.
+///
+/// `KeyContext::from_when_clause` accepts aliases — `file_explorer` and
+/// `fileExplorer` are the same context, and the built-in keymaps use both — so
+/// anything that groups or matches rows by their context string has to fold
+/// them together first. An unrecognised clause (a plugin `mode:` context, or a
+/// typo) is passed through unchanged so it still round-trips.
+pub fn canonical_context(when: &str) -> String {
+    KeyContext::from_when_clause(when)
+        .map(|ctx| ctx.to_when_clause())
+        .unwrap_or_else(|| when.to_string())
+}
 
 /// Format chord keys for display
 pub fn format_chord_keys(keys: &[KeyPress]) -> String {
