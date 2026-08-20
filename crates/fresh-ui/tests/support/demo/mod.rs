@@ -69,7 +69,7 @@ impl Demo {
 
     /// One turn of the loop: route an input, apply what came back, redraw.
     pub fn input(&mut self, input: Input) -> Vec<Msg> {
-        let mut msgs = self.ui.dispatch(input);
+        let mut msgs = self.ui.dispatch(input).msgs;
         msgs.extend(self.ui.take_messages());
         for m in msgs.clone() {
             update(&mut self.app, m);

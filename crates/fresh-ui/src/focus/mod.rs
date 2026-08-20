@@ -518,23 +518,28 @@ impl<M: 'static> Ui<M> {
     /// Keys travel the focus chain: the focused element, then each of its
     /// ancestors. Raw listeners run first; whatever they decline is resolved to
     /// an intent and offered to the same chain as an action.
-    pub(crate) fn dispatch_key(&mut self, k: KeyPress, out: &mut Vec<M>) {
+    /// Reports whether anything claimed the key, so a host with its own
+    /// pipeline behind this tree knows not to act on it as well.
+    pub(crate) fn dispatch_key(&mut self, k: KeyPress, out: &mut Vec<M>) -> bool {
         let chain: Vec<ElementId> = match self.focus {
             Some(f) => self.path_to(f),
             None => self.root.map(|r| vec![r]).unwrap_or_default(),
         };
         if self.propagate_key(&chain, k, out) {
-            return;
+            return true;
         }
         if let Some(intent) = self.resolve_intent(&chain, k) {
             if self.run_action(&chain, intent, k, out) {
-                return;
+                return true;
             }
             if self.default_for_intent(intent) {
-                return;
+                return true;
             }
         }
-        self.dismiss_for_key(k, out);
+        // A key that dismisses a layer is answered by that layer: Escape
+        // closing a menu is the menu's reply, not a key that also belongs to
+        // whatever is behind it.
+        self.dismiss_for_key(k, out)
     }
 
     fn propagate_key(&mut self, chain: &[ElementId], k: KeyPress, out: &mut Vec<M>) -> bool {
