@@ -13,6 +13,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Review Diff is full-width and toggleable** - no soft wrap, side panels (file list, comments) can be hidden, and the sidebar nests files by directory like the File Explorer instead of repeating the full path on every row.
 * **Review Diff handles very large ranges** - a review spanning a hundred commits now lays out completely and stays responsive: cursor movement, hunk jumps, and flipping between the unified and side-by-side views no longer lag behind a stale frame.
 * **Linux musl installs register a desktop entry and icons**, so Fresh shows up in your app launcher - continuing 0.4.9's move to a single self-updating musl binary.
+* **`fresh --skill`** - prints the guide to driving a running editor from a shell: the script verbs, the calling convention, and worked examples. `--skill tour` and `--skill plugin` reach the other guides. It is the single entry point a coding agent needs, and it answers from anywhere - no running editor required, and it works from inside a sandboxed agent.
 
 ### Bug Fixes
 
@@ -44,6 +45,11 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * Vi's `:set number` / `:set nonumber` are honoured again on a buffer carrying a per-buffer pin, where they had become a silent no-op that still reported success.
 * **Rulers**: the column guide is drawn on the column it names rather than one cell to its right, and it stays visible where it crosses full-width characters instead of leaving a hole in the bar (#2928, reported by @dhanoosu).
 * **Daemon mode**: resizing a terminal attached with `fresh -a` no longer smears the last-painted colour across the blank cells - seen as a purple/theme-coloured screen fill when dragging a Windows Terminal window between monitors over SSH (#2723, reported by @amirhosseindavoody).
+* **Starting a coding agent** ("Teach Fresh CLI" in **Run Agent** / **New Workspace**)
+  * Choosing codex or opencode no longer writes an `AGENTS.md` into your repository. The instructions ride the agent's launch prompt instead, so nothing lands in your checkout and an `AGENTS.md` you wrote yourself is left alone.
+  * codex's **Auto mode** can now actually drive the editor. It used to launch with approvals turned off entirely, which left it no way out of its own sandbox to reach the editor's control socket - so an agent that had been taught the CLI could describe it perfectly and never once use it. Auto mode now escalates on request and has those escalations reviewed automatically, the same posture the checkbox already meant for claude.
+  * What the agent is told is now a short pointer to `fresh --skill` rather than a transcript of the API. The old copy duplicated a declaration file thousands of lines long, drifted out of date as the API moved, and sent agents paging through those declarations instead of searching them.
+* **`fresh --cmd ...` from a sandboxed process** now says so. A caller that is denied access to a running editor's control socket - a sandboxed coding agent, or anything in a PID namespace - is told the socket could not be reached and to retry outside the sandbox, instead of being told no editor is running. Relatedly, an inconclusive liveness check can no longer delete a live editor's socket files, which had made it possible for a sandboxed process to knock out the editor you were working in.
 
 ### Internals
 
