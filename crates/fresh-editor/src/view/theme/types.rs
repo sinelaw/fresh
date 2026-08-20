@@ -151,6 +151,25 @@ pub fn shade_toward_contrast(color: Color, amount: u8) -> Color {
     }
 }
 
+/// Foreground for a whitespace indicator drawn *inside* a selection, derived
+/// from the selection background when the theme does not name one.
+///
+/// A selected cell keeps its own foreground and only gains `selection_bg`
+/// behind it, so the indicator has to be legible against *that* background —
+/// `whitespace_indicator_fg` is chosen against the editor background and is
+/// frequently the same color as `selection_bg` (Dracula uses one value for
+/// both). Shifting the selection background toward contrast gives an
+/// indicator that reads as a faint mark on the selection instead of as text.
+/// Backgrounds with no RGB value (terminal-palette themes) have nothing to
+/// shift, so those fall back to the plain indicator color.
+pub fn selected_indicator_fg(selection_bg: Color, fallback: Color) -> Color {
+    if color_to_rgb(selection_bg).is_some() {
+        shade_toward_contrast(selection_bg, 55)
+    } else {
+        fallback
+    }
+}
+
 /// Serializable color representation
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
@@ -619,6 +638,15 @@ pub struct EditorColors {
     /// Whitespace indicator foreground color (for tab arrows and space dots)
     #[serde(default = "default_whitespace_indicator_fg")]
     pub whitespace_indicator_fg: ColorDef,
+    /// Whitespace indicator foreground color *inside a selection*. Selected
+    /// cells keep their own foreground, so the plain
+    /// `whitespace_indicator_fg` — picked to sit on the editor background —
+    /// is often invisible on `selection_bg` (several themes use the very
+    /// same color for both). When omitted, this is derived from
+    /// `selection_bg` by shifting it toward contrast: legible against the
+    /// selection, still clearly dimmer than the selected text.
+    #[serde(default)]
+    pub whitespace_indicator_selected_fg: Option<ColorDef>,
     /// Bracket match highlight color (used when rainbow is disabled)
     #[serde(default = "default_bracket_match_fg")]
     pub bracket_match_fg: ColorDef,
@@ -1441,6 +1469,8 @@ pub struct Theme {
 
     // Whitespace indicator color (tab arrows, space dots)
     pub whitespace_indicator_fg: Color,
+    /// Whitespace indicator color for cells inside a selection.
+    pub whitespace_indicator_selected_fg: Color,
 
     // Bracket matching colors
     pub bracket_match_fg: Color,
@@ -1638,7 +1668,7 @@ impl From<ThemeFile> for Theme {
             editor_fg: file.editor.fg.into(),
             cursor: file.editor.cursor.into(),
             inactive_cursor: file.editor.inactive_cursor.into(),
-            selection_bg: file.editor.selection_bg.into(),
+            selection_bg: file.editor.selection_bg.clone().into(),
             selection_modifier: file
                 .editor
                 .selection_modifier
@@ -1669,7 +1699,18 @@ impl From<ThemeFile> for Theme {
             indent_rainbow_4: file.editor.indent_rainbow_4.into(),
             indent_rainbow_5: file.editor.indent_rainbow_5.into(),
             indent_rainbow_6: file.editor.indent_rainbow_6.into(),
-            whitespace_indicator_fg: file.editor.whitespace_indicator_fg.into(),
+            whitespace_indicator_fg: file.editor.whitespace_indicator_fg.clone().into(),
+            whitespace_indicator_selected_fg: file
+                .editor
+                .whitespace_indicator_selected_fg
+                .clone()
+                .map(|c| c.into())
+                .unwrap_or_else(|| {
+                    selected_indicator_fg(
+                        file.editor.selection_bg.clone().into(),
+                        file.editor.whitespace_indicator_fg.clone().into(),
+                    )
+                }),
             bracket_match_fg: file.editor.bracket_match_fg.into(),
             bracket_rainbow_1: file.editor.bracket_rainbow_1.into(),
             bracket_rainbow_2: file.editor.bracket_rainbow_2.into(),
@@ -1933,6 +1974,9 @@ impl From<Theme> for ThemeFile {
                 indent_rainbow_5: theme.indent_rainbow_5.into(),
                 indent_rainbow_6: theme.indent_rainbow_6.into(),
                 whitespace_indicator_fg: theme.whitespace_indicator_fg.into(),
+                whitespace_indicator_selected_fg: Some(
+                    theme.whitespace_indicator_selected_fg.into(),
+                ),
                 bracket_match_fg: theme.bracket_match_fg.into(),
                 bracket_rainbow_1: theme.bracket_rainbow_1.into(),
                 bracket_rainbow_2: theme.bracket_rainbow_2.into(),
@@ -2190,6 +2234,23 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
     {
         theme.indentation_guide_fg = theme.whitespace_indicator_fg;
     }
+
+    // Same inheritance for the selected-whitespace color: it is *derived*
+    // from `selection_bg`, so a theme that overrides the selection background
+    // (or the plain indicator color it falls back to) without naming a
+    // selected-indicator color would otherwise keep the base theme's value
+    // and lose contrast against its own selection.
+    if raw
+        .get("editor")
+        .and_then(|v| v.as_object())
+        .is_some_and(|editor| {
+            (editor.contains_key("selection_bg") || editor.contains_key("whitespace_indicator_fg"))
+                && !editor.contains_key("whitespace_indicator_selected_fg")
+        })
+    {
+        theme.whitespace_indicator_selected_fg =
+            selected_indicator_fg(theme.selection_bg, theme.whitespace_indicator_fg);
+    }
 }
 
 impl Theme {
@@ -2397,6 +2458,7 @@ theme_color_keys! {
         "ruler_bg" => color ruler_bg,
         "selection_bg" => color selection_bg,
         "whitespace_indicator_fg" => color whitespace_indicator_fg,
+        "whitespace_indicator_selected_fg" => color whitespace_indicator_selected_fg,
         "bracket_match_fg" => color bracket_match_fg,
         "bracket_rainbow_1" => color bracket_rainbow_1,
         "bracket_rainbow_2" => color bracket_rainbow_2,
@@ -2941,6 +3003,70 @@ mod tests {
 
         assert_eq!(theme.whitespace_indicator_fg, Color::Rgb(12, 34, 56));
         assert_eq!(theme.indentation_guide_fg, Color::Rgb(12, 34, 56));
+    }
+
+    /// Every built-in theme must give in-selection whitespace indicators a
+    /// color that is actually distinguishable from the selection background —
+    /// otherwise the marks vanish exactly where they are needed. Several
+    /// themes use one color for both `selection_bg` and
+    /// `whitespace_indicator_fg` (Dracula does), which is why the derived
+    /// value is based on the selection background rather than reusing the
+    /// plain indicator color.
+    #[test]
+    fn test_builtin_themes_derive_a_visible_selected_indicator_color() {
+        for builtin in BUILTIN_THEMES {
+            let theme = Theme::load_builtin(builtin.name).expect("builtin theme loads");
+            let Some(bg) = color_to_rgb(theme.selection_bg) else {
+                // Terminal-palette selections have no RGB value to contrast
+                // against; those fall back to the plain indicator color.
+                assert_eq!(
+                    theme.whitespace_indicator_selected_fg, theme.whitespace_indicator_fg,
+                    "{}: non-RGB selection background falls back to the plain indicator color",
+                    builtin.name
+                );
+                continue;
+            };
+            let fg = color_to_rgb(theme.whitespace_indicator_selected_fg)
+                .unwrap_or_else(|| panic!("{}: derived indicator color is RGB", builtin.name));
+            assert_ne!(
+                fg, bg,
+                "{}: selected whitespace indicators would be invisible on the selection",
+                builtin.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_selected_indicator_fg_is_derived_from_selection_bg_when_omitted() {
+        let json = r#"{
+            "name": "x",
+            "extends": "builtin://dark",
+            "editor": { "selection_bg": [20, 20, 20] }
+        }"#;
+        let theme = Theme::from_json(json).expect("should parse");
+
+        assert_eq!(theme.selection_bg, Color::Rgb(20, 20, 20));
+        assert_eq!(
+            theme.whitespace_indicator_selected_fg,
+            selected_indicator_fg(Color::Rgb(20, 20, 20), theme.whitespace_indicator_fg),
+            "a theme that moves its selection background must take the \
+             derived indicator color with it"
+        );
+    }
+
+    #[test]
+    fn test_selected_indicator_fg_honours_an_explicit_theme_value() {
+        let json = r#"{
+            "name": "x",
+            "extends": "builtin://dark",
+            "editor": {
+                "selection_bg": [20, 20, 20],
+                "whitespace_indicator_selected_fg": [9, 8, 7]
+            }
+        }"#;
+        let theme = Theme::from_json(json).expect("should parse");
+
+        assert_eq!(theme.whitespace_indicator_selected_fg, Color::Rgb(9, 8, 7));
     }
 
     #[test]

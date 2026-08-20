@@ -30,7 +30,7 @@ use crate::view::overlay::Overlay;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use std::ops::ControlFlow;
 
@@ -372,12 +372,27 @@ impl CellPass<'_, '_, '_> {
         // layered over the selection background carried by `resolved.style`.
         // This stops the guide glyph from lighting up to full-contrast text
         // (which read as a literal glyph) when the leading whitespace is
-        // selected. Whitespace indicators still defer to selection styling.
+        // selected. Whitespace indicators are subdued inside a selection too,
+        // via their own theme color: selected cells keep their syntax
+        // foreground, which made every `·` and `→` in a selection read as
+        // full-contrast text — louder than the code it sits between.
         let mut style = resolved.style;
         if is_indentation_guide && !is_cursor {
             style = style.fg(self.indentation_guide_color());
-        } else if is_whitespace_indicator && !style_as_cursor && !is_selected {
-            style = style.fg(self.input.theme.whitespace_indicator_fg);
+        } else if is_whitespace_indicator && !style_as_cursor {
+            if !is_selected {
+                style = style.fg(self.input.theme.whitespace_indicator_fg);
+            } else if !self
+                .input
+                .theme
+                .selection_modifier
+                .contains(Modifier::REVERSED)
+            {
+                // A theme that draws its selection by REVERSED swaps fg and
+                // bg, so a subdued foreground there would dim the selection
+                // block rather than the glyph. Those keep the swap intact.
+                style = style.fg(self.input.theme.whitespace_indicator_selected_fg);
+            }
         }
 
         if !display_char.is_empty() {
