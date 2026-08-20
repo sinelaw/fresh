@@ -423,6 +423,14 @@ export function list(options: {
    * click anywhere on a card fires the same `select` event a classic
    * row would. Interactive widgets nested in a card aren't routed. */
   itemSpecs?: WidgetSpec[];
+  /** One stable identifier per item, parallel to the item list.
+   *
+   * @deprecated Omitting this is deprecated and will become an error.
+   * Per-item state — scroll position, selection, tree expansion — is
+   * keyed by these strings; items without one all share the empty key,
+   * so they cannot keep state of their own. The host logs a warning
+   * naming your plugin and this widget when any item is unkeyed.
+   * Pass one stable string per item (e.g. `"file:5/match:23"`). */
   itemKeys?: string[];
   selectedIndex?: number;
   /** Rows this widget windows to. Omit to auto-size from the
@@ -512,6 +520,14 @@ export function treeNode(
  * selection + expansion across re-renders. */
 export function tree(options: {
   nodes: TreeNode[];
+  /** One stable identifier per item, parallel to the item list.
+   *
+   * @deprecated Omitting this is deprecated and will become an error.
+   * Per-item state — scroll position, selection, tree expansion — is
+   * keyed by these strings; items without one all share the empty key,
+   * so they cannot keep state of their own. The host logs a warning
+   * naming your plugin and this widget when any item is unkeyed.
+   * Pass one stable string per item (e.g. `"file:5/match:23"`). */
   itemKeys?: string[];
   selectedIndex?: number;
   /** Rows this widget windows to. Omit to auto-size from the

@@ -15,6 +15,7 @@
 //! design.
 
 mod actions;
+pub(crate) mod keying;
 pub(crate) mod kinds;
 pub(crate) mod layout_box;
 mod registry;

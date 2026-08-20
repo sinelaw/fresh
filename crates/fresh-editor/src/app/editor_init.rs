@@ -666,6 +666,7 @@ impl Editor {
             async_message_backlog: std::collections::VecDeque::new(),
             full_redraw_requested: false,
             suppress_chrome_cells: false,
+            unkeyed_widget_warnings: std::collections::HashSet::new(),
             shell_ui: Some(fresh_ui::Ui::new()),
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
