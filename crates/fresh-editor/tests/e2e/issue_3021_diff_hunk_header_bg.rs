@@ -72,14 +72,13 @@ fn test_diff_hunk_header_row_has_no_background_gap() {
     let file_path = temp_dir.path().join("hunk.diff");
     std::fs::write(&file_path, diff_content()).unwrap();
 
-    let mut harness = EditorTestHarness::create(
-        120,
-        24,
-        HarnessOptions::new()
-            .with_full_grammar_registry()
-            .without_empty_plugins_dir(),
-    )
-    .unwrap();
+    // Plugin loading stays disabled (the `HarnessOptions` default): the
+    // wash comes from core syntect highlighting, and plugin overlays
+    // paint above the syntax background, so a decorating plugin could
+    // mask the very defect this asserts on.
+    let mut harness =
+        EditorTestHarness::create(120, 24, HarnessOptions::new().with_full_grammar_registry())
+            .unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
     harness.wait_for_screen_contains("keep_one").unwrap();
