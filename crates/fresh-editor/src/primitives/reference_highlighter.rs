@@ -34,8 +34,8 @@ use ratatui::style::Color;
 use std::ops::Range;
 
 /// Default subtle background color for occurrence highlights
-/// A neutral gray that stays distinct from the selection background
-pub const DEFAULT_HIGHLIGHT_COLOR: Color = Color::Rgb(87, 87, 87);
+/// A dark gray that's visible but not distracting
+pub const DEFAULT_HIGHLIGHT_COLOR: Color = Color::Rgb(60, 60, 80);
 
 /// Longest selection (in bytes) whose matches are highlighted.
 ///
@@ -49,8 +49,15 @@ pub const MAX_SELECTION_MATCH_BYTES: usize = 512;
 /// Mirrors the VSCode/Zed rule: a single-line, non-blank, bounded selection
 /// highlights its other occurrences; anything else (multi-line, whitespace
 /// only, oversized) only suppresses the cursor-word highlight.
-pub fn is_matchable_selection(text: &str) -> bool {
+///
+/// `min_len` is the highlighter's [`ReferenceHighlighter::min_word_length`].
+/// The selection path applies it for the same reason the cursor-word path
+/// does: a one- or two-character needle matches on most lines of most files,
+/// so a single `Shift+Right` would otherwise rebuild hundreds of overlays
+/// every time the selection settles.
+pub fn is_matchable_selection(text: &str, min_len: usize) -> bool {
     !text.trim().is_empty()
+        && text.len() >= min_len
         && !text.contains('\n')
         && !text.contains('\r')
         && text.len() <= MAX_SELECTION_MATCH_BYTES
@@ -401,7 +408,12 @@ impl ReferenceHighlighter {
     /// characters (`bet` inside `beta` counts). The selection's own range is
     /// skipped — it already carries the selection background.
     ///
-    /// Like the cursor-word path, the search is confined to the viewport.
+    /// Like the cursor-word path, the search is confined to the viewport and
+    /// gated on [`Self::min_word_length`]: VSCode does highlight a
+    /// single-character selection, but here that would mean rebuilding an
+    /// overlay for every instance of that character on screen each time the
+    /// selection settles, which is exactly the per-frame overlay storm
+    /// `view/overlay.rs` warns about.
     pub fn selection_matches(
         &self,
         buffer: &Buffer,
@@ -410,7 +422,7 @@ impl ReferenceHighlighter {
         viewport_start: usize,
         viewport_end: usize,
     ) -> Vec<HighlightSpan> {
-        if !self.enabled || !is_matchable_selection(selected_text) {
+        if !self.enabled || !is_matchable_selection(selected_text, self.min_word_length) {
             return Vec::new();
         }
 
@@ -1080,20 +1092,69 @@ mod tests {
         assert_eq!(ranges, vec![4..7]);
     }
 
+    /// Each fixture here is chosen so the needle *would* match somewhere other
+    /// than the selection itself if its guard were dropped — a guard test on a
+    /// fixture with no other match proves nothing.
     #[test]
     fn test_multiline_and_blank_selections_are_not_matched() {
-        let buffer = Buffer::from_str_test("foo\nfoo\nfoo");
         let highlighter = ReferenceHighlighter::new();
 
+        // The selected two-line run repeats, so dropping the `\n` guard would
+        // highlight 8..15. (`match_indices` is non-overlapping, so a fixture of
+        // only three lines has no second match to find.)
+        let multiline = Buffer::from_str_test("foo\nfoo\nfoo\nfoo");
         assert!(highlighter
-            .selection_matches(&buffer, "foo\nfoo", &(0..7), 0, buffer.len())
+            .selection_matches(&multiline, "foo\nfoo", &(0..7), 0, multiline.len())
             .is_empty());
+
+        // The buffer actually contains the selected whitespace run a second
+        // time, so dropping the blank guard would highlight 5..8.
+        let blank = Buffer::from_str_test("a   b   c");
         assert!(highlighter
-            .selection_matches(&buffer, "   ", &(0..3), 0, buffer.len())
+            .selection_matches(&blank, "   ", &(1..4), 0, blank.len())
             .is_empty());
-        assert!(!is_matchable_selection(
-            &"x".repeat(MAX_SELECTION_MATCH_BYTES + 1)
-        ));
+
+        // An oversized needle that does occur again in the buffer.
+        let long = "x".repeat(MAX_SELECTION_MATCH_BYTES + 1);
+        let oversized = Buffer::from_str_test(&format!("{long} {long}"));
+        assert!(highlighter
+            .selection_matches(&oversized, &long, &(0..long.len()), 0, oversized.len())
+            .is_empty());
+    }
+
+    /// A one-character selection matches on nearly every line of nearly every
+    /// file. Highlighting all of them would rebuild hundreds of overlays each
+    /// time the selection settles, so the selection path applies the same
+    /// `min_word_length` gate the cursor-word path does.
+    #[test]
+    fn test_short_selections_are_gated_by_min_word_length() {
+        let buffer = Buffer::from_str_test("a b a b a b a b");
+        let mut highlighter = ReferenceHighlighter::new();
+        assert_eq!(highlighter.min_word_length, 2);
+
+        assert!(
+            highlighter
+                .selection_matches(&buffer, "a", &(0..1), 0, buffer.len())
+                .is_empty(),
+            "a single-character selection must not highlight every occurrence of that character"
+        );
+
+        // Two characters clear the default gate.
+        let ranges: Vec<_> = highlighter
+            .selection_matches(&buffer, "a ", &(0..2), 0, buffer.len())
+            .into_iter()
+            .map(|s| s.range)
+            .collect();
+        assert_eq!(ranges, vec![4..6, 8..10, 12..14]);
+
+        // And the gate follows the configured minimum.
+        highlighter = highlighter.with_min_length(1);
+        assert_eq!(
+            highlighter
+                .selection_matches(&buffer, "a", &(0..1), 0, buffer.len())
+                .len(),
+            3
+        );
     }
 
     #[test]

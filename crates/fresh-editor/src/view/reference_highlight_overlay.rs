@@ -111,7 +111,11 @@ impl ReferenceHighlightOverlay {
         let now = Instant::now();
 
         let target = match selection {
-            Some(range) if !range.is_empty() => Some(selection_target(buffer, range)),
+            Some(range) if !range.is_empty() => Some(selection_target(
+                buffer,
+                range,
+                highlighter.min_word_length,
+            )),
             _ => get_word_at_position(buffer, cursor_position).map(HighlightTarget::Word),
         };
 
@@ -251,12 +255,12 @@ impl Default for ReferenceHighlightOverlay {
 /// Oversized selections keep a target (so the cursor-word highlight stays
 /// suppressed) but carry no text: reading them in full would be a scan
 /// proportional to the selection, not to the viewport.
-fn selection_target(buffer: &Buffer, range: Range<usize>) -> HighlightTarget {
+fn selection_target(buffer: &Buffer, range: Range<usize>, min_len: usize) -> HighlightTarget {
     let text = if range.len() <= MAX_SELECTION_MATCH_BYTES {
         let bytes = buffer.slice_bytes(range.clone());
         String::from_utf8(bytes)
             .ok()
-            .filter(|text| is_matchable_selection(text))
+            .filter(|text| is_matchable_selection(text, min_len))
             .unwrap_or_default()
     } else {
         String::new()
@@ -333,7 +337,7 @@ mod tests {
                 0,
                 buffer.len(),
                 100_000,
-                Color::Rgb(87, 87, 87),
+                Color::Rgb(60, 60, 80),
             );
         }
 
@@ -408,7 +412,7 @@ mod tests {
                 0,
                 buffer.len(),
                 100_000,
-                Color::Rgb(87, 87, 87),
+                Color::Rgb(60, 60, 80),
             );
         }
         assert_ne!(overlays.len(), 0, "cursor word should be highlighted");
@@ -423,7 +427,7 @@ mod tests {
             0,
             buffer.len(),
             100_000,
-            Color::Rgb(87, 87, 87),
+            Color::Rgb(60, 60, 80),
         );
         assert_eq!(
             overlays.len(),
@@ -435,13 +439,26 @@ mod tests {
 
     /// Multi-line selections only suppress: matching a multi-line run would
     /// paint whole regions of the viewport.
+    ///
+    /// The fixture repeats the selected two-line run, so without the guard
+    /// the second copy would be highlighted — a fixture where the run occurs
+    /// only once would pass with or without it.
     #[test]
     fn multiline_selection_only_suppresses() {
-        let buffer = Buffer::from_str_test(SAMPLE);
+        let buffer =
+            Buffer::from_str_test("beta gamma\nalpha delta\nbeta gamma\nalpha delta\n");
         let mut overlays = OverlayManager::new();
         let mut markers = MarkerList::new();
         let mut highlighter = ReferenceHighlighter::new();
         let mut manager = ReferenceHighlightOverlay::with_debounce(0);
+
+        // "beta gamma\nalpha" — repeated verbatim at 23..39.
+        let selection = 0..16;
+        assert_eq!(
+            String::from_utf8(buffer.slice_bytes(23..39)).unwrap(),
+            String::from_utf8(buffer.slice_bytes(selection.clone())).unwrap(),
+            "fixture must repeat the selected run, or the guard is untested"
+        );
 
         let ranges = highlighted_ranges(
             &mut manager,
@@ -449,8 +466,30 @@ mod tests {
             &mut overlays,
             &mut markers,
             &mut highlighter,
-            27,
-            Some(6..27),
+            selection.end,
+            Some(selection),
+        );
+        assert!(ranges.is_empty(), "got {ranges:?}");
+    }
+
+    /// A one-character selection must not turn into an overlay per occurrence.
+    #[test]
+    fn single_character_selection_only_suppresses() {
+        let buffer = Buffer::from_str_test(SAMPLE);
+        let mut overlays = OverlayManager::new();
+        let mut markers = MarkerList::new();
+        let mut highlighter = ReferenceHighlighter::new();
+        let mut manager = ReferenceHighlightOverlay::with_debounce(0);
+
+        // "a" of "alpha" — present dozens of times in the fixture.
+        let ranges = highlighted_ranges(
+            &mut manager,
+            &buffer,
+            &mut overlays,
+            &mut markers,
+            &mut highlighter,
+            1,
+            Some(0..1),
         );
         assert!(ranges.is_empty(), "got {ranges:?}");
     }

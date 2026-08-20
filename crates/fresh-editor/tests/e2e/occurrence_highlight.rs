@@ -207,3 +207,101 @@ fn test_occurrence_highlight_toggle() {
         })
         .expect("Background should be highlighted again");
 }
+
+/// A block selection that has not moved horizontally (Alt+Shift+Down straight
+/// down) paints nothing on screen. It still sets a linear anchor, so treating
+/// it as "there is a selection" made the word-under-cursor highlight vanish
+/// with nothing visible to explain why.
+#[test]
+fn test_zero_width_block_selection_keeps_word_highlight() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness
+        .load_buffer_from_text("alpha beta gamma\nbeta alpha delta\n")
+        .unwrap();
+    harness.render().unwrap();
+
+    let (first_row, _) = harness.content_area_rows();
+    let line1 = first_row as u16;
+    let line2 = line1 + 1;
+    let col = |text_col: u16| 6 + text_col;
+    let bg = |h: &EditorTestHarness, x: u16, y: u16| h.get_cell_style(x, y).and_then(|s| s.bg);
+
+    // Cursor into "beta" on line 1; both "beta"s highlight.
+    for _ in 0..7 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .wait_until(|h| {
+            bg(h, col(7), line1) != bg(h, col(12), line1)
+                && bg(h, col(1), line2) != bg(h, col(7), line2)
+        })
+        .expect("the word under the cursor should be highlighted");
+    let word_bg = bg(&harness, col(1), line2);
+
+    // Alt+Shift+Down with no horizontal movement: nothing is painted, so the
+    // word highlight must survive.
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        bg(&harness, col(1), line2),
+        word_bg,
+        "a zero-width block selection paints nothing, so it must not drop the word highlight"
+    );
+}
+
+/// A single-line block selection is one contiguous run of text, so its
+/// occurrences are highlighted exactly like a normal selection's. (The linear
+/// anchor..position range a block selection carries is a real range — it is
+/// only for *multi-line* blocks that it stops tracing the painted rectangle.)
+#[test]
+fn test_single_line_block_selection_highlights_its_matches() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness
+        .load_buffer_from_text("alpha beta gamma\nbeta alpha delta\n")
+        .unwrap();
+    harness.render().unwrap();
+
+    let (first_row, _) = harness.content_area_rows();
+    let line1 = first_row as u16;
+    let line2 = line1 + 1;
+    let col = |text_col: u16| 6 + text_col;
+    let bg = |h: &EditorTestHarness, x: u16, y: u16| h.get_cell_style(x, y).and_then(|s| s.bg);
+
+    // Cursor to the "b" of "beta" on line 1.
+    for _ in 0..6 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // Block-select "bet" without leaving the line.
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::ALT | KeyModifiers::SHIFT)
+            .unwrap();
+    }
+
+    // The "bet" of line 2's "beta" picks up the match highlight; the trailing
+    // "a" does not.
+    harness
+        .wait_until(|h| bg(h, col(0), line2) != bg(h, col(9), line2))
+        .expect("a single-line block selection should highlight its matches");
+    let match_bg = bg(&harness, col(0), line2);
+    assert_eq!(
+        (bg(&harness, col(1), line2), bg(&harness, col(2), line2)),
+        (match_bg, match_bg),
+        "the whole \"bet\" match is highlighted"
+    );
+    assert_eq!(
+        bg(&harness, col(3), line2),
+        bg(&harness, col(9), line2),
+        "the match stops at \"bet\""
+    );
+}

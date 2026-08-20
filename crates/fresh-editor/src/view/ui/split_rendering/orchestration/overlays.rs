@@ -6,7 +6,7 @@
 use super::super::folding::{diff_indicators_for_viewport, fold_indicators_for_viewport};
 use super::super::style::inline_diagnostic_style;
 use super::contexts::{DecorationContext, SelectionContext};
-use crate::model::cursor::{Cursors, SelectionMode};
+use crate::model::cursor::{Cursor, Cursors, SelectionMode};
 use crate::state::{EditorState, ViewMode};
 use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::folding::FoldManager;
@@ -50,35 +50,32 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
     ranges.sort_by_key(|r| r.start);
 
     let block_virtual = state.buffer_settings.virtual_space.block_beyond_eol();
+    let block_rect = |cursor: &Cursor| -> Option<(usize, usize, usize, usize)> {
+        if cursor.selection_mode != SelectionMode::Block {
+            return None;
+        }
+        let anchor = cursor.block_anchor?;
+        let cur_line = state.buffer.get_line_number(cursor.position);
+        let cur_line_start = state.buffer.line_start_offset(cur_line).unwrap_or(0);
+        let mut cur_col = cursor.position.saturating_sub(cur_line_start);
+        // With virtual space, the block column (carried by the sticky column)
+        // may extend past the clipped byte column.
+        if block_virtual {
+            if let Some(sticky) = cursor.sticky_column {
+                cur_col = cur_col.max(sticky);
+            }
+        }
+
+        Some((
+            anchor.line.min(cur_line),
+            anchor.column.min(cur_col),
+            anchor.line.max(cur_line),
+            anchor.column.max(cur_col),
+        ))
+    };
     let mut block_rects: Vec<(usize, usize, usize, usize)> = cursors
         .iter()
-        .filter_map(|(_, cursor)| {
-            if cursor.selection_mode == SelectionMode::Block {
-                if let Some(anchor) = cursor.block_anchor {
-                    let cur_line = state.buffer.get_line_number(cursor.position);
-                    let cur_line_start = state.buffer.line_start_offset(cur_line).unwrap_or(0);
-                    let mut cur_col = cursor.position.saturating_sub(cur_line_start);
-                    // With virtual space, the block column (carried by the
-                    // sticky column) may extend past the clipped byte column.
-                    if block_virtual {
-                        if let Some(sticky) = cursor.sticky_column {
-                            cur_col = cur_col.max(sticky);
-                        }
-                    }
-
-                    Some((
-                        anchor.line.min(cur_line),
-                        anchor.column.min(cur_col),
-                        anchor.line.max(cur_line),
-                        anchor.column.max(cur_col),
-                    ))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
+        .filter_map(|(_, cursor)| block_rect(cursor))
         .collect();
     // Sort by start_line for the render loop's per-line active-set sweep.
     block_rects.sort_by_key(|(start_line, _, _, _)| *start_line);
@@ -114,13 +111,23 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
         0
     };
 
-    // Block selections span disjoint column runs rather than one text run, so
-    // they suppress the cursor-word highlight without contributing a run to
-    // match (the overlay pass ignores multi-line selection text anyway).
-    let primary_selection = cursors
-        .primary()
-        .selection_range()
-        .filter(|range| !range.is_empty());
+    // A block selection also carries a linear anchor..position range, so it is
+    // not exempt from the occurrence highlight: a *single-line* block is one
+    // contiguous text run and its matches are highlighted like any other
+    // selection's. Only a multi-line block differs — its linear range runs
+    // through the tails of the intervening lines rather than tracing the
+    // painted rectangle — and that range is multi-line, which the overlay pass
+    // declines to match anyway, so it merely suppresses the cursor word.
+    //
+    // The one case that has to be excluded here is a zero-width block
+    // (Alt+Shift+Down without any horizontal movement): it paints nothing on
+    // screen, so letting it suppress the cursor-word highlight would make the
+    // highlight vanish for no visible reason.
+    let primary = cursors.primary();
+    let primary_selection = match block_rect(primary) {
+        Some((_, start_col, _, end_col)) if start_col == end_col => None,
+        _ => primary.selection_range().filter(|range| !range.is_empty()),
+    };
 
     SelectionContext {
         ranges,
