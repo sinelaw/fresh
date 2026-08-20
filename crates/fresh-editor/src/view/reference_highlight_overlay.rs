@@ -199,9 +199,22 @@ impl ReferenceHighlightOverlay {
             }
         };
 
-        // Create overlays for each occurrence
+        // Create overlays for each occurrence.
+        //
+        // `ThemedStyle` rather than a plain `Background`: the highlight has to
+        // be a background the eye actually catches, which means it cannot hug
+        // `editor.bg`, which in turn means it lands where syntax foregrounds
+        // live. `fg_on_low_contrast` repairs exactly the cells that would
+        // otherwise become unreadable, so visibility and legibility stop being
+        // a trade (#3011).
         for span in spans {
-            let face = OverlayFace::Background { color: span.color };
+            let face = OverlayFace::ThemedStyle {
+                fallback_style: ratatui::style::Style::default().bg(span.color),
+                fg_theme: None,
+                bg_theme: Some("ui.semantic_highlight_bg".to_string()),
+                fg_on_collision_only: false,
+                fg_on_low_contrast: true,
+            };
             let overlay = Overlay::with_namespace(marker_list, span.range, face, ns.clone())
                 .with_priority_value(5) // Lower priority than diagnostics
                 .with_theme_key("ui.semantic_highlight_bg");

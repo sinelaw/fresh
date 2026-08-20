@@ -1630,6 +1630,7 @@ fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayF
                     fg_theme,
                     bg_theme,
                     fg_on_collision_only: options.fg_on_collision_only,
+                    fg_on_low_contrast: false,
                 }
             } else {
                 OverlayFace::Style { style }

@@ -424,6 +424,31 @@ pub(crate) fn painted_rgb(color: Color, capability: ColorCapability) -> Option<(
     }
 }
 
+/// The foreground to paint so text stays legible on `bg`, or `None` to keep
+/// the foreground as-is.
+///
+/// `None` means "leave it alone": either the pair already clears
+/// [`MIN_CONTRAST_RATIO`], or one of the colors belongs to the terminal's own
+/// palette (`Reset`, named ANSI) and its real value is the user's to decide.
+///
+/// This is what lets a background overlay be *visible* without being allowed
+/// to erase the text under it. A background tint that stands clearly apart
+/// from `editor.bg` and from `editor.selection_bg` necessarily lands in the
+/// luminance band where syntax foregrounds live, so some collision is
+/// unavoidable; repairing the few cells that collide is cheaper than giving up
+/// either visibility or legibility. The replacement is chosen by
+/// `find_readable_256_color`, which picks the *nearest* palette entry clearing
+/// the ratio, so a colliding comment stays recognisably a comment.
+pub(crate) fn repaired_fg(fg: Color, bg: Color) -> Option<Color> {
+    let fg_rgb = painted_rgb(fg, ColorCapability::TrueColor)?;
+    let bg_rgb = painted_rgb(bg, ColorCapability::TrueColor)?;
+    if contrast_ratio(fg_rgb, bg_rgb) >= MIN_CONTRAST_RATIO {
+        return None;
+    }
+    let fg_idx = color_to_palette_index(fg)?;
+    Some(Color::Indexed(find_readable_256_color(fg_idx, bg_rgb)))
+}
+
 /// Get the RGB values for a 256-color palette index
 fn idx_to_rgb(idx: u8) -> (u8, u8, u8) {
     match idx {

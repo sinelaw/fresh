@@ -3406,114 +3406,104 @@ mod tests {
     /// tint" when they sit next to each other on screen.
     const MIN_BRIGHTNESS_DELTA: f64 = 20.0;
 
-    /// Regression for #3011: a selection now suppresses the cursor-word
-    /// highlight and highlights the *matches of the selected text* instead — so
-    /// both backgrounds are on screen at once, right next to each other, and a
-    /// theme whose highlight is merely a slightly different shade of the
-    /// selection makes the selection's extent unreadable.
+    /// Regression for #3011, and for the 256-color invisibility that predates
+    /// it: the occurrence highlight must actually be *seen*.
     ///
-    /// A theme can separate the two either by color (a perceived-brightness gap
-    /// that survives the 256-color quantization a plain `xterm-256color`/tmux
-    /// session applies — that quantization is what collapsed the original
-    /// dark/light/dracula highlights onto the selection) or by an SGR modifier
-    /// the selection does not itself carry. An underline cannot be quantized
-    /// away and never collides with a foreground, which is why most builtins
-    /// take that route; see `test_builtin_highlight_stays_readable`.
+    /// Two separations are required of every builtin, and neither is waivable
+    /// by a modifier — a modifier is an extra cue, never a substitute for a
+    /// visible background, and on terminals that render underlines faintly it
+    /// is no cue at all:
+    ///
+    /// 1. against `editor.bg`, or the highlight is invisible outright;
+    /// 2. against `editor.selection_bg`, or a selection and its highlighted
+    ///    matches cannot be told apart while both are on screen.
+    ///
+    /// Both are checked **after 256-color quantization** as well as in
+    /// truecolor, because quantization is where this actually broke for users:
+    /// on master `high-contrast`'s highlight `[0,25,55]` and its `editor.bg`
+    /// `[0,0,0]` both quantize to palette index 16, so on a plain
+    /// `xterm-256color`/tmux session the highlight painted the background
+    /// colour and vanished. `solarized-dark` did the same; `dracula` and `nord`
+    /// came within 6.9 luma of it. `painted_rgb` models exactly what the
+    /// terminal is sent, so the assertion sees what the user sees.
     #[test]
-    fn test_builtin_highlight_is_distinguishable_from_selection() {
+    fn test_builtin_highlight_is_visible_and_distinct() {
         use crate::view::color_support::{painted_rgb, ColorCapability};
 
         for builtin in BUILTIN_THEMES {
             let theme = Theme::from_json(builtin.json)
                 .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
 
-            // A modifier only distinguishes the highlight if the selection
-            // isn't already drawn with it (the terminal theme reverses its
-            // selection, and underlines its highlight).
+            // A modifier the selection does not itself carry is the only way a
+            // theme that owns no highlight colour at all (the terminal-palette
+            // themes) can be distinguished — and even then only from the
+            // selection, never from the editor background.
             let distinguishing_modifier = theme
                 .modifier_for_bg_key("ui.semantic_highlight_bg")
                 .difference(theme.selection_modifier);
 
-            let mut worst: Option<(ColorCapability, &str, (u8, u8, u8), (u8, u8, u8), f64)> = None;
             for capability in [ColorCapability::TrueColor, ColorCapability::Color256] {
                 let Some(highlight) = painted_rgb(theme.semantic_highlight_bg, capability) else {
+                    // No colour of its own: the modifier has to carry it.
+                    assert!(
+                        !distinguishing_modifier.is_empty(),
+                        "Theme '{}': the occurrence highlight resolves to a terminal-palette \
+                         colour and carries no modifier the selection lacks, so nothing marks \
+                         it at all (#3011)",
+                        builtin.name
+                    );
                     continue;
                 };
+
                 for (name, other) in [
-                    ("selection background", theme.selection_bg),
                     ("editor background", theme.editor_bg),
+                    ("selection background", theme.selection_bg),
                 ] {
                     let Some(other_rgb) = painted_rgb(other, capability) else {
                         continue;
                     };
                     let delta = (brightness(highlight) - brightness(other_rgb)).abs();
-                    if worst.is_none_or(|(_, _, _, _, w)| delta < w) {
-                        worst = Some((capability, name, highlight, other_rgb, delta));
-                    }
+                    assert!(
+                        delta >= MIN_BRIGHTNESS_DELTA,
+                        "Theme '{}' at {:?}: the occurrence highlight {:?} is only {:.1} apart \
+                         in perceived brightness from the {} {:?} (need {:.1}) — it has to be \
+                         visible as a background in its own right, and no modifier substitutes \
+                         for that (#3011)",
+                        builtin.name,
+                        capability,
+                        highlight,
+                        delta,
+                        name,
+                        other_rgb,
+                        MIN_BRIGHTNESS_DELTA
+                    );
                 }
             }
-
-            // No resolvable color at all (a fully terminal-palette theme):
-            // the modifier is the only mechanism left, so require it.
-            let Some((capability, other_name, highlight, other_rgb, delta)) = worst else {
-                assert!(
-                    !distinguishing_modifier.is_empty(),
-                    "Theme '{}': the occurrence highlight resolves to a terminal-palette color, \
-                     so only a modifier can tell it apart from the selection — and it has none \
-                     the selection lacks (#3011)",
-                    builtin.name
-                );
-                continue;
-            };
-
-            assert!(
-                delta >= MIN_BRIGHTNESS_DELTA || !distinguishing_modifier.is_empty(),
-                "Theme '{}': the occurrence highlight is not tellable apart from the \
-                 selection/editor background by color, and carries no modifier the selection \
-                 lacks — a selection and its highlighted matches must be distinguishable \
-                 (#3011). Closest pair: at {:?} the highlight {:?} is {:.1} apart in perceived \
-                 brightness from the {} {:?} (need {:.1}).",
-                builtin.name,
-                capability,
-                highlight,
-                delta,
-                other_name,
-                other_rgb,
-                MIN_BRIGHTNESS_DELTA
-            );
         }
     }
 
-    /// The occurrence highlight replaces the *background* of cells that keep
-    /// their syntax foreground — `OverlayFace::Background` sets `style.bg` and
-    /// nothing rewrites `style.fg` behind it. So a highlight color that lands
-    /// on top of a syntax color makes that text vanish while it is highlighted;
-    /// dracula once shipped a highlight byte-identical to its comment color.
+    /// The counterpart to the visibility rule above: a highlight far enough
+    /// from `editor.bg` to be seen necessarily sits where syntax foregrounds
+    /// live, so some cells collide. `repaired_fg` repairs those, and this
+    /// asserts the repair actually lands — every syntax colour of every
+    /// builtin ends up clearing `MIN_CONTRAST_RATIO` over the highlight, either
+    /// on its own or after repair.
     ///
-    /// Nothing else catches this: the distinguishability test above rewards
-    /// moving the highlight *towards* mid-luma, which is exactly where
-    /// foreground colors live.
-    ///
-    /// The bar is [`MIN_CONTRAST_RATIO`], the same 3.0:1 the 256-color pass
-    /// holds every cell to. WCAG's 4.5:1 is not reachable here and never was:
-    /// a single background cannot clear it against a whole syntax palette —
-    /// the themes' own `editor.bg` values only manage 2.7:1 to 6.4:1 against
-    /// theirs. Only truecolor is asserted, because that is the only mode with
-    /// no safety net: `convert_buffer_colors` runs `enforce_minimum_contrast`
-    /// over every 256-color cell and rewrites foregrounds that fall short.
+    /// Without the repair this is unsatisfiable: an RGB-cube search over the
+    /// values that meet the visibility rule tops out at 1.42:1 for dracula and
+    /// 2.67:1 for solarized-dark, both below the 3.0:1 bar.
     #[test]
-    fn test_builtin_highlight_stays_readable() {
+    fn test_builtin_highlight_never_erases_syntax_colors() {
         use crate::view::color_support::{
-            contrast_ratio, painted_rgb, ColorCapability, MIN_CONTRAST_RATIO,
+            contrast_ratio, painted_rgb, repaired_fg, ColorCapability, MIN_CONTRAST_RATIO,
         };
 
         for builtin in BUILTIN_THEMES {
             let theme = Theme::from_json(builtin.json)
                 .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
 
-            let Some(highlight) =
-                painted_rgb(theme.semantic_highlight_bg, ColorCapability::TrueColor)
-            else {
+            let bg = theme.semantic_highlight_bg;
+            let Some(bg_rgb) = painted_rgb(bg, ColorCapability::TrueColor) else {
                 continue; // Terminal-palette highlight: the RGB isn't ours to know.
             };
 
@@ -3529,18 +3519,19 @@ mod tests {
                 ("syntax.variable", theme.syntax_variable),
                 ("syntax.variable_builtin", theme.syntax_variable_builtin),
             ] {
-                let Some(fg_rgb) = painted_rgb(fg, ColorCapability::TrueColor) else {
+                let painted = repaired_fg(fg, bg).unwrap_or(fg);
+                let Some(fg_rgb) = painted_rgb(painted, ColorCapability::TrueColor) else {
                     continue;
                 };
-                let ratio = contrast_ratio(fg_rgb, highlight);
+                let ratio = contrast_ratio(fg_rgb, bg_rgb);
                 assert!(
                     ratio >= MIN_CONTRAST_RATIO,
-                    "Theme '{}': {} {:?} over the occurrence highlight {:?} has a contrast ratio \
-                     of {:.2}:1 (need {:.1}:1) — highlighting a word must not erase it",
+                    "Theme '{}': {} ends up at {:?} over the occurrence highlight {:?}, a \
+                     contrast ratio of {:.2}:1 (need {:.1}:1) — marking a word must not erase it",
                     builtin.name,
                     name,
                     fg_rgb,
-                    highlight,
+                    bg_rgb,
                     ratio,
                     MIN_CONTRAST_RATIO
                 );
