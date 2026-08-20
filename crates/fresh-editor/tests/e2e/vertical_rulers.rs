@@ -791,26 +791,235 @@ fn test_ruler_counts_display_columns_not_characters() {
     );
 }
 
-/// Documents a **known limitation** (pre-existing, not introduced by #2928):
-/// rulers address display columns and are not snapped to grapheme
-/// boundaries, so over full-width text an *even* ruler column falls on the
-/// trailing half of a double-width cell.
+/// A line of repeated full-width graphemes, for the pair of tests below.
+/// Every `你` spans two display columns, so leading cells are the **odd**
+/// display columns (1, 3, 5 …) and continuation cells are the **even** ones.
+fn wide_line() -> String {
+    "你".repeat(50)
+}
+
+/// Control for the test that follows: a ruler on the *leading* cell of a
+/// double-width grapheme has always rendered.
 ///
-/// `你` occupies display columns 1-2, so a ruler at 2 tints the continuation
-/// cell — which ratatui has `reset()` to a blank. The tint is present in the
-/// frame buffer (asserted below), but `Buffer::diff` skips the cells covered
-/// by a preceding wide symbol, so it is not guaranteed to reach the terminal.
+/// On `wide_line()` the 2nd `你` covers display columns 3-4, so a ruler at 3
+/// sits on the cell that carries the symbol and the tint is emitted.
 ///
-/// The assertion here is deliberately a description of today's behaviour, not
-/// a statement that it is desirable; fixing it means snapping rulers to the
-/// grapheme that covers the column, which is out of scope for #2928.
+/// Note what these assertions read: `EditorTestHarness::buffer()` returns
+/// `Terminal::backend().buffer()`, and `TestBackend::draw` only writes the
+/// cells `Buffer::diff` chose to emit. So this is the *emitted* screen, not
+/// the frame buffer — which is exactly the distinction the next test needs.
 #[test]
-fn test_ruler_on_even_column_over_wide_characters() {
+fn test_ruler_on_leading_cell_of_wide_grapheme_renders() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![3];
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text(&wide_line()).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+
+    let marked = ruler_cells_in_row(&harness, row, 80);
+    assert_eq!(
+        marked,
+        vec![ruler_x(&harness, 3)],
+        "a ruler on the leading cell of a wide grapheme must be visible, \
+         got {marked:?}"
+    );
+    assert_eq!(
+        harness.get_cell(marked[0], row).as_deref(),
+        Some("你"),
+        "display column 3 is the leading cell of the 2nd `你`"
+    );
+}
+
+/// Regression: a ruler whose display column lands on the *continuation* cell
+/// of a double-width grapheme must still be visible.
+///
+/// On `wide_line()` the 2nd `你` covers display columns 3-4, so a ruler at 4
+/// addresses the continuation cell. Setting a background there is a no-op the
+/// user never sees: `Buffer::diff` sets `to_skip = symbol.width() - 1` after a
+/// wide symbol and gates every update on `to_skip == 0`, so the cell is never
+/// emitted. Before the fix this test found **no tinted cell at all** — the
+/// guide silently vanished on wide text.
+///
+/// The ruler now marks the leading cell of the grapheme that occupies the
+/// column, so it stays visible and still points at the character sitting at
+/// that column.
+#[test]
+fn test_ruler_on_trailing_cell_of_wide_grapheme_still_renders() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![4];
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text(&wide_line()).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+
+    let marked = ruler_cells_in_row(&harness, row, 80);
+    assert_eq!(
+        marked,
+        vec![ruler_x(&harness, 3)],
+        "a ruler at column 4 falls inside the `你` covering columns 3-4 and \
+         must be painted on its leading cell (column 3) to be visible at all, \
+         got {marked:?}"
+    );
+    assert_eq!(
+        harness.get_cell(marked[0], row).as_deref(),
+        Some("你"),
+        "the tinted cell must be the one carrying the grapheme's symbol"
+    );
+}
+
+/// The same snap, but with the column arithmetic exercised somewhere other
+/// than a uniform row: two ASCII cells then full-width text.
+///
+/// `ab你你你` lays out as `a`=1, `b`=2, then `你` on 3-4, 5-6, 7-8. A ruler at
+/// 6 is the continuation cell of the `你` covering 5-6, so it must snap to 5.
+///
+/// Deliberately configured with **only** the column that needs snapping. An
+/// earlier draft of this test set `rulers = [5, 6]`; because the ruler at 5
+/// already rendered, the row still had exactly one tinted cell at column 5
+/// before the fix and the test passed vacuously. With `[6]` alone the pre-fix
+/// row has no tinted cell at all.
+#[test]
+fn test_ruler_snaps_to_leading_cell_on_mixed_line() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![6];
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text("ab你你你").unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+
+    let marked = ruler_cells_in_row(&harness, row, 80);
+    assert_eq!(
+        marked,
+        vec![ruler_x(&harness, 5)],
+        "a ruler at 6 belongs to the `你` covering columns 5-6 and must mark \
+         its leading cell at column 5, got {marked:?}"
+    );
+    assert_eq!(
+        harness.get_cell(marked[0], row).as_deref(),
+        Some("你"),
+        "column 5 is the leading cell of the 2nd `你` on `ab你你你`"
+    );
+}
+
+/// The user-visible symptom, in the shape it was reported: a ruler bar that
+/// runs cleanly down the blank rows of a pane but **vanishes where a line of
+/// full-width text crosses it**.
+///
+/// This form needs no claim about terminal emission at all — it compares the
+/// same ruler across rows of a single frame. Before the fix the blank rows
+/// carried a tinted cell and the CJK row carried **none**, so the bar had a
+/// hole in it exactly where the text was.
+///
+/// Note precisely what is asserted, because it is not "the bar is perfectly
+/// straight". Snapping to the covering grapheme's leading cell means that on a
+/// row where the ruler falls inside a full-width character the tint sits one
+/// cell to the left of where it sits on blank rows. That is the deliberate
+/// trade of this fix — a guide one cell left is legible, a guide that is not
+/// emitted at all is not — and it is what the config docs now describe. The
+/// invariant is therefore: **every row shows the guide**, within one cell of
+/// the nominal column.
+///
+/// Measured on this fixture: blank rows tint screen x 25, the wide-text row
+/// tints 24 (the leading half of the `你`-class grapheme covering display
+/// columns 19-20). Before the fix the wide-text row tinted nothing.
+#[test]
+fn test_ruler_bar_is_continuous_across_wide_text_rows() {
+    let mut config = Config::default();
+    // Column 20 is even, so on a line of `你好世界…` starting at column 1 it
+    // lands on the continuation cell of the 10th grapheme (columns 19-20).
+    config.editor.rulers = vec![20];
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    // Blank rows above and below the wide-text row are the control: whatever
+    // the ruler does there is what "correct" looks like.
+    //
+    // The wide line is kept to 20 graphemes / 40 display columns so it fits
+    // the content area without wrapping. An earlier draft used 80 graphemes;
+    // at 160 display columns that line wrapped, the row below it was a
+    // *continuation* of the same wide line rather than the blank line 3, and
+    // the control assertion below caught it.
+    let text = format!("\n\n{}\n\n", "你好世界".repeat(5));
+    let _fixture = harness.load_buffer_from_text(&text).unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    // Buffer lines: 0 blank, 1 blank, 2 wide text, 3 blank.
+    let blank_row = content_first_row as u16;
+    let wide_row = content_first_row as u16 + 2;
+    let blank_row_below = content_first_row as u16 + 3;
+
+    let on_blank = ruler_cells_in_row(&harness, blank_row, 80);
+    let on_wide = ruler_cells_in_row(&harness, wide_row, 80);
+    let on_blank_below = ruler_cells_in_row(&harness, blank_row_below, 80);
+
+    // Control first: establish what an uninterrupted bar looks like.
+    assert_eq!(
+        on_blank.len(),
+        1,
+        "control: a blank row must carry exactly one ruler cell, got {on_blank:?}"
+    );
+    assert_eq!(
+        on_blank_below, on_blank,
+        "control: the blank row below must match the blank row above"
+    );
+
+    // The symptom: before the fix this row carried no tinted cell at all, so
+    // the bar had a hole in it exactly where the wide text was.
+    assert_eq!(
+        on_wide.len(),
+        1,
+        "the ruler must still be visible on the row of full-width text; \
+         before the fix this row carried no tinted cell at all. blank rows \
+         -> {on_blank:?}, wide-text row -> {on_wide:?}"
+    );
+
+    // It may sit one cell left of the nominal column, because it snaps to the
+    // leading cell of the grapheme covering that column. It must not drift
+    // further than that.
+    let nominal = on_blank[0];
+    assert!(
+        on_wide[0] == nominal || on_wide[0] + 1 == nominal,
+        "the guide may snap at most one cell left onto the covering \
+         grapheme, but sat at {} against a nominal {nominal}",
+        on_wide[0]
+    );
+
+    // And it must land on a cell that actually carries a symbol — the whole
+    // point is that a tint on a continuation cell is never emitted.
+    let glyph = harness.get_cell(on_wide[0], wide_row);
+    assert!(
+        glyph.as_deref().is_some_and(|g| g.chars().next().is_some_and(
+            |c| ('\u{4e00}'..='\u{9fff}').contains(&c)
+        )),
+        "the tinted cell on the wide row must carry the CJK grapheme's \
+         symbol, got {glyph:?}"
+    );
+}
+
+/// A combining sequence is *not* affected by the same class of problem, and
+/// this test pins that rather than leaving it to assumption.
+///
+/// `e` + U+0301 is one grapheme of display width 1, so it occupies a single
+/// cell and has no continuation cell for a ruler to be lost on. The ruler
+/// lands on it directly and nothing snaps.
+#[test]
+fn test_ruler_on_combining_sequence_needs_no_snap() {
     let mut config = Config::default();
     config.editor.rulers = vec![2];
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
-    let _fixture = harness.load_buffer_from_text("你好世界").unwrap();
+    // "ae\u{0301}c" -> `a`, `é` (e + combining acute), `c` on columns 1, 2, 3.
+    let _fixture = harness.load_buffer_from_text("ae\u{0301}c").unwrap();
     harness.render().unwrap();
 
     let (content_first_row, _) = harness.content_area_rows();
@@ -820,11 +1029,12 @@ fn test_ruler_on_even_column_over_wide_characters() {
     assert_eq!(
         marked,
         vec![ruler_x(&harness, 2)],
-        "the ruler at column 2 tints display column 2, got {marked:?}"
+        "a width-1 combining sequence has no continuation cell, so the ruler \
+         stays on display column 2, got {marked:?}"
     );
-    assert_ne!(
+    assert_eq!(
         harness.get_cell(marked[0], row).as_deref(),
-        Some("你"),
-        "column 2 is the trailing half of `你`, not the cell carrying its symbol"
+        Some("e\u{0301}"),
+        "column 2 holds the whole combining sequence in one cell"
     );
 }

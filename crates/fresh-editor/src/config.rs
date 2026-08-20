@@ -1340,6 +1340,8 @@ pub struct EditorConfig {
     /// (CJK, most emoji) takes two cells, so on lines containing either, the
     /// ruler column is not the character count the status bar reports; for
     /// plain ASCII text the two numbers agree.
+    /// If the column falls inside a full-width character, the guide marks that
+    /// character's first cell, so it stays visible on lines of CJK text.
     /// Values below 1 are not valid columns and are ignored.
     /// Example: [80, 120] draws rulers at columns 80 and 120.
     /// Default: [] (no rulers)

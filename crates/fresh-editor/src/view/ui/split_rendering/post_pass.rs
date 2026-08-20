@@ -76,6 +76,15 @@ pub(super) fn render_cursor_column_bg(
 /// the line (#2928). The 1-based -> 0-based conversion lives here rather than
 /// at the call site so a caller cannot reintroduce the off-by-one; values
 /// below 1 are not valid columns and are skipped.
+///
+/// When a ruler column falls on the *trailing* half of a double-width
+/// grapheme, the tint is moved onto that grapheme's leading cell. A background
+/// set on a continuation cell never reaches the terminal — `Buffer::diff`
+/// computes `to_skip` from the preceding symbol's width and gates every update
+/// on `to_skip == 0` — so without this the guide silently disappeared on rows
+/// of full-width text while still rendering on the blank rows above and below
+/// (#2928). Snapping keeps the bar continuous and keeps it pointing at the
+/// character that actually occupies the column.
 pub(super) fn render_ruler_bg(
     buf: &mut ratatui::buffer::Buffer,
     columns: &[usize],
@@ -85,6 +94,8 @@ pub(super) fn render_ruler_bg(
     content_height: usize,
     left_column: usize,
 ) {
+    use unicode_width::UnicodeWidthStr;
+
     let guide_height = content_height.min(render_area.height as usize);
     let content_x = render_area.x + gutter_width as u16;
     for &column in columns {
@@ -106,8 +117,19 @@ pub(super) fn render_ruler_bg(
         };
         if guide_x < render_area.x + render_area.width {
             for row in 0..guide_height {
-                let cell = &mut buf[(guide_x, render_area.y + row as u16)];
-                cell.set_bg(color);
+                let y = render_area.y + row as u16;
+                // Snap per row, not per column: whether the ruler lands inside
+                // a wide grapheme depends on that row's text. Only one cell
+                // back needs checking because no terminal grapheme is wider
+                // than two cells.
+                let x = if guide_x > content_x
+                    && buf[(guide_x - 1, y)].symbol().width() > 1
+                {
+                    guide_x - 1
+                } else {
+                    guide_x
+                };
+                buf[(x, y)].set_bg(color);
             }
         }
     }

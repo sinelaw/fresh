@@ -20,7 +20,7 @@ Add column rulers at any position via "Add Ruler" from the command palette. Usef
 
 Ruler columns are 1-based *display* columns — screen cells, not characters: a ruler at 80 highlights the 80th display column, the last one the text may occupy. A tab advances to the next tab stop and a full-width character (CJK, most emoji) takes two cells, so on lines containing either, the ruler column is not the character count the status bar reports; for plain ASCII text the two numbers agree. Values below 1 are not valid columns and are ignored.
 
-Known limitation: on a line of full-width characters a ruler at an even column falls on the trailing half of a double-width cell, where the tint may not be visible.
+When a ruler column falls inside a full-width character — for example a ruler at an even column on a line of CJK text — the guide marks that character's first cell, so it stays visible and still points at the character occupying the column. On such a row the bar can therefore sit one cell to the left of where it runs on the rows above and below.
 
 ## Indentation Guides
 

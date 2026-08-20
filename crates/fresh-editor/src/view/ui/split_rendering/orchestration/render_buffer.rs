@@ -719,7 +719,9 @@ pub(crate) fn draw_buffer_in_split(
         // Ruler" prompt accepts (it rejects 0), counted in screen cells, so a
         // tab spans to the next tab stop and a full-width character takes two
         // (#2928). `render_ruler_bg` owns the conversion to the 0-based screen
-        // offsets it paints, and skips values below 1.
+        // offsets it paints, skips values below 1, and snaps a column landing
+        // inside a full-width grapheme onto that grapheme's leading cell so
+        // the guide stays visible on CJK lines.
         render_ruler_bg(
             buf,
             rulers,
