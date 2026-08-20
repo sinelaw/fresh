@@ -240,16 +240,15 @@ impl BufferSettings {
     ///
     /// THE single place the override semantics live, so a restored session and
     /// a later `apply_config` can't disagree. `Some(true)` has to mirror what
-    /// `WhitespaceVisibility::toggle_all` does when nothing is configured
-    /// visible — fall back to the default set — otherwise turning indicators on
-    /// in a language that hides them (Go hides tabs) would silently restore to
-    /// "hidden" and lose the user's choice.
+    /// `WhitespaceVisibility::toggle_all` shows — the *revealed* set, not the
+    /// bare configured one — otherwise a config reload or a session restore
+    /// would quietly drop the indicators the toggle had just switched on.
     pub fn apply_whitespace_override(&mut self, configured: crate::config::WhitespaceVisibility) {
         use crate::config::WhitespaceVisibility;
         self.whitespace = match self.whitespace_override {
             Some(false) => WhitespaceVisibility::hidden(),
-            Some(true) if !configured.any_visible() => WhitespaceVisibility::default(),
-            _ => configured,
+            Some(true) => WhitespaceVisibility::revealed(configured),
+            None => configured,
         };
         // The tab pin layers on top of the master resolution, so "hide the
         // arrows but keep the space dots" (and the reverse) survives both a
@@ -2168,6 +2167,57 @@ mod tests {
     }
     use super::*;
     use crate::model::event::CursorId;
+
+    /// A restored session (or any later `apply_config`) has to land on the
+    /// same visibility the master toggle produced when the user switched it
+    /// on — otherwise the indicators quietly disappear on the next config
+    /// reload, which is what "it works again after a restart" bug reports
+    /// look like from the inside.
+    #[test]
+    fn test_whitespace_override_on_matches_the_master_toggle() {
+        use crate::config::WhitespaceVisibility;
+
+        // Default config: spaces off, tabs on.
+        let configured = WhitespaceVisibility::default();
+
+        let mut toggled = configured;
+        toggled.toggle_all(configured); // -> hidden
+        toggled.toggle_all(configured); // -> shown
+
+        let mut settings = BufferSettings {
+            whitespace_override: Some(true),
+            ..Default::default()
+        };
+        settings.apply_whitespace_override(configured);
+
+        assert!(
+            settings.whitespace.any_spaces(),
+            "switching the master toggle on marks spaces, whatever the config says"
+        );
+        assert_eq!(
+            (
+                settings.whitespace.spaces_leading,
+                settings.whitespace.spaces_inner,
+                settings.whitespace.spaces_trailing,
+                settings.whitespace.tabs_leading,
+                settings.whitespace.tabs_inner,
+                settings.whitespace.tabs_trailing,
+                settings.whitespace.newlines,
+                settings.whitespace.carriage_returns,
+            ),
+            (
+                toggled.spaces_leading,
+                toggled.spaces_inner,
+                toggled.spaces_trailing,
+                toggled.tabs_leading,
+                toggled.tabs_inner,
+                toggled.tabs_trailing,
+                toggled.newlines,
+                toggled.carriage_returns,
+            ),
+            "re-applying the stored override must reproduce the toggled state"
+        );
+    }
 
     #[test]
     fn test_state_new() {

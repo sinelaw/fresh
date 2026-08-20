@@ -808,21 +808,36 @@ impl WhitespaceVisibility {
         }
     }
 
+    /// The "shown" side of the master toggle, for a buffer whose configured
+    /// visibility is `configured`.
+    ///
+    /// Every space position is on, whatever the configuration says: the
+    /// command promises "whitespace dot indicators (·)", and the configured
+    /// visibility (spaces off, tabs on by default) marks nothing at all in a
+    /// space-indented file, which made the toggle look completely inert. Tab
+    /// and line-ending indicators stay as configured, so a language that
+    /// hides tab arrows (`show_whitespace_tabs: false`, e.g. Go) is still
+    /// honoured and `↵` on every line stays opt-in.
+    pub fn revealed(configured: WhitespaceVisibility) -> Self {
+        Self {
+            spaces_leading: true,
+            spaces_inner: true,
+            spaces_trailing: true,
+            ..configured
+        }
+    }
+
     /// Toggle all whitespace indicators on/off (master switch).
     ///
     /// When turning off, all positions are disabled. When turning back on,
-    /// visibility is restored to `restore` — the user's configured, per-buffer
-    /// resolved visibility — so indicators the user actually enabled (e.g. space
-    /// indicators) reappear, not just the hard-coded default. If `restore` has
-    /// nothing visible (config hides whitespace entirely), fall back to the
-    /// built-in default so the master toggle always shows *something*.
-    pub fn toggle_all(&mut self, restore: WhitespaceVisibility) {
+    /// visibility becomes [`revealed`](Self::revealed) for `configured` — the
+    /// buffer's configured visibility with every space indicator forced on —
+    /// so the toggle always marks something in a buffer that has whitespace.
+    pub fn toggle_all(&mut self, configured: WhitespaceVisibility) {
         if self.any_visible() {
             *self = Self::hidden();
-        } else if restore.any_visible() {
-            *self = restore;
         } else {
-            *self = Self::default();
+            *self = Self::revealed(configured);
         }
     }
 }

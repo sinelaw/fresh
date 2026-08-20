@@ -1138,11 +1138,11 @@ impl Editor {
             }
             Action::ToggleWhitespaceIndicators => {
                 let __buffer_id = self.active_buffer();
-                // Resolve the buffer's configured visibility up front so turning
-                // the master toggle back on restores the indicators the user
-                // actually enabled (e.g. space indicators), rather than the
-                // hard-coded default. Fixes #2579.
-                let restore = self.configured_whitespace_visibility(__buffer_id);
+                // Resolve the buffer's configured visibility up front: turning
+                // the master toggle back on shows every space indicator plus
+                // the tab and line-ending indicators the user actually
+                // configured, rather than the hard-coded default. Fixes #2579.
+                let configured = self.configured_whitespace_visibility(__buffer_id);
                 if let Some(state) = self
                     .windows
                     .get_mut(&self.active_window)
@@ -1150,7 +1150,7 @@ impl Editor {
                     .expect("active window present")
                     .get_mut(&__buffer_id)
                 {
-                    state.buffer_settings.whitespace.toggle_all(restore);
+                    state.buffer_settings.whitespace.toggle_all(configured);
                     let visible = state.buffer_settings.whitespace.any_visible();
                     state.buffer_settings.whitespace_override = Some(visible);
                     // The master toggle answers "any indicators at all?", so
