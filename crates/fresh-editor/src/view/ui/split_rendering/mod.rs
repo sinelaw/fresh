@@ -517,6 +517,7 @@ mod tests {
             viewport_start,
             viewport_end,
             selection.primary_cursor_position,
+            selection.primary_selection.clone(),
             &empty_folds,
             &theme,
             100_000,           // default highlight context bytes
@@ -626,6 +627,7 @@ mod tests {
             viewport_start,
             viewport_end,
             selection.primary_cursor_position,
+            selection.primary_selection.clone(),
             &empty_folds,
             &theme,
             100_000,
@@ -3288,6 +3290,7 @@ mod tests {
             viewport_start,
             viewport_end,
             selection.primary_cursor_position,
+            selection.primary_selection.clone(),
             &empty_folds,
             &theme,
             100_000,

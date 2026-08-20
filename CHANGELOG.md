@@ -17,6 +17,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 ### Bug Fixes
 
 * **Selection now reaches the buffer edges** - Shift+Up on the first line and Shift+Down on the last line extend the selection to the buffer start/end, and dragging the mouse past the top or bottom edge keeps selecting and auto-scrolls instead of stopping dead (#3006, #3017, reported by @akarinotomoshibi).
+* **A selection is readable again** - while text is selected, the word-under-cursor highlight steps aside and the other occurrences of the *selected* text are highlighted instead (as in VSCode/Zed), so the extent of the selection is unambiguous. The builtin themes also got occurrence-highlight colours that stay clearly visible against both the editor background and the selection - including on 256-color terminals, where `high-contrast` and `solarized-dark` previously quantized onto their own background and showed nothing at all - and text that would be unreadable on the highlight is nudged to a legible shade while it is marked. Code tours get their own `ui.tour_step_bg` key so their step band keeps its previous colour (#3011, reported by @akarinotomoshibi).
 * **Folding**
   * A misplaced fold no longer swallows a line's text behind `...` - seen as a KDL file's `debug {` vanishing (#3031, reported by @rsramkis).
   * A collapsed fold's header row stays legible when the folded line itself is empty.

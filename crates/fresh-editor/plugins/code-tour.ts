@@ -606,9 +606,12 @@ async function paintStepOverlay(t: TourInstance): Promise<void> {
   // each line paints a full-width band — a region marker visually
   // distinct from a text selection (which never covers the empty tail
   // of a line). The bg is a theme key so the band restyles with the
-  // theme, like every other tour colour.
+  // theme, like every other tour colour. It is the band's *own* key:
+  // the occurrence highlight next door is tuned for a few cells of text
+  // that must stay legible and stay apart from the selection, which is
+  // the wrong trade for a wash over whole line ranges.
   editor.addOverlay(bufferId, t.namespace, range[0], range[1], {
-    bg: "ui.semantic_highlight_bg",
+    bg: "ui.tour_step_bg",
     extendToLineEnd: true,
   });
   t.paintedBuffers.add(bufferId);

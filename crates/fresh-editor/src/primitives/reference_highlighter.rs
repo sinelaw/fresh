@@ -37,6 +37,32 @@ use std::ops::Range;
 /// A dark gray that's visible but not distracting
 pub const DEFAULT_HIGHLIGHT_COLOR: Color = Color::Rgb(60, 60, 80);
 
+/// Longest selection (in bytes) whose matches are highlighted.
+///
+/// A selection is arbitrary text, so matching it has to be bounded: beyond
+/// this the selection is treated as "not matchable" (the cursor-word
+/// highlight still stays suppressed, there is simply nothing to search for).
+pub const MAX_SELECTION_MATCH_BYTES: usize = 512;
+
+/// Whether the matches of a selection should be highlighted.
+///
+/// Mirrors the VSCode/Zed rule: a single-line, non-blank, bounded selection
+/// highlights its other occurrences; anything else (multi-line, whitespace
+/// only, oversized) only suppresses the cursor-word highlight.
+///
+/// `min_len` is the highlighter's [`ReferenceHighlighter::min_word_length`].
+/// The selection path applies it for the same reason the cursor-word path
+/// does: a one- or two-character needle matches on most lines of most files,
+/// so a single `Shift+Right` would otherwise rebuild hundreds of overlays
+/// every time the selection settles.
+pub fn is_matchable_selection(text: &str, min_len: usize) -> bool {
+    !text.trim().is_empty()
+        && text.len() >= min_len
+        && !text.contains('\n')
+        && !text.contains('\r')
+        && text.len() <= MAX_SELECTION_MATCH_BYTES
+}
+
 /// Semantic highlighter for word occurrences
 pub struct ReferenceHighlighter {
     /// Color for occurrence highlights
@@ -372,6 +398,44 @@ impl ReferenceHighlighter {
             viewport_end,
             context_bytes,
         )
+    }
+
+    /// Get highlights for every occurrence of the selected text in the viewport
+    ///
+    /// This is the "selection highlight" of VSCode/Zed: while a selection is
+    /// active it replaces the cursor-word occurrence highlight. Matching is
+    /// literal rather than whole-word, because a selection can be any run of
+    /// characters (`bet` inside `beta` counts). The selection's own range is
+    /// skipped — it already carries the selection background.
+    ///
+    /// Like the cursor-word path, the search is confined to the viewport and
+    /// gated on [`Self::min_word_length`]: VSCode does highlight a
+    /// single-character selection, but here that would mean rebuilding an
+    /// overlay for every instance of that character on screen each time the
+    /// selection settles, which is exactly the per-frame overlay storm
+    /// `view/overlay.rs` warns about.
+    pub fn selection_matches(
+        &self,
+        buffer: &Buffer,
+        selected_text: &str,
+        selection: &Range<usize>,
+        viewport_start: usize,
+        viewport_end: usize,
+    ) -> Vec<HighlightSpan> {
+        if !self.enabled || !is_matchable_selection(selected_text, self.min_word_length) {
+            return Vec::new();
+        }
+
+        self.find_matches_in_range(buffer, selected_text, viewport_start, viewport_end, false)
+            .into_iter()
+            .filter(|range| range != selection)
+            .map(|range| HighlightSpan {
+                range,
+                color: self.highlight_color,
+                bg: None,
+                category: None,
+            })
+            .collect()
     }
 
     /// Locals-based highlighting that respects variable scoping
@@ -812,6 +876,22 @@ impl ReferenceHighlighter {
         start: usize,
         end: usize,
     ) -> Vec<Range<usize>> {
+        self.find_matches_in_range(buffer, word, start, end, true)
+    }
+
+    /// Find all matches of `needle` overlapping the `start..end` byte range
+    ///
+    /// With `whole_word`, matches that continue into a surrounding word are
+    /// rejected (the cursor-word highlight); without it every literal match
+    /// counts (the selection highlight).
+    fn find_matches_in_range(
+        &self,
+        buffer: &Buffer,
+        needle: &str,
+        start: usize,
+        end: usize,
+        whole_word: bool,
+    ) -> Vec<Range<usize>> {
         // Skip if search range is too large (e.g., huge single-line files)
         if end.saturating_sub(start) > Self::MAX_SEARCH_RANGE {
             return Vec::new();
@@ -819,9 +899,18 @@ impl ReferenceHighlighter {
 
         let mut occurrences = Vec::new();
 
-        // Get the text in the range (with some padding for edge words)
-        let search_start = start.saturating_sub(word.len());
-        let search_end = (end + word.len()).min(buffer.len());
+        // Get the text in the range (with some padding for edge matches),
+        // kept on character boundaries so the slice stays valid UTF-8.
+        let search_start = buffer.snap_to_char_boundary(start.saturating_sub(needle.len()));
+        let padded_end = (end + needle.len()).min(buffer.len());
+        let search_end = {
+            let snapped = buffer.snap_to_char_boundary(padded_end);
+            if snapped == padded_end {
+                padded_end
+            } else {
+                buffer.next_char_boundary(snapped)
+            }
+        };
 
         let bytes = buffer.slice_bytes(search_start..search_end);
         let text = match std::str::from_utf8(&bytes) {
@@ -832,17 +921,17 @@ impl ReferenceHighlighter {
         // Use match_indices for single-pass searching (creates StrSearcher once)
         // This is much more efficient than repeatedly calling find() which creates
         // a new searcher each time
-        for (rel_pos, _) in text.match_indices(word) {
+        for (rel_pos, _) in text.match_indices(needle) {
             let abs_start = search_start + rel_pos;
-            let abs_end = abs_start + word.len();
+            let abs_end = abs_start + needle.len();
 
             // Check if this is a whole word match (not part of a larger word)
-            let is_word_start = abs_start == 0 || {
+            let is_word_start = !whole_word || abs_start == 0 || {
                 let prev_byte = buffer.slice_bytes(abs_start - 1..abs_start);
                 prev_byte.first().map(|&b| !is_word_char(b)).unwrap_or(true)
             };
 
-            let is_word_end = abs_end >= buffer.len() || {
+            let is_word_end = !whole_word || abs_end >= buffer.len() || {
                 let next_byte = buffer.slice_bytes(abs_end..abs_end + 1);
                 next_byte.first().map(|&b| !is_word_char(b)).unwrap_or(true)
             };
@@ -974,6 +1063,98 @@ mod tests {
         let spans = highlighter.highlight_occurrences(&buffer, 8, 4, 12, 100_000);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].range, 8..11);
+    }
+
+    #[test]
+    fn test_selection_matches_are_literal_and_skip_the_selection() {
+        // "bet" is selected inside the first "beta": every other "bet" in the
+        // viewport is highlighted, including the ones inside longer words,
+        // and the selection itself is left to the selection background.
+        let buffer = Buffer::from_str_test("alpha beta gamma\nbeta betting");
+        let highlighter = ReferenceHighlighter::new();
+
+        let selection = 6..9; // "bet" of the first "beta"
+        let spans = highlighter.selection_matches(&buffer, "bet", &selection, 0, buffer.len());
+
+        let ranges: Vec<_> = spans.into_iter().map(|s| s.range).collect();
+        assert_eq!(ranges, vec![17..20, 22..25]);
+    }
+
+    #[test]
+    fn test_selection_matches_limited_to_viewport() {
+        let buffer = Buffer::from_str_test("bet bet bet bet");
+        let highlighter = ReferenceHighlighter::new();
+
+        // Viewport covers only the first two matches.
+        let selection = 0..3;
+        let spans = highlighter.selection_matches(&buffer, "bet", &selection, 0, 7);
+        let ranges: Vec<_> = spans.into_iter().map(|s| s.range).collect();
+        assert_eq!(ranges, vec![4..7]);
+    }
+
+    /// Each fixture here is chosen so the needle *would* match somewhere other
+    /// than the selection itself if its guard were dropped — a guard test on a
+    /// fixture with no other match proves nothing.
+    #[test]
+    fn test_multiline_and_blank_selections_are_not_matched() {
+        let highlighter = ReferenceHighlighter::new();
+
+        // The selected two-line run repeats, so dropping the `\n` guard would
+        // highlight 8..15. (`match_indices` is non-overlapping, so a fixture of
+        // only three lines has no second match to find.)
+        let multiline = Buffer::from_str_test("foo\nfoo\nfoo\nfoo");
+        assert!(highlighter
+            .selection_matches(&multiline, "foo\nfoo", &(0..7), 0, multiline.len())
+            .is_empty());
+
+        // The buffer actually contains the selected whitespace run a second
+        // time, so dropping the blank guard would highlight 5..8.
+        let blank = Buffer::from_str_test("a   b   c");
+        assert!(highlighter
+            .selection_matches(&blank, "   ", &(1..4), 0, blank.len())
+            .is_empty());
+
+        // An oversized needle that does occur again in the buffer.
+        let long = "x".repeat(MAX_SELECTION_MATCH_BYTES + 1);
+        let oversized = Buffer::from_str_test(&format!("{long} {long}"));
+        assert!(highlighter
+            .selection_matches(&oversized, &long, &(0..long.len()), 0, oversized.len())
+            .is_empty());
+    }
+
+    /// A one-character selection matches on nearly every line of nearly every
+    /// file. Highlighting all of them would rebuild hundreds of overlays each
+    /// time the selection settles, so the selection path applies the same
+    /// `min_word_length` gate the cursor-word path does.
+    #[test]
+    fn test_short_selections_are_gated_by_min_word_length() {
+        let buffer = Buffer::from_str_test("a b a b a b a b");
+        let mut highlighter = ReferenceHighlighter::new();
+        assert_eq!(highlighter.min_word_length, 2);
+
+        assert!(
+            highlighter
+                .selection_matches(&buffer, "a", &(0..1), 0, buffer.len())
+                .is_empty(),
+            "a single-character selection must not highlight every occurrence of that character"
+        );
+
+        // Two characters clear the default gate.
+        let ranges: Vec<_> = highlighter
+            .selection_matches(&buffer, "a ", &(0..2), 0, buffer.len())
+            .into_iter()
+            .map(|s| s.range)
+            .collect();
+        assert_eq!(ranges, vec![4..6, 8..10, 12..14]);
+
+        // And the gate follows the configured minimum.
+        highlighter = highlighter.with_min_length(1);
+        assert_eq!(
+            highlighter
+                .selection_matches(&buffer, "a", &(0..1), 0, buffer.len())
+                .len(),
+            3
+        );
     }
 
     #[test]

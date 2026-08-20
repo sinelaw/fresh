@@ -335,7 +335,12 @@ fn indexed_to_16(idx: u8) -> Color {
 /// Minimum WCAG contrast ratio for readable text.
 /// WCAG AA requires 4.5:1 for normal text; we use 3.0 as a practical minimum
 /// since terminal fonts are typically large/monospace.
-const MIN_CONTRAST_RATIO: f64 = 3.0;
+///
+/// This is the bar `enforce_minimum_contrast` holds every 256-color cell to,
+/// and the bar the builtin themes' own colors are held to (see the theme
+/// tests) — nothing rewrites foregrounds on a truecolor terminal, so there the
+/// theme has to get it right on its own.
+pub(crate) const MIN_CONTRAST_RATIO: f64 = 3.0;
 
 /// The 6 discrete values used in the 256-color cube (indices 16-231)
 const CUBE_VALUES: [u8; 6] = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff];
@@ -378,7 +383,7 @@ fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
 }
 
 /// Compute WCAG contrast ratio between two colors given as (r, g, b)
-fn contrast_ratio(fg: (u8, u8, u8), bg: (u8, u8, u8)) -> f64 {
+pub(crate) fn contrast_ratio(fg: (u8, u8, u8), bg: (u8, u8, u8)) -> f64 {
     let l1 = relative_luminance(fg.0, fg.1, fg.2);
     let l2 = relative_luminance(bg.0, bg.1, bg.2);
     let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
@@ -404,6 +409,45 @@ const ANSI_COLORS: [(u8, u8, u8); 16] = [
     (0, 255, 255),
     (255, 255, 255),
 ];
+
+/// The RGB a terminal actually paints for `color` at a given capability.
+///
+/// `None` for named and default colors: those resolve against the terminal's
+/// own palette, so no fixed RGB describes them. This is the palette inverse of
+/// `convert_color`, and the only supported way to ask "what will actually be
+/// on screen" — don't re-derive the cube/gray-ramp constants elsewhere.
+pub(crate) fn painted_rgb(color: Color, capability: ColorCapability) -> Option<(u8, u8, u8)> {
+    match convert_color(color, capability) {
+        Color::Rgb(r, g, b) => Some((r, g, b)),
+        Color::Indexed(idx) => Some(idx_to_rgb(idx)),
+        _ => None,
+    }
+}
+
+/// The foreground to paint so text stays legible on `bg`, or `None` to keep
+/// the foreground as-is.
+///
+/// `None` means "leave it alone": either the pair already clears
+/// [`MIN_CONTRAST_RATIO`], or one of the colors belongs to the terminal's own
+/// palette (`Reset`, named ANSI) and its real value is the user's to decide.
+///
+/// This is what lets a background overlay be *visible* without being allowed
+/// to erase the text under it. A background tint that stands clearly apart
+/// from `editor.bg` and from `editor.selection_bg` necessarily lands in the
+/// luminance band where syntax foregrounds live, so some collision is
+/// unavoidable; repairing the few cells that collide is cheaper than giving up
+/// either visibility or legibility. The replacement is chosen by
+/// `find_readable_256_color`, which picks the *nearest* palette entry clearing
+/// the ratio, so a colliding comment stays recognisably a comment.
+pub(crate) fn repaired_fg(fg: Color, bg: Color) -> Option<Color> {
+    let fg_rgb = painted_rgb(fg, ColorCapability::TrueColor)?;
+    let bg_rgb = painted_rgb(bg, ColorCapability::TrueColor)?;
+    if contrast_ratio(fg_rgb, bg_rgb) >= MIN_CONTRAST_RATIO {
+        return None;
+    }
+    let fg_idx = color_to_palette_index(fg)?;
+    Some(Color::Indexed(find_readable_256_color(fg_idx, bg_rgb)))
+}
 
 /// Get the RGB values for a 256-color palette index
 fn idx_to_rgb(idx: u8) -> (u8, u8, u8) {

@@ -213,6 +213,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                 fg_theme,
                 bg_theme,
                 fg_on_collision_only,
+                fg_on_low_contrast,
             } => {
                 let mut themed_style = *fallback_style;
                 // Resolve bg first so the collision check below sees it.
@@ -235,6 +236,18 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                         };
                         if apply {
                             themed_style = themed_style.fg(color);
+                        }
+                    }
+                }
+                // Keep the text legible over the band we just painted. Only
+                // the cells that would actually go unreadable are touched, and
+                // each is moved to the nearest palette entry that clears the
+                // ratio, so the syntax colour is nudged rather than replaced.
+                if *fg_on_low_contrast {
+                    let new_bg = themed_style.bg.or(style.bg);
+                    if let (Some(fg), Some(bg)) = (themed_style.fg.or(style.fg), new_bg) {
+                        if let Some(repaired) = crate::view::color_support::repaired_fg(fg, bg) {
+                            themed_style = themed_style.fg(repaired);
                         }
                     }
                 }
@@ -312,6 +325,7 @@ mod tests {
                 fg_theme: Some(fg_key.to_string()),
                 bg_theme: Some(bg_key.to_string()),
                 fg_on_collision_only,
+                fg_on_low_contrast: false,
             },
         )
     }
@@ -418,6 +432,77 @@ mod tests {
 
         assert_eq!(out.style.bg, Some(Color::Yellow));
         assert_eq!(out.style.fg, Some(Color::Black));
+    }
+
+    fn occurrence_overlay(marker_list: &mut MarkerList) -> Overlay {
+        Overlay::new(
+            marker_list,
+            0..10,
+            OverlayFace::ThemedStyle {
+                fallback_style: Style::default(),
+                fg_theme: None,
+                bg_theme: Some("ui.semantic_highlight_bg".to_string()),
+                fg_on_collision_only: false,
+                fg_on_low_contrast: true,
+            },
+        )
+    }
+
+    /// The occurrence highlight is a *visible* background, so it necessarily
+    /// lands in the luminance band where syntax colours live. A colour that
+    /// would go unreadable on it is repaired; one that is already legible is
+    /// left exactly as the theme author wrote it (#3011).
+    #[test]
+    fn low_contrast_fg_is_repaired_over_the_occurrence_highlight() {
+        use crate::view::color_support::{contrast_ratio, painted_rgb, ColorCapability};
+
+        let theme = Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        let mut ml = MarkerList::new();
+        ml.set_buffer_size(100);
+        let o = occurrence_overlay(&mut ml);
+
+        let hl = painted_rgb(theme.semantic_highlight_bg, ColorCapability::TrueColor).unwrap();
+
+        // dark's comment green sits right on top of the highlight band.
+        let comment = theme.syntax_comment;
+        let before = contrast_ratio(
+            painted_rgb(comment, ColorCapability::TrueColor).unwrap(),
+            hl,
+        );
+        assert!(
+            before < 3.0,
+            "fixture no longer collides (contrast {before:.2}) — pick a colour that does"
+        );
+
+        let out = run(&theme, &o, Some(comment));
+        assert_eq!(out.style.bg, Some(theme.semantic_highlight_bg));
+        let painted = painted_rgb(out.style.fg.unwrap(), ColorCapability::TrueColor).unwrap();
+        let after = contrast_ratio(painted, hl);
+        assert!(
+            after >= 3.0,
+            "fg {:?} over highlight {:?} is still only {after:.2}:1",
+            out.style.fg,
+            hl
+        );
+        assert_ne!(out.style.fg, Some(comment), "the colliding fg must move");
+    }
+
+    #[test]
+    fn legible_fg_is_untouched_over_the_occurrence_highlight() {
+        let theme = Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        let mut ml = MarkerList::new();
+        ml.set_buffer_size(100);
+        let o = occurrence_overlay(&mut ml);
+
+        // editor.fg is a near-white; it clears the bar on the highlight.
+        let out = run(&theme, &o, Some(theme.editor_fg));
+
+        assert_eq!(out.style.bg, Some(theme.semantic_highlight_bg));
+        assert_eq!(
+            out.style.fg,
+            Some(theme.editor_fg),
+            "a legible foreground must be left alone"
+        );
     }
 
     #[test]

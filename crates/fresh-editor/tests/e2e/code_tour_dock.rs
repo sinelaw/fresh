@@ -233,8 +233,8 @@ fn load_tour(harness: &mut EditorTestHarness, manifest: &str, tab_marker: &str) 
 }
 
 /// Screen rows (within the editor area) whose column 20 carries the step
-/// highlight's background colour — the theme key `ui.semantic_highlight_bg`,
-/// which the harness's high-contrast theme resolves to rgb(0, 25, 55). The
+/// highlight's background colour — the theme key `ui.tour_step_bg`, which the
+/// harness's high-contrast theme resolves to rgb(0, 25, 55). The
 /// highlight is painted `extendToLineEnd`, so column 20 is covered for every
 /// fixture file in this module.
 fn highlighted_rows(h: &EditorTestHarness) -> Vec<u16> {

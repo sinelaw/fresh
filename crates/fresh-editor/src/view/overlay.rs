@@ -32,6 +32,15 @@ pub enum OverlayFace {
         /// When `true`, apply `fg` only on cells whose existing fg
         /// equals the resolved bg (a same-colour collision).
         fg_on_collision_only: bool,
+        /// When `true`, repair the *existing* fg on cells where it would not
+        /// stay legible over the resolved bg, independently of `fg_theme`.
+        ///
+        /// A strict superset of `fg_on_collision_only`, which only catches an
+        /// exact same-colour match: this catches "different colour, same
+        /// luminance" too, which is what actually makes text disappear. Used
+        /// by the occurrence highlight so its background can be visibly
+        /// distinct from `editor.bg` without erasing the words it marks.
+        fg_on_low_contrast: bool,
     },
 }
 
@@ -110,6 +119,8 @@ impl OverlayFace {
                 fg_theme,
                 bg_theme,
                 fg_on_collision_only: options.fg_on_collision_only,
+                // Not exposed to plugins: an editor-internal affordance.
+                fg_on_low_contrast: false,
             }
         } else {
             OverlayFace::Style { style }
