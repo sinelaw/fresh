@@ -10,6 +10,7 @@
 
 use super::*;
 use anyhow::Result as AnyhowResult;
+use crossterm::event::KeyModifiers as KM;
 use rust_i18n::t;
 
 impl Editor {
@@ -1897,6 +1898,80 @@ impl Editor {
                     self.update_prompt_suggestions();
                 }
             }
+
+            // Prompt navigation and editing.
+            //
+            // These are the actions the `prompt` section of every keymap binds.
+            // The prompt owns its editing logic in `Prompt`'s `InputHandler`
+            // (suggestion sync, theme preview, plugin selection hooks, …), and
+            // the handler runs *before* keybinding resolution — so a key it
+            // handles itself never reaches its binding, and until now a key it
+            // ignored resolved to an action with no dispatch arm at all and did
+            // nothing. That left every `prompt` binding on a non-default key
+            // silently dead (Emacs `C-b`/`C-n`/`C-g`, say).
+            //
+            // Each action is defined as "the same thing this key does", and
+            // re-enters the prompt's handler with that key, so there is one
+            // implementation of each operation rather than a second copy here
+            // that would drift.
+            Action::PromptCancel => self.dispatch_prompt_key_for_action(KeyCode::Esc, KM::NONE),
+            Action::PromptBackspace => {
+                self.dispatch_prompt_key_for_action(KeyCode::Backspace, KM::NONE)
+            }
+            Action::PromptDelete => self.dispatch_prompt_key_for_action(KeyCode::Delete, KM::NONE),
+            Action::PromptMoveLeft => self.dispatch_prompt_key_for_action(KeyCode::Left, KM::NONE),
+            Action::PromptMoveRight => {
+                self.dispatch_prompt_key_for_action(KeyCode::Right, KM::NONE)
+            }
+            Action::PromptMoveStart => self.dispatch_prompt_key_for_action(KeyCode::Home, KM::NONE),
+            Action::PromptMoveEnd => self.dispatch_prompt_key_for_action(KeyCode::End, KM::NONE),
+            Action::PromptSelectPrev => self.dispatch_prompt_key_for_action(KeyCode::Up, KM::NONE),
+            Action::PromptSelectNext => {
+                self.dispatch_prompt_key_for_action(KeyCode::Down, KM::NONE)
+            }
+            Action::PromptPageUp => self.dispatch_prompt_key_for_action(KeyCode::PageUp, KM::NONE),
+            Action::PromptPageDown => {
+                self.dispatch_prompt_key_for_action(KeyCode::PageDown, KM::NONE)
+            }
+            Action::PromptAcceptSuggestion => {
+                self.dispatch_prompt_key_for_action(KeyCode::Tab, KM::NONE)
+            }
+            Action::PromptMoveWordLeft => {
+                self.dispatch_prompt_key_for_action(KeyCode::Left, KM::CONTROL)
+            }
+            Action::PromptMoveWordRight => {
+                self.dispatch_prompt_key_for_action(KeyCode::Right, KM::CONTROL)
+            }
+            Action::PromptDeleteWordBackward => {
+                self.dispatch_prompt_key_for_action(KeyCode::Backspace, KM::CONTROL)
+            }
+            Action::PromptDeleteWordForward => {
+                self.dispatch_prompt_key_for_action(KeyCode::Delete, KM::CONTROL)
+            }
+            Action::PromptDeleteToLineEnd => {
+                self.dispatch_prompt_key_for_action(KeyCode::Char('k'), KM::CONTROL)
+            }
+            Action::PromptSelectAll => {
+                self.dispatch_prompt_key_for_action(KeyCode::Char('a'), KM::CONTROL)
+            }
+            Action::PromptMoveLeftSelecting => {
+                self.dispatch_prompt_key_for_action(KeyCode::Left, KM::SHIFT)
+            }
+            Action::PromptMoveRightSelecting => {
+                self.dispatch_prompt_key_for_action(KeyCode::Right, KM::SHIFT)
+            }
+            Action::PromptMoveHomeSelecting => {
+                self.dispatch_prompt_key_for_action(KeyCode::Home, KM::SHIFT)
+            }
+            Action::PromptMoveEndSelecting => {
+                self.dispatch_prompt_key_for_action(KeyCode::End, KM::SHIFT)
+            }
+            Action::PromptSelectWordLeft => {
+                self.dispatch_prompt_key_for_action(KeyCode::Left, KM::CONTROL | KM::SHIFT)
+            }
+            Action::PromptSelectWordRight => {
+                self.dispatch_prompt_key_for_action(KeyCode::Right, KM::CONTROL | KM::SHIFT)
+            }
             _ => {
                 // TODO: Why do we have this catch-all? It seems like actions should either:
                 // 1. Be handled explicitly above (like InsertChar, PopupConfirm, etc.)
@@ -2053,5 +2128,36 @@ impl Editor {
             buffer_id
         );
         Ok(())
+    }
+
+    /// Run one of the `prompt_*` actions by re-entering the prompt's own
+    /// input handler with the key that means the same thing.
+    ///
+    /// The prompt keeps its editing logic in `Prompt`'s `InputHandler` and runs
+    /// it ahead of keybinding resolution, so an action arm that reimplemented
+    /// (say) suggestion navigation would be a second copy of the sync, theme
+    /// preview and plugin-notification behaviour, free to drift from the one
+    /// the arrow keys use. Delegating keeps exactly one implementation.
+    ///
+    /// A no-op when no prompt is open — an action bound in the `prompt`
+    /// context can still be reached from elsewhere.
+    fn dispatch_prompt_key_for_action(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) {
+        use crate::input::handler::{InputContext, InputHandler};
+        let mut ctx = InputContext::new();
+        let event = crossterm::event::KeyEvent::new(code, modifiers);
+        let handled = match self.active_window_mut().prompt.as_mut() {
+            Some(prompt) => {
+                prompt.handle_key_event(&event, &mut ctx);
+                true
+            }
+            None => false,
+        };
+        if handled {
+            self.process_deferred_actions(ctx);
+        }
     }
 }

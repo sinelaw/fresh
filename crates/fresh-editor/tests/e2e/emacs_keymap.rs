@@ -120,3 +120,122 @@ fn inherited_default_bindings_still_fire() {
 
     harness.assert_screen_contains("ALPHA beta");
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Minibuffer and menu: a keymap binding has to actually reach them.
+//
+// Both surfaces run their own input handler ahead of keybinding resolution —
+// the menu's is capture-all — so a `prompt` or `menu` binding on anything but
+// the handler's own hardcoded keys used to do nothing at all.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Open the goto-line prompt with `M-g g`.
+fn open_goto_line(harness: &mut EditorTestHarness) {
+    key(harness, KeyCode::Char('g'), KeyModifiers::ALT);
+    key(harness, KeyCode::Char('g'), KeyModifiers::NONE);
+}
+
+#[test]
+fn minibuffer_ctrl_b_and_ctrl_f_move_the_caret() {
+    let mut harness = emacs_harness();
+    open_goto_line(&mut harness);
+    harness.type_text("123").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("123");
+
+    // C-b twice, then a digit: it lands between "1" and "2".
+    ctrl(&mut harness, 'b');
+    ctrl(&mut harness, 'b');
+    harness.type_text("9").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("192");
+
+    // C-f moves back over the "2"; the next digit lands after it.
+    ctrl(&mut harness, 'f');
+    harness.type_text("7").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("1927");
+}
+
+#[test]
+fn minibuffer_ctrl_a_is_beginning_of_line_not_select_all() {
+    // The prompt widget hardcodes Ctrl+A to select-all and runs before
+    // keybinding resolution, so the Emacs binding could never win. Typing
+    // after C-a proves which one did: beginning-of-line keeps the text.
+    let mut harness = emacs_harness();
+    open_goto_line(&mut harness);
+    harness.type_text("123").unwrap();
+    harness.render().unwrap();
+
+    ctrl(&mut harness, 'a');
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("X123");
+}
+
+#[test]
+fn minibuffer_ctrl_g_cancels() {
+    let mut harness = emacs_harness();
+    open_goto_line(&mut harness);
+    harness.type_text("123").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("123");
+
+    ctrl(&mut harness, 'g');
+    harness.assert_screen_not_contains("Go to line");
+}
+
+#[test]
+fn menu_ctrl_n_moves_the_highlight() {
+    // The menu handler consumes every key it doesn't recognise, so `menu`
+    // bindings never fired. Proven by what Enter runs: with C-n working, the
+    // second File item (Open File…) opens its prompt; without it, Enter runs
+    // the first item and makes a new buffer instead.
+    let mut harness = emacs_harness();
+    key(&mut harness, KeyCode::F(10), KeyModifiers::NONE);
+    harness.assert_screen_contains("Open File");
+
+    ctrl(&mut harness, 'n');
+    key(&mut harness, KeyCode::Enter, KeyModifiers::NONE);
+    harness.assert_screen_contains("Open file");
+}
+
+#[test]
+fn menu_ctrl_g_closes_the_menu() {
+    let mut harness = emacs_harness();
+    key(&mut harness, KeyCode::F(10), KeyModifiers::NONE);
+    harness.assert_screen_contains("Open File");
+
+    ctrl(&mut harness, 'g');
+    harness.assert_screen_not_contains("Open File");
+}
+
+/// The precedence change must not disturb the default keymap, which binds
+/// `prompt` Ctrl+A to `prompt_select_all` — the same thing the widget does.
+#[test]
+fn default_keymap_minibuffer_ctrl_a_still_selects_all() {
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(Config {
+                active_keybinding_map: "default".into(),
+                ..Default::default()
+            })
+            .with_preserved_keybinding_map(),
+    )
+    .unwrap();
+
+    // Ctrl+G is goto-line in the default keymap.
+    key(&mut harness, KeyCode::Char('g'), KeyModifiers::CONTROL);
+    harness.type_text("123").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("123");
+
+    // Select-all, so the next character replaces the whole line.
+    key(&mut harness, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("123");
+    harness.assert_screen_contains("X");
+}
