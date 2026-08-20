@@ -551,3 +551,29 @@ fn a_scrollbar_sits_in_a_gutter_the_content_does_not_cover() {
     });
     assert!(!overlap, "content must not cover the scrollbar gutter");
 }
+
+/// **A backend clips a run to the item's own rectangle.** Layout gives a
+/// constrained node the width it was *allowed*, not the width its content
+/// wants, so a `Draw::Lines` run can be longer than the rect that carries it.
+/// A backend that writes the string and honours only the inherited clip paints
+/// straight through whatever encloses the node — a menu row through its own
+/// border, a status segment through the segment beside it.
+///
+/// The reference backend in `support::screen` is the contract; the interactive
+/// example's fold does the same.
+#[test]
+fn a_run_longer_than_its_item_is_clipped_to_it() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col()
+            .w(Sizing::Cells(6))
+            .child(fresh_ui::text("0123456789").w(Sizing::Cells(4))),
+        Size { w: 8, h: 2 },
+    );
+    let screen = support::screen::render(spec);
+    assert_eq!(
+        screen.line(0),
+        "0123    ",
+        "four columns were given, four were painted"
+    );
+}

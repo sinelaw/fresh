@@ -9,8 +9,14 @@
 //!
 //! Quit with Ctrl-Q. The library itself has no terminal dependency; crossterm
 //! is a dev-dependency, so it is compiled only for examples and tests. This
-//! file is an ordinary backend — a fold over `LayoutSpec::items` — and is the
+//! file is an ordinary backend — a fold over the display list — and is the
 //! shape a real host renderer takes.
+//!
+//! It folds in **two passes**, split at `LayoutSpec::layers_from`, with a band
+//! of its own drawn in between (F2). That is the shape a host takes while it
+//! is still painting some surfaces itself: its own drawing has to land over
+//! the tree's in-flow content and under the tree's layers, and only the
+//! library can say where one ends and the other begins.
 
 #[path = "../tests/support/mod.rs"]
 mod support;
@@ -37,10 +43,13 @@ fn main() -> io::Result<()> {
     let (w, h) = terminal::size()?;
     // A long list, so the task viewport overflows and shows a scrollbar.
     let mut demo = Demo::with_app(App::seeded(250), Size::new(w, h));
-    let redraw = |term: &mut Terminal, demo: &Demo| -> io::Result<()> {
-        term.draw(demo.ui.spec(), demo.app.theme.name == "dark")
+    // Stands in for a host's own painter, drawn between the display list's two
+    // halves. See `Terminal::banner`.
+    let mut banner = true;
+    let redraw = |term: &mut Terminal, demo: &Demo, banner: bool| -> io::Result<()> {
+        term.draw(demo.ui.spec(), demo.app.theme.name == "dark", banner)
     };
-    redraw(&mut term, &demo)?;
+    redraw(&mut term, &demo, banner)?;
 
     loop {
         if demo.app.quit {
@@ -56,6 +65,11 @@ fn main() -> io::Result<()> {
                     if k.code == CtKey::Char('q') && k.modifiers.contains(KeyModifiers::CONTROL) {
                         break;
                     }
+                    if k.code == CtKey::F(2) {
+                        banner = !banner;
+                        redraw(&mut term, &demo, banner)?;
+                        continue;
+                    }
                     if let Some(press) = translate_key(k.code, k.modifiers) {
                         demo.input(Input::Key(press));
                     }
@@ -68,10 +82,10 @@ fn main() -> io::Result<()> {
                 CtEvent::Resize(w, h) => demo.resize(Size::new(w, h)),
                 _ => continue,
             }
-            redraw(&mut term, &demo)?;
+            redraw(&mut term, &demo, banner)?;
         } else if demo.ui.needs_frame() {
             demo.pump();
-            redraw(&mut term, &demo)?;
+            redraw(&mut term, &demo, banner)?;
         }
     }
 
@@ -205,7 +219,7 @@ impl Terminal {
         })
     }
 
-    fn draw(&mut self, spec: &fresh_ui::LayoutSpec, dark: bool) -> io::Result<()> {
+    fn draw(&mut self, spec: &fresh_ui::LayoutSpec, dark: bool, banner: bool) -> io::Result<()> {
         let (w, h) = terminal::size()?;
         if (w, h) != (self.w, self.h) {
             self.w = w;
@@ -222,11 +236,48 @@ impl Terminal {
         self.shadows.clear();
 
         let frame = Rect::new(0, 0, self.w, self.h);
-        for item in &spec.items {
+
+        // **Two passes over one list.** A backend that draws content the tree
+        // does not own — a host mid-migration, still painting some of its own
+        // surfaces — needs to slot that drawing *between* the tree's in-flow
+        // content and its layers: over the first, under the second. That is
+        // what `LayoutSpec::layers_from` is for, and the banner below stands in
+        // for the host's own painter so the ordering is visible rather than
+        // asserted.
+        //
+        // Nothing outside the library can work the split out for itself: a
+        // scrim carries no key, and a layer need not carry one either (the
+        // `Dropdown` in this very demo does not), so an index-derived guess
+        // puts both on the wrong side.
+        for item in spec.in_flow() {
             self.paint(item, frame, &r);
         }
+        if banner {
+            self.banner(frame, &r);
+        }
+        for item in spec.layers() {
+            self.paint(item, frame, &r);
+        }
+
         self.cast_shadows(frame, &r);
         self.flush(spec)
+    }
+
+    /// A band the *backend* paints, owned by nothing in the tree.
+    ///
+    /// Press F2 to toggle it, then open a menu, the palette or the confirm
+    /// modal over it: the tree's in-flow content goes under the band, and
+    /// every layer — the modal's dim scrim included — goes over it. Fold the
+    /// whole list in one pass instead and the band covers the layers, which is
+    /// the bug this split exists to prevent.
+    fn banner(&mut self, frame: Rect, roles: &Roles) {
+        let y = frame.h as i32 / 2;
+        let text = "  host-painted band (F2) — in-flow content under, layers over  ";
+        let (fg, bg) = (c(roles.status_fg), c(roles.status_bg));
+        self.fill(Rect::new(0, y, frame.w, 1), ' ', fg, bg, frame);
+        for (i, ch) in text.chars().enumerate() {
+            self.put(i as i32, y, ch, fg, bg, frame);
+        }
     }
 
     fn paint(&mut self, item: &fresh_ui::Item, frame: Rect, roles: &Roles) {
@@ -255,6 +306,10 @@ impl Terminal {
             Draw::Scrim(Scrim::Dim) => self.dim(frame, roles),
             Draw::Border => self.border(r, fg, bg, clip),
             Draw::Lines(lines) => {
+                // Clipped to the item's own rect as well as its inherited one:
+                // an item declares how much room it has, and a run longer than
+                // that would otherwise paint through whatever encloses it.
+                let clip = clip.intersect(r);
                 for (i, line) in lines.iter().enumerate() {
                     let y = r.y + i as i32;
                     for (j, ch) in line.chars().enumerate() {

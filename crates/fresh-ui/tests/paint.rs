@@ -367,3 +367,174 @@ fn styling_does_not_change_where_text_breaks() {
     );
     assert_eq!(plain, styled);
 }
+
+// -- the in-flow / out-of-flow split -----------------------------------------
+
+/// **What `layers_from` is for.** A backend that draws content of its own
+/// between the tree's in-flow half and its layers — a host mid-migration
+/// painting surfaces the tree does not own yet — has to know where one ends
+/// and the other begins. Everything before the mark is the tree; everything
+/// from it on is a layer.
+#[test]
+fn layers_from_marks_where_the_out_of_flow_half_begins() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col().children([
+            text("behind one"),
+            text("behind two"),
+            layer()
+                .anchor(Anchor::Screen(Align::Center))
+                .child(text("front")),
+        ]),
+        FRAME,
+    );
+    assert_eq!(spec.layers_from, 2);
+    assert_eq!(spec.in_flow().len(), 2);
+    assert_eq!(spec.layers().len(), 1);
+    assert!(matches!(&spec.layers()[0].draw, Draw::Lines(l) if &*l[0] == "front"));
+}
+
+/// With no layer at all the whole list is in flow, and the out-of-flow half is
+/// empty rather than absent — a backend's second pass simply finds nothing.
+#[test]
+fn a_frame_with_no_layers_is_all_in_flow() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(col().children([text("a"), text("b")]), FRAME);
+    assert_eq!(spec.layers_from, spec.items.len());
+    assert!(spec.layers().is_empty());
+    assert_eq!(spec.in_flow().len(), spec.items.len());
+}
+
+/// **The case nothing outside the library can get right.** A scrim belongs to
+/// no keyed subtree — it carries no key at all — and it is pushed *before* the
+/// layer's own items. A backend deriving the split from the key index would
+/// put it on the wrong side and paint the dimming under the content it is
+/// meant to dim.
+#[test]
+fn a_scrim_belongs_to_the_out_of_flow_half() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col().children([
+            text("behind"),
+            layer()
+                .key("modal")
+                .anchor(Anchor::Screen(Align::Center))
+                .scrim(Some(Scrim::Dim))
+                .child(text("front")),
+        ]),
+        FRAME,
+    );
+    assert!(
+        spec.layers()
+            .iter()
+            .any(|i| matches!(i.draw, Draw::Scrim(Scrim::Dim))),
+        "the scrim is out of flow: {:?}",
+        spec.items.iter().map(|i| &i.draw).collect::<Vec<_>>()
+    );
+    assert!(
+        spec.in_flow()
+            .iter()
+            .all(|i| !matches!(i.draw, Draw::Scrim(_))),
+        "and nothing in flow is one"
+    );
+    assert!(
+        spec.layers()[0].key.is_none(),
+        "and it is unkeyed, which is why the index cannot classify it"
+    );
+}
+
+/// **The other case.** A layer need not be keyed — `widgets::Dropdown`'s is
+/// not — so it produces no index entry, and a backend deriving the split from
+/// the index would treat its whole pop-over as in-flow content.
+#[test]
+fn an_unkeyed_layer_is_still_out_of_flow() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col().children([
+            text("behind"),
+            layer()
+                .anchor(Anchor::Screen(Align::Center))
+                .child(text("front")),
+        ]),
+        FRAME,
+    );
+    assert!(spec.index.is_empty(), "nothing here is keyed");
+    assert_eq!(spec.layers().len(), 1, "and the split still knows");
+}
+
+/// An opaque scrim erases the in-flow half, so the whole list is out of flow
+/// and the mark has to move with it — otherwise it points past the end.
+#[test]
+fn an_opaque_scrim_leaves_nothing_in_flow() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col().children([
+            text("behind one"),
+            text("behind two"),
+            layer()
+                .anchor(Anchor::Screen(Align::Center))
+                .modality(Modality::Exclusive)
+                .scrim(Some(Scrim::Opaque))
+                .child(text("on top")),
+        ]),
+        FRAME,
+    );
+    assert_eq!(spec.layers_from, 0);
+    assert!(spec.in_flow().is_empty());
+    assert_eq!(spec.layers().len(), spec.items.len());
+}
+
+/// The two halves partition the list: nothing is dropped and nothing is
+/// counted twice, which is what makes a two-pass backend equivalent to a
+/// one-pass one.
+#[test]
+fn the_two_halves_partition_the_list() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col().children([
+            text("behind"),
+            layer()
+                .key("a")
+                .anchor(Anchor::Screen(Align::Start))
+                .scrim(Some(Scrim::Dim))
+                .child(text("one")),
+            layer()
+                .key("b")
+                .anchor(Anchor::Screen(Align::End))
+                .child(text("two")),
+        ]),
+        FRAME,
+    );
+    assert_eq!(spec.in_flow().len() + spec.layers().len(), spec.items.len());
+    assert!(spec.layers_from <= spec.items.len());
+}
+
+/// **An item declares how much room it has.** Layout gives a constrained node
+/// the width it was allowed, not the width its content wants — so a backend
+/// that ignores the rect and simply writes the string paints through whatever
+/// encloses it. The clipping fix is in the backends (`tests/support/screen.rs`
+/// and `examples/interactive.rs`); this pins the fact they have to honour.
+#[test]
+fn a_constrained_run_reports_the_rect_it_was_given_not_the_one_it_wanted() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col()
+            .w(Sizing::Cells(6))
+            .child(text("0123456789").w(Sizing::Cells(4))),
+        Size { w: 12, h: 3 },
+    );
+    let item = spec
+        .items
+        .iter()
+        .find(|i| matches!(i.draw, Draw::Lines(_)))
+        .expect("a text item");
+    assert_eq!(item.rect.w, 4, "four columns is what it was given");
+    let Draw::Lines(lines) = &item.draw else {
+        unreachable!()
+    };
+    assert_eq!(
+        &*lines[0], "0123456789",
+        "and the run is longer than that, which is the backend's problem to \
+         clip rather than the library's to hide"
+    );
+}

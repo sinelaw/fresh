@@ -102,6 +102,10 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
         Draw::Scrim(Scrim::Dim) => fill(s, frame, '·', frame),
         Draw::Border => border(s, r, clip),
         Draw::Lines(lines) => {
+            // Clipped to the item's own rect as well as its inherited one: an
+            // item declares how much room it has, and a run longer than that
+            // would otherwise paint straight through whatever encloses it.
+            let clip = clip.intersect(r);
             for (i, line) in lines.iter().enumerate() {
                 let y = r.y + i as i32;
                 for (j, ch) in line.chars().enumerate() {

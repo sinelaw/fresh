@@ -108,6 +108,17 @@ the display list — the shape a real host renderer takes — and depends on
 crossterm only as a dev-dependency, so the library itself keeps its single
 runtime dependency.
 
+It folds in **two passes**, split at `LayoutSpec::layers_from`, and draws a band
+of its own in between (press <kbd>F2</kbd> to toggle it). That is the shape a
+host takes while it still paints some surfaces itself: its own drawing belongs
+over the tree's in-flow content and under the tree's layers. Only the library
+can say where one half ends and the other begins — a scrim carries no key, and
+a layer need not carry one either (`widgets::Dropdown`'s does not), so a
+backend deriving the split from the key index would put both on the wrong side.
+Open the palette, a menu or the confirm modal over the band to see the
+ordering, and the modal's scrim dimming the band along with everything else
+beneath it.
+
 ## Tests
 
 ```text
