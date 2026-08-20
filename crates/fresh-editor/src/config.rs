@@ -2588,7 +2588,7 @@ pub struct FileBrowserConfig {
 }
 
 /// A single key in a sequence
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct KeyPress {
     /// Key name (e.g., "a", "Enter", "F1")
     pub key: String,

@@ -1,6 +1,6 @@
 //! Data types for the keybinding editor.
 
-use crate::config::Keybinding;
+use crate::config::{KeyPress, Keybinding};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
@@ -49,6 +49,11 @@ pub struct ResolvedBinding {
     pub modifiers: KeyModifiers,
     /// Whether this is a chord (multi-key) binding
     pub is_chord: bool,
+    /// The key sequence, for chord bindings (empty otherwise). Kept so the
+    /// editor can write a chord back to config: a chord has no single
+    /// `key_code`/`modifiers` to reconstruct it from, and dropping this is
+    /// what made "delete" and "edit" silently destroy chord bindings.
+    pub chord_keys: Vec<KeyPress>,
     /// Plugin name this binding belongs to (None = builtin)
     pub plugin_name: Option<String>,
     /// Human-friendly command name from the CommandRegistry (e.g., "Titlecase").
@@ -112,6 +117,11 @@ pub struct EditBindingState {
     /// When true, the next keypress in the key field is captured raw
     /// (including Esc, Tab, Enter). Resets to false after one capture.
     pub capturing_special: bool,
+    /// Key sequence of the chord being edited, empty when the dialog holds a
+    /// single-key binding. Cleared as soon as the user records a new key, so
+    /// saving without re-recording keeps the chord intact instead of writing
+    /// a keyless binding.
+    pub chord_keys: Vec<KeyPress>,
 }
 
 impl EditBindingState {
@@ -120,11 +130,15 @@ impl EditBindingState {
             "global".to_string(),
             "normal".to_string(),
             "prompt".to_string(),
+            "searchPrompt".to_string(),
             "popup".to_string(),
             "completion".to_string(),
             "file_explorer".to_string(),
+            "dock".to_string(),
             "menu".to_string(),
             "terminal".to_string(),
+            "settings".to_string(),
+            "compositeBuffer".to_string(),
         ]
     }
 
@@ -155,6 +169,7 @@ impl EditBindingState {
             autocomplete_visible: false,
             action_error: None,
             capturing_special: false,
+            chord_keys: Vec::new(),
         }
     }
 
@@ -176,7 +191,14 @@ impl EditBindingState {
 
         Self {
             mode: EditMode::RecordingKey,
-            key_code: Some(binding.key_code),
+            // A chord has no single key code to seed the field with; keep the
+            // sequence in `chord_keys` instead and leave `key_code` empty so
+            // saving without re-recording round-trips the chord unchanged.
+            key_code: if binding.is_chord {
+                None
+            } else {
+                Some(binding.key_code)
+            },
             modifiers: binding.modifiers,
             key_display: binding.key_display.clone(),
             action_text: binding.action.clone(),
@@ -194,6 +216,7 @@ impl EditBindingState {
             autocomplete_visible: false,
             action_error: None,
             capturing_special: false,
+            chord_keys: binding.chord_keys.clone(),
         }
     }
 }
