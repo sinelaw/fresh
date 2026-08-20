@@ -1682,5 +1682,5 @@
   "status.terminal_restart_shell": "⟳ 重启终端",
   "status.terminal_restart_code": "%{label}（退出码 %{code}）",
   "terminal.tab_exited": "%{name}（已退出）",
-  "cli.arg.skill": "打印从 shell 操作此编辑器的指南。可选主题：script（默认）、tour、plugin"
+  "cli.arg.skill": "打印从 shell 操作此编辑器的指南。其他指南：--skill=tour、--skill=plugin"
 }

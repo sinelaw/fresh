@@ -80,6 +80,11 @@ pub fn try_read_nonblocking(stream: &mut LocalStream, buf: &mut [u8]) -> io::Res
 
 /// Outcome of a connect probe against a control socket. Mirrors the Unix enum
 /// so callers are platform-agnostic.
+///
+/// `Alive` and `Blocked` are never constructed here — Windows has no connect
+/// probe (see below) — but the variants stay so the shared match in `ipc` is
+/// identical on both platforms.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectProbe {
     Alive,

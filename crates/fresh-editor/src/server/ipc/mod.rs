@@ -559,6 +559,21 @@ pub struct ClientConnection {
     pub control: StreamWrapper,
 }
 
+/// Normalize a connect failure, keeping a permission denial distinguishable.
+///
+/// Everything else collapses to `ConnectionRefused`, but `PermissionDenied`
+/// has to survive: it means "not allowed to reach it", which callers must not
+/// conflate with "nothing is listening" — a sandbox that denies `connect(2)`
+/// on the socket produces it while the editor is running perfectly well.
+fn connect_error(e: impl std::fmt::Display + Into<io::Error>) -> io::Error {
+    let err: io::Error = e.into();
+    let kind = match err.kind() {
+        io::ErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,
+        _ => io::ErrorKind::ConnectionRefused,
+    };
+    io::Error::new(kind, err.to_string())
+}
+
 impl ClientConnection {
     /// Connect to a server at the given socket paths
     pub fn connect(paths: &SocketPaths) -> io::Result<Self> {
@@ -566,11 +581,9 @@ impl ClientConnection {
         let data_name = platform::socket_name_for_path(&paths.data)?;
 
         // Connect control socket first, then data (matching server's accept order)
-        let control = Stream::connect(control_name)
-            .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e.to_string()))?;
+        let control = Stream::connect(control_name).map_err(connect_error)?;
 
-        let data = Stream::connect(data_name)
-            .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e.to_string()))?;
+        let data = Stream::connect(data_name).map_err(connect_error)?;
 
         Ok(Self {
             data: StreamWrapper::new(data),

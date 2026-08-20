@@ -1682,5 +1682,5 @@
   "status.terminal_restart_shell": "⟳ Restartovat terminál",
   "status.terminal_restart_code": "%{label} (kód %{code})",
   "terminal.tab_exited": "%{name} (ukončeno)",
-  "cli.arg.skill": "Vypíše průvodce ovládáním tohoto editoru ze shellu. Volitelné téma: script (výchozí), tour, plugin"
+  "cli.arg.skill": "Vypíše průvodce ovládáním tohoto editoru ze shellu. Další průvodci: --skill=tour, --skill=plugin"
 }

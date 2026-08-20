@@ -58,7 +58,17 @@ struct Cli {
 
     /// Print the guide for driving this editor from a shell
     /// The one entry point an agent needs; defaults to the scripting guide.
-    #[arg(long, value_name = "TOPIC", num_args = 0..=1, default_missing_value = "")]
+    /// `require_equals` keeps a bare `--skill` from swallowing the argument
+    /// after it, which is otherwise a file to open: `fresh --skill README.md`
+    /// prints the guide instead of failing on an unknown topic named
+    /// `README.md`. A topic is selected with `=`, as in `--skill=tour`.
+    #[arg(
+        long,
+        value_name = "TOPIC",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = ""
+    )]
     skill: Option<String>,
 
     /// Files to open (supports file:line:col, ranges, and @"message" syntax)
@@ -3511,6 +3521,22 @@ fn extract_session_flag<'a>(tokens: &[&'a str]) -> (Option<String>, Vec<&'a str>
 /// `--session <id>` overrides it. Unlike `run_open_files_command`, this never
 /// spawns a daemon — these verbs only make sense against a live editor, so a
 /// missing session or dead server is a hard error.
+/// The error for "the socket is there, but this process may not reach it".
+///
+/// Worded so the reader can act: an agent that can re-run outside its sandbox
+/// needs to be told that is the fix, and told it in terms it can match on. The
+/// injected "Teach Fresh CLI" contract points at this phrasing.
+fn socket_denied_error(session: &str, socket_paths: &SocketPaths) -> anyhow::Error {
+    anyhow::anyhow!(
+        "cannot reach the Fresh editor for session '{}': its control socket ({}) \
+         could not be reached because connecting to it was denied. The editor is \
+         most likely running — the socket simply lives outside this process's \
+         sandbox. Re-run this command outside the sandbox.",
+        session,
+        socket_paths.control.display(),
+    )
+}
+
 fn resolve_cmd_socket(session_override: Option<&str>) -> AnyhowResult<SocketPaths> {
     let session = match session_override {
         Some(s) if !s.trim().is_empty() => s.to_string(),
@@ -3531,14 +3557,7 @@ fn resolve_cmd_socket(session_override: Option<&str>) -> AnyhowResult<SocketPath
         // can re-run outside its sandbox (an agent with an escalation path)
         // can act on this, whereas "no running editor" sends it hunting for a
         // stale session that is in fact alive and well.
-        ServerLiveness::Unreachable => anyhow::bail!(
-            "cannot reach the Fresh editor for session '{}': connecting to {} was \
-             denied. The editor is most likely running — its control socket just \
-             lives outside this process's sandbox. Re-run this command outside \
-             the sandbox.",
-            session,
-            socket_paths.control.display(),
-        ),
+        ServerLiveness::Unreachable => Err(socket_denied_error(&session, &socket_paths)),
         ServerLiveness::Dead => {
             anyhow::bail!("no running Fresh editor for session '{}'", session)
         }
@@ -3627,7 +3646,19 @@ impl CmdConnection {
 /// deadline-bounded, so the client can never hang on an editor that accepts the
 /// connection and then never answers.
 fn connect_cmd(socket_paths: &SocketPaths) -> AnyhowResult<CmdConnection> {
-    let conn = fresh::server::ipc::ClientConnection::connect(socket_paths)?;
+    // A sandbox that leaves the editor's pid visible (Landlock without a PID
+    // namespace) passes the liveness probe and is refused here instead, so the
+    // denial has to be translated at both sites or it surfaces as a bare EPERM.
+    let conn = fresh::server::ipc::ClientConnection::connect(socket_paths).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            socket_denied_error(
+                &std::env::var("FRESH_SESSION").unwrap_or_else(|_| "?".to_string()),
+                socket_paths,
+            )
+        } else {
+            anyhow::Error::from(e)
+        }
+    })?;
     let mut reader = conn.control_reader();
     let accepted = client_handshake_reading(&conn, || {
         reader

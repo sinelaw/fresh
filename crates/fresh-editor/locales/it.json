@@ -1682,5 +1682,5 @@
   "status.terminal_restart_shell": "⟳ Riavvia il terminale",
   "status.terminal_restart_code": "%{label} (uscita %{code})",
   "terminal.tab_exited": "%{name} (terminato)",
-  "cli.arg.skill": "Stampa la guida per pilotare questo editor da una shell. Argomento facoltativo: script (predefinito), tour, plugin"
+  "cli.arg.skill": "Stampa la guida per pilotare questo editor da una shell. Altre guide: --skill=tour, --skill=plugin"
 }
