@@ -1976,7 +1976,6 @@ type FocusTarget =
 
 interface PkgManagerState {
   isOpen: boolean;
-  bufferId: number | null;
   splitId: number | null;
   sourceBufferId: number | null;
   filter: "all" | "installed" | "plugins" | "themes" | "languages" | "bundles";
@@ -2007,7 +2006,6 @@ interface PkgManagerState {
 
 const pkgState: PkgManagerState = {
   isOpen: false,
-  bufferId: null,
   splitId: null,
   sourceBufferId: null,
   filter: "all",
@@ -2686,11 +2684,21 @@ function updatePkgManagerView(): void {
  */
 async function openPackageManager(): Promise<void> {
   if (pkgState.isOpen) {
-    // Already open, just focus it
-    if (pkgState.bufferId !== null) {
-      editor.showBuffer(pkgState.bufferId);
+    // Adopt the group we already own and bring it to the front, rather
+    // than stacking a second one. This used to key off `pkgState
+    // .bufferId`, which nothing ever assigned (the buffer-group
+    // migration left it null), so re-running the command while the
+    // manager was open did nothing at all.
+    const listBufferId = pkgState.panelBuffers["list"];
+    if (typeof listBufferId === "number" && bufferExists(listBufferId)) {
+      editor.showBuffer(listBufferId);
+      return;
     }
-    return;
+    // The group is gone without us hearing about it. Drop the dead
+    // handles and open a new one instead of returning to a UI that no
+    // longer exists.
+    unmountPkgPanels();
+    resetPkgManagerState();
   }
 
   // Store current buffer
@@ -2760,38 +2768,85 @@ async function openPackageManager(): Promise<void> {
   });
 }
 
+/** Whether `bufferId` is still a live buffer. */
+function bufferExists(bufferId: number): boolean {
+  return editor.listBuffers().some((b) => b.id === bufferId);
+}
+
+/**
+ * Unmount the widget panels the manager owns.
+ *
+ * The host keys panels by (plugin, panel id) and is never told that a
+ * panel's buffer went away, so a panel that is merely dropped on the
+ * plugin side stays registered against a dead buffer for the rest of
+ * the session. Closing the buffer group is not an unmount; only this
+ * is.
+ */
+function unmountPkgPanels(): void {
+  pkgState.listPanel?.unmount();
+  pkgState.footerPanel?.unmount();
+  pkgState.listPanel = null;
+  pkgState.footerPanel = null;
+  pkgListRowCache = [];
+}
+
+/** Drop every handle into a package-manager UI that no longer exists. */
+function resetPkgManagerState(): void {
+  pkgState.isOpen = false;
+  pkgState.groupId = null;
+  pkgState.panelBuffers = {};
+  pkgState.splitId = null;
+  pkgState.sourceBufferId = null;
+  pkgState.error = null;
+}
+
 /**
  * Close the package manager
  */
 function closePackageManager(): void {
   if (!pkgState.isOpen) return;
 
-  // Close the buffer group if using the new system
-  if (pkgState.groupId !== null) {
-    editor.closeBufferGroup(pkgState.groupId);
-    pkgState.groupId = null;
-    pkgState.panelBuffers = {};
-  } else if (pkgState.bufferId !== null) {
-    editor.closeBuffer(pkgState.bufferId);
+  const groupId = pkgState.groupId;
+  const sourceBufferId = pkgState.sourceBufferId;
+  const splitId = pkgState.splitId;
+
+  // Unmount before the buffers go, and clear the state before the
+  // close fires `buffer_closed` for each panel — by then there is
+  // nothing left for `pkg_buffer_closed` to tear down, so the two
+  // teardown routes can't trip over each other.
+  unmountPkgPanels();
+  resetPkgManagerState();
+
+  if (groupId !== null) {
+    editor.closeBufferGroup(groupId);
   }
 
   // Restore previous buffer if possible
-  if (pkgState.sourceBufferId !== null && pkgState.splitId !== null) {
-    editor.showBuffer(pkgState.sourceBufferId);
+  if (sourceBufferId !== null && splitId !== null) {
+    editor.showBuffer(sourceBufferId);
   }
-
-  // Reset state. The buffer group's close will tear down the panel
-  // buffers and (implicitly) the widget panels rendering into them;
-  // we just null the handles so any stray render call after close
-  // is a no-op.
-  pkgState.isOpen = false;
-  pkgState.bufferId = null;
-  pkgState.splitId = null;
-  pkgState.sourceBufferId = null;
-  pkgState.listPanel = null;
-  pkgState.footerPanel = null;
-  pkgListRowCache = [];
 }
+
+/**
+ * Tear down when a panel buffer is closed by the editor rather than by
+ * `pkg_back_or_close`: the group tab's ×, File → Close Buffer, or a
+ * split going away.
+ *
+ * Without this the state stays "open" pointing at dead buffer ids, and
+ * because the open path then takes its adopt branch, `Package:
+ * Packages` never opens again for the rest of the session.
+ */
+function pkg_buffer_closed(data: { buffer_id: number }): void {
+  if (!pkgState.isOpen) return;
+  const isOurs = Object.values(pkgState.panelBuffers).some(
+    (id) => id === data.buffer_id,
+  );
+  if (!isOurs) return;
+  unmountPkgPanels();
+  resetPkgManagerState();
+}
+registerHandler("pkg_buffer_closed", pkg_buffer_closed);
+editor.on("buffer_closed", "pkg_buffer_closed");
 
 /**
  * Get all focusable elements in order for Tab navigation
