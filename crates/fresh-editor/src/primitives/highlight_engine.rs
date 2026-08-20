@@ -696,6 +696,95 @@ fn prepare_line_at(content_bytes: &[u8], pos: usize) -> (usize, usize, Option<Pr
     (line_end, line_byte_len, prepared)
 }
 
+/// Streaming span sink that fills the *unclaimed* gaps of a washed row
+/// with that row's wash.
+///
+/// The diff categories (`Inserted` / `Deleted` / `Changed`) are the
+/// ones whose `bg_extends_to_line_end()` is set: the renderer treats
+/// them as a whole-row wash rather than as styling of the scoped
+/// text. Syntect's `Diff` grammar mostly cooperates — a `+`/`-` row is
+/// one span covering the row — but a hunk header is not: it scopes
+/// `@@ -1,2 +3,4 @@` under `meta.diff.range` and leaves the enclosing
+/// section name `git diff` appends after the closing `@@` outside that
+/// scope entirely, so the bar stopped at the `@@` and resumed only in
+/// the trailing fill past end-of-line, with the section name sitting in
+/// a hole.
+///
+/// So the rule is applied per row rather than per scope: when the span
+/// covering the row start carries a wash, every byte range of the row
+/// that *no span claims* is emitted with that same category. Rows whose
+/// covering span at the row start is not a wash — every row of ordinary
+/// source, and the non-wash rows of a diff — pass through untouched.
+/// Filler spans merge with their neighbours in `merge_adjacent_spans`,
+/// and the wash categories resolve to the editor foreground, so filling
+/// changes background only.
+///
+/// The guarantee stops at "unclaimed": a span that *does* claim a range
+/// inside a washed row keeps its own category, background or none, so
+/// the bar still breaks across it. That is reachable — syntect's `Diff`
+/// grammar matches `meta.diff.header.to-file` mid-row, so a section
+/// name shaped like `- foo ====` inside a hunk header is scoped as a
+/// file header — but not by anything `git diff` emits, so the sink is
+/// deliberately not scope-aware. See
+/// `test_diff_hunk_header_inner_span_is_a_known_wash_hole`.
+struct RowWash<F: FnMut(usize, usize, HighlightCategory)> {
+    row_start: usize,
+    row_end: usize,
+    /// The wash to fill gaps with; `None` until the span covering
+    /// `row_start` decides, and stays `None` for rows carrying no wash.
+    wash: Option<HighlightCategory>,
+    /// Whether the span covering `row_start` has been seen (so `wash`
+    /// is decided).
+    decided: bool,
+    /// End of the highest byte range emitted so far.
+    covered: usize,
+    inner: F,
+}
+
+impl<F: FnMut(usize, usize, HighlightCategory)> RowWash<F> {
+    fn new(row_start: usize, row_end: usize, inner: F) -> Self {
+        Self {
+            row_start,
+            row_end,
+            wash: None,
+            decided: false,
+            covered: row_start,
+            inner,
+        }
+    }
+
+    fn emit(&mut self, start: usize, end: usize, category: HighlightCategory) {
+        // Decide from the span that *covers* `row_start`, not from
+        // whichever span happens to arrive first: an empty leading
+        // segment (`start == end == row_start`) must not decide the
+        // row, so the rule does not depend on the producer skipping
+        // zero-length ranges.
+        if !self.decided && end > self.row_start {
+            self.decided = true;
+            if start <= self.row_start && category.bg_extends_to_line_end() {
+                self.wash = Some(category);
+            }
+        }
+        if let Some(wash) = self.wash {
+            if start > self.covered {
+                (self.inner)(self.covered, start, wash);
+            }
+        }
+        self.covered = self.covered.max(end);
+        (self.inner)(start, end, category);
+    }
+
+    /// Emit the trailing filler, if any. Must be called once the row's
+    /// spans have all been emitted.
+    fn finish(mut self) {
+        if let Some(wash) = self.wash {
+            if self.covered < self.row_end {
+                (self.inner)(self.covered, self.row_end, wash);
+            }
+        }
+    }
+}
+
 impl TextMateEngine {
     /// Create a new TextMate engine for the given syntax
     pub fn new(syntax_set: Arc<SyntaxSet>, syntax_index: usize) -> Self {
@@ -905,8 +994,9 @@ impl TextMateEngine {
     /// Parse one line advancing the composite `snapshot` (host parser +
     /// optional embedded-language child parser). This is the single
     /// per-line entry point for all parse paths, so embedded regions
-    /// behave identically under cold start, forward extension, and
-    /// partial update.
+    /// behave identically under cold start, forward extension and
+    /// partial update — and under `structure_lines_in`, which advances
+    /// the same snapshot but discards the spans.
     ///
     /// Line classification is driven purely by the host grammar's scope
     /// stack (no second lexer that could disagree with what the host
@@ -926,7 +1016,33 @@ impl TextMateEngine {
     /// it is in a cheap "raw" context — because only it knows where the
     /// region ends. Content lines therefore cost one extra (trivial)
     /// host `parse_line` on top of the child parse.
+    ///
+    /// Spans leave this function through `RowWash`, which fills the
+    /// unclaimed gaps of rows the grammar washes (see its docs) — a
+    /// `@@` hunk header whose trailing section name is left outside
+    /// `meta.diff.range` would otherwise punch a hole in the bar.
     fn parse_snapshot_line(
+        &mut self,
+        snapshot: &mut ParseSnapshot,
+        prepared: &PreparedLine,
+        current_offset: usize,
+        on_span: impl FnMut(usize, usize, HighlightCategory),
+    ) -> bool {
+        let mut wash = RowWash::new(
+            current_offset,
+            current_offset + prepared.line_content_len,
+            on_span,
+        );
+        let parsed =
+            self.parse_snapshot_line_spans(snapshot, prepared, current_offset, |s, e, c| {
+                wash.emit(s, e, c)
+            });
+        wash.finish();
+        parsed
+    }
+
+    /// `parse_snapshot_line` without the row-wash gap filling; see there.
+    fn parse_snapshot_line_spans(
         &mut self,
         snapshot: &mut ParseSnapshot,
         prepared: &PreparedLine,
@@ -3577,6 +3693,148 @@ mod tests {
             }
         } else {
             panic!("Expected TextMate engine for .diff file");
+        }
+    }
+
+    /// Reproduce <https://github.com/sinelaw/fresh/issues/3021>: the
+    /// enclosing-section name `git diff` appends after a hunk header's
+    /// closing `@@` is scoped outside `meta.diff.range`, so the
+    /// `diff_modify_bg` bar stopped at the `@@` and left the section
+    /// name in a bg-less hole. The whole `@@` row must carry
+    /// `theme.diff_modify_bg`, exactly as
+    /// `test_diff_inserted_line_is_fully_covered` requires of `+` rows.
+    #[test]
+    fn test_diff_hunk_header_line_is_fully_covered() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("commit.diff"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        // Two hunk headers: one with a section name (the reported case)
+        // and one bare, so the bare form is covered against regressions
+        // from the gap fill.
+        let content = concat!(
+            "diff --git a/file.rs b/file.rs\n",
+            "index aaa..bbb 100644\n",
+            "--- a/file.rs\n",
+            "+++ b/file.rs\n",
+            "@@ -2,6 +2,8 @@ fn keep_one(&self) -> usize {\n",
+            " context\n",
+            "+added\n",
+            "@@ -40,3 +42,4 @@\n",
+            " more context\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+
+        if let HighlightEngine::TextMate(ref mut tm) = engine {
+            let spans = tm.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+
+            let bytes = content.as_bytes();
+            let mut line_start = 0;
+            let mut headers_checked = 0;
+            while line_start < bytes.len() {
+                let mut line_end = line_start;
+                while line_end < bytes.len() && bytes[line_end] != b'\n' {
+                    line_end += 1;
+                }
+                if content[line_start..line_end].starts_with("@@ ") {
+                    headers_checked += 1;
+                    for byte_pos in line_start..line_end {
+                        let span = spans
+                            .iter()
+                            .find(|s| s.range.start <= byte_pos && s.range.end > byte_pos);
+                        let bg = span.and_then(|s| s.bg);
+                        assert_eq!(
+                            bg,
+                            Some(theme.diff_modify_bg),
+                            "byte {} (`{}`) of `@@` line starting at {} should carry \
+                             diff_modify_bg; got span={:?}",
+                            byte_pos,
+                            content[byte_pos..byte_pos + 1].escape_debug(),
+                            line_start,
+                            span,
+                        );
+                    }
+                }
+                line_start = line_end + 1;
+            }
+            assert_eq!(headers_checked, 2, "both hunk headers should be examined");
+        } else {
+            panic!("Expected TextMate engine for .diff file");
+        }
+    }
+
+    /// Pins the known limitation of the `RowWash` gap fill: it fills
+    /// only the byte ranges of a washed row that *no* span claims. A
+    /// span that does claim its range keeps its own (bg-less)
+    /// category, so the bar still breaks across it.
+    ///
+    /// This is reachable with the shipped `Diff` grammar because its
+    /// `meta.diff.header.to-file` rule is not `^`-anchored: a
+    /// hunk-header section name shaped like `- foo ====` is scoped as
+    /// a file header mid-row and maps to `Type`, which carries no
+    /// background (asserted below). `git diff` never emits a
+    /// section name of that shape, so the algorithm is deliberately
+    /// left as is rather than made scope-aware. If that ever changes,
+    /// this test and the `RowWash` doc comment are what to update.
+    #[test]
+    fn test_diff_hunk_header_inner_span_is_a_known_wash_hole() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("commit.diff"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        const RANGE: &str = "@@ -2,6 +2,8 @@";
+        const SECTION: &str = " - foo ====";
+        let content = format!(
+            "--- a/file.rs\n\
+             +++ b/file.rs\n\
+             {RANGE}{SECTION}\n\
+             context\n"
+        );
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+
+        let HighlightEngine::TextMate(ref mut tm) = engine else {
+            panic!("Expected TextMate engine for .diff file");
+        };
+        let spans = tm.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+        let span_at = |byte_pos: usize| {
+            spans
+                .iter()
+                .find(|s| s.range.start <= byte_pos && s.range.end > byte_pos)
+        };
+        let bg_at = |byte_pos: usize| span_at(byte_pos).and_then(|s| s.bg);
+
+        let header_start = content.find(RANGE).expect("header line present");
+        // The `@@ … @@` run is washed, as issue #3021 requires.
+        for byte_pos in header_start..header_start + RANGE.len() {
+            assert_eq!(
+                bg_at(byte_pos),
+                Some(theme.diff_modify_bg),
+                "byte {byte_pos} of `{RANGE}` should carry diff_modify_bg",
+            );
+        }
+        // …but the section name is *claimed* by a non-wash span, so the
+        // gap fill does not reach it. Documented limitation, not a
+        // shape `git diff` produces.
+        for byte_pos in header_start + RANGE.len()..header_start + RANGE.len() + SECTION.len() {
+            let span = span_at(byte_pos);
+            // `Type` is what `meta.diff.header.*` maps to in
+            // `scope_to_category` — i.e. the run really is claimed by
+            // the unanchored to-file header rule, not merely unstyled.
+            assert_eq!(
+                span.and_then(|s| s.category),
+                Some(HighlightCategory::Type),
+                "byte {byte_pos} of `{SECTION}` should be claimed by the \
+                 `meta.diff.header.*` rule",
+            );
+            assert_ne!(
+                bg_at(byte_pos),
+                Some(theme.diff_modify_bg),
+                "byte {byte_pos} of `{SECTION}` is claimed, so the gap fill \
+                 does not reach it; if it now carries the wash, the \
+                 limitation was fixed — update this test and the `RowWash` docs",
+            );
         }
     }
 
