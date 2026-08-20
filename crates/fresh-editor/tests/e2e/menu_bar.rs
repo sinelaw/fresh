@@ -222,6 +222,33 @@ fn test_mouse_click_toggles_menu() {
     harness.assert_screen_not_contains("New File");
 }
 
+/// **The toggle, with a frame drawn between press and release.**
+///
+/// `mouse_click` sends both halves back to back; the real loop repaints in
+/// between, because the press changed something. That gap is where a toggle
+/// goes wrong: the press dismisses the open menu, the repaint rebuilds the
+/// menu bar with nothing open, and a release handler that had closed over "my
+/// menu is open" is holding an answer from a frame that no longer exists — so
+/// the click reopens the menu it was meant to shut.
+///
+/// The bar acts on the press for exactly this reason, which is also what the
+/// pre-migration code did.
+#[test]
+fn test_mouse_click_toggles_menu_across_a_repaint() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+    harness.render().unwrap();
+
+    harness.mouse_click_with_repaint(2, 0).unwrap();
+    harness.assert_screen_contains("New File");
+
+    harness.sleep(double_click_delay);
+
+    harness.mouse_click_with_repaint(2, 0).unwrap();
+    harness.assert_screen_not_contains("New File");
+}
+
 /// Test that clicking outside menu labels closes menu
 #[test]
 fn test_mouse_click_empty_area_closes_menu() {

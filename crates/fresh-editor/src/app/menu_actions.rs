@@ -310,54 +310,19 @@ impl Editor {
         false
     }
 
-    /// Compute hover target for menu dropdown chain (main dropdown and submenus).
-    /// Geometry derived from live state (`menu_layout_now`).
-    pub(crate) fn compute_menu_dropdown_hover(
-        &self,
-        col: u16,
-        row: u16,
-        menu_index: usize,
-    ) -> Option<HoverTarget> {
-        let menu_layout = self.menu_layout_now()?;
-
-        // Check submenu items first (they're rendered on top)
-        if let Some((depth, item_idx)) = menu_layout.submenu_item_at(col, row) {
-            return Some(HoverTarget::SubmenuItem(depth, item_idx));
-        }
-
-        // Check main dropdown items
-        if let Some(item_idx) = menu_layout.item_at(col, row) {
-            return Some(HoverTarget::MenuDropdownItem(menu_index, item_idx));
-        }
-
-        None
-    }
-
-    /// Handle click on menu dropdown chain (main dropdown and any open submenus).
-    /// Returns Some(Ok(())) if click was handled, None if click was outside all dropdowns.
-    /// Hit-tests geometry derived from live state (`menu_layout_now`).
-    pub(crate) fn handle_menu_dropdown_click(
+    /// Act on one dropdown row, named by the level it is on and its position
+    /// there.
+    ///
+    /// Split out of the coordinate-driven form above: a migrated dropdown row
+    /// answers its own click and already knows which row it is, so it should
+    /// not have to hand back a cell for the hit-test to turn into the index it
+    /// started from.
+    pub(crate) fn activate_menu_item(
         &mut self,
-        col: u16,
-        row: u16,
+        depth: usize,
+        item_idx: usize,
         menu: &Menu,
-    ) -> AnyhowResult<Option<AnyhowResult<()>>> {
-        use crate::view::ui::menu::MenuHit;
-
-        let menu_layout = match self.menu_layout_now() {
-            Some(layout) => layout,
-            None => return Ok(None),
-        };
-
-        // Use the layout to determine what was clicked
-        let hit = match menu_layout.hit_test(col, row) {
-            Some(MenuHit::DropdownItem(item_idx)) => (0, item_idx),
-            Some(MenuHit::SubmenuItem { depth, index }) => (depth, index),
-            _ => return Ok(None), // Click outside dropdown areas
-        };
-
-        let (depth, item_idx) = hit;
-
+    ) -> AnyhowResult<AnyhowResult<()>> {
         // Navigate to the clicked item in the menu structure
         let items = if depth == 0 {
             // Main dropdown items
@@ -376,24 +341,24 @@ impl Editor {
                             current_items =
                                 generate_dynamic_items(source, &self.menu_state.themes_dir);
                         }
-                        _ => return Ok(Some(Ok(()))),
+                        _ => return Ok(Ok(())),
                     }
                 } else {
-                    return Ok(Some(Ok(())));
+                    return Ok(Ok(()));
                 }
             }
             current_items
         };
 
         let Some(item) = items.get(item_idx) else {
-            return Ok(Some(Ok(())));
+            return Ok(Ok(()));
         };
 
         // Handle the clicked item
         match item {
             MenuItem::Separator { .. } | MenuItem::Label { .. } => {
                 // Clicked on separator or label - do nothing but consume the click
-                Ok(Some(Ok(())))
+                Ok(Ok(()))
             }
             MenuItem::Submenu {
                 items: submenu_items,
@@ -405,7 +370,7 @@ impl Editor {
                     self.menu_state.submenu_path.push(item_idx);
                     self.menu_state.highlighted_item = Some(0);
                 }
-                Ok(Some(Ok(())))
+                Ok(Ok(()))
             }
             MenuItem::DynamicSubmenu { source, .. } => {
                 // Clicked on dynamic submenu - open it
@@ -415,7 +380,7 @@ impl Editor {
                     self.menu_state.submenu_path.push(item_idx);
                     self.menu_state.highlighted_item = Some(0);
                 }
-                Ok(Some(Ok(())))
+                Ok(Ok(()))
             }
             MenuItem::Action { action, args, .. } => {
                 // Clicked on action - execute it
@@ -425,9 +390,9 @@ impl Editor {
                 self.close_menu_with_auto_hide();
 
                 if let Some(action) = Action::from_str(&action_name, &action_args) {
-                    return Ok(Some(self.handle_action(action)));
+                    return Ok(self.handle_action(action));
                 }
-                Ok(Some(Ok(())))
+                Ok(Ok(()))
             }
         }
     }

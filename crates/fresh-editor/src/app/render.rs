@@ -174,6 +174,15 @@ impl Editor {
             window.enforce_terminal_grid_wrap();
         }
 
+        // The boolean state flags menu `when` conditions read. Refreshed
+        // *before* anything is described, because the menu bar's labels are
+        // now part of the frame's description, built at the top of this
+        // method — the Explorer menu appears only while the sidebar has focus,
+        // and a stale context showed it a frame too long. It used to sit just
+        // above the old late `render_menu_bar` call, which is where the
+        // description was built from.
+        self.update_menu_context();
+
         // Carve a full-height left column for a docked floating panel
         // (e.g. the orchestrator dock) out of the screen *before* the
         // chrome lays itself out, so the menu bar, splits, and status
@@ -287,13 +296,11 @@ impl Editor {
             .shell_ui
             .take()
             .expect("the shell tree is taken and returned within one frame");
-        let regions = {
-            let spec = ui.frame(
-                crate::view::shell::frame::frame_tree(shell.clone()),
-                fresh_ui::Size::new(size.width, size.height),
-            );
-            crate::view::shell::frame::regions_of(spec, size)
-        };
+        ui.frame(
+            crate::view::shell::frame::frame_tree(shell.clone()),
+            fresh_ui::Size::new(size.width, size.height),
+        );
+        let regions = crate::view::shell::frame::regions_of(&ui, size);
         self.shell_ui = Some(ui);
         let region = |r: crate::view::shell::frame::HostRegion| -> ratatui::layout::Rect {
             regions
@@ -302,6 +309,35 @@ impl Editor {
                 .map(|(_, rect)| *rect)
                 .unwrap_or_default()
         };
+        // The shell's BACKGROUND band: everything the tree owns that is not a
+        // `Layer`, painted *before* every legacy painter so they land on top
+        // of it — the mirror of the overlay band at the end of this method.
+        //
+        // Two passes because there is one display list and many legacy
+        // painters, and the legacy painters are not in the list: a native
+        // region under them has to be written first, a native overlay over
+        // them has to be written last. One pass could only ever serve one of
+        // those, which is what confined migration to top-most surfaces.
+        if !self.suppress_chrome_cells {
+            let palette = self.shell_palette();
+            let ui = self
+                .shell_ui
+                .take()
+                .expect("the shell tree is taken and returned within one frame");
+            let caret = crate::view::shell::fold::fold_native(
+                ui.spec(),
+                frame.buffer_mut(),
+                &palette,
+                crate::view::shell::fold::Band::Background,
+            );
+            // Nothing in this band can report a caret: `fold_native` skips
+            // host regions, and the native cursor is answered by the overlay
+            // pass (see `fold_band`). A caret here would mean one of those two
+            // facts had quietly changed.
+            debug_assert!(caret.is_none(), "the background band placed a caret");
+            self.shell_ui = Some(ui);
+        }
+
         use crate::view::shell::frame::HostRegion;
         let menu_bar_area = region(HostRegion::MenuBar);
         let status_bar_area = region(HostRegion::StatusBar);
@@ -1178,10 +1214,6 @@ impl Editor {
             );
         }
 
-        // Render menu bar last so dropdown appears on top of all other content
-        // Update menu context with current editor state
-        self.update_menu_context();
-
         // The full-screen modals (settings, calibration wizard, keybinding
         // editor, event-debug dialog) and the blocking workspace-trust prompt
         // each dim the *entire* frame — the dock included — and centre in the
@@ -1190,15 +1222,22 @@ impl Editor {
         // dock's later pass would overpaint their left edge. See the bottom of
         // `render` and `render_panels_and_modals`.
 
-        // Menu bar, drawn last so its dropdowns sit above all other content.
-        self.render_menu_bar(frame, menu_bar_area);
+        // The menu no longer paints here — the bar row is a native region and
+        // its dropdowns are layers — but its walk still records theme-key
+        // provenance for the inspector, and refreshes the expanded-submenu
+        // cache the event-time layout rides on.
+        self.record_menu_theme_runs(menu_bar_area);
 
-        // Everything the shell's tree owns outright, painted here rather than
-        // straight after layout: the tree now carries overlays, and an overlay
-        // sits above the content around it. Layout runs early because the
-        // regions need their rectangles; paint runs late because paint order
-        // is what puts a menu on top. Host regions are skipped — they were
-        // painted above, into the rectangles this same layout produced.
+        // Where a migrated surface asked for the terminal caret, if any. See
+        // the commit at the end of this method.
+        let mut shell_caret: crate::view::shell::fold::Caret = None;
+
+        // The shell's OVERLAY band: its `Layer`s, painted after every legacy
+        // painter because paint order is what puts a menu on top. Its
+        // background band was painted at the top of this method, before them,
+        // for the mirror-image reason. Host regions are skipped in both — they
+        // are painted by their own code, into the rectangles this same layout
+        // produced.
         //
         // This replaced `render_context_menus`: a context menu is an ordinary
         // `Layer` in the tree now, not a separately-ranked surface painted by
@@ -1216,21 +1255,25 @@ impl Editor {
                 .shell_ui
                 .take()
                 .expect("the shell tree is taken and returned within one frame");
-            let shell_caret =
-                crate::view::shell::fold::fold_native(ui.spec(), frame.buffer_mut(), &palette);
-            // A native widget that places a cursor (a focused `TextField`)
-            // wins over the buffer's, which is the rule §4.4 states and the
-            // behaviour `cursor_suppressed_by_late_overlay` encodes by hand.
-            // No migrated surface places one yet, so this is `None` on every
-            // frame today — but taking it and asserting that is how it stays
-            // true, rather than being silently dropped until the first field
-            // migrates and nobody notices it has no caret.
-            debug_assert!(
-                shell_caret.is_none(),
-                "a migrated surface placed a caret ({shell_caret:?}); wire it \
-                 into the end-of-frame cursor commit before relying on it"
+            let fold_caret = crate::view::shell::fold::fold_native(
+                ui.spec(),
+                frame.buffer_mut(),
+                &palette,
+                crate::view::shell::fold::Band::Overlay,
             );
-            let _ = shell_caret;
+            // A native widget that placed a cursor — a focused `TextField` —
+            // outranks both the buffer's caret and the sidebar's, which is the
+            // rule §4.4 states and the thing
+            // `cursor_suppressed_by_late_overlay` encodes by hand for the
+            // surfaces that have not migrated. It wins by construction: if a
+            // native field has focus, it set the cursor.
+            //
+            // No migrated surface places one yet, so this is `None` on every
+            // frame today. It is carried to the commit below anyway, because
+            // an unwired seam that is only asserted-about is a seam nobody
+            // finds out is missing until the first field migrates without a
+            // caret.
+            shell_caret = fold_caret;
             self.shell_ui = Some(ui);
         }
 
@@ -1268,12 +1311,34 @@ impl Editor {
         // `cursor_obscured_by_overlay` cannot see them. The editor's own
         // caret needs no such check: `hide_cursor` above already suppressed
         // it for every one of those states.
-        let hardware_cursor = pending_hardware_cursor.or_else(|| {
+        let legacy_cursor = pending_hardware_cursor.or_else(|| {
             explorer_hardware_cursor.filter(|_| !self.cursor_suppressed_by_late_overlay())
         });
-        if let Some((cx, cy)) = hardware_cursor {
-            if self.active_window().prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
-                frame.set_cursor_position((cx, cy));
+        match shell_caret {
+            // A caret a migrated surface placed wins outright, and needs none
+            // of the guards below. Those exist to work out whether something
+            // painted later covered the cell; a native field is *in* the tree,
+            // so if it has focus it is on top by construction. That is the
+            // rule §4.4 states, and the reason
+            // `cursor_suppressed_by_late_overlay` retires with the last
+            // unmigrated overlay rather than growing another entry.
+            //
+            // One caveat while the migration runs: `render_panels_and_modals`
+            // paints *after* this commit, so a legacy full-screen modal could
+            // still cover a native caret. That is the same gap the legacy
+            // carets have — it is what `cursor_suppressed_by_late_overlay`
+            // exists for — and it closes when the modals migrate (M7), not
+            // before. No migrated surface places a caret yet, so nothing is
+            // exposed to it today.
+            Some((cx, cy)) => frame.set_cursor_position((cx, cy)),
+            None => {
+                if let Some((cx, cy)) = legacy_cursor {
+                    if self.active_window().prompt.is_none()
+                        && !self.cursor_obscured_by_overlay(cx, cy)
+                    {
+                        frame.set_cursor_position((cx, cy));
+                    }
+                }
             }
         }
 
@@ -2514,6 +2579,21 @@ impl Editor {
         } = self.bottom_row_flags();
         let (dock_area, chrome_area) = self.compute_dock_split(size);
         let win = self.active_window();
+        // One walk for the whole menu: the bar's labels and, when one is open,
+        // its dropdown chain. Skipped entirely when the bar is hidden.
+        //
+        // The bar's rectangle is derived here rather than read back off the
+        // last frame's tree. This is `build`, and build must not depend on
+        // layout — the rectangle it would read is one frame stale, and asking
+        // for it at all is the loop the library refuses. It needs no layout:
+        // the bar is the chrome column's top row.
+        let menu_layout = win.menu_bar_visible.then(|| ratatui::layout::Rect {
+            x: chrome_area.x,
+            y: chrome_area.y,
+            width: chrome_area.width,
+            height: 1,
+        });
+        let menu_layout = menu_layout.and_then(|bar| self.menu_layout_in(bar));
         crate::view::shell::frame::Frame {
             menu_bar: win.menu_bar_visible,
             status_bar: win.status_bar_visible && !has_suggestions && !has_file_browser,
@@ -2522,20 +2602,14 @@ impl Editor {
             dock: dock_area.map(|d| d.width),
             explorer: self.file_explorer_layout_request(chrome_area.width),
             menu: self.open_context_menu_for_shell(),
+            menu_bar_items: menu_layout
+                .as_ref()
+                .map(|l| l.shell_bar.clone())
+                .unwrap_or_default(),
             // From the same walk that decides the dropdowns' geometry, so the
             // description and the rectangles the not-yet-migrated hit-testing
             // uses cannot disagree — they are one computation.
-            // Gated on a menu actually being open: the walk expands every
-            // menu (config + plugin) and lays out the whole chain, which is
-            // pure waste on the frames where nothing is open — the same gate
-            // `chrome::Menu::collect` applies for the same reason.
-            dropdowns: if self.menu_state.active_menu.is_some() {
-                self.menu_layout_now()
-                    .map(|l| l.shell_dropdowns)
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            },
+            dropdowns: menu_layout.map(|l| l.shell_dropdowns).unwrap_or_default(),
         }
     }
 
@@ -2577,7 +2651,7 @@ impl Editor {
         let Some(ui) = self.shell_ui.as_ref() else {
             return ratatui::layout::Rect::default();
         };
-        crate::view::shell::frame::regions_of(ui.spec(), size)
+        crate::view::shell::frame::regions_of(ui, size)
             .into_iter()
             .find(|(r, _)| *r == region)
             .map(|(_, rect)| rect)
@@ -2635,22 +2709,41 @@ impl Editor {
     /// paint pass (the same content source the painter and `menu_view`
     /// use). `None` when the menu bar is hidden.
     pub(crate) fn menu_layout_now(&self) -> Option<crate::view::ui::menu::MenuLayout> {
-        let area = self.menu_bar_area_now()?;
+        self.menu_layout_in(self.menu_bar_area_now()?)
+    }
+
+    /// The same walk, for a bar rect the caller already has.
+    ///
+    /// `shell_frame` needs it: it *builds* the frame's description, so it runs
+    /// before the frame is laid out and must not read the rectangles the last
+    /// one produced. Build is a function of state, and a build that consulted
+    /// layout would depend on the layout that depends on it — the loop the
+    /// library's own `Ui::rect` refuses at runtime.
+    ///
+    /// The bar's rectangle is not a layout result there anyway: it is the top
+    /// row of the chrome column, whose origin and width `compute_dock_split`
+    /// already decided from state alone.
+    pub(crate) fn menu_layout_in(
+        &self,
+        area: ratatui::layout::Rect,
+    ) -> Option<crate::view::ui::menu::MenuLayout> {
         let frame = self.active_chrome().last_frame;
         let screen = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
-        let hover_target = self.active_window().mouse_state.hover_target.clone();
+        // The shell's own hover, not the legacy walk's: the menu's chrome
+        // boxes are deleted, so the walk has nothing to say about it and would
+        // only report `None`. See `Editor::shell_hover`.
+        let hover_target = self.shell_hover.clone();
         let all_menus = self.all_menus_expanded();
         let keybindings = self.keybindings.read().unwrap();
-        let theme = self.theme.read().unwrap();
         Some(crate::view::ui::MenuRenderer::compute_layout(
             screen,
             area,
             &all_menus,
             &self.menu_state,
             &keybindings,
-            &theme,
             hover_target.as_ref(),
             self.config.editor.menu_bar_mnemonics,
+            None,
         ))
     }
 
@@ -2788,11 +2881,15 @@ impl Editor {
         }
     }
 
-    /// Render the menu bar into `menu_bar_area`. Drawn late in `render` so
-    /// its dropdowns sit above all other content. Hit-test geometry is NOT
-    /// recorded here — chrome hit-testing, click resolution, and the web
-    /// projection derive it live via [`Self::menu_layout_now`].
-    fn render_menu_bar(&mut self, frame: &mut Frame, menu_bar_area: ratatui::layout::Rect) {
+    /// Record the menu's theme-key provenance for the theme inspector.
+    ///
+    /// This was `render_menu_bar`. Nothing about the menu paints from here any
+    /// more — the bar row is a native region in the shell's background band
+    /// and its dropdowns are `Layer`s in the overlay band — but the walk still
+    /// has one caller-visible side effect: the per-cell theme keys the
+    /// inspector reads. It also refreshes the expanded-submenu cache the
+    /// event-time layout rides on.
+    fn record_menu_theme_runs(&mut self, menu_bar_area: ratatui::layout::Rect) {
         if self.active_window().menu_bar_visible {
             // Pre-expand DynamicSubmenu items once per registry; without this
             // MenuRenderer::render rescans + reparses every theme JSON file
@@ -2804,27 +2901,26 @@ impl Editor {
                 &self.menus,
                 &self.menu_state.themes_dir,
             );
-            let hover_target = self.active_window().mouse_state.hover_target.clone();
+            let hover_target = self.shell_hover.clone();
             let menu_bar_mnemonics = self.config.editor.menu_bar_mnemonics;
-            let draw_chrome = !self.suppress_chrome_cells;
             // The single content source shared with the web `menu_view()`
             // projection (uses the cache populated just above).
             let all_menus = self.all_menus_expanded();
             let keybindings = self.keybindings.read().unwrap();
+            let frame_rect = self.active_chrome().last_frame;
+            let screen = ratatui::layout::Rect::new(0, 0, frame_rect.width, frame_rect.height);
             let mut menu_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-            let new_menu_layout = crate::view::ui::MenuRenderer::render(
-                frame,
+            let new_menu_layout = crate::view::ui::MenuRenderer::compute_layout(
+                screen,
                 menu_bar_area,
                 &all_menus,
                 &self.menu_state,
                 &keybindings,
-                &self.theme.read().unwrap(),
                 hover_target.as_ref(),
                 menu_bar_mnemonics,
                 Some(&mut crate::app::types::CellThemeRecorder::new(
                     &mut menu_runs,
                 )),
-                draw_chrome,
             );
             drop(keybindings);
             self.active_chrome_mut().apply_theme_runs(&menu_runs);

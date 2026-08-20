@@ -27,8 +27,7 @@
 //! that width from state before building. Both sides here are handed the
 //! already-resolved width, isolating the layout question.
 
-use fresh::view::shell::frame::{frame_tree, Frame, HostRegion};
-use fresh_ui::{Draw, Size, Ui};
+use fresh::view::shell::frame::{region_rects, Frame, HostRegion};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 fn id(r: HostRegion) -> u64 {
@@ -39,23 +38,13 @@ fn id(r: HostRegion) -> u64 {
 /// shape the real backend callback takes — `(HostId, rect)` is exactly what a
 /// region painter needs.
 fn fold(f: Frame, size: Rect) -> Vec<(u64, Rect)> {
-    let mut ui: Ui<fresh::view::shell::msg::UiMsg> = Ui::new();
-    let spec = ui.frame(frame_tree(f), Size::new(size.width, size.height));
-    let mut out: Vec<(u64, Rect)> = spec
-        .items
-        .iter()
-        .filter_map(|it| match &it.draw {
-            Draw::Host(id) => Some((
-                id.0,
-                Rect {
-                    x: it.rect.x as u16,
-                    y: it.rect.y as u16,
-                    width: it.rect.w,
-                    height: it.rect.h,
-                },
-            )),
-            _ => None,
-        })
+    // Through `region_rects`, which is a layout query — not a scan of the
+    // display list for `Draw::Host`. A region that has gone native emits no
+    // such item, and one that paints nothing at all (a hidden row) emits none
+    // either; both still have a rectangle, and that is what this compares.
+    let mut out: Vec<(u64, Rect)> = region_rects(f, size)
+        .into_iter()
+        .map(|(r, rect)| (r.id(), rect))
         .collect();
     out.sort_by_key(|(id, _)| *id);
     out
@@ -178,6 +167,9 @@ fn combos() -> Vec<Frame> {
                             // overlay: a menu is a layer, out of flow.
                             menu: None,
                             dropdowns: Vec::new(),
+                            // Content, not geometry: an empty bar row occupies
+                            // the same cells a full one does.
+                            menu_bar_items: Default::default(),
                         });
                     }
                 }
@@ -267,6 +259,7 @@ fn squeeze_band_starves_a_different_row_than_ratatui() {
         explorer: None,
         menu: None,
         dropdowns: Vec::new(),
+        menu_bar_items: Default::default(),
     };
     let size = Rect {
         x: 0,

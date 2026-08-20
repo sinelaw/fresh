@@ -201,6 +201,13 @@ pub struct ShellPalette {
     menu_disabled: Style,
     menu_info: Style,
     menu_separator: Style,
+    bar: Style,
+    bar_item: Style,
+    bar_item_mnemonic: Style,
+    bar_active: Style,
+    bar_active_mnemonic: Style,
+    bar_hover: Style,
+    bar_hover_mnemonic: Style,
 }
 
 impl crate::view::shell::fold::Palette for ShellPalette {
@@ -224,8 +231,31 @@ impl crate::view::shell::fold::Palette for ShellPalette {
             "menu.item.disabled" => self.menu_disabled,
             "menu.item.info" => self.menu_info,
             "menu.separator" => self.menu_separator,
+            // The menu bar row: its ground, its labels, and the one character
+            // of a label that wears the mnemonic underline. An underline is
+            // part of how a run looks, so it is part of the run's name — the
+            // library carries one `ThemeKey` per item and never interprets it.
+            "menu.bar" => self.bar,
+            "menu.bar.item" => self.bar_item,
+            "menu.bar.item.mnemonic" => self.bar_item_mnemonic,
+            "menu.bar.item.active" => self.bar_active,
+            "menu.bar.item.active.mnemonic" => self.bar_active_mnemonic,
+            "menu.bar.item.hover" => self.bar_hover,
+            "menu.bar.item.hover.mnemonic" => self.bar_hover_mnemonic,
             _ => self.base,
         }
+    }
+}
+
+use crate::view::ui::BarLabelStyle;
+
+/// One menu-bar label style, with the mnemonic underline applied on top.
+fn bar_style(theme: &crate::view::theme::Theme, style: BarLabelStyle, mnemonic: bool) -> Style {
+    let base = style.style(theme);
+    if mnemonic {
+        base.add_modifier(ratatui::style::Modifier::UNDERLINED)
+    } else {
+        base
     }
 }
 
@@ -259,6 +289,13 @@ impl Editor {
             menu_disabled: crate::view::ui::MenuRowStyle::Disabled.style(&theme),
             menu_info: crate::view::ui::MenuRowStyle::Info.style(&theme),
             menu_separator: crate::view::ui::MenuRowStyle::Separator.style(&theme),
+            bar: Style::default().bg(theme.menu_bg),
+            bar_item: bar_style(&theme, BarLabelStyle::Normal, false),
+            bar_item_mnemonic: bar_style(&theme, BarLabelStyle::Normal, true),
+            bar_active: bar_style(&theme, BarLabelStyle::Active, false),
+            bar_active_mnemonic: bar_style(&theme, BarLabelStyle::Active, true),
+            bar_hover: bar_style(&theme, BarLabelStyle::Hovered, false),
+            bar_hover_mnemonic: bar_style(&theme, BarLabelStyle::Hovered, true),
         }
     }
 }
@@ -279,6 +316,11 @@ impl Editor {
         let Some(mut ui) = self.shell_ui.take() else {
             return false;
         };
+        // What the menu was showing when this event arrived. Snapshotted
+        // before a single message is applied, because the first of them may be
+        // the layer's own dismissal — and a toggle has to know what it is
+        // toggling. See `UiFact::MenuBarPress`.
+        self.shell_menu_open_before = self.menu_state.active_menu;
         let result = ui.dispatch(input);
         self.shell_ui = Some(ui);
         // Claimed is reported, not inferred. Producing a message and taking
@@ -334,6 +376,64 @@ impl Editor {
                 }
                 if let Err(e) = self.activate_highlighted_context_menu(kind) {
                     tracing::warn!("context menu activation failed: {e}");
+                }
+            }
+
+            UiFact::MenuHover(target) => {
+                // The tree says where the pointer is; the existing reaction
+                // says what the menu does about it. Both halves of the old
+                // walk, minus the walk.
+                let target = match target {
+                    // `MenuDropdownItem` names the menu it belongs to, and a
+                    // row cannot know that — the tree is built per frame while
+                    // the open menu changes under it. Fill it in here, where
+                    // the answer lives.
+                    Some(crate::app::types::HoverTarget::MenuDropdownItem(_, item)) => self
+                        .menu_state
+                        .active_menu
+                        .map(|m| crate::app::types::HoverTarget::MenuDropdownItem(m, item)),
+                    other => other,
+                };
+                self.shell_hover = target.clone();
+                self.menu_hover_reaction(target.as_ref());
+            }
+            UiFact::MenuBarPress { index } => {
+                // `open_before` is what the menu was showing when this pointer
+                // event *arrived*, before the layer's dismissal closed it. A
+                // toggle needs that: by the time any message is applied the
+                // menu is already shut, so asking now would always answer "not
+                // open" and reopen what the press was meant to close.
+                if self.shell_menu_open_before == Some(index) {
+                    self.close_menu_with_auto_hide();
+                } else {
+                    self.active_window_mut().on_editor_focus_lost();
+                    self.menu_state.open_menu(index);
+                }
+            }
+            UiFact::MenuItemClick { depth, index } => {
+                let Some(active) = self.menu_state.active_menu else {
+                    return;
+                };
+                let menus: Vec<crate::config::Menu> = self
+                    .menus
+                    .menus
+                    .iter()
+                    .chain(self.menu_state.plugin_menus.iter())
+                    .cloned()
+                    .collect();
+                let Some(menu) = menus.get(active) else {
+                    return;
+                };
+                match self.activate_menu_item(depth, index, menu) {
+                    Ok(Err(e)) | Err(e) => {
+                        tracing::warn!("menu item activation failed: {e}")
+                    }
+                    Ok(Ok(())) => {}
+                }
+            }
+            UiFact::CloseMenu => {
+                if self.menu_state.active_menu.is_some() {
+                    self.close_menu_with_auto_hide();
                 }
             }
         }

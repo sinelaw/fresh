@@ -1334,6 +1334,34 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// A click with a frame drawn between the press and the release, as the
+    /// real loop does.
+    ///
+    /// `mouse_click` sends both halves back to back, which no running editor
+    /// ever does — the main loop repaints whenever a press changed anything.
+    /// That gap matters for any surface whose press and release are handled
+    /// separately: the tree is rebuilt in between, so a handler closing over
+    /// state from the frame the press landed on is holding a stale answer by
+    /// the time the release arrives. Use this to test such a pair.
+    pub fn mouse_click_with_repaint(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
+        self.send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })?;
+        self.render()?;
+        self.send_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })?;
+        self.drain_async_work();
+        self.render()?;
+        Ok(())
+    }
+
     /// Simulate a shift+click at specific coordinates (for extending selection)
     pub fn mouse_shift_click(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
         let mouse_event = MouseEvent {
