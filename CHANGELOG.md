@@ -38,6 +38,12 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Whitespace indicators**
   * Indicators inside a selection are drawn in a subdued colour of their own (`whitespace_indicator_selected_fg`, derived from the selection background when a theme doesn't set it) instead of taking the selected text's full-contrast foreground, where they were louder than the code around them.
   * **Toggle Whitespace Indicators (Current Buffer)** now marks every space when switched on, so it does something visible in a space-indented file — with the default settings (spaces off, tabs on) both halves of the toggle looked identical. Tab and line-ending indicators still follow the configuration.
+* **Line numbers**
+  * A per-buffer line-number toggle survives a tab switch in Page View instead of reappearing for one frame and then vanishing on the next keypress (#2931, reported by @mygirleatsmayo).
+  * **Toggle Line Numbers** in a Compose/Page View buffer no longer writes a setting the user never chose, leaving no way to turn numbers off while composing.
+  * Vi's `:set number` / `:set nonumber` are honoured again on a buffer carrying a per-buffer pin, where they had become a silent no-op that still reported success.
+* **Rulers**: the column guide is drawn on the column it names rather than one cell to its right, and it stays visible where it crosses full-width characters instead of leaving a hole in the bar (#2928, reported by @dhanoosu).
+* **Daemon mode**: resizing a terminal attached with `fresh -a` no longer smears the last-painted colour across the blank cells.
 
 ### Internals
 
