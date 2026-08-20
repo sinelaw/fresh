@@ -167,12 +167,27 @@ pub struct BufferViewState {
 
     /// Explicit per-buffer override for line-number visibility.
     /// `None` = follow the global `editor.line_numbers` default; `Some(v)` =
-    /// the user pinned this buffer via "Toggle Line Numbers (Current Buffer)".
+    /// the user pinned this buffer via "Toggle Line Numbers (Current Buffer)"
+    /// or vi's `:set number` / `:set nonumber`.
     /// Persisted per-file so the choice survives a restart without freezing
     /// untouched buffers at a stale global value (cf. issue #474). `show_line_numbers`
     /// remains the rendered source of truth; this only records intent + drives
     /// persistence and re-application when the global default changes underneath.
     pub line_numbers_override: Option<bool>,
+
+    /// Plugin-supplied line-number default for this (split, buffer), set via
+    /// `setLineNumbersDefault`. `None` = no plugin opinion. Markdown compose
+    /// uses it to drop the gutter from a document preview.
+    ///
+    /// Exactly the arrangement `fold_indicators_plugin_override` uses, and for
+    /// the same reasons: kept apart from the user's own pin so that a mode
+    /// re-entering itself can never overwrite a deliberate choice (issue
+    /// #2931), and deliberately **not** persisted, so a transient opinion
+    /// cannot outlive itself in the saved workspace. It loses to the pin in
+    /// [`BufferViewState::line_numbers_visible`], which is what keeps "Toggle
+    /// Line Numbers (Current Buffer)" — and `:set number` — working while a
+    /// mode is hiding the gutter.
+    pub line_numbers_plugin_override: Option<bool>,
 
     /// Explicit per-buffer override for line wrap (analogue of
     /// `line_numbers_override`). `viewport.line_wrap_enabled` stays the rendered
@@ -263,6 +278,7 @@ impl BufferViewState {
             show_line_numbers: true,
             highlight_current_line: true,
             line_numbers_override: None,
+            line_numbers_plugin_override: None,
             line_wrap_override: None,
             highlight_current_line_override: None,
             indentation_guide_user_override: None,
@@ -298,6 +314,25 @@ impl BufferViewState {
             .unwrap_or(true)
     }
 
+    /// Whether the gutter should draw line numbers in this split, given the
+    /// global `editor.line_numbers` default.
+    ///
+    /// Same precedence as [`Self::fold_indicators_visible`], and for the same
+    /// reason: the user's own pin wins outright, a plugin (markdown compose)
+    /// supplies the default when they have not expressed one, and failing both
+    /// the global setting decides. That ordering is what lets "Toggle Line
+    /// Numbers (Current Buffer)" still do something while a mode is hiding the
+    /// gutter — and what stops the mode from erasing the pin when it re-enters
+    /// itself on the next `buffer_activated` (issue #2931).
+    ///
+    /// `show_line_numbers` stays the rendered source of truth; call this to
+    /// (re)compute it whenever any of the three inputs changes.
+    pub fn line_numbers_visible(&self, default_line_numbers: bool) -> bool {
+        self.line_numbers_override
+            .or(self.line_numbers_plugin_override)
+            .unwrap_or(default_line_numbers)
+    }
+
     pub fn apply_config_defaults(&mut self, defaults: ViewConfigDefaults) {
         let ViewConfigDefaults {
             line_numbers,
@@ -308,7 +343,7 @@ impl BufferViewState {
             rulers,
             scroll_offset,
         } = defaults;
-        self.show_line_numbers = self.line_numbers_override.unwrap_or(line_numbers);
+        self.show_line_numbers = self.line_numbers_visible(line_numbers);
         self.highlight_current_line = self
             .highlight_current_line_override
             .unwrap_or(highlight_current_line);
@@ -346,6 +381,10 @@ impl Clone for BufferViewState {
             show_line_numbers: self.show_line_numbers,
             highlight_current_line: self.highlight_current_line,
             line_numbers_override: self.line_numbers_override,
+            // Carried like `view_mode` and the fold-indicator opinion below: a
+            // split cloned from a composing one is composing too, and should
+            // hide its gutter for the same reason.
+            line_numbers_plugin_override: self.line_numbers_plugin_override,
             line_wrap_override: self.line_wrap_override,
             highlight_current_line_override: self.highlight_current_line_override,
             indentation_guide_user_override: self.indentation_guide_user_override,

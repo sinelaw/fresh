@@ -133,6 +133,8 @@ pub mod large_file_inplace_write_bug;
 pub mod large_file_mode;
 pub mod lifecycle;
 pub mod line_number_bugs;
+#[cfg(feature = "plugins")]
+pub mod line_numbers_override;
 pub mod line_wrapping;
 pub mod list_clamp_no_spurious_select;
 pub mod live_grep;
@@ -186,8 +188,6 @@ pub mod markdown_compose_code_frame;
 pub mod markdown_compose_diagnostics;
 #[cfg(feature = "plugins")]
 pub mod markdown_compose_first_scroll_relayout;
-#[cfg(feature = "plugins")]
-pub mod markdown_compose_line_numbers_override;
 #[cfg(feature = "plugins")]
 pub mod markdown_compose_page_width;
 #[cfg(feature = "plugins")]

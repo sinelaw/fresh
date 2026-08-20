@@ -5,7 +5,7 @@
 use crate::model::cursor::Cursors;
 use crate::model::event::{BufferId, ContainerId, CursorId, Event, LeafId, OverlayFace, SplitId};
 use crate::view::overlay::{OverlayHandle, OverlayNamespace};
-use crate::view::split::SplitViewState;
+use crate::view::split::{BufferViewState, SplitViewState};
 use anyhow::Result as AnyhowResult;
 use fresh_core::api::{
     GrepMatch, JsCallbackId, LayoutHints, MenuPosition, OverlayOptions, PluginResponse,
@@ -1973,16 +1973,55 @@ impl Editor {
     /// so that different splits showing the same buffer can have independent
     /// line number settings (e.g., source mode shows line numbers, compose hides them).
     ///
-    /// `enabled` is a *default*, not a command: an explicit
-    /// `line_numbers_override` — "Toggle Line Numbers (Current Buffer)" — wins,
-    /// exactly as it does in [`BufferViewState::apply_config_defaults`] and when
-    /// leaving page view. Markdown compose re-asserts `false` from its
-    /// `buffer_activated` handler, so without this a plugin re-entering a mode
-    /// silently erased a per-buffer pin the user had made while composing
-    /// (issue #2931). The override is left untouched here for the same reason
-    /// `SetFoldIndicators` writes its own field: a mode's opinion is not a
-    /// preference, and must not leak into the persisted workspace.
+    /// This is the *user command* channel: it records the same explicit
+    /// per-buffer pin that "Toggle Line Numbers (Current Buffer)" records, so
+    /// vi's `:set number` / `:set nonumber` do what they say even on a buffer
+    /// that is already pinned the other way, and the choice persists with the
+    /// rest of the per-file workspace state. A mode announcing its own default
+    /// must use [`Self::handle_set_line_numbers_default`] instead — see issue
+    /// #2931 for what happens when the two are conflated.
     pub(super) fn handle_set_line_numbers(&mut self, buffer_id: BufferId, enabled: bool) {
+        self.with_active_split_buffer_view(buffer_id, |vs| {
+            vs.line_numbers_override = Some(enabled);
+            vs.show_line_numbers = enabled;
+        });
+    }
+
+    /// Handle SetLineNumbersDefault command
+    ///
+    /// The *mode default* channel, the counterpart of `SetFoldIndicators`:
+    /// writes `line_numbers_plugin_override`, never the user's
+    /// `line_numbers_override`, and `None` withdraws the plugin's opinion.
+    ///
+    /// Markdown compose re-asserts its `false` from `buffer_activated`, which
+    /// fires every time focus returns to a tab that is already open. Writing
+    /// that straight onto the rendered flag erased a pin the user had made
+    /// while composing (issue #2931); keeping it in a field of its own means
+    /// the opinion is deferred rather than destructive, and can be withdrawn
+    /// on the way out without a save/restore dance.
+    pub(super) fn handle_set_line_numbers_default(
+        &mut self,
+        buffer_id: BufferId,
+        enabled: Option<bool>,
+    ) {
+        let default_line_numbers = self.config.editor.line_numbers;
+        self.with_active_split_buffer_view(buffer_id, |vs| {
+            vs.line_numbers_plugin_override = enabled;
+            vs.show_line_numbers = vs.line_numbers_visible(default_line_numbers);
+        });
+    }
+
+    /// Run `f` against `buffer_id`'s view state in the active split, falling
+    /// back to the split's active buffer when this split has no state for that
+    /// buffer yet.
+    ///
+    /// Shared by the two line-number entry points so they cannot drift apart
+    /// on which view state they land on.
+    fn with_active_split_buffer_view(
+        &mut self,
+        buffer_id: BufferId,
+        f: impl FnOnce(&mut BufferViewState),
+    ) {
         let active_split = self
             .windows
             .get(&self.active_window)
@@ -1998,10 +2037,11 @@ impl Editor {
             .get_mut(&active_split)
         {
             if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
-                buf_state.show_line_numbers = buf_state.line_numbers_override.unwrap_or(enabled);
+                f(buf_state);
             } else {
-                // Buffer not yet in this split — fall back to setting on active
-                view_state.show_line_numbers = view_state.line_numbers_override.unwrap_or(enabled);
+                // Buffer not yet in this split — fall back to the active one,
+                // which `SplitViewState` derefs to.
+                f(view_state);
             }
         }
     }
