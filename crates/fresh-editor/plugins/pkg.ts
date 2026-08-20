@@ -837,6 +837,110 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
 }
 
 /**
+ * Read the `version` recorded in an installed package's manifest, or
+ * `null` when the directory holds no readable manifest. Used to name
+ * the version an upgrade replaced.
+ */
+function installedVersion(packageDir: string): string | null {
+  const manifest = readJsonFile<PackageManifest>(
+    editor.pathJoin(packageDir, "package.json"),
+  );
+  return manifest?.version || null;
+}
+
+/**
+ * Unload every plugin running out of `packageDir`.
+ *
+ * Must run before an installed directory is replaced: deleting files
+ * under a loaded plugin leaves the old copy running for the rest of
+ * the session. Matches by path prefix rather than by package name
+ * (the runtime plugin name comes from the entry file), and unloads
+ * every match so a bundle's several plugins all come down.
+ */
+async function unloadPluginsUnder(packageDir: string): Promise<void> {
+  const loadedPlugins = await editor.listPlugins();
+  for (const plugin of loadedPlugins) {
+    if (plugin.path.startsWith(packageDir)) {
+      await editor.unloadPlugin(plugin.name).catch(() => {});
+    }
+  }
+}
+
+/**
+ * Move a freshly fetched, already-validated package into its install
+ * directory, replacing any copy already there.
+ *
+ * Callers validate the staging copy first and unload anything running
+ * out of the target, so by the time this runs the replacement is known
+ * good. The existing copy is renamed aside and only deleted once the
+ * new one is in place; a failed swap puts it back, so an upgrade can
+ * never leave the user without a working install. The backup name
+ * starts with a dot so `getInstalledPackages` never sees it as a
+ * package of its own.
+ *
+ * `move` renames the staging directory in (the git-clone paths, whose
+ * staging lives under the temp dir); otherwise it is copied, leaving
+ * the source intact (local-path installs).
+ */
+function swapInstalledDir(
+  stagingDir: string,
+  packagesDir: string,
+  packageName: string,
+  move: boolean,
+): boolean {
+  const targetDir = editor.pathJoin(packagesDir, packageName);
+  const backupDir = editor.pathJoin(
+    packagesDir,
+    `.${packageName}.replaced-${Date.now()}`,
+  );
+
+  const hadExisting = fsLocal.fileExists(targetDir);
+  if (hadExisting && !fsLocal.renamePath(targetDir, backupDir)) {
+    return false;
+  }
+
+  const placed = move
+    ? fsLocal.renamePath(stagingDir, targetDir)
+    : fsLocal.copyPath(stagingDir, targetDir);
+
+  if (!placed) {
+    if (hadExisting) {
+      fsLocal.removePath(targetDir);
+      fsLocal.renamePath(backupDir, targetDir);
+    }
+    return false;
+  }
+
+  if (hadExisting) {
+    fsLocal.removePath(backupDir);
+  }
+  return true;
+}
+
+/**
+ * Status line for a finished install. `previousVersion` is `null` for a
+ * first install and the replaced version otherwise, so an upgrade reads
+ * as one ("Upgraded file-diff 1.0.0 → 1.1.0"). Re-running an install at
+ * the version already on disk is a deliberate forced refresh (the
+ * source may have moved without the version changing), reported as a
+ * reinstall rather than silently doing nothing.
+ */
+function installedStatus(
+  action: string,
+  packageName: string,
+  previousVersion: string | null,
+  version: string,
+): string {
+  if (previousVersion === null) {
+    return `${action} ${packageName} v${version}`;
+  }
+  if (previousVersion === version) {
+    return `Reinstalled ${packageName} v${version}`;
+  }
+  return `Upgraded ${packageName} ${previousVersion} → ${version}`;
+}
+
+/**
  * Install a package from a git URL, direct file URL, or local path.
  *
  * Supports:
@@ -952,52 +1056,68 @@ async function installFromDirectFile(
   // Sanitize for use as a directory name.
   const safeName = packageName.replace(/[^a-zA-Z0-9_.-]/g, "-");
   const targetDir = editor.pathJoin(THEMES_PACKAGES_DIR, safeName);
+  // Remembered before anything is replaced so the finished install can
+  // report an upgrade; `null` when this is a first install.
+  const previousVersion = fsLocal.fileExists(targetDir)
+    ? installedVersion(targetDir)
+    : null;
 
-  if (fsLocal.fileExists(targetDir)) {
-    editor.setStatus(`Package '${safeName}' is already installed`);
-    fsLocal.removePath(tempFile);
-    return false;
-  }
-
-  ensureDir(THEMES_PACKAGES_DIR);
-  if (!ensureDir(targetDir)) {
-    editor.setStatus(`Failed to create package directory ${targetDir}`);
+  // Stage the whole package in the temp dir first. Only once it is
+  // complete does `swapInstalledDir` touch the installed copy, so a
+  // half-written theme can never replace a working one.
+  const stagingDir = editor.pathJoin(
+    editor.getTempDir(),
+    `fresh-pkg-theme-${hashString(url)}-${Date.now()}`,
+  );
+  if (!ensureDir(stagingDir)) {
+    editor.setStatus(`Failed to create staging directory ${stagingDir}`);
     fsLocal.removePath(tempFile);
     return false;
   }
 
   const themeFileName = "theme.json";
-  if (!fsLocal.writeFile(editor.pathJoin(targetDir, themeFileName), content)) {
+  if (!fsLocal.writeFile(editor.pathJoin(stagingDir, themeFileName), content)) {
     editor.setStatus(`Failed to write theme file`);
     fsLocal.removePath(tempFile);
-    fsLocal.removePath(targetDir);
+    fsLocal.removePath(stagingDir);
     return false;
   }
 
   const manifest: PackageManifest = {
     name: safeName,
-    version: "1.0.0",
+    version: previousVersion ?? "1.0.0",
     description: `Theme installed from ${url}`,
     type: "theme",
     fresh: {
       themes: [{ file: themeFileName, name: themeName ?? safeName }],
     },
   };
-  if (!await writeJsonFile(editor.pathJoin(targetDir, "package.json"), manifest)) {
+  if (!await writeJsonFile(editor.pathJoin(stagingDir, "package.json"), manifest)) {
     editor.setStatus(`Failed to write package manifest`);
     fsLocal.removePath(tempFile);
-    fsLocal.removePath(targetDir);
+    fsLocal.removePath(stagingDir);
     return false;
   }
 
-  await writeJsonFile(editor.pathJoin(targetDir, ".fresh-source.json"), {
+  await writeJsonFile(editor.pathJoin(stagingDir, ".fresh-source.json"), {
     url,
+    installed_from: url,
     installed_at: new Date().toISOString(),
   });
 
+  ensureDir(THEMES_PACKAGES_DIR);
+  if (!swapInstalledDir(stagingDir, THEMES_PACKAGES_DIR, safeName, true)) {
+    editor.setStatus(`Failed to install ${safeName}: could not replace ${targetDir}`);
+    fsLocal.removePath(tempFile);
+    fsLocal.removePath(stagingDir);
+    return false;
+  }
+
   fsLocal.removePath(tempFile);
   editor.reloadThemes();
-  editor.setStatus(`Installed theme ${themeName ?? safeName}`);
+  editor.setStatus(
+    installedStatus("Installed theme", themeName ?? safeName, previousVersion, manifest.version),
+  );
   return true;
 }
 
@@ -1062,38 +1182,55 @@ async function installFromRepo(
                            : LANGUAGES_PACKAGES_DIR;
   const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
 
-  // Check if already installed in correct location
-  if (fsLocal.fileExists(correctTargetDir)) {
-    editor.setStatus(`Package '${packageName}' is already installed`);
-    fsLocal.removePath(tempDir);
-    return false;
+  // An existing installation is an upgrade, not a dead end. The clone
+  // above is already fetched and validated, so replacing the old copy
+  // from here can only fail on a filesystem error — a bad download
+  // returned long before this point, leaving the install untouched.
+  const previousVersion = fsLocal.fileExists(correctTargetDir)
+    ? installedVersion(correctTargetDir)
+    : null;
+
+  // Record where this came from so the package manager can re-install
+  // it later without re-deriving the URL from the clone's git remote.
+  await writeJsonFile(editor.pathJoin(tempDir, ".fresh-source.json"), {
+    repository: repoUrl,
+    installed_from: repoUrl,
+    installed_at: new Date().toISOString()
+  });
+
+  if (previousVersion !== null) {
+    // Unload before replacing: files deleted under a loaded plugin
+    // leave the old copy running for the rest of the session.
+    await unloadPluginsUnder(correctTargetDir);
   }
 
   // Ensure correct directory exists and move from temp
   ensureDir(correctPackagesDir);
-  if (!fsLocal.renamePath(tempDir, correctTargetDir)) {
+  if (!swapInstalledDir(tempDir, correctPackagesDir, packageName, true)) {
     editor.setStatus(`Failed to install ${packageName}: could not move package to target directory`);
     fsLocal.removePath(tempDir);
     return false;
   }
+
+  const newVersion = manifest?.version ?? "unknown";
 
   // Dynamically load plugins, reload themes, load language packs, or load bundles
   if (manifest?.type === "plugin" && validation.entryPath) {
     // Update entry path to new location
     const newEntryPath = validation.entryPath.replace(tempDir, correctTargetDir);
     await editor.loadPlugin(newEntryPath);
-    editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(installedStatus("Installed and activated", packageName, previousVersion, newVersion));
   } else if (manifest?.type === "theme") {
     editor.reloadThemes();
-    editor.setStatus(`Installed theme ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(installedStatus("Installed theme", packageName, previousVersion, newVersion));
   } else if (manifest?.type === "language") {
     await loadLanguagePack(correctTargetDir, manifest);
-    editor.setStatus(`Installed language pack ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(installedStatus("Installed language pack", packageName, previousVersion, newVersion));
   } else if (manifest?.type === "bundle") {
     await loadBundle(correctTargetDir, manifest);
-    editor.setStatus(`Installed bundle ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(installedStatus("Installed bundle", packageName, previousVersion, newVersion));
   } else {
-    editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(installedStatus("Installed", packageName, previousVersion, newVersion));
   }
   return true;
 }
@@ -1156,29 +1293,34 @@ async function installFromLocalPath(
                            : LANGUAGES_PACKAGES_DIR;
   const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
 
-  // Check if already installed in correct location
-  if (fsLocal.fileExists(correctTargetDir)) {
-    editor.setStatus(`Package '${packageName}' is already installed`);
-    return false;
-  }
+  // An existing installation is an upgrade, not a dead end.
+  const previousVersion = fsLocal.fileExists(correctTargetDir)
+    ? installedVersion(correctTargetDir)
+    : null;
 
   // Ensure correct directory exists
   ensureDir(correctPackagesDir);
 
-  // Copy the directory to correct target
+  // Copy into a staging directory and validate there, so a source that
+  // turns out not to be a valid package never touches an installation
+  // that already works.
+  const stagingDir = editor.pathJoin(
+    editor.getTempDir(),
+    `fresh-pkg-local-${hashString(sourcePath)}-${Date.now()}`,
+  );
   editor.setStatus(`Copying from ${sourcePath}...`);
-  if (!fsLocal.copyPath(sourcePath, correctTargetDir)) {
+  if (!fsLocal.copyPath(sourcePath, stagingDir)) {
     editor.setStatus(`Failed to copy package from ${sourcePath}`);
     return false;
   }
 
   // Validate package structure
-  const validation = validatePackage(correctTargetDir, packageName);
+  const validation = validatePackage(stagingDir, packageName);
   if (!validation.valid) {
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
     editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
     // Clean up the invalid package
-    fsLocal.removePath(correctTargetDir);
+    fsLocal.removePath(stagingDir);
     return false;
   }
 
@@ -1188,23 +1330,39 @@ async function installFromLocalPath(
     original_url: parsed.subpath ? `${parsed.repoUrl}#${parsed.subpath}` : parsed.repoUrl,
     installed_at: new Date().toISOString()
   };
-  await writeJsonFile(editor.pathJoin(correctTargetDir, ".fresh-source.json"), sourceInfo);
+  await writeJsonFile(editor.pathJoin(stagingDir, ".fresh-source.json"), sourceInfo);
+
+  if (previousVersion !== null) {
+    // Unload before replacing: files deleted under a loaded plugin
+    // leave the old copy running for the rest of the session.
+    await unloadPluginsUnder(correctTargetDir);
+  }
+  if (!swapInstalledDir(stagingDir, correctPackagesDir, packageName, true)) {
+    editor.setStatus(`Failed to install ${packageName}: could not move package to target directory`);
+    fsLocal.removePath(stagingDir);
+    return false;
+  }
+
+  const newVersion = manifest.version || "unknown";
+  // The validated entry path points into the staging directory; the
+  // package now lives at its install path.
+  const entryPath = validation.entryPath?.replace(stagingDir, correctTargetDir);
 
   // Dynamically load plugins, reload themes, load language packs, or load bundles
-  if (manifest.type === "plugin" && validation.entryPath) {
-    await editor.loadPlugin(validation.entryPath);
-    editor.setStatus(`Installed and activated ${packageName} v${manifest.version || "unknown"}`);
+  if (manifest.type === "plugin" && entryPath) {
+    await editor.loadPlugin(entryPath);
+    editor.setStatus(installedStatus("Installed and activated", packageName, previousVersion, newVersion));
   } else if (manifest.type === "theme") {
     editor.reloadThemes();
-    editor.setStatus(`Installed theme ${packageName} v${manifest.version || "unknown"}`);
+    editor.setStatus(installedStatus("Installed theme", packageName, previousVersion, newVersion));
   } else if (manifest.type === "language") {
     await loadLanguagePack(correctTargetDir, manifest);
-    editor.setStatus(`Installed language pack ${packageName} v${manifest.version || "unknown"}`);
+    editor.setStatus(installedStatus("Installed language pack", packageName, previousVersion, newVersion));
   } else if (manifest.type === "bundle") {
     await loadBundle(correctTargetDir, manifest);
-    editor.setStatus(`Installed bundle ${packageName} v${manifest.version || "unknown"}`);
+    editor.setStatus(installedStatus("Installed bundle", packageName, previousVersion, newVersion));
   } else {
-    editor.setStatus(`Installed ${packageName} v${manifest.version || "unknown"}`);
+    editor.setStatus(installedStatus("Installed", packageName, previousVersion, newVersion));
   }
   return true;
 }
@@ -1280,50 +1438,60 @@ async function installFromMonorepo(
                              : LANGUAGES_PACKAGES_DIR;
     const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
 
-    // Check if already installed
-    if (fsLocal.fileExists(correctTargetDir)) {
-      editor.setStatus(`Package '${packageName}' is already installed`);
-      fsLocal.removePath(tempDir);
-      return false;
-    }
+    // An existing installation is an upgrade, not a dead end. The
+    // subdirectory in the clone is already fetched and validated, so
+    // the old copy only goes once the replacement is known good.
+    const previousVersion = fsLocal.fileExists(correctTargetDir)
+      ? installedVersion(correctTargetDir)
+      : null;
 
     // Ensure correct directory exists
     ensureDir(correctPackagesDir);
 
-    // Copy subdirectory to correct target
-    editor.setStatus(`Installing ${packageName} from ${parsed.subpath}...`);
-    if (!fsLocal.copyPath(subpathDir, correctTargetDir)) {
-      editor.setStatus(`Failed to copy package from ${parsed.subpath}`);
-      fsLocal.removePath(tempDir);
-      return false;
-    }
-
-    // Store the original monorepo URL in a .fresh-source file
+    // Store the original monorepo URL in a .fresh-source file. Written
+    // into the clone before the swap so the marker lands with the files
+    // it describes.
     const sourceInfo = {
       repository: parsed.repoUrl,
       subpath: parsed.subpath,
       installed_from: `${parsed.repoUrl}#${parsed.subpath}`,
       installed_at: new Date().toISOString()
     };
-    await writeJsonFile(editor.pathJoin(correctTargetDir, ".fresh-source.json"), sourceInfo);
+    await writeJsonFile(editor.pathJoin(subpathDir, ".fresh-source.json"), sourceInfo);
+
+    if (previousVersion !== null) {
+      // Unload before replacing: files deleted under a loaded plugin
+      // leave the old copy running for the rest of the session.
+      await unloadPluginsUnder(correctTargetDir);
+    }
+
+    // Copy subdirectory to correct target
+    editor.setStatus(`Installing ${packageName} from ${parsed.subpath}...`);
+    if (!swapInstalledDir(subpathDir, correctPackagesDir, packageName, false)) {
+      editor.setStatus(`Failed to copy package from ${parsed.subpath}`);
+      fsLocal.removePath(tempDir);
+      return false;
+    }
+
+    const newVersion = manifest?.version ?? "unknown";
 
     // Dynamically load plugins, reload themes, load language packs, or load bundles
     if (manifest?.type === "plugin" && validation.entryPath) {
       // Update entry path to new location
       const newEntryPath = validation.entryPath.replace(subpathDir, correctTargetDir);
       await editor.loadPlugin(newEntryPath);
-      editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+      editor.setStatus(installedStatus("Installed and activated", packageName, previousVersion, newVersion));
     } else if (manifest?.type === "theme") {
       editor.reloadThemes();
-      editor.setStatus(`Installed theme ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+      editor.setStatus(installedStatus("Installed theme", packageName, previousVersion, newVersion));
     } else if (manifest?.type === "language") {
       await loadLanguagePack(correctTargetDir, manifest);
-      editor.setStatus(`Installed language pack ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+      editor.setStatus(installedStatus("Installed language pack", packageName, previousVersion, newVersion));
     } else if (manifest?.type === "bundle") {
       await loadBundle(correctTargetDir, manifest);
-      editor.setStatus(`Installed bundle ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+      editor.setStatus(installedStatus("Installed bundle", packageName, previousVersion, newVersion));
     } else {
-      editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+      editor.setStatus(installedStatus("Installed", packageName, previousVersion, newVersion));
     }
     return true;
   } finally {
