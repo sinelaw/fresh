@@ -1154,6 +1154,29 @@ pub struct Editor {
     /// hide. The TUI/GUI leave it `false` and draw chrome to cells as before.
     /// See docs/internal/web-ui.md.
     pub(crate) suppress_chrome_cells: bool,
+    /// Which menu was open when the pointer event now being dispatched
+    /// arrived — before any of its messages were applied, and in particular
+    /// before a layer's dismissal closed one. The menu bar's toggle reads it.
+    /// See `UiFact::MenuBarPress`.
+    pub(crate) shell_menu_open_before: Option<usize>,
+    /// What the pointer is over *in the shell's tree*, as the tree itself
+    /// reported it.
+    ///
+    /// Deliberately not `mouse_state.hover_target`. That field is written by
+    /// the legacy hover walk on every motion event, and a migrated surface's
+    /// chrome box is deleted — so the walk finds nothing there and would clear
+    /// whatever the tree had just set. Two owners, one field.
+    ///
+    /// Two earlier attempts were worse. Claiming the `Move` in the tree killed
+    /// the plugin `mouse_move` hook, the terminal-link and LSP hover trackers,
+    /// and any drag whose pointer crossed the migrated row. A one-event flag
+    /// saying "the tree answered" flickered, because `Enter` fires once on the
+    /// way in and says nothing on the motions that follow inside the same
+    /// node.
+    ///
+    /// Separate ownership is the answer: the tree writes here, the walk writes
+    /// there, and neither reads the other's. This field retires with the walk.
+    pub(crate) shell_hover: Option<crate::app::types::HoverTarget>,
     /// `(plugin, widget)` pairs already warned about for missing per-item
     /// keys, so the deprecation notice fires once rather than on every panel
     /// update. See `crate::widgets::keying`.

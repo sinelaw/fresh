@@ -203,7 +203,7 @@ mod tests {
 #[cfg(test)]
 mod paint_tests {
     use super::*;
-    use crate::view::shell::fold::fold_native;
+    use crate::view::shell::fold::{fold_native, Band};
     use crate::view::shell::frame::{frame_tree, Frame};
     use fresh_ui::{Size, ThemeKey, Ui};
     use ratatui::buffer::Buffer;
@@ -222,7 +222,11 @@ mod paint_tests {
         };
         let spec = ui.frame(frame_tree(frame), Size::new(w, h)).clone();
         let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
-        fold_native(&spec, &mut buf, &plain);
+        // Both bands: a test that renders the whole frame wants the whole
+        // display list, and the cut only matters where legacy painters go
+        // between them.
+        fold_native(&spec, &mut buf, &plain, Band::Background);
+        fold_native(&spec, &mut buf, &plain, Band::Overlay);
         buf
     }
 
@@ -251,6 +255,44 @@ mod paint_tests {
         assert_eq!(row(&buf, 2), "  │ Copy   │        ", "first item");
         assert_eq!(row(&buf, 3), "  │ Paste  │        ", "second item");
         assert_eq!(row(&buf, 4), "  └────────┘        ", "bottom border");
+    }
+
+    /// **The highlighted row looks different, and the test can see it.**
+    ///
+    /// Rendering through a palette that answered `Style::default()` for every
+    /// name meant the highlight was asserted only by the *name* the
+    /// description carried, never by anything a user would see. A row whose
+    /// theme is wired to the wrong palette entry, or a fold that dropped the
+    /// style, would have gone through unnoticed.
+    #[test]
+    fn the_highlighted_row_is_styled_differently_from_the_others() {
+        use crate::view::shell::fold::{test_palette, Band};
+        let mut ui: Ui<UiMsg> = Ui::new();
+        let spec = ui
+            .frame(
+                frame_tree(Frame {
+                    menu: Some(Menu {
+                        x: 0,
+                        y: 0,
+                        width: 10,
+                        highlighted: 1,
+                        items: vec!["Copy".into(), "Paste".into()],
+                    }),
+                    ..Frame::default()
+                }),
+                Size::new(20, 6),
+            )
+            .clone();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 6));
+        fold_native(&spec, &mut buf, &test_palette::palette, Band::Overlay);
+
+        assert_eq!(buf[(2, 1)].style(), test_palette::painted("menu.item"));
+        assert_eq!(
+            buf[(2, 2)].style(),
+            test_palette::painted("menu.item.highlighted"),
+            "the highlighted row is the one the menu says is highlighted"
+        );
+        assert_ne!(buf[(2, 1)].style(), buf[(2, 2)].style());
     }
 
     /// **The clamp, as a layer property.** A menu opened near the right/bottom

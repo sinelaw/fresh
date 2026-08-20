@@ -55,39 +55,62 @@ impl<F: Fn(&ThemeKey) -> Style> Palette for F {
     }
 }
 
-/// Paint only what the tree owns outright, leaving host regions to their own
-/// painters.
+/// Which half of the display list a fold pass writes.
+///
+/// The migration needs two passes because there is one display list and *many*
+/// legacy painters, and the legacy painters are not in the list. A native
+/// region that sits under the legacy ones (the menu bar row, the sidebar, the
+/// status bar) has to be written *before* them; a native overlay (a context
+/// menu, a dropdown) has to be written *after*. One pass can only serve one of
+/// those, which is why migration was previously confined to surfaces that
+/// paint over everything.
+///
+/// The two bands are the same list, cut once at `LayoutSpec::layers_from`.
+/// Legacy painters run in between, so each band lands where its surface
+/// belongs, and the rule that migration must proceed top-down through the old
+/// paint order retires with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Band {
+    /// In-flow content: everything before the first overlay.
+    Background,
+    /// Out-of-flow content: the `Layer`s, which `fresh-ui` paints after the
+    /// tree they were declared in.
+    Overlay,
+}
+
+/// Paint one band of what the tree owns outright, leaving host regions to
+/// their own painters.
 ///
 /// The migration's working state: the frame is a `fresh-ui` tree, but most of
 /// its regions are still `Host` leaves painted by the code that always painted
-/// them. This folds the native items and skips the hosts.
+/// them. This folds the native items of one band and skips the hosts.
 ///
-/// # Migrate in paint order
+/// # Two passes, one list
 ///
-/// There is one fold, and it runs *after* every legacy painter, so **anything
-/// native paints above everything that has not migrated**. Within the display
-/// list `fold` interleaves correctly by paint order; across the seam it cannot,
-/// because the legacy painters are not in the list.
+/// `render` calls this twice. [`Band::Background`] runs before any legacy
+/// painter, so the legacy ones land on top of it; [`Band::Overlay`] runs after
+/// all of them, so it lands on top of *them*. Within each band the display
+/// list already interleaves correctly by paint order; the cut is what lets the
+/// legacy painters slot in between, since they are not in the list at all.
 ///
-/// The rule that follows: a region may become native only once everything that
-/// paints *over* it already has. Migration proceeds top-down through the old
-/// paint order — overlays first (the context menu, topmost, went first), then
-/// what they cover.
-///
-/// Getting this wrong is silent. The status bar is the next candidate and
-/// popups deliberately paint over its row, so migrating it before them would
-/// put the bar on top of the popup with nothing failing to say so. Splitting
-/// the fold into passes keyed to the legacy z-bands is the alternative if that
-/// order ever becomes impractical; it is not needed while the order holds.
+/// Get the band wrong and the failure is silent — a status bar painted in the
+/// overlay band sits on top of the popup that is supposed to cover it — so the
+/// rule is the surface's own nature: a `Layer` is an overlay, anything in flow
+/// is background.
 ///
 /// When the last region is native this collapses into [`fold`], whose
-/// `HostPainter` is the general form, and the rule retires with it.
-pub fn fold_native(spec: &LayoutSpec, buf: &mut Buffer, palette: &dyn Palette) -> Caret {
+/// `HostPainter` is the general form, and both bands become one pass again.
+pub fn fold_native(
+    spec: &LayoutSpec,
+    buf: &mut Buffer,
+    palette: &dyn Palette,
+    band: Band,
+) -> Caret {
     struct Skip;
     impl HostPainter for Skip {
         fn paint_host(&mut self, _: HostRegion, _: Rect, _: &mut Buffer, _: &mut Caret) {}
     }
-    fold(spec, buf, palette, &mut Skip)
+    fold_band(spec, buf, palette, &mut Skip, band)
 }
 
 /// Fold a display list into `buf`, returning the caret position for the frame.
@@ -104,11 +127,41 @@ pub fn fold(
     palette: &dyn Palette,
     host: &mut dyn HostPainter,
 ) -> Caret {
+    let a = fold_band(spec, buf, palette, host, Band::Background);
+    let b = fold_band(spec, buf, palette, host, Band::Overlay);
+    b.or(a)
+}
+
+/// [`fold`], restricted to one band. See [`Band`].
+pub fn fold_band(
+    spec: &LayoutSpec,
+    buf: &mut Buffer,
+    palette: &dyn Palette,
+    host: &mut dyn HostPainter,
+    band: Band,
+) -> Caret {
     let frame = buf.area;
     let mut host_caret: Caret = None;
 
-    for item in &spec.items {
-        let style = palette.style(&item.theme);
+    // The library says where the split is. It used to be derived here, by
+    // matching keys against a hand-kept list of the frame's layer families —
+    // which was wrong for a scrim (unkeyed, and pushed *before* its layer's
+    // items) and for an unkeyed layer (`widgets::Dropdown` has none), and
+    // would have put both on the background side, silently.
+    let items = match band {
+        Band::Background => spec.in_flow(),
+        Band::Overlay => spec.layers(),
+    };
+    for item in items {
+        // From a reset, not a patch. An item's theme says what its cells look
+        // like *outright* — a display list is not a diff over whatever was
+        // there before. `Cell::set_style` patches, so without the reset an
+        // item painted over legacy cells inherits their modifiers: a dropdown
+        // drawn over the active tab came out bold, because the tab's BOLD
+        // survived a fill that only named a foreground and a background. The
+        // ratatui `Block` this replaced said `Style::reset()` for the same
+        // reason.
+        let style = Style::reset().patch(palette.style(&item.theme));
         let rect = to_rect(item.rect);
         let clip = intersect(to_rect(item.clip), frame);
 
@@ -117,9 +170,18 @@ pub fn fold(
             Draw::Border => border(buf, rect, style, clip),
             Draw::Scrim(Scrim::Opaque) => fill(buf, frame, ' ', style, frame),
             // Dimming is a backend decision; the library only says "everything
-            // behind this is receding".
-            Draw::Scrim(Scrim::Dim) => restyle(buf, frame, style, frame),
+            // behind this is receding" — so this one *is* a patch over what is
+            // already there, and takes the palette's style unreset.
+            Draw::Scrim(Scrim::Dim) => restyle(buf, frame, palette.style(&item.theme), frame),
             Draw::Lines(lines) => {
+                // Clipped to the item's own rect as well as its inherited one:
+                // an item declares how much room it has. Layout hands a
+                // constrained node the width it was *allowed*, not the width
+                // its content wants, so a run can be longer than the rect
+                // carrying it — and one that is would paint through whatever
+                // encloses it, a menu row straight through its own border.
+                // The library's own backends make the same guarantee.
+                let clip = intersect(clip, rect);
                 for (i, line) in lines.iter().enumerate() {
                     let y = rect.y.saturating_add(i as u16);
                     let mut x = rect.x;
@@ -165,10 +227,79 @@ pub fn fold(
         }
     }
 
-    spec.cursor
-        .filter(|c| c.visible)
+    // There is one `LayoutSpec::cursor` per frame, and the display list does
+    // not record which half placed it — so this reports it from the **last**
+    // band rather than pretending to know its provenance. Reporting it from
+    // both would hand the caller the same caret twice; reporting it from the
+    // first would let a host painted later overwrite a native field's caret,
+    // which is the one thing the rule forbids.
+    //
+    // A background surface that places a cursor is therefore still answered
+    // for, just by the overlay pass — which is correct, because the overlay
+    // pass runs last and nothing can have covered it since.
+    let native = match band {
+        Band::Overlay => spec.cursor.filter(|c| c.visible),
+        Band::Background => None,
+    };
+    native
         .map(|c| (c.pos.x.max(0) as u16, c.pos.y.max(0) as u16))
         .or(host_caret)
+}
+
+/// A palette whose styles are *distinguishable*, for tests.
+///
+/// The shell's tests all used `Style::default()`, so every cell came out
+/// looking the same and no test could tell a highlighted row from an ordinary
+/// one, a bold label from a plain one, or a fill that reset the cell beneath
+/// it from one that inherited its modifiers. Four cell-level bugs reached CI
+/// through that gap in a single wave. A test that renders should be able to
+/// assert *how* a cell looks, not only what it says.
+///
+/// Each theme name gets its own colour, and the two modifiers the real
+/// [`ShellPalette`](crate::app::ShellPalette) applies — bold for an active
+/// menu-bar label, underline for its mnemonic — are reproduced from the name,
+/// so a test asserting them is asserting the same structure the editor uses.
+#[cfg(test)]
+pub(crate) mod test_palette {
+    use ratatui::style::{Color, Modifier, Style};
+
+    use fresh_ui::ThemeKey;
+
+    /// The style this palette gives a theme name.
+    pub(crate) fn of(name: &str) -> Style {
+        // Distinct per name, and stable across runs: an assertion names the
+        // theme, not a colour number.
+        let n = name
+            .bytes()
+            .fold(7u16, |a, b| a.wrapping_mul(31).wrapping_add(b as u16));
+        let mut style = Style::default()
+            .fg(Color::Indexed((n % 100) as u8 + 16))
+            .bg(Color::Indexed((n % 100) as u8 + 128));
+        if name.contains(".active") {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        if name.ends_with(".mnemonic") {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
+        style
+    }
+
+    /// The palette itself, for handing to [`super::fold_native`].
+    pub(crate) fn palette(theme: &ThemeKey) -> Style {
+        of(theme.as_str())
+    }
+
+    /// What a cell painted under this palette actually carries.
+    ///
+    /// Computed by painting one, rather than by reproducing the arithmetic:
+    /// the fold applies `Style::reset()` before the theme's own style and
+    /// `Cell::set_style` patches, so the modifier bookkeeping is easy to
+    /// restate wrongly and impossible to get wrong this way.
+    pub(crate) fn painted(name: &str) -> Style {
+        let mut cell = ratatui::buffer::Cell::default();
+        cell.set_style(Style::reset().patch(of(name)));
+        cell.style()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -329,7 +460,10 @@ mod tests {
             .collect()
     }
 
-    /// Every visible region reaches its painter, with the rect layout computed.
+    /// Every region still painted by its own code reaches its painter, in the
+    /// rect layout computed. The menu bar is absent because it is no longer a
+    /// `Host`: it is a native region now, and its row is drawn from the tree
+    /// rather than handed back to a painter.
     #[test]
     fn each_region_is_painted_into_its_own_rect() {
         let f = Frame {
@@ -342,15 +476,8 @@ mod tests {
 
         let mut got: Vec<_> = rec.calls.iter().map(|(r, _)| *r).collect();
         got.sort();
-        assert_eq!(
-            got,
-            vec![HostRegion::MenuBar, HostRegion::Body, HostRegion::StatusBar]
-                .into_iter()
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(row_text(&buf, 0), "MMMMMMMMMM");
+        assert_eq!(got, vec![HostRegion::Body, HostRegion::StatusBar]);
+        assert_eq!(row_text(&buf, 0), "          ", "the native bar, unthemed");
         assert_eq!(row_text(&buf, 1), "BBBBBBBBBB");
         assert_eq!(row_text(&buf, 2), "BBBBBBBBBB");
         assert_eq!(row_text(&buf, 3), "SSSSSSSSSS");
@@ -466,6 +593,212 @@ mod tests {
 }
 
 #[cfg(test)]
+mod band_tests {
+    use super::*;
+    use crate::view::shell::context_menu::Menu;
+    use crate::view::shell::frame::{frame_tree, Frame, HostRegion};
+    use crate::view::shell::menu::{DropdownLevel, DropdownRow};
+    use crate::view::shell::msg::UiMsg;
+    use fresh_ui::{Size, Ui};
+    use ratatui::layout::Rect;
+    use ratatui::style::Style;
+
+    fn plain(_: &ThemeKey) -> Style {
+        Style::default()
+    }
+
+    fn spec_of(f: Frame, w: u16, h: u16) -> fresh_ui::LayoutSpec {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(frame_tree(f), Size::new(w, h)).clone()
+    }
+
+    fn a_menu() -> Menu {
+        Menu {
+            x: 2,
+            y: 1,
+            width: 10,
+            highlighted: 0,
+            items: vec!["Copy".into()],
+        }
+    }
+
+    fn a_dropdown() -> DropdownLevel {
+        DropdownLevel {
+            x: 0,
+            y: 1,
+            width: 10,
+            rows: vec![DropdownRow {
+                text: " New    ".into(),
+                theme: "menu.item",
+            }],
+        }
+    }
+
+    fn painted(spec: &fresh_ui::LayoutSpec, band: Band, w: u16, h: u16) -> Vec<String> {
+        let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
+        fold_native(spec, &mut buf, &plain, band);
+        (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect())
+            .collect()
+    }
+
+    /// **The two bands partition the list.** Nothing is dropped and nothing is
+    /// painted twice: every item belongs to exactly one side of the cut.
+    #[test]
+    fn the_cut_partitions_the_display_list() {
+        let spec = spec_of(
+            Frame {
+                menu: Some(a_menu()),
+                dropdowns: vec![a_dropdown()],
+                ..Frame::default()
+            },
+            30,
+            10,
+        );
+        assert!(
+            !spec.in_flow().is_empty(),
+            "the frame's regions are background"
+        );
+        assert!(!spec.layers().is_empty(), "its layers are overlay");
+        assert_eq!(
+            spec.in_flow().len() + spec.layers().len(),
+            spec.items.len(),
+            "and nothing is dropped or counted twice"
+        );
+    }
+
+    /// Every item in the background band belongs to the frame itself, and the
+    /// overlay band carries the menus' boxes — which is what makes
+    /// "background" and "overlay" mean what they say.
+    #[test]
+    fn the_background_band_is_the_regions_and_the_overlay_band_is_the_layers() {
+        let spec = spec_of(
+            Frame {
+                menu: Some(a_menu()),
+                dropdowns: vec![a_dropdown()],
+                ..Frame::default()
+            },
+            30,
+            10,
+        );
+        for item in spec.in_flow() {
+            assert!(
+                !matches!(item.draw, Draw::Border | Draw::Scrim(_)),
+                "a layer's item landed in the background band: {:?}",
+                item.draw
+            );
+        }
+        assert!(
+            spec.layers().iter().any(|i| matches!(i.draw, Draw::Border)),
+            "the overlay band must carry the menus' boxes"
+        );
+    }
+
+    /// With no overlay open the whole list is background, so the late pass has
+    /// nothing to do — a frame that opens no menu must not pay for a second
+    /// walk that finds items.
+    #[test]
+    fn a_frame_with_no_layers_is_all_background() {
+        let spec = spec_of(Frame::default(), 30, 10);
+        assert!(spec.layers().is_empty());
+        assert!(painted(&spec, Band::Overlay, 30, 10)
+            .iter()
+            .all(|r| r.chars().all(|c| c == ' ')));
+    }
+
+    /// **An item declares how much room it has.** A run longer than the rect
+    /// carrying it must not paint through whatever encloses it — a menu row
+    /// through its own border, which is what a `Paragraph`'s silent
+    /// truncation used to hide.
+    #[test]
+    fn a_run_longer_than_its_item_is_clipped_to_it() {
+        use crate::view::shell::menu::{DropdownLevel, DropdownRow};
+        let spec = spec_of(
+            Frame {
+                dropdowns: vec![DropdownLevel {
+                    x: 0,
+                    y: 0,
+                    // Inner width 6, but the row claims ten cells of text.
+                    width: 8,
+                    rows: vec![DropdownRow {
+                        text: "0123456789".into(),
+                        theme: "menu.item",
+                    }],
+                }],
+                ..Frame::default()
+            },
+            20,
+            6,
+        );
+        let rows = painted(&spec, Band::Overlay, 20, 6);
+        let painted_box: String = rows[1].chars().take(8).collect();
+        assert_eq!(
+            painted_box, "\u{2502}012345\u{2502}",
+            "the border survives the row: {rows:?}"
+        );
+    }
+
+    /// **The point of the split.** A layer paints in the overlay band and
+    /// nothing else does, so a legacy painter running between the two passes
+    /// lands under it — which is what lets a background region migrate while
+    /// the popups over it have not.
+    #[test]
+    fn a_layer_paints_only_in_the_overlay_band() {
+        let spec = spec_of(
+            Frame {
+                menu: Some(a_menu()),
+                ..Frame::default()
+            },
+            30,
+            10,
+        );
+        let bg = painted(&spec, Band::Background, 30, 10);
+        assert!(
+            bg.iter().all(|r| r.chars().all(|c| c == ' ')),
+            "regions are hosts, so the background band paints nothing yet: {bg:?}"
+        );
+        let over = painted(&spec, Band::Overlay, 30, 10);
+        assert!(
+            over.iter().any(|r| r.contains('\u{250c}')),
+            "the menu's box belongs to the overlay band: {over:?}"
+        );
+    }
+
+    /// **Every layer the frame declares reaches the overlay band**, whether or
+    /// not it is keyed.
+    ///
+    /// This used to be a check that each layer named a family in a
+    /// hand-maintained list, which could only ever confirm what the list
+    /// already said. The split is the library's now, so what is worth pinning
+    /// is the property itself: three layers, three boxes above the fold.
+    #[test]
+    fn every_declared_layer_reaches_the_overlay_band() {
+        let spec = spec_of(
+            Frame {
+                menu: Some(a_menu()),
+                dropdowns: vec![a_dropdown(), a_dropdown()],
+                ..Frame::default()
+            },
+            30,
+            10,
+        );
+        // Two dropdown levels and the context menu, each a bordered box.
+        let boxes = spec
+            .layers()
+            .iter()
+            .filter(|i| matches!(i.draw, Draw::Border))
+            .count();
+        assert_eq!(boxes, 3, "every declared layer paints above the fold");
+        assert!(
+            spec.in_flow()
+                .iter()
+                .all(|i| !matches!(i.draw, Draw::Border)),
+            "and none of them below it"
+        );
+    }
+}
+
+#[cfg(test)]
 mod native_tests {
     use super::*;
     use crate::view::shell::frame::{frame_tree, Frame};
@@ -487,7 +820,8 @@ mod native_tests {
             .clone();
         let mut buf = Buffer::empty(Rect::new(0, 0, 20, 6));
         let before = buf.clone();
-        fold_native(&spec, &mut buf, &plain);
+        fold_native(&spec, &mut buf, &plain, Band::Background);
+        fold_native(&spec, &mut buf, &plain, Band::Overlay);
         assert_eq!(buf, before, "host regions must be left to their painters");
     }
 }

@@ -989,7 +989,7 @@ behaviour that is *declared*.
 
 | Was | Is |
 |---|---|
-| a full-frame `chrome:context_menu_close_guard` box, pushed at z180, with a pointer arm that dismissed and consumed | `Modality::Inert` on the layer — everything outside is non-interactive because the layer says so |
+| a full-frame `chrome:context_menu_close_guard` box, pushed at z180, with a pointer arm that dismissed and consumed | `Modality::Exclusive` on the layer — everything outside is non-interactive because the layer says so, and no host leaf beneath it takes raw input |
 | a `chrome:context_menu` box plus `handle_click_context_menus`, hit-testing the pointer against the menu's rect to decide activate / dismiss / inert-border | the rows' own `on_click`, and `Dismiss::OUTSIDE_POINTER` for everything else |
 | `hover` + `on_hover_change`, walking hover targets to produce `HoverTarget::ContextMenuItem` and feed the highlight back | the rows' own `on_enter` |
 | a "right-click inside an open menu" arm, so the menu is not re-opened or re-targeted | `on_secondary_click` that stops propagation |
@@ -1088,14 +1088,201 @@ context menus used — cells, then input, then let the layer's own `fit` decide
 placement — and it is what keeps the not-yet-migrated hit-testing agreeing with
 what is drawn.
 
+#### The fold, split into two bands
+
+The single fold was the migration's real ordering constraint, and it was
+stricter than the plan admitted. There is one display list and *many* legacy
+painters, and the legacy painters are not in the list — so one fold pass can
+only sit on one side of them. It sat late, which made every native surface
+paint above everything unmigrated. That is right for overlays and wrong for
+everything else: the file explorer paints *first* among the legacy painters, so
+making it native under one fold would have put the sidebar on top of the body,
+the popups and the modals, silently.
+
+`fold_native` now takes a `Band`. `render` calls it twice — `Background` before
+any legacy painter, `Overlay` after all of them — and the legacy painters run
+in between. Each band lands where its surface belongs, and the
+"migrate top-down through the old paint order" rule retires with it.
+
+**The cut is the library's**, and briefly was not. The first version derived it
+here, by matching item keys against a hand-kept list of the frame's layer
+families — which is precisely the "no hand-specified exceptions" the library's
+second goal rules out, and it was already wrong twice over:
+
+- **A scrim carries no key**, and is pushed *before* its layer's own items. An
+  index-derived boundary puts it on the background side, so a modal's dimming
+  would paint under the content it exists to dim. That is the rest of S3.
+- **A layer need not be keyed at all.** `widgets::Dropdown`'s is not, so its
+  whole pop-over produces no index entry and reads as in-flow content — it
+  would vanish under the legacy painters. That is the first library widget S4
+  reaches for.
+
+`LayoutSpec::layers_from` says it outright (base PR #3052), with `in_flow()`
+and `layers()` as the two halves, and `OVERLAY_FAMILIES` and its guard test are
+deleted. Same diagnosis as `Dispatch::claimed`: the library already computed it
+and threw it away. **The rule this keeps proving — when the editor finds itself
+inferring something the library knows, that is a missing library capability,
+not a place for an editor convention.**
+
+That PR also closed a second gap it turned up. A `Draw::Lines` run can be
+longer than the rect carrying it, because layout hands a constrained node the
+width it was *allowed* rather than the width its content wants — and every
+backend in the repo, the fold included, drew the string while honouring only
+the *inherited* clip. So an over-long row painted straight through its own
+border, which is what the ratatui `Paragraph`'s silent truncation had been
+hiding. An item declares how much room it has; the backends clip to it now.
+
+**What this unblocks, all at once:** the status bar and the search-options row
+(S2, which had been stuck precisely because popups paint over the bar's row),
+the menu bar's own row, the dock column, and the file explorer. None of them
+depends on the overlay waves any more — their order is now a scheduling choice.
+
+#### The menu bar row, native — the first background region
+
+The first surface migrated *under* the legacy painters rather than over them,
+and the two-pass fold's first real consumer.
+
+- **`BarLabelStyle`** is the bar's `MenuRowStyle`: one ladder (normal / active /
+  hovered) with three renderings — `style()` for ratatui, `theme_keys()` for the
+  theme inspector, `shell_theme()` for the display list.
+- **The mnemonic is a run, not a sibling.** One underlined character inside a
+  label is text styled *within itself*, which is exactly what `text_runs` was
+  added for; laying the three pieces out side by side would let them wrap and
+  truncate independently. The underline is carried as part of the run's theme
+  name (`menu.bar.item.active.mnemonic`), because an item carries one
+  `ThemeKey` and the library never interprets it.
+- **`MenuRenderer::render` is gone.** It painted; `compute_layout` did the same
+  walk with painting switched off, and a `debug_assert` held them in step.
+  Nothing paints a cell there any more, so there is one walk and nothing to
+  keep in step. `render_menu_bar` becomes `record_menu_theme_runs` — the walk's
+  only remaining side effect is the inspector's provenance.
+
+**A region is named, not announced.** `regions_of` used to scan the display
+list for `Draw::Host` items, which works only while every region *is* a host: a
+native region emits no such item, and neither does a region that paints nothing
+at all (a hidden row, a bar with no labels). Both still have rectangles that
+callers ask for by name. Every region node now carries `region_key(r)` — host
+leaf or native alike — and `regions_of` is a layout query (`Ui::find_by_key` +
+`rect_of`) rather than a paint scan. That is goal 5 applied to the migration's
+own bookkeeping: layout computes rectangles, everything else reads them.
+
+The parity sweep caught this, which is the argument for having built it:
+migrating the bar dropped region 2 from 8586 of its cases, silently, until the
+oracle said so.
+
+#### Menu pointer input, and the close guard
+
+`app/chrome/menu.rs` goes from 204 lines to 71 — `collect`, `hover`,
+`on_hover_change`, `on_pointer`, `handle_click_menu_bar` and
+`handle_click_menu_dropdown_surface` all deleted, along with
+`compute_menu_dropdown_hover` and the coordinate-driven
+`handle_menu_dropdown_click`. What is left is the layer entry and the keyboard
+grab.
+
+| Was | Is |
+|---|---|
+| `chrome:menu_bar` box at z120, hit-tested against `MenuLayout::menu_at` | the bar labels' own `on_click`, which already know which menu they open |
+| `chrome:menu_dropdown` box per level, plus `hit_test` → `(depth, index)` | each row's own `on_click`, which already knows its level and position |
+| a full-frame `chrome:menu_close_guard` box at z110 | `Dismiss::OUTSIDE_POINTER` on the outermost level |
+| `hover` + `on_hover_change` walking hover targets | each row's `on_enter`, feeding the *same* `menu_hover_reaction` |
+
+Three things are worth recording, because each is a rule the next surface will
+meet.
+
+**Modality is `None`, not `Exclusive`.** Clicking another bar label while a
+menu is open must close the first and open the second from one press — every
+platform does. An exclusive layer makes the bar underneath inert and costs the
+user a click. With `None` the dismissal fires first and the label's own click
+follows, so the pair reads "close this, open that".
+
+**Which makes the toggle a matter of *when*, not of what to remember.**
+Clicking the *open* menu's own label closes it. Dismissal runs first, so by the
+time any message is applied the menu is already shut and asking "is this menu
+open?" answers no and reopens it — a toggle that never toggles.
+
+The first fix had the label close over its own open-ness at build time, and it
+was wrong in the running editor while passing every test: the main loop
+repaints between press and release, so the release ran against a tree rebuilt
+with nothing open. `mouse_click` in the harness sends both halves back to back
+and could not express the gap; `mouse_click_with_repaint` now can, and
+`test_mouse_click_toggles_menu_across_a_repaint` is the test that fails without
+the fix.
+
+The fix is to put the toggle where the state is. The bar acts on the **press**,
+which is also what the pre-migration code did (`MouseEventKind::Down`), so the
+dismissal and the toggle land in one dispatch — and `shell_dispatch` snapshots
+`menu_state.active_menu` before applying a single message of it. The general
+shape is the opposite of what the first attempt suggested: *a handler that needs
+to know what was true before the event should not carry the answer; it should
+be dispatched where the answer is still there to read.*
+
+It also produces the right gesture split for free. The bar acts on press and
+the rows act on release, which is precisely press-on-bar, drag-to-item,
+release-to-activate — how a menu bar is used.
+
+**A migrated surface claims the pointer over its own cells.** The hover target
+lives in one field (`mouse_state.hover_target`) that the legacy walk rewrites
+on every move. With the bar's chrome box deleted, that walk finds nothing there
+and clears what the tree just set. So the bar row and the dropdown boxes take
+`Move` — after which the legacy walk does not run for that event at all. Every
+background region that migrates will need the same, until the walk itself goes.
+
+`activate_menu_item(depth, index, menu)` is split out of the coordinate form: a
+row that answers its own click already knows which row it is, and should not
+have to hand back a cell for a hit-test to turn into the index it started from.
+
+One deliberate behaviour change: a **right**-click outside an open menu used to
+be swallowed by the guard box, which consumed any button. Dismissal fires for
+any button but claims only the primary one, so a right-click now closes the
+menu *and* goes on to open the context menu — the same ruling the context-menu
+wave made, for the same reason.
+
+#### Four corrections from the second review
+
+An unbiased agent reviewed the branch against the library's stated goals
+(`docs/internal/fresh-ui-migration-review-2.md`). Its verdict was that the
+frame swap and the context-menu wave are on-goal and the menu-bar wave was
+not. Four things came out of it, beyond the band cut above.
+
+**The caret is wired, not asserted about.** `fold_native`'s return value was
+taken, `debug_assert`ed `None`, and dropped with `let _ =` — a seam that would
+be discovered missing by the first native field having no cursor. It now flows
+into the end-of-frame commit, ahead of both the buffer's caret and the
+sidebar's, and it needs none of the obscured/suppressed guards those two carry:
+a native field is *in* the tree, so if it has focus it is on top by
+construction. `cursor_suppressed_by_late_overlay` retires with the last
+unmigrated overlay rather than growing another entry.
+
+**`build` no longer reads layout.** `shell_frame` reached `menu_layout_now` →
+`shell_region_now` → the retained tree, so building the description consulted
+the rectangles the *previous* frame produced — the loop the library's own
+`Ui::rect` refuses at runtime, and one frame stale into the bargain. The bar's
+rectangle was never a layout result anyway: it is the chrome column's top row,
+and `compute_dock_split` already decided that column from state alone.
+`menu_layout_in(bar_rect)` takes it as an argument now.
+
+**The tests could not see a style.** Every shell test rendered through a
+palette answering `Style::default()`, so a highlighted row, a bold label and an
+underlined mnemonic all came out identical — which is how four cell-level bugs
+reached CI in one wave. `fold::test_palette` gives each theme name a distinct
+colour and reproduces the two modifiers the real palette applies, and the
+migrated surfaces now assert cell styles: the mnemonic run differs from the
+characters beside it, the highlighted context-menu row differs from its
+neighbours, and a dropdown painted over bold cells comes out unbold — the
+display-list-is-not-a-diff rule, pinned at the cell.
+
+**And the exact message list, not `contains`.** The click-bubbling bug produced
+`[MenuBarPress, CloseMenu]` — open and shut in one gesture — and passed a
+`contains` assertion happily. The input tests assert the whole list now.
+
 #### Revised stages
 
 | Stage | What moves | Why here |
 |---|---|---|
 | **S1** | Frame skeleton: every region a `Host` leaf, painted by today's painters. Input fully delegated. | **Landed.** The frame's geometry is the shell's, the retained tree persists across frames, native items paint through the fold, and input is offered to the shell ahead of the legacy walk. Every region is still a `Host` leaf, so nothing has changed on screen — which is the point. Remaining before S3: threading real `BodyState`. |
 | **S2** | The live-derived regions — status bar, search-options row — become native descriptions. | Smallest possible first real swap; both already derive their geometry purely (§2.4). |
-| **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. **Context menus: done** (below) — paint, pointer, dismissal, keyboard and geometry, with only the `blocks_terminal_input` rank entry left behind. **Menu-bar dropdowns: paint migrated**; input and the close guard next. |
-| **S4** | Dock column, file explorer, plugin panels. | Depends on S3's layer semantics; carries the plugin API change. |
+| **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. **Context menus: done** (below) — paint, pointer, dismissal, keyboard and geometry, with only the `blocks_terminal_input` rank entry left behind. **Menu bar: paint and pointer migrated** — the bar row is a native background region, the dropdown chain is a stack of layers, and the close guard is a dismissal property; only the keyboard grab and the rank entry remain. |
+| **S4** | Dock column, file explorer, plugin panels. | No longer waits on S3: the two-pass fold means a background region can migrate while the overlays above it have not. What it *does* wait on is §6.2's "colour that is not a theme name" — the explorer's slots and the panels' widgets both carry plugin-supplied colours, which a `ThemeKey` cannot name. The plugin API change (keyed `List`/`Tree` items) is deprecated ahead of it, so its release cycle runs in parallel rather than in series. |
 | **S5** | Splits, tabs, scrollbars decompose; the buffer becomes the only `Host` leaf. | Requires the per-leaf `render_content` decision (§6.2); last because it is the only stage that touches the KEEP side. |
 
 ### 5.1 M0 — the seam (a genuine prototype, not just plumbing)
@@ -1145,7 +1332,7 @@ plus the §4.7 rebuild benchmark. No wave is scheduled until this exit holds.
 | Wave | Surface | New mechanism exercised | Deletes (survey-grounded) |
 |---|---|---|---|
 | **M1** | Status bar, search-options row | static layout, click targets | the live-derived `status_bar_layout_now`/`search_options_layout_now` paths and their `StatusView` painters |
-| **M2** ⟵ **go/no-go** | Context menus (tab / new-tab / explorer / close-split) | `Layer`, `Modality::Inert`, `dismiss`, list nav | `chrome/context_menu.rs`, its close-guard box, its `on_key` pre-band grab, its rank entry, the four `Window` context-menu highlight fields |
+| **M2** ⟵ **go/no-go** | Context menus (tab / new-tab / explorer / close-split) | `Layer`, `Modality::Exclusive`, `dismiss`, list nav | `chrome/context_menu.rs`, its close-guard box, its `on_key` pre-band grab, its rank entry, the four `Window` context-menu highlight fields |
 | **M3** | Menu bar, dropdowns, submenus | nested layers, hover auto-switch, mnemonics | `chrome/menu.rs`, the `view/ui/menu.rs` dispatch half, the menu close-guard box, the hover auto-switch machine |
 | **M4** | Info/hover/signature popups, theme inspector | transient dismissal via observers, scroll, text selection | `chrome/popups.rs`, `chrome/theme_info.rs`, `view/popup_mouse.rs` remnants, the transient-dismiss pre-band stage (the LSP hover *state machine* stays behind the leaf) |
 | **M5** | File browser, prompt / command palette | `FocusScope`, text input, results list, preview | `chrome/prompt.rs`, `chrome/file_browser.rs`, `view/prompt_input.rs`, the overlay toolbar ring, the click scrim, the position-blind wheel box, the manual-scroll latch |
@@ -1318,22 +1505,57 @@ list.
    and threw it away. **The general lesson: when the editor finds itself
    inferring something about routing, that is a missing library capability, not
    a place for an editor convention.**
-0. **Migrate in paint order** — **decided**. There is one fold and it runs
-   after every legacy painter, so anything native paints above everything that
-   has not migrated. `fold` interleaves correctly *within* the display list but
-   cannot across the seam, because the legacy painters are not in it. So a
-   region may become native only once everything that paints over it already
-   has: top-down through the old paint order, overlays first. The failure is
-   silent — the status bar is next and popups paint over its row — so the rule
-   is recorded on `fold_native` where the next person will meet it. Splitting
-   the fold into passes keyed to the legacy z-bands is the fallback if the
-   order ever becomes impractical.
+0. ~~**Migrate in paint order**~~ — **superseded.** The rule was: one fold,
+   running after every legacy painter, so a region may become native only once
+   everything that paints over it already has. It was the migration's real
+   ordering constraint and it was stricter than it looked — the file explorer
+   paints *first* among the legacy painters, so under one fold it could not
+   migrate until nearly everything else had.
+
+   The fold is two passes now, `Background` before every legacy painter and
+   `Overlay` after all of them, so each band lands where its surface belongs
+   and the ordering rule retires. Nothing replaces it: which band an item
+   belongs to is `LayoutSpec::layers_from`'s answer, not a convention anyone
+   has to maintain.
 1. ~~**The fold-callback API**~~ — **prototyped** (§5.0). `HostPainter` +
    `impl HostPainter for Editor`; paint order, clipping, the caret rule and the
    borrow are covered by tests. What remains is threading real per-frame state
    and publishing `BodyOutput` to the geometry bridge — mechanical S1 work. The
    `Ui`-beside-`Editor` constraint it revealed is recorded in §4.4.
-2. **Inline styled text** (blocks M3/M5). Styled spans in
+2. **Colour that is not a theme name** (blocks S4 — the file explorer — and
+   M6, and the status bar's plugin tokens). An `Item` carries one `ThemeKey`: a
+   *name* for where its appearance comes from, which the backend resolves. That
+   is the right model for everything migrated so far, because every colour so
+   far came from a theme slot.
+
+   The file explorer breaks it. `ExplorerSlotPayload::fg` and
+   `name_color_hint` are `ratatui::Color` values **supplied by plugins** — a
+   badge tinted by a linter, a filename coloured by a git-status provider.
+   There is no theme slot to name, and the set is not known until the frame is
+   built. The same vocabulary reappears in plugin panels (M6) and in the status
+   bar's plugin tokens, so this is not one surface's quirk.
+
+   Three ways out, in order of preference:
+
+   - **Per-frame minted names.** `ThemeKey` is an opaque string the library
+     never interprets, and the palette is ours. Intern each dynamic style as
+     the description is built, name it `dyn:N`, and carry the table beside the
+     palette snapshot — which is built per frame from the same editor state.
+     No library change, the description still carries only names, and the
+     mapping stays where the design puts it: in the backend. The table lives
+     next to the palette rather than in `Frame`, so the description never holds
+     a `ratatui::Style`.
+   - **A colour variant on `ThemeKey`.** Honest, but it puts appearance in the
+     display list and every backend then has to understand a colour model —
+     the web frontend included.
+   - **Keep those rows behind a `Host` leaf.** Cheap, but it splits the
+     explorer down the middle and defeats the point of migrating it.
+
+   The first is the intended answer; it is not built, because building a
+   mechanism before its first consumer is how unused abstractions get
+   entrenched. It lands with the explorer's paint.
+
+3. **Inline styled text** (blocks M3/M5). Styled spans in
    `TextProps`/`Draw::Lines` as a one-time library change, or one `TextRun`
    node per span editor-side (§4.2 note). Mnemonics, match highlights,
    markdown popups, and explorer git coloring all need it under a

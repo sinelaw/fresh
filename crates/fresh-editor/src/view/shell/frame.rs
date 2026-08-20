@@ -79,6 +79,10 @@ pub struct Frame {
     /// The open menu-bar dropdown chain, outermost level first. Empty when no
     /// menu is open.
     pub dropdowns: Vec<super::menu::DropdownLevel>,
+    /// The menu bar's labels. Content, not visibility: `menu_bar` above says
+    /// whether the row exists at all, and an existing row with no labels is a
+    /// blank row of the bar's own colour.
+    pub menu_bar_items: super::menu::MenuBar,
 }
 
 impl Default for Frame {
@@ -92,6 +96,7 @@ impl Default for Frame {
             explorer: None,
             menu: None,
             dropdowns: Vec::new(),
+            menu_bar_items: super::menu::MenuBar::default(),
         }
     }
 }
@@ -153,7 +158,14 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         ]),
     };
     let chrome = col().flex(1).children([
-        region(HostRegion::MenuBar).h(cells(f.menu_bar)),
+        // Native: the bar's own row. It keeps the region key so every caller
+        // that asks for `HostRegion::MenuBar`'s rectangle still gets one — a
+        // region that has gone native is still a region.
+        named(
+            HostRegion::MenuBar,
+            super::menu::menu_bar(&f.menu_bar_items),
+        )
+        .h(cells(f.menu_bar)),
         body,
         region(HostRegion::StatusBar).h(cells(f.status_bar)),
         region(HostRegion::SearchOptions).h(cells(f.search_options)),
@@ -175,7 +187,23 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
 }
 
 fn region(r: HostRegion) -> Node<UiMsg> {
-    host(r.id())
+    named(r, host(r.id()))
+}
+
+/// Tag a region's node with the region's name, whether it is still a `Host`
+/// leaf or has gone native.
+///
+/// The name is what [`regions_of`] looks up, so migrating a region does not
+/// change how its rectangle is found: it is a layout query either way, and a
+/// region that paints nothing at all — a hidden row, a bar with no labels —
+/// still has one.
+fn named(r: HostRegion, n: Node<UiMsg>) -> Node<UiMsg> {
+    n.key(region_key(r))
+}
+
+/// The display-list key a native region carries.
+pub fn region_key(r: HostRegion) -> fresh_ui::Key {
+    fresh_ui::Key::Pair("region".into(), r.id())
 }
 
 /// The rectangle the shell assigns each visible region, for a frame of `size`.
@@ -185,36 +213,36 @@ fn region(r: HostRegion) -> Node<UiMsg> {
 /// `split_file_explorer_area`. Running both and comparing is how the frame
 /// migrates onto `fresh-ui` without a flag day: see
 /// [`assert_parity`].
-/// The host regions of a display list the caller already produced.
+/// Every region's rectangle, read off a tree the caller already laid out.
+///
+/// A layout query, not a paint one: `Ui::rect_of` is the rectangle layout
+/// assigned, so a region reports it whether it paints a cell or not. Reading
+/// the display list instead would lose exactly the regions that paint nothing
+/// — a hidden row, a menu bar with no labels — and lose them silently.
 ///
 /// [`region_rects`] is the standalone form, for tests and for callers with no
 /// `Ui` of their own; this is the form `render` uses, so the frame is laid out
 /// once and both the rectangles and the painted output come from it.
 pub fn regions_of(
-    spec: &fresh_ui::LayoutSpec,
+    ui: &fresh_ui::Ui<UiMsg>,
     size: ratatui::layout::Rect,
 ) -> Vec<(HostRegion, ratatui::layout::Rect)> {
-    use fresh_ui::Draw;
-    let mut out: Vec<(HostRegion, ratatui::layout::Rect)> = spec
-        .items
-        .iter()
-        .filter_map(|it| match &it.draw {
-            Draw::Host(id) => HostRegion::from_host_id(*id).map(|r| {
-                (
-                    r,
-                    ratatui::layout::Rect {
-                        x: size.x.saturating_add(it.rect.x.max(0) as u16),
-                        y: size.y.saturating_add(it.rect.y.max(0) as u16),
-                        width: it.rect.w,
-                        height: it.rect.h,
-                    },
-                )
-            }),
-            _ => None,
+    HostRegion::ALL
+        .into_iter()
+        .filter_map(|r| {
+            let e = ui.find_by_key(&region_key(r))?;
+            let rect = ui.rect_of(e);
+            Some((
+                r,
+                ratatui::layout::Rect {
+                    x: size.x.saturating_add(rect.x.max(0) as u16),
+                    y: size.y.saturating_add(rect.y.max(0) as u16),
+                    width: rect.w,
+                    height: rect.h,
+                },
+            ))
         })
-        .collect();
-    out.sort_by_key(|(r, _)| *r);
-    out
+        .collect()
 }
 
 pub fn region_rects(
@@ -224,6 +252,6 @@ pub fn region_rects(
     use fresh_ui::{Size, Ui};
 
     let mut ui: Ui<UiMsg> = Ui::new();
-    let spec = ui.frame(frame_tree(f), Size::new(size.width, size.height));
-    regions_of(spec, size)
+    ui.frame(frame_tree(f), Size::new(size.width, size.height));
+    regions_of(&ui, size)
 }
