@@ -384,6 +384,26 @@ impl Editor {
             return Some(result);
         }
 
+        // A `prompt`-context binding outranks the prompt widget's own
+        // hardcoded key handling. `Prompt`'s `InputHandler` owns a handful of
+        // Ctrl keys outright (Ctrl+A select-all, Ctrl+Y redo-input, …) and runs
+        // ahead of keybinding resolution, so no keymap and no user config could
+        // reach those keys — an Emacs user cannot get `C-a` to mean
+        // beginning-of-line in the minibuffer, however they bind it.
+        //
+        // Narrowly scoped on purpose: only a resolved `prompt_*` action is
+        // taken here, so a binding that means something else entirely (the file
+        // browser's Alt toggles, Ctrl+P for quick-open) keeps its existing
+        // route through the rungs below. The actions themselves re-enter this
+        // same handler with their canonical key, so nothing here recurses.
+        if let Some(action) = self.prompt_action_binding(event) {
+            return Some(
+                self.handle_action(action)
+                    .map(|_| InputResult::Consumed)
+                    .unwrap_or(InputResult::Consumed),
+            );
+        }
+
         if let Some(ref mut prompt) = self.active_window_mut().prompt {
             let result = prompt.dispatch_input(event, &mut ctx);
             // Only return and process deferred actions if the prompt
@@ -397,6 +417,61 @@ impl Editor {
             }
         }
         None
+    }
+
+    /// The `prompt_*` action this key resolves to in the prompt's own key
+    /// context, if any.
+    ///
+    /// Only the prompt's navigation and editing actions qualify — the set with
+    /// a dispatch arm that delegates back to the prompt widget. Anything else
+    /// the key might resolve to is left to the normal walk, so this can only
+    /// ever change which of the *prompt's own* operations a key performs.
+    fn prompt_action_binding(
+        &self,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<crate::input::keybindings::Action> {
+        use crate::input::keybindings::Action;
+        let context = self.get_key_context();
+        if !matches!(
+            context,
+            crate::input::keybindings::KeyContext::Prompt
+                | crate::input::keybindings::KeyContext::SearchPrompt
+        ) {
+            return None;
+        }
+        let action = self.keybindings.read().ok()?.resolve(event, context);
+        matches!(
+            action,
+            Action::PromptCancel
+                | Action::PromptBackspace
+                | Action::PromptDelete
+                | Action::PromptMoveLeft
+                | Action::PromptMoveRight
+                | Action::PromptMoveStart
+                | Action::PromptMoveEnd
+                | Action::PromptSelectPrev
+                | Action::PromptSelectNext
+                | Action::PromptPageUp
+                | Action::PromptPageDown
+                | Action::PromptAcceptSuggestion
+                | Action::PromptMoveWordLeft
+                | Action::PromptMoveWordRight
+                | Action::PromptDeleteWordBackward
+                | Action::PromptDeleteWordForward
+                | Action::PromptDeleteToLineEnd
+                | Action::PromptSelectAll
+                | Action::PromptMoveLeftSelecting
+                | Action::PromptMoveRightSelecting
+                | Action::PromptMoveHomeSelecting
+                | Action::PromptMoveEndSelecting
+                | Action::PromptSelectWordLeft
+                | Action::PromptSelectWordRight
+                | Action::PromptCopy
+                | Action::PromptCut
+                | Action::PromptPaste
+                | Action::PromptConfirm
+        )
+        .then_some(action)
     }
 
     /// Hit-test (col, row) against the suggestions popup. Returns the index

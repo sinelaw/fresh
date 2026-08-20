@@ -123,6 +123,23 @@ impl ChromeComponent for Menu {
         event: &crossterm::event::KeyEvent,
     ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
         use crate::input::handler::{InputContext, InputHandler};
+        // A `menu`-context binding is consulted first. `MenuInputHandler` is
+        // capture-all — its final arm consumes every key it doesn't recognise —
+        // so without this the `menu` section of every keymap is decorative:
+        // nothing a user or a keymap binds there can ever fire (Emacs `C-n` /
+        // `C-g` in an open menu did nothing at all).
+        //
+        // Narrowly scoped to the menu's own actions, so a binding that means
+        // something else keeps whatever route it has today, and the handler
+        // still owns navigation, mnemonics and dismissal for every key the
+        // keymap leaves alone.
+        if let Some(action) = self.menu_action_binding(ed, event) {
+            return Some(
+                ed.handle_action(action)
+                    .map(|_| crate::input::handler::InputResult::Consumed),
+            );
+        }
+
         // An open menu is capture-all: navigation, mnemonics and
         // dismissal all belong to `MenuInputHandler` while its layer
         // is up.
@@ -141,6 +158,37 @@ impl ChromeComponent for Menu {
         };
         ed.process_deferred_actions(ctx);
         Some(Ok(result))
+    }
+}
+
+impl Menu {
+    /// The menu action this key resolves to in the `menu` context, if any.
+    ///
+    /// Only the menu's own navigation and dismissal actions qualify, so this
+    /// can change which menu operation a key performs and nothing else.
+    /// `menu_open` is deliberately excluded: the mnemonics it powers are the
+    /// handler's business, and re-opening a menu from inside one is not a
+    /// menu-navigation step.
+    fn menu_action_binding(
+        &self,
+        ed: &Editor,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<crate::input::keybindings::Action> {
+        use crate::input::keybindings::{Action, KeyContext};
+        if ed.get_key_context() != KeyContext::Menu {
+            return None;
+        }
+        let action = ed.keybindings.read().ok()?.resolve(event, KeyContext::Menu);
+        matches!(
+            action,
+            Action::MenuUp
+                | Action::MenuDown
+                | Action::MenuLeft
+                | Action::MenuRight
+                | Action::MenuExecute
+                | Action::MenuClose
+        )
+        .then_some(action)
     }
 }
 
