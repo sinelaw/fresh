@@ -31,7 +31,7 @@ pub use daemon::{
 };
 pub use editor_server::{EditorServer, EditorServerConfig};
 pub use input_parser::InputParser;
-pub use ipc::{ServerListener, SocketPaths};
+pub use ipc::{ServerListener, ServerLiveness, SocketPaths};
 pub use protocol::{ClientHello, ControlMessage, ServerHello, PROTOCOL_VERSION};
 #[cfg(test)]
 pub use runner::{Server, ServerConfig};

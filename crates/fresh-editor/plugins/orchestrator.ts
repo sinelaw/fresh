@@ -6893,19 +6893,33 @@ const AGENT_REGISTRY: AgentEntry[] = [
     // Auto mode: `--full-auto` was REMOVED from the root command (recent Codex
     // rejects `codex --full-auto` outright; it survives only under `codex exec`
     // as a deprecation warning that redirects to `--sandbox workspace-write`).
-    // The current no-prompt, self-approving posture is the pair
-    // `--sandbox workspace-write --ask-for-approval never`: Codex runs
-    // model-proposed commands itself inside the workspace-write sandbox and
-    // never stops to ask — deliberately NOT `-s danger-full-access` nor the
-    // `--dangerously-bypass-approvals-and-sandbox` full bypass. Both flags are
-    // accepted on the root command AND on the `resume` subcommand, so they ride
-    // launch and resume alike. The initial prompt is a trailing positional
-    // (`codex "…"`).
+    // Codex runs model-proposed commands inside the workspace-write sandbox —
+    // deliberately NOT `-s danger-full-access` nor the
+    // `--dangerously-bypass-approvals-and-sandbox` full bypass.
+    //
+    // `--ask-for-approval on-request` + `approvals_reviewer = "auto_review"`
+    // is the counterpart of claude's `--permission-mode auto`: the model
+    // escalates when it needs out of the sandbox, and an automated reviewer —
+    // not the human — rules on the request. `never` cannot be used here: it
+    // fails escalations outright rather than reviewing them, which silently
+    // breaks "Teach Fresh CLI", since the editor's control socket lives
+    // outside the workspace and `connect()` to it is EPERM inside the sandbox.
+    //
+    // All of these are accepted on the root command AND on the `resume`
+    // subcommand, so they ride launch and resume alike. The initial prompt is
+    // a trailing positional (`codex "…"`).
     id: "codex",
     label: "codex",
     match: /^codex$/,
     spec: { continue: { resumeArgs: ["resume", "--last"] } },
-    auto: ["--sandbox", "workspace-write", "--ask-for-approval", "never"],
+    auto: [
+      "--sandbox",
+      "workspace-write",
+      "--ask-for-approval",
+      "on-request",
+      "-c",
+      'approvals_reviewer="auto_review"',
+    ],
     prompt: { style: "positional" },
     systemPrompt: { via: "prompt" },
   },
@@ -6951,7 +6965,8 @@ const FRESH_CLI_ALLOW_SCRIPT = true;
 // the agent looks each call up with `script api` instead of trusting this text.
 const FRESH_CLI_SYSTEM_PROMPT = [
   "You are running inside a Fresh editor workspace and can drive it \u2014 arrange panes, open files, show output, start other agents \u2014 by submitting TypeScript to the editor's plugin runtime.",
-  "Always invoke the CLI through $FRESH_BIN: it is the exact binary running this workspace. FRESH_WINDOW_ID is your window.",
+  "Always invoke the CLI through $FRESH_BIN: that environment variable is the exact binary running this workspace.",
+  "Inside a script, FRESH_WINDOW_ID is a predefined constant naming your window \u2014 it is not an environment variable, so prefer calls that take an explicit id over whatever is focused.",
   "",
   "    \"$FRESH_BIN\" --cmd script api <query>    search the editor API by name and docs",
   "    \"$FRESH_BIN\" --cmd script types          paths of the API declaration files",

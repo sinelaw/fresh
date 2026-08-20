@@ -47,10 +47,27 @@ pub fn try_read_nonblocking(stream: &mut LocalStream, buf: &mut [u8]) -> io::Res
     result
 }
 
-/// Check if server is alive by trying to connect (Unix-specific fallback)
-pub fn check_server_by_connect(control_path: &Path) -> bool {
-    if let Ok(name) = socket_name_for_path(control_path) {
-        return interprocess::local_socket::Stream::connect(name).is_ok();
+/// Outcome of a connect probe against a control socket.
+///
+/// `Blocked` is the case a plain boolean cannot express: the socket is there
+/// and may well be live, but this process is not permitted to reach it. A
+/// sandbox that denies `connect(2)` on a socket outside its writable roots
+/// produces exactly this, and must never be read as "the editor is gone".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectProbe {
+    Alive,
+    Refused,
+    Blocked,
+}
+
+/// Probe a control socket, distinguishing "nobody home" from "not allowed".
+pub fn probe_server_by_connect(control_path: &Path) -> ConnectProbe {
+    let Ok(name) = socket_name_for_path(control_path) else {
+        return ConnectProbe::Refused;
+    };
+    match interprocess::local_socket::Stream::connect(name) {
+        Ok(_) => ConnectProbe::Alive,
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => ConnectProbe::Blocked,
+        Err(_) => ConnectProbe::Refused,
     }
-    false
 }

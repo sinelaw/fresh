@@ -14,9 +14,15 @@ use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
 use fresh::services::terminal_modes::{self, KeyboardConfig, TerminalModes};
 use fresh::services::tracing_setup;
 use fresh::{
-    app::Editor, client, config, config_io::DirectoryContext, server::SocketPaths,
-    services::release_checker, services::remote, services::signal_handler,
-    services::tracing_setup::TracingHandles, workspace,
+    app::Editor,
+    client, config,
+    config_io::DirectoryContext,
+    server::{ServerLiveness, SocketPaths},
+    services::release_checker,
+    services::remote,
+    services::signal_handler,
+    services::tracing_setup::TracingHandles,
+    workspace,
 };
 use fresh_input_parser::Event as InputEvent;
 use ratatui::Terminal;
@@ -3514,10 +3520,24 @@ fn resolve_cmd_socket(session_override: Option<&str>) -> AnyhowResult<SocketPath
 
     let socket_paths = resolve_session(Some(&session))?;
     socket_paths.cleanup_if_stale();
-    if !socket_paths.is_server_alive() {
-        anyhow::bail!("no running Fresh editor for session '{}'", session);
+    match socket_paths.probe_server() {
+        ServerLiveness::Alive => Ok(socket_paths),
+        // Denied rather than absent. Say so, and say what to do: a caller that
+        // can re-run outside its sandbox (an agent with an escalation path)
+        // can act on this, whereas "no running editor" sends it hunting for a
+        // stale session that is in fact alive and well.
+        ServerLiveness::Unreachable => anyhow::bail!(
+            "cannot reach the Fresh editor for session '{}': connecting to {} was \
+             denied. The editor is most likely running — its control socket just \
+             lives outside this process's sandbox. Re-run this command outside \
+             the sandbox.",
+            session,
+            socket_paths.control.display(),
+        ),
+        ServerLiveness::Dead => {
+            anyhow::bail!("no running Fresh editor for session '{}'", session)
+        }
     }
-    Ok(socket_paths)
 }
 
 /// How long a command-channel client waits for the editor to answer before
