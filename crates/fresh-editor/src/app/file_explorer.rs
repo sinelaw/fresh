@@ -1709,13 +1709,17 @@ impl crate::app::window::Window {
         // `init_file_explorer`. Clear it *before* the expand-to-path sync below
         // so that sync can re-acquire it (it early-returns if it's still set).
         self.file_explorer_sync_in_progress = false;
+        // A follow request deferred while the build ran goes first: it names
+        // the file the user was actually sent to, which the active buffer may
+        // no longer be. It is re-gated on the way through (see
+        // `resume_deferred_file_explorer_expand`).
+        self.resume_deferred_file_explorer_expand();
         // Auto-expand to reveal the active file on first open (issue #1569),
-        // but only when this window is actually showing the explorer. A
-        // request deferred while the build ran wins: it names the file the
-        // user was actually sent to, which the active buffer may no longer be.
-        if self.file_explorer_sync_deferred.is_some() {
-            self.resume_deferred_file_explorer_expand();
-        } else if self.file_explorer_visible {
+        // but only when this window is actually showing the explorer. Skipped
+        // when the replay above already claimed the tree — this reveal is
+        // ungated, so running it on top would drag the selection off the file
+        // the deferred request was sent to.
+        if !self.file_explorer_sync_in_progress && self.file_explorer_visible {
             self.sync_file_explorer_to_active_file();
         }
     }
@@ -1733,6 +1737,16 @@ impl crate::app::window::Window {
     /// per-window for the same reason as `install_initialized_file_explorer`).
     pub(crate) fn install_expanded_file_explorer(&mut self, mut view: FileTreeView) {
         view.update_scroll_for_selection();
+        // A replay that would land exactly where this expand already did is
+        // pure churn — and not free churn: replaying hands the tree straight
+        // back out, so `self.file_explorer` returns to `None` and the sidebar
+        // paints blank until the second expand lands. One frame locally; over
+        // SSH the user watches it populate, blank, and populate again.
+        if self.file_explorer_sync_deferred.as_deref()
+            == view.get_selected_entry().map(|entry| entry.path.as_path())
+        {
+            self.file_explorer_sync_deferred = None;
+        }
         self.file_explorer = Some(view);
         self.file_explorer_sync_in_progress = false;
         self.resume_deferred_file_explorer_expand();
@@ -1747,11 +1761,18 @@ impl crate::app::window::Window {
     /// file and then hands the keyboard straight back to its own panel — a
     /// pathless virtual buffer — so re-reading would silently find nothing
     /// to reveal (issue #2988).
+    ///
+    /// The replay goes back through [`Window::follow_path_in_explorer`]
+    /// rather than straight to the spawn, because the gate it was queued
+    /// under can have gone false in the meantime: an expand takes seconds on
+    /// a remote filesystem, and the user is free to turn
+    /// `follow_active_buffer` off in Settings or take the keyboard into the
+    /// tree while it runs. Re-checking there keeps the gate at a single fork.
     fn resume_deferred_file_explorer_expand(&mut self) {
         let Some(target_path) = self.file_explorer_sync_deferred.take() else {
             return;
         };
-        self.expand_file_explorer_to_path(target_path);
+        self.follow_path_in_explorer(target_path);
     }
 
     /// Shift focus back to the editor pane (away from the file explorer)
@@ -1991,28 +2012,65 @@ impl crate::app::window::Window {
         self.set_status_message(msg);
     }
 
-    /// The single gate for `file_explorer.follow_active_buffer`.
+    /// Run the `file_explorer.follow_active_buffer` gate against whatever
+    /// file is active right now.
     ///
-    /// Every path that can make a *different file* the active one funnels
-    /// through here, so the gate cannot drift between call sites: the
-    /// buffer-switch path ([`Window::set_active_buffer`]) and the file-open
-    /// path that reuses the active scratch buffer in place — which changes
-    /// the active *file* without changing the active *buffer*, so it never
-    /// reaches `set_active_buffer` at all (issue #2988).
+    /// Called from the two paths that switch which file the user is looking
+    /// at without going through the explorer itself: the buffer-switch path
+    /// ([`Window::set_active_buffer`]) and the file-open path that reuses the
+    /// active scratch buffer in place — which changes the active *file*
+    /// without changing the active *buffer*, so it never reaches
+    /// `set_active_buffer` at all (issue #2988).
+    ///
+    /// Deliberately *not* a claim that every active-file change reaches here.
+    /// Two known ones do not, and their behaviour is unchanged: `Save As`
+    /// (`Editor::save_file_as_with_checks`) renames the active buffer's path
+    /// in place, and workspace restore opens files through
+    /// [`Window::open_file_no_focus`]. Adding either is a behaviour change,
+    /// not a refactor — check here before assuming the coverage is total.
+    pub(crate) fn follow_active_buffer_in_explorer(&mut self) {
+        let active_buf = self.active_buffer();
+        let Some(metadata) = self.buffer_metadata.get(&active_buf) else {
+            return;
+        };
+        let Some(target_path) = metadata.file_path().cloned() else {
+            return;
+        };
+        self.follow_path_in_explorer(target_path);
+    }
+
+    /// The single fork the `follow_active_buffer` gate is enforced at.
+    ///
+    /// Everything that follows the user around the tree — the live requests
+    /// from [`Window::follow_active_buffer_in_explorer`] and the deferred
+    /// ones replayed by [`Window::resume_deferred_file_explorer_expand`] —
+    /// passes its conditions here rather than re-deriving them, so a replay
+    /// cannot slip past a gate that has gone false since it was queued.
     ///
     /// Skipped while the explorer itself holds the keyboard: the user is
     /// navigating the tree, and yanking the selection to the editor's file
     /// under them would fight their own cursor.
-    pub(crate) fn follow_active_buffer_in_explorer(&mut self) {
-        if self.file_explorer_visible
-            && self.resources.config.file_explorer.follow_active_buffer
-            && self.key_context != crate::input::keybindings::KeyContext::FileExplorer
+    fn follow_path_in_explorer(&mut self, target_path: PathBuf) {
+        if !self.file_explorer_visible
+            || !self.resources.config.file_explorer.follow_active_buffer
+            || self.key_context == crate::input::keybindings::KeyContext::FileExplorer
+            || !target_path.starts_with(&self.root)
         {
-            self.sync_file_explorer_to_active_file();
+            tracing::trace!(
+                "follow_path_in_explorer: gate closed, not following {:?}",
+                target_path
+            );
+            return;
         }
+
+        self.expand_file_explorer_to_path(target_path);
     }
 
-    /// Expand this window's file-explorer tree to the active buffer's file.
+    /// Expand this window's file-explorer tree to the active buffer's file,
+    /// *ungated*: this is the explicit "show me where I am" reveal that
+    /// opening or focusing the sidebar performs (issue #1569), so it runs
+    /// even with `follow_active_buffer` off and with the tree focused.
+    ///
     /// No-op when the explorer isn't visible, the active buffer has no file
     /// behind it, or that file is outside the window's root.
     pub fn sync_file_explorer_to_active_file(&mut self) {
@@ -2045,19 +2103,31 @@ impl crate::app::window::Window {
     /// the first one forever, with nothing to retry it (issue #2988).
     fn expand_file_explorer_to_path(&mut self, target_path: PathBuf) {
         if !self.file_explorer_visible {
+            tracing::trace!(
+                "expand_file_explorer_to_path: sidebar hidden, dropping {:?}",
+                target_path
+            );
             return;
         }
 
         if self.file_explorer_sync_in_progress {
+            tracing::trace!(
+                "expand_file_explorer_to_path: expand in flight, deferring {:?}",
+                target_path
+            );
             self.file_explorer_sync_deferred = Some(target_path);
             return;
         }
 
         let Some(mut view) = self.file_explorer.take() else {
+            tracing::trace!(
+                "expand_file_explorer_to_path: no tree to expand, dropping {:?}",
+                target_path
+            );
             return;
         };
         tracing::trace!(
-            "sync_file_explorer_to_active_file: taking file_explorer for async expand to {:?}",
+            "expand_file_explorer_to_path: taking file_explorer for async expand to {:?}",
             target_path
         );
         let runtime_handle = self
@@ -2083,6 +2153,13 @@ impl crate::app::window::Window {
                 );
             });
         } else {
+            // No async plumbing on this window (headless/unit contexts). The
+            // tree goes back untouched; say so rather than losing the request
+            // without a trace.
+            tracing::trace!(
+                "expand_file_explorer_to_path: no runtime/bridge, dropping {:?}",
+                target_path
+            );
             self.file_explorer = Some(view);
         }
     }
