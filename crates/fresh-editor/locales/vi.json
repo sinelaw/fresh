@@ -1681,5 +1681,6 @@
   "status.terminal_restart": "⟳ Khởi động lại %{program}",
   "status.terminal_restart_shell": "⟳ Khởi động lại terminal",
   "status.terminal_restart_code": "%{label} (mã %{code})",
-  "terminal.tab_exited": "%{name} (đã thoát)"
+  "terminal.tab_exited": "%{name} (đã thoát)",
+  "cli.arg.skill": "In hướng dẫn điều khiển trình soạn thảo này từ shell. Chủ đề tùy chọn: script (mặc định), tour, plugin"
 }

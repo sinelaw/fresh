@@ -1681,5 +1681,6 @@
   "status.terminal_restart": "⟳ Restart %{program}",
   "status.terminal_restart_shell": "⟳ Restart terminal",
   "status.terminal_restart_code": "%{label} (exit %{code})",
-  "terminal.tab_exited": "%{name} (exited)"
+  "terminal.tab_exited": "%{name} (exited)",
+  "cli.arg.skill": "Print the guide for driving this editor from a shell. Optional topic: script (default), tour, plugin"
 }

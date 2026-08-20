@@ -1681,5 +1681,6 @@
   "status.terminal_restart": "⟳ %{program} neu starten",
   "status.terminal_restart_shell": "⟳ Terminal neu starten",
   "status.terminal_restart_code": "%{label} (Code %{code})",
-  "terminal.tab_exited": "%{name} (beendet)"
+  "terminal.tab_exited": "%{name} (beendet)",
+  "cli.arg.skill": "Gibt die Anleitung zum Steuern dieses Editors über eine Shell aus. Optionales Thema: script (Standard), tour, plugin"
 }

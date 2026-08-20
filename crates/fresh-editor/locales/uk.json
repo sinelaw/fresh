@@ -1681,5 +1681,6 @@
   "status.terminal_restart": "⟳ Перезапустити %{program}",
   "status.terminal_restart_shell": "⟳ Перезапустити термінал",
   "status.terminal_restart_code": "%{label} (код %{code})",
-  "terminal.tab_exited": "%{name} (завершено)"
+  "terminal.tab_exited": "%{name} (завершено)",
+  "cli.arg.skill": "Виводить посібник із керування цим редактором з оболонки. Необовʼязкова тема: script (типово), tour, plugin"
 }
