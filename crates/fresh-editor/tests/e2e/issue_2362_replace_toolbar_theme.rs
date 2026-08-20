@@ -29,8 +29,8 @@ fn open_replace(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    // The toolbar should now be on screen with Case Sensitive checked
-    // (its default state).
+    // The toolbar should now be on screen with Case Sensitive unchecked
+    // (its default state since search is case-insensitive by default).
     harness.assert_screen_contains("Case Sensitive");
 }
 
@@ -52,8 +52,18 @@ fn test_dracula_checked_option_is_visible() {
 
     open_replace(&mut harness);
 
-    // Case Sensitive is checked by default, so its label is drawn with the
-    // "active" style. Locate the label and inspect a cell within it.
+    // Search is case-insensitive by default, so Case Sensitive is unchecked
+    // unless the user toggles it ON. Lock in the default state.
+    harness.assert_screen_contains("[ ] Case Sensitive");
+
+    // Case Sensitive now defaults to unchecked; toggle it ON with Alt+C (bound
+    // to `toggle_search_case_sensitive` in the `searchPrompt` context) so we
+    // exercise the active/checked styling that the Dracula contrast regression
+    // guards. Locate the label and inspect a cell within it.
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
     harness.assert_screen_contains("[x] Case Sensitive");
     let (label_col, label_row) = harness
         .find_text_on_screen("Case Sensitive")
