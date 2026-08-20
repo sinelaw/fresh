@@ -16,4 +16,5 @@
 - [Devcontainers](./devcontainer.md) - Attach to a project's devcontainer
 - [Daemon Mode](./session-persistence.md) - Detach and reattach to a background daemon (formerly "Session Persistence")
 - [Keybinding Editor](./keybinding-editor.md) - Visual keybinding browser and editor
+- [Emacs Keymap](./emacs-keymap.md) - The Emacs keybinding style, key by key
 - [Dashboard](./dashboard.md) - Startup dashboard with weather, git, PRs, disk

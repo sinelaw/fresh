@@ -210,14 +210,23 @@ impl KeybindingEditor {
         let mut bindings = Vec::new();
         let mut seen: HashMap<(String, String), usize> = HashMap::new(); // (key_display, context) -> index
 
-        // First, load bindings from the active keymap
+        // First, load bindings from the active keymap. `resolve_keymap`
+        // returns the inheritance chain parent-first, and the resolver takes
+        // the last write for a given key+context — so a keymap that overrides
+        // an inherited binding must *replace* the parent's row here, not add a
+        // second one. Otherwise `emacs` (which inherits `default`) listed both
+        // "Ctrl+S → Save file" and "Ctrl+S → Find", only one of which fires.
         let map_bindings = config.resolve_keymap(&config.active_keybinding_map);
         for kb in &map_bindings {
             if let Some(entry) = Self::keybinding_to_resolved(kb, BindingSource::Keymap, resolver) {
                 let key = (entry.key_display.clone(), entry.context.clone());
-                let idx = bindings.len();
-                seen.insert(key, idx);
-                bindings.push(entry);
+                if let Some(&existing_idx) = seen.get(&key) {
+                    bindings[existing_idx] = entry;
+                } else {
+                    let idx = bindings.len();
+                    seen.insert(key, idx);
+                    bindings.push(entry);
+                }
             }
         }
 
@@ -1410,6 +1419,25 @@ mod tests {
         assert!(
             editor.bindings[idx].is_chord,
             "the row stays a chord after the edit"
+        );
+    }
+
+    #[test]
+    fn an_overriding_keymap_replaces_the_inherited_row() {
+        // `emacs` inherits `default` and rebinds Ctrl+S from Save to Find.
+        // Only the winning action may be listed, or the editor advertises a
+        // binding that never fires.
+        let editor = make_emacs_editor();
+        let ctrl_s: Vec<&str> = editor
+            .bindings
+            .iter()
+            .filter(|b| b.key_display == "Ctrl+S" && b.context == "normal")
+            .map(|b| b.action.as_str())
+            .collect();
+        assert_eq!(
+            ctrl_s,
+            vec!["search"],
+            "Ctrl+S must list only the emacs action, not the inherited one"
         );
     }
 

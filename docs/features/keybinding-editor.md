@@ -57,7 +57,7 @@ When adding or editing a binding, a dialog appears with three fields:
 
 1. **Key** — Press the desired key combination. The dialog starts in key recording mode. To bind a special key like **Esc**, **Tab**, or **Enter**, press **Enter** on the key field first to enter recording, then press the key you want to bind; press **Escape** to cancel recording.
 2. **Action** — Type an action name. An autocomplete popup shows matching actions as you type. Use `↑`/`↓` to navigate suggestions and `Tab` or `Enter` to accept. Only valid action names are accepted.
-3. **Context** — Use `←`/`→` to cycle through available contexts (global, normal, prompt, popup, file\_explorer, menu, terminal).
+3. **Context** — Use `←`/`→` to cycle through available contexts (global, normal, prompt, searchPrompt, popup, completion, file\_explorer, dock, menu, terminal, settings, compositeBuffer).
 
 Use `Tab` to move between fields. The dialog shows a read-only description of the selected action and warns about conflicting bindings.
 
@@ -73,10 +73,21 @@ If you try to close the editor with unsaved changes, a confirmation dialog offer
 
 Fresh uses a layered keybinding system:
 
-1. **Keymap** — A named set of default bindings (e.g., `default`, `emacs`, `macos`). Set via `"keymap"` in your config.
+1. **Keymap** — A named set of default bindings (`default`, `emacs`, `vscode`, `macos`, `macos-gui`). Set via `"active_keybinding_map"` in your config.
 2. **Custom bindings** — User overrides defined in the `"keybindings"` array of your config file. These take precedence over keymap bindings.
 
-Custom bindings added through the editor are appended to the `keybindings` array. To switch the base keymap, use **View → Keybinding Style** or set `"keymap"` in your config file.
+Custom bindings added through the editor are appended to the `keybindings` array. To switch the base keymap, use **View → Keybinding Style** or set `"active_keybinding_map"` in your config file:
+
+```json
+{
+  "active_keybinding_map": "emacs"
+}
+```
+
+Every built-in keymap other than `default` inherits from another one and
+overrides only the keys it cares about, so anything a keymap doesn't mention
+behaves like its parent. `vscode`, `macos`, and `emacs` inherit `default`;
+`macos-gui` inherits `macos`.
 
 ### Binding Format
 
@@ -109,13 +120,43 @@ Each binding in `config.json` has this structure:
 | `global` | Always active, regardless of focus |
 | `normal` | When the text editor is focused |
 | `prompt` | When an input prompt is active |
+| `searchPrompt` | When the find/replace prompt is active — a narrowing of `prompt`, adding the match-mode toggles |
 | `popup` | When a popup (completion, hover) is open |
+| `completion` | When the completion popup is open — takes precedence over `popup` |
 | `file_explorer` | When the file explorer has focus |
+| `dock` | When the utility dock has focus |
 | `menu` | When a menu is open |
 | `terminal` | When the integrated terminal has focus |
+| `settings` | When the settings editor is open |
+| `compositeBuffer` | When a composite (diff / git log) view is focused |
 
 When the same key is bound in more than one applicable context, the most
 specific context wins: a `normal` or `prompt` binding outranks a `global` one
 for the same key. `global` is the fallback that applies wherever no narrower
 binding claims the key. Your custom bindings always outrank keymap defaults,
 whatever context either uses.
+
+### Chord (multi-key) bindings
+
+A binding can be a *sequence* of keypresses instead of a single one — Emacs's
+`C-x C-s` is one. Use `keys` instead of `key`/`modifiers`:
+
+```json
+{
+  "keybindings": [
+    {
+      "keys": [
+        { "key": "x", "modifiers": ["ctrl"] },
+        { "key": "s", "modifiers": ["ctrl"] }
+      ],
+      "action": "save",
+      "when": "normal"
+    }
+  ]
+}
+```
+
+The keybinding editor lists chords (shown as `Ctrl+X Ctrl+S`), and `d` disables
+one the same way it disables any other keymap binding. Recording a *new* chord
+from the editor's add/edit dialog is not supported yet — the key field captures
+a single combination — so write those in `config.json` by hand.

@@ -38,6 +38,7 @@ pub mod dock_panel_routing;
 pub mod dock_switch_wipes_outgoing_window;
 pub mod document_model;
 pub mod emacs_actions;
+pub mod emacs_keymap;
 pub mod encoding;
 pub mod explorer_bugs;
 pub mod explorer_context_menu;
