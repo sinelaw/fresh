@@ -142,6 +142,12 @@ jobs:
         # never match (SC2193).
         env:
           TARGET: ${{ matrix.target }}
+          # Compile liblzma from the vendored xz source instead of linking
+          # whatever `pkg-config` turns up. Without this, `lzma-sys` links the
+          # runner's Homebrew liblzma on macOS arm64 (and the distro's
+          # liblzma.so.5 on Linux), so the published binary carries a
+          # dependency on a library the user's machine has no reason to have.
+          LZMA_API_STATIC: 1
         run: |
           if [ "${{ matrix.cross }}" = "true" ] && [ "$TARGET" = "aarch64-unknown-linux-gnu" ]; then
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
@@ -153,6 +159,22 @@ jobs:
           # Default features include embed-plugins; plugins (and themes via build.rs)
           # are compiled into the binary, so we ship a single self-contained executable.
           cargo build --release --target ${{ matrix.target }}
+
+      # Checks the artifact rather than trusting the build flag above: a
+      # released binary must load nothing but the OS's own libraries, or it
+      # dies at startup on every machine that lacks the missing library.
+      - name: Verify macOS binary links only system libraries
+        if: runner.os == 'macOS'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          deps=$(otool -L "target/${TARGET}/release/fresh" | tail -n +2 | awk '{print $1}')
+          echo "$deps"
+          if external=$(echo "$deps" | grep -v -E '^(/usr/lib/|/System/Library/)'); then
+            echo "::error::binary depends on non-system libraries:"
+            echo "$external"
+            exit 1
+          fi
 
       - name: Create archive (Unix)
         if: runner.os != 'Windows'
