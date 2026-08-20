@@ -682,7 +682,11 @@ function getInstalledPackages(type: "plugin" | "theme" | "language" | "bundle"):
         }
 
         packages.push({
-          name: entry.name,
+          // The manifest names the package; the directory is only
+          // where it happens to live. They match for anything the
+          // installer put there, but the manifest is what a registry
+          // entry would be keyed by, so prefer it.
+          name: manifest?.name || entry.name,
           path: pkgPath,
           type,
           source,
@@ -698,6 +702,23 @@ function getInstalledPackages(type: "plugin" | "theme" | "language" | "bundle"):
   }
 
   return packages;
+}
+
+/**
+ * Every installed package, of every kind.
+ *
+ * The manager's commands used to look at plugins and themes only, so a
+ * language pack or bundle — which `Package: Install from URL` installs
+ * just as readily — was listed in the browser but invisible to Update,
+ * Remove, Update All and the lockfile.
+ */
+function getAllInstalledPackages(): InstalledPackage[] {
+  return [
+    ...getInstalledPackages("plugin"),
+    ...getInstalledPackages("theme"),
+    ...getInstalledPackages("language"),
+    ...getInstalledPackages("bundle"),
+  ];
 }
 
 /**
@@ -949,8 +970,12 @@ function swapInstalledDir(
     : fsLocal.copyPath(stagingDir, targetDir);
 
   if (!placed) {
+    // A directory copy that fails part-way still leaves what it managed
+    // to write. Clear it: a half-copied package left at the install
+    // path is scanned as an installed one and shows up in the browser
+    // as if the install had worked.
+    fsLocal.removePath(targetDir);
     if (hadExisting) {
-      fsLocal.removePath(targetDir);
       fsLocal.renamePath(backupDir, targetDir);
     }
     return false;
@@ -1823,9 +1848,7 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
  * Update all packages
  */
 async function updateAllPackages(): Promise<void> {
-  const plugins = getInstalledPackages("plugin");
-  const themes = getInstalledPackages("theme");
-  const all = [...plugins, ...themes];
+  const all = getAllInstalledPackages();
 
   if (all.length === 0) {
     editor.setStatus("No packages installed");
@@ -1861,9 +1884,7 @@ async function updateAllPackages(): Promise<void> {
 async function generateLockfile(): Promise<void> {
   editor.setStatus("Generating lockfile...");
 
-  const plugins = getInstalledPackages("plugin");
-  const themes = getInstalledPackages("theme");
-  const all = [...plugins, ...themes];
+  const all = getAllInstalledPackages();
 
   const lockfile: Lockfile = {
     lockfile_version: 1,
@@ -2612,7 +2633,11 @@ function buildPkgDetailEntries(): TextPropertyEntry[] {
   if (selectedItem) {
     entries.push({ text: selectedItem.name + "\n", properties: { type: "detail-title" } });
     entries.push({ text: "─".repeat(Math.min(selectedItem.name.length + 2, 50)) + "\n", properties: { type: "detail-sep" } });
-    let metaLine = `v${selectedItem.version}`;
+    // The kind is on the row for available packages (the `[P]`/`[T]`
+    // tag) but nowhere for installed ones, so state it here — it is
+    // read straight off the manifest, which every installed package
+    // has whether or not a registry lists it.
+    let metaLine = `${selectedItem.packageType} • v${selectedItem.version}`;
     if (selectedItem.updateAvailable && selectedItem.latestVersion) {
       metaLine += ` → v${selectedItem.latestVersion}`;
     }
@@ -3040,12 +3065,39 @@ async function runPackageAction(
 ): Promise<boolean> {
   pkgState.error = null;
   lastPackageError = null;
+  const selectedName = getFilteredItems()[pkgState.selectedIndex]?.name;
   const ok = await run();
   if (!ok) {
     pkgState.error = lastPackageError ?? "Action failed";
   }
   pkgState.items = buildPackageList();
+  // Keep the selection on the same package. The list is ordered
+  // installed-first, so installing one moves it up past every
+  // available entry and a positional index would land on something
+  // else. A package that is gone (uninstalled) leaves the index where
+  // it was, which `updatePkgManagerView` clamps into range.
+  if (selectedName !== undefined) {
+    const idx = getFilteredItems().findIndex((i) => i.name === selectedName);
+    if (idx >= 0) {
+      pkgState.selectedIndex = idx;
+    }
+  }
   return ok;
+}
+
+/**
+ * Re-read what is installed and repaint, if the browser is open.
+ *
+ * Installs and removals started from outside the browser's own action
+ * buttons — `Package: Install from URL`, the registry finder, the
+ * Update / Remove finders — otherwise leave it showing the package set
+ * from when it was opened, so a package just installed from a URL
+ * doesn't appear until the browser is closed and reopened.
+ */
+function refreshPackageManagerIfOpen(): void {
+  if (!pkgState.isOpen) return;
+  pkgState.items = buildPackageList();
+  updatePkgManagerView();
 }
 
 async function pkg_activate() : Promise<void> {
@@ -3203,6 +3255,7 @@ const registryFinder = new Finder<[string, RegistryEntry]>(editor, {
   maxResults: 100,
   onSelect: async ([name, entry]) => {
     await installPackage(entry.repository, name, "plugin");
+    refreshPackageManagerIfOpen();
   }
 });
 
@@ -3292,11 +3345,22 @@ editor.on("prompt_confirmed", async (args) => {
   if (args.prompt_type !== "pkg-install-url") return true;
 
   const url = args.input.trim();
-  if (url) {
-    await installPackage(url);
-  } else {
+  if (!url) {
     editor.setStatus("No URL or path provided");
+    return true;
   }
+
+  // The handler's promise is detached from here on, so it carries its
+  // own catch: an unhandled rejection is fatal to the plugin runtime.
+  try {
+    await installPackage(url);
+  } catch (e) {
+    packageFailure(`Install failed: ${e}`);
+  }
+  // A package installed from a URL is an installed package like any
+  // other; if the browser is open it belongs in the list now, not
+  // after a close and reopen.
+  refreshPackageManagerIfOpen();
 
   return true;
 });
@@ -3314,6 +3378,7 @@ registerHandler("pkg_list", pkg_list);
  */
 async function pkg_update_all() : Promise<void> {
   await updateAllPackages();
+  refreshPackageManagerIfOpen();
 }
 registerHandler("pkg_update_all", pkg_update_all);
 
@@ -3321,9 +3386,7 @@ registerHandler("pkg_update_all", pkg_update_all);
  * Update a specific package
  */
 function pkg_update() : void {
-  const plugins = getInstalledPackages("plugin");
-  const themes = getInstalledPackages("theme");
-  const all = [...plugins, ...themes];
+  const all = getAllInstalledPackages();
 
   if (all.length === 0) {
     editor.setStatus("No packages installed");
@@ -3340,6 +3403,7 @@ function pkg_update() : void {
     preview: false,
     onSelect: async (pkg) => {
       await updatePackage(pkg);
+      refreshPackageManagerIfOpen();
     }
   });
 
@@ -3357,9 +3421,7 @@ registerHandler("pkg_update", pkg_update);
  * Remove a package
  */
 function pkg_remove() : void {
-  const plugins = getInstalledPackages("plugin");
-  const themes = getInstalledPackages("theme");
-  const all = [...plugins, ...themes];
+  const all = getAllInstalledPackages();
 
   if (all.length === 0) {
     editor.setStatus("No packages installed");
@@ -3376,6 +3438,7 @@ function pkg_remove() : void {
     preview: false,
     onSelect: async (pkg) => {
       await removePackage(pkg);
+      refreshPackageManagerIfOpen();
     }
   });
 
@@ -3401,9 +3464,7 @@ registerHandler("pkg_sync", pkg_sync);
  * Show outdated packages
  */
 async function pkg_outdated() : Promise<void> {
-  const plugins = getInstalledPackages("plugin");
-  const themes = getInstalledPackages("theme");
-  const all = [...plugins, ...themes];
+  const all = getAllInstalledPackages();
 
   if (all.length === 0) {
     editor.setStatus("No packages installed");
@@ -3414,7 +3475,17 @@ async function pkg_outdated() : Promise<void> {
 
   const outdated: Array<{ pkg: InstalledPackage; behind: number }> = [];
 
+  let skipped = 0;
   for (const pkg of all) {
+    // Only a plain-repo install has a .git to count commits against. A
+    // monorepo-subpath or local-directory install is a copy, so git
+    // here reports nothing and the package would silently look up to
+    // date; those are updated by re-installing (see `updatePackage`).
+    if (!fsLocal.fileExists(editor.pathJoin(pkg.path, ".git"))) {
+      skipped++;
+      continue;
+    }
+
     // Fetch latest
     await gitCommand(["-C", `${pkg.path}`, "fetch"]);
 
@@ -3430,7 +3501,11 @@ async function pkg_outdated() : Promise<void> {
   }
 
   if (outdated.length === 0) {
-    editor.setStatus("All packages are up to date");
+    editor.setStatus(
+      skipped > 0
+        ? `All git-tracked packages are up to date (${skipped} installed by copy — use Update to re-install)`
+        : "All packages are up to date",
+    );
     return;
   }
 
@@ -3444,6 +3519,7 @@ async function pkg_outdated() : Promise<void> {
     preview: false,
     onSelect: async (item) => {
       await updatePackage(item.pkg);
+      refreshPackageManagerIfOpen();
     }
   });
 
