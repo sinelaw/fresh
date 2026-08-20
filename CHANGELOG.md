@@ -13,7 +13,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Review Diff is full-width and toggleable** - no soft wrap, side panels (file list, comments) can be hidden, and the sidebar nests files by directory like the File Explorer instead of repeating the full path on every row.
 * **Review Diff handles very large ranges** - a review spanning a hundred commits now lays out completely and stays responsive: cursor movement, hunk jumps, and flipping between the unified and side-by-side views no longer lag behind a stale frame.
 * **Linux musl installs register a desktop entry and icons**, so Fresh shows up in your app launcher - continuing 0.4.9's move to a single self-updating musl binary.
-* **`fresh --skill`** - prints the guide to driving a running editor from a shell: the script verbs, the calling convention, and worked examples. `--skill tour` and `--skill plugin` reach the other guides. It is the single entry point a coding agent needs, and it answers from anywhere - no running editor required, and it works from inside a sandboxed agent.
+* **`fresh --skill`** - prints the guide to driving a running editor from a shell: the script verbs, the calling convention, and worked examples. `--skill=tour` and `--skill=plugin` reach the other guides. It is the single entry point a coding agent needs, and it answers from anywhere - no running editor required, and it works from inside a sandboxed agent.
 
 ### Bug Fixes
 

@@ -1682,5 +1682,5 @@
   "status.terminal_restart_shell": "⟳ 터미널 다시 시작",
   "status.terminal_restart_code": "%{label} (종료 %{code})",
   "terminal.tab_exited": "%{name} (종료됨)",
-  "cli.arg.skill": "셸에서 이 편집기를 제어하는 방법에 대한 안내를 출력합니다. 선택 항목: script(기본값), tour, plugin"
+  "cli.arg.skill": "셸에서 이 편집기를 제어하는 방법에 대한 안내를 출력합니다. 다른 안내: --skill=tour, --skill=plugin"
 }
