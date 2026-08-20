@@ -58,6 +58,10 @@ jobs:
 
       - name: Build GUI binary
         shell: bash
+        env:
+          # See release.yml: keeps the runner's Homebrew liblzma (and the
+          # distro's liblzma.so.5) out of a binary we hand to users.
+          LZMA_API_STATIC: 1
         run: |
           if [ "${{ matrix.cross }}" = "true" ] && [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
@@ -66,6 +70,19 @@ jobs:
             export RUSTFLAGS="-C target-feature=+crt-static"
           fi
           cargo build --release --features gui --target ${{ matrix.target }}
+
+      - name: Verify macOS binary links only system libraries
+        if: runner.os == 'macOS'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          deps=$(otool -L "target/${TARGET}/release/fresh" | tail -n +2 | awk '{print $1}')
+          echo "$deps"
+          if external=$(echo "$deps" | grep -v -E '^(/usr/lib/|/System/Library/)'); then
+            echo "::error::binary depends on non-system libraries:"
+            echo "$external"
+            exit 1
+          fi
 
       # ── Windows: single exe ──────────────────────────────────────────
       - name: Package GUI (Windows)
