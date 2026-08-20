@@ -1730,3 +1730,518 @@ globalThis.uninstall_test_hello = function() { editor.setStatus("Hello from unin
         screen
     );
 }
+
+// ---------------------------------------------------------------------------
+// Regression tests for the package manager's upgrade / browser behaviour.
+//
+// Each of these reproduces one defect: without the corresponding fix in
+// `plugins/pkg.ts` the assertion fails, or the semantic wait never settles.
+// They all drive the palette and the browser with real keys and assert on
+// rendered output only.
+// ---------------------------------------------------------------------------
+
+/// Everything a package-manager UI test needs: an isolated config dir, a
+/// project repo carrying the `pkg` plugin, and a package index on disk so
+/// the registry sync never reaches the network.
+struct PkgUiEnv {
+    _temp_dir: tempfile::TempDir,
+    dir_context: fresh::config_io::DirectoryContext,
+    repo: GitTestRepo,
+    packages_dir: std::path::PathBuf,
+}
+
+/// Build the shared setup. `registry_packages` is the JSON object body for
+/// the index's `packages` map — `{}` for a registry that lists nothing, so
+/// the browser shows only what is installed.
+fn setup_pkg_ui_env(registry_packages: &str) -> PkgUiEnv {
+    use fresh::config_io::DirectoryContext;
+    use tempfile::TempDir;
+
+    init_tracing_from_env();
+
+    let temp_dir = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+
+    let plugins_dir = repo.path.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "pkg");
+
+    let packages_dir = dir_context.config_dir.join("plugins").join("packages");
+    fs::create_dir_all(&packages_dir).unwrap();
+
+    // `193934da` is the pkg plugin's hash of the default registry URL, which
+    // is what the default config points at. Seeding the index means
+    // `isRegistrySynced()` is true on the first paint; the git repo with no
+    // remote makes the background `git pull` exit immediately instead of
+    // going to the network.
+    let fake_registry_dir = packages_dir.join(".index").join("193934da");
+    fs::create_dir_all(&fake_registry_dir).unwrap();
+    fs::write(
+        fake_registry_dir.join("plugins.json"),
+        format!(
+            r#"{{"schema_version": 1, "updated": "2026-01-01T00:00:00Z", "packages": {}}}"#,
+            registry_packages
+        ),
+    )
+    .unwrap();
+    git_init_commit(&fake_registry_dir);
+
+    PkgUiEnv {
+        _temp_dir: temp_dir,
+        dir_context,
+        repo,
+        packages_dir,
+    }
+}
+
+/// `git init` + commit everything in `dir`, with no remote configured.
+fn git_init_commit(dir: &std::path::Path) {
+    for args in [
+        vec!["init"],
+        vec!["add", "."],
+        vec![
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "user.name=T",
+            "commit",
+            "-m",
+            "init",
+        ],
+    ] {
+        std::process::Command::new("git")
+            .args(&args)
+            .current_dir(dir)
+            .output()
+            .unwrap_or_else(|e| panic!("git {:?} failed in {:?}: {}", args, dir, e));
+    }
+}
+
+/// Write a one-file plugin package into `dir`, registering `command_name` so
+/// the palette can show which version of the code is actually running.
+fn write_plugin_package(
+    dir: &std::path::Path,
+    name: &str,
+    version: &str,
+    description: &str,
+    command_name: &str,
+) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(
+        dir.join("main.ts"),
+        format!(
+            r#"
+/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+globalThis.pkg_e2e_cmd = function() {{ editor.setStatus("{name} ran"); }};
+editor.registerCommand("{command_name}", "e2e probe command", "pkg_e2e_cmd", null);
+"#
+        ),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("package.json"),
+        format!(
+            r#"{{
+    "name": "{name}",
+    "version": "{version}",
+    "description": "{description}",
+    "type": "plugin",
+    "fresh": {{ "entry": "main.ts" }}
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
+/// Run a command from the palette by name.
+fn run_palette_command(harness: &mut EditorTestHarness, command: &str) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text(command).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(command))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}
+
+/// Drive `Package: Install from URL` with `url`.
+fn install_from_url(harness: &mut EditorTestHarness, url: &str) {
+    run_palette_command(harness, "Package: Install from URL");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Git URL or local path"))
+        .unwrap();
+    harness.type_text(url).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}
+
+/// Text unique to the package browser being on screen (the filter bar).
+const PKG_BROWSER_MARKER: &str = "Bundles";
+
+/// `Package: Install from URL` must upgrade a package that is already
+/// installed, rather than refusing with "already installed", and the running
+/// session must pick up the new code — not just the files on disk.
+#[test]
+#[cfg_attr(windows, ignore)] // file:// URLs don't work reliably on Windows
+fn test_pkg_install_from_url_upgrades_installed_package() {
+    let env = setup_pkg_ui_env("{}");
+
+    // A monorepo-subpath source: the install path that has no `.git` of its
+    // own, so it is also the one an update can't reach with `git pull`.
+    let monorepo = GitTestRepo::new();
+    let pkg_dir = monorepo.path.join("plugin-alpha");
+    write_plugin_package(
+        &pkg_dir,
+        "plugin-alpha",
+        "1.0.0",
+        "Alpha plugin",
+        "Alpha Version One",
+    );
+    monorepo.git_add_all();
+    monorepo.git_commit("alpha 1.0.0");
+
+    let original_dir = env.repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        35,
+        Default::default(),
+        env.repo.path.clone(),
+        env.dir_context.clone(),
+    )
+    .unwrap();
+
+    let url = format!("file://{}#plugin-alpha", monorepo.path.display());
+
+    install_from_url(&mut harness, &url);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Installed and activated"))
+        .unwrap();
+    assert!(
+        harness.screen_to_string().contains("1.0.0"),
+        "First install should report v1.0.0. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Publish a newer version, with a different command name so the palette
+    // can tell which copy of the code the session is running.
+    write_plugin_package(
+        &pkg_dir,
+        "plugin-alpha",
+        "1.1.0",
+        "Alpha plugin",
+        "Alpha Version Two",
+    );
+    monorepo.git_add_all();
+    monorepo.git_commit("alpha 1.1.0");
+
+    install_from_url(&mut harness, &url);
+
+    // Without the fix this reports "Package 'plugin-alpha' is already
+    // installed" and the wait never settles.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Upgraded"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("plugin-alpha") && screen.contains("1.0.0") && screen.contains("1.1.0"),
+        "Upgrade should name both versions. Screen:\n{}",
+        screen
+    );
+
+    // The session must be running the new code: the new command is
+    // registered and the old one is gone (it would still be there if the
+    // old copy had been left loaded while its files were replaced).
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Alpha Version").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Alpha Version Two"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Alpha Version One"),
+        "The replaced version's command should be gone after the upgrade. Screen:\n{}",
+        screen
+    );
+}
+
+/// An installed package must offer a working Update action in the browser,
+/// including one installed from a monorepo subpath — which has no `.git`, so
+/// the old `git pull` implementation could never have updated it.
+#[test]
+#[cfg_attr(windows, ignore)] // file:// URLs don't work reliably on Windows
+fn test_pkg_browser_update_action_reachable_and_updates() {
+    let env = setup_pkg_ui_env("{}");
+
+    let monorepo = GitTestRepo::new();
+    let pkg_dir = monorepo.path.join("plugin-alpha");
+    write_plugin_package(
+        &pkg_dir,
+        "plugin-alpha",
+        "1.0.0",
+        "Alpha plugin",
+        "Alpha Version One",
+    );
+    monorepo.git_add_all();
+    monorepo.git_commit("alpha 1.0.0");
+
+    let original_dir = env.repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        35,
+        Default::default(),
+        env.repo.path.clone(),
+        env.dir_context.clone(),
+    )
+    .unwrap();
+
+    let url = format!("file://{}#plugin-alpha", monorepo.path.display());
+    install_from_url(&mut harness, &url);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Installed and activated"))
+        .unwrap();
+
+    run_palette_command(&mut harness, "Package: Packages");
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains(PKG_BROWSER_MARKER) && s.contains("INSTALLED (1)")
+        })
+        .unwrap();
+
+    // Enter on the list moves focus to the selected package's actions.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Uninstall"))
+        .unwrap();
+
+    // Without the fix the only action offered is Uninstall: `updateAvailable`
+    // is hardcoded false and Reinstall needs a local_path this install never
+    // wrote.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Update"),
+        "An installed package with a recorded source should offer Update. Screen:\n{}",
+        screen
+    );
+
+    // Publish a newer version and activate the focused Update button.
+    write_plugin_package(
+        &pkg_dir,
+        "plugin-alpha",
+        "1.1.0",
+        "Alpha plugin",
+        "Alpha Version One",
+    );
+    monorepo.git_add_all();
+    monorepo.git_commit("alpha 1.1.0");
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("1.1.0"))
+        .unwrap();
+}
+
+/// Closing the browser through the editor's own Close Buffer command — not
+/// the plugin's Esc handler — must leave `Package: Packages` able to open it
+/// again.
+#[test]
+fn test_pkg_browser_reopens_after_close_buffer() {
+    let env = setup_pkg_ui_env("{}");
+
+    let original_dir = env.repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        35,
+        Default::default(),
+        env.repo.path.clone(),
+        env.dir_context.clone(),
+    )
+    .unwrap();
+
+    run_palette_command(&mut harness, "Package: Packages");
+    harness
+        .wait_until(|h| h.screen_to_string().contains(PKG_BROWSER_MARKER))
+        .unwrap();
+
+    run_palette_command(&mut harness, "Close Buffer");
+    harness
+        .wait_until(|h| !h.screen_to_string().contains(PKG_BROWSER_MARKER))
+        .unwrap();
+
+    // Without the fix the plugin still believes it is open and this second
+    // open is a no-op, so the browser never comes back.
+    run_palette_command(&mut harness, "Package: Packages");
+    harness
+        .wait_until(|h| h.screen_to_string().contains(PKG_BROWSER_MARKER))
+        .unwrap();
+}
+
+/// The first Down must move the selection, including on an open where the
+/// list was still empty when the panel mounted — the registry had not
+/// finished loading yet.
+#[test]
+#[cfg_attr(windows, ignore)] // file:// URLs don't work reliably on Windows
+fn test_pkg_browser_arrow_down_moves_selection_on_first_press() {
+    use fresh::config_io::DirectoryContext;
+    use tempfile::TempDir;
+
+    init_tracing_from_env();
+
+    let temp_dir = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // A registry served from a local git repo, and deliberately *not*
+    // pre-synced: with no index and no cache on disk, the browser's first
+    // paint has no rows at all and the packages only arrive when the
+    // background sync lands. That ordering is what used to leave the list
+    // widget's selection out of step with the plugin's.
+    let registry = GitTestRepo::new();
+    fs::write(
+        registry.path.join("plugins.json"),
+        r#"{
+            "schema_version": 1,
+            "updated": "2026-01-01T00:00:00Z",
+            "packages": {
+                "aaa-plugin": {
+                    "description": "Detail shows Alpha",
+                    "repository": "https://example.invalid/aaa"
+                },
+                "zzz-plugin": {
+                    "description": "Detail shows Zulu",
+                    "repository": "https://example.invalid/zzz"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    registry.git_add_all();
+    registry.git_commit("registry");
+
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    let plugins_dir = repo.path.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "pkg");
+    fs::create_dir_all(dir_context.config_dir.join("plugins").join("packages")).unwrap();
+
+    let config = fresh::config::Config {
+        packages: fresh::config::PackagesConfig {
+            sources: vec![format!("file://{}", registry.path.display())],
+        },
+        ..Default::default()
+    };
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        35,
+        config,
+        repo.path.clone(),
+        dir_context.clone(),
+    )
+    .unwrap();
+
+    run_palette_command(&mut harness, "Package: Packages");
+
+    // Only the detail panel renders a package's description, so these
+    // strings say which package the selection is on.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Detail shows Alpha"))
+        .unwrap();
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+
+    // Without the fix the first presses go into catching the list widget up
+    // with the plugin's selection, so the detail panel doesn't move.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Detail shows Zulu"))
+        .unwrap();
+}
+
+/// A package installed from a URL while the browser is open must appear in
+/// it, without closing and reopening.
+#[test]
+#[cfg_attr(windows, ignore)] // file:// URLs don't work reliably on Windows
+fn test_pkg_url_installed_package_appears_in_open_browser() {
+    let env = setup_pkg_ui_env("{}");
+
+    let monorepo = GitTestRepo::new();
+    write_plugin_package(
+        &monorepo.path.join("plugin-gamma"),
+        "plugin-gamma",
+        "1.0.0",
+        "Gamma plugin",
+        "Gamma Command",
+    );
+    monorepo.git_add_all();
+    monorepo.git_commit("gamma 1.0.0");
+
+    let original_dir = env.repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        35,
+        Default::default(),
+        env.repo.path.clone(),
+        env.dir_context.clone(),
+    )
+    .unwrap();
+
+    run_palette_command(&mut harness, "Package: Packages");
+    harness
+        .wait_until(|h| h.screen_to_string().contains(PKG_BROWSER_MARKER))
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains("plugin-gamma"),
+        "Nothing is installed yet. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    let url = format!("file://{}#plugin-gamma", monorepo.path.display());
+    install_from_url(&mut harness, &url);
+
+    // Without the fix the browser keeps the package set it was opened with,
+    // so the new package never shows up here.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("INSTALLED (1)"))
+        .unwrap();
+    assert!(
+        harness.screen_to_string().contains("plugin-gamma"),
+        "The newly installed package should be listed. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    assert!(
+        env.packages_dir.join("plugin-gamma").exists(),
+        "The package should also be on disk at {:?}",
+        env.packages_dir.join("plugin-gamma")
+    );
+}
