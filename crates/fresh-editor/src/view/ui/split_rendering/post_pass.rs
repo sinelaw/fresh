@@ -122,9 +122,7 @@ pub(super) fn render_ruler_bg(
                 // a wide grapheme depends on that row's text. Only one cell
                 // back needs checking because no terminal grapheme is wider
                 // than two cells.
-                let x = if guide_x > content_x
-                    && buf[(guide_x - 1, y)].symbol().width() > 1
-                {
+                let x = if guide_x > content_x && buf[(guide_x - 1, y)].symbol().width() > 1 {
                     guide_x - 1
                 } else {
                     guide_x

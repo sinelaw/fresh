@@ -998,9 +998,10 @@ fn test_ruler_bar_is_continuous_across_wide_text_rows() {
     // point is that a tint on a continuation cell is never emitted.
     let glyph = harness.get_cell(on_wide[0], wide_row);
     assert!(
-        glyph.as_deref().is_some_and(|g| g.chars().next().is_some_and(
-            |c| ('\u{4e00}'..='\u{9fff}').contains(&c)
-        )),
+        glyph.as_deref().is_some_and(|g| g
+            .chars()
+            .next()
+            .is_some_and(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))),
         "the tinted cell on the wide row must carry the CJK grapheme's \
          symbol, got {glyph:?}"
     );
