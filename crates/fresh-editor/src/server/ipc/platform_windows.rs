@@ -78,12 +78,22 @@ pub fn try_read_nonblocking(stream: &mut LocalStream, buf: &mut [u8]) -> io::Res
     stream.read(buf)
 }
 
-/// Check if server is alive by trying to connect (not used on Windows)
+/// Outcome of a connect probe against a control socket. Mirrors the Unix enum
+/// so callers are platform-agnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectProbe {
+    Alive,
+    Refused,
+    Blocked,
+}
+
+/// Probe a control socket.
 ///
-/// On Windows, we don't try to connect to verify - it can leave pipes in busy state.
-/// Just rely on PID file.
-pub fn check_server_by_connect(_control_path: &Path) -> bool {
-    false
+/// Windows deliberately has no connect-based probe: connecting to verify can
+/// leave a pipe in a busy state, so liveness rests on the PID file alone. This
+/// always reports `Refused`, which keeps the caller on that path.
+pub fn probe_server_by_connect(_control_path: &Path) -> ConnectProbe {
+    ConnectProbe::Refused
 }
 
 /// Check if a Windows pipe error should be treated as WouldBlock

@@ -39,6 +39,18 @@ pub struct SocketPaths {
     pub pid: PathBuf,
 }
 
+/// Whether a session's server is running, as far as *this* process can tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerLiveness {
+    /// The server answered, or its process is visibly running.
+    Alive,
+    /// Positively not running: no pid and nothing listening.
+    Dead,
+    /// The socket is present but this process may not reach it — typically a
+    /// sandbox denying `connect(2)`. Says nothing about the server itself.
+    Unreachable,
+}
+
 impl SocketPaths {
     /// Get the socket directory
     pub fn socket_directory() -> io::Result<PathBuf> {
@@ -94,27 +106,47 @@ impl SocketPaths {
 
     /// Check if the server process is still alive
     pub fn is_server_alive(&self) -> bool {
+        matches!(self.probe_server(), ServerLiveness::Alive)
+    }
+
+    /// Liveness of the session's server, keeping "cannot tell" separate from
+    /// "not running".
+    ///
+    /// Both signals can fail for reasons that have nothing to do with the
+    /// editor: a caller in a PID namespace cannot see the editor's pid, and a
+    /// sandboxed caller may be denied `connect(2)` on a socket that lives
+    /// outside its writable roots. Reporting either as "dead" is what makes a
+    /// sandboxed agent chase a phantom stale session — and, worse, invites
+    /// `cleanup_if_stale` to unlink the *live* editor's sockets.
+    pub fn probe_server(&self) -> ServerLiveness {
         use crate::server::daemon::is_process_running;
 
         // Check PID file - this is the reliable method
         if let Ok(Some(pid)) = self.read_pid() {
             if is_process_running(pid) {
-                return true;
+                return ServerLiveness::Alive;
             }
         }
 
         // Platform-specific fallback check
         if self.exists() {
-            return platform::check_server_by_connect(&self.control);
+            return match platform::probe_server_by_connect(&self.control) {
+                platform::ConnectProbe::Alive => ServerLiveness::Alive,
+                platform::ConnectProbe::Blocked => ServerLiveness::Unreachable,
+                platform::ConnectProbe::Refused => ServerLiveness::Dead,
+            };
         }
 
-        false
+        ServerLiveness::Dead
     }
 
     /// Clean up stale daemon files if the daemon is not running
     /// Returns true if files were cleaned up
+    ///
+    /// Only a positive `Dead` verdict may delete anything: an `Unreachable`
+    /// probe means we were denied the answer, not given a negative one.
     pub fn cleanup_if_stale(&self) -> bool {
-        if self.exists() && !self.is_server_alive() {
+        if self.exists() && self.probe_server() == ServerLiveness::Dead {
             // Best-effort cleanup of stale socket files
             #[allow(clippy::let_underscore_must_use)]
             let _ = self.cleanup();
