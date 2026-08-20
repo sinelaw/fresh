@@ -46,11 +46,30 @@ const TWO_MD: &str = "Bravo document body.\n\nSecond bravo paragraph with **stro
 
 /// The command that records the user's explicit per-buffer pin.
 const TOGGLE_PIN: &str = "Toggle Line Numbers (Current Buffer)";
+/// The command that flips the global `editor.line_numbers` preference.
+///
+/// Typing a command's full name selects it outright, so this does not land on
+/// the longer [`TOGGLE_PIN`] that shares its prefix.
+const TOGGLE_GLOBAL: &str = "Toggle Line Numbers";
 
 /// The gutter separator immediately before a line of text. Its presence on the
 /// row holding `body` is the only on-screen evidence of line numbers.
 fn gutter_before(body: &str) -> String {
     format!("│ {body}")
+}
+
+/// A config with the given global `editor.line_numbers` and markdown opening
+/// in Page View, which is what puts the compose plugin in charge of the gutter.
+fn page_view_config(line_numbers: bool) -> Config {
+    let mut config = Config::default();
+    config.editor.line_numbers = line_numbers;
+    let markdown = config
+        .languages
+        .get_mut("markdown")
+        .expect("default config defines the markdown language");
+    markdown.page_view = Some(true);
+    markdown.page_width = Some(60);
+    config
 }
 
 /// Build a project holding the real `markdown_compose` plugin plus `one.md`
@@ -193,16 +212,7 @@ fn type_at_end_of_document(harness: &mut EditorTestHarness) {
 fn test_page_view_keeps_per_buffer_line_numbers_across_tab_switch() {
     init_tracing_from_env();
 
-    let mut config = Config::default();
-    config.editor.line_numbers = true;
-    let markdown = config
-        .languages
-        .get_mut("markdown")
-        .expect("default config defines the markdown language");
-    markdown.page_view = Some(true);
-    markdown.page_width = Some(60);
-
-    let (mut harness, _temp) = compose_harness(config);
+    let (mut harness, _temp) = compose_harness(page_view_config(true));
 
     // Compose has taken over two.md: its emphasis markers are concealed, and
     // the gutter is hidden even though `editor.line_numbers` is true.
@@ -347,5 +357,116 @@ fn test_vi_set_nonumber_beats_a_per_buffer_pin() {
         .wait_until_stable(|h| !h.screen_to_string().contains(&gutter_before(PLAIN_BODY)))
         .unwrap();
     harness.assert_screen_contains(PLAIN_BODY);
+    harness.assert_no_plugin_errors();
+}
+
+/// The *global* "Toggle Line Numbers" must not make the gutter appear and then
+/// silently vanish on the next return to the tab.
+///
+/// The handler used to write `show_line_numbers` directly, without consulting
+/// [`BufferViewState::line_numbers_visible`]. Compose re-asserts its own default
+/// from `buffer_activated`, which fires every time focus comes back to a tab
+/// that is already open, so the very next resolve undid the toggle: the numbers
+/// appeared, survived until the next switch-back, and then went away with
+/// nothing on screen to explain it.
+///
+/// The invariant asserted is that the gutter looks the *same* right after the
+/// toggle as it does after leaving the tab and returning — a stronger and more
+/// honest statement than "it never appears", and one that fails on the old
+/// behaviour in exactly the way the report describes.
+#[test]
+fn test_global_toggle_line_numbers_survives_a_tab_switch_while_composing() {
+    init_tracing_from_env();
+
+    let (mut harness, _temp) = compose_harness(page_view_config(true));
+
+    // Compose has taken over two.md: emphasis concealed, gutter hidden even
+    // though `editor.line_numbers` is true.
+    harness
+        .wait_until_stable(|h| !h.screen_to_string().contains("**"))
+        .unwrap();
+    harness.assert_screen_not_contains(&gutter_before(TWO_BODY));
+
+    harness.run_palette_command(TOGGLE_GLOBAL).unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Settle the frame the same way the post-round-trip frame is settled
+    // below, so the two observations are taken under identical conditions.
+    type_at_end_of_document(&mut harness);
+    harness
+        .wait_until_stable(|h| !h.screen_to_string().contains("**"))
+        .unwrap();
+    let gutter_after_toggle = harness
+        .screen_to_string()
+        .contains(&gutter_before(TWO_BODY));
+
+    // Leave the tab and come back. Returning fires `buffer_activated`, where
+    // compose re-asserts its default.
+    switch_tab(&mut harness, KeyCode::PageUp, ONE_BODY);
+    switch_tab(&mut harness, KeyCode::PageDown, TWO_BODY);
+
+    // Drive a redraw and wait for the plugin to conceal the emphasis just
+    // typed, so the frame observed is the settled one rather than the stale
+    // pre-switch frame.
+    type_at_end_of_document(&mut harness);
+    harness
+        .wait_until_stable(|h| !h.screen_to_string().contains("**"))
+        .unwrap();
+    let gutter_after_round_trip = harness
+        .screen_to_string()
+        .contains(&gutter_before(TWO_BODY));
+
+    assert_eq!(
+        gutter_after_toggle,
+        gutter_after_round_trip,
+        "the global toggle's effect on the gutter changed by itself across a \
+         tab switch: visible={gutter_after_toggle} right after the toggle, \
+         visible={gutter_after_round_trip} after leaving the tab and coming \
+         back\n{}",
+        harness.screen_to_string()
+    );
+    harness.assert_no_plugin_errors();
+}
+
+/// The global toggle must derive its new value from the global setting, not
+/// from whatever the current view happens to be rendering.
+///
+/// In a compose buffer the rendered flag is `false` while `editor.line_numbers`
+/// is `true`, so `!rendered` "flipped" the preference from true to true — and
+/// since the handler persists to the user's config layer, that wrote back a
+/// value the user never chose and left them unable to turn line numbers off at
+/// all from a compose buffer.
+///
+/// The evidence is on screen rather than in the config struct: a buffer opened
+/// *after* the toggle takes its gutter straight from `editor.line_numbers`, so
+/// it renders whatever the toggle actually wrote there.
+#[test]
+fn test_global_toggle_line_numbers_flips_the_global_setting_from_a_compose_buffer() {
+    init_tracing_from_env();
+
+    let (mut harness, temp) = compose_harness(page_view_config(true));
+
+    // The starting state that made the old arithmetic wrong: global setting
+    // on, gutter off because compose says so.
+    harness
+        .wait_until_stable(|h| !h.screen_to_string().contains("**"))
+        .unwrap();
+    harness.assert_screen_not_contains(&gutter_before(TWO_BODY));
+
+    // The setting is on, so one press of the global toggle means "off".
+    harness.run_palette_command(TOGGLE_GLOBAL).unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // A plain-text buffer opened now has no mode with an opinion, so its
+    // gutter shows the global setting as the toggle left it.
+    let plain = temp.path().join("project").join("plain.txt");
+    std::fs::write(&plain, format!("{PLAIN_BODY}\n")).unwrap();
+    harness.open_file(&plain).unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains(PLAIN_BODY))
+        .unwrap();
+
+    harness.assert_screen_contains(PLAIN_BODY);
+    harness.assert_screen_not_contains(&gutter_before(PLAIN_BODY));
     harness.assert_no_plugin_errors();
 }

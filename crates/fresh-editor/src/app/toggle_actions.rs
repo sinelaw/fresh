@@ -16,16 +16,41 @@ use crate::config_keys::{self, SettingKey};
 use super::Editor;
 
 impl Editor {
-    /// Toggle line numbers in the gutter for the active split.
+    /// Toggle the global `editor.line_numbers` preference.
     ///
-    /// Line number visibility is stored per-split in `BufferViewState` so that
-    /// different splits of the same buffer can independently show/hide line numbers
-    /// (e.g., source mode shows them, compose mode hides them).
+    /// The new value is written to the config and persisted to the user config
+    /// layer, so the choice survives a restart (issue #474), and the active
+    /// split's rendered flag is re-resolved through
+    /// [`BufferViewState::line_numbers_visible`](crate::view::split::BufferViewState::line_numbers_visible)
+    /// so that a mode's default (markdown compose hiding the gutter) still has
+    /// its say.
     ///
-    /// The new value is also written to the global `editor.line_numbers`
-    /// preference and persisted to the user config layer, so the choice
-    /// survives a restart (issue #474). Per-split overrides (e.g. compose mode
-    /// forcing them off) still apply on top of this default.
+    /// Two things follow from taking the global setting as both the input and
+    /// the output of the flip:
+    ///
+    ///   * The new value comes from `editor.line_numbers`, never from the
+    ///     rendered `show_line_numbers`. The two disagree exactly when a mode
+    ///     is hiding the gutter, and deriving a *global* preference from a
+    ///     *mode's local* display state let a compose buffer "flip" the setting
+    ///     from true to true — silently rewriting the user's persisted config to
+    ///     a value they never chose, with no way to turn line numbers off from
+    ///     that buffer at all.
+    ///   * The flag is re-resolved rather than assigned. Compose re-asserts its
+    ///     default from `buffer_activated`, which fires on every return to an
+    ///     already-open tab, so assigning meant the gutter appeared and then
+    ///     silently vanished on the next switch-back. Resolving makes the
+    ///     command's on-screen effect the same before and after that round trip:
+    ///     while a mode is hiding the gutter it stays hidden, and the new
+    ///     setting takes effect on source buffers and on leaving the mode. The
+    ///     status message says so, so an apparently inert command is explained.
+    ///
+    /// Scope is the active split's view state, matching
+    /// [`toggle_line_numbers_current_buffer`](Self::toggle_line_numbers_current_buffer).
+    /// It is deliberately not swept across every split: terminal splits, grouped
+    /// panels and plugin docks hold `show_line_numbers = false` directly, with no
+    /// override recorded, so re-resolving them would hand those panes a gutter
+    /// they are built never to have. Other views pick the new default up from
+    /// `apply_config_defaults`, the path that owns that stamping.
     pub fn toggle_line_numbers(&mut self) {
         let active_split = self
             .windows
@@ -34,20 +59,23 @@ impl Editor {
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
             .active_split();
-        let Some(new_value) = self
+        let new_value = !self.config.editor.line_numbers;
+        let Some(resolved) = self
             .windows
             .get_mut(&self.active_window)
             .and_then(|w| w.split_view_states_mut())
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
             .map(|vs| {
-                let new_value = !vs.show_line_numbers;
-                vs.show_line_numbers = new_value;
                 // The user is expressing a global intent on this view, so drop
                 // any per-buffer pin here — otherwise the override would revert
-                // this change on the next view-mode switch / restart.
+                // this change on the next view-mode switch / restart. Cleared
+                // before resolving, so the resolve below sees the same state a
+                // later `apply_config_defaults` will.
                 vs.line_numbers_override = None;
-                new_value
+                let resolved = vs.line_numbers_visible(new_value);
+                vs.show_line_numbers = resolved;
+                resolved
             })
         else {
             return;
@@ -57,12 +85,21 @@ impl Editor {
         // to the user config layer (issue #474). Without this the change lives
         // only in the per-split runtime state and is forgotten on next launch.
         self.config_mut().editor.line_numbers = new_value;
+        // Every window keeps its own `Arc` clone of the config, and the file-open
+        // path reads `editor.line_numbers` through *that* one when it stamps a
+        // freshly-opened buffer's gutter. Without this fanout the new preference
+        // reached only the editor-level config, so the very next file opened
+        // still came up with the old setting.
+        self.sync_windows_config();
         self.persist_config_change(config_keys::EDITOR_LINE_NUMBERS, new_value);
 
-        let status = if new_value {
-            t!("toggle.line_numbers_shown")
-        } else {
-            t!("toggle.line_numbers_hidden")
+        // When a mode outvotes the new setting the command looks inert, so say
+        // what happened rather than report a change the screen contradicts.
+        let status = match (new_value, resolved) {
+            (true, true) => t!("toggle.line_numbers_shown"),
+            (false, false) => t!("toggle.line_numbers_hidden"),
+            (true, false) => t!("toggle.line_numbers_shown_mode_hides"),
+            (false, true) => t!("toggle.line_numbers_hidden_mode_shows"),
         };
         self.set_status_message(status.to_string());
     }
