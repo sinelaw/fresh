@@ -1305,12 +1305,15 @@ impl Editor {
     pub fn context_menu_view(&self) -> Option<ContextMenuView> {
         use crate::app::types::ContextMenuKind;
         let w = self.active_window();
-        let chrome = self.active_chrome();
-        // One shared geometry core drives all three menus; the only per-menu
-        // difference the web cares about is the `kind` tag. Position is
-        // edge-clamped so the native box matches the TUI renderer / hit-test.
+        // One shared geometry core drives all four menus; the only per-menu
+        // difference the web cares about is the `kind` tag.
         let (kind, core) = w.open_context_menu()?;
-        let (x, y) = core.clamped_position(chrome.last_frame.width, chrome.last_frame.height);
+        // Where layout actually put it. The TUI and the web draw the menu
+        // differently but must agree on the cells it covers, so both read the
+        // one rectangle the shell's tree produced rather than each re-deriving
+        // the clamp.
+        let rect = self.shell_menu_rect()?;
+        let (x, y) = (rect.x.max(0) as u16, rect.y.max(0) as u16);
         let kind = match kind {
             ContextMenuKind::FileExplorer => "fileExplorer",
             ContextMenuKind::NewTab => "newTab",

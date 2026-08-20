@@ -57,6 +57,7 @@ pub use file_browser::{
 pub use file_explorer::{ExplorerDecorations, FileExplorerRenderer};
 pub use focus::FocusManager;
 pub use layout::point_in_rect;
+pub(crate) use menu::MenuRowStyle;
 #[cfg(feature = "runtime")]
 pub use menu::{context_keys, MenuContext, MenuHit, MenuLayout, MenuRenderer, MenuState};
 #[cfg(feature = "runtime")]

@@ -180,28 +180,6 @@ impl crate::view::shell::fold::HostPainter for Editor {
     }
 }
 
-/// A compile-time proof of the arrangement the shell requires: the display
-/// list is borrowed from the `Ui` while the fold holds `&mut Editor` and
-/// `&mut Buffer`. This type-checks only because the `Ui` is a separate object
-/// from the `Editor` — the constraint documented on
-/// [`crate::view::shell::fold`]. Never called; it exists to fail the build if
-/// that arrangement is ever broken.
-#[allow(dead_code)]
-fn _the_ui_must_not_live_on_the_editor(
-    editor: &mut Editor,
-    ui: &mut fresh_ui::Ui<()>,
-    buf: &mut Buffer,
-    frame: crate::view::shell::frame::Frame,
-) {
-    use crate::view::shell::frame::frame_tree;
-    let palette = |_: &fresh_ui::ThemeKey| ratatui::style::Style::default();
-    let spec = ui.frame(
-        frame_tree(frame),
-        fresh_ui::Size::new(buf.area.width, buf.area.height),
-    );
-    let _caret = crate::view::shell::fold::fold(spec, buf, &palette, editor);
-}
-
 /// The backend's half of theming: a theme name resolved to concrete colours.
 ///
 /// `fresh-ui` never says what anything looks like — an item carries a
@@ -214,6 +192,15 @@ fn _the_ui_must_not_live_on_the_editor(
 pub struct ShellPalette {
     status: Style,
     base: Style,
+    menu: Style,
+    menu_item: Style,
+    menu_highlighted: Style,
+    menu_border: Style,
+    menu_dropdown: Style,
+    menu_hover: Style,
+    menu_disabled: Style,
+    menu_info: Style,
+    menu_separator: Style,
 }
 
 impl crate::view::shell::fold::Palette for ShellPalette {
@@ -222,6 +209,21 @@ impl crate::view::shell::fold::Palette for ShellPalette {
             // Grown as regions migrate; an unknown name falls back rather than
             // failing, so a new surface renders plainly before it is themed.
             "status" => self.status,
+            // A context menu's box, its rows, and the highlighted row. The
+            // border takes its own colour, as the old painter's
+            // `border_style` did.
+            "menu" => self.menu,
+            "menu.item" => self.menu_item,
+            "menu.item.highlighted" => self.menu_highlighted,
+            "menu.border" => self.menu_border,
+            // A menu-bar dropdown's box and the five ways one of its rows can
+            // look. The names are `MenuRowStyle`'s, one per style, so the
+            // ratatui painter's colours and the shell's cannot drift.
+            "menu.dropdown" => self.menu_dropdown,
+            "menu.item.hover" => self.menu_hover,
+            "menu.item.disabled" => self.menu_disabled,
+            "menu.item.info" => self.menu_info,
+            "menu.separator" => self.menu_separator,
             _ => self.base,
         }
     }
@@ -236,6 +238,27 @@ impl Editor {
                 .fg(theme.status_bar_fg)
                 .bg(theme.status_bar_bg),
             base: Style::default().fg(theme.editor_fg).bg(theme.editor_bg),
+            menu: Style::default()
+                .fg(theme.menu_dropdown_fg)
+                .bg(theme.menu_dropdown_bg),
+            menu_item: Style::default()
+                .fg(theme.menu_dropdown_fg)
+                .bg(theme.menu_dropdown_bg),
+            menu_highlighted: Style::default()
+                .fg(theme.menu_highlight_fg)
+                .bg(theme.menu_highlight_bg),
+            menu_border: Style::default()
+                .fg(theme.menu_border_fg)
+                .bg(theme.menu_dropdown_bg),
+            // The box: border ink on the dropdown ground. Its fill draws
+            // spaces, so only the background reaches the eye there.
+            menu_dropdown: Style::default()
+                .fg(theme.menu_border_fg)
+                .bg(theme.menu_dropdown_bg),
+            menu_hover: crate::view::ui::MenuRowStyle::Hovered.style(&theme),
+            menu_disabled: crate::view::ui::MenuRowStyle::Disabled.style(&theme),
+            menu_info: crate::view::ui::MenuRowStyle::Info.style(&theme),
+            menu_separator: crate::view::ui::MenuRowStyle::Separator.style(&theme),
         }
     }
 }
@@ -248,30 +271,71 @@ impl Editor {
     /// next, and the existing walk remains the floor. Returns whether the tree
     /// claimed it.
     ///
-    /// Today no node in the tree carries a handler — every region is a `Host`
-    /// leaf standing in for a painter that has not migrated — so this always
-    /// declines and every event reaches the legacy path exactly as before.
-    /// That is the point: the seam is in place and inert, and a surface starts
-    /// taking its own input the moment it stops being a `Host`.
+    /// Only migrated surfaces carry handlers — every region is still a `Host`
+    /// leaf standing in for a painter that has not moved — so anything the
+    /// tree declines reaches the legacy path exactly as before. A surface
+    /// starts taking its own input the moment it stops being a `Host`.
     pub(crate) fn shell_dispatch(&mut self, input: fresh_ui::Input) -> bool {
         let Some(mut ui) = self.shell_ui.take() else {
             return false;
         };
-        let msgs = ui.dispatch(input);
+        let result = ui.dispatch(input);
         self.shell_ui = Some(ui);
-        if msgs.is_empty() {
-            return false;
-        }
-        for msg in msgs {
+        // Claimed is reported, not inferred. Producing a message and taking
+        // the event are different things: a hover moves a highlight without
+        // claiming the pointer, and a dismissal closes a menu while leaving a
+        // right-click to go on and open the next one.
+        let claimed = result.claimed;
+        for msg in result.msgs {
             match msg {
                 crate::view::shell::msg::UiMsg::Action(action) => {
                     // Straight into the pipeline that has always applied
                     // actions; nothing about it changes.
-                    let _ = self.handle_action(action);
+                    if let Err(e) = self.handle_action(action.clone()) {
+                        tracing::warn!("shell action {action:?} failed: {e}");
+                    }
                 }
-                crate::view::shell::msg::UiMsg::Ui(_) => {}
+                crate::view::shell::msg::UiMsg::Ui(fact) => self.apply_ui_fact(fact),
             }
         }
-        true
+        claimed
+    }
+
+    /// Apply a positional fact — the half of a message that never becomes a
+    /// keybinding.
+    fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact) {
+        use crate::view::shell::msg::UiFact;
+        match fact {
+            UiFact::CloseContextMenu => {
+                self.active_window_mut().close_context_menus();
+            }
+            UiFact::HighlightContextMenuItem(idx) => {
+                if let Some(core) = self.active_window_mut().context_menu_core_mut() {
+                    core.highlighted = idx;
+                }
+            }
+            UiFact::StepContextMenu(step) => {
+                use crate::view::shell::msg::MenuStep;
+                if let Some(core) = self.active_window_mut().context_menu_core_mut() {
+                    match step {
+                        MenuStep::Prev => core.prev_item(),
+                        MenuStep::Next => core.next_item(),
+                    }
+                }
+            }
+            UiFact::ActivateContextMenuItem(idx) => {
+                // The same two steps the old click handler took: move the
+                // highlight, then activate through the path Enter uses.
+                let Some((kind, _)) = self.active_window().open_context_menu() else {
+                    return;
+                };
+                if let Some(core) = self.active_window_mut().context_menu_core_mut() {
+                    core.highlighted = idx;
+                }
+                if let Err(e) = self.activate_highlighted_context_menu(kind) {
+                    tracing::warn!("context menu activation failed: {e}");
+                }
+            }
+        }
     }
 }

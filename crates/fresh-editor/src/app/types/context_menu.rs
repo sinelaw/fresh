@@ -41,17 +41,6 @@ pub struct ContextMenu {
     pub item_count: usize,
 }
 
-/// Result of hit-testing a screen position against a [`ContextMenu`] box.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContextMenuHit {
-    /// The position is outside the (clamped) menu box entirely.
-    Outside,
-    /// The position is on the top or bottom border row — inert.
-    Border,
-    /// The position is on item row `idx` (0-based).
-    Item(usize),
-}
-
 impl ContextMenu {
     /// Anchor a fresh menu of `item_count` items at the given screen
     /// position, highlight cleared to the first item.
@@ -67,22 +56,6 @@ impl ContextMenu {
     /// Total box height: one row per item plus the top and bottom borders.
     pub fn height(&self) -> u16 {
         self.item_count as u16 + 2
-    }
-
-    /// The anchor position clamped so the whole box stays on screen.
-    pub fn clamped_position(&self, screen_width: u16, screen_height: u16) -> (u16, u16) {
-        let x = if self.position.0 + self.width > screen_width {
-            screen_width.saturating_sub(self.width)
-        } else {
-            self.position.0
-        };
-        let h = self.height();
-        let y = if self.position.1 + h > screen_height {
-            screen_height.saturating_sub(h)
-        } else {
-            self.position.1
-        };
-        (x, y)
     }
 
     /// Move the highlight down one item, wrapping at the end.
@@ -103,45 +76,6 @@ impl ContextMenu {
         } else {
             self.highlighted - 1
         };
-    }
-
-    /// Classify a screen position against the (edge-clamped) menu box: an
-    /// item row, a border row, or outside. This is the single hit-test both
-    /// mouse hover and click routing consult, so the drawn box and the
-    /// clickable box can never disagree.
-    /// The menu's on-screen box (edge-clamped), as the rect `hit`
-    /// classifies against — so the chrome surface tree can carry the
-    /// menu's real geometry.
-    pub fn rect(&self, screen_width: u16, screen_height: u16) -> ratatui::layout::Rect {
-        let (x, y) = self.clamped_position(screen_width, screen_height);
-        ratatui::layout::Rect {
-            x,
-            y,
-            width: self.width,
-            height: self.height(),
-        }
-    }
-
-    pub fn hit(&self, col: u16, row: u16, screen_width: u16, screen_height: u16) -> ContextMenuHit {
-        let (menu_x, menu_y) = self.clamped_position(screen_width, screen_height);
-        let menu_height = self.height();
-        if col < menu_x || col >= menu_x + self.width || row < menu_y || row >= menu_y + menu_height
-        {
-            return ContextMenuHit::Outside;
-        }
-        // The first and last rows are the borders — inert.
-        if row == menu_y || row == menu_y + menu_height - 1 {
-            return ContextMenuHit::Border;
-        }
-        let idx = (row - menu_y - 1) as usize;
-        if idx < self.item_count {
-            ContextMenuHit::Item(idx)
-        } else {
-            // Unreachable given the bounds above (an interior row always maps
-            // to a valid item), but treat any gap as inert rather than
-            // fabricating an out-of-range index.
-            ContextMenuHit::Border
-        }
     }
 }
 

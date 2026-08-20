@@ -10,6 +10,8 @@
 
 use fresh_ui::{col, host, row, HostId, Node, Sizing};
 
+use super::msg::UiMsg;
+
 /// A region of the frame the host still paints itself.
 ///
 /// The discriminants are the `HostId` values carried in `Draw::Host`, so the
@@ -60,7 +62,7 @@ impl From<HostRegion> for HostId {
 /// decisions that today read `size` at the top of `render` — the dock's
 /// bail-out, the explorer's column count — are resolved from state before the
 /// description is built. See [`Frame::resolve_dock`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame {
     pub menu_bar: bool,
     pub status_bar: bool,
@@ -70,6 +72,13 @@ pub struct Frame {
     pub dock: Option<u16>,
     /// (columns, on_left)
     pub explorer: Option<(u16, bool)>,
+    /// The open context menu, if any. An overlay is an ordinary child of the
+    /// tree rather than a separately-ranked surface — which is the whole point
+    /// of moving them here.
+    pub menu: Option<super::context_menu::Menu>,
+    /// The open menu-bar dropdown chain, outermost level first. Empty when no
+    /// menu is open.
+    pub dropdowns: Vec<super::menu::DropdownLevel>,
 }
 
 impl Default for Frame {
@@ -81,6 +90,8 @@ impl Default for Frame {
             prompt_line: false,
             dock: None,
             explorer: None,
+            menu: None,
+            dropdowns: Vec::new(),
         }
     }
 }
@@ -123,9 +134,9 @@ impl Frame {
 /// position and callers use it — the suggestions popup anchors to the prompt
 /// row whether or not that row is drawn — so omitting it would silently move
 /// whatever hangs off it.
-pub fn frame_tree<M: 'static>(f: Frame) -> Node<M> {
+pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     let cells = |on: bool| Sizing::Cells(on as u16);
-    let body = match f.explorer {
+    let body: Node<UiMsg> = match f.explorer {
         Some((cols, true)) => row().flex(1).children([
             region(HostRegion::Explorer).w(Sizing::Cells(cols)),
             region(HostRegion::Body).flex(1),
@@ -148,13 +159,22 @@ pub fn frame_tree<M: 'static>(f: Frame) -> Node<M> {
         region(HostRegion::SearchOptions).h(cells(f.search_options)),
         region(HostRegion::PromptLine).h(cells(f.prompt_line)),
     ]);
-    row().children([
+    let frame = row().children([
         region(HostRegion::Dock).w(Sizing::Cells(f.dock.unwrap_or(0))),
         chrome,
-    ])
+    ]);
+    // Overlays, in paint order. Menu-bar dropdowns first, then a context menu
+    // over them — the order `layer_rank::MENU` below `layer_rank::CONTEXT_MENU`
+    // states in the precedence table, expressed here as the order they are
+    // declared in.
+    let frame = frame.children(super::menu::dropdown_chain(&f.dropdowns));
+    match &f.menu {
+        Some(menu) => frame.child(super::context_menu::context_menu(menu)),
+        None => frame,
+    }
 }
 
-fn region<M: 'static>(r: HostRegion) -> Node<M> {
+fn region(r: HostRegion) -> Node<UiMsg> {
     host(r.id())
 }
 
@@ -203,45 +223,7 @@ pub fn region_rects(
 ) -> Vec<(HostRegion, ratatui::layout::Rect)> {
     use fresh_ui::{Size, Ui};
 
-    let mut ui: Ui<()> = Ui::new();
+    let mut ui: Ui<UiMsg> = Ui::new();
     let spec = ui.frame(frame_tree(f), Size::new(size.width, size.height));
     regions_of(spec, size)
-}
-
-/// Debug-only: check the shell reproduces the rectangles the existing layout
-/// produced, and report every disagreement at once.
-///
-/// This is the same technique the chrome-geometry hoist used — the paint pass
-/// asserts that the live derivation agrees with what it just painted — applied
-/// to the frame. In debug builds it runs on every real frame, so the whole e2e
-/// suite becomes the verification that the shell can take the frame over.
-///
-/// Skipped in the squeeze band (frame shorter than its fixed rows), where the
-/// two layout engines deliberately starve different rows; that case is pinned
-/// by `squeeze_band_starves_a_different_row_than_ratatui` and is a decision
-/// recorded in the migration doc, not a defect.
-#[cfg(debug_assertions)]
-pub fn assert_parity(
-    f: Frame,
-    size: ratatui::layout::Rect,
-    expected: &[(HostRegion, ratatui::layout::Rect)],
-) {
-    if size.height < f.fixed_rows() || size.width == 0 || size.height == 0 {
-        return;
-    }
-    let got = region_rects(f, size);
-    for (region, want) in expected {
-        let Some((_, have)) = got.iter().find(|(r, _)| r == region) else {
-            debug_assert!(
-                false,
-                "shell frame parity: {region:?} missing from the shell layout \
-                 (frame {size:?}, {f:?})"
-            );
-            continue;
-        };
-        debug_assert_eq!(
-            have, want,
-            "shell frame parity: {region:?} disagrees (frame {size:?}, {f:?})"
-        );
-    }
 }

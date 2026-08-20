@@ -60,11 +60,28 @@ impl<F: Fn(&ThemeKey) -> Style> Palette for F {
 ///
 /// The migration's working state: the frame is a `fresh-ui` tree, but most of
 /// its regions are still `Host` leaves painted by the code that always painted
-/// them. This folds the native items and skips the hosts, so a region can move
-/// into the tree on its own without the ones around it having to move first.
+/// them. This folds the native items and skips the hosts.
+///
+/// # Migrate in paint order
+///
+/// There is one fold, and it runs *after* every legacy painter, so **anything
+/// native paints above everything that has not migrated**. Within the display
+/// list `fold` interleaves correctly by paint order; across the seam it cannot,
+/// because the legacy painters are not in the list.
+///
+/// The rule that follows: a region may become native only once everything that
+/// paints *over* it already has. Migration proceeds top-down through the old
+/// paint order — overlays first (the context menu, topmost, went first), then
+/// what they cover.
+///
+/// Getting this wrong is silent. The status bar is the next candidate and
+/// popups deliberately paint over its row, so migrating it before them would
+/// put the bar on top of the popup with nothing failing to say so. Splitting
+/// the fold into passes keyed to the legacy z-bands is the alternative if that
+/// order ever becomes impractical; it is not needed while the order holds.
 ///
 /// When the last region is native this collapses into [`fold`], whose
-/// `HostPainter` is the general form.
+/// `HostPainter` is the general form, and the rule retires with it.
 pub fn fold_native(spec: &LayoutSpec, buf: &mut Buffer, palette: &dyn Palette) -> Caret {
     struct Skip;
     impl HostPainter for Skip {
@@ -131,7 +148,13 @@ pub fn fold(
             // A hint about where selecting text is meaningful; nothing to draw.
             Draw::Selectable => {}
             Draw::Host(id) => {
-                if let Some(region) = HostRegion::from_host_id(*id) {
+                let region = HostRegion::from_host_id(*id);
+                debug_assert!(
+                    region.is_some(),
+                    "a host id with no region: {id:?} would paint nothing, in \
+                     silence"
+                );
+                if let Some(region) = region {
                     // Clipped to the frame, so a host never paints outside it.
                     let area = intersect(rect, clip);
                     if area.width > 0 && area.height > 0 {
@@ -221,10 +244,13 @@ fn border(buf: &mut Buffer, r: Rect, style: Style, clip: Rect) {
         put(buf, l, y, '│', style, clip);
         put(buf, right, y, '│', style, clip);
     }
-    put(buf, l, t, '╭', style, clip);
-    put(buf, right, t, '╮', style, clip);
-    put(buf, l, bottom, '╰', style, clip);
-    put(buf, right, bottom, '╯', style, clip);
+    // Plain corners, matching ratatui's default `BorderType::Plain` — the
+    // glyphs every bordered surface in the editor already draws. A rounded set
+    // would be a visible change on the first surface that migrates.
+    put(buf, l, t, '┌', style, clip);
+    put(buf, right, t, '┐', style, clip);
+    put(buf, l, bottom, '└', style, clip);
+    put(buf, right, bottom, '┘', style, clip);
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +302,19 @@ mod tests {
         Style::default()
     }
 
+    fn run_msg(
+        root: Node<crate::view::shell::msg::UiMsg>,
+        w: u16,
+        h: u16,
+        rec: &mut Recorder,
+    ) -> (Buffer, Caret) {
+        let mut ui: Ui<crate::view::shell::msg::UiMsg> = Ui::new();
+        let spec = ui.frame(root, Size::new(w, h)).clone();
+        let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
+        let caret = fold(&spec, &mut buf, &plain, rec);
+        (buf, caret)
+    }
+
     fn run(root: Node<()>, w: u16, h: u16, rec: &mut Recorder) -> (Buffer, Caret) {
         let mut ui: Ui<()> = Ui::new();
         let spec = ui.frame(root, Size::new(w, h)).clone();
@@ -299,7 +338,7 @@ mod tests {
             ..Frame::default()
         };
         let mut rec = Recorder::default();
-        let (buf, _) = run(frame_tree(f), 10, 4, &mut rec);
+        let (buf, _) = run_msg(frame_tree(f), 10, 4, &mut rec);
 
         let mut got: Vec<_> = rec.calls.iter().map(|(r, _)| *r).collect();
         got.sort();
@@ -354,7 +393,7 @@ mod tests {
             ..Frame::default()
         };
         let mut rec = Recorder::default();
-        let (buf, _) = run(frame_tree(f), 8, 2, &mut rec);
+        let (buf, _) = run_msg(frame_tree(f), 8, 2, &mut rec);
         for (region, rect) in &rec.calls {
             assert!(
                 rect.x + rect.width <= buf.area.width && rect.y + rect.height <= buf.area.height,
@@ -370,7 +409,7 @@ mod tests {
     fn a_host_region_can_own_the_caret() {
         let mut rec = Recorder::default();
         rec.caret_at = Some((HostRegion::Body, 3, 1));
-        let (_, caret) = run(frame_tree(Frame::default()), 10, 4, &mut rec);
+        let (_, caret) = run_msg(frame_tree(Frame::default()), 10, 4, &mut rec);
         assert_eq!(caret, Some((3, 1)));
     }
 
@@ -395,12 +434,16 @@ mod tests {
         );
     }
 
-    /// **The borrow shape**, as a compile-time proof: the fold reads the spec
-    /// off the `Ui` while the callback holds `&mut` on a separate host object.
-    /// This only type-checks because the `Ui` is *not* stored on the host —
-    /// the constraint documented at the top of this module.
+    /// `fold`'s signature must keep admitting a **mutable** host while the
+    /// display list is borrowed from the `Ui` — that is what lets a host
+    /// region take the `with_all_mut` split it needs to paint a buffer. A
+    /// `fold` that took `&mut Ui`, or a `HostPainter` taking `&self`, would
+    /// fail to compile here.
+    ///
+    /// It does not prove where the `Ui` is stored; that is enforced at the
+    /// call site by the `expect` in `render`.
     #[test]
-    fn the_ui_and_the_host_are_borrowed_disjointly() {
+    fn fold_admits_a_mutable_host_while_the_spec_is_borrowed() {
         struct Host {
             painted: u32,
         }
@@ -410,7 +453,7 @@ mod tests {
             }
         }
 
-        let mut ui: Ui<()> = Ui::new();
+        let mut ui: Ui<crate::view::shell::msg::UiMsg> = Ui::new();
         let mut host_state = Host { painted: 0 };
         let mut buf = Buffer::empty(Rect::new(0, 0, 10, 4));
 
@@ -438,7 +481,7 @@ mod native_tests {
     /// and each region's existing painter keeps producing exactly what it did.
     #[test]
     fn a_frame_of_host_regions_paints_nothing() {
-        let mut ui: Ui<()> = Ui::new();
+        let mut ui: Ui<crate::view::shell::msg::UiMsg> = Ui::new();
         let spec = ui
             .frame(frame_tree(Frame::default()), Size::new(20, 6))
             .clone();
@@ -446,19 +489,5 @@ mod native_tests {
         let before = buf.clone();
         fold_native(&spec, &mut buf, &plain);
         assert_eq!(buf, before, "host regions must be left to their painters");
-    }
-
-    /// And a native region *is* painted, so a surface starts drawing through
-    /// the fold the moment it stops being a host.
-    #[test]
-    fn a_native_region_is_painted() {
-        use crate::view::shell::status_bar::{status_bar, Segment, Side};
-        let mut ui: Ui<()> = Ui::new();
-        let segs = [Segment::new("mode", "NORMAL", Side::Left)];
-        let spec = ui.frame(status_bar(&segs), Size::new(20, 1)).clone();
-        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 1));
-        fold_native(&spec, &mut buf, &plain);
-        let row: String = (0..20).map(|x| buf[(x, 0)].symbol().to_string()).collect();
-        assert!(row.starts_with("NORMAL"), "got {row:?}");
     }
 }

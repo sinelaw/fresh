@@ -25,19 +25,27 @@ pub enum UiMsg {
     /// A UI fact with no meaning outside this frame. Consumed where messages
     /// are applied and never serialized.
     ///
-    /// Empty until a surface needs one — the first will be click-to-byte, when
-    /// the buffer host takes its own clicks.
-    #[allow(dead_code)]
     Ui(UiFact),
 }
 
 /// The positional half: facts about *where*, which never become keybindings.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UiFact {
-    /// Placeholder so the enum is not empty while the first real variant is
-    /// still on the legacy path. Never constructed.
-    #[allow(dead_code)]
-    None,
+    /// Dismiss the open context menu.
+    CloseContextMenu,
+    /// Move the open context menu's highlight to a row (hover).
+    HighlightContextMenuItem(usize),
+    /// Activate a row — the same path a keyboard Enter takes.
+    ActivateContextMenuItem(usize),
+    /// Move the highlight one row up or down.
+    StepContextMenu(MenuStep),
+}
+
+/// Which way a menu's highlight moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuStep {
+    Prev,
+    Next,
 }
 
 impl From<Action> for UiMsg {

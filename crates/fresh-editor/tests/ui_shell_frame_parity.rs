@@ -11,9 +11,15 @@
 //! lost at step one.
 //!
 //! This test builds the frame skeleton both ways — as a `fresh-ui` description
-//! folded to `Draw::Host` items, and as the ratatui `Layout` calls `render.rs`
-//! actually makes — and compares the resulting rectangles over a sweep of
-//! terminal sizes and visibility combinations.
+//! folded to `Draw::Host` items, and as the ratatui `Layout` calls that
+//! `render.rs` used to make — and compares the resulting rectangles over a
+//! sweep of terminal sizes and visibility combinations.
+//!
+//! S1b deleted the production copy of that second computation, so `reference()`
+//! below is now the only one left: this is a golden of the layout the editor
+//! had, not a live cross-check against one it still runs. That is still worth
+//! keeping — it is what stops the shell's layout drifting from the behaviour
+//! users have — but it is a pin, not an oracle.
 //!
 //! Note what is deliberately *not* compared: the dock's bail-out rules
 //! (`EDITOR_MIN`/`DOCK_MIN`) are app logic keyed on the frame width, not a
@@ -33,7 +39,7 @@ fn id(r: HostRegion) -> u64 {
 /// shape the real backend callback takes — `(HostId, rect)` is exactly what a
 /// region painter needs.
 fn fold(f: Frame, size: Rect) -> Vec<(u64, Rect)> {
-    let mut ui: Ui<()> = Ui::new();
+    let mut ui: Ui<fresh::view::shell::msg::UiMsg> = Ui::new();
     let spec = ui.frame(frame_tree(f), Size::new(size.width, size.height));
     let mut out: Vec<(u64, Rect)> = spec
         .items
@@ -168,6 +174,10 @@ fn combos() -> Vec<Frame> {
                             prompt_line: prompt,
                             dock,
                             explorer,
+                            // The frame layout is the same with or without an
+                            // overlay: a menu is a layer, out of flow.
+                            menu: None,
+                            dropdowns: Vec::new(),
                         });
                     }
                 }
@@ -185,7 +195,7 @@ fn sweep(sizes: &[(u16, u16)]) -> Vec<String> {
     let mut bad = Vec::new();
     for raw in combos() {
         for &(w, h) in sizes {
-            let f = raw.resolve_dock(w);
+            let f = raw.clone().resolve_dock(w);
             if h < f.fixed_rows() {
                 continue; // the squeeze band — see the test below
             }
@@ -195,8 +205,8 @@ fn sweep(sizes: &[(u16, u16)]) -> Vec<String> {
                 width: w,
                 height: h,
             };
-            let got = fold(f, size);
-            let want = reference(f, size);
+            let got = fold(f.clone(), size);
+            let want = reference(f.clone(), size);
             if got != want {
                 bad.push(format!(
                     "{w}x{h} {f:?}\n     fresh-ui: {got:?}\n     ratatui : {want:?}"
@@ -255,6 +265,8 @@ fn squeeze_band_starves_a_different_row_than_ratatui() {
         prompt_line: true,
         dock: None,
         explorer: None,
+        menu: None,
+        dropdowns: Vec::new(),
     };
     let size = Rect {
         x: 0,
@@ -262,8 +274,8 @@ fn squeeze_band_starves_a_different_row_than_ratatui() {
         width: 50,
         height: 2,
     };
-    let got = fold(f, size);
-    let want = reference(f, size);
+    let got = fold(f.clone(), size);
+    let want = reference(f.clone(), size);
     assert_ne!(
         got, want,
         "the squeeze divergence disappeared - if fresh-ui's flex starvation now \

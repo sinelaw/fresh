@@ -942,13 +942,159 @@ through the fold, takes its own input, and keeps its own state — with no
 further plumbing. That is what makes S2 and S3 a sequence of independent swaps
 rather than one flag day.
 
+#### The wave order was wrong, and the code said so
+
+The plan ordered M1 (status bar) before M2 (context menus) by increasing risk.
+Reading both renderers reverses that:
+
+- `render_status` is ~3,200 lines carrying a right-side **drop heuristic**
+  (shed low-priority elements until they fit alongside a ~40%-capped-at-40 left
+  budget, never dropping the first), a narrow-terminal case under 15 columns,
+  per-element truncation, separator theming, per-element styling that varies
+  with LSP state, and cell-provenance runs. Reproducing it cell-identically is
+  a wave in itself.
+- `render_context_menu` is ~50 lines: clear the area, pad each label, draw a
+  bordered block.
+
+So context menus went first — which is also what the plan wanted for a
+different reason: M2 is its designated go/no-go, the first surface to need a
+layer at all.
+
+**Context menu paint, migrated.** A context menu is now an ordinary `Layer` in
+the frame's tree rather than a separately-ranked surface with its own painter.
+Three things kept it cell-identical:
+
+- **The position is the old one.** The layer anchors at the point
+  `ContextMenu::clamped_position` already computed, rather than letting `fit`
+  place it — so the menu lands on the same cells, and the hit-testing that has
+  *not* migrated keeps agreeing with what is drawn.
+- **The padding is the old one**, reproduced character for character
+  (`" {:<width$}"`) rather than re-derived, because the row is what the cells
+  actually contain.
+- **The border glyphs changed to plain** (`┌┐└┘`). The fold drew rounded
+  corners, which nothing had noticed because no surface had used a border yet;
+  ratatui's default — and every bordered surface in the editor — is plain.
+
+**Paint moved late.** The fold used to run straight after layout, which was
+fine while it painted nothing. An overlay sits *above* the content around it,
+so layout still runs early (the regions need rectangles) and paint now runs
+where the context-menu paint used to be. Paint order is what puts a menu on
+top.
+
+`render_context_menus` and `render_context_menu` are deleted.
+
+**Pointer input and dismissal, migrated.** This is the first place the
+migration's central claim pays out: behaviour that was *written down* becomes
+behaviour that is *declared*.
+
+| Was | Is |
+|---|---|
+| a full-frame `chrome:context_menu_close_guard` box, pushed at z180, with a pointer arm that dismissed and consumed | `Modality::Inert` on the layer — everything outside is non-interactive because the layer says so |
+| a `chrome:context_menu` box plus `handle_click_context_menus`, hit-testing the pointer against the menu's rect to decide activate / dismiss / inert-border | the rows' own `on_click`, and `Dismiss::OUTSIDE_POINTER` for everything else |
+| `hover` + `on_hover_change`, walking hover targets to produce `HoverTarget::ContextMenuItem` and feed the highlight back | the rows' own `on_enter` |
+| a "right-click inside an open menu" arm, so the menu is not re-opened or re-targeted | `on_secondary_click` that stops propagation |
+
+`app/chrome/context_menu.rs` loses 138 lines: its `collect` is now empty, and
+`on_pointer`, `hover`, `on_hover_change` and `handle_click_context_menus` are
+gone.
+
+**One thing worth recording**, because it decides parity: dismissal is
+evaluated on the **press**, not the release (`hit.rs`'s `Input::Press` arm),
+which is exactly when the close-guard box dismissed too. A first version of the
+test watched only the release and saw nothing.
+
+**Keyboard, migrated.** Arrows, Enter and the modal swallow were a pre-band
+keyboard grab — a whole pipeline stage that ran before every layer rank. They
+are now an `on_key` on a focused child of the layer, and the pre-band grab
+stage is down to one component (the theme inspector's observer).
+
+Escape is the interesting one: it is *not* handled. The layer declares
+`Dismiss::ESCAPE`, and a key that dismisses a layer is answered by that layer.
+The handler must therefore decline it without stopping — stopping claims the
+key inside `propagate_key`, which returns before `dispatch_key` reaches
+dismissal at all, so the menu would swallow Escape and stay open. That is the
+shape of every modal that migrates: *act on what you own, stop what you swallow,
+and let the layer's declared dismissals through untouched.*
+
+`ContextMenu::on_key` and `handle_context_menu_key` are deleted.
+
+**Geometry, unified.** The layer anchored at the point
+`ContextMenu::clamped_position` computed — a bridge, while hit-testing was
+still legacy, that outlived its reason and left the editor with two places that
+decided where a menu goes. The layer now takes the **raw** click point with
+`Fit::CLAMP`, which is the same arithmetic (`x.min(frame - box).max(0)`)
+declared instead of written, and `clamped_position` is deleted.
+
+Its second caller was the web `Scene`, and unpicking that is the part worth
+recording, because every later wave hits it:
+
+- **Suppression is a fold decision, not a tree one.** The web bridge renders
+  with `suppress_chrome_cells` so the cells carry buffer interiors only, and
+  the menu's tree derivation was gated on that flag — which meant the retained
+  spec had no menu on exactly the path that needed its rectangle. The gate
+  moved to the `fold_native` call: the description is built either way, and
+  only the cell-writing half is skipped. That is what "backends are folds over
+  the display list" is worth in practice — two frontends, one layout.
+- **Consumers read the spec.** `context_menu::menu_rect(spec)` returns where
+  the menu actually landed, found through `LayoutSpec::index` by the layer's
+  key, and `Editor::shell_menu_rect` is its caller-side partner (the same shape
+  as `shell_region_now`, for a surface that is not a host region). The `Scene`
+  asks it instead of re-deriving the clamp.
+
+What remains of the old implementation is `layer_rank::CONTEXT_MENU`, and only
+because the PTY gate reads `blocks_terminal_input` off the overlay stack while
+the library derives the same fact from `raw_input()` — which is only meaningful
+once host leaves *declare* that they take raw input. Every region is a
+`PlainHost` today, so deriving it now would report the terminal blocked on
+every frame. It retires with the terminal grid's own host leaf (S5).
+
+#### Menu-bar dropdowns, paint
+
+The second overlay, and the first with real structure: a dropdown is a *chain*
+— the menu's own box plus one per open submenu level, each placed against the
+one before it. Each level is now a `Layer`, and the chain is the order they are
+declared in. That is the whole of "a submenu paints over the level it opened
+from"; the old renderer got the same result by painting in a loop, and a
+z-ordered scheme would have had to state it as a rule.
+
+The interesting work was not the tree. It was that the old dropdown decided
+three things in one pass and spelled two of them twice:
+
+- **`MenuRowStyle`** replaces two style ladders that had already drifted.
+  `build_dropdown_item_line` chose colours for the cells and
+  `record_dropdown_item_run` chose provenance keys for the theme inspector —
+  the same decision, written out separately, and the recorder's copy did not
+  know about hover, so it reported a hovered row as an ordinary one. There is
+  now one ladder with three renderings: `style()` for ratatui, `theme_keys()`
+  for the inspector, `shell_theme()` for the display list. The inspector's
+  hover bug goes with it.
+- **`dropdown_item_text`** is what a row *says*, separated from how it looks —
+  the padding, the checkbox glyph, the keybinding hint, the submenu arrow,
+  reproduced character for character because the row is what the cells contain.
+- **The walk publishes the description.** `MenuLayout` gains
+  `shell_dropdowns`: the same pass that decides each level's rectangle now also
+  says what its rows read, and the shell paints from that. Not a second
+  derivation of the menu — the only one.
+
+`render_dropdown_level` no longer writes a cell, so its `frame`, `theme` and
+`draw` parameters are gone, as is the ratatui `Paragraph`/`Block` that drew the
+box.
+
+**Paint only, deliberately.** The levels carry no modality, no dismissal and no
+handlers, and each is anchored at the rectangle `fit_dropdown_area` already
+chose. Pointer input still runs through `chrome::Menu`'s boxes and the
+full-frame `chrome:menu_close_guard`. That is the same three-step shape the
+context menus used — cells, then input, then let the layer's own `fit` decide
+placement — and it is what keeps the not-yet-migrated hit-testing agreeing with
+what is drawn.
+
 #### Revised stages
 
 | Stage | What moves | Why here |
 |---|---|---|
 | **S1** | Frame skeleton: every region a `Host` leaf, painted by today's painters. Input fully delegated. | **Landed.** The frame's geometry is the shell's, the retained tree persists across frames, native items paint through the fold, and input is offered to the shell ahead of the legacy walk. Every region is still a `Host` leaf, so nothing has changed on screen — which is the point. Remaining before S3: threading real `BodyState`. |
 | **S2** | The live-derived regions — status bar, search-options row — become native descriptions. | Smallest possible first real swap; both already derive their geometry purely (§2.4). |
-| **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. |
+| **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. **Context menus: done** (below) — paint, pointer, dismissal, keyboard and geometry, with only the `blocks_terminal_input` rank entry left behind. **Menu-bar dropdowns: paint migrated**; input and the close guard next. |
 | **S4** | Dock column, file explorer, plugin panels. | Depends on S3's layer semantics; carries the plugin API change. |
 | **S5** | Splits, tabs, scrollbars decompose; the buffer becomes the only `Host` leaf. | Requires the per-leaf `render_content` decision (§6.2); last because it is the only stage that touches the KEEP side. |
 
@@ -1089,6 +1235,21 @@ The e2e suite (~315 files) is the primary mechanism, used as-is:
 5. **Two implementations of one surface must not persist across waves.** A wave
    that cannot delete its predecessor indicates a defect in the seam — fix the
    seam rather than accumulate a second UI stack.
+
+   **A wave may split by channel, and must say so.** That rule is about the
+   same behaviour existing twice, not about a surface having to migrate in one
+   step. Paint, pointer, keyboard and modality can move separately — the
+   context menu moved paint, then pointer, and still has its keyboard grab and
+   its `layer_rank` entry — and that is legitimate *provided each channel has
+   exactly one implementation at every moment*. The menu's pointer input lives
+   in the tree and nowhere else; its keyboard grab lives in the chrome
+   component and nowhere else.
+
+   The cost is a surface spread across three files mid-wave, which is only
+   tolerable while it is *visibly* mid-wave. So a split wave names, in the
+   surface's own module doc, which channels have moved and which have not —
+   `view/shell/context_menu.rs` does — and the wave is not finished until the
+   last channel lands and the old file is deleted.
 6. **The caret and the caret-anchored popups are the subtle seam.** Get the M0
    caret arbitration and geometry-cache bridge right, or M4/M5 popups mis-anchor.
 
@@ -1144,6 +1305,29 @@ list.
 
 ### 6.2 Open decisions — settle each before the wave it blocks
 
+0. ~~**How does the editor learn the tree claimed an event?**~~ — **decided,
+   and it was the review's finding rather than the plan's.** The seam's
+   contract was briefly carried in the message channel: `shell_dispatch` read
+   "claimed" off "did any message come back", and a `UiFact::Consumed` message
+   existed to mean "there is no message". That produced a real bug (a
+   right-click outside a menu closed it and then failed to open the next one)
+   and silently swallowed hover from the legacy trackers.
+
+   `fresh-ui` reports it now — `Dispatch { msgs, claimed }` — which the
+   library's own gap rule required, since `propagate_all` already computed it
+   and threw it away. **The general lesson: when the editor finds itself
+   inferring something about routing, that is a missing library capability, not
+   a place for an editor convention.**
+0. **Migrate in paint order** — **decided**. There is one fold and it runs
+   after every legacy painter, so anything native paints above everything that
+   has not migrated. `fold` interleaves correctly *within* the display list but
+   cannot across the seam, because the legacy painters are not in it. So a
+   region may become native only once everything that paints over it already
+   has: top-down through the old paint order, overlays first. The failure is
+   silent — the status bar is next and popups paint over its row — so the rule
+   is recorded on `fold_native` where the next person will meet it. Splitting
+   the fold into passes keyed to the legacy z-bands is the fallback if the
+   order ever becomes impractical.
 1. ~~**The fold-callback API**~~ — **prototyped** (§5.0). `HostPainter` +
    `impl HostPainter for Editor`; paint order, clipping, the caret rule and the
    borrow are covered by tests. What remains is threading real per-frame state
@@ -1165,14 +1349,18 @@ list.
    `{offset, content, window}`; the plugin overview-ruler marker API has no
    expression. Extend the library's scrollbar, keep scrollbars behind the
    `Host` leaf, or drop the API.
-5. **The message-type split** (blocks M0). `UiMsg { Action(..), … }` is the
-   shape (§2.9); decide what stays a UI-geometry message consumed by `update`
-   (click→byte, drag→offset, tab-select) versus what becomes an `Action` in
-   the keybinding namespace.
-6. **Frame scheduling and rebuild cost** (blocks M1). Who calls `ui.frame` and
-   when; which subtrees must be `Shared`; what the M0 benchmark (§4.7)
-   actually measures at a sustained input rate.
-7. **Row visibility under squeeze** (blocks S1). When the visible fixed rows
+5. ~~**The message-type split**~~ — **decided and shipped** as
+   `UiMsg::{Action, Ui(UiFact)}` (`view/shell/msg.rs`). Anything bindable stays
+   an `Action`; positional facts are `UiFact` and are never serialized.
+6. **Frame scheduling and rebuild cost** — still open, and no longer gating.
+   It was written as an M0 exit criterion; S1, the context-menu wave and the
+   frame swap all shipped without it, so calling it a gate was wrong. The
+   measurement is still worth taking (a full chrome rebuild per frame, plus a
+   `Vec<String>` of labels per open menu), but it is a performance question to
+   answer with a profile, not a precondition.
+7. **Row visibility under squeeze** — still open; S1 shipped without deciding
+   it, and the divergence is *recorded* by
+   `squeeze_band_starves_a_different_row_than_ratatui`, not resolved by it. When the visible fixed rows
    cannot fit, `fresh-ui` and ratatui starve different rows (§5.0). Decide
    which rows `build()` drops as a function of available height, making the
    choice explicit app state instead of inheriting either engine's starvation
