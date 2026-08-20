@@ -43,7 +43,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * **Toggle Line Numbers** in a Compose/Page View buffer no longer writes a setting the user never chose, leaving no way to turn numbers off while composing.
   * Vi's `:set number` / `:set nonumber` are honoured again on a buffer carrying a per-buffer pin, where they had become a silent no-op that still reported success.
 * **Rulers**: the column guide is drawn on the column it names rather than one cell to its right, and it stays visible where it crosses full-width characters instead of leaving a hole in the bar (#2928, reported by @dhanoosu).
-* **Daemon mode**: resizing a terminal attached with `fresh -a` no longer smears the last-painted colour across the blank cells.
+* **Daemon mode**: resizing a terminal attached with `fresh -a` no longer smears the last-painted colour across the blank cells - seen as a purple/theme-coloured screen fill when dragging a Windows Terminal window between monitors over SSH (#2723, reported by @amirhosseindavoody).
 
 ### Internals
 
