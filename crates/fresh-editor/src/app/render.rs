@@ -2973,11 +2973,19 @@ impl Editor {
             .min(crate::view::prompt::MAX_VISIBLE_SUGGESTIONS);
         let height = suggestion_count as u16 + 2 + hints_height;
 
+        // Clamp the suggestions box to the rows actually available above
+        // the prompt line: on a terminal shorter than the full suggestion
+        // list (plus chrome + hints), the saturating y anchored the box at
+        // row 0 but kept the unclamped height, letting the box (and the
+        // `Clear` behind it) extend past the buffer's last row and panic
+        // with "index outside of buffer".
+        let max_rows_above_prompt = prompt_area.y; // rows 0..=prompt_area.y-1
+        let box_height = (height - hints_height).min(max_rows_above_prompt);
         let suggestions_area = ratatui::layout::Rect {
             x: prompt_area.x,
-            y: prompt_area.y.saturating_sub(height),
+            y: prompt_area.y.saturating_sub(box_height),
             width,
-            height: height - hints_height,
+            height: box_height,
         };
 
         // Blank the buffer cells under the suggestions box only when the
