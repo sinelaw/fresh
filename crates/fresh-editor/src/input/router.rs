@@ -548,6 +548,22 @@ pub fn mode_key_disposition(
             ChordResolution::Partial => return ModeKeyDisposition::ChordPending,
             ChordResolution::NoMatch => {}
         }
+        // A chord is in flight: the mode's ui-fallthrough single-key
+        // resolution must not claim the next key before the Normal-
+        // context chord it extends has had its say. Without this, a plugin
+        // mode (e.g. markdown-source) made C-x C-c abandon the pending C-x
+        // and run the whitelisted Copy action instead ("Copied line"),
+        // breaking every keymap chord whose second key resolves to a
+        // ui-fallthrough action. Resolve the in-flight chord against
+        // Normal first; only a NoMatch lets the mode's own single-key
+        // stage run.
+        if !chord_state.is_empty() {
+            match kb.resolve_chord(chord_state, event, KeyContext::Normal) {
+                ChordResolution::Complete(action) => return ModeKeyDisposition::Run(action),
+                ChordResolution::Partial => return ModeKeyDisposition::ChordPending,
+                ChordResolution::NoMatch => {}
+            }
+        }
         // Mode single-key resolution (custom > keymap > plugin defaults)
         let resolved = kb.resolve(event, mode_ctx);
         if resolved != Action::None {
