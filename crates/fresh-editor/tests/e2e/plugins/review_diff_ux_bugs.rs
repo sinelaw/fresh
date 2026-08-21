@@ -2289,3 +2289,189 @@ fn test_normal_review_lays_out_every_file() {
         "both changed files' hunks belong in the stream. Screen:\n{screen}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// FILES sidebar: it owns its scroll window
+// ---------------------------------------------------------------------------
+
+/// A repo with `count` modified `.rs` files — enough of them that the
+/// FILES sidebar's tree cannot show them all at once.
+fn repo_with_many_modified_files(count: usize) -> GitTestRepo {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    for i in 0..count {
+        fs::write(
+            repo.path.join(format!("src/mod_{i:03}.rs")),
+            format!("pub fn f_{i}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    for i in 0..count {
+        fs::write(
+            repo.path.join(format!("src/mod_{i:03}.rs")),
+            format!("pub fn f_{i}() {{ /* CHANGED */ }}\n"),
+        )
+        .unwrap();
+    }
+    repo
+}
+
+/// The sidebar's file rows, read out of the left-hand column band the
+/// FILES panel occupies (the diff stream names files too, so the rest of
+/// the row has to be cut away before counting).
+fn sidebar_file_rows(screen: &str, sidebar_cols: usize) -> Vec<String> {
+    screen
+        .lines()
+        .map(|l| l.chars().take(sidebar_cols).collect::<String>())
+        .filter(|l| l.contains("mod_"))
+        .collect()
+}
+
+/// Show the FILES sidebar (the `F` toggle) and settle the frame.
+fn show_files_panel(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('F'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.tick_and_render().unwrap();
+}
+
+/// Growing the terminal must grow the FILES tree with it. The row budget
+/// is the host's — the panel's live height minus its header and filter
+/// row — so the rows the resize added fill with files instead of staying
+/// blank while files are still unshown.
+#[test]
+fn test_files_panel_fills_its_height_after_a_resize() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(60);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+
+    let before = sidebar_file_rows(&harness.screen_to_string(), 20).len();
+    assert!(
+        before > 0,
+        "the sidebar should list files to begin with. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness.resize(120, 55).unwrap();
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let after = sidebar_file_rows(&screen, 20).len();
+    assert!(
+        after >= before + 20,
+        "25 rows of new panel height should carry ~25 more files, not stay \
+         blank: {before} rows before the resize, {after} after. Screen:\n{screen}"
+    );
+}
+
+/// Wheeling past the end of the file tree must stop there. The panel
+/// buffer underneath is pinned (`scrollable: false`), so the wheel can't
+/// fall through to it and carry the panel's own header off the top —
+/// which left a blank row at the bottom that nothing could scroll back.
+#[test]
+fn test_files_panel_wheel_past_the_end_keeps_the_header() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(60);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+
+    assert!(
+        harness.screen_to_string().contains("FILES"),
+        "the sidebar starts with its header on screen. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Well past the bottom of a 60-file tree, so the last events arrive
+    // with the tree already at its bound.
+    for _ in 0..60 {
+        harness
+            .send_mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 5,
+                row: 10,
+                modifiers: KeyModifiers::NONE,
+            })
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("FILES"),
+        "the FILES header must survive a wheel that runs off the end of the \
+         tree — it scrolled off when the wheel fell through to the panel \
+         buffer. Screen:\n{screen}"
+    );
+}
+
+/// The sidebar's scrollbar is the tree's, and it is grabbable: a press on
+/// the track jumps the tree to that position. The bar is painted inside
+/// the panel (the panel reserves the columns for it) because the panel's
+/// buffer is pinned and so reserves no scrollbar column of its own.
+#[test]
+fn test_files_panel_scrollbar_press_scrolls_the_tree() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(60);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+
+    let screen = harness.screen_to_string();
+    // The panel's right edge: the column of the divider between the
+    // sidebar and the diff, on a row the sidebar is drawing files into.
+    let divider_col = screen
+        .lines()
+        .find(|l| l.chars().take(40).collect::<String>().contains("mod_"))
+        .and_then(|l| l.chars().position(|c| c == '\u{2502}'))
+        .expect("the sidebar is drawn next to the diff") as u16;
+    let track_col = divider_col - 1;
+
+    let before = sidebar_file_rows(&screen, 20);
+    assert!(!before.is_empty());
+
+    // Near the bottom of the track: the tree should jump toward the end
+    // of the list.
+    harness.mouse_click(track_col, 25).unwrap();
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let after = sidebar_file_rows(&screen, 20);
+    assert_ne!(
+        before, after,
+        "pressing the sidebar's scrollbar should scroll its tree. \
+         Screen:\n{screen}"
+    );
+}

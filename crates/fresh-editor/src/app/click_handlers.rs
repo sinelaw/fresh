@@ -151,6 +151,18 @@ impl Editor {
     ) -> AnyhowResult<()> {
         use crate::model::event::{CursorId, Event};
         use crossterm::event::KeyModifiers;
+
+        // A scrollbar painted over a buffer-mounted widget panel sits
+        // inside the split's content rect (the panel reserves the columns
+        // for it), so the press arrives here rather than through
+        // `handle_click_scrollbar`. Grab it before anything else: the bar
+        // overlaps the list's rightmost column, and a press there is a
+        // scroll, not a click on the row behind it.
+        if self.try_split_widget_scrollbar_press(col, row) {
+            self.focus_split(split_id, buffer_id);
+            return Ok(());
+        }
+
         // Build modifiers string for plugins
         let modifiers_str = if modifiers.contains(KeyModifiers::SHIFT) {
             "shift".to_string()

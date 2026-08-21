@@ -253,8 +253,10 @@ interface ReviewState {
   // header; falls back to a ratio-derived estimate until the first
   // viewport_changed for that panel arrives.
   panelWidths: Record<string, number>;
-  // Last height in rows the host reported for each panel. The tree and
-  // list widgets need a row budget (`visibleRows`) to scroll within.
+  // Last height in rows the host reported for each panel. The panels'
+  // own list/tree windows are sized by the host; this is what
+  // `refreshViewportDimensions` reads for the diff pane's geometry, and
+  // what makes the side panels' relayout fire once per settled size.
   panelHeights: Record<string, number>;
   // Which comment the rail has selected (null = none). The rail is a
   // List widget: the host owns the selected *row*, the plugin owns which
@@ -2032,14 +2034,6 @@ let filesTree: FilesTree = {
     nodes: [], keys: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
 };
 
-/** Rows a side panel's list/tree can use: its height minus the header
- *  (and the filter field when it is showing). */
-function panelListRows(panel: 'files' | 'comments'): number {
-    const height = state.panelHeights[panel] ?? Math.max(8, state.viewportHeight - 6);
-    const chrome = 1 + (panel === 'files' ? 1 : 0); // header (+ filter field)
-    return Math.max(1, height - chrome);
-}
-
 /** The FILES panel spec: header, the filter field while `/` is open, and
  *  the file tree. */
 function buildFilesPanelSpec(): WidgetSpec {
@@ -2080,7 +2074,13 @@ function buildFilesPanelSpec(): WidgetSpec {
             nodes: filesTree.nodes,
             itemKeys: filesTree.keys,
             selectedIndex: selected,
-            visibleRows: panelListRows('files'),
+            // No `visibleRows`: the host sizes the tree to the panel's
+            // live height minus the rows its siblings occupy, and re-runs
+            // that on every resize. A plugin-side budget was a copy of the
+            // height taken from the last `viewport_changed`, and a grown
+            // panel kept the old, shorter window until some unrelated
+            // event happened to repaint it — the rows below the window
+            // stayed blank with files still to show.
             expandedKeys: filesTree.groupKeys,
             indentCols: FILES_TREE_INDENT,
             key: FILES_TREE_KEY,
@@ -2183,7 +2183,7 @@ function buildCommentsPanelSpec(): WidgetSpec {
             items: commentsList.items,
             itemKeys: commentsList.keys,
             selectedIndex: selected,
-            visibleRows: panelListRows('comments'),
+            // Host-auto-sized, like the FILES tree above.
             focusable: true,
             key: COMMENTS_LIST_KEY,
         }),
@@ -6646,7 +6646,14 @@ const REVIEW_LAYOUT = JSON.stringify({
         type: "split",
         direction: "h",
         ratio: FILES_PANEL_RATIO,
-        first: { type: "scrollable", id: "files" },
+        // Both side panels are widget panels whose list/tree owns its
+        // own scroll window, so the buffer under them is pinned
+        // (`scrollable: false`, as search_replace.ts does for the same
+        // reason). Left user-scrollable, a wheel that walked off the end
+        // of the tree fell through to the pane and scrolled the panel
+        // itself: the header slid off the top and a blank row appeared at
+        // the bottom, with no way to scroll it back.
+        first: { type: "scrollable", id: "files", scrollable: false },
         second: {
             type: "split",
             direction: "h",
@@ -6660,7 +6667,7 @@ const REVIEW_LAYOUT = JSON.stringify({
                 first: { type: "fixed", id: "sticky", height: 1 },
                 second: { type: "scrollable", id: "diff" },
             },
-            second: { type: "scrollable", id: "comments" },
+            second: { type: "scrollable", id: "comments", scrollable: false },
         },
     },
 });

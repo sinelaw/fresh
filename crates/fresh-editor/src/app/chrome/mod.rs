@@ -289,6 +289,11 @@ pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
     {
         return Some(PointerGrab::WidgetScrollbar);
     }
+    // Same grab for a scrollbar on a buffer-mounted widget panel; its
+    // tracks live on the editor rather than on a panel struct.
+    if ed.split_widget_scrollbar_drag.is_some() {
+        return Some(PointerGrab::WidgetScrollbar);
+    }
     let ms = &ed.active_window().mouse_state;
     if ms.dragging_scrollbar.is_some() {
         return Some(PointerGrab::VScrollbar);

@@ -768,6 +768,23 @@ impl Editor {
     /// the legacy fallback until it is). No padding is subtracted —
     /// the viewport height is already the buffer's usable rows.
     pub(super) fn widget_panel_height(&self, buffer_id: BufferId) -> Option<u32> {
+        // Prefer the rect the last draw actually gave this panel. The
+        // split view-state's viewport is a seed the layout pass computes,
+        // and for a buffer-group panel it can only be a guess: the group's
+        // inner tree is stashed out of the main split tree, so
+        // `apply_layout` finds no rect for those leaves and falls back to
+        // the whole editor height. Sizing a list to that overshoots the
+        // panel and clips its last rows.
+        let painted = self
+            .active_layout()
+            .split_areas
+            .iter()
+            .find(|(_, id, _, _, _, _)| *id == buffer_id)
+            .map(|(_, _, content_rect, _, _, _)| content_rect.height as u32)
+            .filter(|h| *h > 0);
+        if painted.is_some() {
+            return painted;
+        }
         self.windows
             .get(&self.active_window)
             .and_then(|w| w.buffers.splits())
@@ -777,6 +794,57 @@ impl Editor {
                     .find(|vs| vs.buffer_state(buffer_id).is_some() && vs.viewport.height > 0)
                     .map(|vs| vs.viewport.height as u32)
             })
+    }
+
+    /// Buffer-mounted widget panels whose split no longer matches the row
+    /// budget their auto-sized (`visible_rows: None`) lists and trees were
+    /// windowed to — a resize, a divider drag, a panel becoming visible.
+    ///
+    /// The comparison is against the height the panel was last *rendered*
+    /// against, not against the previous frame's viewport: a panel is then
+    /// repainted once per size change instead of once per frame, however
+    /// many frames the new size takes to settle.
+    pub(super) fn widget_panels_with_stale_height(&self) -> Vec<crate::widgets::PanelKey> {
+        self.widget_registry
+            .panel_keys()
+            .into_iter()
+            .filter(|key| {
+                let Some((buffer_id, _)) = self.widget_registry.buffer_and_spec_ref(key) else {
+                    return false;
+                };
+                // Floating and dock panels size themselves to their own
+                // frame (`floating_panel_inner_height`) and are re-rendered
+                // by the paths that move them; only the split-mounted ones
+                // take their budget from a split.
+                if Self::slot_for_panel_buffer(buffer_id).is_some() {
+                    return false;
+                }
+                match self.widget_panel_height(buffer_id) {
+                    Some(h) => self.widget_panel_render_heights.get(key) != Some(&h),
+                    None => false,
+                }
+            })
+            .collect()
+    }
+
+    /// Record the row budget `panel_key` was just rendered against. Called
+    /// from every path that renders a buffer-mounted panel, so
+    /// [`Self::widget_panels_with_stale_height`] can tell a panel that has
+    /// seen the current geometry from one that has not.
+    pub(super) fn record_widget_panel_render_height(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        avail_height: Option<u32>,
+    ) {
+        match avail_height {
+            Some(h) => {
+                self.widget_panel_render_heights
+                    .insert(panel_key.clone(), h);
+            }
+            None => {
+                self.widget_panel_render_heights.remove(panel_key);
+            }
+        }
     }
 
     /// Re-render an existing widget panel after an in-host state
@@ -793,6 +861,7 @@ impl Editor {
         // with 5 000 nodes that's a multi-MB deep clone per IPC, which
         // dominates the host's per-mutation cost during a streaming
         // search.
+        let rendered_height: Option<u32>;
         let (buffer_id, _is_floating, panel_width, out_pieces) = {
             let (buffer_id, spec) = match self.widget_registry.buffer_and_spec_ref(panel_key) {
                 Some(s) => s,
@@ -842,6 +911,7 @@ impl Editor {
                 Some(slot) => self.floating_panel_inner_height(slot),
                 None => self.widget_panel_height(buffer_id),
             };
+            rendered_height = avail_height;
             let theme_guard = self.theme.read().unwrap();
             let out = render_floating_spec(
                 focus_marker,
@@ -860,6 +930,7 @@ impl Editor {
             (buffer_id, is_floating, panel_width, out)
         };
         let _ = panel_width;
+        self.record_widget_panel_render_height(panel_key, rendered_height);
         let panel_slot = Self::slot_for_panel_buffer(buffer_id);
         let focus_cursor = out_pieces.focus_cursor;
         let entries = out_pieces.entries;
@@ -2450,6 +2521,69 @@ impl Editor {
             self.apply_widget_scroll(&panel_key, &key, off, t.visible);
         }
         true
+    }
+
+    /// Try to start a drag on a scrollbar painted over a *buffer-mounted*
+    /// widget panel (the review-diff sidebar, Search & Replace). Returns
+    /// true when the press landed on a track, so the caller skips the
+    /// click it would otherwise have delivered to the panel underneath.
+    ///
+    /// The floating-panel twin is [`Self::try_widget_scrollbar_press`];
+    /// the difference is only where the tracks live (on the editor here,
+    /// on the panel struct there).
+    pub(super) fn try_split_widget_scrollbar_press(&mut self, col: u16, row: u16) -> bool {
+        use crate::view::ui::scrollbar::ScrollbarState;
+        let Some((panel_key, track)) = self
+            .split_widget_scrollbar_tracks
+            .iter()
+            .find(|(_, t)| crate::view::ui::point_in_rect(t.rect, col, row))
+            .map(|(p, t)| (p.clone(), t.clone()))
+        else {
+            return false;
+        };
+        let state = ScrollbarState::new(track.total, track.visible, track.scroll);
+        let Some(new_offset) = self
+            .split_widget_scrollbar_mouse
+            .press(state, track.rect, col, row)
+        else {
+            return false;
+        };
+        self.split_widget_scrollbar_drag = Some((panel_key.clone(), track.list_key.clone()));
+        self.apply_widget_scroll(&panel_key, &track.list_key, new_offset, track.visible);
+        true
+    }
+
+    /// Continue an in-flight buffer-mounted scrollbar drag. Returns true
+    /// while one is active.
+    pub(super) fn try_split_widget_scrollbar_drag(&mut self, row: u16) -> bool {
+        use crate::view::ui::scrollbar::ScrollbarState;
+        let Some((panel_key, list_key)) = self.split_widget_scrollbar_drag.clone() else {
+            return false;
+        };
+        // Re-read the track: the panel re-renders as it scrolls, so its
+        // recorded geometry is the one from the latest draw.
+        let Some(track) = self
+            .split_widget_scrollbar_tracks
+            .iter()
+            .find(|(p, t)| *p == panel_key && t.list_key == list_key)
+            .map(|(_, t)| t.clone())
+        else {
+            return true;
+        };
+        let state = ScrollbarState::new(track.total, track.visible, track.scroll);
+        if let Some(off) = self
+            .split_widget_scrollbar_mouse
+            .drag(state, track.rect, row)
+        {
+            self.apply_widget_scroll(&panel_key, &list_key, off, track.visible);
+        }
+        true
+    }
+
+    /// End any in-flight buffer-mounted scrollbar drag.
+    pub(super) fn release_split_widget_scrollbar(&mut self) {
+        self.split_widget_scrollbar_mouse.release();
+        self.split_widget_scrollbar_drag = None;
     }
 
     /// End any in-flight floating-panel scrollbar drag.

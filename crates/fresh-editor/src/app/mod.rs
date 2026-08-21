@@ -1408,6 +1408,26 @@ pub struct Editor {
     /// cleared on button-up. `anchor_flat` is the press position as a
     /// flat byte offset into the widget's shadow TextEdit value.
     pub(crate) widget_text_drag: Option<WidgetTextDrag>,
+    /// Screen-space scrollbar tracks painted over buffer-mounted widget
+    /// panels at the last draw, one per overflowing List/Tree, tagged
+    /// with the panel that owns it. Floating panels keep the same thing
+    /// on the panel struct; split-mounted ones have no such struct, so
+    /// the editor holds theirs. Refreshed on every draw — the mouse
+    /// hit-test reads it to start or continue a drag.
+    pub(crate) split_widget_scrollbar_tracks: Vec<(crate::widgets::PanelKey, WidgetScrollbarTrack)>,
+    /// Press/drag/release state for those tracks (the canonical
+    /// `ScrollbarMouse`, as the floating panels use).
+    pub(crate) split_widget_scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
+    /// Panel and list key of the split-mounted scrollbar being dragged.
+    pub(crate) split_widget_scrollbar_drag: Option<(crate::widgets::PanelKey, String)>,
+    /// Row budget each buffer-mounted widget panel was last rendered
+    /// against, so a panel whose split has since changed size can be
+    /// re-rendered once — and only once — against the new one. Comparing
+    /// against what was *rendered* (rather than against the previous
+    /// frame's viewport) is what keeps that a single repaint instead of a
+    /// per-frame one.
+    pub(crate) widget_panel_render_heights:
+        std::collections::HashMap<crate::widgets::PanelKey, u32>,
 }
 
 /// See [`Editor::widget_text_drag`].

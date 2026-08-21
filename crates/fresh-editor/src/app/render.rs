@@ -782,6 +782,22 @@ impl Editor {
             self.request_plugin_render();
         }
 
+        // A split that changed size takes any widget panel mounted in it
+        // with it: an auto-sized (`visible_rows: None`) list or tree was
+        // windowed to the old row budget, and this draw is the first place
+        // the panel's real rect is known (see
+        // `widget_panels_with_stale_height`). Re-render those panels here
+        // and ask for the frame that shows the result, rather than leaving
+        // a grown panel with blank rows under its short list until
+        // something else happens to repaint it.
+        let resized_panels = self.widget_panels_with_stale_height();
+        if !resized_panels.is_empty() {
+            for panel_key in &resized_panels {
+                self.rerender_widget_panel(panel_key);
+            }
+            self.request_plugin_render();
+        }
+
         // Update previous_viewports for next frame's comparison.
         // Take both `previous_viewports` and the split view-states from
         // the same `__win` borrow so the iterator and the inserts share
@@ -4874,8 +4890,11 @@ impl Editor {
         use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 
         // Collect paint jobs first so the layout/registry borrows end
-        // before the frame is written.
+        // before the frame is written. Each job also becomes a track the
+        // mouse hit-test can grab, so these bars drag like the floating
+        // panels' do instead of being decoration.
         let mut jobs: Vec<(ratatui::layout::Rect, ScrollbarState)> = Vec::new();
+        let mut tracks: Vec<(crate::widgets::PanelKey, super::WidgetScrollbarTrack)> = Vec::new();
         for (split_id, buffer_id, content_rect, _, _, _) in &self.active_layout().split_areas {
             let panels = self.widget_registry.panels_for_buffer(*buffer_id);
             if panels.is_empty() {
@@ -4943,31 +4962,51 @@ impl Editor {
                     // own just past the content rect, so paint into that one
                     // and the two coincide. Two tracks side by side is what
                     // the reserved columns looked like before.
+                    //
+                    // That column only exists when the split actually
+                    // draws a buffer scrollbar. A panel whose buffer is
+                    // non-scrollable (the self-managing widget panels:
+                    // Search & Replace, the review-diff sidebar) is laid
+                    // out to the full split width, so painting past the
+                    // content rect put the bar on the split divider — one
+                    // column outside the panel, where it was overwritten
+                    // and the list looked like it had no scrollbar at all.
                     let region_right = content_rect
                         .x
                         .saturating_add(gutter)
                         .saturating_add(b.col as u16)
                         .saturating_add(b.width.saturating_sub(1) as u16);
                     let panel_right = content_rect.x + content_rect.width.saturating_sub(1);
+                    let has_buffer_scrollbar_column = self.config.editor.show_vertical_scrollbar
+                        && !self.active_window().is_non_scrollable_buffer(*buffer_id);
                     let sb_x = if b.col != 0 {
                         region_right.min(panel_right)
-                    } else if self.config.editor.show_vertical_scrollbar {
+                    } else if has_buffer_scrollbar_column {
                         content_rect.x + content_rect.width
                     } else {
                         panel_right
                     };
-                    jobs.push((
-                        ratatui::layout::Rect {
-                            x: sb_x,
-                            y: y as u16,
-                            width: 1,
-                            height: h as u16,
+                    let rect = ratatui::layout::Rect {
+                        x: sb_x,
+                        y: y as u16,
+                        width: 1,
+                        height: h as u16,
+                    };
+                    jobs.push((rect, ScrollbarState::new(sc.total, sc.visible, sc.offset)));
+                    tracks.push((
+                        panel_key.clone(),
+                        super::WidgetScrollbarTrack {
+                            list_key: b.key.clone().unwrap_or_default(),
+                            rect,
+                            total: sc.total,
+                            visible: sc.visible,
+                            scroll: sc.offset,
                         },
-                        ScrollbarState::new(sc.total, sc.visible, sc.offset),
                     ));
                 }
             }
         }
+        self.split_widget_scrollbar_tracks = tracks;
         if jobs.is_empty() {
             return;
         }
