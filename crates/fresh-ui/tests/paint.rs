@@ -538,3 +538,177 @@ fn a_constrained_run_reports_the_rect_it_was_given_not_the_one_it_wanted() {
          clip rather than the library's to hide"
     );
 }
+
+// -- anchoring and placement -------------------------------------------------
+//
+// `Anchor::Node` and four of the six `Place` variants had no caller and no test
+// anywhere in the repository — not in the library, its tests, its demo, or the
+// editor consuming it. These cover the placement each one promises, so that the
+// first real consumer inherits a guarantee rather than an assumption.
+
+/// The rectangles a keyed node's own subtree produced.
+fn rects_of(spec: &fresh_ui::LayoutSpec, needles: &[&str]) -> Vec<Rect> {
+    spec.items
+        .iter()
+        .filter(|i| matches!(&i.draw, Draw::Lines(l) if needles.contains(&&*l[0])))
+        .map(|i| i.rect)
+        .collect()
+}
+
+/// A trigger of known geometry with a layer hung off it, so each `Place` can be
+/// checked against one fixed anchor.
+fn placed(place: Place, anchor: Anchor) -> fresh_ui::LayoutSpec {
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().children([
+            text("pad").h(Sizing::Cells(2)),
+            row().children([
+                text("pad2").w(Sizing::Cells(4)),
+                col()
+                    .key("trigger")
+                    .w(Sizing::Cells(6))
+                    .h(Sizing::Cells(2))
+                    .children([
+                        text("T").h(Sizing::Cells(1)),
+                        layer()
+                            .anchor(anchor)
+                            .place(place)
+                            .child(text("pop").w(Sizing::Cells(3)).h(Sizing::Cells(1))),
+                    ]),
+            ]),
+        ]),
+        Size { w: 30, h: 12 },
+    )
+    .clone()
+}
+
+/// **`Anchor::Node` resolves a key to that node's rectangle**, which is what a
+/// chain of dependent layers needs: each level names the node it opens from
+/// rather than a point someone computed.
+#[test]
+fn a_layer_anchored_to_a_keyed_node_places_against_that_node() {
+    let spec = placed(Place::Below, Anchor::Node("trigger".into()));
+    let pop = rects_of(&spec, &["pop"]);
+    assert_eq!(pop.len(), 1);
+    // The trigger sits at x=4, y=2, 6x2 — so "below" is its bottom edge.
+    assert_eq!((pop[0].x, pop[0].y), (4, 4));
+}
+
+/// An `Anchor::Node` naming a key that is not in the tree falls back to the
+/// declaring parent rather than to the origin — a stale key misplaces a layer,
+/// it does not teleport it to a corner.
+#[test]
+fn an_anchor_naming_a_missing_node_falls_back_to_the_parent() {
+    let spec = placed(Place::Below, Anchor::Node("nope".into()));
+    let pop = rects_of(&spec, &["pop"]);
+    assert_eq!(pop.len(), 1);
+    assert_eq!(
+        (pop[0].x, pop[0].y),
+        (4, 4),
+        "the parent is the trigger here"
+    );
+}
+
+/// `Place::Above` puts the layer's *bottom* on the anchor's top edge.
+#[test]
+fn place_above_sits_on_the_anchors_top_edge() {
+    let spec = placed(Place::Above, Anchor::Parent);
+    let pop = rects_of(&spec, &["pop"]);
+    assert_eq!((pop[0].x, pop[0].y), (4, 1), "one row tall, so top - 1");
+}
+
+/// `Place::RightOf` puts the layer's left edge on the anchor's right edge, at
+/// the anchor's top — the placement a submenu chain is built from.
+#[test]
+fn place_right_of_starts_at_the_anchors_right_edge() {
+    let spec = placed(Place::RightOf, Anchor::Parent);
+    let pop = rects_of(&spec, &["pop"]);
+    assert_eq!((pop[0].x, pop[0].y), (10, 2), "trigger x=4 w=6");
+}
+
+/// `Place::LeftOf` is its mirror: the layer's *right* edge on the anchor's left.
+#[test]
+fn place_left_of_ends_at_the_anchors_left_edge() {
+    let spec = placed(Place::LeftOf, Anchor::Parent);
+    let pop = rects_of(&spec, &["pop"]);
+    assert_eq!((pop[0].x, pop[0].y), (1, 2), "three wide, so x - 3");
+}
+
+/// `Place::Fill` takes the anchor's rectangle outright — the layer is not
+/// placed *near* the anchor, it is sized *to* it.
+#[test]
+fn place_fill_takes_the_anchors_whole_rectangle() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui
+        .frame(
+            col().children([
+                text("pad").h(Sizing::Cells(2)),
+                col()
+                    .key("target")
+                    .w(Sizing::Cells(8))
+                    .h(Sizing::Cells(3))
+                    .children([
+                        text("T").h(Sizing::Cells(1)),
+                        layer()
+                            .anchor(Anchor::Node("target".into()))
+                            .place(Place::Fill)
+                            .child(col().theme("cover").child(text("x"))),
+                    ]),
+            ]),
+            Size { w: 30, h: 12 },
+        )
+        .clone();
+    let cover = spec
+        .items
+        .iter()
+        .find(|i| i.theme.as_str() == "cover")
+        .expect("the filling layer paints its ground");
+    assert_eq!(
+        (cover.rect.x, cover.rect.y, cover.rect.w, cover.rect.h),
+        (0, 2, 8, 3),
+        "the anchor's rectangle, not a placement beside it"
+    );
+}
+
+/// **Nested layers resolve against their parent's final rectangle.** A layer
+/// declared inside another is appended to the worklist while that one is being
+/// arranged, so the inner one sees where the outer actually landed — which is
+/// what makes a dependent chain (a submenu off a menu) expressible at all.
+#[test]
+fn a_layer_inside_a_layer_places_against_where_its_parent_landed() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui
+        .frame(
+            col().children([
+                text("pad").h(Sizing::Cells(3)),
+                col().key("root").w(Sizing::Cells(5)).children([
+                    text("R").h(Sizing::Cells(1)),
+                    layer()
+                        .key("outer")
+                        .anchor(Anchor::Node("root".into()))
+                        .place(Place::Below)
+                        .child(
+                            col().key("outerbox").w(Sizing::Cells(7)).children([
+                                text("out").h(Sizing::Cells(1)),
+                                layer()
+                                    .anchor(Anchor::Node("outerbox".into()))
+                                    .place(Place::RightOf)
+                                    .child(text("in").w(Sizing::Cells(2))),
+                            ]),
+                        ),
+                ]),
+            ]),
+            Size { w: 30, h: 12 },
+        )
+        .clone();
+    let out = rects_of(&spec, &["out"]);
+    let inn = rects_of(&spec, &["in"]);
+    assert_eq!(out.len(), 1, "the outer layer painted");
+    assert_eq!(inn.len(), 1, "and so did the one inside it");
+    assert_eq!(
+        inn[0].x,
+        out[0].x + 7,
+        "the inner layer starts at the outer box's right edge, so it saw the \
+         rectangle the outer one was finally given"
+    );
+}
