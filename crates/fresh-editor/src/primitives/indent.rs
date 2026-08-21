@@ -1189,11 +1189,32 @@ impl IndentCalculator {
             return Some(line_indent.saturating_sub(tab_size));
         }
 
-        // When the current line ends with a token captured as @dedent (`}`,
-        // `end`, `fi`, `done`, …), keep the new line at the same indent as
-        // the closing token. The grammar has already placed that token at the
-        // correct column matching its opener; the next line continues at the
-        // enclosing scope's indent.
+        // A line ending in `)` is ambiguous to the indent counter — and doubly
+        // so mid-edit, when the enclosing block is still unclosed and the parse
+        // window yields only ERROR nodes. The trailing `)` may close a braceless
+        // control head's condition (`if (a)`, `for (…)`, `while (…)` — the body
+        // must indent one level), a call/group on its own line (`foo(a)` — no
+        // indent), or a multi-line argument list. The per-language regex rules
+        // tier resolves this deterministically from the line text (its
+        // `indent_next_line` pattern encodes exactly which keywords open a
+        // braceless body), so decline here and let the public `calculate_indent`
+        // defer to it. This also restores parity with the C-family languages
+        // that have no bundled grammar and already use that tier (issue #2492).
+        let last_nonws_is_close_paren = last_nonws_offset
+            .and_then(|p| source.get(p))
+            .is_some_and(|&b| b == b')');
+        if last_nonws_is_dedent_capture && last_nonws_is_close_paren {
+            tracing::debug!(
+                "Cursor line ends with ')', deferring to the regex rules tier (issue #2492)"
+            );
+            return None;
+        }
+
+        // When the current line ends with another token captured as @dedent
+        // (`}`, `]`, `end`, `fi`, `done`, …), keep the new line at the same
+        // indent as the closing token. These are unambiguous block closers: the
+        // grammar has already placed the token at the correct column matching
+        // its opener; the next line continues at the enclosing scope's indent.
         if last_nonws_is_dedent_capture {
             let line_indent = Self::get_current_line_indent(buffer, position, tab_size);
             tracing::debug!(
@@ -1689,6 +1710,74 @@ mod tests {
         let indent = calc.calculate_indent(&buffer, position, &Language::CSharp, 4);
         // Should fall back to previous line indent (4 spaces)
         assert_eq!(indent, Some(4));
+    }
+
+    // ========================================================================
+    // Issue #2492: a braceless control-flow head (`if (a)`, `for (…)`,
+    // `while (…)`) in a *bundled* tree-sitter language (TypeScript / JavaScript)
+    // must indent the body one level — matching the C-family languages that use
+    // the regex rules tier. The bug was that the condition's closing `)` is
+    // captured as @dedent, which short-circuited to "maintain indent" (0)
+    // before the braceless-body indent could apply.
+    //
+    // Cursor sits at end of the head line (where Enter is pressed), with no
+    // trailing newline.
+    // ========================================================================
+
+    #[test]
+    fn test_typescript_braceless_control_head_indents() {
+        let mut calc = IndentCalculator::new();
+        for code in ["if (a)", "for (x of y)", "while (a)"] {
+            let buffer = Buffer::from_str_test(code);
+            let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::TypeScript, 4);
+            assert_eq!(
+                indent,
+                Some(4),
+                "braceless `{code}` should indent its body one level (got {indent:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_javascript_braceless_control_head_indents() {
+        let mut calc = IndentCalculator::new();
+        for code in ["if (a)", "for (x of y)", "while (a)"] {
+            let buffer = Buffer::from_str_test(code);
+            let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::JavaScript, 4);
+            assert_eq!(
+                indent,
+                Some(4),
+                "braceless `{code}` should indent its body one level (got {indent:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_typescript_braceless_head_indents_when_nested() {
+        // The body indents relative to the head's own column, not column 0.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("function f() {\n    if (a)");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::TypeScript, 4);
+        assert_eq!(indent, Some(8), "got {indent:?}");
+    }
+
+    #[test]
+    fn test_typescript_complete_one_line_constructs_do_not_over_indent() {
+        // Regression guard for the #2492 fix: lines that both open and close on
+        // themselves must NOT gain a level. A bare `function foo()` needs a
+        // brace body (it does not indent on its own, matching VS Code / the C
+        // family), an empty-bodied `if (a) {}` is complete, and an array
+        // literal is not a block head.
+        let mut calc = IndentCalculator::new();
+        for code in ["function foo()", "if (a) {}", "const a = [1, 2]"] {
+            let buffer = Buffer::from_str_test(code);
+            let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::TypeScript, 4);
+            assert_eq!(
+                indent,
+                Some(0),
+                "`{code}` should not indent the next line (got {indent:?})"
+            );
+        }
     }
 
     #[test]
