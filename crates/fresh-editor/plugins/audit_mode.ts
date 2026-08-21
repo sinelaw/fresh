@@ -6445,13 +6445,28 @@ editor.on("prompt_confirmed", async (args) => {
         const f = pendingDiscardFile;
         if (f) {
             const cwd = gitCwd();
-            if (f.category === 'untracked') {
-                await editor.spawnProcess("rm", ["--", f.path], cwd);
-            } else {
-                await editor.spawnProcess("git", ["checkout", "--", f.path], cwd);
-            }
+            // "Discard changes in file" means lose the file's changes entirely
+            // and bring it back to its committed (HEAD) state. For tracked
+            // files this must reset BOTH the index and the working tree:
+            // `git checkout -- <path>` only rewrites the working tree from the
+            // index, so a fully-staged change (clean working tree) would slip
+            // through untouched while we still reported success. `git checkout
+            // HEAD -- <path>` restores the index entry and the working tree to
+            // HEAD, dropping staged and unstaged edits alike.
+            const result = f.category === 'untracked'
+                ? await editor.spawnProcess("rm", ["--", f.path], cwd)
+                : await editor.spawnProcess("git", ["checkout", "HEAD", "--", f.path], cwd);
             await refreshMagitData();
-            editor.setStatus(`Discarded: ${f.path}`);
+            // Only claim a discard happened when the command actually
+            // succeeded — never tell the user an irreversible discard worked
+            // when it didn't.
+            if (result.exit_code === 0) {
+                editor.setStatus(`Discarded: ${f.path}`);
+            } else {
+                editor.setStatus(
+                    `Discard failed: ${(result.stderr || "").trim() || f.path}`,
+                );
+            }
         }
     } else {
         editor.setStatus("Discard cancelled");
