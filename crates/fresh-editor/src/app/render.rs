@@ -782,22 +782,6 @@ impl Editor {
             self.request_plugin_render();
         }
 
-        // A split that changed size takes any widget panel mounted in it
-        // with it: an auto-sized (`visible_rows: None`) list or tree was
-        // windowed to the old row budget, and this draw is the first place
-        // the panel's real rect is known (see
-        // `widget_panels_with_stale_height`). Re-render those panels here
-        // and ask for the frame that shows the result, rather than leaving
-        // a grown panel with blank rows under its short list until
-        // something else happens to repaint it.
-        let resized_panels = self.widget_panels_with_stale_height();
-        if !resized_panels.is_empty() {
-            for panel_key in &resized_panels {
-                self.rerender_widget_panel(panel_key);
-            }
-            self.request_plugin_render();
-        }
-
         // Update previous_viewports for next frame's comparison.
         // Take both `previous_viewports` and the split view-states from
         // the same `__win` borrow so the iterator and the inserts share
@@ -844,6 +828,25 @@ impl Editor {
         self.active_layout_mut().close_split_areas = close_split_areas;
         self.active_layout_mut().maximize_split_areas = maximize_split_areas;
         self.active_layout_mut().view_line_mappings = view_line_mappings;
+
+        // A split that changed size takes any widget panel mounted in it
+        // with it: an auto-sized (`visible_rows: None`) list or tree was
+        // windowed to the old row budget, and the rects published just
+        // above are the first place the panel's new geometry is known.
+        // Re-render those panels against it and ask for the frame that
+        // shows the result, rather than leaving a grown panel with blank
+        // rows under its short list until something else repaints it.
+        // Must stay below the `split_areas` assignment:
+        // `widget_panels_with_stale_height` reads this frame's rects, and
+        // against the previous frame's it would find nothing stale on the
+        // one frame that matters.
+        let restaled_panels = self.widget_panels_with_stale_height();
+        if !restaled_panels.is_empty() {
+            for panel_key in &restaled_panels {
+                self.rerender_widget_panel(panel_key);
+            }
+            self.request_plugin_render();
+        }
 
         // Widget panels mounted into splits render through the ordinary
         // buffer pipeline, which knows nothing about widget geometry —

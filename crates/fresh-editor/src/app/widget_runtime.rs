@@ -103,6 +103,26 @@ pub(super) fn render_floating_spec(
 /// positionless wheel to pick which widget inside a panel absorbs
 /// the scroll. No kind matching here: the capability is the kind's
 /// declaration.
+/// Whether `spec` contains a `List`/`Tree` that omitted `visible_rows` —
+/// the widgets whose row window is the host's to size, and so the only
+/// ones a change of panel height can leave laid out wrongly.
+fn spec_has_auto_sized_list(spec: &fresh_core::api::WidgetSpec) -> bool {
+    use fresh_core::api::WidgetSpec;
+    if matches!(
+        spec,
+        WidgetSpec::List {
+            visible_rows: None,
+            ..
+        } | WidgetSpec::Tree {
+            visible_rows: None,
+            ..
+        }
+    ) {
+        return true;
+    }
+    spec.children().any(spec_has_auto_sized_list)
+}
+
 fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<String> {
     let meta = crate::widgets::kinds::behavior(spec).box_meta(spec);
     if meta.picker_scroll_target {
@@ -775,15 +795,8 @@ impl Editor {
         // `apply_layout` finds no rect for those leaves and falls back to
         // the whole editor height. Sizing a list to that overshoots the
         // panel and clips its last rows.
-        let painted = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(_, id, _, _, _, _)| *id == buffer_id)
-            .map(|(_, _, content_rect, _, _, _)| content_rect.height as u32)
-            .filter(|h| *h > 0);
-        if painted.is_some() {
-            return painted;
+        if let Some(painted) = self.painted_panel_height(buffer_id) {
+            return Some(painted);
         }
         self.windows
             .get(&self.active_window)
@@ -796,20 +809,39 @@ impl Editor {
             })
     }
 
+    /// Height of the content rect the last draw gave `buffer_id`, or
+    /// `None` when it wasn't painted into a split at all (hidden panel,
+    /// a group slot pointing at some other buffer).
+    fn painted_panel_height(&self, buffer_id: BufferId) -> Option<u32> {
+        self.active_layout()
+            .split_areas
+            .iter()
+            .find(|(_, id, _, _, _, _)| *id == buffer_id)
+            .map(|(_, _, content_rect, _, _, _)| content_rect.height as u32)
+            .filter(|h| *h > 0)
+    }
+
     /// Buffer-mounted widget panels whose split no longer matches the row
     /// budget their auto-sized (`visible_rows: None`) lists and trees were
     /// windowed to — a resize, a divider drag, a panel becoming visible.
     ///
-    /// The comparison is against the height the panel was last *rendered*
-    /// against, not against the previous frame's viewport: a panel is then
-    /// repainted once per size change instead of once per frame, however
-    /// many frames the new size takes to settle.
+    /// Deliberately narrow, because the repaint it drives happens mid-draw:
+    ///
+    /// * only panels currently painted into a split (a panel whose buffer
+    ///   has been swapped out of its group's slot has no geometry to be
+    ///   stale against, and must not be rewritten underneath the plugin);
+    /// * only panels that actually *have* an auto-sized list or tree —
+    ///   a spec that pins every `visible_rows` lays out the same at any
+    ///   height, so repainting it would be work with no visible effect;
+    /// * and the comparison is against the height the panel was last
+    ///   *rendered* against, not the previous frame's viewport, so a panel
+    ///   is repainted once per size change rather than once per frame.
     pub(super) fn widget_panels_with_stale_height(&self) -> Vec<crate::widgets::PanelKey> {
         self.widget_registry
             .panel_keys()
             .into_iter()
             .filter(|key| {
-                let Some((buffer_id, _)) = self.widget_registry.buffer_and_spec_ref(key) else {
+                let Some((buffer_id, spec)) = self.widget_registry.buffer_and_spec_ref(key) else {
                     return false;
                 };
                 // Floating and dock panels size themselves to their own
@@ -819,10 +851,13 @@ impl Editor {
                 if Self::slot_for_panel_buffer(buffer_id).is_some() {
                     return false;
                 }
-                match self.widget_panel_height(buffer_id) {
-                    Some(h) => self.widget_panel_render_heights.get(key) != Some(&h),
-                    None => false,
+                if !spec_has_auto_sized_list(spec) {
+                    return false;
                 }
+                let Some(painted) = self.painted_panel_height(buffer_id) else {
+                    return false;
+                };
+                self.widget_panel_render_heights.get(key) != Some(&painted)
             })
             .collect()
     }
@@ -2533,10 +2568,29 @@ impl Editor {
     /// on the panel struct there).
     pub(super) fn try_split_widget_scrollbar_press(&mut self, col: u16, row: u16) -> bool {
         use crate::view::ui::scrollbar::ScrollbarState;
+        // Only tracks belonging to a keyed List/Tree: those are the ones
+        // `apply_widget_scroll` can move. A press claimed for anything else
+        // (a keyless box, an overflowing multi-line Text) would scroll
+        // nothing while still swallowing the click the panel underneath
+        // was owed.
         let Some((panel_key, track)) = self
             .split_widget_scrollbar_tracks
             .iter()
-            .find(|(_, t)| crate::view::ui::point_in_rect(t.rect, col, row))
+            .find(|(panel_key, t)| {
+                crate::view::ui::point_in_rect(t.rect, col, row)
+                    && self
+                        .widget_registry
+                        .buffer_and_spec_ref(panel_key)
+                        .is_some_and(|(_, spec)| {
+                            crate::widgets::find_widget_by_key(spec, &t.list_key).is_some_and(|w| {
+                                matches!(
+                                    w,
+                                    fresh_core::api::WidgetSpec::List { .. }
+                                        | fresh_core::api::WidgetSpec::Tree { .. }
+                                )
+                            })
+                        })
+            })
             .map(|(p, t)| (p.clone(), t.clone()))
         else {
             return false;

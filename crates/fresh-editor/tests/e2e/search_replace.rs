@@ -2880,3 +2880,58 @@ fn test_search_replace_positions_track_bulk_edits() {
         .wait_until(|h| cursor_sits_on(h, "ZZNEEDLE two"))
         .unwrap();
 }
+
+/// The results tree is auto-sized (it omits `visibleRows`), so growing
+/// the terminal has to grow the window it renders — the rows the resize
+/// added must fill with matches rather than stay blank while matches are
+/// still unshown. The repaint that does this reads the rects published by
+/// the draw it runs in; against the previous frame's it would find nothing
+/// stale on the one frame that matters, and this panel — unlike the
+/// review-diff sidebar — has no plugin-side relayout to cover for it.
+#[test]
+fn test_search_results_grow_with_the_panel_on_resize() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    for i in 0..40 {
+        fs::write(
+            project_root.join(format!("hit_{i:02}.txt")),
+            "NEEDLE_MARKER here\n",
+        )
+        .unwrap();
+    }
+
+    let start_file = project_root.join("hit_00.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("NEEDLE_MARKER").unwrap();
+
+    // The tree is windowing (40 matches, a panel that fits a handful).
+    harness
+        .wait_until(|h| h.screen_to_string().matches("NEEDLE_MARKER here").count() >= 2)
+        .unwrap();
+    let before = harness
+        .screen_to_string()
+        .matches("NEEDLE_MARKER here")
+        .count();
+
+    harness.resize(120, 60).unwrap();
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let after = screen.matches("NEEDLE_MARKER here").count();
+    assert!(
+        after >= before + 5,
+        "the rows the resize added should carry more matches, not stay \
+         blank while 40 of them wait to be shown: {before} match rows \
+         before the resize, {after} after. Screen:\n{screen}"
+    );
+}
