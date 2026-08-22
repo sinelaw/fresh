@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 #
-# Does install.sh fail honestly when GitHub does not answer?
+# Does install.sh stay honest, and stay anonymous, when GitHub does not answer?
 #
 #   scripts/test-install-failure-modes.sh
 #
-# The bug this pins down: helpers in install.sh return a URL by echoing it and
-# callers capture that with $(...). When a diagnostic went to stdout, a failed
-# lookup returned its own error message *as the URL*, the emptiness check that
-# was supposed to catch it passed, and curl was handed a string of ANSI escapes
-# to fetch -- reporting `bad range in URL position 3`, which names neither the
-# real cause (an exhausted API rate limit) nor anything the user can act on.
+# Two properties are pinned here.
 #
-# An exhausted rate limit is the ordinary case, not an exotic one: the
-# unauthenticated GitHub API allows 60 requests per hour per source IP, so any
-# shared egress -- a NAT, a CI runner, an office network -- reaches it.
+# 1. Anonymous access is enough. The installer must never call the GitHub API:
+#    unauthenticated, that API allows 60 requests per hour per source IP, so from
+#    any shared egress -- a NAT, a CI runner, an office network -- it is often
+#    already spent and answers 403. Installing an editor should not depend on a
+#    budget the user does not control, nor require a token. The public download
+#    endpoints need no credential, so those are all install.sh may use.
+#
+# 2. A failed lookup is never mistaken for a successful one. Helpers here return
+#    a URL by echoing it and callers capture that with $(...). When diagnostics
+#    went to stdout, a failed lookup returned its own error text *as the URL*,
+#    the emptiness check meant to catch that passed, and curl was handed a string
+#    of ANSI escapes to fetch -- reporting `bad range in URL position 3`, which
+#    names curl's own parser rather than anything the user can act on.
 #
 # Hermetic: curl is shimmed and PATH is reduced to that shim plus the utilities
 # install.sh needs, so no network is touched and the fallback methods (nix,
@@ -38,44 +43,65 @@ for tool in sh mktemp chmod tar awk grep cut tr head sed ln mkdir rm cp mv uname
     src="$(command -v "$tool" 2>/dev/null)" && ln -sf "$src" "$BINDIR/$tool"
 done
 
-# $1 = api http status the shim reports, $2 = whether asset downloads succeed
+# $1 = status the download endpoints report ("ok" serves them)
 make_curl_shim() {
     cat > "$BINDIR/curl" <<EOF
 #!/bin/sh
-# Faithful to the two behaviors install.sh depends on: without -f, curl exits 0
-# on an HTTP error and reports the status through -w; with -f it exits 22.
+# Records every request so the assertions can inspect what was asked for, then
+# answers as configured. Faithful to the two curl behaviors install.sh relies
+# on: without -f curl exits 0 on an HTTP error and reports the status through
+# -w, and with -f it exits 22.
+echo "\$*" >> "$WORK/requests.log"
+
 for a in "\$@"; do
   case "\$a" in
     *api.github.com*)
-      case " \$* " in
-        *-f*) echo "curl: (22) The requested URL returned error: $1" >&2; exit 22 ;;
-      esac
-      case " \$* " in *" -w "*) printf '%s' "$1" ;; esac
-      exit 0 ;;
-    https://github.com/*/releases/*)
-      if [ "$2" != "ok" ]; then
-        echo "curl: (22) The requested URL returned error: 404" >&2
-        exit 22
+      echo "SHIM-API-CALL: \$a" >&2
+      exit 3 ;;
+    */releases/latest)
+      # The version redirect. -w '%{url_effective}' reports where it landed.
+      if [ "$1" = "ok" ]; then
+        case " \$* " in *" -w "*) printf 'https://github.com/o/r/releases/tag/v9.9.9' ;; esac
+        exit 0
       fi
+      case " \$* " in *" -w "*) printf '' ;; esac
+      exit 22 ;;
+    */releases/latest/download/*)
+      if [ "$1" = "ok" ]; then
+        case " \$* " in *" -w "*) printf '200' ;; esac
+        exit 0
+      fi
+      case " \$* " in *" -w "*) printf '%s' "$1" ;; esac
+      # Faithful to the distinction install.sh depends on: with -f curl fails the
+      # call on an HTTP error, without -f it succeeds and leaves the status to be
+      # read from -w. Getting this wrong here silently turns every status into a
+      # transport failure and the diagnosis assertions below stop testing anything.
+      case " \$* " in
+        *" -f"*|*"-fsSL"*|*"-fSL"*) exit 22 ;;
+      esac
+      if [ "$1" = "000" ]; then exit 7; fi
       exit 0 ;;
   esac
 done
 # Every curl call install.sh makes targets one of the shapes above, so reaching
-# here means the URL was built from something that is not a URL -- which is
-# exactly the failure this script exists to catch. Real curl rejects such an
-# argument too, just with a message ("bad range in URL") that describes its own
-# parser rather than the cause.
+# here means the URL was built from something that is not a URL -- exactly the
+# failure this script exists to catch. Real curl rejects such an argument too,
+# just with a message ("bad range in URL") describing its own parser.
 echo "SHIM-UNEXPECTED-URL: \$*" >&2
 exit 3
 EOF
     chmod +x "$BINDIR/curl"
+    : > "$WORK/requests.log"
 }
 
 run_install() {
-    # A fresh HOME per run so nothing leaks between cases.
     local home="$WORK/home.$1"
     mkdir -p "$home"
+    # A token is deliberately present in the environment: if install.sh ever
+    # grows an authenticated path again, these runs would quietly take it and
+    # the anonymity assertions would stop meaning anything.
     env -i PATH="$BINDIR" HOME="$home" SHELL=/bin/sh \
+        GITHUB_TOKEN=must-not-be-used GH_TOKEN=must-not-be-used \
         timeout 60 sh "$INSTALL_SH" "${@:2}" 2>&1
 }
 
@@ -83,7 +109,6 @@ run_install() {
 # those pass for free if the script never ran. Every case is gated on this
 # first, so a broken harness reads as a failure rather than a clean sweep.
 assert_ran() {
-    # $1 = label, $2 = output
     if grep -q 'Installing\|Looking for\|\[INFO\]' <<<"$2"; then
         pass "$1: install.sh ran"
     else
@@ -91,97 +116,74 @@ assert_ran() {
     fi
 }
 
+assert_anonymous() {
+    # $1 = label, $2 = output
+    if grep -q 'SHIM-API-CALL' <<<"$2"; then
+        fail "$1: called the GitHub API"
+    else
+        pass "$1: no GitHub API call"
+    fi
+    if grep -qi 'authorization\|bearer\|must-not-be-used' "$WORK/requests.log"; then
+        fail "$1: sent credentials"
+    else
+        pass "$1: sent no credentials"
+    fi
+}
+
+assert_no_bad_url() {
+    if grep -q 'SHIM-UNEXPECTED-URL\|bad range in URL' <<<"$2"; then
+        fail "$1: handed curl something that is not a URL"
+    else
+        pass "$1: never asks curl to fetch a non-URL"
+    fi
+    if grep -qE 'Downloading .*(ERROR|\[0;31m)' <<<"$2"; then
+        fail "$1: a diagnostic was captured and used as a URL"
+    else
+        pass "$1: diagnostics do not leak into captured values"
+    fi
+}
+
 echo "install.sh failure modes"
 
-# --- The reported failure: API rate limited. ---
-make_curl_shim 403 fail
+# --- Anonymous access is enough, for every method. ---
+for method in tarball deb rpm appimage; do
+    make_curl_shim ok
+    OUT="$(run_install "anon.$method" --method="$method")"
+    assert_anonymous "$method" "$OUT"
+done
+
+# --- Downloads refused. GitHub rate limits anonymous downloads too, so a 403
+# --- here is not evidence the asset is missing and must not be reported as if
+# --- it were. ---
+make_curl_shim 403
 OUT="$(run_install ratelimited --method=tarball)"
-assert_ran "rate-limited" "$OUT"
-
-if grep -q 'bad range in URL' <<<"$OUT"; then
-    fail "reports curl's URL-parsing error instead of the real cause"
+assert_ran "download 403" "$OUT"
+assert_no_bad_url "download 403" "$OUT"
+if grep -qi 'rate limiting downloads' <<<"$OUT"; then
+    pass "a refused download is reported as rate limiting, not as a missing asset"
 else
-    pass "no 'bad range in URL' from a mangled URL"
+    fail "a refused download is not diagnosed as rate limiting"
 fi
 
-if grep -q 'SHIM-UNEXPECTED-URL' <<<"$OUT"; then
-    fail "handed curl something that is not a release URL"
+# --- The asset genuinely is not there. ---
+make_curl_shim 404
+OUT="$(run_install missing --method=tarball)"
+assert_no_bad_url "download 404" "$OUT"
+if grep -qi 'not published' <<<"$OUT"; then
+    pass "a 404 is reported as a missing asset"
 else
-    pass "never asks curl to fetch a non-URL"
+    fail "a 404 is not distinguished from other failures"
 fi
 
-if grep -qE 'Downloading .*(ERROR|\[0;31m)' <<<"$OUT"; then
-    fail "a diagnostic was captured and used as a URL"
-else
-    pass "diagnostics do not leak into captured values"
-fi
-
-if grep -q 'rate limit' <<<"$OUT"; then
-    pass "names the rate limit as the cause"
-else
-    fail "does not explain that the API rate limit is the cause"
-fi
-
-if grep -q 'GITHUB_TOKEN' <<<"$OUT"; then
-    pass "points at GITHUB_TOKEN as the way out"
-else
-    fail "offers no remedy for the rate limit"
-fi
-
-# --- The API is rate limited but the asset download works. ---
-# The universal build's name carries no version, so /releases/latest/download
-# reaches it without the API at all; this is the default `curl | sh` path and it
-# should not be affected by the limit.
-make_curl_shim 403 ok
-OUT="$(run_install redirect --method=tarball)"
-assert_ran "redirect" "$OUT"
-
-if grep -q 'rate limit' <<<"$OUT"; then
-    fail "consulted the rate-limited API when the redirect would do"
-else
-    pass "default install does not consult the API"
-fi
-
-# --- A hard network failure. ---
-make_curl_shim 000 fail
+# --- No network at all. ---
+make_curl_shim 000
 OUT="$(run_install offline --method=tarball)"
 assert_ran "offline" "$OUT"
-
-if grep -q 'SHIM-UNEXPECTED-URL' <<<"$OUT"; then
-    fail "offline path still handed curl a bad URL"
-else
-    pass "offline path fails without a bad URL"
-fi
-
-if grep -qi 'could not reach\|network' <<<"$OUT"; then
+assert_no_bad_url "offline" "$OUT"
+if grep -qi 'could not reach' <<<"$OUT"; then
     pass "offline path says the network is the problem"
 else
     fail "offline path does not mention the network"
-fi
-
-# --- Helpers whose value is captured must not fail merely by having nothing
-# --- to say. Under `set -e`, `x=$(f)` takes f's status, so a helper that
-# --- returns non-zero on an ordinary empty result aborts the whole installer.
-probe="$WORK/probe.sh"
-{
-    echo 'set -e'
-    sed -n '/^api_auth_header()/,/^}/p' "$INSTALL_SH"
-    echo '_auth=$(api_auth_header)'
-    echo 'echo "SURVIVED:${_auth}"'
-} > "$probe"
-
-OUT="$(env -u GITHUB_TOKEN -u GH_TOKEN sh "$probe" 2>&1)"
-if [[ "$OUT" == SURVIVED:* ]]; then
-    pass "api_auth_header succeeds when no token is set"
-else
-    fail "api_auth_header aborts the installer when no token is set"
-fi
-
-OUT="$(env GITHUB_TOKEN=probe-token sh "$probe" 2>&1)"
-if [[ "$OUT" == *"Bearer probe-token"* ]]; then
-    pass "api_auth_header uses GITHUB_TOKEN when present"
-else
-    fail "api_auth_header ignores GITHUB_TOKEN"
 fi
 
 echo
