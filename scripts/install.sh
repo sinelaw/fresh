@@ -68,10 +68,21 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-log_info()    { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
-log_success() { printf "${GREEN}[SUCCESS]${NC} %s\n" "$1"; }
-log_warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
-log_error()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; exit 1; }
+# Every diagnostic goes to stderr, and not only for tidiness: several helpers
+# below return a value by echoing it, and a caller captures that with $(...).
+# A diagnostic on stdout would be captured as if it were the value, so a failure
+# would be indistinguishable from success and the message itself would be
+# handed onwards as data. Keeping the two streams apart is what makes an empty
+# capture a reliable signal that the helper failed.
+log_info()    { printf "${BLUE}[INFO]${NC} %s\n" "$1" >&2; }
+log_success() { printf "${GREEN}[SUCCESS]${NC} %s\n" "$1" >&2; }
+log_warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1" >&2; }
+
+# Note that `exit` inside $(...) ends only the subshell the substitution runs
+# in, so log_error cannot be relied on to stop the script from a helper whose
+# output is captured. Those helpers return a status instead; log_error is for
+# the top-level paths, where the exit does what it says.
+log_error()   { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; exit 1; }
 
 check_cmd() { command -v "$1" >/dev/null 2>&1; }
 
@@ -186,8 +197,24 @@ sha256_of() {
 # wrong URL or a response that did not come from the release.
 download_verified() {
     # $1 = url, $2 = destination path
+
+    # A last guard rather than a redundant one: this function is always handed a
+    # URL that some other helper produced, and the cost of that helper failing
+    # open once already was curl being asked to fetch a diagnostic string. Refuse
+    # anything that is not an http(s) URL instead of passing it on.
+    case "$1" in
+        https://*|http://*) ;;
+        *) log_error "refusing to download from a malformed location: $1" ;;
+    esac
+
     log_info "Downloading $(basename "$1")..."
-    curl -fSL "$1" -o "$2" || log_error "download failed: $1"
+
+    # A fetch that does not land is reported to the caller rather than ending the
+    # run, because for some assets there is a second place worth asking. Note the
+    # asymmetry with the verification below: failing to *get* bytes is a reason to
+    # look elsewhere, whereas getting bytes that do not verify is not -- that stays
+    # fatal, since retrying it from another source would only launder the problem.
+    curl -fSL "$1" -o "$2" || return 1
 
     sums=$(curl -fsSL "$1.sha256" 2>/dev/null || true)
     [ -n "$sums" ] || log_error "no .sha256 published for $(basename "$1"); refusing to install unverified bytes."
@@ -204,20 +231,79 @@ download_verified() {
 # --- Release metadata ---
 
 RELEASE_JSON=""
+RELEASE_JSON_FAILED=0
 
-fetch_release_json() {
-    [ -n "$RELEASE_JSON" ] && return 0
-    check_cmd curl || log_error "curl is required."
-    make_workdir
-    RELEASE_JSON="$WORKDIR/release.json"
-    curl -fsSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
-        -o "$RELEASE_JSON" || log_error "could not fetch the latest release metadata."
+# The unauthenticated GitHub API allows 60 requests per hour per source IP, and
+# it answers 403 once that is spent. Behind shared egress -- a NAT, a CI runner,
+# an office network -- that budget is routinely gone, so a 403 here says nothing
+# about whether a release exists and must not be reported as if it did.
+#
+# A token raises the limit to 5000/hour. GITHUB_TOKEN and GH_TOKEN are the names
+# the gh CLI and Actions already set, so an environment that has one gets the
+# higher limit without being asked for it.
+#
+# Returns success whether or not a token was found. Having no token is the
+# ordinary case, not an error, and this is read as `_auth=$(api_auth_header)`:
+# under `set -e` an assignment takes the status of the command substitution, so
+# returning non-zero here would abort the installer for every user without a
+# token. (That is currently masked by the callers sitting in `||` lists, which
+# suppress `set -e` -- exactly the kind of correctness-by-coincidence worth not
+# depending on.)
+api_auth_header() {
+    _tok="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+    if [ -n "$_tok" ]; then
+        printf 'Authorization: Bearer %s' "$_tok"
+    fi
     return 0
 }
 
-# URL of the asset whose filename is exactly $1.
+# Returns non-zero on failure rather than exiting: every caller reaches this
+# through $(...), where an exit would end only the subshell and let the script
+# continue with the error text in place of a URL.
+fetch_release_json() {
+    [ "$RELEASE_JSON_FAILED" = "1" ] && return 1
+    [ -n "$RELEASE_JSON" ] && return 0
+    check_cmd curl || { log_warn "curl is required to read the release metadata."; RELEASE_JSON_FAILED=1; return 1; }
+    make_workdir
+
+    _json="$WORKDIR/release.json"
+    _auth=$(api_auth_header)
+    if [ -n "$_auth" ]; then
+        _code=$(curl -sSL -w '%{http_code}' -H "$_auth" \
+            "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
+            -o "$_json" 2>/dev/null) || _code=000
+    else
+        _code=$(curl -sSL -w '%{http_code}' \
+            "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
+            -o "$_json" 2>/dev/null) || _code=000
+    fi
+
+    if [ "$_code" = "200" ]; then
+        RELEASE_JSON="$_json"
+        return 0
+    fi
+
+    RELEASE_JSON_FAILED=1
+    case "$_code" in
+        403|429)
+            log_warn "GitHub's API rate limit is exhausted for this network (HTTP $_code)."
+            if [ -z "$_auth" ]; then
+                log_warn "Set GITHUB_TOKEN to raise the limit, or retry in a few minutes."
+            else
+                log_warn "Retry in a few minutes; the limit resets hourly."
+            fi
+            ;;
+        000) log_warn "Could not reach api.github.com; check the network or a proxy." ;;
+        *)   log_warn "Unexpected reply from api.github.com (HTTP $_code)." ;;
+    esac
+    return 1
+}
+
+# URL of the asset whose filename is exactly $1. Prints nothing and returns
+# non-zero when the metadata is unavailable, so a caller capturing this gets an
+# empty string and can fall back.
 asset_url_exact() {
-    fetch_release_json
+    fetch_release_json || return 1
     tr ',' '\n' < "$RELEASE_JSON" \
         | grep '"browser_download_url"' \
         | cut -d'"' -f4 \
@@ -228,7 +314,7 @@ asset_url_exact() {
 # URL of the first asset containing $2 and ending in $1 (for versioned names).
 asset_url_match() {
     # $1 = suffix (e.g. .deb), $2 = arch token
-    fetch_release_json
+    fetch_release_json || return 1
     tr ',' '\n' < "$RELEASE_JSON" \
         | grep '"browser_download_url"' \
         | cut -d'"' -f4 \
@@ -395,17 +481,40 @@ do_install_tarball() {
     # can already read gzip. (The dist archives are xz; those are unpacked by
     # wrapper installers that bring their own tooling.)
     ASSET="${BIN_NAME}-${TARGET}.tar.gz"
-    URL=$(asset_url_exact "$ASSET")
-    if [ -z "$URL" ]; then
-        log_warn "The latest release has no $ASSET."
-        return 1
-    fi
+
+    # The universal build's filename carries no version, so the release does not
+    # have to be enumerated to find it: GitHub redirects /releases/latest/download
+    # to the current release's asset of that name, and serves the .sha256 sidecar
+    # the same way. That path is not the API and is not rate limited, which
+    # matters because this is the branch `curl ... | sh` takes by default -- the
+    # API's 60-requests-per-hour-per-IP budget is not something an installer
+    # should spend when it has an exact name to ask for.
+    URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download/${ASSET}"
 
     log_info "Installing the universal build ($TARGET)..."
     make_workdir
 
     ARCHIVE="$WORKDIR/$ASSET"
-    download_verified "$URL" "$ARCHIVE"
+
+    # The download is its own availability check. A preflight HEAD would have to
+    # follow the redirect to the signed asset host, which is a second request that
+    # can stall on its own, to learn only what the GET is about to report anyway.
+    if ! download_verified "$URL" "$ARCHIVE"; then
+        # Reaching here means the redirect did not serve the asset, which the API
+        # may be able to explain -- a renamed asset, a release published without
+        # one. It is the fallback rather than the first move because it is the
+        # rate-limited path.
+        log_warn "The release download did not serve $ASSET; asking the API."
+        URL=$(asset_url_exact "$ASSET") || URL=""
+        if [ -z "$URL" ]; then
+            log_warn "The latest release has no reachable $ASSET."
+            return 1
+        fi
+        download_verified "$URL" "$ARCHIVE" || {
+            log_warn "Could not download $ASSET."
+            return 1
+        }
+    fi
 
     EXTRACT="$WORKDIR/extract"
     mkdir -p "$EXTRACT"
@@ -523,7 +632,7 @@ install_debian() {
     check_cmd dpkg || log_error "dpkg not found; this does not look like a Debian-based system."
 
     ARCH=$(dpkg --print-architecture)
-    URL=$(asset_url_match "\.deb" "$ARCH")
+    URL=$(asset_url_match "\.deb" "$ARCH") || URL=""
 
     if [ -z "$URL" ]; then
         log_warn "No .deb package found for $ARCH."
@@ -532,7 +641,7 @@ install_debian() {
 
     make_workdir
     TEMP_DEB="$WORKDIR/${BIN_NAME}.deb"
-    download_verified "$URL" "$TEMP_DEB"
+    download_verified "$URL" "$TEMP_DEB" || log_error "download failed: $URL"
 
     log_info "Installing via dpkg (you may be asked for your password)..."
     run_privileged dpkg -i "$TEMP_DEB"
@@ -545,7 +654,7 @@ install_fedora() {
     check_cmd curl || log_error "curl is required."
 
     ARCH=$(uname -m)
-    URL=$(asset_url_match "\.rpm" "$ARCH")
+    URL=$(asset_url_match "\.rpm" "$ARCH") || URL=""
 
     if [ -z "$URL" ]; then
         log_warn "No .rpm package found for $ARCH."
@@ -554,7 +663,7 @@ install_fedora() {
 
     make_workdir
     TEMP_RPM="$WORKDIR/${BIN_NAME}.rpm"
-    download_verified "$URL" "$TEMP_RPM"
+    download_verified "$URL" "$TEMP_RPM" || log_error "download failed: $URL"
 
     log_info "Installing via rpm (you may be asked for your password)..."
     if check_cmd zypper; then
@@ -579,7 +688,7 @@ do_install_appimage() {
         *) log_warn "AppImage not available for architecture: $(uname -m)"; return 1 ;;
     esac
 
-    URL=$(asset_url_match "\.AppImage" "$APPIMAGE_ARCH")
+    URL=$(asset_url_match "\.AppImage" "$APPIMAGE_ARCH") || URL=""
     if [ -z "$URL" ]; then
         log_warn "No AppImage found for $APPIMAGE_ARCH."
         return 1
@@ -590,7 +699,7 @@ do_install_appimage() {
     TEMP_EXTRACT="$WORKDIR/appimage-extract"
     mkdir -p "$TEMP_EXTRACT"
 
-    download_verified "$URL" "$TEMP_APPIMAGE"
+    download_verified "$URL" "$TEMP_APPIMAGE" || log_error "download failed: $URL"
     chmod +x "$TEMP_APPIMAGE"
 
     log_info "Extracting AppImage..."
