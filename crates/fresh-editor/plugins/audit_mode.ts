@@ -830,7 +830,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
     // Staged diffs
     if (hasStaged) {
-        const result = await editor.spawnProcess("git", ["diff", "--cached", "--unified=3"], cwd);
+        const result = await editor.spawnProcess("git", ["diff", "--no-ext-diff", "--cached", "--unified=3"], cwd);
         if (result.exit_code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'staged'));
         }
@@ -838,7 +838,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
     // Unstaged diffs
     if (hasUnstaged) {
-        const result = await editor.spawnProcess("git", ["diff", "--unified=3"], cwd);
+        const result = await editor.spawnProcess("git", ["diff", "--no-ext-diff", "--unified=3"], cwd);
         if (result.exit_code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'unstaged'));
         }
@@ -847,7 +847,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
     // Untracked file diffs
     for (const f of untrackedFiles) {
         const result = await editor.spawnProcess("git", [
-            "diff", "--no-index", "--unified=3", "/dev/null", f.path
+            "diff", "--no-ext-diff", "--no-index", "--unified=3", "/dev/null", f.path
         ], cwd);
         if (result.stdout.trim()) {
             const hunks = parseDiffOutput(result.stdout, 'untracked');
@@ -6874,7 +6874,10 @@ function parseRangeInput(input: string): ReviewRange | null {
  * still works; untracked / staged categories are meaningless here.
  */
 async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; files: FileEntry[] }> {
-    const args = range.command || ["diff", "--unified=3", `${range.from}..${range.to}`];
+    // This output is parsed as a unified patch below. A user-level
+    // `diff.external` setting (for example `difft`) changes the output format,
+    // so force Git's native formatter just as git-gutter does.
+    const args = range.command || ["diff", "--no-ext-diff", "--unified=3", `${range.from}..${range.to}`];
     const cwd = gitCwd();
     const result = await editor.spawnProcess("git", args, cwd);
     if (result.exit_code !== 0) {
@@ -7027,7 +7030,7 @@ editor.on("prompt_confirmed", (args) => {
         from: ref,
         to: ref,
         label: ref,
-        command: ["stash", "show", "-p", "--unified=3", ref],
+        command: ["stash", "show", "-p", "--no-ext-diff", "--unified=3", ref],
     });
     return true;
 });
@@ -7230,12 +7233,12 @@ async function side_by_side_diff_current_file() {
     let diffOutput: string;
     if (isUntracked) {
         // For untracked files, use --no-index to diff against /dev/null
-        const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "--no-index", "--unified=3", "--", "/dev/null", filePath]);
+        const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "--no-ext-diff", "--no-index", "--unified=3", "--", "/dev/null", filePath]);
         // git diff --no-index exits with 1 when there are differences, which is expected
         diffOutput = result.stdout || "";
     } else {
         // For tracked files, use normal diff against HEAD
-        const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "HEAD", "--unified=3", "--", filePath]);
+        const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "--no-ext-diff", "HEAD", "--unified=3", "--", filePath]);
         if (result.exit_code !== 0) {
             editor.setStatus(editor.t("status.failed_git_diff"));
             return;

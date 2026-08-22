@@ -2077,6 +2077,45 @@ fn open_review_range_head(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
+/// A configured external diff driver may emit side-by-side text instead of a
+/// unified patch. Review Range parses Git's patch output, so it must bypass
+/// `diff.external` rather than mistaking the unparseable output for no changes.
+#[test]
+#[cfg(unix)]
+fn test_range_review_ignores_external_diff_and_pager() {
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    repo.create_file("src/main.rs", "fn main() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    // RANGE_EXTERNAL_DIFF_MARKER\n}\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("second commit");
+    repo.setup_external_diff_and_pager();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    open_review_range_head(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("RANGE_EXTERNAL_DIFF_MARKER"),
+        "Review Range should render Git's native patch even when diff.external is configured. Screen:\n{screen}"
+    );
+}
+
 /// A big range (the reported case: `HEAD~100..HEAD`) used to open on a
 /// list of file headers and *no diff at all*. Above a line threshold the
 /// stream rendered exactly one file, and the one it picked came from the
