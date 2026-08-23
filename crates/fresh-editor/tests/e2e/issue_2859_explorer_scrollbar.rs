@@ -132,3 +132,74 @@ fn a_tree_that_fits_draws_no_scrollbar() {
         harness.screen_to_string()
     );
 }
+
+#[test]
+fn file_explorer_scrollbar_thumb_can_be_dragged() {
+    let mut config = Config {
+        theme: "high-contrast".into(),
+        ..Default::default()
+    };
+    config.file_explorer.width = ExplorerWidth::Columns(30);
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(100, 30, config).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    for i in 0..80 {
+        fs::write(project_root.join(format!("file_{i:02}.txt")), "x").unwrap();
+    }
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("file_00.txt").unwrap();
+    harness.render().unwrap();
+
+    let scrollbar_col = 28;
+    let thumb_color = harness.editor().theme().scrollbar_thumb_fg;
+    let track_color = harness.editor().theme().scrollbar_track_fg;
+    let scrollbar_rows: Vec<u16> = (0..harness.buffer().area.height)
+        .filter(|&row| {
+            harness
+                .get_cell_style(scrollbar_col, row)
+                .and_then(|style| style.bg)
+                .is_some_and(|bg| bg == thumb_color || bg == track_color)
+        })
+        .collect();
+    let thumb_start = scrollbar_rows
+        .iter()
+        .copied()
+        .find(|&row| {
+            harness
+                .get_cell_style(scrollbar_col, row)
+                .and_then(|style| style.bg)
+                == Some(thumb_color)
+        })
+        .expect("the Explorer scrollbar thumb should be painted");
+    let track_bottom = *scrollbar_rows
+        .last()
+        .expect("the Explorer scrollbar track should be painted");
+
+    let selected_before = harness.editor().file_explorer().unwrap().get_selected();
+    assert_eq!(
+        harness
+            .editor()
+            .file_explorer()
+            .unwrap()
+            .get_scroll_offset(),
+        0
+    );
+
+    harness
+        .mouse_drag(scrollbar_col, thumb_start, scrollbar_col, track_bottom)
+        .unwrap();
+
+    let view = harness.editor().file_explorer().unwrap();
+    assert_eq!(
+        view.get_scroll_offset(),
+        view.max_scroll_offset(),
+        "dragging the thumb to the bottom should reach the end of the tree"
+    );
+    assert_eq!(
+        view.get_selected(),
+        selected_before,
+        "scrollbar dragging must not select the tree row under the pointer"
+    );
+}
