@@ -192,6 +192,13 @@
         "mouse_forwarding": "requested"
       }
     },
+    "live_diff": {
+      "description": "Live Diff plugin settings.\nControls the inline-diff view rendered against a git reference.",
+      "$ref": "#/$defs/LiveDiffConfig",
+      "default": {
+        "enabled_on_startup": false
+      }
+    },
     "keybindings": {
       "description": "Custom keybindings (overrides for the active map)",
       "type": "array",
@@ -1338,6 +1345,17 @@
           "const": "alt_screen"
         }
       ]
+    },
+    "LiveDiffConfig": {
+      "description": "Live Diff plugin configuration.\n\nThe Live Diff plugin renders a unified-diff view directly inside the\neditable buffer (gutter glyphs, virtual deletion lines, change\nhighlights) against a git reference. By default it is opt-in: the\nuser toggles it on via the `Live Diff: Toggle (Global)` command.\nThis struct exposes settings that take effect at startup, before\nany toggle command has been issued.",
+      "type": "object",
+      "properties": {
+        "enabled_on_startup": {
+          "description": "Enable the Live Diff view globally when Fresh starts.\nWhen `true`, the editor begins each session with Live Diff on\n— equivalent to invoking `Live Diff: Toggle (Global)` once\nfrom the command palette. The user can still toggle it off\nfor the current session; the next startup re-enables it.\nDefault: false (opt-in via command palette).",
+          "type": "boolean",
+          "default": false
+        }
+      }
     },
     "Keybinding": {
       "description": "Keybinding definition",

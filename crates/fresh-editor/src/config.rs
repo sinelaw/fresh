@@ -495,6 +495,11 @@ pub struct Config {
     #[serde(default)]
     pub terminal: TerminalConfig,
 
+    /// Live Diff plugin settings.
+    /// Controls the inline-diff view rendered against a git reference.
+    #[serde(default)]
+    pub live_diff: LiveDiffConfig,
+
     /// Custom keybindings (overrides for the active map)
     #[serde(default)]
     pub keybindings: Vec<Keybinding>,
@@ -2519,6 +2524,34 @@ pub struct TerminalShellConfig {
     pub args: Vec<String>,
 }
 
+/// Live Diff plugin configuration.
+///
+/// The Live Diff plugin renders a unified-diff view directly inside the
+/// editable buffer (gutter glyphs, virtual deletion lines, change
+/// highlights) against a git reference. By default it is opt-in: the
+/// user toggles it on via the `Live Diff: Toggle (Global)` command.
+/// This struct exposes settings that take effect at startup, before
+/// any toggle command has been issued.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LiveDiffConfig {
+    /// Enable the Live Diff view globally when Fresh starts.
+    /// When `true`, the editor begins each session with Live Diff on
+    /// — equivalent to invoking `Live Diff: Toggle (Global)` once
+    /// from the command palette. The user can still toggle it off
+    /// for the current session; the next startup re-enables it.
+    /// Default: false (opt-in via command palette).
+    #[serde(default = "default_false")]
+    pub enabled_on_startup: bool,
+}
+
+impl Default for LiveDiffConfig {
+    fn default() -> Self {
+        Self {
+            enabled_on_startup: false,
+        }
+    }
+}
+
 /// Warning notification configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WarningsConfig {
@@ -3219,6 +3252,7 @@ impl Default for Config {
             file_browser: FileBrowserConfig::default(),
             clipboard: ClipboardConfig::default(),
             terminal: TerminalConfig::default(),
+            live_diff: LiveDiffConfig::default(),
             keybindings: vec![], // User customizations only; defaults come from active_keybinding_map
             keybinding_maps: HashMap::new(), // User-defined maps go here
             active_keybinding_map: default_keybinding_map_name(),
