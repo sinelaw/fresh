@@ -15,19 +15,18 @@
 #
 # What the default install does, in full:
 #
-#   downloads   github.com/sinelaw/fresh/releases, and nothing else
+#   downloads   github.com/sinelaw/fresh/releases, over anonymous HTTPS
 #   verifies    the .sha256 published beside each asset; a mismatch aborts
 #   writes      ~/.local/share/fresh-editor and a `fresh` symlink in
 #               ~/.local/bin, plus a .desktop entry and icons under
 #               ~/.local/share (skip those with --no-desktop-integration)
 #   records     every path written outside its own directory, in
-#               installed-files.txt, so an uninstall needs no guesswork
+#               installed-files.txt, which a later run reads to clean up
 #
-# No account, token, or credential is used or read, by any method. --method=deb,
-# rpm and appimage download from the same releases page; deb and rpm then install
-# system-wide, so those two need root. --method=brew, nix, cargo, npm and aur
-# hand the install to that tool, which uses its own registry and its own
-# privilege and signing rules; npm and aur may ask for root.
+# --method=deb, rpm and appimage take the same route; deb and rpm then install
+# system-wide as root. --method=brew, nix, cargo, npm and aur hand the install
+# to that tool, which uses its own registry and its own privilege and signing
+# rules; npm and aur may use root.
 
 set -e
 
@@ -215,10 +214,10 @@ download_verified() {
 
     log_info "Downloading $(basename "$1")..."
 
-    # Not `-f`, which collapses every HTTP error into one exit code: GitHub rate
-    # limits anonymous downloads too, so a refusal is not evidence the asset is
-    # missing. Failing to get bytes returns to the caller; bytes that do not
-    # verify are fatal, below.
+    # -w reports the HTTP status, which separates a rate-limited download from a
+    # missing asset -- GitHub meters anonymous downloads as well as the API.
+    # A failed fetch returns to the caller; bytes that fail verification are
+    # fatal, below.
     _dl=$(curl -SL -w '%{http_code}' "$1" -o "$2") || _dl=000
     case "$_dl" in
         2??) ;;
@@ -242,17 +241,17 @@ download_verified() {
 
 # --- Release metadata ---
 #
-# Deliberately no GitHub API: unauthenticated it allows 60 requests per hour per
-# source IP, so behind a NAT, a CI runner, or an office network it is often
-# already spent and answers 403. Only the public download endpoints are used, so
-# nothing here needs a credential.
+# Assets come from the public download endpoints, which serve anonymous
+# requests. The GitHub API meters those at 60 per hour per source IP -- a budget
+# shared by everyone behind a NAT, a CI runner or an office network, and one
+# that answers 403 once spent.
 
 # Resolves to the current release's asset of that name; the .sha256 sidecar is
 # served the same way.
 RELEASE_DOWNLOAD="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download"
 
 # /releases/latest answers 302 with Location .../releases/tag/vX.Y.Z. As through
-# the API, "latest" skips drafts and pre-releases. Only the packages whose
+# the API, "latest" resolves to the newest full release. Only the packages whose
 # filenames embed a version need this.
 latest_version() {
     _loc=$(curl -sSL -o /dev/null -w '%{url_effective}' \
