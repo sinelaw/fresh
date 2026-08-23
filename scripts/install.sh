@@ -22,17 +22,12 @@
 #               ~/.local/share (skip those with --no-desktop-integration)
 #   records     every path written outside its own directory, in
 #               installed-files.txt, so an uninstall needs no guesswork
-#   root        never used, and never asked for
 #
-# No account, token, or credential is used or read, by any method. The deb, rpm
-# and appimage methods also download only from the releases page above; deb and
-# rpm then install system-wide, so those two need root. The brew, nix, cargo,
-# npm and aur methods hand the install to that tool, which fetches from its own
-# registry and applies its own privilege and signing rules -- npm and aur may
-# ask for root.
-#
-# Read it before running it. That advice holds for anything piped into a shell,
-# including this.
+# No account, token, or credential is used or read, by any method. --method=deb,
+# rpm and appimage download from the same releases page; deb and rpm then install
+# system-wide, so those two need root. --method=brew, nix, cargo, npm and aur
+# hand the install to that tool, which uses its own registry and its own
+# privilege and signing rules; npm and aur may ask for root.
 
 set -e
 
@@ -89,8 +84,8 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Diagnostics go to stderr. Helpers below return a value by echoing it, so a
-# message on stdout would be captured as if it were that value.
+# Helpers below return values by echoing them, so a diagnostic left on stdout
+# would be captured as if it were the value.
 log_info()    { printf "${BLUE}[INFO]${NC} %s\n" "$1" >&2; }
 log_success() { printf "${GREEN}[SUCCESS]${NC} %s\n" "$1" >&2; }
 log_warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1" >&2; }
@@ -213,7 +208,6 @@ sha256_of() {
 download_verified() {
     # $1 = url, $2 = destination path
 
-    # Never hand curl something that is not a URL.
     case "$1" in
         https://*|http://*) ;;
         *) log_error "refusing to download from a malformed location: $1" ;;
@@ -221,28 +215,17 @@ download_verified() {
 
     log_info "Downloading $(basename "$1")..."
 
-    # The status is read from -w rather than left to `-f`, which collapses every
-    # HTTP error into one exit code: GitHub rate limits anonymous downloads too,
-    # so a refusal is not evidence the asset is missing. Progress still shows; it
-    # goes to stderr, only the status is captured.
-    #
-    # Failing to *get* bytes returns to the caller. Getting bytes that do not
-    # *verify* stays fatal below -- retrying that elsewhere would only launder it.
+    # Not `-f`, which collapses every HTTP error into one exit code: GitHub rate
+    # limits anonymous downloads too, so a refusal is not evidence the asset is
+    # missing. Failing to get bytes returns to the caller; bytes that do not
+    # verify are fatal, below.
     _dl=$(curl -SL -w '%{http_code}' "$1" -o "$2") || _dl=000
     case "$_dl" in
         2??) ;;
-        403|429)
-            log_warn "GitHub is rate limiting downloads from this network (HTTP $_dl); retry shortly."
-            return 1 ;;
-        404)
-            log_warn "$(basename "$1") is not published in the latest release."
-            return 1 ;;
-        000)
-            log_warn "Could not reach GitHub to download $(basename "$1")."
-            return 1 ;;
-        *)
-            log_warn "Download of $(basename "$1") failed (HTTP $_dl)."
-            return 1 ;;
+        403|429) log_warn "GitHub is rate limiting downloads from this network (HTTP $_dl); retry shortly."; return 1 ;;
+        404)     log_warn "$(basename "$1") is not published in the latest release."; return 1 ;;
+        000)     log_warn "Could not reach GitHub to download $(basename "$1")."; return 1 ;;
+        *)       log_warn "Download of $(basename "$1") failed (HTTP $_dl)."; return 1 ;;
     esac
 
     sums=$(curl -fsSL "$1.sha256" 2>/dev/null || true)
@@ -264,23 +247,20 @@ download_verified() {
 # already spent and answers 403. Only the public download endpoints are used, so
 # nothing here needs a credential.
 
-# /releases/latest/download/NAME serves the current release's asset of that
-# name, and its .sha256 sidecar the same way.
-release_asset_url() {
-    printf 'https://github.com/%s/%s/releases/latest/download/%s' \
-        "$REPO_OWNER" "$REPO_NAME" "$1"
-}
+# Resolves to the current release's asset of that name; the .sha256 sidecar is
+# served the same way.
+RELEASE_DOWNLOAD="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download"
 
-# The latest version, read from a redirect: /releases/latest answers 302 with
-# Location .../releases/tag/vX.Y.Z. Only packages whose filenames embed a version
-# need it, so the default install never calls this. As through the API, "latest"
-# skips drafts and pre-releases.
+# /releases/latest answers 302 with Location .../releases/tag/vX.Y.Z. As through
+# the API, "latest" skips drafts and pre-releases. Only the packages whose
+# filenames embed a version need this.
 latest_version() {
     _loc=$(curl -sSL -o /dev/null -w '%{url_effective}' \
         "https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest" 2>/dev/null) || _loc=""
     case "$_loc" in
-        */releases/tag/v*) printf '%s' "${_loc##*/releases/tag/v}" ;;
-        */releases/tag/*)  printf '%s' "${_loc##*/releases/tag/}" ;;
+        */releases/tag/*)
+            _tag="${_loc##*/releases/tag/}"
+            printf '%s' "${_tag#v}" ;;
         *)
             log_warn "Could not determine the latest version from GitHub."
             return 1 ;;
@@ -446,16 +426,13 @@ do_install_tarball() {
     # wrapper installers that bring their own tooling.)
     ASSET="${BIN_NAME}-${TARGET}.tar.gz"
 
-    # This filename carries no version, so it can be asked for by name directly.
-    URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download/${ASSET}"
+    URL="$RELEASE_DOWNLOAD/$ASSET"
 
     log_info "Installing the universal build ($TARGET)..."
     make_workdir
 
     ARCHIVE="$WORKDIR/$ASSET"
 
-    # The download is its own availability check; download_verified reports why
-    # if it fails.
     download_verified "$URL" "$ARCHIVE" || return 1
 
     EXTRACT="$WORKDIR/extract"
@@ -575,7 +552,7 @@ install_debian() {
 
     ARCH=$(dpkg --print-architecture)
     VERSION=$(latest_version) || return 1
-    URL=$(release_asset_url "${BIN_NAME}_${VERSION}-1_${ARCH}.deb")
+    URL="$RELEASE_DOWNLOAD/${BIN_NAME}_${VERSION}-1_${ARCH}.deb"
 
     make_workdir
     TEMP_DEB="$WORKDIR/${BIN_NAME}.deb"
@@ -593,7 +570,7 @@ install_fedora() {
 
     ARCH=$(uname -m)
     VERSION=$(latest_version) || return 1
-    URL=$(release_asset_url "${BIN_NAME}-${VERSION}-1.${ARCH}.rpm")
+    URL="$RELEASE_DOWNLOAD/${BIN_NAME}-${VERSION}-1.${ARCH}.rpm"
 
     make_workdir
     TEMP_RPM="$WORKDIR/${BIN_NAME}.rpm"
@@ -624,7 +601,7 @@ do_install_appimage() {
 
     VERSION=$(latest_version) || return 1
     # Named exactly: the release also ships a gui AppImage for the same arch.
-    URL=$(release_asset_url "${BIN_NAME}-${VERSION}-${APPIMAGE_ARCH}.AppImage")
+    URL="$RELEASE_DOWNLOAD/${BIN_NAME}-${VERSION}-${APPIMAGE_ARCH}.AppImage"
 
     make_workdir
     TEMP_APPIMAGE="$WORKDIR/fresh.AppImage"
