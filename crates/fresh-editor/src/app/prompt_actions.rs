@@ -1796,6 +1796,22 @@ impl Editor {
                 // for the same reason.
                 self.active_window_mut().key_context =
                     crate::input::keybindings::KeyContext::Normal;
+                // Reveal the jumped-to file in the explorer, honouring
+                // `follow_active_buffer`. Quick Open, Open File and Live Grep
+                // are explicit "take me to this file" gestures, so a
+                // jumped-to file should surface in the tree just like a tab
+                // switch does. The passive hook in `set_active_buffer` can't
+                // cover this path: it runs inside `open_file` above, *before*
+                // the `key_context` reset, so at that point the jump is still
+                // in the file-explorer/prompt context and the hook is gated
+                // out. Triggering it here — after the reset — keeps the jump
+                // tied to the same setting, so turning `follow_active_buffer`
+                // off leaves the explorer put on a jump. The call is a no-op
+                // when the explorer is closed and de-dupes against the passive
+                // sync via `file_explorer_sync_in_progress`. (issue #2365)
+                if self.config.file_explorer.follow_active_buffer {
+                    self.active_window_mut().sync_file_explorer_to_active_file();
+                }
                 self.set_status_message(
                     t!("buffer.opened", name = full_path.display().to_string()).to_string(),
                 );

@@ -95,6 +95,7 @@ pub mod issue_2283_dock_last_tab_close;
 pub mod issue_2345_language_settings;
 pub mod issue_2357_shebang_interpreter;
 pub mod issue_2362_replace_toolbar_theme;
+pub mod issue_2365_quick_open_reveals_in_explorer;
 pub mod issue_2373_buffer_switcher_virtual;
 pub mod issue_2405_brackets_in_comments;
 pub mod issue_2415_dock_role_stuck;
