@@ -2,8 +2,8 @@
 # Fresh Editor Universal Installer
 #
 # Usage:
-#   curl -sL .../install.sh | sh
-#   curl -sL .../install.sh | sh -s -- --method=deb
+#   curl -fsSL .../install.sh | sh
+#   curl -fsSL .../install.sh | sh -s -- --method=deb
 #   FRESH_INSTALL_METHOD=rpm sh install.sh
 #
 # The default is the universal build: a statically linked (musl) binary
@@ -12,6 +12,21 @@
 # supported — they are just chosen deliberately with --method rather than
 # picked for you, because a package-manager install hands the update lifecycle
 # to that package manager and requires root to apply.
+#
+# What the default install does, in full:
+#
+#   downloads   github.com/sinelaw/fresh/releases, over anonymous HTTPS
+#   verifies    the .sha256 published beside each asset; a mismatch aborts
+#   writes      ~/.local/share/fresh-editor and a `fresh` symlink in
+#               ~/.local/bin, plus a .desktop entry and icons under
+#               ~/.local/share (skip those with --no-desktop-integration)
+#   records     every path written outside its own directory, in
+#               installed-files.txt, which a later run reads to clean up
+#
+# --method=deb, rpm and appimage take the same route; deb and rpm then install
+# system-wide as root. --method=brew, nix, cargo, npm and aur hand the install
+# to that tool, which uses its own registry and its own privilege and signing
+# rules; npm and aur may use root.
 
 set -e
 
@@ -35,7 +50,7 @@ AUR_HELPER_PRIORITY="yay paru"
 #    Set to 0 to always force compilation from source.
 PREFER_CARGO_BINSTALL=1
 
-# 4. Repository Details (for scraping releases)
+# 4. Repository Details (used to build the release URLs below)
 REPO_OWNER="sinelaw"
 REPO_NAME="fresh"
 BIN_NAME="fresh-editor"
@@ -68,10 +83,15 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-log_info()    { printf "${BLUE}[INFO]${NC} %s\n" "$1"; }
-log_success() { printf "${GREEN}[SUCCESS]${NC} %s\n" "$1"; }
-log_warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
-log_error()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; exit 1; }
+# Helpers below return values by echoing them, so a diagnostic left on stdout
+# would be captured as if it were the value.
+log_info()    { printf "${BLUE}[INFO]${NC} %s\n" "$1" >&2; }
+log_success() { printf "${GREEN}[SUCCESS]${NC} %s\n" "$1" >&2; }
+log_warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1" >&2; }
+
+# `exit` inside $(...) ends only that subshell, so log_error is for top-level
+# paths; helpers whose output is captured return a status instead.
+log_error()   { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; exit 1; }
 
 check_cmd() { command -v "$1" >/dev/null 2>&1; }
 
@@ -149,9 +169,9 @@ run_privileged() {
 WORKDIR=""
 
 # Methods already attempted this run. Dispatch falls back on failure, and the
-# fallback list contains the universal build too, so without this an explicit
-# --method=tarball that finds no asset would download the release metadata and
-# fail a second time before moving on.
+# fallback list contains the universal build too, so this is what stops an
+# explicit --method=tarball from re-fetching the same asset and failing a second
+# time before moving on.
 TRIED=""
 already_tried() { case " $TRIED " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 mark_tried()    { TRIED="$TRIED $1"; }
@@ -186,8 +206,26 @@ sha256_of() {
 # wrong URL or a response that did not come from the release.
 download_verified() {
     # $1 = url, $2 = destination path
+
+    case "$1" in
+        https://*|http://*) ;;
+        *) log_error "refusing to download from a malformed location: $1" ;;
+    esac
+
     log_info "Downloading $(basename "$1")..."
-    curl -fSL "$1" -o "$2" || log_error "download failed: $1"
+
+    # -w reports the HTTP status, which separates a rate-limited download from a
+    # missing asset: GitHub meters anonymous downloads.
+    # A failed fetch returns to the caller; bytes that fail verification are
+    # fatal, below.
+    _dl=$(curl -SL -w '%{http_code}' "$1" -o "$2") || _dl=000
+    case "$_dl" in
+        2??) ;;
+        403|429) log_warn "GitHub is rate limiting downloads from this network (HTTP $_dl); retry shortly."; return 1 ;;
+        404)     log_warn "$(basename "$1") is not published in the latest release."; return 1 ;;
+        000)     log_warn "Could not reach GitHub to download $(basename "$1")."; return 1 ;;
+        *)       log_warn "Download of $(basename "$1") failed (HTTP $_dl)."; return 1 ;;
+    esac
 
     sums=$(curl -fsSL "$1.sha256" 2>/dev/null || true)
     [ -n "$sums" ] || log_error "no .sha256 published for $(basename "$1"); refusing to install unverified bytes."
@@ -201,40 +239,25 @@ download_verified() {
     log_info "Checksum verified."
 }
 
-# --- Release metadata ---
+# --- Release URLs ---
 
-RELEASE_JSON=""
+# Resolves to the current release's asset of that name; the .sha256 sidecar is
+# served the same way.
+RELEASE_DOWNLOAD="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download"
 
-fetch_release_json() {
-    [ -n "$RELEASE_JSON" ] && return 0
-    check_cmd curl || log_error "curl is required."
-    make_workdir
-    RELEASE_JSON="$WORKDIR/release.json"
-    curl -fsSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
-        -o "$RELEASE_JSON" || log_error "could not fetch the latest release metadata."
-    return 0
-}
-
-# URL of the asset whose filename is exactly $1.
-asset_url_exact() {
-    fetch_release_json
-    tr ',' '\n' < "$RELEASE_JSON" \
-        | grep '"browser_download_url"' \
-        | cut -d'"' -f4 \
-        | awk -v want="$1" '{ n = split($0, p, "/"); if (p[n] == want) print }' \
-        | head -n 1
-}
-
-# URL of the first asset containing $2 and ending in $1 (for versioned names).
-asset_url_match() {
-    # $1 = suffix (e.g. .deb), $2 = arch token
-    fetch_release_json
-    tr ',' '\n' < "$RELEASE_JSON" \
-        | grep '"browser_download_url"' \
-        | cut -d'"' -f4 \
-        | grep -- "$2" \
-        | grep -- "$1\$" \
-        | head -n 1
+# /releases/latest answers 302 with Location .../releases/tag/vX.Y.Z, naming the
+# newest full release. Only the packages whose filenames embed a version need it.
+latest_version() {
+    _loc=$(curl -sSL -o /dev/null -w '%{url_effective}' \
+        "https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest" 2>/dev/null) || _loc=""
+    case "$_loc" in
+        */releases/tag/*)
+            _tag="${_loc##*/releases/tag/}"
+            printf '%s' "${_tag#v}" ;;
+        *)
+            log_warn "Could not determine the latest version from GitHub."
+            return 1 ;;
+    esac
 }
 
 # --- The universal build ---
@@ -395,17 +418,15 @@ do_install_tarball() {
     # can already read gzip. (The dist archives are xz; those are unpacked by
     # wrapper installers that bring their own tooling.)
     ASSET="${BIN_NAME}-${TARGET}.tar.gz"
-    URL=$(asset_url_exact "$ASSET")
-    if [ -z "$URL" ]; then
-        log_warn "The latest release has no $ASSET."
-        return 1
-    fi
+
+    URL="$RELEASE_DOWNLOAD/$ASSET"
 
     log_info "Installing the universal build ($TARGET)..."
     make_workdir
 
     ARCHIVE="$WORKDIR/$ASSET"
-    download_verified "$URL" "$ARCHIVE"
+
+    download_verified "$URL" "$ARCHIVE" || return 1
 
     EXTRACT="$WORKDIR/extract"
     mkdir -p "$EXTRACT"
@@ -523,16 +544,12 @@ install_debian() {
     check_cmd dpkg || log_error "dpkg not found; this does not look like a Debian-based system."
 
     ARCH=$(dpkg --print-architecture)
-    URL=$(asset_url_match "\.deb" "$ARCH")
-
-    if [ -z "$URL" ]; then
-        log_warn "No .deb package found for $ARCH."
-        return 1
-    fi
+    VERSION=$(latest_version) || return 1
+    URL="$RELEASE_DOWNLOAD/${BIN_NAME}_${VERSION}-1_${ARCH}.deb"
 
     make_workdir
     TEMP_DEB="$WORKDIR/${BIN_NAME}.deb"
-    download_verified "$URL" "$TEMP_DEB"
+    download_verified "$URL" "$TEMP_DEB" || log_error "download failed: $URL"
 
     log_info "Installing via dpkg (you may be asked for your password)..."
     run_privileged dpkg -i "$TEMP_DEB"
@@ -545,16 +562,12 @@ install_fedora() {
     check_cmd curl || log_error "curl is required."
 
     ARCH=$(uname -m)
-    URL=$(asset_url_match "\.rpm" "$ARCH")
-
-    if [ -z "$URL" ]; then
-        log_warn "No .rpm package found for $ARCH."
-        return 1
-    fi
+    VERSION=$(latest_version) || return 1
+    URL="$RELEASE_DOWNLOAD/${BIN_NAME}-${VERSION}-1.${ARCH}.rpm"
 
     make_workdir
     TEMP_RPM="$WORKDIR/${BIN_NAME}.rpm"
-    download_verified "$URL" "$TEMP_RPM"
+    download_verified "$URL" "$TEMP_RPM" || log_error "download failed: $URL"
 
     log_info "Installing via rpm (you may be asked for your password)..."
     if check_cmd zypper; then
@@ -579,18 +592,16 @@ do_install_appimage() {
         *) log_warn "AppImage not available for architecture: $(uname -m)"; return 1 ;;
     esac
 
-    URL=$(asset_url_match "\.AppImage" "$APPIMAGE_ARCH")
-    if [ -z "$URL" ]; then
-        log_warn "No AppImage found for $APPIMAGE_ARCH."
-        return 1
-    fi
+    VERSION=$(latest_version) || return 1
+    # Named exactly: the release also ships a gui AppImage for the same arch.
+    URL="$RELEASE_DOWNLOAD/${BIN_NAME}-${VERSION}-${APPIMAGE_ARCH}.AppImage"
 
     make_workdir
     TEMP_APPIMAGE="$WORKDIR/fresh.AppImage"
     TEMP_EXTRACT="$WORKDIR/appimage-extract"
     mkdir -p "$TEMP_EXTRACT"
 
-    download_verified "$URL" "$TEMP_APPIMAGE"
+    download_verified "$URL" "$TEMP_APPIMAGE" || log_error "download failed: $URL"
     chmod +x "$TEMP_APPIMAGE"
 
     log_info "Extracting AppImage..."

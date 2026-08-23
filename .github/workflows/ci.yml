@@ -80,6 +80,21 @@ jobs:
       - name: Check build without plugins feature
         run: cargo check --no-default-features --features runtime --all-targets
 
+  # install.sh is the entry point for `curl ... | sh`, and it is the one script
+  # here whose failure modes users hit before they have anything else installed.
+  # shellcheck's own job below lints workflow `run:` blocks only, so the
+  # installer would otherwise go unlinted; these run it against a shimmed curl
+  # so the network-failure paths are exercised without a network.
+  installer:
+    name: installer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Lint install.sh
+        run: shellcheck -S warning -s sh scripts/install.sh
+      - name: Failure modes
+        run: ./scripts/test-install-failure-modes.sh
+
   test:
     runs-on: ${{ matrix.os }}
     name: test ${{ matrix.os }}

@@ -1422,7 +1422,7 @@
                     <div class="install-row">
                         <span class="install-row-label">Install:</span>
                         <div class="install-pill primary" id="install-pill" onclick="copyInstallPill(this)">
-                            <code id="install-cmd">curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
+                            <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
                             <button class="copy-btn" onclick="event.stopPropagation(); copyInstallPill(document.getElementById('install-pill'))" aria-label="Copy install command">
                                 <img src="public/copy-icon.svg" alt="" width="16" height="16">
                             </button>
@@ -1645,7 +1645,7 @@
                 <div class="install-card" id="install-quick">
                     <h3>Linux / macOS (quick install)<a class="anchor-link" href="#install-quick" aria-label="Permalink to Linux / macOS (quick install)">#</a></h3>
                     <div class="copyable">
-                        <code id="cmd-curl">curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
+                        <code id="cmd-curl">curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
                         <button class="copy-btn" onclick="copyCode('cmd-curl', this)">
                             <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
@@ -2030,7 +2030,7 @@
         }
 
         const INSTALL_COMMANDS = {
-            linux: 'curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh',
+            linux: 'curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh',
             mac: 'brew install fresh-editor',
             windows: 'winget install fresh-editor'
         };
