@@ -50,7 +50,7 @@ AUR_HELPER_PRIORITY="yay paru"
 #    Set to 0 to always force compilation from source.
 PREFER_CARGO_BINSTALL=1
 
-# 4. Repository Details (for scraping releases)
+# 4. Repository Details (used to build the release URLs below)
 REPO_OWNER="sinelaw"
 REPO_NAME="fresh"
 BIN_NAME="fresh-editor"
@@ -169,9 +169,9 @@ run_privileged() {
 WORKDIR=""
 
 # Methods already attempted this run. Dispatch falls back on failure, and the
-# fallback list contains the universal build too, so without this an explicit
-# --method=tarball that finds no asset would download the release metadata and
-# fail a second time before moving on.
+# fallback list contains the universal build too, so this is what stops an
+# explicit --method=tarball from re-fetching the same asset and failing a second
+# time before moving on.
 TRIED=""
 already_tried() { case " $TRIED " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 mark_tried()    { TRIED="$TRIED $1"; }
@@ -215,7 +215,7 @@ download_verified() {
     log_info "Downloading $(basename "$1")..."
 
     # -w reports the HTTP status, which separates a rate-limited download from a
-    # missing asset -- GitHub meters anonymous downloads as well as the API.
+    # missing asset: GitHub meters anonymous downloads.
     # A failed fetch returns to the caller; bytes that fail verification are
     # fatal, below.
     _dl=$(curl -SL -w '%{http_code}' "$1" -o "$2") || _dl=000
@@ -239,20 +239,14 @@ download_verified() {
     log_info "Checksum verified."
 }
 
-# --- Release metadata ---
-#
-# Assets come from the public download endpoints, which serve anonymous
-# requests. The GitHub API meters those at 60 per hour per source IP -- a budget
-# shared by everyone behind a NAT, a CI runner or an office network, and one
-# that answers 403 once spent.
+# --- Release URLs ---
 
 # Resolves to the current release's asset of that name; the .sha256 sidecar is
 # served the same way.
 RELEASE_DOWNLOAD="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download"
 
-# /releases/latest answers 302 with Location .../releases/tag/vX.Y.Z. As through
-# the API, "latest" resolves to the newest full release. Only the packages whose
-# filenames embed a version need this.
+# /releases/latest answers 302 with Location .../releases/tag/vX.Y.Z, naming the
+# newest full release. Only the packages whose filenames embed a version need it.
 latest_version() {
     _loc=$(curl -sSL -o /dev/null -w '%{url_effective}' \
         "https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest" 2>/dev/null) || _loc=""
