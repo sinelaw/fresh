@@ -4,7 +4,7 @@ A modern, full-featured terminal text editor, **with zero configuration**. Famil
 
 [Official Website](https://sinelaw.github.io/fresh/) &nbsp;·&nbsp; [Documentation](https://getfresh.dev/docs) &nbsp;·&nbsp; [Discord](https://discord.gg/gqGh3K4uW3) &nbsp;·&nbsp; [Contributing](#contributing)
 
-**[Quick Install](#installation):** &nbsp; `curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh`
+**[Quick Install](#installation):** &nbsp; `curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh`
 
 ---
 
@@ -61,7 +61,7 @@ See more feature demos: [Editing](https://getfresh.dev/docs/blog/editing) (searc
 
 Quick install:
 
-`curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh`
+`curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh`
 
 On Linux this installs the **universal build**: one statically linked binary
 that runs on every distro, unpacked under `~/.local`, owned by you. It needs no
@@ -71,7 +71,7 @@ editor. On macOS it uses Homebrew.
 Prefer your distro's package manager? Ask for it explicitly:
 
 ```bash
-curl -sL .../install.sh | sh -s -- --method=deb    # also: rpm, aur, nix, cargo, npm, brew, appimage
+curl -fsSL .../install.sh | sh -s -- --method=deb    # also: rpm, aur, nix, cargo, npm, brew, appimage
 ```
 
 Packages are fully supported — they are opt-in rather than the default because
@@ -105,7 +105,7 @@ Or, pick your preferred method:
 ### Universal build (Linux)
 
 ```bash
-curl -sL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh
 ```
 
 A single static (musl) binary for `x86_64` and `aarch64` with every feature

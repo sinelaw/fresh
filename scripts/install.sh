@@ -2,8 +2,8 @@
 # Fresh Editor Universal Installer
 #
 # Usage:
-#   curl -sL .../install.sh | sh
-#   curl -sL .../install.sh | sh -s -- --method=deb
+#   curl -fsSL .../install.sh | sh
+#   curl -fsSL .../install.sh | sh -s -- --method=deb
 #   FRESH_INSTALL_METHOD=rpm sh install.sh
 #
 # The default is the universal build: a statically linked (musl) binary
