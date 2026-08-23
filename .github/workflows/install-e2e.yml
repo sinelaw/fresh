@@ -1,0 +1,43 @@
+# The real install, on machines that have nothing on them yet.
+#
+# scripts/test-install-failure-modes.sh (in ci.yml) shims curl and checks what
+# install.sh says when GitHub does not answer. This one checks the other half:
+# a clean distro image, an unprivileged user, the published one-liner piped into
+# sh, a real download, and the installed editor executed at the end.
+#
+# Alpine is the one to watch: /bin/sh there is BusyBox ash, so it is the real
+# test that install.sh is POSIX rather than bash, and the image has no glibc, so
+# it is also the test that the musl build runs where it is meant to.
+#
+# Paths-filtered because it pulls five images and downloads five release
+# archives; workflow_dispatch is there for running it on demand.
+name: install e2e
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/install.sh'
+      - 'scripts/test-install-e2e.sh'
+      - '.github/workflows/install-e2e.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: install on ${{ matrix.distro }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [ubuntu, debian, fedora, alpine, arch]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install and run
+        run: ./scripts/test-install-e2e.sh ${{ matrix.distro }}
