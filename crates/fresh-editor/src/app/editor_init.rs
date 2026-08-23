@@ -699,6 +699,10 @@ impl Editor {
             dock_width: None,
             dock_resizing: false,
             widget_text_drag: None,
+            split_widget_scrollbar_tracks: Vec::new(),
+            split_widget_scrollbar_mouse: Default::default(),
+            split_widget_scrollbar_drag: None,
+            widget_panel_render_heights: std::collections::HashMap::new(),
         };
 
         // The plugin per-window filesystem registry is populated on the first

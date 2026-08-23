@@ -276,6 +276,7 @@ impl Editor {
                 // so no grab can outlive its release even if its
                 // finalizer above was skipped.
                 self.release_widget_scrollbar();
+                self.release_split_widget_scrollbar();
                 self.widget_text_drag = None;
                 self.clear_active_window_drag_state();
 
@@ -980,7 +981,10 @@ impl Editor {
             // owns the input channel while it's up.
             PointerGrab::WidgetScrollbar => {
                 let _ = self.try_widget_scrollbar_drag(super::PanelSlot::Dock, row)
-                    || self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row);
+                    || self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row)
+                    // Buffer-mounted panels (review-diff sidebar, Search &
+                    // Replace) keep their tracks on the editor.
+                    || self.try_split_widget_scrollbar_drag(row);
             }
             // Vertical scrollbar drag: update scroll position.
             PointerGrab::VScrollbar => {

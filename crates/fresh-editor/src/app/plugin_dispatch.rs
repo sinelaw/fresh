@@ -5145,6 +5145,7 @@ impl Editor {
         let panel_width = self.widget_panel_width(buffer_id);
         let avail_height = self.widget_panel_height(buffer_id);
         let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
+        self.record_widget_panel_render_height(&panel_key, avail_height);
         let focus_cursor = out.focus_cursor;
         // KNOWN LIMITATION (deliberate, recorded in the v2 review doc):
         // buffer-mounted panels consume only the base rows + hits —
@@ -5224,6 +5225,7 @@ impl Editor {
         let panel_width = self.widget_panel_width(buffer_id_for_width);
         let avail_height = self.widget_panel_height(buffer_id_for_width);
         let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width, avail_height);
+        self.record_widget_panel_render_height(panel_key, avail_height);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         match self.widget_registry.update(
