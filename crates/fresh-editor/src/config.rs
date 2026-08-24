@@ -4159,6 +4159,13 @@ impl Config {
 
     /// Load a built-in keymap from embedded JSON
     fn load_builtin_keymap(name: &str) -> Option<KeymapConfig> {
+        Self::load_builtin_keymap_for_target(name, cfg!(target_os = "macos"))
+    }
+
+    /// Load a built-in keymap as it should appear for the given target OS. Extracted
+    /// from `load_builtin_keymap` so the platform-conditional adjustments below are
+    /// testable from any host.
+    fn load_builtin_keymap_for_target(name: &str, is_macos: bool) -> Option<KeymapConfig> {
         let json_content = match name {
             "default" => include_str!("../keymaps/default.json"),
             "emacs" => include_str!("../keymaps/emacs.json"),
@@ -4168,8 +4175,17 @@ impl Config {
             _ => return None,
         };
 
-        match serde_json::from_str(json_content) {
-            Ok(config) => Some(config),
+        match serde_json::from_str::<KeymapConfig>(json_content) {
+            Ok(mut config) => {
+                // On macOS, layer the `vscode` keymap on top of `macos` so users
+                // get Mac VSCode conventions (Option+Left/Right for word motion,
+                // Ctrl+B for the file explorer, etc.) instead of the Linux/Windows
+                // VSCode defaults. See issue #1916.
+                if name == "vscode" && is_macos {
+                    config.inherits = Some("macos".to_string());
+                }
+                Some(config)
+            }
             Err(e) => {
                 eprintln!("Failed to parse builtin keymap '{}': {}", name, e);
                 None
@@ -8973,6 +8989,97 @@ mod tests {
         assert!(
             has_insert_newline,
             "macos keymap should have insert_newline action for Enter key"
+        );
+    }
+
+    /// Regression test for issue #1916: on macOS, the `vscode` keymap should
+    /// inherit from `macos` so that Mac VSCode conventions (Option+Left/Right ->
+    /// word motion, Ctrl+B -> file explorer, etc.) take effect instead of the
+    /// Linux/Windows VSCode defaults.
+    #[test]
+    fn test_vscode_keymap_inherits_macos_on_macos() {
+        let km = Config::load_builtin_keymap_for_target("vscode", true)
+            .expect("vscode keymap should be loadable");
+        assert_eq!(
+            km.inherits.as_deref(),
+            Some("macos"),
+            "On macOS, the vscode keymap must inherit from macos (#1916)"
+        );
+    }
+
+    #[test]
+    fn test_vscode_keymap_inherits_default_on_non_macos() {
+        let km = Config::load_builtin_keymap_for_target("vscode", false)
+            .expect("vscode keymap should be loadable");
+        assert_eq!(
+            km.inherits.as_deref(),
+            Some("default"),
+            "On non-macOS platforms, the vscode keymap continues to inherit from default"
+        );
+    }
+
+    /// Verify the resolved binding chain on a macOS target: Option+Right in
+    /// normal context must end up as `move_word_end` (last-wins), matching
+    /// VSCode's macOS behavior.
+    #[test]
+    fn test_vscode_keymap_on_macos_resolves_option_right_to_word_end() {
+        let mut config = Config::default();
+        // Inject the macOS-target `vscode` keymap into user-defined maps so
+        // `resolve_keymap` picks it up regardless of the host OS. Inherited
+        // `macos` and `default` keymaps don't have platform-conditional
+        // behavior, so the host's builtin loader resolves them faithfully.
+        config.keybinding_maps.insert(
+            "vscode".to_string(),
+            Config::load_builtin_keymap_for_target("vscode", true).unwrap(),
+        );
+
+        let bindings = config.resolve_keymap("vscode");
+        let action = bindings
+            .iter()
+            .filter(|b| {
+                b.key == "Right"
+                    && b.modifiers == vec!["alt".to_string()]
+                    && b.when.as_deref() == Some("normal")
+            })
+            .next_back()
+            .map(|b| b.action.as_str());
+
+        assert_eq!(
+            action,
+            Some("move_word_end"),
+            "On macOS, vscode-resolved Option+Right (normal) must be move_word_end (#1916). \
+             Got: {:?}",
+            action
+        );
+    }
+
+    /// Same chain on a non-macOS target keeps the default's Alt+Right ->
+    /// navigate_forward — the fix must not regress Linux/Windows behavior.
+    #[test]
+    fn test_vscode_keymap_on_non_macos_resolves_alt_right_to_navigate_forward() {
+        let mut config = Config::default();
+        config.keybinding_maps.insert(
+            "vscode".to_string(),
+            Config::load_builtin_keymap_for_target("vscode", false).unwrap(),
+        );
+
+        let bindings = config.resolve_keymap("vscode");
+        let action = bindings
+            .iter()
+            .filter(|b| {
+                b.key == "Right"
+                    && b.modifiers == vec!["alt".to_string()]
+                    && b.when.as_deref() == Some("normal")
+            })
+            .next_back()
+            .map(|b| b.action.as_str());
+
+        assert_eq!(
+            action,
+            Some("navigate_forward"),
+            "On non-macOS, vscode-resolved Alt+Right (normal) must remain navigate_forward. \
+             Got: {:?}",
+            action
         );
     }
 
