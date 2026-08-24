@@ -14,6 +14,19 @@ Each bug entry:
 
 ---
 
+## BUG-039: Terminal tab name not preserved across editor restart (restored exited terminal shows generic `*Terminal N*`)
+- **ID:** BUG-039
+- **Severity:** Medium (usability; defeats telling restored dead terminals apart; contradicts documented behavior).
+- **Status:** Open — GitHub [#3074](https://github.com/sinelaw/fresh/issues/3074) filed (Run #60).
+- **Version:** fresh 0.4.10 @ 992e61d02.
+- **Reproduction Steps:** `cd /tmp/wr60 && fresh main.rs` (persistent, NOT --no-restore) → Open Terminal to the Right, `cd subdir` (tab `bash — root@vm: /tmp/wr60/subdir`) → Open Terminal (tab `bash — root@vm: /tmp/wr60`) → `exit` both → Ctrl+Q → `cd /tmp/wr60 && fresh` (pure restore).
+- **Expected:** Each restored terminal keeps its tab name (`bash — .../subdir (exited)` / `bash — ... (exited)`), per terminal.md §Persistence + 0.4.6 changelog.
+- **Actual:** Both restore as the SAME generic base name `*Terminal 0* (exited) 1` / `*Terminal 0* (exited) 2`; descriptive `bash — <cwd>` names lost. `(exited)` marker + `⟳ Restart` indicator + scrollback restore correctly.
+- **Cause (black-box):** name re-derived from the live process each time — restarting the terminal regains `bash — ...`; a dead restored terminal has no live process, so it falls back to the internal buffer name. A live-at-quit terminal keeps its name (process present after restore).
+- **Search queries (0 dupes):** `terminal tab name restart restore`, `terminal tab generic name exited restore session`, `terminal name survive editor restart`. Related-but-distinct: #2828 (closed), #2485 (closed), #2282 (rename feature request).
+
+---
+
 ## BUG-017: vi mode — indent operators `>>`/`<<` and visual-mode `>`/`<` are no-ops
 - **ID:** BUG-017
 - **Title:** In vi mode, the indent/dedent operators `>>` and `<<` (NORMAL) and `>`/`<` (Visual) do nothing — no indentation change, no status feedback.
@@ -538,7 +551,7 @@ Each bug entry:
 ## BUG-038: Extract Tab to New Workspace — the extracted co-tenant workspace is not persisted (lost on restart)
 - **ID:** BUG-038
 - **Severity:** Medium-high (silent loss of the co-tenant workspace arrangement the feature exists to create; an unsaved extracted buffer would be data loss).
-- **Status:** Open — GitHub #2735 filed (Run #59).
+- **Status:** **FIXED** (Run #60, confirmed via UI in v0.4.10; fix landed 0.4.9, maintainer-closed). Recheck: `fresh main.rs lib.rs` → Extract Tab on lib.rs → 2 co-tenant windows → Quit → TWO `.ws-*.json` on disk (was ONE) → relaunch `fresh` → BOTH windows restore with their files. `--no-restore` half also fixed: writes no session layout (only trust.json).
 - **GitHub Issue:** [#2735](https://github.com/sinelaw/fresh/issues/2735)
 - **Version:** v0.4.4 @ f545a75ad.
 - **Feature:** 0.4.4 co-tenant workspaces — palette "Extract Tab to New Workspace" (builtin) moves the current tab into a NEW workspace over the same project root (a co-tenant window). Backed by the commit "Restore each co-tenant window to its own file on reboot."
