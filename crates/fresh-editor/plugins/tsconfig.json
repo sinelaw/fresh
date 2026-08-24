@@ -33,6 +33,7 @@
     "diagnostics_panel.ts",
     "diff_nav.ts",
     "env-manager.ts",
+    "file_icons.ts",
     "find_references.ts",
     "flash.ts",
     "git_blame.ts",

@@ -1320,8 +1320,8 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_tilde: bool,
 
-    /// Use Nerd Font icons for decorative UI glyphs (e.g. the settings
-    /// category icons). Nerd Font glyphs live in the Unicode private-use
+    /// Use Nerd Font icons for decorative UI glyphs (e.g. settings categories
+    /// and file-type icons in the File Explorer). Nerd Font glyphs live in the Unicode private-use
     /// area and only render correctly when the terminal uses a patched
     /// "Nerd Font"; on any other font they show up as `?` or empty boxes.
     /// When disabled, standard Unicode symbols (covered by normal

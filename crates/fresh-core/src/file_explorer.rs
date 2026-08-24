@@ -49,6 +49,83 @@ pub struct FileExplorerLeadingSlot {
     pub min_width: usize,
 }
 
+/// Where a path-independent leading-slot rule gets its foreground colour.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(untagged, deny_unknown_fields)]
+#[ts(export)]
+pub enum FileExplorerLeadingRuleColor {
+    /// A fixed RGB value or theme key, resolved when the row is painted.
+    Color(OverlayColorSpec),
+    /// Inherit the final filename foreground after selection, path overrides,
+    /// hidden/symlink styling, and pending-cut dimming are applied.
+    Filename {
+        source: FileExplorerLeadingRuleColorSource,
+    },
+}
+
+/// Supported dynamic colour sources for a leading-slot rule.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub enum FileExplorerLeadingRuleColorSource {
+    Filename,
+}
+
+/// Leading-slot payload stored in a path-independent rule table.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct FileExplorerLeadingRuleSlot {
+    /// Text shown in the leading slot (typically one icon glyph).
+    pub text: String,
+    /// Fixed colour or inheritance from the row's final filename colour.
+    pub color: FileExplorerLeadingRuleColor,
+    /// Minimum display width reserved for the leading slot.
+    #[serde(default)]
+    #[ts(optional)]
+    pub min_width: Option<usize>,
+}
+
+/// Path-independent leading-slot rules registered by a plugin namespace.
+///
+/// Rules are normalized and compiled by the host at registration time. At
+/// render time the host considers exact filenames, final extensions, and
+/// directory basenames before consulting the relevant fallback.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct FileExplorerLeadingSlotRules {
+    /// Namespace priority. Higher values win within the explicit tier or the
+    /// fallback tier; explicit matches always beat every fallback.
+    #[serde(default)]
+    #[ts(optional)]
+    pub priority: Option<i32>,
+    /// Match keys case-sensitively. Defaults to false.
+    #[serde(default)]
+    #[ts(optional)]
+    pub case_sensitive: Option<bool>,
+    /// Exact file basenames, for example `.gitignore` or `Dockerfile`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub exact_files: Option<std::collections::HashMap<String, FileExplorerLeadingRuleSlot>>,
+    /// Final extensions without a leading dot, for example `rs` or `tar`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub extensions: Option<std::collections::HashMap<String, FileExplorerLeadingRuleSlot>>,
+    /// Exact directory basenames.
+    #[serde(default)]
+    #[ts(optional)]
+    pub directory_names: Option<std::collections::HashMap<String, FileExplorerLeadingRuleSlot>>,
+    /// Used for files only when no explicit rule from any namespace matched.
+    #[serde(default)]
+    #[ts(optional)]
+    pub fallback_file: Option<FileExplorerLeadingRuleSlot>,
+    /// Used for directories only when no explicit rule from any namespace matched.
+    #[serde(default)]
+    #[ts(optional)]
+    pub fallback_directory: Option<FileExplorerLeadingRuleSlot>,
+}
+
 /// Trailing-slot content for a file explorer row.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -119,6 +196,17 @@ impl<'js> rquickjs::FromJs<'js> for FileExplorerSlotEntry {
     }
 }
 
+#[cfg(feature = "plugins")]
+impl<'js> rquickjs::FromJs<'js> for FileExplorerLeadingSlotRules {
+    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
+        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+            from: "object",
+            to: "FileExplorerLeadingSlotRules",
+            message: Some(e.to_string()),
+        })
+    }
+}
+
 #[cfg(all(test, feature = "plugins"))]
 mod tests {
     use super::*;
@@ -169,6 +257,43 @@ mod tests {
             assert!(got.suppress_trailing);
             assert!(got.suppress_name_color);
             assert_eq!(got.priority, 5);
+        });
+    }
+
+    #[test]
+    fn leading_rules_from_js_decodes_selectors_and_filename_color() {
+        let rt = Runtime::new().unwrap();
+        let ctx = Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let v: Value = ctx
+                .eval::<Value, _>(
+                    br#"({
+                        priority: 7,
+                        exactFiles: {
+                            '.gitignore': { text: 'G', color: 'syntax.keyword' }
+                        },
+                        extensions: {
+                            rs: { text: 'R', color: { source: 'filename' }, minWidth: 1 }
+                        },
+                        fallbackDirectory: { text: 'D', color: [1, 2, 3] }
+                    })"#,
+                )
+                .unwrap();
+            let got = FileExplorerLeadingSlotRules::from_js(&ctx, v).unwrap();
+            assert_eq!(got.priority, Some(7));
+            assert_eq!(got.case_sensitive, None);
+            assert!(got.exact_files.as_ref().unwrap().contains_key(".gitignore"));
+            assert!(matches!(
+                got.extensions.as_ref().unwrap()["rs"].color,
+                FileExplorerLeadingRuleColor::Filename {
+                    source: FileExplorerLeadingRuleColorSource::Filename
+                }
+            ));
+            assert_eq!(got.extensions.as_ref().unwrap()["rs"].min_width, Some(1));
+            assert!(matches!(
+                got.fallback_directory.unwrap().color,
+                FileExplorerLeadingRuleColor::Color(OverlayColorSpec::Rgb(1, 2, 3))
+            ));
         });
     }
 }

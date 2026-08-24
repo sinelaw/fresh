@@ -3790,6 +3790,7 @@ impl Editor {
                         fuzzy: matched.as_ref(),
                         decorations: &win.file_explorer_decoration_cache,
                         slot_overrides: &win.file_explorer_slot_override_cache,
+                        leading_rules: &self.file_explorer_leading_rule_cache,
                         slot_resolver: &slot_resolver,
                         theme: &theme,
                         collapsed: &indicators.0,

@@ -4516,6 +4516,39 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Register path-independent leading-slot rules for a namespace.
+    pub fn set_file_explorer_leading_slot_rules(
+        &self,
+        namespace: String,
+        rules: fresh_core::file_explorer::FileExplorerLeadingSlotRules,
+    ) -> bool {
+        let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
+
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .file_explorer_namespaces
+            .push(scoped_namespace.clone());
+
+        self.command_sender
+            .send(PluginCommand::SetFileExplorerLeadingSlotRules {
+                namespace: scoped_namespace,
+                rules,
+            })
+            .is_ok()
+    }
+
+    /// Clear path-independent leading-slot rules for a namespace.
+    pub fn clear_file_explorer_leading_slot_rules(&self, namespace: String) -> bool {
+        let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
+        self.command_sender
+            .send(PluginCommand::ClearFileExplorerLeadingSlotRules {
+                namespace: scoped_namespace,
+            })
+            .is_ok()
+    }
+
     // === Virtual Text ===
 
     /// Add virtual text (inline text that doesn't exist in the buffer)
@@ -9216,6 +9249,11 @@ impl QuickJsBackend {
                         .send(PluginCommand::ClearFileExplorerSlots {
                             namespace: ns.clone(),
                         });
+                    let _ = self.command_sender.send(
+                        PluginCommand::ClearFileExplorerLeadingSlotRules {
+                            namespace: ns.clone(),
+                        },
+                    );
                 }
             }
 
@@ -12271,6 +12309,44 @@ mod tests {
             }
             _ => panic!("Expected SetPromptSuggestions, got {:?}", cmd),
         }
+    }
+
+    #[test]
+    fn test_file_explorer_leading_rules_decode_and_clear_on_plugin_cleanup() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+                const editor = getEditor();
+                editor.setFileExplorerLeadingSlotRules("icons", {
+                    priority: 7,
+                    extensions: {
+                        rs: { text: "R", color: { source: "filename" }, minWidth: 1 }
+                    }
+                });
+                "#,
+                "test.js",
+            )
+            .unwrap();
+
+        let command = rx.try_recv().unwrap();
+        let namespace = match command {
+            PluginCommand::SetFileExplorerLeadingSlotRules { namespace, rules } => {
+                assert_eq!(rules.priority, Some(7));
+                assert_eq!(rules.extensions.as_ref().unwrap()["rs"].text, "R");
+                namespace
+            }
+            other => panic!("expected leading-slot rules, got {other:?}"),
+        };
+
+        backend.cleanup_plugin("test");
+        let cleanup: Vec<_> = rx.try_iter().collect();
+        assert!(cleanup.iter().any(|command| matches!(
+            command,
+            PluginCommand::ClearFileExplorerLeadingSlotRules { namespace: cleared }
+                if cleared == &namespace
+        )));
     }
 
     // ==================== State Query Tests ====================

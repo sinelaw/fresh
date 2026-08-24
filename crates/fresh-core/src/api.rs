@@ -4098,6 +4098,15 @@ pub enum PluginCommand {
         namespace: String,
     },
 
+    /// Set path-independent file explorer leading-slot rules for a namespace.
+    SetFileExplorerLeadingSlotRules {
+        namespace: String,
+        rules: crate::file_explorer::FileExplorerLeadingSlotRules,
+    },
+
+    /// Clear path-independent file explorer leading-slot rules for a namespace.
+    ClearFileExplorerLeadingSlotRules { namespace: String },
+
     /// Open a file at a specific line and column
     /// Line and column are 1-indexed to match git grep output
     OpenFileAtLocation {
