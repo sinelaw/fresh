@@ -704,6 +704,54 @@ clearFileExplorerSlots(namespace: string): boolean
 |------|------|-------------|
 | `namespace` | `string` | Namespace to clear (e.g., "git-status") |
 
+#### `setFileExplorerLeadingSlotRules`
+
+Register path-independent leading-slot rules for a plugin namespace. This is
+intended for file-type icon packs: registration cost scales with the number of
+rules rather than the number of files in the workspace, and rendering performs
+only native basename/extension lookups.
+
+```typescript
+setFileExplorerLeadingSlotRules(
+  namespace: string,
+  rules: FileExplorerLeadingSlotRules,
+): boolean
+```
+
+```typescript
+editor.setFileExplorerLeadingSlotRules("file-type-icons", {
+  priority: 10,
+  exactFiles: {
+    ".gitignore": { text: "", color: "syntax.keyword" },
+  },
+  extensions: {
+    rs: { text: "", color: "syntax.keyword", minWidth: 1 },
+    md: { text: "󰂺", color: { source: "filename" }, minWidth: 1 },
+  },
+  fallbackFile: {
+    text: "󰈔",
+    color: { source: "filename" },
+    minWidth: 1,
+  },
+});
+```
+
+Rules are case-insensitive unless `caseSensitive` is true. Explicit filename,
+final-extension, and directory-name matches compete by namespace priority. Any
+explicit match wins over every fallback. Exact-path entries installed through
+`setFileExplorerSlots`, including `suppressLeading`, always take precedence.
+`{ source: "filename" }` inherits the final filename foreground.
+These text-glyph rules apply to the terminal/native-GUI renderer. The browser
+frontend keeps its independent SVG file-icon projection.
+
+#### `clearFileExplorerLeadingSlotRules`
+
+Clear path-independent leading-slot rules for a namespace.
+
+```typescript
+clearFileExplorerLeadingSlotRules(namespace: string): boolean
+```
+
 #### `submitViewTransform`
 
 Submit a transformed view stream for a viewport
