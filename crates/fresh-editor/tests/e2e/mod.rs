@@ -245,6 +245,7 @@ pub mod remote_reconnect_terminal;
 pub mod rendering;
 // Spawns its agent terminals through the plugin `createTerminal` command —
 // the path Orchestrator's "Run Agent…" uses — so it needs that API compiled in.
+pub mod issue_2673_duplicate_line;
 #[cfg(feature = "plugins")]
 pub mod restart_exited_terminal;
 pub mod restored_agent_terminal;
