@@ -205,12 +205,22 @@ impl SettingsState {
                 dialog.backspace();
             }
             KeyCode::Delete => {
-                if is_editing_json {
-                    // Delete character at cursor in JSON editor
-                    dialog.delete();
-                } else {
-                    // Delete item in TextList
+                // A composite TextList has no caret of its own while a row is
+                // focused, so Delete drops the focused row — matching both the
+                // navigation-mode handler and the standalone control. Every
+                // other editable control routed here (plain Text, JSON) is a
+                // caret field, so Delete forward-deletes the character at the
+                // caret. The previous JSON-only guard sent scalar Text fields
+                // down the list-removal path, a no-op that left their Delete
+                // key dead even though Backspace worked (issue #2875).
+                let is_text_list = matches!(
+                    dialog.current_item().map(|i| &i.control),
+                    Some(SettingControl::TextList(_))
+                );
+                if is_text_list {
                     dialog.delete_list_item();
+                } else {
+                    dialog.delete();
                 }
             }
             KeyCode::Home => {
@@ -2014,6 +2024,113 @@ mod tests {
             text_value(&state),
             "Xabcdef",
             "Delete must forward-delete the character at the caret"
+        );
+    }
+
+    /// A plain `Text` field inside the entry ("Edit Item") dialog must honor
+    /// forward-Delete. The dialog's text-editing handler previously routed
+    /// Delete to list-item removal for every non-JSON control, so a scalar
+    /// Text field's Delete key was dead even though Backspace worked
+    /// (issue #2875). Regression guard.
+    #[test]
+    fn test_entry_dialog_text_field_forward_delete() {
+        use super::super::entry_dialog::EntryDialogState;
+        use super::super::schema::{SettingSchema, SettingType};
+        use std::collections::HashMap;
+
+        // A minimal object entry with one editable String field — the same
+        // shape as the "Edit Item" dialog in the issue screenshot (a
+        // `Command` field alongside an `Enabled` toggle).
+        let command_prop = SettingSchema {
+            path: "/command".to_string(),
+            name: "Command".to_string(),
+            description: None,
+            setting_type: SettingType::String,
+            default: Some(serde_json::json!("")),
+            read_only: false,
+            section: None,
+            order: None,
+            nullable: false,
+            enum_from: None,
+            dual_list_sibling: None,
+            dynamically_extendable_status_bar_elements: false,
+        };
+        let schema = SettingSchema {
+            path: "/test".to_string(),
+            name: "Test".to_string(),
+            description: None,
+            setting_type: SettingType::Object {
+                properties: vec![command_prop],
+            },
+            default: None,
+            read_only: false,
+            section: None,
+            order: None,
+            nullable: false,
+            enum_from: None,
+            dual_list_sibling: None,
+            dynamically_extendable_status_bar_elements: false,
+        };
+
+        let config_schema = include_str!("../../../plugins/config-schema.json");
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::new(config_schema, &config).unwrap();
+
+        let dialog = EntryDialogState::from_schema(
+            "cmd".to_string(),
+            &serde_json::json!({ "command": "" }),
+            &schema,
+            "/test",
+            true, // new entry
+            false,
+            &HashMap::new(),
+        );
+        state.entry_dialog_stack.push(dialog);
+
+        // Focus the Command field and drop into text-edit mode.
+        {
+            let dialog = state.entry_dialog_mut().expect("dialog present");
+            let command_idx = dialog
+                .items
+                .iter()
+                .position(|i| i.name == "Command")
+                .expect("Command field present");
+            dialog.selected_item = command_idx;
+            dialog.start_editing();
+            assert!(
+                dialog.editing_text,
+                "precondition: editing the Command field"
+            );
+        }
+
+        let mut ctx = InputContext::new();
+
+        // Helper: read the Command field's current value from the dialog.
+        let command_value = |state: &SettingsState| -> String {
+            match state
+                .entry_dialog()
+                .and_then(|d| d.current_item())
+                .map(|i| &i.control)
+            {
+                Some(SettingControl::Text(s)) => s.value(),
+                _ => panic!("current dialog item is not a Text control"),
+            }
+        };
+
+        for c in "abc".chars() {
+            state.handle_key_event(&key(KeyCode::Char(c)), &mut ctx);
+        }
+        assert_eq!(command_value(&state), "abc");
+
+        // Home moves the caret to the start; Delete removes the char at the
+        // caret. Before the fix this routed to list-item removal — a no-op on
+        // a scalar Text field — leaving the value untouched.
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            command_value(&state),
+            "bc",
+            "Delete must forward-delete the character at the caret in the entry dialog"
         );
     }
 }

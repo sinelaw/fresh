@@ -213,6 +213,88 @@ fn test_add_second_lsp_server_for_python_via_keyboard() {
 }
 
 // ---------------------------------------------------------------------------
+// Issue #2875: Delete key is dead in a Text field of the Edit Item dialog
+// ---------------------------------------------------------------------------
+
+/// End-to-end reproducer for issue #2875. Drives the real editor into the
+/// "Edit Item" dialog (python LSP server config, the same dialog as the issue
+/// screenshot), edits the `Command` text field, and verifies the forward-Delete
+/// key removes the character at the caret — the way Backspace already did.
+///
+/// Before the fix, the dialog's text-editing handler routed Delete to
+/// TextList row-removal for every non-JSON control, so a scalar Text field's
+/// Delete key was a no-op. Observed on the rendered screen, not model state.
+#[test]
+fn test_entry_dialog_text_field_delete_key_issue_2875() {
+    let mut harness = EditorTestHarness::new(120, 50).unwrap();
+    harness.render().unwrap();
+
+    open_python_lsp_edit_value(&mut harness);
+
+    // Enter on the ObjectArray entry opens the nested Edit Item dialog for the
+    // pylsp server — the one with Command / Enabled / Name fields.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    if !harness.screen_to_string().contains("Edit Item") {
+        harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        open_python_lsp_edit_value(&mut harness);
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+    harness.assert_screen_contains("Edit Item");
+    harness.assert_screen_contains("Command");
+
+    // The Command field is the first editable field and is focused on open.
+    // Enter drops into text-edit mode (caret at end of the existing value).
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Append a unique marker plus a trailing char to delete.
+    harness.type_text("ZZZq").unwrap();
+    harness.render().unwrap();
+    eprintln!(
+        "--- after typing 'ZZZq' into Command ---\n{}",
+        harness.screen_to_string()
+    );
+    harness.assert_screen_contains("ZZZq");
+
+    // Caret sits after 'q'. Left moves it between 'Z' and 'q'; Delete must
+    // forward-delete the 'q' at the caret. Before the fix this was a no-op.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    eprintln!(
+        "--- after Left + Delete (expect 'ZZZ', no trailing 'q') ---\n{}",
+        harness.screen_to_string()
+    );
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("ZZZ"),
+        "marker text should survive the Delete.\nScreen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("ZZZq"),
+        "Delete must forward-delete the 'q' at the caret (issue #2875).\nScreen:\n{screen}"
+    );
+
+    // Clean up (Esc out of edit mode and the stacked dialogs).
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Bug B: Down navigation inconsistencies in Edit Item dialog
 // ---------------------------------------------------------------------------
 
