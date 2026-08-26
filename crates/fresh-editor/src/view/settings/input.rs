@@ -2183,32 +2183,54 @@ mod tests {
         );
     }
 
-    /// Forward-Delete walks grapheme boundaries, not bytes. Deleting through
-    /// a two-byte `é` and a three-byte `漢` must remove one visible character
-    /// each and never split a UTF-8 sequence — ad-hoc byte slicing at exactly
-    /// this kind of site has been a recurring source of multibyte panics.
+    /// Forward-Delete removes one *grapheme cluster*, not one byte and not
+    /// one `char`. The field holds `a`, a decomposed `e` + combining acute,
+    /// and a three-byte `漢`, so each of the three properties is separable:
+    ///
+    /// * a byte-indexed delete would split the combining mark or `漢` and
+    ///   panic on the resulting non-boundary — ad-hoc slicing at sites like
+    ///   this is a known recurring source of multibyte crashes;
+    /// * a char-indexed delete would survive but leave the orphaned
+    ///   combining mark behind, so the caret would need two presses to clear
+    ///   one visible character;
+    /// * only a cluster-indexed delete clears `e` + mark in a single press.
+    ///
+    /// A precomposed `é` cannot tell these apart — it is one byte sequence,
+    /// one `char`, and one cluster at once — so the decomposed form is what
+    /// makes this test load-bearing.
     #[test]
     fn test_entry_dialog_text_field_forward_delete_multibyte() {
         let mut state = string_field_dialog();
         let mut ctx = InputContext::new();
 
-        for c in "aé漢".chars() {
+        // "ae\u{301}漢": 'a', then 'e' + COMBINING ACUTE ACCENT (one cluster,
+        // two chars, three bytes), then a three-byte ideograph.
+        for c in "ae\u{301}漢".chars() {
             state.handle_key_event(&key(KeyCode::Char(c)), &mut ctx);
         }
-        assert_eq!(dialog_text_value(&state), "aé漢");
+        assert_eq!(dialog_text_value(&state), "ae\u{301}漢");
 
         state.handle_key_event(&key(KeyCode::Home), &mut ctx);
         state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
         assert_eq!(
             dialog_text_value(&state),
-            "é漢",
+            "e\u{301}漢",
             "Delete must remove exactly the one-byte 'a' at the caret"
         );
+
         state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
         assert_eq!(
             dialog_text_value(&state),
             "漢",
-            "Delete must remove the whole two-byte 'é', not half of it"
+            "one Delete must clear the whole 'e' + combining-mark cluster, \
+             not just its base character"
+        );
+
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "",
+            "Delete must remove all three bytes of the ideograph at the caret"
         );
     }
 
