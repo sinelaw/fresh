@@ -2300,13 +2300,13 @@ fn test_file_explorer_new_file_creates_missing_parent_directories() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_prompt().unwrap();
 
     harness.type_text("src/components/app.rs").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.sleep(std::time::Duration::from_millis(100));
+    harness.wait_for_prompt_closed().unwrap();
     harness.render().unwrap();
 
     // Chained join: a single "src/components/app.rs" only compares equal on
