@@ -283,6 +283,9 @@ fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
     harness
         .open_file(&project_root.join("file_00.txt"))
         .unwrap();
+    // The helper leaves focus in the explorer, where typing goes to its
+    // filter box instead of the buffer -- and an unmodified buffer never
+    // grows the marker this test is about.
     harness.editor_mut().active_window_mut().focus_editor();
     harness.type_text("x").unwrap();
     harness.editor_mut().focus_file_explorer();
@@ -372,12 +375,22 @@ fn overflowing_row_offers_no_status_tooltip_under_the_scrollbar() {
     // dir would key the buffer differently from the explorer's node.
     let project_root = harness.project_dir().unwrap().canonicalize().unwrap();
     harness.open_file(&project_root.join(&long_name)).unwrap();
+    // The helper leaves focus in the explorer, where typing goes to its
+    // filter box instead of the buffer -- and an unmodified buffer grows no
+    // marker, which would make the assertions below pass for the wrong reason.
+    harness.editor_mut().active_window_mut().focus_editor();
     harness.type_text("x").unwrap();
     harness.editor_mut().focus_file_explorer();
     // Wait on one fact only - the row being on screen - and assert the rest,
     // so a wrong expectation fails with a screen dump instead of hanging.
+    // Match the row, not the name anywhere: the tab bar carries it too, and
+    // waiting on that races the tree's own load.
     harness
-        .wait_until(|h| h.screen_to_string().contains(long_name.as_str()))
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|l| l.starts_with('\u{2502}') && l.contains(long_name.as_str()))
+        })
         .unwrap();
     harness.render().unwrap();
 
