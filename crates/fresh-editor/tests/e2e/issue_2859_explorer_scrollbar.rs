@@ -4,8 +4,10 @@
 //! Everything here is read back from rendered output (CONTRIBUTING Testing 2):
 //! the bar shows up as themed cell backgrounds in its reserved lane, the tree
 //! as screen text. No model, view, or context accessors — the same rule
-//! `issue_2119_wheel_scroll.rs` documents, whose token helpers are reused here.
+//! `issue_2119_wheel_scroll.rs` documents, whose token readers these tests
+//! share from `common::explorer`.
 
+use crate::common::explorer::{first_explorer_token, token_on_line_with};
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, ExplorerWidth};
@@ -42,35 +44,6 @@ fn harness_with_files(files: usize) -> EditorTestHarness {
     harness.wait_for_file_explorer_item("file_00.txt").unwrap();
     harness.render().unwrap();
     harness
-}
-
-/// The first non-whitespace token at/after `prefix` on the line, e.g. for
-/// prefix "file_" on "│▌   file_11.txt  ●" returns "file_11.txt".
-fn token_after(line: &str, prefix: &str) -> Option<String> {
-    let idx = line.find(prefix)?;
-    let tok: String = line[idx..]
-        .chars()
-        .take_while(|c| !c.is_whitespace())
-        .collect();
-    Some(tok)
-}
-
-/// The `prefix`-token on the first screen line that also contains `marker`.
-fn token_on_line_with(screen: &str, marker: &str, prefix: &str) -> Option<String> {
-    screen
-        .lines()
-        .find(|l| l.contains(marker))
-        .and_then(|l| token_after(l, prefix))
-}
-
-/// The `prefix`-token on the first *file-explorer body* row (those start with
-/// the explorer's left border `│`), so we read the top tree entry rather than
-/// a tab title or status-bar mention of the same name.
-fn first_explorer_token(screen: &str, prefix: &str) -> Option<String> {
-    screen
-        .lines()
-        .filter(|l| l.starts_with('│'))
-        .find_map(|l| token_after(l, prefix))
 }
 
 /// Screen rows of the explorer body: the ones between its top and bottom
