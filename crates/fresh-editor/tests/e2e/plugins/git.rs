@@ -1997,6 +1997,143 @@ fn test_git_blame_cursor_navigation() {
     assert!(screen.contains("──"));
 }
 
+/// The block header is a band painted the full width of the view, so a
+/// closing `──` after the text would land at a different column on every
+/// header — the summary and author lengths vary — and read as ragged rather
+/// than as a rule. Only the fixed-width leading `──` should survive.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_header_has_no_trailing_rule() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_blame_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("src/main.rs");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("fn main"))
+        .unwrap();
+
+    trigger_git_blame(&mut harness);
+
+    let screen = harness.screen_to_string();
+    let headers: Vec<&str> = screen.lines().filter(|l| l.contains("──")).collect();
+    assert!(
+        !headers.is_empty(),
+        "expected at least one blame header on screen:\n{screen}"
+    );
+
+    for header in headers {
+        let text = header.trim_end();
+        assert!(
+            text.ends_with('"'),
+            "blame header should end with the commit summary's closing quote, but a \
+             trailing rule follows it: {text:?}"
+        );
+        assert_eq!(
+            text.matches("──").count(),
+            1,
+            "blame header should carry only the leading rule: {text:?}"
+        );
+    }
+}
+
+/// `b` walks into history one commit at a time, so `q` unwinds it the same
+/// way: from one hop deep, the first `q` returns to the blame it came from
+/// and only the second closes the view. Closing outright from several hops
+/// in threw the walk away and meant re-running blame to get back.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_q_unwinds_history_before_closing() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+
+    // A second commit touching the same line, so the line under the cursor
+    // has a parent commit for `b` to walk to.
+    repo.modify_file("src/main.rs", "fn main() {\n    println!(\"v2\");\n}\n");
+    repo.git_add_all();
+    repo.git_commit("second commit");
+
+    repo.setup_git_blame_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("src/main.rs");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("fn main"))
+        .unwrap();
+
+    trigger_git_blame(&mut harness);
+
+    // Walk one commit back. The status line reports the depth, which is the
+    // signal that the hop actually happened rather than being refused.
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::NONE)
+        .unwrap();
+    let walked = harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("depth: 1") || screen.contains("Cannot get blame")
+        })
+        .is_ok();
+    assert!(walked, "`b` neither walked back nor reported why");
+
+    if harness.screen_to_string().contains("Cannot get blame") {
+        // The cursor sat on a line whose last change was the initial commit,
+        // so there is no parent to walk to and nothing to unwind. Nothing to
+        // assert about popping in that case.
+        return;
+    }
+
+    // First `q`: retraces the hop, stays in blame.
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("depth: 1"))
+        .unwrap();
+    assert!(
+        harness.screen_to_string().contains("──"),
+        "the first `q` should have unwound the `b` hop, not closed the view:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Second `q`: the stack is empty now, so this one closes.
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("fn main") && !screen.contains("──")
+        })
+        .unwrap();
+    harness.assert_screen_not_contains("──");
+}
+
 /// Test git blame close with q
 // TODO: Fix git blame tests on Windows - they fail due to git command output differences
 #[test]
