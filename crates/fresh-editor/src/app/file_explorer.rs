@@ -875,6 +875,18 @@ impl Editor {
                         }
                     }
                 }
+
+                // `rename` replaces an existing destination without warning,
+                // so a name that collides with a real file would destroy it.
+                // Refuse: the temporary item stays where it is and can be
+                // renamed again with F2.
+                if fs.exists(&new_path) {
+                    let name = truncate_name_for_prompt(&new_name, 40);
+                    self.set_status_message(
+                        t!("explorer.new_item_path_exists", name = &name).to_string(),
+                    );
+                    return;
+                }
             }
             let result = if is_new_file {
                 // `create_dir_all` is also safe when the parent already

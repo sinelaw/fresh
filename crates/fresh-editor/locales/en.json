@@ -1001,6 +1001,7 @@
   "explorer.pasted": "Pasted: %{name}",
   "explorer.pasted_moved": "Moved: %{name}",
   "explorer.rename_cancelled": "Rename cancelled",
+  "explorer.new_item_path_exists": "'%{name}' already exists",
   "explorer.new_item_path_must_be_relative": "New item path must be relative",
   "explorer.new_item_path_outside_project": "New item path must stay within the project directory",
   "explorer.rename_invalid_dot": "Name cannot be '.' or '..'",

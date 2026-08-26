@@ -972,6 +972,7 @@
   "explorer.refreshed_default": "Actualizado",
   "explorer.refreshing": "Actualizando %{name}...",
   "explorer.rename_cancelled": "Renombrado cancelado",
+  "explorer.new_item_path_exists": "'%{name}' ya existe",
   "explorer.new_item_path_must_be_relative": "La ruta del nuevo elemento debe ser relativa",
   "explorer.new_item_path_outside_project": "La ruta del nuevo elemento debe permanecer dentro del directorio del proyecto",
   "explorer.rename_invalid_dot": "El nombre no puede ser '.' ni '..'",

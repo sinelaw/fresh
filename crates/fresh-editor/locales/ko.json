@@ -972,6 +972,7 @@
   "explorer.refreshed_default": "새로 고침됨",
   "explorer.refreshing": "%{name} 새로 고침 중...",
   "explorer.rename_cancelled": "이름 변경 취소됨",
+  "explorer.new_item_path_exists": "'%{name}'이(가) 이미 존재합니다",
   "explorer.new_item_path_must_be_relative": "새 항목 경로는 상대 경로여야 합니다",
   "explorer.new_item_path_outside_project": "새 항목 경로는 프로젝트 디렉터리 안에 있어야 합니다",
   "explorer.rename_invalid_dot": "이름은 '.' 또는 '..'일 수 없습니다",

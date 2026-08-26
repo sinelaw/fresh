@@ -972,6 +972,7 @@
   "explorer.refreshed_default": "Оновлено",
   "explorer.refreshing": "Оновлення %{name}...",
   "explorer.rename_cancelled": "Перейменування скасовано",
+  "explorer.new_item_path_exists": "'%{name}' вже існує",
   "explorer.new_item_path_must_be_relative": "Шлях нового елемента має бути відносним",
   "explorer.new_item_path_outside_project": "Шлях нового елемента має залишатися в каталозі проєкту",
   "explorer.rename_invalid_dot": "Ім'я не може бути '.' або '..'",

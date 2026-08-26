@@ -2364,6 +2364,58 @@ fn test_file_explorer_new_file_cannot_escape_project_directory() {
     );
 }
 
+/// Now that a new item's name may contain separators, it can address a file
+/// that already exists. `rename` would replace it without asking, so the
+/// contents of an unrelated file would be gone with no way back. The
+/// collision must be refused and the temporary item left alone.
+#[test]
+fn test_file_explorer_new_file_does_not_overwrite_existing_file() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let existing = project_root.join("src").join("main.rs");
+    fs::create_dir_all(existing.parent().unwrap()).unwrap();
+    fs::write(&existing, "fn main() { println!(\"keep me\"); }\n").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("src/main.rs").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&existing).unwrap(),
+        "fn main() { println!(\"keep me\"); }\n",
+        "an existing file must survive a colliding new-item name"
+    );
+
+    // The temporary item was not moved, so the user can rename it again.
+    let untitled_files: Vec<_> = fs::read_dir(&project_root)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("untitled_"))
+        .collect();
+    assert_eq!(
+        untitled_files.len(),
+        1,
+        "the temporary file should stay put after a refused rename"
+    );
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("untitled_"),
+        "the temporary file should still be open and visible. Screen:\n{}",
+        screen
+    );
+}
+
 /// Test that renaming an existing file from file explorer updates buffer metadata
 /// but keeps focus in file explorer (not switching to editor)
 #[test]

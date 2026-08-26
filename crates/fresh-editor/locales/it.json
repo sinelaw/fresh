@@ -972,6 +972,7 @@
   "explorer.refreshed_default": "Aggiornato",
   "explorer.refreshing": "Aggiornamento %{name}...",
   "explorer.rename_cancelled": "Rinomina annullata",
+  "explorer.new_item_path_exists": "'%{name}' esiste già",
   "explorer.new_item_path_must_be_relative": "Il percorso del nuovo elemento deve essere relativo",
   "explorer.new_item_path_outside_project": "Il percorso del nuovo elemento deve rimanere nella directory del progetto",
   "explorer.rename_invalid_dot": "Il nome non può essere '.' o '..'",
