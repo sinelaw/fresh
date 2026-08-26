@@ -2195,15 +2195,22 @@ fn test_git_blame_does_not_scroll_a_file_that_fits_on_screen() {
 /// way: from one hop deep, the first `q` returns to the blame it came from
 /// and only the second closes the view. Closing outright from several hops
 /// in threw the walk away and meant re-running blame to get back.
+///
+/// Which revision is on screen is the evidence, rather than the status
+/// line's depth counter: at this width the status truncates mid-message
+/// ("... | depth: " with the number cut off), so a depth assertion would
+/// wait for text the terminal never renders.
 // TODO: Fix git blame tests on Windows - they fail due to git command output differences
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_git_blame_q_unwinds_history_before_closing() {
     let repo = GitTestRepo::new();
-    repo.setup_typical_project();
+    repo.create_file("src/main.rs", "fn main() {\n    println!(\"v1\");\n}\n");
+    repo.git_add(&["src/main.rs"]);
+    repo.git_commit("Initial commit");
 
-    // A second commit touching the same line, so the line under the cursor
-    // has a parent commit for `b` to walk to.
+    // Only the middle line changes, so only it carries the second commit —
+    // and only from that line does `b` have a parent to walk to.
     repo.modify_file("src/main.rs", "fn main() {\n    println!(\"v2\");\n}\n");
     repo.git_add_all();
     repo.git_commit("second commit");
@@ -2229,22 +2236,27 @@ fn test_git_blame_q_unwinds_history_before_closing() {
 
     trigger_git_blame(&mut harness);
 
-    // Walk one commit back. Every line of the file belongs to the second
-    // commit, whose parent is the initial commit, so the hop is available
-    // wherever the cursor sits and the status line must report depth 1.
+    // Land on the line the second commit introduced.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("v2"))
+        .unwrap();
+
+    // Walk one commit back: the parent revision's text replaces it on screen.
     harness
         .send_key(KeyCode::Char('b'), KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("depth: 1"))
+        .wait_until(|h| h.screen_to_string().contains("v1"))
         .unwrap();
 
-    // First `q`: retraces the hop, stays in blame.
+    // First `q`: retraces the hop rather than closing. The view comes back to
+    // the revision it started on, still a blame view.
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| !h.screen_to_string().contains("depth: 1"))
+        .wait_until(|h| h.screen_to_string().contains("v2"))
         .unwrap();
     assert!(
         harness.screen_to_string().contains("──"),
