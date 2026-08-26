@@ -19,6 +19,8 @@ use std::fs;
 /// it — the column the row renderer keeps free.
 const EXPLORER_COLS: u16 = 30;
 const SCROLLBAR_COL: u16 = EXPLORER_COLS - 2;
+/// A column well inside the editor split to the explorer's right.
+const EDITOR_COL: u16 = EXPLORER_COLS + 20;
 
 fn explorer_config() -> Config {
     let mut config = Config {
@@ -375,4 +377,53 @@ fn overflowing_row_offers_no_status_tooltip_under_the_scrollbar() {
             harness.screen_to_string()
         );
     }
+}
+
+/// Letting go of the button ends the scrollbar grab. The Explorer's grab is
+/// consulted before the terminal and text-selection ones, so a grab that
+/// outlived its button would capture every later drag anywhere on screen and
+/// steer the tree from it.
+#[test]
+fn file_explorer_scrollbar_grab_ends_with_the_button() {
+    let mut harness = harness_with_files(80, &[]);
+
+    let body = explorer_body_rows(&harness);
+    let track_top = body[0];
+    let track_bottom = *body.last().unwrap();
+    // Leave the thumb in the upper part of the track, so a grab that survived
+    // would have somewhere to drag the tree to.
+    let part_way = track_top + (track_bottom - track_top) / 3;
+
+    let top_before =
+        first_explorer_token(&harness.screen_to_string(), "file_").unwrap_or_else(|| {
+            panic!(
+                "the tree should show entries.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    harness
+        .mouse_drag(SCROLLBAR_COL, track_top, SCROLLBAR_COL, part_way)
+        .unwrap();
+    let scrolled = harness.screen_to_string();
+    let top_scrolled = first_explorer_token(&scrolled, "file_")
+        .unwrap_or_else(|| panic!("the tree should still show entries.\nScreen:\n{scrolled}"));
+    assert_ne!(
+        top_scrolled, top_before,
+        "precondition: the thumb drag should have scrolled the tree.\nScreen:\n{scrolled}"
+    );
+
+    // Now drag in the editor pane, ending far below where the thumb was left.
+    // A leaked grab reads only the row, so this would drag the tree to its end.
+    harness
+        .mouse_drag(EDITOR_COL, track_top, EDITOR_COL, track_bottom)
+        .unwrap();
+
+    let after = harness.screen_to_string();
+    assert_eq!(
+        first_explorer_token(&after, "file_").as_deref(),
+        Some(top_scrolled.as_str()),
+        "a drag in the editor must not scroll the File Explorer — the scrollbar \
+         grab should have ended with the button that started it.\nScreen:\n{after}"
+    );
 }
