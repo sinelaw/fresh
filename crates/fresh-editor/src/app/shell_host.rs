@@ -169,12 +169,16 @@ impl crate::view::shell::fold::HostPainter for Editor {
                 // exists to establish.
                 let _ = paint_body(self, rect, buf, caret, BodyState::default());
             }
-            // Still painted by `Editor::render`; moved out one stage at a time.
+            // Native already — the tree paints these, and the fold never
+            // reaches here for them because a native region emits no
+            // `Draw::Host`. Listed so that un-migrating one is a compile
+            // error rather than a blank row.
+            HostRegion::MenuBar | HostRegion::SearchOptions => {}
+            // Still painted by `Editor::render`; moved out one stage at a
+            // time.
             HostRegion::Dock
-            | HostRegion::MenuBar
             | HostRegion::Explorer
             | HostRegion::StatusBar
-            | HostRegion::SearchOptions
             | HostRegion::PromptLine => {}
         }
     }
@@ -366,7 +370,7 @@ impl Editor {
                 }
             }
 
-            UiFact::MenuHover(target) => {
+            UiFact::Hover(target) => {
                 // The tree says where the pointer is; the existing reaction
                 // says what the menu does about it. Both halves of the old
                 // walk, minus the walk.
@@ -382,6 +386,10 @@ impl Editor {
                     other => other,
                 };
                 self.shell_hover = target.clone();
+                // The menu's own reaction still runs — the tree says where the
+                // pointer is, the machine says what the menu does about it.
+                // Surfaces that only restyle (the search-options row) need
+                // nothing beyond the field itself.
                 self.menu_hover_reaction(target.as_ref());
             }
             UiFact::MenuBarPress { index } => {

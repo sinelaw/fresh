@@ -316,7 +316,7 @@ pub struct SuggestionView {
 /// One search-option toggle (Case / Whole Word / Regex / Confirm-each) as the
 /// TUI lays it out on the options row: state + the cell span of its checkbox,
 /// so a non-cell frontend can render a native toggle and route clicks back to
-/// the exact cells `SearchOptionsLayout::checkbox_at` hit-tests.
+/// the exact cells the shell's tree assigned it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchOptionView {
@@ -481,70 +481,34 @@ impl Editor {
             p.suggestions.len(),
             p.suggestions.len(),
         ));
-        // Search-option toggles: mirror the TUI's options row from the same
-        // derived layout the TUI hit-tests (`search_options_layout_now`) —
-        // same cell spans — plus the live state and the same label/shortcut
-        // derivation `StatusBarRenderer::render_search_options` uses.
-        let search_options = self.search_options_layout_now().map(|lo| {
-            use crate::input::keybindings::{Action, KeyContext};
-            use fresh_i18n::t;
-            let win = self.active_window();
-            let kb = self.keybinding_resolver();
-            let shortcut = |a: &Action| {
-                kb.get_keybinding_for_action(a, KeyContext::SearchPrompt)
-                    .or_else(|| kb.get_keybinding_for_action(a, KeyContext::Prompt))
-                    .or_else(|| kb.get_keybinding_for_action(a, KeyContext::Global))
-            };
-            let opt = |span: Option<(u16, u16)>,
-                       name: &'static str,
-                       label: String,
-                       active: bool,
-                       shortcut: Option<String>| {
-                span.map(|(x0, x1)| SearchOptionView {
-                    name,
-                    label,
-                    shortcut,
-                    active,
-                    x: x0,
-                    w: x1.saturating_sub(x0).max(1),
+        // Search-option toggles: the row's own content — the same values the
+        // TUI describes its toggles with — plus the cell spans the shell's
+        // layout assigned them, READ BACK off the laid-out tree rather than
+        // recomputed. The web frontend routes clicks to those exact cells, so
+        // a second derivation here is a second chance to disagree; there used
+        // to be one (`SearchOptionsLayout::compute`) and it existed only to
+        // be re-checked against the painter.
+        let search_options = self.search_options_content().and_then(|content| {
+            use crate::view::shell::search_options::Piece;
+            let spans = self.search_option_spans_now()?;
+            let row = spans.first().map(|(_, r)| r.y)?;
+            let options = content
+                .pieces
+                .iter()
+                .filter_map(|piece| {
+                    let Piece::Toggle(t) = piece else { return None };
+                    let (_, rect) = spans.iter().find(|(o, _)| *o == t.option)?;
+                    Some(SearchOptionView {
+                        name: t.option.web_name(),
+                        label: t.label.clone(),
+                        shortcut: t.shortcut.clone(),
+                        active: t.checked,
+                        x: rect.x,
+                        w: rect.width.max(1),
+                    })
                 })
-            };
-            SearchOptionsView {
-                row: lo.row,
-                options: [
-                    opt(
-                        lo.case_sensitive,
-                        "case",
-                        t!("search.case_sensitive").to_string(),
-                        win.search_case_sensitive,
-                        shortcut(&Action::ToggleSearchCaseSensitive),
-                    ),
-                    opt(
-                        lo.whole_word,
-                        "word",
-                        t!("search.whole_word").to_string(),
-                        win.search_whole_word,
-                        shortcut(&Action::ToggleSearchWholeWord),
-                    ),
-                    opt(
-                        lo.regex,
-                        "regex",
-                        t!("search.regex").to_string(),
-                        win.search_use_regex,
-                        shortcut(&Action::ToggleSearchRegex),
-                    ),
-                    opt(
-                        lo.confirm_each,
-                        "confirm",
-                        t!("search.confirm_each").to_string(),
-                        win.search_confirm_each,
-                        shortcut(&Action::ToggleSearchConfirmEach),
-                    ),
-                ]
-                .into_iter()
-                .flatten()
-                .collect(),
-            }
+                .collect();
+            Some(SearchOptionsView { row, options })
         });
         Some(PaletteView {
             query: p.input_str().to_string(),

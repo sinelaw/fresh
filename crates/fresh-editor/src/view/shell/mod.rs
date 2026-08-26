@@ -20,3 +20,4 @@ pub mod frame;
 pub mod input;
 pub mod menu;
 pub mod msg;
+pub mod search_options;

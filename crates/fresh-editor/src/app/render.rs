@@ -253,12 +253,6 @@ impl Editor {
             self.update_search_highlights(&query);
         }
 
-        // Determine if we need to show search options bar.
-        // These are stable for the whole frame: every plugin command was
-        // dispatched before this point (pre-layout drain), and nothing after
-        // it mutates prompt state mid-paint.
-        let show_search_options = self.active_prompt_has_search_options();
-
         // Hide status bar when suggestions popup or file browser
         // popup is shown — those popups float just above the prompt
         // line, and a visible status bar wedged between them looks
@@ -340,7 +334,6 @@ impl Editor {
 
         use crate::view::shell::frame::HostRegion;
         let status_bar_area = region(HostRegion::StatusBar);
-        let search_options_area = region(HostRegion::SearchOptions);
         let prompt_line_area = region(HostRegion::PromptLine);
         let editor_content_area = region(HostRegion::Body);
         // Presence is app state, not geometry: a hidden sidebar still has a
@@ -1144,21 +1137,10 @@ impl Editor {
 
         let prompt = self.active_window().prompt.clone();
         let theme = self.theme.read().unwrap().clone();
-        let keybindings_cloned = self.keybindings.read().unwrap().clone(); // Clone the keybindings
 
         // Status bar (hidden when toggled off, or when a suggestions/file-
         // browser popup covers the bottom row).
         self.render_status_bar_row(frame, status_bar_area, has_suggestions, has_file_browser);
-
-        // Search-options bar (case / whole-word / regex / confirm toggles),
-        // shown only while a search-style prompt is active.
-        self.render_search_options_bar(
-            frame,
-            search_options_area,
-            show_search_options,
-            &theme,
-            &keybindings_cloned,
-        );
 
         // Prompt input line (non-overlay prompts only).
         self.render_prompt_line(frame, prompt_line_area, &prompt, &theme);
@@ -1382,8 +1364,9 @@ impl Editor {
     }
 
     /// The Confirm-each option's live value when it is shown (replace
-    /// modes only), `None` when hidden. Shared by the paint pass and
-    /// the per-event geometry (`search_options_layout_now`).
+    /// modes only), `None` when hidden. Read by
+    /// [`Editor::search_options_content`], which is the one place the row's
+    /// content is derived.
     pub(crate) fn search_confirm_shown(&self) -> Option<bool> {
         self.active_window().prompt.as_ref().and_then(|p| {
             if matches!(
@@ -1400,90 +1383,106 @@ impl Editor {
         })
     }
 
-    /// The search-options bar's layout THIS instant, derived from live
-    /// state: the same visibility conditions and bottom-up row math the
-    /// paint layout uses (the bar sits on the row above the prompt line
-    /// at the chrome column's bottom), and the same span math the
-    /// painter draws ([`SearchOptionsLayout::compute`], asserted
-    /// against the paint walk in debug builds). This replaced the
-    /// paint-recorded `ChromeLayout.search_options_layout` cache —
-    /// geometry produced by layout, not recorded by paint. `None` when
-    /// the bar is hidden.
-    pub(crate) fn search_options_layout_now(
+    /// The search-options row's content THIS instant: which toggles are on
+    /// the row, what each says, whether it is checked, and what the pointer
+    /// is on. `None` when no search-style prompt is up.
+    ///
+    /// Content only. There is no `x` and no width here, because the tree
+    /// measures this row — which is what replaced `SearchOptionsLayout`, a
+    /// span table computed once by `compute` for event handling and a second
+    /// time by the painter for cells, reconciled by a `debug_assert_eq!` that
+    /// release builds compiled out. The spans are now read back off the laid
+    /// out tree by [`crate::view::shell::search_options::option_spans`].
+    pub(crate) fn search_options_content(
         &self,
-    ) -> Option<crate::view::ui::status_bar::SearchOptionsLayout> {
+    ) -> Option<crate::view::shell::search_options::SearchOptions> {
+        use crate::view::shell::search_options::{Piece, SearchOption, SearchOptions, Toggle};
         if !self.active_prompt_has_search_options() {
             return None;
         }
-        let frame = self.active_chrome().last_frame;
-        let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
-        let (_, chrome_area) = self.compute_dock_split(size);
-        let prompt_h: u16 = if self.bottom_row_flags().prompt_row_visible {
-            1
-        } else {
-            0
-        };
-        if chrome_area.height < prompt_h + 1 {
-            return None;
-        }
-        let area = ratatui::layout::Rect::new(
-            chrome_area.x,
-            chrome_area.y + chrome_area.height - prompt_h - 1,
-            chrome_area.width,
-            1,
-        );
+        let confirm = self.search_confirm_shown();
+        let win = self.active_window();
         let keybindings = self.keybindings.read().unwrap();
-        Some(crate::view::ui::status_bar::SearchOptionsLayout::compute(
-            area,
-            self.active_window().search_use_regex,
-            self.search_confirm_shown().is_some(),
-            &keybindings,
-        ))
+        // The search-option toggles live in the SearchPrompt context; fall
+        // back to Prompt then Global so a user override in either still
+        // surfaces in the hint.
+        let shortcut = |a: &crate::input::keybindings::Action| -> Option<String> {
+            use crate::input::keybindings::KeyContext;
+            keybindings
+                .get_keybinding_for_action(a, KeyContext::SearchPrompt)
+                .or_else(|| keybindings.get_keybinding_for_action(a, KeyContext::Prompt))
+                .or_else(|| keybindings.get_keybinding_for_action(a, KeyContext::Global))
+        };
+        let toggle = |option: SearchOption, label: String, checked: bool| {
+            Piece::Toggle(Toggle {
+                option,
+                label,
+                shortcut: shortcut(&option.action()),
+                checked,
+            })
+        };
+        let mut pieces = vec![
+            toggle(
+                SearchOption::CaseSensitive,
+                t!("search.case_sensitive").to_string(),
+                win.search_case_sensitive,
+            ),
+            toggle(
+                SearchOption::WholeWord,
+                t!("search.whole_word").to_string(),
+                win.search_whole_word,
+            ),
+            toggle(
+                SearchOption::Regex,
+                t!("search.regex").to_string(),
+                win.search_use_regex,
+            ),
+        ];
+        if let Some(confirm) = confirm {
+            // The capture-group reminder only makes sense where captures can
+            // be spent: a replace prompt with regex on.
+            if win.search_use_regex {
+                pieces.push(Piece::Hint(" \u{2502} $1,$2,\u{2026}".to_string()));
+            }
+            pieces.push(toggle(
+                SearchOption::ConfirmEach,
+                t!("search.confirm_each").to_string(),
+                confirm,
+            ));
+        }
+        Some(SearchOptions {
+            pieces,
+            // The shell's own hover, not the legacy walk's: this row's chrome
+            // box is deleted, so the walk has nothing to say about it.
+            hovered: match self.shell_hover {
+                Some(HoverTarget::SearchOptionCaseSensitive) => Some(SearchOption::CaseSensitive),
+                Some(HoverTarget::SearchOptionWholeWord) => Some(SearchOption::WholeWord),
+                Some(HoverTarget::SearchOptionRegex) => Some(SearchOption::Regex),
+                Some(HoverTarget::SearchOptionConfirmEach) => Some(SearchOption::ConfirmEach),
+                _ => None,
+            },
+        })
     }
 
-    /// Render the search-options bar into `area` when `show_search_options`
-    /// is set (a search-style prompt is active).
-    fn render_search_options_bar(
-        &mut self,
-        frame: &mut Frame,
-        area: ratatui::layout::Rect,
-        show_search_options: bool,
-        theme: &crate::view::theme::Theme,
-        keybindings: &crate::input::keybindings::KeybindingResolver,
-    ) {
-        if show_search_options {
-            let confirm_each = self.search_confirm_shown();
-
-            // Determine hover state for search options
-            use crate::view::ui::status_bar::SearchOptionsHover;
-            let search_options_hover = match &self.active_window().mouse_state.hover_target {
-                Some(HoverTarget::SearchOptionCaseSensitive) => SearchOptionsHover::CaseSensitive,
-                Some(HoverTarget::SearchOptionWholeWord) => SearchOptionsHover::WholeWord,
-                Some(HoverTarget::SearchOptionRegex) => SearchOptionsHover::Regex,
-                Some(HoverTarget::SearchOptionConfirmEach) => SearchOptionsHover::ConfirmEach,
-                _ => SearchOptionsHover::None,
-            };
-
-            StatusBarRenderer::render_search_options(
-                frame,
-                area,
-                self.active_window().search_case_sensitive,
-                self.active_window().search_whole_word,
-                self.active_window().search_use_regex,
-                confirm_each,
-                theme,
-                keybindings,
-                search_options_hover,
-            );
-            // The derived per-event geometry must name the same row the
-            // paint layout allocated — trips in every debug/e2e run if
-            // the bottom-up derivation drifts from the Layout::split.
-            debug_assert_eq!(
-                self.search_options_layout_now().map(|l| l.row),
-                Some(area.y),
-                "search-options area derivation must match the paint layout"
-            );
+    /// Where layout put each search-option toggle, read off the retained tree.
+    ///
+    /// The read-back the web projection uses. `None` when the row is hidden —
+    /// the toggles have no element then, so there is nothing to read.
+    pub(crate) fn search_option_spans_now(
+        &self,
+    ) -> Option<
+        Vec<(
+            crate::view::shell::search_options::SearchOption,
+            ratatui::layout::Rect,
+        )>,
+    > {
+        if !self.active_prompt_has_search_options() {
+            return None;
         }
+        let ui = self.shell_ui.as_ref()?;
+        let frame = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
+        Some(crate::view::shell::search_options::option_spans(ui, size))
     }
 
     /// Render the bottom prompt input line into `area`. Overlay prompts (e.g.
@@ -2528,7 +2527,7 @@ impl Editor {
     /// and whether the prompt line reserves its row. The paint-time
     /// `Layout` split (`render`), the event-time derivations
     /// (`shell_frame`, `status_bar_area_now`,
-    /// `search_options_layout_now`) all read THIS — these conditions
+    /// `search_options_content`) all read THIS — these conditions
     /// used to be hand-copied at four sites, three of them outside the
     /// paint-vs-derived parity oracle's reach.
     fn bottom_row_flags(&self) -> BottomRowFlags {
@@ -2604,7 +2603,7 @@ impl Editor {
         crate::view::shell::frame::Frame {
             menu_bar: menu_bar_visible,
             status_bar: win.status_bar_visible && !has_suggestions && !has_file_browser,
-            search_options: self.active_prompt_has_search_options(),
+            search_options: self.search_options_content(),
             prompt_line: prompt_row_visible,
             dock: dock_area.map(|d| d.width),
             explorer: self.file_explorer_layout_request(chrome_area.width),

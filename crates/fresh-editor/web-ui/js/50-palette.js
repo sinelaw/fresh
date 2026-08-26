@@ -28,9 +28,10 @@ function paletteListEl(p, list){
 
 // Native search-option toggles (Case / Whole Word / Regex / Confirm-each) for
 // search/replace prompts — the TUI's checkbox row above the prompt line.
-// Each chip forwards its click to the TUI's own checkbox cells
-// (SearchOptionsLayout::checkbox_at), so the editor flips the flag and the
-// refreshed state comes back through the scene — single source of truth.
+// Each chip forwards its click to the TUI's own checkbox cells — the spans the
+// shell's layout assigned that toggle, reported in the scene — so the editor
+// flips the flag and the refreshed state comes back through the scene: single
+// source of truth. A mousedown is what the row acts on, in the TUI too.
 function searchOptionsEl(p){
   const so=p.searchOptions;
   if(!so || !so.options || !so.options.length) return null;

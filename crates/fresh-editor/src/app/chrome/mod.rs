@@ -29,7 +29,6 @@ mod menu;
 mod modals;
 mod popups;
 mod prompt;
-mod search_options;
 mod splits;
 mod status_bar;
 mod theme_info;
@@ -542,7 +541,6 @@ pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
         &menu::Menu,
         &file_explorer::FileExplorer,
         &status_bar::StatusBar,
-        &search_options::SearchOptions,
         &base::Base,
     ]
 }
