@@ -2110,7 +2110,22 @@ fn test_git_blame_keeps_the_focused_line_on_its_screen_row() {
         .position(|l| l.contains(needle))
         .expect("the focused line should be on screen in the source buffer");
 
-    trigger_git_blame(&mut harness);
+    // Not `trigger_git_blame`: that waits for a `──` header to appear, and
+    // this file has one commit, so its only header sits above line 1 — far
+    // off screen at line 90. Waiting for the ready message instead keeps the
+    // check on rendered output without requiring a header in view.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Git Blame").unwrap();
+    harness.wait_for_screen_contains("Git Blame").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Git blame:"))
+        .unwrap();
     harness
         .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(90))
         .unwrap();
