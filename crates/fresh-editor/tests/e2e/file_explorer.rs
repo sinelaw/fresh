@@ -2322,17 +2322,24 @@ fn test_file_explorer_new_file_creates_missing_parent_directories() {
     // Semantic sync: wait for the new name to surface on screen at all.
     harness.wait_for_screen_contains("app.rs").unwrap();
 
-    // Typing reaches that buffer only if focus left the explorer and landed
-    // in the newly-created file -- the visible form of both invariants this
-    // test used to read out of the editor's model.
+    // Type, then save. The text can only reach this path through the buffer
+    // the rename left open, and only if focus followed it out of the
+    // explorer -- the two invariants this test used to read out of the
+    // editor's model. Asserting on the screen alone would not do: had focus
+    // stayed behind, the same characters would render in the explorer's
+    // search box.
     harness.type_text("fn main() {}").unwrap();
-    harness.render().unwrap();
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("fn main() {}"),
-        "typing should reach the new file's buffer. Screen:\n{}",
-        screen
-    );
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    let saved_path = created_path.clone();
+    harness
+        .wait_until(move |_| {
+            std::fs::read_to_string(&saved_path)
+                .map(|contents| contents.contains("fn main() {}"))
+                .unwrap_or(false)
+        })
+        .unwrap();
 
     let untitled_files: Vec<_> = std::fs::read_dir(&project_root)
         .unwrap()
