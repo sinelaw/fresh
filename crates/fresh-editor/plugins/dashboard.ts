@@ -970,9 +970,9 @@ function paint(dims?: { width: number; height: number }) {
     for (const e of drawToEntries(drawn)) entries.push(e);
     // Pad below the frame so the buffer covers the full viewport height.
     // Without this, rows past the last frame line render with
-    // `editor.after_eof_bg` (a deliberate shade off from `editor.bg` to mark
-    // end-of-file in code buffers) and show up as a different-colored strip
-    // at the bottom of the dashboard.
+    // `editor.after_eof_bg`, which follows `editor.bg` by default but is a
+    // separate color a theme may shade — that would show up as a
+    // different-colored strip at the bottom of the dashboard.
     const bottomPad = Math.max(0, height - topPad - frameHeight);
     for (let i = 0; i < bottomPad; i++) entries.push({ text: "\n" });
 

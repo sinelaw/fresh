@@ -53,7 +53,7 @@ Every occurrence of the word under the cursor is highlighted in the viewport. Wh
 
 ## Post-EOF Background
 
-Rows past the end of the buffer render with a distinct background color (`post_eof_bg` theme key) so the "end of file" boundary is obvious even without `~` tildes. Works alongside `show_tilde`.
+Rows past the end of the buffer keep the theme's editor background, so the empty space below a short file reads as the same surface as the text above it; the end of the buffer is marked by the `~` tildes (`show_tilde`, on by default). A theme that wants that space called out with a shade of its own sets the `editor.after_eof_bg` key - in a custom theme JSON, or in the graphical theme editor under **Editor -> After End-of-File Background** - and those rows use it instead.
 
 ## Auto-Save
 

@@ -127,9 +127,9 @@ pub fn brighten_color(color: Color, amount: u8) -> Color {
 /// brightness spectrum: dark colors become slightly brighter, light colors
 /// slightly darker. Non-RGB colors are returned unchanged.
 ///
-/// Used to derive subtle visual cues (e.g. post-EOF background shade) from
-/// a theme's editor background without requiring theme authors to pick an
-/// explicit color.
+/// Used to derive subtle visual cues (e.g. the whitespace indicator drawn
+/// inside a selection) from a theme color without requiring theme authors to
+/// pick an explicit one.
 pub fn shade_toward_contrast(color: Color, amount: u8) -> Color {
     if let Some((r, g, b)) = color_to_rgb(color) {
         let avg = (u16::from(r) + u16::from(g) + u16::from(b)) / 3;
@@ -669,9 +669,11 @@ pub struct EditorColors {
     #[serde(default = "default_bracket_rainbow_6")]
     pub bracket_rainbow_6: ColorDef,
     /// Background color for lines after end-of-file (optional override).
-    /// When not set, computed as a slightly contrasting shade of `bg`
-    /// (lighter for dark themes, darker for light themes) to give post-EOF
-    /// rows a subtle visual separation from the buffer content.
+    /// When not set, post-EOF rows keep the theme's editor `bg`, so the
+    /// space below a short buffer reads as part of the same surface as the
+    /// text. Themes that want the post-EOF area called out (issue #779) can
+    /// name a shade here; `~` markers (`editor.show_tilde`) mark the end of
+    /// the buffer either way.
     #[serde(default)]
     pub after_eof_bg: Option<ColorDef>,
 }
@@ -1678,14 +1680,16 @@ impl From<ThemeFile> for Theme {
             current_line_bg: file.editor.current_line_bg.into(),
             line_number_fg: file.editor.line_number_fg.into(),
             line_number_bg: file.editor.line_number_bg.into(),
-            // Use explicit override if provided, otherwise derive a subtle
-            // contrasting shade from the editor background.
+            // Use explicit override if provided, otherwise stay on the
+            // theme's own editor background: the area below the last line is
+            // still the editor, and a derived shade there reads as a grayed
+            // out strip that belongs to no theme color.
             after_eof_bg: file
                 .editor
                 .after_eof_bg
                 .clone()
                 .map(|c| c.into())
-                .unwrap_or_else(|| shade_toward_contrast(file.editor.bg.clone().into(), 10)),
+                .unwrap_or_else(|| file.editor.bg.clone().into()),
             ruler_bg: file.editor.ruler_bg.into(),
             indentation_guide_fg: file
                 .editor

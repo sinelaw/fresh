@@ -856,7 +856,7 @@
           ]
         },
         "after_eof_bg": {
-          "description": "Background color for lines after end-of-file (optional override).\nWhen not set, computed as a slightly contrasting shade of `bg`\n(lighter for dark themes, darker for light themes) to give post-EOF\nrows a subtle visual separation from the buffer content.",
+          "description": "Background color for lines after end-of-file (optional override).\nWhen not set, post-EOF rows keep the theme's editor `bg`, so the\nspace below a short buffer reads as part of the same surface as the\ntext. Themes that want the post-EOF area called out (issue #779) can\nname a shade here; `~` markers (`editor.show_tilde`) mark the end of\nthe buffer either way.",
           "anyOf": [
             {
               "$ref": "#/$defs/ColorDef"

@@ -10,9 +10,9 @@
 //!   entry even when there's no screen room left, so visual-line
 //!   navigation can still reach the trailing line.
 //! * `fill_eof_rows` — pad the bottom of the viewport with `~`
-//!   markers / `after_eof_bg` shading so post-EOF space is visually
-//!   distinct from buffer content (see issues #779, #458, ratatui
-//!   #1606).
+//!   markers on `after_eof_bg`, which follows the theme's editor
+//!   background unless the theme names a post-EOF shade of its own
+//!   (see issues #779, #458, ratatui #1606).
 
 use super::super::super::style::dim_color_for_tilde;
 use super::super::contexts::DecorationContext;
@@ -239,8 +239,9 @@ fn ensure_trailing_mapping(ctx: &PostRowContext<'_>, acc: &mut PostRowAccumulato
     }
 }
 
-/// Pad the bottom of the viewport with `~` (when `show_tilde`) and
-/// `theme.after_eof_bg` shading. Issues #779, #458 explain why we
+/// Pad the bottom of the viewport with `~` (when `show_tilde`) on
+/// `theme.after_eof_bg` — the theme's editor background unless the theme
+/// names a separate post-EOF color. Issues #779, #458 explain why we
 /// don't use `Modifier::DIM` here, and ratatui #1606 explains why
 /// we always emit a styled span (vs leaving the row blank).
 pub(super) fn fill_eof_rows(
