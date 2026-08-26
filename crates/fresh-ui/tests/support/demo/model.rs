@@ -105,6 +105,9 @@ pub struct App {
     pub quit: bool,
     pub draft: String,
     pub status: String,
+    /// The last row press and how many presses in its run — shown on the
+    /// ribbon, where the row's own `toggled #N` status cannot overwrite it.
+    pub last_click: Option<(usize, u8)>,
     pub sidebar: u16,
     pub resizing: bool,
     pub theme: Rc<Theme>,
@@ -203,6 +206,7 @@ impl App {
             quit: false,
             draft: String::new(),
             status: "ready".into(),
+            last_click: None,
             sidebar: 12,
             resizing: false,
             theme: Rc::new(LIGHT),
@@ -289,11 +293,24 @@ pub enum Msg {
     EndResize,
     /// Reported by the sync task, from another thread.
     Synced(usize),
+    /// A row was pressed, and how many presses in a run this was — 1 for a
+    /// single, 2 for a double, 3 for a triple. The count comes from the host
+    /// (`Event::clicks`), which is the only party with a clock.
+    Clicked(usize, u8),
+    /// The ribbon's button. It sits on a `PointerMode::Transparent` strip
+    /// drawn over the list, so this fires only from the button's own cells —
+    /// everywhere else on the strip the press reaches the row behind it.
+    RibbonClear,
 }
 
 /// The whole of the application's behaviour, in one place.
 pub fn update(app: &mut App, msg: Msg) {
     match msg {
+        Msg::Clicked(i, n) => app.last_click = Some((i, n)),
+        Msg::RibbonClear => {
+            app.filter = Filter::All;
+            app.status = "ribbon: filter cleared (the strip let the rest through)".into();
+        }
         Msg::Draft(s) => app.draft = s,
         Msg::Add => {
             let title = std::mem::take(&mut app.draft);

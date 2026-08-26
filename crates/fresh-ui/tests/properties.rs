@@ -306,29 +306,13 @@ fn apply(demo: &mut Demo, act: &Act) {
     match act {
         Act::Click(x, y) => {
             let pos = Point::new(*x as i32, *y as i32);
-            demo.input(Input::Press {
-                pos,
-                button: MouseButton::Left,
-                mods: m,
-            });
-            demo.input(Input::Release {
-                pos,
-                button: MouseButton::Left,
-                mods: m,
-            });
+            demo.input(Input::press(pos, MouseButton::Left, m));
+            demo.input(Input::release(pos, MouseButton::Left, m));
         }
         Act::RightClick(x, y) => {
             let pos = Point::new(*x as i32, *y as i32);
-            demo.input(Input::Press {
-                pos,
-                button: MouseButton::Right,
-                mods: m,
-            });
-            demo.input(Input::Release {
-                pos,
-                button: MouseButton::Right,
-                mods: m,
-            });
+            demo.input(Input::press(pos, MouseButton::Right, m));
+            demo.input(Input::release(pos, MouseButton::Right, m));
         }
         Act::Move(x, y) => {
             demo.input(Input::Move {
@@ -461,6 +445,170 @@ proptest! {
             "{} elements after {} inputs",
             demo.ui.live_count(),
             acts.len()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Floors, pointer modes, and the click run — the three attributes added for
+// hosts that were writing arithmetic around their absence.
+// ---------------------------------------------------------------------------
+
+proptest! {
+    /// **A floor is never violated.** Whatever a container is doing with the
+    /// space it has — dividing a remainder, running out of it entirely — a
+    /// child that declared a minimum extent gets at least that many cells.
+    ///
+    /// The interesting half is the overflow case: a row too narrow for its
+    /// children still honours their floors and overflows, rather than
+    /// quietly handing out zero.
+    #[test]
+    fn a_floor_is_never_violated(
+        width in 1u16..40,
+        kids in prop::collection::vec((0u16..12, 0u16..6, any::<bool>()), 1..6),
+    ) {
+        let mut ui: Ui<()> = Ui::new();
+        let children: Vec<Node<()>> = kids
+            .iter()
+            .map(|&(cells, floor, flexible)| {
+                let n = text("");
+                let n = if flexible { n.flex(1) } else { n.w(Sizing::Cells(cells)) };
+                n.min_w(floor)
+            })
+            .collect();
+        ui.frame(row().children(children), Size::new(width, 1));
+        for (i, &(_, floor, _)) in kids.iter().enumerate() {
+            let r = ui.rect(ui.at(&[i]).unwrap());
+            prop_assert!(
+                r.w >= floor,
+                "child {i} wanted at least {floor} cells, got {} (width {width})",
+                r.w
+            );
+            // **And the cells are its own.** Width alone is not the guarantee:
+            // an overflowing row used to pull later children *back* over a
+            // floored one, so the extent was right and the separation was gone.
+            // A floor that a sibling may sit on top of is not a floor.
+            if floor > 0 && i + 1 < kids.len() {
+                let next = ui.rect(ui.at(&[i + 1]).unwrap());
+                prop_assert!(
+                    next.x >= r.x + r.w as i32,
+                    "child {} was placed at {}, over child {i}'s cells ({}..{})",
+                    i + 1,
+                    next.x,
+                    r.x,
+                    r.x + r.w as i32
+                );
+            }
+        }
+    }
+
+    /// **A floor never shrinks anything.** Adding one can only ever widen a
+    /// child, never narrow it — so it is safe to add to an existing layout.
+    #[test]
+    fn adding_a_floor_never_narrows_a_child(
+        width in 1u16..40,
+        cells in prop::collection::vec(0u16..12, 1..6),
+        floor in 0u16..6,
+        which in 0usize..6,
+    ) {
+        let which = which % cells.len();
+        let build = |floor_on: Option<usize>| -> Vec<Node<()>> {
+            cells
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| {
+                    let n = text("").w(Sizing::Cells(c));
+                    if floor_on == Some(i) { n.min_w(floor) } else { n }
+                })
+                .collect()
+        };
+        let mut a: Ui<()> = Ui::new();
+        a.frame(row().children(build(None)), Size::new(width, 1));
+        let before = a.rect(a.at(&[which]).unwrap()).w;
+        let mut b: Ui<()> = Ui::new();
+        b.frame(row().children(build(Some(which))), Size::new(width, 1));
+        let after = b.rect(b.at(&[which]).unwrap()).w;
+        prop_assert!(after >= before, "floor narrowed {which}: {before} -> {after}");
+    }
+
+    /// **A transparent cover is invisible to the pointer, everywhere.** Not at
+    /// one sampled cell: at every cell of the area it covers.
+    #[test]
+    fn a_transparent_cover_never_absorbs(x in 0i32..12, y in 0i32..4) {
+        use std::cell::Cell;
+        use std::rc::Rc as R;
+        use fresh_ui::{col, gesture, stack, Event, GestureKind, PointerMode};
+        let hit = R::new(Cell::new(false));
+        let h = hit.clone();
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(
+            stack().children([
+                gesture(text("")).w(Sizing::Cells(12)).h(Sizing::Cells(4)).on(
+                    GestureKind::Press,
+                    R::new(move |_: &Event| { h.set(true); None }),
+                ),
+                col()
+                    .pointer_mode(PointerMode::Transparent)
+                    .w(Sizing::Cells(12))
+                    .h(Sizing::Cells(4)),
+            ]),
+            Size::new(12, 4),
+        );
+        ui.dispatch(Input::press(Point::new(x, y), MouseButton::Left, Mods::NONE));
+        prop_assert!(hit.get(), "the cover swallowed the press at ({x}, {y})");
+    }
+
+    /// …and an opaque one absorbs at every cell. The pair is what makes either
+    /// half meaningful.
+    #[test]
+    fn an_opaque_cover_always_absorbs(x in 0i32..12, y in 0i32..4) {
+        use std::cell::Cell;
+        use std::rc::Rc as R;
+        use fresh_ui::{col, gesture, stack, Event, GestureKind};
+        let hit = R::new(Cell::new(false));
+        let h = hit.clone();
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(
+            stack().children([
+                gesture(text("")).w(Sizing::Cells(12)).h(Sizing::Cells(4)).on(
+                    GestureKind::Press,
+                    R::new(move |_: &Event| { h.set(true); None }),
+                ),
+                col().w(Sizing::Cells(12)).h(Sizing::Cells(4)),
+            ]),
+            Size::new(12, 4),
+        );
+        ui.dispatch(Input::press(Point::new(x, y), MouseButton::Left, Mods::NONE));
+        prop_assert!(!hit.get(), "the cover let the press through at ({x}, {y})");
+    }
+
+    /// **The run count is carried, not invented.** Whatever the host reports on
+    /// the press arrives on the press *and* on the click it completes — the
+    /// library neither counts nor re-counts.
+    #[test]
+    fn the_click_run_is_reported_unchanged(n in 1u8..=8) {
+        use std::cell::RefCell as RC;
+        use std::rc::Rc as R;
+        use fresh_ui::{gesture, Event, GestureKind};
+        let seen: R<RC<Vec<(GestureKind, u8)>>> = R::default();
+        let (a, b) = (seen.clone(), seen.clone());
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(
+            gesture(text("")).w(Sizing::Cells(4)).h(Sizing::Cells(1))
+                .on(GestureKind::Press, R::new(move |e: &Event| {
+                    a.borrow_mut().push((e.kind, e.clicks)); None
+                }))
+                .on(GestureKind::Click, R::new(move |e: &Event| {
+                    b.borrow_mut().push((e.kind, e.clicks)); None
+                })),
+            Size::new(4, 1),
+        );
+        let at = Point::new(1, 0);
+        ui.dispatch(Input::press_n(at, MouseButton::Left, Mods::NONE, n));
+        ui.dispatch(Input::release(at, MouseButton::Left, Mods::NONE));
+        prop_assert_eq!(
+            &*seen.borrow(),
+            &vec![(GestureKind::Press, n), (GestureKind::Click, n)]
         );
     }
 }

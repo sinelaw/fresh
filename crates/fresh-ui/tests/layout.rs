@@ -378,3 +378,117 @@ fn a_viewport_clips_its_children_and_scrolls_them() {
         "now at the top"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Floors: an extent that a shrinking container cannot take away
+// ---------------------------------------------------------------------------
+
+/// A `Flex` gap takes what is left — and what is left can be nothing.
+///
+/// This is the behaviour a floor exists to override, pinned first so the next
+/// test means something.
+#[test]
+fn a_flex_gap_closes_completely_when_there_is_nothing_left() {
+    let mut ui = ui();
+    ui.frame(
+        row().children([
+            text("aaaaaaaa").w(Sizing::Cells(8)),
+            row().flex(1),
+            text("bb").w(Sizing::Cells(2)),
+        ]),
+        Size::new(10, 1),
+    );
+    assert_eq!(ui.rect(ui.at(&[1]).unwrap()).w, 0);
+}
+
+/// With a floor it does not close: the gap keeps its cells and the row
+/// overflows, rather than the separation silently disappearing.
+///
+/// Overflowing is the honest outcome. A caller that writes `min_w(3)` is
+/// saying three cells matter more than fitting; the alternative — quietly
+/// giving zero — is the case that ships as a rendering bug nobody can see in
+/// the description.
+#[test]
+fn a_floor_keeps_a_flex_gap_open_when_the_row_is_too_narrow() {
+    let mut ui = ui();
+    ui.frame(
+        row().children([
+            text("aaaaaaaa").w(Sizing::Cells(8)),
+            row().flex(1).min_w(3),
+            text("bb").w(Sizing::Cells(2)),
+        ]),
+        Size::new(10, 1),
+    );
+    assert_eq!(ui.rect(ui.at(&[1]).unwrap()).w, 3);
+}
+
+/// A floor is a floor, not a size: with room to spare the flex share wins.
+#[test]
+fn a_floor_does_not_cap_a_gap_that_has_room() {
+    let mut ui = ui();
+    ui.frame(
+        row().children([
+            text("aa").w(Sizing::Cells(2)),
+            row().flex(1).min_w(3),
+            text("bb").w(Sizing::Cells(2)),
+        ]),
+        Size::new(20, 1),
+    );
+    assert_eq!(ui.rect(ui.at(&[1]).unwrap()).w, 16);
+}
+
+/// It applies to the main axis of whichever direction the container runs, so
+/// the same attribute reads correctly in a column.
+#[test]
+fn a_column_honours_the_height_floor() {
+    let mut ui = ui();
+    ui.frame(
+        col().children([
+            text("a").h(Sizing::Cells(8)),
+            col().flex(1).min_h(3),
+            text("b").h(Sizing::Cells(2)),
+        ]),
+        Size::new(10, 10),
+    );
+    assert_eq!(ui.rect(ui.at(&[1]).unwrap()).h, 3);
+}
+
+/// A floor on a node that is not flexible at all still holds: `Auto` content
+/// narrower than the floor is padded out to it.
+#[test]
+fn a_floor_widens_content_that_would_be_narrower() {
+    let mut ui = ui();
+    ui.frame(
+        row().children([text("ab").min_w(6), text("cd")]),
+        Size::new(20, 1),
+    );
+    assert_eq!(ui.rect(ui.at(&[0]).unwrap()).w, 6);
+    assert_eq!(ui.rect(ui.at(&[1]).unwrap()).x, 6);
+}
+
+/// The floor survives the compositions a real list is made of: a viewport
+/// around a column of rows, each row ending in a badge pushed right by a
+/// floored gap.
+///
+/// Isolated tests measure a `row()` whose parent hands it a definite width.
+/// A list row's width arrives through a viewport and a constraint-dependent
+/// builder, and that is the path a host actually uses — so it is the path the
+/// floor has to hold on.
+#[test]
+fn a_floor_holds_inside_a_viewport() {
+    let mut ui = ui();
+    ui.frame(
+        viewport(col().children([row().h(Sizing::Cells(1)).children([
+            text("a rather long row title"),
+            row().flex(1).min_w(3),
+            text("#2").w(Sizing::Cells(2)),
+        ])])),
+        Size::new(20, 4),
+    );
+    let gap = ui.at(&[0, 0, 1]).expect("the gap");
+    assert!(
+        ui.rect(gap).w >= 3,
+        "the gap collapsed to {} inside a viewport",
+        ui.rect(gap).w
+    );
+}

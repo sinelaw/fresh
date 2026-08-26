@@ -29,19 +29,11 @@ enum Msg {
 fn click(ui: &mut Ui<Msg>, x: i32, y: i32) -> Vec<Msg> {
     let pos = Point::new(x, y);
     let mut out = ui
-        .dispatch(Input::Press {
-            pos,
-            button: MouseButton::Left,
-            mods: Mods::NONE,
-        })
+        .dispatch(Input::press(pos, MouseButton::Left, Mods::NONE))
         .msgs;
     out.extend(
-        ui.dispatch(Input::Release {
-            pos,
-            button: MouseButton::Left,
-            mods: Mods::NONE,
-        })
-        .msgs,
+        ui.dispatch(Input::release(pos, MouseButton::Left, Mods::NONE))
+            .msgs,
     );
     out
 }

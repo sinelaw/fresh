@@ -15,33 +15,17 @@ fn key(c: KeyCode) -> Input {
 }
 
 fn press(x: i32, y: i32) -> Input {
-    Input::Press {
-        pos: Point::new(x, y),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    }
+    Input::press(Point::new(x, y), MouseButton::Left, Mods::NONE)
 }
 
 fn release(x: i32, y: i32) -> Input {
-    Input::Release {
-        pos: Point::new(x, y),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    }
+    Input::release(Point::new(x, y), MouseButton::Left, Mods::NONE)
 }
 
 fn right(x: i32, y: i32) -> Vec<Input> {
     vec![
-        Input::Press {
-            pos: Point::new(x, y),
-            button: MouseButton::Right,
-            mods: Mods::NONE,
-        },
-        Input::Release {
-            pos: Point::new(x, y),
-            button: MouseButton::Right,
-            mods: Mods::NONE,
-        },
+        Input::press(Point::new(x, y), MouseButton::Right, Mods::NONE),
+        Input::release(Point::new(x, y), MouseButton::Right, Mods::NONE),
     ]
 }
 

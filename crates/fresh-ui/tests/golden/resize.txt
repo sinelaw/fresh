@@ -1,11 +1,11 @@
 === at 56x14
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it out
-            │»[ ] route the pointer
-            │»[ ] wire up focus
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x] build the reconciler                #2
+( ) Done    │»[ ] lay it out                          #3
+            │»[ ] route the pointer                   #4
+            │»[ ] wire up focus                       #5
             │
             │
             │
@@ -17,7 +17,7 @@ Filter      │new task…                              Add
 === at 30x8
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…    Add
-(o) All░░░░░│»[x] write the sp
+(o) All░░░░░│ ribbon: click th
 ( ) Open    │»[x] build the re
 ( ) Done    │»[ ] lay it out
             │»[ ] route the po
@@ -27,19 +27,19 @@ Filter      │new task…    Add
 === at 90x6
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                                                                Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█
-( ) Open    │»[x] build the reconciler                                                   │
-( ) Done    │»[ ] lay it out                                                             │
+(o) All░░░░░│ ribbon: click the text, it falls through · last press: — ░░░ [clear filter]
+( ) Open    │»[x] build the reconciler                                                 #2│
+( ) Done    │»[ ] lay it out                                                           #3│
 5 tasks · light · synced 0 · ready
 
 === back to 56x14
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it out
-            │»[ ] route the pointer
-            │»[ ] wire up focus
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x] build the reconciler                #2
+( ) Done    │»[ ] lay it out                          #3
+            │»[ ] route the pointer                   #4
+            │»[ ] wire up focus                       #5
             │
             │
             │

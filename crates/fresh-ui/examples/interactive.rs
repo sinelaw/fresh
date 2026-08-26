@@ -46,6 +46,8 @@ fn main() -> io::Result<()> {
     // Stands in for a host's own painter, drawn between the display list's two
     // halves. See `Terminal::banner`.
     let mut banner = true;
+    // The host owns the clock: see `Clicks`.
+    let mut clicks = Clicks::new();
     let redraw = |term: &mut Terminal, demo: &Demo, banner: bool| -> io::Result<()> {
         term.draw(demo.ui.spec(), demo.app.theme.name == "dark", banner)
     };
@@ -75,7 +77,7 @@ fn main() -> io::Result<()> {
                     }
                 }
                 CtEvent::Mouse(m) => {
-                    if let Some(input) = translate_mouse(m) {
+                    if let Some(input) = translate_mouse(m, &mut clicks) {
                         demo.input(input);
                     }
                 }
@@ -135,20 +137,53 @@ fn button(b: CtButton) -> MouseButton {
     }
 }
 
-fn translate_mouse(m: event::MouseEvent) -> Option<Input> {
+/// The host's click-run tracker.
+///
+/// **The library has no clock, deliberately.** Whether two presses are a
+/// double is a question about time and distance, and the answer belongs to
+/// whoever owns the input device and the user's preference for it — a real
+/// application reads a configured threshold, and its tests substitute the time
+/// source. So the host counts the run and reports it on `Input::press_n`; the
+/// library carries it to handlers as `Event::clicks` and onto the `Click` it
+/// synthesises from the press.
+///
+/// This is the smallest honest implementation of that contract: same button,
+/// same cell, inside the threshold.
+struct Clicks {
+    threshold: Duration,
+    last: Option<(std::time::Instant, Point, MouseButton)>,
+    count: u8,
+}
+
+impl Clicks {
+    fn new() -> Clicks {
+        Clicks {
+            threshold: Duration::from_millis(400),
+            last: None,
+            count: 0,
+        }
+    }
+
+    fn press(&mut self, pos: Point, button: MouseButton) -> u8 {
+        let now = std::time::Instant::now();
+        let consecutive = self.last.is_some_and(|(t, p, b)| {
+            now.duration_since(t) < self.threshold && p == pos && b == button
+        });
+        self.count = if consecutive { self.count + 1 } else { 1 };
+        self.last = Some((now, pos, button));
+        self.count
+    }
+}
+
+fn translate_mouse(m: event::MouseEvent, clicks: &mut Clicks) -> Option<Input> {
     let pos = Point::new(m.column as i32, m.row as i32);
     let mods = mods(m.modifiers);
     Some(match m.kind {
-        MouseEventKind::Down(b) => Input::Press {
-            pos,
-            button: button(b),
-            mods,
-        },
-        MouseEventKind::Up(b) => Input::Release {
-            pos,
-            button: button(b),
-            mods,
-        },
+        MouseEventKind::Down(b) => {
+            let b = button(b);
+            Input::press_n(pos, b, mods, clicks.press(pos, b))
+        }
+        MouseEventKind::Up(b) => Input::release(pos, button(b), mods),
         MouseEventKind::Moved | MouseEventKind::Drag(_) => Input::Move { pos, mods },
         MouseEventKind::ScrollDown => Input::Wheel {
             pos,
@@ -590,6 +625,12 @@ fn style(theme: &ThemeKey, r: &Roles) -> (Color, Color) {
         }
         "button.disabled" => (r.faint, r.bar),
         "status" => (r.status_fg, r.status_bg),
+        // The transparent strip drawn over the list's first row, and the one
+        // part of it that absorbs a press.
+        "ribbon" => (r.title, r.hover),
+        "ribbon.button" => (r.focus_fg, r.focus_bg),
+        // The right-aligned id, pushed there by a flex gap with a floor.
+        "badge" => (r.faint, r.base),
         "menu" | "dropdown" | "palette" => (r.dim, r.elev),
         "modal" => (r.bright, r.modal),
         _ => (r.text, r.base),

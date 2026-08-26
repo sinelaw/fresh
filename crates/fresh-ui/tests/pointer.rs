@@ -35,19 +35,11 @@ fn traced(name: &'static str, log: &Log, child: Node<()>) -> Node<()> {
 fn click(ui: &mut Ui<()>, x: i32, y: i32) -> Vec<()> {
     let pos = Point::new(x, y);
     let mut out = ui
-        .dispatch(Input::Press {
-            pos,
-            button: MouseButton::Left,
-            mods: Mods::NONE,
-        })
+        .dispatch(Input::press(pos, MouseButton::Left, Mods::NONE))
         .msgs;
     out.extend(
-        ui.dispatch(Input::Release {
-            pos,
-            button: MouseButton::Left,
-            mods: Mods::NONE,
-        })
-        .msgs,
+        ui.dispatch(Input::release(pos, MouseButton::Left, Mods::NONE))
+            .msgs,
     );
     out
 }
@@ -208,11 +200,11 @@ fn capture_survives_the_pointer_leaving_the_rectangle() {
         FRAME,
     );
 
-    ui.dispatch(Input::Press {
-        pos: Point::new(1, 0),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
+    ui.dispatch(Input::press(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
     assert!(ui.captured().is_some());
 
     // Far outside the grip's own rectangle, and on top of another element.
@@ -222,11 +214,11 @@ fn capture_survives_the_pointer_leaving_the_rectangle() {
     });
     assert_eq!(*moves.borrow(), vec![Point::new(5, 6)]);
 
-    ui.dispatch(Input::Release {
-        pos: Point::new(5, 6),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
+    ui.dispatch(Input::release(
+        Point::new(5, 6),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
     assert!(ui.captured().is_none(), "release ends the drag");
 }
 
@@ -415,11 +407,11 @@ fn pressing_and_dragging_the_scrollbar_gutter_scrolls_the_viewport() {
 
     let gutter = FRAME.w as i32 - 1;
     // Press near the bottom of the track: the window jumps toward the end.
-    ui.dispatch(Input::Press {
-        pos: Point::new(gutter, FRAME.h as i32 - 1),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
+    ui.dispatch(Input::press(
+        Point::new(gutter, FRAME.h as i32 - 1),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
     ui.tick();
     let jumped = ui.scroll(vp).0.y;
     assert!(jumped > 0, "a press on the gutter scrolled ({jumped})");
@@ -433,11 +425,11 @@ fn pressing_and_dragging_the_scrollbar_gutter_scrolls_the_viewport() {
     assert_eq!(ui.scroll(vp).0.y, 0, "dragging to the top scrolled back");
 
     // After release the gutter no longer drives scrolling.
-    ui.dispatch(Input::Release {
-        pos: Point::new(gutter, 0),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
+    ui.dispatch(Input::release(
+        Point::new(gutter, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
     ui.dispatch(Input::Move {
         pos: Point::new(gutter, FRAME.h as i32 - 1),
         mods: Mods::NONE,
@@ -568,11 +560,11 @@ fn a_claim_is_reported_separately_from_the_messages() {
         ),
         FRAME,
     );
-    let d = ui.dispatch(Input::Press {
-        pos: Point::new(1, 0),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
+    let d = ui.dispatch(Input::press(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
     assert!(d.msgs.is_empty(), "the handler returned no message");
     assert!(d.claimed, "but it claimed the press");
 }
@@ -585,11 +577,129 @@ fn a_message_without_a_claim_is_reported_as_unclaimed() {
         gesture(text("row")).on(GestureKind::Press, Rc::new(|_: &Event| Some(()))),
         FRAME,
     );
-    let d = ui.dispatch(Input::Press {
-        pos: Point::new(1, 0),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
+    let d = ui.dispatch(Input::press(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
     assert_eq!(d.msgs.len(), 1);
     assert!(!d.claimed, "producing a message is not claiming the event");
+}
+
+// ---------------------------------------------------------------------------
+// A pointer mode on any node, not only a gesture
+// ---------------------------------------------------------------------------
+
+/// A container that draws nothing still absorbs a press by default — "a region
+/// that draws is a region that hits" describes the intent, not the mechanism,
+/// and the mechanism has always been "everything hits unless it says
+/// otherwise". This pins the default so the opt-out below is meaningful.
+#[test]
+fn a_plain_container_over_a_target_absorbs_the_press() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        stack().children([
+            traced("behind", &log, text("xxxxxxxx"))
+                .w(Sizing::Cells(8))
+                .h(Sizing::Cells(1)),
+            // No theme, no listeners, nothing drawn: still a surface.
+            col().w(Sizing::Cells(5)).h(Sizing::Cells(1)),
+        ]),
+        FRAME,
+    );
+    click(&mut ui, 2, 0);
+    assert!(
+        !log.borrow().iter().any(|s| s.starts_with("behind")),
+        "the plain container absorbed it: {:?}",
+        log.borrow()
+    );
+    // …and the target really is reachable, so the assertion above is about the
+    // container and not about a click that landed on nothing.
+    log.borrow_mut().clear();
+    click(&mut ui, 6, 0);
+    assert!(
+        log.borrow().iter().any(|s| s.starts_with("behind")),
+        "past the container, the target answers: {:?}",
+        log.borrow()
+    );
+}
+
+/// …and the opt-out reaches an ordinary container, not just a `Gesture`.
+///
+/// This is the shape every overlay strip takes: a full-size column positioning
+/// a one-row band over content that must stay reachable. Before `pointer_mode`
+/// applied to any node it could not be written — wrapping the column in a
+/// transparent gesture made the *wrapper* transparent and left the column
+/// itself absorbing everything.
+#[test]
+fn a_transparent_container_lets_the_press_reach_what_is_behind() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        stack().children([
+            traced("behind", &log, text("xxxxx"))
+                .w(Sizing::Cells(5))
+                .h(Sizing::Cells(1)),
+            col()
+                .pointer_mode(PointerMode::Transparent)
+                .w(Sizing::Cells(5))
+                .h(Sizing::Cells(1)),
+        ]),
+        FRAME,
+    );
+    click(&mut ui, 2, 0);
+    assert!(
+        log.borrow().iter().any(|s| s.starts_with("behind")),
+        "got {:?}",
+        log.borrow()
+    );
+}
+
+/// Transparency is per node, not inherited: a strip can pass presses through
+/// while one control inside it still takes them. That is the whole point — an
+/// overlay is mostly decoration with a button in it.
+#[test]
+fn an_opaque_child_of_a_transparent_strip_still_absorbs() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        stack().children([
+            traced("behind", &log, text("xxxxxxxx"))
+                .w(Sizing::Cells(8))
+                .h(Sizing::Cells(1)),
+            col()
+                .pointer_mode(PointerMode::Transparent)
+                .w(Sizing::Cells(8))
+                .h(Sizing::Cells(1))
+                .children([fresh_ui::row()
+                    .pointer_mode(PointerMode::Transparent)
+                    .h(Sizing::Cells(1))
+                    .children([
+                        // The spacer has to say so too — transparency is a
+                        // property of a node, not something its parent grants
+                        // it. Leave this opaque and the strip swallows its own
+                        // left half.
+                        fresh_ui::row()
+                            .pointer_mode(PointerMode::Transparent)
+                            .w(Sizing::Cells(4)),
+                        traced("button", &log, text("ok")).w(Sizing::Cells(2)),
+                    ])]),
+        ]),
+        FRAME,
+    );
+    click(&mut ui, 1, 0);
+    assert!(
+        log.borrow().iter().any(|s| s.starts_with("behind"))
+            && !log.borrow().iter().any(|s| s.starts_with("button")),
+        "off the button: {:?}",
+        log.borrow()
+    );
+    log.borrow_mut().clear();
+    click(&mut ui, 5, 0);
+    assert!(
+        log.borrow().iter().any(|s| s.starts_with("button")),
+        "on the button: {:?}",
+        log.borrow()
+    );
 }

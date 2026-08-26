@@ -16,20 +16,20 @@ use fresh_ui::{
 const FRAME: Size = Size { w: 20, h: 10 };
 
 fn press(ui: &mut Ui<()>, x: i32, y: i32) {
-    ui.dispatch(Input::Press {
-        pos: Point::new(x, y),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
+    ui.dispatch(Input::press(
+        Point::new(x, y),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
 }
 
 fn click(ui: &mut Ui<()>, x: i32, y: i32) {
     press(ui, x, y);
-    ui.dispatch(Input::Release {
-        pos: Point::new(x, y),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
+    ui.dispatch(Input::release(
+        Point::new(x, y),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
 }
 
 fn key(ui: &mut Ui<()>, code: KeyCode) {

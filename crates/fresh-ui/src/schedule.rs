@@ -464,7 +464,9 @@ pub struct Ui<M> {
     /// Pointer state.
     pub(crate) hover: Vec<ElementId>,
     pub(crate) captured: Option<ElementId>,
-    pub(crate) press: Option<(Vec<ElementId>, crate::event::MouseButton)>,
+    /// The elements a press landed on, which button it was, and which press
+    /// of a run it was — the last so the `Click` it completes can report it.
+    pub(crate) press: Option<(Vec<ElementId>, crate::event::MouseButton, u8)>,
 
     /// Focus state. Neither the application nor the component declares it.
     pub(crate) focus: Option<ElementId>,

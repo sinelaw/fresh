@@ -741,10 +741,10 @@ impl<M: 'static> Ui<M> {
             self.focus_restore = None;
         }
         self.hover.retain(|h| *h != id);
-        if let Some((targets, _)) = &mut self.press {
+        if let Some((targets, _, _)) = &mut self.press {
             targets.retain(|t| *t != id);
         }
-        if self.press.as_ref().is_some_and(|(t, _)| t.is_empty()) {
+        if self.press.as_ref().is_some_and(|(t, _, _)| t.is_empty()) {
             self.press = None;
         }
         self.geom_store.borrow_mut().entries.remove(&id);
@@ -826,6 +826,9 @@ impl<M: 'static> Ui<M> {
             children: Vec::new(),
             w: crate::desc::Sizing::Auto,
             h: crate::desc::Sizing::Auto,
+            min_w: 0,
+            min_h: 0,
+            pointer: None,
             clips,
             out_of_flow,
             reads_window,

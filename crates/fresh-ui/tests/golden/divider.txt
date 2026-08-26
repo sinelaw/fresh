@@ -1,11 +1,11 @@
 === pressed the divider
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it out
-            │»[ ] route the pointer
-            │»[ ] wire up focus
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x] build the reconciler                #2
+( ) Done    │»[ ] lay it out                          #3
+            │»[ ] route the pointer                   #4
+            │»[ ] wire up focus                       #5
             │
             │
             │
@@ -17,11 +17,11 @@ Filter      │new task…                              Add
 === dragged right — the pointer left the divider's own column
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter              │new task…                      Add
-(o) All░░░░░░░░░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░
-( ) Open            │»[x] build the reconciler
-( ) Done            │»[ ] lay it out
-                    │»[ ] route the pointer
-                    │»[ ] wire up focus
+(o) All░░░░░░░░░░░░░│ ribbon: click the text, it falls t
+( ) Open            │»[x] build the reconciler        #2
+( ) Done            │»[ ] lay it out                  #3
+                    │»[ ] route the pointer           #4
+                    │»[ ] wire up focus               #5
                     │
                     │
                     │
@@ -33,11 +33,11 @@ Filter              │new task…                      Add
 === and back left, over an unrelated widget
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter  │new task…                                  Add
-(o) All░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open│»[x] build the reconciler
-( ) Done│»[ ] lay it out
-        │»[ ] route the pointer
-        │»[ ] wire up focus
+(o) All░│ ribbon: click the text, it falls through · las
+( ) Open│»[x] build the reconciler                    #2
+( ) Done│»[ ] lay it out                              #3
+        │»[ ] route the pointer                       #4
+        │»[ ] wire up focus                           #5
         │
         │
         │
@@ -49,11 +49,11 @@ Filter  │new task…                                  Add
 === released: moving no longer resizes
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter  │new task…                                  Add
-(o) All░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open│»[x] build the reconciler
-( ) Done│»[ ] lay it out
-        │»[ ] route the pointer
-        │»[ ] wire up focus
+(o) All░│ ribbon: click the text, it falls through · las
+( ) Open│»[x] build the reconciler                    #2
+( ) Done│»[ ] lay it out                              #3
+        │»[ ] route the pointer                       #4
+        │»[ ] wire up focus                           #5
         │
         │
         │

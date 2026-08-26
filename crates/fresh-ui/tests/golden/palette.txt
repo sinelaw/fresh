@@ -1,11 +1,11 @@
 === opened
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x┌──────────────────────┐
-( ) Done    │»[ │command…▪▪▪▪▪▪▪▪▪▪▪▪▪▪│
-            │»[ │Toggle theme░░░░░░░░░░│
-            │»[ │Toggle preview        │
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x┌──────────────────────┐              #2
+( ) Done    │»[ │command…▪▪▪▪▪▪▪▪▪▪▪▪▪▪│              #3
+            │»[ │Toggle theme░░░░░░░░░░│              #4
+            │»[ │Toggle preview        │              #5
             │   │Clear done            │
             │   │Sync                  │
             │   └──────────────────────┘
@@ -17,11 +17,11 @@ Filter      │new task…                              Add
 === filtered to matches containing p
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it out
-            │»[ ┌──────────────────────┐
-            │»[ │p▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪│
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x] build the reconciler                #2
+( ) Done    │»[ ] lay it out                          #3
+            │»[ ┌──────────────────────┐              #4
+            │»[ │p▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪│              #5
             │   │Toggle preview░░░░░░░░│
             │   └──────────────────────┘
             │
@@ -33,11 +33,11 @@ Filter      │new task…                              Add
 === filtered to matches containing t
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ┌──────────────────────┐
-            │»[ │t▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪│
-            │»[ │Toggle theme░░░░░░░░░░│
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x] build the reconciler                #2
+( ) Done    │»[ ┌──────────────────────┐              #3
+            │»[ │t▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪│              #4
+            │»[ │Toggle theme░░░░░░░░░░│              #5
             │   │Toggle preview        │
             │   └──────────────────────┘
             │
@@ -49,11 +49,11 @@ Filter      │new task…                              Add
 === ran Toggle theme: the accent and the status change
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│▸[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │▸[x] build the reconciler
-( ) Done    │▸[ ] lay it out
-            │▸[ ] route the pointer
-            │▸[ ] wire up focus
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │▸[x] build the reconciler                #2
+( ) Done    │▸[ ] lay it out                          #3
+            │▸[ ] route the pointer                   #4
+            │▸[ ] wire up focus                       #5
             │
             │
             │

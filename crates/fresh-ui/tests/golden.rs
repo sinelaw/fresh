@@ -96,31 +96,15 @@ impl Session {
 
     fn click(&mut self, x: i32, y: i32) -> &mut Self {
         let pos = Point::new(x, y);
-        self.feed(Input::Press {
-            pos,
-            button: MouseButton::Left,
-            mods: Mods::NONE,
-        });
-        self.feed(Input::Release {
-            pos,
-            button: MouseButton::Left,
-            mods: Mods::NONE,
-        });
+        self.feed(Input::press(pos, MouseButton::Left, Mods::NONE));
+        self.feed(Input::release(pos, MouseButton::Left, Mods::NONE));
         self
     }
 
     fn right_click(&mut self, x: i32, y: i32) -> &mut Self {
         let pos = Point::new(x, y);
-        self.feed(Input::Press {
-            pos,
-            button: MouseButton::Right,
-            mods: Mods::NONE,
-        });
-        self.feed(Input::Release {
-            pos,
-            button: MouseButton::Right,
-            mods: Mods::NONE,
-        });
+        self.feed(Input::press(pos, MouseButton::Right, Mods::NONE));
+        self.feed(Input::release(pos, MouseButton::Right, Mods::NONE));
         self
     }
 
@@ -227,11 +211,11 @@ fn a_menu_opens_over_the_content_and_dismisses_outside() {
 #[test]
 fn dragging_the_divider_resizes_the_sidebar() {
     let mut s = Session::new();
-    s.feed(Input::Press {
-        pos: Point::new(12, 6),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
+    s.feed(Input::press(
+        Point::new(12, 6),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
     s.shot("pressed the divider");
     s.feed(Input::Move {
         pos: Point::new(20, 9),
@@ -243,11 +227,11 @@ fn dragging_the_divider_resizes_the_sidebar() {
         mods: Mods::NONE,
     });
     s.shot("and back left, over an unrelated widget");
-    s.feed(Input::Release {
-        pos: Point::new(8, 2),
-        button: MouseButton::Left,
-        mods: Mods::NONE,
-    });
+    s.feed(Input::release(
+        Point::new(8, 2),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
     s.feed(Input::Move {
         pos: Point::new(30, 5),
         mods: Mods::NONE,

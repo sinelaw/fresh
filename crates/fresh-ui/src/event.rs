@@ -134,6 +134,21 @@ pub enum Input {
         pos: Point,
         button: MouseButton,
         mods: Mods,
+        /// Which press in a run this is: `1` for a single, `2` for the second
+        /// of a double, `3` for a triple, and so on.
+        ///
+        /// **Reported by the host, not derived here.** A double is a fact about
+        /// *time* — two presses close enough together, near enough to each
+        /// other — and the library has no clock and should not grow one. Hosts
+        /// already have this: a terminal front end has its own configurable
+        /// threshold, and its tests have a substitutable time source that a
+        /// clock in here would defeat. So the host says how many, and the
+        /// library carries it to the handler on [`Event::clicks`] and onto the
+        /// `Click` it synthesises.
+        ///
+        /// [`Input::press`] sets it to 1, which is what a host that does not
+        /// track runs should send.
+        clicks: u8,
     },
     Release {
         pos: Point,
@@ -153,6 +168,33 @@ pub enum Input {
         mods: Mods,
     },
     Key(KeyPress),
+}
+
+impl Input {
+    /// A single press — `clicks: 1`.
+    pub fn press(pos: Point, button: MouseButton, mods: Mods) -> Input {
+        Input::Press {
+            pos,
+            button,
+            mods,
+            clicks: 1,
+        }
+    }
+
+    /// A press that is the `clicks`-th of a run.
+    pub fn press_n(pos: Point, button: MouseButton, mods: Mods, clicks: u8) -> Input {
+        Input::Press {
+            pos,
+            button,
+            mods,
+            clicks,
+        }
+    }
+
+    /// A release.
+    pub fn release(pos: Point, button: MouseButton, mods: Mods) -> Input {
+        Input::Release { pos, button, mods }
+    }
 }
 
 /// Which way a wheel turns, and which way an offset moves.
@@ -216,6 +258,13 @@ pub struct Event {
     /// Which axis `delta` moves along. `Vertical` for everything else.
     pub axis: Axis,
     pub key: Option<KeyPress>,
+    /// Which press in a run produced this, as the host reported it: `1` for a
+    /// single, `2` for a double, `3` for a triple. `1` for everything that is
+    /// not a press or a click.
+    ///
+    /// A `Click` carries the count of the press it completes, so a listener can
+    /// tell a double-click from a single without tracking presses itself.
+    pub clicks: u8,
     /// On a focus event, what the acquisition asked the target to do with its
     /// selection.
     pub selection: SelectionOnFocus,
@@ -242,6 +291,7 @@ impl Event {
             delta: 0,
             axis: Axis::Vertical,
             key: None,
+            clicks: 1,
             selection: SelectionOnFocus::None,
             target: at,
             current: at,
