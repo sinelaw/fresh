@@ -255,6 +255,45 @@ impl SplitRenderer {
         )
     }
 
+    /// Render a **composite** buffer into an arbitrary screen rect.
+    ///
+    /// The composite sibling of `render_phantom_leaf`, and it has to
+    /// exist separately for the same reason the split path branches:
+    /// a composite carries no text of its own — its content is the
+    /// source buffers named by `composite.sources`, laid out into
+    /// columns. Sent through the per-leaf renderer it paints one
+    /// empty leaf, which is what a `Pane` pointed at a side-by-side
+    /// diff used to show.
+    ///
+    /// The caller owns the `CompositeViewState` (scroll and cursor
+    /// row), exactly as it owns the `SplitViewState` for a leaf.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_phantom_composite(
+        buf: &mut ratatui::buffer::Buffer,
+        area: Rect,
+        composite: &crate::model::composite_buffer::CompositeBuffer,
+        buffers: &mut std::collections::HashMap<BufferId, EditorState>,
+        theme: &crate::view::theme::Theme,
+        view_state: &mut crate::view::composite_view::CompositeViewState,
+        use_terminal_bg: bool,
+        show_tilde: bool,
+    ) {
+        orchestration::render_composite::render_composite_buffer(
+            buf,
+            area,
+            composite,
+            buffers,
+            theme,
+            // A phantom composite is never the focused split; the
+            // caret belongs to whatever owns input.
+            /* is_active */
+            false,
+            view_state,
+            use_terminal_bg,
+            show_tilde,
+        );
+    }
+
     /// Render a single buffer into an arbitrary screen rect.
     ///
     /// Public façade over the per-leaf renderer for callers that
