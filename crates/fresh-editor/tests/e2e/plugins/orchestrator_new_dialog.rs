@@ -1641,6 +1641,100 @@ fn teach_fresh_cli_toggle_shown_for_agent_hidden_for_terminal() {
     );
 }
 
+/// True when the focus marker sits on the value row of the box titled
+/// `title` (a boxed field renders its label as the box's top border and
+/// the marker one row below, inside the brackets).
+fn boxed_field_focused(screen: &str, title: &str) -> bool {
+    let lines: Vec<&str> = screen.lines().collect();
+    match lines.iter().position(|l| l.contains(title)) {
+        Some(i) => lines.get(i + 1).is_some_and(|l| l.contains('▸')),
+        None => false,
+    }
+}
+
+/// Type `text` one settled keystroke at a time. `type_text` pushes the
+/// whole string through without draining the panel's async work in
+/// between, and a field in this form can then lose a leading character —
+/// a separate bug this test doesn't want to trip over.
+fn type_settled(harness: &mut EditorTestHarness, text: &str) {
+    for ch in text.chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+}
+
+/// A value longer than the field can show must still be navigable to its
+/// start: the field paints a window over the value that follows the
+/// caret, so Home (or a walk of Left) brings the head back on screen and
+/// what you then type lands where you can see it.
+///
+/// It didn't. The field was pinned to the value's *tail* — `…` then the
+/// last N chars — and a caret in the hidden head was clamped to the first
+/// visible char, so Home moved the caret but nothing on screen moved with
+/// it: the beginning of a long workspace name, path or agent command
+/// could not be seen or visually edited at all.
+#[test]
+fn long_value_can_be_navigated_back_to_its_start() {
+    let (_temp, workspace) = set_up_workspace();
+    // A narrow screen keeps the form's fields narrow, so a modest value
+    // already outgrows them.
+    let mut harness = EditorTestHarness::with_working_dir(100, 40, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+    open_new_session_form(&mut harness);
+
+    // Walk to Workspace Name (a plain text field — Project Path opens a
+    // completion popup as it fills, which is a different test's subject).
+    let mut guard = 0;
+    while !boxed_field_focused(&harness.screen_to_string(), "Workspace Name") {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 20,
+            "Tab never reached the Workspace Name field. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+
+    // Clear the suggested name (End, then backspace it away) and type a
+    // value wider than the field.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    for _ in 0..40 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    type_settled(&mut harness, &format!("QQQ{}ZZZ", "-abcdefghij".repeat(5)));
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZZZ"))
+        .unwrap();
+
+    // Typing keeps the caret end in view, so the head is off screen.
+    harness.assert_screen_not_contains("QQQ");
+
+    // Home brings the window home with the caret.
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("QQQ"))
+        .unwrap();
+
+    // And the caret is really where the screen says it is: what we type
+    // now lands at the value's start, in view.
+    type_settled(&mut harness, "YY");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("YYQQQ"))
+        .unwrap();
+
+    // Walking back to the tail brings the window with it, too.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZZZ"))
+        .unwrap();
+    harness.assert_screen_not_contains("YYQQQ");
+}
+
 /// "Run Agent…" and "New Workspace" are one dialog, distinguished only by
 /// where its "Launch in" switch starts — and flipping that switch reshapes the
 /// form in place rather than opening a different one.

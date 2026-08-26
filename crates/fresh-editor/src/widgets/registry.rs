@@ -163,11 +163,11 @@ pub enum WidgetInstanceState {
     },
     /// `Text` instance state: host-owned `TextEdit` (value + cursor
     /// row/col + selection anchor + multiline flag), plus a viewport
-    /// scroll offset that's only meaningful for multi-line
-    /// (`rows > 1`) variants — the row index of the first visible
-    /// line. Single-line text widgets always render from value
-    /// byte 0 and rely on render-time head-truncate scrolling, so
-    /// they leave `scroll` at `0`.
+    /// scroll offset. For multi-line (`rows > 1`) variants that's the
+    /// row index of the first visible line; for a single-line field
+    /// it's the first visible value *char* — the left edge of the
+    /// horizontal window that follows the caret across a value too
+    /// long for the field (`0` whenever the whole value fits).
     ///
     /// Becomes authoritative once the widget mounts; the spec's
     /// `value` / `cursor_byte` are *initial-only* (used at first
