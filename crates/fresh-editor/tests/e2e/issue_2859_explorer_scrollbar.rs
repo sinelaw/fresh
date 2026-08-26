@@ -29,14 +29,17 @@ fn explorer_config() -> Config {
     config
 }
 
-/// Open the explorer on a temp project holding `files` numbered entries and
-/// wait until the tree has landed.
-fn harness_with_files(files: usize) -> EditorTestHarness {
+/// Open the explorer on a temp project holding `files` numbered entries plus
+/// any `extra` names, and wait until the tree has landed.
+fn harness_with_files(files: usize, extra: &[&str]) -> EditorTestHarness {
     let mut harness =
         EditorTestHarness::with_temp_project_and_config(100, 30, explorer_config()).unwrap();
     let project_root = harness.project_dir().unwrap();
     for i in 0..files {
         fs::write(project_root.join(format!("file_{i:02}.txt")), "x").unwrap();
+    }
+    for name in extra {
+        fs::write(project_root.join(name), "x").unwrap();
     }
 
     harness.editor_mut().focus_file_explorer();
@@ -83,7 +86,7 @@ fn thumb_rows(harness: &EditorTestHarness) -> Vec<u16> {
 /// the tree is at its start, to the bottom once it is scrolled to its end.
 #[test]
 fn scrollable_file_explorer_draws_a_thumb_that_tracks_the_viewport() {
-    let mut harness = harness_with_files(80);
+    let mut harness = harness_with_files(80, &[]);
 
     let body = explorer_body_rows(&harness);
     assert!(
@@ -156,7 +159,7 @@ fn scrollable_file_explorer_draws_a_thumb_that_tracks_the_viewport() {
 /// the track restores exactly the view (and selection) we started from.
 #[test]
 fn file_explorer_scrollbar_thumb_drag_scrolls_without_moving_the_selection() {
-    let mut harness = harness_with_files(80);
+    let mut harness = harness_with_files(80, &[]);
 
     // Put the selection well inside the first screenful so it is visible both
     // before the drag and after the round trip.
@@ -212,7 +215,7 @@ fn file_explorer_scrollbar_thumb_drag_scrolls_without_moving_the_selection() {
 /// lane blank.
 #[test]
 fn file_explorer_that_fits_paints_no_scrollbar() {
-    let harness = harness_with_files(3);
+    let harness = harness_with_files(3, &[]);
 
     let track_color = harness.editor().theme().scrollbar_track_fg;
     let thumb_color = harness.editor().theme().scrollbar_thumb_fg;
@@ -239,7 +242,7 @@ fn file_explorer_that_fits_paints_no_scrollbar() {
 /// about the file behind it.
 #[test]
 fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
-    let mut harness = harness_with_files(80);
+    let mut harness = harness_with_files(80, &[]);
 
     // An unsaved buffer decorates its explorer row with "●" and a tooltip.
     // Canonicalize: on platforms where the temp dir is reached through a
@@ -303,4 +306,73 @@ fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
          behind it.\nScreen:\n{}",
         harness.screen_to_string()
     );
+}
+
+/// The other end of the same rule: a row too wide for its content lane has no
+/// room left to right-align its status marker, so the marker is laid out in
+/// the scrollbar's column and painted straight over. An invisible marker must
+/// not answer the pointer either.
+#[test]
+fn overflowing_row_offers_no_status_tooltip_under_the_scrollbar() {
+    // Size the name so the slot lands exactly on the bar - the sharp case.
+    // Once a row overflows, its padding collapses to a single space, so the
+    // slot sits at `content_start_x (1) + row prefix + name + gap (1)`.
+    const ROW_PREFIX: usize = 4; // one indent level (2) + tree indicator (2)
+    let name_len = SCROLLBAR_COL as usize - 1 - ROW_PREFIX - 1;
+    // Sorts ahead of the `file_NN` entries, so the row is on screen unscrolled.
+    let long_name = format!("a{}.txt", "b".repeat(name_len - 5));
+    assert_eq!(long_name.chars().count(), name_len);
+    assert!(
+        ROW_PREFIX + name_len + 2 >= EXPLORER_COLS as usize - 3,
+        "the fixture name has to overflow the row's content lane, or this test \
+         proves nothing about the overflow path"
+    );
+
+    let mut harness = harness_with_files(80, &[long_name.as_str()]);
+
+    // Canonicalize for the same reason the hover test does: a symlinked temp
+    // dir would key the buffer differently from the explorer's node.
+    let project_root = harness.project_dir().unwrap().canonicalize().unwrap();
+    harness.open_file(&project_root.join(&long_name)).unwrap();
+    harness.type_text("x").unwrap();
+    harness.editor_mut().focus_file_explorer();
+    // Wait on one fact only - the row being on screen - and assert the rest,
+    // so a wrong expectation fails with a screen dump instead of hanging.
+    harness
+        .wait_until(|h| h.screen_to_string().contains(long_name.as_str()))
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.starts_with('│') && l.contains(long_name.as_str()))
+        .unwrap_or_else(|| {
+            panic!("the overflowing file should have an explorer row.\nScreen:\n{screen}")
+        });
+    let row = row as u16;
+
+    // Count cells, not bytes: the row carries multi-byte border and tree
+    // glyphs before the panel's right edge.
+    let explorer_row: String = line.chars().take(EXPLORER_COLS as usize).collect();
+    assert!(
+        !explorer_row.contains('●'),
+        "the marker on an overflowing row is painted over by the scrollbar, so \
+         it should not be on screen at all; row reads {explorer_row:?}.\nScreen:\n{screen}"
+    );
+
+    // Nothing anywhere on that row - the scrollbar's column above all - may
+    // offer the tooltip of a marker nobody can see.
+    for col in 0..EXPLORER_COLS {
+        harness.mouse_move(col, row).unwrap();
+        assert!(
+            !harness
+                .screen_to_string()
+                .contains("Unsaved changes in editor"),
+            "column {col} of the overflowing row claimed a status marker that is \
+             painted under the scrollbar.\nScreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
 }
