@@ -819,12 +819,13 @@ impl Editor {
         }
 
         let requested_path = Path::new(&new_name);
+        let has_separator = new_name.chars().any(std::path::is_separator);
 
         // Existing items are renamed in place, so their names must remain a
         // single path component. Newly-created items may include separators:
         // their missing parent directories are created below before the
         // temporary item is moved into place.
-        if !is_new_file && new_name.chars().any(std::path::is_separator) {
+        if !is_new_file && has_separator {
             self.set_status_message(t!("explorer.rename_invalid_separator").to_string());
             return;
         }
@@ -849,19 +850,29 @@ impl Editor {
         if self.tokio_runtime.is_some() {
             let fs = std::sync::Arc::clone(&self.authority().filesystem);
             if is_new_file {
-                match creation_path_is_within_project(fs.as_ref(), self.working_dir(), &new_path) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        self.set_status_message(
-                            t!("explorer.new_item_path_outside_project").to_string(),
-                        );
-                        return;
-                    }
-                    Err(e) => {
-                        self.set_status_message(
-                            t!("explorer.error_renaming", error = e.to_string()).to_string(),
-                        );
-                        return;
+                // Only a name with separators can leave the directory the
+                // temporary item was created in, and the walk canonicalizes
+                // every ancestor — a blocking round trip each on a remote
+                // filesystem. Flat names are already known to be inside.
+                if has_separator {
+                    match creation_path_is_within_project(
+                        fs.as_ref(),
+                        self.working_dir(),
+                        &new_path,
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            self.set_status_message(
+                                t!("explorer.new_item_path_outside_project").to_string(),
+                            );
+                            return;
+                        }
+                        Err(e) => {
+                            self.set_status_message(
+                                t!("explorer.error_renaming", error = e.to_string()).to_string(),
+                            );
+                            return;
+                        }
                     }
                 }
             }
