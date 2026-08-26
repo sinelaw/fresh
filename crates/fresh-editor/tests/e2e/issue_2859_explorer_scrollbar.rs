@@ -269,7 +269,10 @@ fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
     let mut harness = harness_with_files(80);
 
     // An unsaved buffer decorates its explorer row with "●" and a tooltip.
-    let project_root = harness.project_dir().unwrap();
+    // Canonicalize: on platforms where the temp dir is reached through a
+    // symlink, an uncanonicalized path keys the buffer differently from the
+    // explorer's node and the marker never appears.
+    let project_root = harness.project_dir().unwrap().canonicalize().unwrap();
     harness
         .open_file(&project_root.join("file_00.txt"))
         .unwrap();
