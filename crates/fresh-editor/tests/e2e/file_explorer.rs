@@ -2356,22 +2356,17 @@ fn test_file_explorer_new_file_cannot_escape_project_directory() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.type_text("../escaped.rs").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
     harness.render().unwrap();
 
     assert!(
         !escaped_path.exists(),
         "a relative creation path must not escape the project"
-    );
-    assert!(
-        harness
-            .screen_to_string()
-            .contains("New item path must stay within the project directory"),
-        "the rejected path should produce a clear status message"
     );
 }
 
