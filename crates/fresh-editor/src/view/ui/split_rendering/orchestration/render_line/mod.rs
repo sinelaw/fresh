@@ -77,6 +77,11 @@ pub(crate) struct LineRenderInput<'a> {
     pub byte_offset_mode: bool,
     /// Whether to show tilde (~) markers on lines past end-of-file
     pub show_tilde: bool,
+    /// Background the content rows of this split are painted on:
+    /// `theme.editor_bg`, or `Color::Reset` when `editor.use_terminal_bg`
+    /// hands the background to the terminal. Rows past end-of-file follow it
+    /// unless the theme names `after_eof_bg`.
+    pub effective_editor_bg: Color,
     /// Whether to highlight the line containing the cursor
     pub highlight_current_line: bool,
     /// Indentation guide rendering mode.
@@ -486,6 +491,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         show_line_numbers,
         byte_offset_mode,
         show_tilde,
+        effective_editor_bg,
         highlight_current_line,
         indentation_guide,
         indentation_guide_glyph,
@@ -1138,8 +1144,16 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         },
     );
 
-    // Pad the bottom of the viewport with `~` / after_eof_bg shading.
-    fill_eof_rows(&mut lines, theme, render_area, show_tilde);
+    // Pad the bottom of the viewport with `~` markers on the post-EOF
+    // background (the effective editor background unless the theme names a
+    // post-EOF shade of its own).
+    fill_eof_rows(
+        &mut lines,
+        theme,
+        render_area,
+        show_tilde,
+        effective_editor_bg,
+    );
 
     LineRenderOutput {
         lines,

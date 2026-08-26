@@ -78,7 +78,15 @@ pub(crate) fn render_composite_buffer(
         let display_row = scroll_row + view_row;
         let row_y = content_y + view_row as u16;
         if display_row >= total_rows {
-            render_past_end_row(buf, area.x, row_y, &layout, show_tilde, theme);
+            render_past_end_row(
+                buf,
+                area.x,
+                row_y,
+                &layout,
+                show_tilde,
+                theme,
+                effective_editor_bg,
+            );
             continue;
         }
         render_aligned_row(
@@ -278,6 +286,7 @@ fn render_past_end_row(
     layout: &PaneLayout,
     show_tilde: bool,
     theme: &Theme,
+    effective_editor_bg: Color,
 ) {
     let mut x = area_x;
     for &width in &layout.widths {
@@ -291,7 +300,7 @@ fn render_past_end_row(
         let eof = Paragraph::new(text).style(
             Style::default()
                 .fg(theme.line_number_fg)
-                .bg(theme.after_eof_bg),
+                .bg(theme.post_eof_bg(effective_editor_bg)),
         );
         eof.render(eof_area, buf);
         x += width + layout.separator_width;

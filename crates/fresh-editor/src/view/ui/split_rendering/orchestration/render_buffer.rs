@@ -576,6 +576,7 @@ pub(crate) fn compute_buffer_layout(
         show_line_numbers,
         byte_offset_mode,
         show_tilde,
+        effective_editor_bg,
         highlight_current_line,
         indentation_guide,
         indentation_guide_glyph,

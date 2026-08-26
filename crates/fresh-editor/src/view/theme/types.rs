@@ -2258,6 +2258,25 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
 }
 
 impl Theme {
+    /// Background to paint rows past end-of-file on, given the effective
+    /// editor background of the split being drawn.
+    ///
+    /// `effective_editor_bg` is `editor_bg` normally and `Color::Reset` when
+    /// `editor.use_terminal_bg` puts the terminal's own background behind the
+    /// buffer. A theme that does not name `after_eof_bg` resolves it to
+    /// `editor_bg`, and those rows have to follow whatever the content rows
+    /// are actually painted on — otherwise `use_terminal_bg` leaves an opaque
+    /// band below the last line, which is the thing the derived shade was
+    /// removed for. A theme that does name a distinct post-EOF color keeps
+    /// it: an explicit color is a choice, not a fallback.
+    pub fn post_eof_bg(&self, effective_editor_bg: Color) -> Color {
+        if self.after_eof_bg == self.editor_bg {
+            effective_editor_bg
+        } else {
+            self.after_eof_bg
+        }
+    }
+
     /// Returns `true` when the theme has a light background.
     ///
     /// Uses the relative luminance of `editor_bg` (perceived brightness).
