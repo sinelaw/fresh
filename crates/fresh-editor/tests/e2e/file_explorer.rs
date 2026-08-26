@@ -2290,7 +2290,10 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
 #[test]
 fn test_file_explorer_new_file_creates_missing_parent_directories() {
     let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
-    let project_root = harness.project_dir().unwrap();
+    // Canonicalize: the editor stores the resolved path, so on platforms that
+    // reach the temp dir through a symlink (macOS) or spell it differently
+    // (Windows verbatim prefixes) the raw handout compares unequal.
+    let project_root = harness.project_dir().unwrap().canonicalize().unwrap();
 
     harness.editor_mut().focus_file_explorer();
     harness.wait_for_file_explorer().unwrap();
