@@ -236,17 +236,7 @@ fn test_entry_dialog_text_field_delete_key_issue_2875() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
-    if !harness.screen_to_string().contains("Edit Item") {
-        harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-        open_python_lsp_edit_value(&mut harness);
-        harness
-            .send_key(KeyCode::Enter, KeyModifiers::NONE)
-            .unwrap();
-        harness.render().unwrap();
-    }
-    harness.assert_screen_contains("Edit Item");
+    harness.wait_for_screen_contains("Edit Item").unwrap();
     harness.assert_screen_contains("Command");
 
     // The Command field is the first editable field and is focused on open.
@@ -256,35 +246,36 @@ fn test_entry_dialog_text_field_delete_key_issue_2875() {
         .unwrap();
     harness.render().unwrap();
 
-    // Append a unique marker plus a trailing char to delete.
-    harness.type_text("ZZZq").unwrap();
+    // Append a marker that is unique on screen and whose *shape* changes when
+    // the delete lands: `q` is the character to remove and `W` is a tail that
+    // survives it, so the before and after states are two different tokens
+    // rather than one token and its prefix.
+    harness.type_text("ZZZqW").unwrap();
     harness.render().unwrap();
-    eprintln!(
-        "--- after typing 'ZZZq' into Command ---\n{}",
-        harness.screen_to_string()
-    );
-    harness.assert_screen_contains("ZZZq");
+    harness.assert_screen_contains("ZZZqW");
 
-    // Caret sits after 'q'. Left moves it between 'Z' and 'q'; Delete must
-    // forward-delete the 'q' at the caret. Before the fix this was a no-op.
+    // Caret sits after 'W'. Two Lefts put it just before the 'q'; Delete must
+    // forward-delete that 'q'. Before the fix this was a no-op.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Delete, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    eprintln!(
-        "--- after Left + Delete (expect 'ZZZ', no trailing 'q') ---\n{}",
-        harness.screen_to_string()
-    );
 
     let screen = harness.screen_to_string();
+    // The positive assertion carries the signal and the negative one guards
+    // against a stale match. Asserting only the absence of `ZZZqW` would also
+    // pass if the field stopped rendering the marker at all (width truncation,
+    // a closed dialog), so the post-delete token must be positively present.
     assert!(
-        screen.contains("ZZZ"),
-        "marker text should survive the Delete.\nScreen:\n{screen}"
+        screen.contains("ZZZW"),
+        "Delete must forward-delete the 'q' at the caret, leaving 'ZZZW' \
+         (issue #2875).\nScreen:\n{screen}"
     );
     assert!(
-        !screen.contains("ZZZq"),
-        "Delete must forward-delete the 'q' at the caret (issue #2875).\nScreen:\n{screen}"
+        !screen.contains("ZZZqW"),
+        "the pre-delete marker must be gone from the field.\nScreen:\n{screen}"
     );
 
     // Clean up (Esc out of edit mode and the stacked dialogs).
@@ -317,16 +308,7 @@ fn test_entry_dialog_down_visits_every_field_once() {
         .unwrap();
     harness.render().unwrap();
 
-    let screen = harness.screen_to_string();
-    if !screen.contains("Edit Item") {
-        harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-        open_python_lsp_edit_value(&mut harness);
-        harness
-            .send_key(KeyCode::Enter, KeyModifiers::NONE)
-            .unwrap();
-        harness.render().unwrap();
-    }
+    harness.wait_for_screen_contains("Edit Item").unwrap();
 
     harness.assert_screen_contains("Command");
     harness.assert_screen_contains("Enabled");
