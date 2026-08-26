@@ -98,11 +98,17 @@ function activeBlame(): BlameInstance | null {
 
 // Blame headers are rendered via `addVirtualLine`, which accepts theme
 // keys directly — so we don't expose colors as plugin settings. Themes
-// drive the look; if a theme lacks specific blame keys, these fall
-// through to the editor's status-bar palette which is what every theme
-// defines.
-const HEADER_FG_KEY = "ui.status_bar_fg";
-const HEADER_BG_KEY = "ui.status_bar_bg";
+// drive the look.
+//
+// These are the header band's own keys rather than borrowed status-bar
+// ones: a status bar sits on the frame's edge and reads fine sharing the
+// editor's background (`dark` gives it exactly that, `high-contrast` a
+// shade away), but a header band whose whole job is to separate one
+// commit's block from the next disappears when it does. Every shipped
+// theme names both keys; a theme that names neither falls back to the
+// menu surface's own `ui.menu_bg` / `ui.menu_fg`.
+const HEADER_FG_KEY = "ui.blame_header_fg";
+const HEADER_BG_KEY = "ui.blame_header_bg";
 
 // =============================================================================
 // Mode Definition
