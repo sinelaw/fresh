@@ -261,27 +261,26 @@ pub fn fold_band(
 /// so a test asserting them is asserting the same structure the editor uses.
 #[cfg(test)]
 pub(crate) mod test_palette {
-    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::style::Style;
 
     use fresh_ui::ThemeKey;
 
     /// The style this palette gives a theme name.
+    ///
+    /// The **real** resolution — `shell_theme::resolve` against a default
+    /// `Theme` — not a synthetic stand-in. A shell name is a pair of theme
+    /// keys, so a test that asserts a style is asserting the mapping the
+    /// editor actually performs: that a highlighted row reads
+    /// `ui.menu_highlight_*`, that a mnemonic adds an underline and nothing
+    /// else. A hash-derived palette could only ever say "these two names
+    /// differ".
     pub(crate) fn of(name: &str) -> Style {
-        // Distinct per name, and stable across runs: an assertion names the
-        // theme, not a colour number.
-        let n = name
-            .bytes()
-            .fold(7u16, |a, b| a.wrapping_mul(31).wrapping_add(b as u16));
-        let mut style = Style::default()
-            .fg(Color::Indexed((n % 100) as u8 + 16))
-            .bg(Color::Indexed((n % 100) as u8 + 128));
-        if name.contains(".active") {
-            style = style.add_modifier(Modifier::BOLD);
+        thread_local! {
+            static THEME: crate::view::theme::Theme =
+                crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+                    .expect("a theme of nothing but defaults");
         }
-        if name.ends_with(".mnemonic") {
-            style = style.add_modifier(Modifier::UNDERLINED);
-        }
-        style
+        THEME.with(|t| crate::app::shell_host::shell_theme::resolve(name, t))
     }
 
     /// The palette itself, for handing to [`super::fold_native`].
@@ -629,7 +628,7 @@ mod band_tests {
             width: 10,
             rows: vec![DropdownRow {
                 text: " New    ".into(),
-                theme: "menu.item",
+                theme: crate::view::ui::MenuRowStyle::Normal.shell_theme(),
             }],
         }
     }
@@ -722,7 +721,7 @@ mod band_tests {
                     width: 8,
                     rows: vec![DropdownRow {
                         text: "0123456789".into(),
-                        theme: "menu.item",
+                        theme: crate::view::ui::MenuRowStyle::Normal.shell_theme(),
                     }],
                 }],
                 ..Frame::default()

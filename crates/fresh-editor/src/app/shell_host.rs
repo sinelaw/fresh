@@ -190,112 +190,99 @@ impl crate::view::shell::fold::HostPainter for Editor {
 /// It is a snapshot of the colours rather than a borrow of the theme, so the
 /// fold can hold it while the rest of the editor is mutably borrowed.
 pub struct ShellPalette {
-    status: Style,
-    base: Style,
-    menu: Style,
-    menu_item: Style,
-    menu_highlighted: Style,
-    menu_border: Style,
-    menu_dropdown: Style,
-    menu_hover: Style,
-    menu_disabled: Style,
-    menu_info: Style,
-    menu_separator: Style,
-    bar: Style,
-    bar_item: Style,
-    bar_item_mnemonic: Style,
-    bar_active: Style,
-    bar_active_mnemonic: Style,
-    bar_hover: Style,
-    bar_hover_mnemonic: Style,
+    theme: std::sync::Arc<crate::view::theme::Theme>,
 }
 
 impl crate::view::shell::fold::Palette for ShellPalette {
     fn style(&self, theme: &fresh_ui::ThemeKey) -> Style {
-        match theme.as_str() {
-            // Grown as regions migrate; an unknown name falls back rather than
-            // failing, so a new surface renders plainly before it is themed.
-            "status" => self.status,
-            // A context menu's box, its rows, and the highlighted row. The
-            // border takes its own colour, as the old painter's
-            // `border_style` did.
-            "menu" => self.menu,
-            "menu.item" => self.menu_item,
-            "menu.item.highlighted" => self.menu_highlighted,
-            "menu.border" => self.menu_border,
-            // A menu-bar dropdown's box and the five ways one of its rows can
-            // look. The names are `MenuRowStyle`'s, one per style, so the
-            // ratatui painter's colours and the shell's cannot drift.
-            "menu.dropdown" => self.menu_dropdown,
-            "menu.item.hover" => self.menu_hover,
-            "menu.item.disabled" => self.menu_disabled,
-            "menu.item.info" => self.menu_info,
-            "menu.separator" => self.menu_separator,
-            // The menu bar row: its ground, its labels, and the one character
-            // of a label that wears the mnemonic underline. An underline is
-            // part of how a run looks, so it is part of the run's name — the
-            // library carries one `ThemeKey` per item and never interprets it.
-            "menu.bar" => self.bar,
-            "menu.bar.item" => self.bar_item,
-            "menu.bar.item.mnemonic" => self.bar_item_mnemonic,
-            "menu.bar.item.active" => self.bar_active,
-            "menu.bar.item.active.mnemonic" => self.bar_active_mnemonic,
-            "menu.bar.item.hover" => self.bar_hover,
-            "menu.bar.item.hover.mnemonic" => self.bar_hover_mnemonic,
-            _ => self.base,
-        }
+        shell_theme::resolve(theme.as_str(), &self.theme)
     }
 }
 
-use crate::view::ui::BarLabelStyle;
+/// The shell's theme names, and the one rule for reading them.
+///
+/// **A name is real theme keys, not a name of our own.** A cell needs a
+/// foreground and a background, and an `Item` carries exactly one `ThemeKey` —
+/// so a shell name is a *pair*, written `fg_key/bg_key`, optionally followed by
+/// a text attribute (`+bold`, `+underline`). Both halves go through
+/// [`Theme::resolve_theme_key`], the editor's existing table-generated
+/// resolver, so no name is invented here and every colour on screen traces to
+/// a theme entry a user can edit.
+///
+/// This replaced a hand-written match of twenty-odd arms over names like
+/// `menu.bar.item.active.mnemonic` — six spellings for two orthogonal
+/// attributes, which is the combinatorial blow-up that arrives in earnest with
+/// the file explorer (git status × selection × cut × focus). A grammar does not
+/// blow up; a list of names does.
+///
+/// It also converges with the theme inspector, which has always recorded
+/// provenance as exactly this pair (`ThemeRun { fg_key, bg_key }`). The display
+/// list and the inspector now say the same thing in the same words.
+pub mod shell_theme {
+    use ratatui::style::{Modifier, Style};
 
-/// One menu-bar label style, with the mnemonic underline applied on top.
-fn bar_style(theme: &crate::view::theme::Theme, style: BarLabelStyle, mnemonic: bool) -> Style {
-    let base = style.style(theme);
-    if mnemonic {
-        base.add_modifier(ratatui::style::Modifier::UNDERLINED)
-    } else {
-        base
+    use crate::view::theme::Theme;
+
+    /// Build a name from two theme keys.
+    pub fn pair(fg: &str, bg: &str) -> String {
+        format!("{fg}/{bg}")
+    }
+
+    /// The same, with text attributes the theme does not carry.
+    ///
+    /// Reserved for attributes that are *structural* rather than themed: a
+    /// mnemonic is underlined because it is a mnemonic. They compose with any
+    /// pair and with each other, so this is grammar rather than more names.
+    pub fn attrs(fg: &str, bg: &str, attrs: &[&str]) -> String {
+        let mut out = pair(fg, bg);
+        for a in attrs {
+            out.push('+');
+            out.push_str(a);
+        }
+        out
+    }
+
+    /// Resolve a shell name to a concrete style.
+    ///
+    /// An unreadable or unknown name falls back to the editor's own ground
+    /// rather than failing, so a surface that has not been themed yet renders
+    /// plainly instead of not at all.
+    pub fn resolve(name: &str, theme: &Theme) -> Style {
+        let mut parts = name.split('+');
+        let pair = parts.next().unwrap_or(name);
+        let mut modifier = Modifier::empty();
+        for a in parts {
+            modifier |= match a {
+                "bold" => Modifier::BOLD,
+                "underline" => Modifier::UNDERLINED,
+                _ => Modifier::empty(),
+            };
+        }
+        let Some((fg_key, bg_key)) = pair.split_once('/') else {
+            return base(theme);
+        };
+        let (Some(fg), Some(bg)) = (
+            theme.resolve_theme_key(fg_key),
+            theme.resolve_theme_key(bg_key),
+        ) else {
+            return base(theme);
+        };
+        // The attribute the theme declares for the foreground key, plus the
+        // structural one the name asked for.
+        let modifier = modifier | theme.resolve_modifier_key(fg_key);
+        Style::default().fg(fg).bg(bg).add_modifier(modifier)
+    }
+
+    fn base(theme: &Theme) -> Style {
+        Style::default().fg(theme.editor_fg).bg(theme.editor_bg)
     }
 }
 
 impl Editor {
     /// Snapshot the colours the shell's themes resolve to this frame.
     pub(crate) fn shell_palette(&self) -> ShellPalette {
-        let theme = self.theme.read().unwrap();
         ShellPalette {
-            status: Style::default()
-                .fg(theme.status_bar_fg)
-                .bg(theme.status_bar_bg),
-            base: Style::default().fg(theme.editor_fg).bg(theme.editor_bg),
-            menu: Style::default()
-                .fg(theme.menu_dropdown_fg)
-                .bg(theme.menu_dropdown_bg),
-            menu_item: Style::default()
-                .fg(theme.menu_dropdown_fg)
-                .bg(theme.menu_dropdown_bg),
-            menu_highlighted: Style::default()
-                .fg(theme.menu_highlight_fg)
-                .bg(theme.menu_highlight_bg),
-            menu_border: Style::default()
-                .fg(theme.menu_border_fg)
-                .bg(theme.menu_dropdown_bg),
-            // The box: border ink on the dropdown ground. Its fill draws
-            // spaces, so only the background reaches the eye there.
-            menu_dropdown: Style::default()
-                .fg(theme.menu_border_fg)
-                .bg(theme.menu_dropdown_bg),
-            menu_hover: crate::view::ui::MenuRowStyle::Hovered.style(&theme),
-            menu_disabled: crate::view::ui::MenuRowStyle::Disabled.style(&theme),
-            menu_info: crate::view::ui::MenuRowStyle::Info.style(&theme),
-            menu_separator: crate::view::ui::MenuRowStyle::Separator.style(&theme),
-            bar: Style::default().bg(theme.menu_bg),
-            bar_item: bar_style(&theme, BarLabelStyle::Normal, false),
-            bar_item_mnemonic: bar_style(&theme, BarLabelStyle::Normal, true),
-            bar_active: bar_style(&theme, BarLabelStyle::Active, false),
-            bar_active_mnemonic: bar_style(&theme, BarLabelStyle::Active, true),
-            bar_hover: bar_style(&theme, BarLabelStyle::Hovered, false),
-            bar_hover_mnemonic: bar_style(&theme, BarLabelStyle::Hovered, true),
+            theme: self.theme.read().unwrap().clone().into(),
         }
     }
 }

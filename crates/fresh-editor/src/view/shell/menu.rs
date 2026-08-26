@@ -12,11 +12,18 @@
 //! `OUTSIDE_POINTER` dismissal is what the full-frame
 //! `chrome:menu_close_guard` box used to be.
 //!
-//! **Geometry has not migrated.** Each level is still anchored at the
-//! rectangle `MenuRenderer::fit_dropdown_area` chose, rather than letting the
-//! layer's own `fit` place it, because the keyboard half still hit-tests
-//! against that walk's output and the two must agree on where the box is.
-//! That is the last piece of this wave, along with `layer_rank::MENU`.
+//! **Placement has not migrated**, and the reason is upstream of placement:
+//! this chain has no content model in the tree to place. `DropdownLevel`
+//! carries `x`, `y` and `width` — a rect on a description type, which the
+//! design doc names as its own stop sign — plus strings already fitted to a
+//! width nothing measured. `Place::RightOf` places against a *measured* box,
+//! so it is not merely unused here, it is not yet expressible.
+//!
+//! An earlier version of this note claimed `Anchor::Node` could not express
+//! the one-row rise a submenu's border needs. It can: anchor to the row
+//! *above*. That is not the blocker; the content model is. See §6.2 of the
+//! migration doc for the order the pieces have to move in, and for the
+//! measured divergence between this walk's flip rule and `Fit::FLIP`.
 
 use std::rc::Rc;
 
@@ -43,7 +50,7 @@ fn hover(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
 pub struct BarItem {
     /// `(text, theme name)`, in order. Usually one run; three when a mnemonic
     /// splits the label.
-    pub runs: Vec<(String, &'static str)>,
+    pub runs: Vec<(String, String)>,
     /// Which menu this label opens.
     pub index: usize,
 }
@@ -70,7 +77,7 @@ pub fn menu_bar(bar: &MenuBar) -> Node<UiMsg> {
             let runs: Vec<Run> = it
                 .runs
                 .iter()
-                .map(|(t, theme)| Run::themed(t.clone(), *theme))
+                .map(|(t, theme)| Run::themed(t.clone(), theme))
                 .collect();
             let index = it.index;
             gesture(text_runs(runs))
@@ -101,15 +108,22 @@ pub fn menu_bar(bar: &MenuBar) -> Node<UiMsg> {
     // `row == 0` arm of `handle_click_menu_bar` did; a label above answers
     // first, because a click is derived per path and the label is the deeper
     // one.
-    gesture(row().theme("menu.bar").children(labels))
-        // On the press, with the labels above it: the whole bar acts on the
-        // same gesture, so the dismissal, the close and the toggle are one
-        // dispatch and cannot see each other's aftermath.
-        .on(
-            GestureKind::Press,
-            Rc::new(|_: &Event| Some(UiMsg::Ui(UiFact::CloseMenu))),
-        )
-        .on_enter(hover(None))
+    gesture(
+        row()
+            .theme(crate::app::shell_host::shell_theme::pair(
+                "ui.menu_fg",
+                "ui.menu_bg",
+            ))
+            .children(labels),
+    )
+    // On the press, with the labels above it: the whole bar acts on the
+    // same gesture, so the dismissal, the close and the toggle are one
+    // dispatch and cannot see each other's aftermath.
+    .on(
+        GestureKind::Press,
+        Rc::new(|_: &Event| Some(UiMsg::Ui(UiFact::CloseMenu))),
+    )
+    .on_enter(hover(None))
 }
 
 /// One row of one dropdown: what it says, and the name of how it looks.
@@ -120,7 +134,7 @@ pub fn menu_bar(bar: &MenuBar) -> Node<UiMsg> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DropdownRow {
     pub text: String,
-    pub theme: &'static str,
+    pub theme: String,
 }
 
 /// One level of an open dropdown chain: the bordered box and its rows.
@@ -132,48 +146,62 @@ pub struct DropdownLevel {
     pub rows: Vec<DropdownRow>,
 }
 
-/// The open chain, outermost level first.
+/// The open chain, **nested**: each level is declared inside the one it opened
+/// from, not beside it.
 ///
-/// Declaration order is paint order, so a submenu lands on top of the level it
-/// opened from — which is what the old loop achieved by painting in the same
-/// order, and what a z-rank would otherwise have to state.
-pub fn dropdown_chain(levels: &[DropdownLevel]) -> Vec<Node<UiMsg>> {
-    levels
-        .iter()
-        .enumerate()
-        .map(|(depth, l)| dropdown(depth, l))
-        .collect()
+/// Nesting is not a stylistic choice, it is what makes the chain one surface.
+/// `OUTSIDE_POINTER` is an ancestor test — a press is "outside" a layer when
+/// the layer is not on the hit path — so with the levels declared as siblings a
+/// press inside a *submenu* is outside the level above it, and the outermost
+/// level dismisses the whole chain. Dismissal lands on the press, so by the
+/// release there is no open menu left and the row's own click finds nothing to
+/// activate: clicking a submenu item with the mouse did nothing at all.
+///
+/// Declaring the child inside its parent's subtree puts every level on the
+/// path, so a press anywhere in the chain is inside all of it. Paint order is
+/// unchanged — `resolve_layers` walks a worklist that grows as it goes, so a
+/// nested layer resolves after its parent and paints after it too.
+pub fn dropdown_chain(levels: &[DropdownLevel]) -> Option<Node<UiMsg>> {
+    let mut inner: Option<Node<UiMsg>> = None;
+    for (depth, level) in levels.iter().enumerate().rev() {
+        inner = Some(dropdown(depth, level, inner.take()));
+    }
+    inner
 }
 
-fn dropdown(depth: usize, level: &DropdownLevel) -> Node<UiMsg> {
+fn dropdown(depth: usize, level: &DropdownLevel, nested: Option<Node<UiMsg>>) -> Node<UiMsg> {
     let rows: Vec<Node<UiMsg>> = level
         .rows
         .iter()
         .enumerate()
         .map(|(index, r)| {
-            gesture(text(r.text.clone()).theme(r.theme).h(Sizing::Cells(1)))
-                // Stops, for the same reason the bar's labels do: the box
-                // behind the rows closes the menu, and a row that only
-                // answered would be followed by that close — which would shut
-                // the menu on the way into a submenu.
-                .on(
-                    GestureKind::Click,
-                    Rc::new(move |e: &Event| {
-                        e.stop();
-                        Some(UiMsg::Ui(UiFact::MenuItemClick { depth, index }))
-                    }),
-                )
-                // The hover machine decides what a row under the pointer
-                // means — highlight, open a submenu, close the deeper ones.
-                .on_leave(hover(None))
-                .on_enter(hover(Some(if depth == 0 {
-                    // The bar index the reaction fills in for itself; it knows
-                    // which menu is open.
-                    HoverTarget::MenuDropdownItem(0, index)
-                } else {
-                    HoverTarget::SubmenuItem(depth, index)
-                })))
-                .into()
+            gesture(
+                text(r.text.clone())
+                    .theme(r.theme.clone())
+                    .h(Sizing::Cells(1)),
+            )
+            // Stops, for the same reason the bar's labels do: the box
+            // behind the rows closes the menu, and a row that only
+            // answered would be followed by that close — which would shut
+            // the menu on the way into a submenu.
+            .on(
+                GestureKind::Click,
+                Rc::new(move |e: &Event| {
+                    e.stop();
+                    Some(UiMsg::Ui(UiFact::MenuItemClick { depth, index }))
+                }),
+            )
+            // The hover machine decides what a row under the pointer
+            // means — highlight, open a submenu, close the deeper ones.
+            .on_leave(hover(None))
+            .on_enter(hover(Some(if depth == 0 {
+                // The bar index the reaction fills in for itself; it knows
+                // which menu is open.
+                HoverTarget::MenuDropdownItem(0, index)
+            } else {
+                HoverTarget::SubmenuItem(depth, index)
+            })))
+            .into()
         })
         .collect();
 
@@ -184,16 +212,26 @@ fn dropdown(depth: usize, level: &DropdownLevel) -> Node<UiMsg> {
         // cells.
         .anchor(Anchor::Point(level.x, level.y))
         .child(
-            gesture(
-                col()
+            gesture({
+                let mut b = col()
                     .border()
                     // Border ink over the dropdown ground; the fill draws
                     // spaces, so only the background of this key reaches the
                     // eye there.
-                    .theme("menu.dropdown")
+                    .theme(crate::app::shell_host::shell_theme::pair(
+                        "ui.menu_border_fg",
+                        "ui.menu_dropdown_bg",
+                    ))
                     .w(Sizing::Cells(level.width))
-                    .children(rows),
-            )
+                    .children(rows);
+                // The level this one opened, inside it. A layer is out of
+                // flow, so it takes none of this box's space — it is here for
+                // ancestry, which is what dismissal tests.
+                if let Some(child) = nested {
+                    b = b.child(child);
+                }
+                b
+            })
             // An inert cell of the box — its border — closes the menu, which
             // is what a click inside the dropdown that hit no item always did.
             .on_click(|_| UiMsg::Ui(UiFact::CloseMenu)),
@@ -216,6 +254,23 @@ fn dropdown(depth: usize, level: &DropdownLevel) -> Node<UiMsg> {
     l
 }
 
+/// The names a bar label carries, spelled once for the test fixtures below.
+/// They are ordinary theme keys — the point of the grammar is that a test can
+/// write them out and mean exactly what the editor means.
+#[cfg(test)]
+const ITEM: &str = "ui.menu_fg/ui.menu_bg";
+#[cfg(test)]
+const BAR: &str = "ui.menu_fg/ui.menu_bg";
+#[cfg(test)]
+const MNEMONIC: &str = "ui.menu_fg/ui.menu_bg+underline";
+/// The active label is bold *and* its mnemonic underlined — two structural
+/// attributes composing on one pair, which is the whole reason the grammar
+/// replaced a name per combination.
+#[cfg(test)]
+const ACTIVE: &str = "ui.menu_active_fg/ui.menu_active_bg+bold";
+#[cfg(test)]
+const ACTIVE_MNEMONIC: &str = "ui.menu_active_fg/ui.menu_active_bg+bold+underline";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,7 +289,10 @@ mod tests {
     fn row_of(text: &str) -> DropdownRow {
         DropdownRow {
             text: text.to_string(),
-            theme: "menu.item",
+            theme: crate::app::shell_host::shell_theme::pair(
+                "ui.menu_dropdown_fg",
+                "ui.menu_dropdown_bg",
+            ),
         }
     }
 
@@ -292,19 +350,19 @@ mod tests {
                 items: vec![
                     BarItem {
                         runs: vec![
-                            (" ".into(), "menu.bar.item"),
-                            ("File".into(), "menu.bar.item"),
-                            (" ".into(), "menu.bar.item"),
-                            (" ".into(), "menu.bar"),
+                            (" ".into(), ITEM.to_string()),
+                            ("File".into(), ITEM.to_string()),
+                            (" ".into(), ITEM.to_string()),
+                            (" ".into(), BAR.to_string()),
                         ],
                         index: 0,
                     },
                     BarItem {
                         runs: vec![
-                            (" ".into(), "menu.bar.item"),
-                            ("Edit".into(), "menu.bar.item"),
-                            (" ".into(), "menu.bar.item"),
-                            (" ".into(), "menu.bar"),
+                            (" ".into(), ITEM.to_string()),
+                            ("Edit".into(), ITEM.to_string()),
+                            (" ".into(), ITEM.to_string()),
+                            (" ".into(), BAR.to_string()),
                         ],
                         index: 1,
                     },
@@ -333,9 +391,9 @@ mod tests {
         let bar = MenuBar {
             items: vec![BarItem {
                 runs: vec![
-                    (" ".into(), "menu.bar.item.active"),
-                    ("F".into(), "menu.bar.item.active.mnemonic"),
-                    ("ile".into(), "menu.bar.item.active"),
+                    (" ".into(), ACTIVE.to_string()),
+                    ("F".into(), ACTIVE_MNEMONIC.to_string()),
+                    ("ile".into(), ACTIVE.to_string()),
                 ],
                 index: 0,
             }],
@@ -355,12 +413,12 @@ mod tests {
 
         assert_eq!(
             buf[(1, 0)].style(),
-            test_palette::painted("menu.bar.item.active.mnemonic"),
+            test_palette::painted(ACTIVE_MNEMONIC),
             "the mnemonic is underlined and bold"
         );
         assert_eq!(
             buf[(2, 0)].style(),
-            test_palette::painted("menu.bar.item.active"),
+            test_palette::painted(ACTIVE),
             "the character beside it is only bold"
         );
         assert_ne!(
@@ -390,7 +448,10 @@ mod tests {
                         width: 10,
                         rows: vec![DropdownRow {
                             text: " New    ".into(),
-                            theme: "menu.item",
+                            theme: crate::app::shell_host::shell_theme::pair(
+                                "ui.menu_dropdown_fg",
+                                "ui.menu_dropdown_bg",
+                            ),
                         }],
                     }],
                     ..Frame::default()
@@ -410,7 +471,7 @@ mod tests {
 
         assert_eq!(
             buf[(2, 1)].style(),
-            test_palette::painted("menu.item"),
+            test_palette::painted(&crate::view::ui::MenuRowStyle::Normal.shell_theme()),
             "the row says what its cells look like outright"
         );
         assert!(
@@ -428,11 +489,11 @@ mod tests {
         let bar = MenuBar {
             items: vec![BarItem {
                 runs: vec![
-                    (" ".into(), "menu.bar.item"),
-                    ("F".into(), "menu.bar.item.mnemonic"),
-                    ("ile".into(), "menu.bar.item"),
-                    (" ".into(), "menu.bar.item"),
-                    (" ".into(), "menu.bar"),
+                    (" ".into(), ITEM.to_string()),
+                    ("F".into(), MNEMONIC.to_string()),
+                    ("ile".into(), ITEM.to_string()),
+                    (" ".into(), ITEM.to_string()),
+                    (" ".into(), BAR.to_string()),
                 ],
                 index: 0,
             }],
@@ -456,9 +517,7 @@ mod tests {
             crate::view::shell::frame::HostRegion::MenuBar,
         ));
         assert!(
-            items
-                .iter()
-                .any(|i| i.theme.as_str() == "menu.bar.item.mnemonic"),
+            items.iter().any(|i| i.theme.as_str() == MNEMONIC),
             "the mnemonic run must reach the display list under its own name"
         );
     }
@@ -565,10 +624,10 @@ mod input_tests {
     fn bar_item(label: &str, index: usize) -> BarItem {
         BarItem {
             runs: vec![
-                (" ".into(), "menu.bar.item"),
-                (label.into(), "menu.bar.item"),
-                (" ".into(), "menu.bar.item"),
-                (" ".into(), "menu.bar"),
+                (" ".into(), ITEM.to_string()),
+                (label.into(), ITEM.to_string()),
+                (" ".into(), ITEM.to_string()),
+                (" ".into(), BAR.to_string()),
             ],
             index,
         }
@@ -591,11 +650,17 @@ mod input_tests {
                             rows: vec![
                                 DropdownRow {
                                     text: " New      ".into(),
-                                    theme: "menu.item",
+                                    theme: crate::app::shell_host::shell_theme::pair(
+                                        "ui.menu_dropdown_fg",
+                                        "ui.menu_dropdown_bg",
+                                    ),
                                 },
                                 DropdownRow {
                                     text: " Open     ".into(),
-                                    theme: "menu.item",
+                                    theme: crate::app::shell_host::shell_theme::pair(
+                                        "ui.menu_dropdown_fg",
+                                        "ui.menu_dropdown_bg",
+                                    ),
                                 },
                             ],
                         }]
@@ -842,6 +907,122 @@ mod input_tests {
                 .any(|m| matches!(m, UiMsg::Ui(UiFact::MenuHover(None)))),
             "got {:?}",
             d.msgs
+        );
+    }
+}
+
+#[cfg(test)]
+mod submenu_regression {
+    use super::*;
+    use crate::view::shell::frame::{frame_tree, Frame};
+    use fresh_ui::{Input, Mods, MouseButton, Point, Size, Ui};
+
+    /// A two-level chain: File's dropdown at (0,1), its submenu to the right.
+    fn open_chain() -> Ui<UiMsg> {
+        let row = |t: &str| DropdownRow {
+            text: t.to_string(),
+            theme: crate::app::shell_host::shell_theme::pair(
+                "ui.menu_dropdown_fg",
+                "ui.menu_dropdown_bg",
+            ),
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                dropdowns: vec![
+                    DropdownLevel {
+                        x: 0,
+                        y: 1,
+                        width: 12,
+                        rows: vec![row(" New      "), row(" More    >")],
+                    },
+                    DropdownLevel {
+                        x: 11,
+                        y: 2,
+                        width: 12,
+                        rows: vec![row(" Deep     ")],
+                    },
+                ],
+                ..Frame::default()
+            }),
+            Size::new(40, 12),
+        );
+        ui
+    }
+
+    fn facts(msgs: Vec<UiMsg>) -> Vec<UiFact> {
+        msgs.into_iter()
+            .map(|m| match m {
+                UiMsg::Ui(f) => f,
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect()
+    }
+
+    fn click(ui: &mut Ui<UiMsg>, x: i32, y: i32) -> Vec<UiFact> {
+        let pos = Point::new(x, y);
+        let mut out = ui
+            .dispatch(Input::Press {
+                pos,
+                button: MouseButton::Left,
+                mods: Mods::NONE,
+            })
+            .msgs;
+        out.extend(
+            ui.dispatch(Input::Release {
+                pos,
+                button: MouseButton::Left,
+                mods: Mods::NONE,
+            })
+            .msgs,
+        );
+        facts(out)
+    }
+
+    /// **Clicking a submenu row activates it, and does not close the chain.**
+    ///
+    /// The levels were declared as sibling layers, and `OUTSIDE_POINTER` is an
+    /// ancestor test — so a press inside the *submenu* counted as outside the
+    /// level above it and the outermost layer dismissed the lot. Dismissal
+    /// lands on the press, so by the release there was no open menu and the
+    /// row's own click found nothing to activate: clicking a submenu item with
+    /// the mouse did nothing at all. Every submenu test was keyboard-driven,
+    /// so nothing caught it.
+    #[test]
+    fn clicking_a_submenu_row_activates_it_and_keeps_the_chain_open() {
+        let mut ui = open_chain();
+        // The depth-1 box spans x 11..23, y 2..5; its one row sits at y 3.
+        assert_eq!(
+            click(&mut ui, 14, 3),
+            vec![UiFact::MenuItemClick { depth: 1, index: 0 }]
+        );
+    }
+
+    /// The parent level still answers its own rows, now that its child is
+    /// declared inside it.
+    #[test]
+    fn clicking_a_parent_row_still_activates_that_row() {
+        let mut ui = open_chain();
+        assert_eq!(
+            click(&mut ui, 4, 2),
+            vec![UiFact::MenuItemClick { depth: 0, index: 0 }]
+        );
+    }
+
+    /// **Nesting must not cost the close guard.** A press genuinely outside
+    /// the whole chain still dismisses it — that is the outermost layer's
+    /// `OUTSIDE_POINTER`, and nesting only changed what counts as inside.
+    #[test]
+    fn clicking_outside_the_whole_chain_still_dismisses() {
+        let mut ui = open_chain();
+        let press = ui.dispatch(Input::Press {
+            pos: Point::new(35, 10),
+            button: MouseButton::Left,
+            mods: Mods::NONE,
+        });
+        assert!(
+            facts(press.msgs).contains(&UiFact::CloseMenu),
+            "outside the chain is still outside"
         );
     }
 }

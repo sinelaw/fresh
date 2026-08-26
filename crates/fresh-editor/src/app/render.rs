@@ -339,7 +339,6 @@ impl Editor {
         }
 
         use crate::view::shell::frame::HostRegion;
-        let menu_bar_area = region(HostRegion::MenuBar);
         let status_bar_area = region(HostRegion::StatusBar);
         let search_options_area = region(HostRegion::SearchOptions);
         let prompt_line_area = region(HostRegion::PromptLine);
@@ -1226,7 +1225,7 @@ impl Editor {
         // its dropdowns are layers — but its walk still records theme-key
         // provenance for the inspector, and refreshes the expanded-submenu
         // cache the event-time layout rides on.
-        self.record_menu_theme_runs(menu_bar_area);
+        self.apply_menu_theme_runs();
 
         // Where a migrated surface asked for the terminal caret, if any. See
         // the commit at the end of this method.
@@ -2568,7 +2567,7 @@ impl Editor {
     /// `Layout` split at event time. Two implementations of one layout is the
     /// condition this migration exists to remove.
     pub(crate) fn shell_frame(
-        &self,
+        &mut self,
         size: ratatui::layout::Rect,
     ) -> crate::view::shell::frame::Frame {
         let BottomRowFlags {
@@ -2578,7 +2577,7 @@ impl Editor {
             prompt_row_visible,
         } = self.bottom_row_flags();
         let (dock_area, chrome_area) = self.compute_dock_split(size);
-        let win = self.active_window();
+        let menu_bar_visible = self.active_window().menu_bar_visible;
         // One walk for the whole menu: the bar's labels and, when one is open,
         // its dropdown chain. Skipped entirely when the bar is hidden.
         //
@@ -2587,15 +2586,23 @@ impl Editor {
         // layout — the rectangle it would read is one frame stale, and asking
         // for it at all is the loop the library refuses. It needs no layout:
         // the bar is the chrome column's top row.
-        let menu_layout = win.menu_bar_visible.then(|| ratatui::layout::Rect {
+        let menu_layout = menu_bar_visible.then(|| ratatui::layout::Rect {
             x: chrome_area.x,
             y: chrome_area.y,
             width: chrome_area.width,
             height: 1,
         });
+        // THE menu walk for this frame. Everything the menu needs comes out of
+        // it — the rectangles, the description the shell paints, and the
+        // theme-key provenance — because they are one derivation. It used to
+        // run twice per frame in release and three times in debug, from three
+        // different bar rectangles, reconciled only by a `debug_assert_eq!`
+        // that release compiles out.
         let menu_layout = menu_layout.and_then(|bar| self.menu_layout_in(bar));
+        self.menu_layout_frame = menu_layout.clone();
+        let win = self.active_window();
         crate::view::shell::frame::Frame {
-            menu_bar: win.menu_bar_visible,
+            menu_bar: menu_bar_visible,
             status_bar: win.status_bar_visible && !has_suggestions && !has_file_browser,
             search_options: self.active_prompt_has_search_options(),
             prompt_line: prompt_row_visible,
@@ -2709,7 +2716,11 @@ impl Editor {
     /// paint pass (the same content source the painter and `menu_view`
     /// use). `None` when the menu bar is hidden.
     pub(crate) fn menu_layout_now(&self) -> Option<crate::view::ui::menu::MenuLayout> {
-        self.menu_layout_in(self.menu_bar_area_now()?)
+        // The frame's own walk, not a fresh one. What the web `Scene` projects
+        // must be what the TUI drew, and a second walk from a different bar
+        // rectangle is exactly how the two came to disagree. `build_scene`
+        // renders before it projects, so this is this frame's answer.
+        self.menu_layout_frame.clone()
     }
 
     /// The same walk, for a bar rect the caller already has.
@@ -2743,7 +2754,6 @@ impl Editor {
             &keybindings,
             hover_target.as_ref(),
             self.config.editor.menu_bar_mnemonics,
-            None,
         ))
     }
 
@@ -2881,58 +2891,24 @@ impl Editor {
         }
     }
 
-    /// Record the menu's theme-key provenance for the theme inspector.
+    /// Apply the theme-key provenance the frame's menu walk recorded.
     ///
-    /// This was `render_menu_bar`. Nothing about the menu paints from here any
-    /// more — the bar row is a native region in the shell's background band
-    /// and its dropdowns are `Layer`s in the overlay band — but the walk still
-    /// has one caller-visible side effect: the per-cell theme keys the
-    /// inspector reads. It also refreshes the expanded-submenu cache the
-    /// event-time layout rides on.
-    fn record_menu_theme_runs(&mut self, menu_bar_area: ratatui::layout::Rect) {
-        if self.active_window().menu_bar_visible {
-            // Pre-expand DynamicSubmenu items once per registry; without this
-            // MenuRenderer::render rescans + reparses every theme JSON file
-            // on every frame. `menu_layout_now` reads this same cache (its
-            // freshness rides on the paint pass, exactly as the retired
-            // paint-recorded layout's did).
-            self.expanded_menus_cache.update(
-                &self.theme_registry,
-                &self.menus,
-                &self.menu_state.themes_dir,
-            );
-            let hover_target = self.shell_hover.clone();
-            let menu_bar_mnemonics = self.config.editor.menu_bar_mnemonics;
-            // The single content source shared with the web `menu_view()`
-            // projection (uses the cache populated just above).
-            let all_menus = self.all_menus_expanded();
-            let keybindings = self.keybindings.read().unwrap();
-            let frame_rect = self.active_chrome().last_frame;
-            let screen = ratatui::layout::Rect::new(0, 0, frame_rect.width, frame_rect.height);
-            let mut menu_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-            let new_menu_layout = crate::view::ui::MenuRenderer::compute_layout(
-                screen,
-                menu_bar_area,
-                &all_menus,
-                &self.menu_state,
-                &keybindings,
-                hover_target.as_ref(),
-                menu_bar_mnemonics,
-                Some(&mut crate::app::types::CellThemeRecorder::new(
-                    &mut menu_runs,
-                )),
-            );
-            drop(keybindings);
-            self.active_chrome_mut().apply_theme_runs(&menu_runs);
-            // Parity oracle: the event-time derivation must reproduce the
-            // area the frame layout chose (MenuLayout.bar_area carries it)
-            // and the exact bar/dropdown geometry this paint walk produced.
-            debug_assert_eq!(
-                self.menu_layout_now(),
-                Some(new_menu_layout),
-                "menu event-time layout and paint walk must agree"
-            );
-        }
+    /// This was `render_menu_bar`, then a second walk that existed only to
+    /// produce these runs. Nothing about the menu paints from here — the bar
+    /// row is a native region in the shell's background band and its dropdowns
+    /// are `Layer`s in the overlay band — and nothing is re-derived either:
+    /// `shell_frame` did the walk at the top of this method and the runs came
+    /// out of it. The expanded-submenu cache is refreshed before that walk, in
+    /// `refresh_menu_content`.
+    fn apply_menu_theme_runs(&mut self) {
+        let Some(runs) = self
+            .menu_layout_frame
+            .as_ref()
+            .map(|l| l.theme_runs.clone())
+        else {
+            return;
+        };
+        self.active_chrome_mut().apply_theme_runs(&runs);
     }
 
     /// Drain plugin commands enqueued before this frame's layout pass.

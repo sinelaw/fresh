@@ -23,7 +23,7 @@ pub struct CellThemeInfo {
 /// `Vec` (sidestepping any borrow of the per-cell map / the window) and the
 /// caller applies them via [`ChromeLayout::apply_theme_runs`] once its own
 /// borrows are released. Keys are `&'static str` (all chrome keys are literals).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeRun {
     pub x: u16,
     pub y: u16,

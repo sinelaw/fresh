@@ -688,9 +688,26 @@ host-factory hoisting per §4.4) are written down before M1.
 This refines Part 2 of
 [`widget-library-implementation-plan.md`](widget-library-implementation-plan.md)
 (the deletion ledger and verification strategy hold as written) with the
-concrete current-state findings. The acceptance test (cell-identical output)
-and the one-implementation-at-a-time rule are unchanged, and so are the wave
-*contents*. What does change is the **direction**: §5.0 argues — and a PoC
+concrete current-state findings. The one-implementation-at-a-time rule is
+unchanged, and so are the wave *contents*.
+
+**The acceptance test needs a third criterion.** Cell-identical output and
+pointer parity are necessary and they are not sufficient: the dropdown chain
+passes both while its description carries a rect, a pre-chosen width, a
+pre-decided item count and strings already fitted to a width nothing measured.
+A surface that passes those two has moved its *pixels* into the tree; it has
+not necessarily moved its *content model*. So the bar is:
+
+1. cell-identical output,
+2. pointer and keyboard parity, and
+3. **the tree measures this surface** — no rect, width or fitted string reaches
+   the description pre-computed.
+
+Where a wave meets 1 and 2 but not 3, say so rather than calling it migrated.
+Today: the status bar and search-options row have not started; the **menu-bar
+dropdowns meet 1 and 2 but not 3** (§6.2 item 5); the context menus meet all
+three; the frame's regions meet 3 by construction, being `Host` leaves whose
+only description *is* a rectangle the tree assigns. What does change is the **direction**: §5.0 argues — and a PoC
 demonstrates — that the frame should migrate **first**, not last, which
 reverses M0's mount point and dissolves M9 into the stages that follow. The
 wave table in §5.2 is kept because its per-surface deletions are still the
@@ -1120,9 +1137,31 @@ second goal rules out, and it was already wrong twice over:
 `LayoutSpec::layers_from` says it outright (base PR #3052), with `in_flow()`
 and `layers()` as the two halves, and `OVERLAY_FAMILIES` and its guard test are
 deleted. Same diagnosis as `Dispatch::claimed`: the library already computed it
-and threw it away. **The rule this keeps proving — when the editor finds itself
-inferring something the library knows, that is a missing library capability,
-not a place for an editor convention.**
+and threw it away.
+
+**When a `fresh-ui` change is warranted**, stated properly, because this keeps
+coming up and a vague version of it has already been applied wrongly in both
+directions:
+
+- **Underivability.** Can a correct consumer compute this from the library's
+  *existing outputs*? If yes, it is not a library change, however convenient.
+  `layers_from` fails that test — a scrim carries no key and is pushed before
+  its layer's items, and `widgets::Dropdown`'s layer carries no key at all, so
+  every backend-side derivation is silently wrong. A placement offset passes it:
+  anchor to a different node.
+- **Internal inconsistency.** The library contradicting its own contract is a
+  library bug wherever it surfaces. An `Item` declares a rect and both in-repo
+  backends painted outside it — the fix belongs there, not in every caller
+  pre-fitting every string.
+- **A caller in the same PR, plus a test that fails without it.** No primitive
+  lands on speculation. `layers_from` had `fold_band` and the demo's F2 band;
+  `Draw::Lines` clipping had a failing golden. `Anchor::Node` and four `Place`
+  variants had neither and have never been constructed by anything, anywhere.
+
+*Not* "would another consumer want this?" — that question is unfalsifiable, is
+reliably answered yes by whoever wants the feature, and at value granularity
+rejects everything (no second consumer wants `Sizing::Cells(12)` "with the same
+meaning" either). It is what admitted the six unused variants.
 
 That PR also closed a second gap it turned up. A `Draw::Lines` run can be
 longer than the rect carrying it, because layout hands a constrained node the
@@ -1492,7 +1531,7 @@ list.
 
 ### 6.2 Open decisions — settle each before the wave it blocks
 
-0. ~~**How does the editor learn the tree claimed an event?**~~ — **decided,
+1. ~~**How does the editor learn the tree claimed an event?**~~ — **decided,
    and it was the review's finding rather than the plan's.** The seam's
    contract was briefly carried in the message channel: `shell_dispatch` read
    "claimed" off "did any message come back", and a `UiFact::Consumed` message
@@ -1505,7 +1544,7 @@ list.
    and threw it away. **The general lesson: when the editor finds itself
    inferring something about routing, that is a missing library capability, not
    a place for an editor convention.**
-0. ~~**Migrate in paint order**~~ — **superseded.** The rule was: one fold,
+2. ~~**Migrate in paint order**~~ — **superseded.** The rule was: one fold,
    running after every legacy painter, so a region may become native only once
    everything that paints over it already has. It was the migration's real
    ordering constraint and it was stricter than it looked — the file explorer
@@ -1517,70 +1556,127 @@ list.
    and the ordering rule retires. Nothing replaces it: which band an item
    belongs to is `LayoutSpec::layers_from`'s answer, not a convention anyone
    has to maintain.
-1. ~~**The fold-callback API**~~ — **prototyped** (§5.0). `HostPainter` +
+3. ~~**The fold-callback API**~~ — **prototyped** (§5.0). `HostPainter` +
    `impl HostPainter for Editor`; paint order, clipping, the caret rule and the
    borrow are covered by tests. What remains is threading real per-frame state
    and publishing `BodyOutput` to the geometry bridge — mechanical S1 work. The
    `Ui`-beside-`Editor` constraint it revealed is recorded in §4.4.
-2. **Colour that is not a theme name** (blocks S4 — the file explorer — and
-   M6, and the status bar's plugin tokens). An `Item` carries one `ThemeKey`: a
-   *name* for where its appearance comes from, which the backend resolves. That
-   is the right model for everything migrated so far, because every colour so
-   far came from a theme slot.
+4. ~~**Colour that is not a theme name**~~ — **decided and shipped: a name is
+   always real theme keys.**
 
-   The file explorer breaks it. `ExplorerSlotPayload::fg` and
-   `name_color_hint` are `ratatui::Color` values **supplied by plugins** — a
-   badge tinted by a linter, a filename coloured by a git-status provider.
-   There is no theme slot to name, and the set is not known until the frame is
-   built. The same vocabulary reappears in plugin panels (M6) and in the status
-   bar's plugin tokens, so this is not one surface's quirk.
+   The entry here proposed minting `dyn:N` names during build. That was wrong
+   twice over — it makes `build` mutate a table, which goal 3 forbids in as many
+   words, and `dyn:17` destroys the provenance a `ThemeKey` exists to carry. The
+   review's content-derived alternative was better but still invented a name
+   space.
 
-   Three ways out, in order of preference:
+   What shipped needs neither, because the editor already had the answer:
+   `Theme::resolve_theme_key("section.field")` is a generic, table-generated
+   name resolver, and `Theme::resolve_modifier_key` reads the attribute declared
+   on the same table row. The shell was hand-writing a twenty-arm match over
+   names of its own beside it.
 
-   - **Per-frame minted names.** `ThemeKey` is an opaque string the library
-     never interprets, and the palette is ours. Intern each dynamic style as
-     the description is built, name it `dyn:N`, and carry the table beside the
-     palette snapshot — which is built per frame from the same editor state.
-     No library change, the description still carries only names, and the
-     mapping stays where the design puts it: in the backend. The table lives
-     next to the palette rather than in `Frame`, so the description never holds
-     a `ratatui::Style`.
-   - **A colour variant on `ThemeKey`.** Honest, but it puts appearance in the
-     display list and every backend then has to understand a colour model —
-     the web frontend included.
-   - **Keep those rows behind a `Host` leaf.** Cheap, but it splits the
-     explorer down the middle and defeats the point of migrating it.
+   **A shell `ThemeKey` is `fg_key/bg_key`**, optionally `+bold` / `+underline`.
+   A cell needs two colours and an `Item` carries one name, so the name is a
+   pair; both halves resolve through the editor's own table. Nothing is invented,
+   every colour on screen traces to an entry a user can edit, and the six
+   spellings for two orthogonal attributes
+   (`menu.bar.item{,.mnemonic}{,.active,.hover}`) collapse into one pair plus
+   composable attributes — which is the point, because the blow-up arrives in
+   earnest with the explorer's git status × selection × cut × focus.
 
-   The first is the intended answer; it is not built, because building a
-   mechanism before its first consumer is how unused abstractions get
-   entrenched. It lands with the explorer's paint.
+   It also converges two things that were saying the same thing in different
+   words: the theme inspector has always recorded provenance as
+   `ThemeRun { fg_key, bg_key }`, exactly this pair. `MenuRowStyle::shell_theme`
+   is now derived from `theme_keys()`, so the display list and the inspector
+   cannot disagree — and unifying them fixed a real drift, where a hovered bar
+   label reported its *resting* keys to the inspector while painting hover
+   colours.
 
-3. **Inline styled text** (blocks M3/M5). Styled spans in
+   **The one genuine limit**, for whoever migrates the explorer: plugins may
+   send `OverlayColorSpec::Rgb`, a shipped wire variant, and a raw colour is not
+   a theme entry. Two things make it smaller than it looks. Every in-repo slot
+   provider already sends `ThemeKey` (`syntax.string`, `syntax.type`,
+   `ui.file_status_modified_fg`, and LSP diagnostics), so the built-ins need
+   nothing. And the plugins that genuinely need raw colour are the ones
+   displaying colour *as data* — `theme_editor.ts`'s swatch grid — which should
+   not be theme entries. When the explorer migrates, the choice is to give that
+   family a self-describing name (`rgb:7f3fbf`, resolved by the same parser) or
+   to leave those rows behind a `Host` leaf. Neither needs a side table, and
+   neither is needed before then.
+
+   `resolve_overlay_color` collapsing a spec to a `Color` inside the slot
+   *cache* — long before any description exists — is the thing to move when that
+   day comes.
+
+5. **The dropdown chain's placement** (the tail of M3). *A dependency, not a
+   decision — and the previous entry here got both its facts wrong.*
+
+   It claimed `Anchor::Node` "can name the parent but not the offset", so a
+   `Place` offset was needed as a base PR. False: **anchor to the row above**.
+   `Place::RightOf` then yields the wanted rectangle for every row, today, with
+   no library change. It also claimed `fit_dropdown_area` "runs once, so nothing
+   can drift" — it ran twice per frame in release and three times in debug, from
+   three different bar rectangles, held together by a `debug_assert_eq!` that
+   release compiles out. (Now one walk; see `Editor::menu_layout_frame`.)
+
+   The real blocker is upstream of placement: **the chain has no content model
+   in the tree to place.** `DropdownLevel` carries `x`, `y`, `width` on a type
+   whose only job is to produce a description — the design doc's own stop sign
+   ("a description type with a rect field indicates layers 1 and 3 have been
+   merged") — plus pre-fitted strings, a pre-decided item count, and a
+   pre-chosen width. Nothing is measured, so `Place::RightOf` has nothing to
+   place against and `Fit` is not expressible at all.
+
+   And the two rules genuinely differ, so turning `fit` on is a pixel change,
+   not a refactor. Measured on one frame (w=22, parent box x=4 w=12, sub w=10,
+   no room right): `Fit::FLIP` gives `sub.x = 12`, the editor's rule gives
+   `x = 1` — **eleven cells apart**. Vertically `fit_dropdown_area` never flips;
+   it *drops items* to fit, where `Fit` would move the box and keep them all.
+
+   **The order, therefore:** rows become real nodes → the box measures itself →
+   `Fit` becomes expressible → the flip/truncation divergence above becomes a
+   reviewed pixel change → *only then* is the border offset a question, and the
+   leading answer is `Anchor::Node(row_above)`, which needs nothing.
+
+   If a primitive is still wanted after that, it is **not** a scalar offset. It
+   is the relationship — *place the layer so that this descendant lands on the
+   anchor* — which survives a border-thickness change and has a real second
+   consumer in this repo's future: `crates/fresh-gui/src/native_menu.rs`, where
+   a macOS-style popup button puts the *selected* item over the trigger.
+
+   **Before relying on any of it, note the API is largely unexercised**:
+   `Anchor::Node` has zero callers and zero tests in the whole repository, and
+   four of six `Place` variants (`Above`, `RightOf`, `LeftOf`, `Fill`) are never
+   constructed anywhere — library, tests, demo, or editor. Whoever uses one owes
+   it a test first.
+
+6. **Inline styled text** (blocks M3/M5). Styled spans in
    `TextProps`/`Draw::Lines` as a one-time library change, or one `TextRun`
    node per span editor-side (§4.2 note). Mnemonics, match highlights,
    markdown popups, and explorer git coloring all need it under a
    cell-identical bar.
-3. **Per-leaf decomposition of `render_content`** (blocks M9). Its unit today
+7. **Per-leaf decomposition of `render_content`** (blocks M9). Its unit today
    is the whole split tree; the target grid wants per-leaf `Host` nodes with
    `fresh-ui` tabs and dividers. Either the whole grid stays one `Host` leaf
    (and M9's headline deletions shrink), or the orchestration layer is split
    per leaf — a refactor on the KEEP side (`render_phantom_leaf` shows a
    per-leaf path exists, minus the cross-tree logic). A scoping decision, not
    a detail.
-4. **Scrollbar markers** (blocks M9). `Draw::Scrollbar` carries only
+8. **Scrollbar markers** (blocks M9). `Draw::Scrollbar` carries only
    `{offset, content, window}`; the plugin overview-ruler marker API has no
    expression. Extend the library's scrollbar, keep scrollbars behind the
    `Host` leaf, or drop the API.
-5. ~~**The message-type split**~~ — **decided and shipped** as
+9. ~~**The message-type split**~~ — **decided and shipped** as
    `UiMsg::{Action, Ui(UiFact)}` (`view/shell/msg.rs`). Anything bindable stays
    an `Action`; positional facts are `UiFact` and are never serialized.
-6. **Frame scheduling and rebuild cost** — still open, and no longer gating.
+10. **Frame scheduling and rebuild cost** — still open, and no longer gating.
    It was written as an M0 exit criterion; S1, the context-menu wave and the
    frame swap all shipped without it, so calling it a gate was wrong. The
    measurement is still worth taking (a full chrome rebuild per frame, plus a
    `Vec<String>` of labels per open menu), but it is a performance question to
    answer with a profile, not a precondition.
-7. **Row visibility under squeeze** — still open; S1 shipped without deciding
+11. **Row visibility under squeeze** — still open; S1 shipped without deciding
    it, and the divergence is *recorded* by
    `squeeze_band_starves_a_different_row_than_ratatui`, not resolved by it. When the visible fixed rows
    cannot fit, `fresh-ui` and ratatui starve different rows (§5.0). Decide
@@ -1588,13 +1684,13 @@ list.
    choice explicit app state instead of inheriting either engine's starvation
    order. Pinned today by
    `squeeze_band_starves_a_different_row_than_ratatui`.
-8. **Frame-buffer animations.** Cell-snapshot effects have no display-list
+12. **Frame-buffer animations.** Cell-snapshot effects have no display-list
    expression: keep them as post-processes over the folded buffer (beside
    `convert_buffer_colors`), or retire them deliberately.
-9. **Theme-inspector granularity** (§4.5). Chrome provenance coarsens from
+13. **Theme-inspector granularity** (§4.5). Chrome provenance coarsens from
    per-cell to per-item; confirm the inspector survives, with buffer cells
    keeping the per-cell map via the leaf.
-10. **Wheel-semantics parity** (M4/M5). Today's wheel walk has no dedup and no
+14. **Wheel-semantics parity** (M4/M5). Today's wheel walk has no dedup and no
    opacity gate *by ruling*; `fresh-ui` chains wheels by "a `Viewport` claims
    only if its offset changed." Close but not identical — e.g. a
    scrolled-to-bound popup over the buffer. Land an explicit parity test
