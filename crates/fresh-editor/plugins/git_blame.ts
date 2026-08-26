@@ -25,8 +25,15 @@ const editor = getEditor();
  *
  * Features:
  * - 'b' to go back in history (show blame at parent commit)
- * - 'q' to close the blame view
+ * - 'q' to step back out: unwinds one 'b' hop, or closes the view once
+ *   there are none left, so a blame walked two commits deep takes three
+ *   presses to leave
+ * - 'Escape' to close the whole view in one press, hops and all
  * - 'y' to yank (copy) the commit hash at cursor
+ *
+ * Opening blame, walking with 'b' and unwinding with 'q' all keep the line
+ * under the cursor on the same screen row, so the reader's eye does not
+ * have to re-find it after every hop.
  *
  * Inspired by magit's git-blame-additions feature.
  */
@@ -61,6 +68,36 @@ interface BlameBlock {
 }
 
 /**
+ * Short label for a rev like `abc1234def…^^`: the hash abbreviated, with any
+ * trailing `^`s kept. Slicing to 7 characters alone would drop them and
+ * report the child's hash while showing the parent's blame.
+ */
+function revLabel(commit: string | null): string {
+  if (commit === null) return "HEAD";
+  const carets = /\^*$/.exec(commit)?.[0] ?? "";
+  const hash = commit.slice(0, commit.length - carets.length);
+  return (hash.length > 7 ? hash.slice(0, 7) : hash) + carets;
+}
+
+/**
+ * Where the view was when `b` walked away from it. `q` pops one of these
+ * back, so a blame opened and then walked two commits deep takes three `q`
+ * presses to leave: two to retrace the walk, one to close.
+ *
+ * The cursor line and its screen row are captured alongside the commit so a
+ * pop lands the reader exactly where they were looking, not at the top of
+ * the file.
+ */
+interface HistoryFrame {
+  commit: string | null;   // Commit that was being viewed (null = HEAD)
+  // Where the reader was looking, or null when that could not be read (a file
+  // too large to have been line-scanned reports no cursor line). Null means
+  // "leave the view alone on the way back" — storing 0/0 instead would send
+  // the reader to line 1, which is exactly what not knowing should not do.
+  view: { cursorLine: number; screenRow: number } | null;
+}
+
+/**
  * One open blame view. Several can be open at once (e.g. blame on two
  * different files side by side), so each is keyed by its own virtual
  * buffer id in `blameInstances` rather than living in a single global.
@@ -72,7 +109,7 @@ interface BlameInstance {
   sourceFilePath: string | null;   // Path to the file being blamed
   repo: GitRepo;                   // Repo the blamed file lives in (its sub-project in a monorepo)
   currentCommit: string | null;    // Current commit being viewed (null = HEAD)
-  commitStack: string[];           // Stack of commits for `b`-navigation
+  commitStack: HistoryFrame[];     // Where `b` came from; `q` pops it
   blocks: BlameBlock[];            // Blame blocks with byte offsets
   fileContent: string;             // Pure file content (for virtual buffer)
   lineByteOffsets: number[];       // Byte offset of each line start
@@ -118,7 +155,7 @@ editor.defineMode(
   "git-blame",
   [
     ["b", "git_blame_go_back"],
-    ["q", "git_blame_close"],
+    ["q", "git_blame_pop"],
     ["Escape", "git_blame_close"],
     ["y", "git_blame_copy_hash"],
   ],
@@ -284,14 +321,34 @@ async function fetchFileContent(repo: GitRepo, filePath: string, commit: string 
 }
 
 /**
- * Build line byte offset lookup table
+ * UTF-8 byte length of a string.
+ *
+ * Every byte offset this plugin hands to the host — a virtual line's anchor,
+ * a cursor position, a scroll target — is a UTF-8 offset into the buffer,
+ * because that is how the host stores text. A JS string's `.length` counts
+ * UTF-16 code units instead, which agrees only for ASCII: a Japanese file of
+ * 2000 UTF-8 bytes measures 1040 by `.length`, and a scroll computed that way
+ * lands roughly half way up the file from where it should.
+ */
+function utf8Length(text: string): number {
+  let bytes = 0;
+  for (const char of text) {
+    const cp = char.codePointAt(0) ?? 0;
+    bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+
+/**
+ * Build line byte offset lookup table, in UTF-8 bytes to match the host.
  */
 function buildLineByteOffsets(content: string): number[] {
   const offsets: number[] = [0]; // Line 1 starts at byte 0
   let byteOffset = 0;
 
   for (const char of content) {
-    byteOffset += char.length; // In JS strings, each char is at least 1
+    const cp = char.codePointAt(0) ?? 0;
+    byteOffset += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
     if (char === '\n') {
       offsets.push(byteOffset);
     }
@@ -315,6 +372,154 @@ function getLineByteOffset(
   }
   // Return end of file if line number is out of range
   return fileContentLength;
+}
+
+/**
+ * Line index (0-based) whose block header would be drawn above it, for every
+ * block in the view. A header is a `LineAbove` virtual row, so it occupies a
+ * visual row of its own immediately before its block's first source line.
+ */
+function headerLines(inst: BlameInstance): Set<number> {
+  const set: Set<number> = new Set();
+  for (const block of inst.blocks) {
+    set.add(byteToLine(inst.lineByteOffsets, block.startByte));
+  }
+  return set;
+}
+
+/** 0-based line index containing `byte` (binary search over line starts). */
+function byteToLine(lineByteOffsets: number[], byte: number): number {
+  let lo = 0;
+  let hi = lineByteOffsets.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (lineByteOffsets[mid] <= byte) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * Visual rows between the first visible line and `cursorLine` — the screen
+ * row the cursor sits on, counted from the top of the text viewport.
+ *
+ * This is not `cursorLine - topLine`: every block header between the two is
+ * a virtual row that takes up screen space without being a source line, so
+ * it has to be counted too. Getting this wrong is what made the view jump.
+ *
+ * The range is inclusive of `topLine`'s own header: a header is drawn above
+ * its block's first line, so when the top line starts a block its header —
+ * not the line — is the viewport's first row, pushing the line down one.
+ * That is observable at the very top of the buffer, where there is no room
+ * to scroll the header out of sight and line 1 can never sit on row 0.
+ */
+function screenRowOf(inst: BlameInstance, topLine: number, cursorLine: number): number {
+  const headers = headerLines(inst);
+  let rows = cursorLine - topLine;
+  for (let line = topLine; line <= cursorLine; line++) {
+    if (headers.has(line)) rows++;
+  }
+  return rows;
+}
+
+/**
+ * Inverse of `screenRowOf`: the line that must sit at the top of the
+ * viewport for `cursorLine` to be drawn `screenRow` rows down.
+ *
+ * Walks up from the cursor, spending one row per source line plus one more
+ * for each header passed, and stops as soon as spending another would push
+ * the cursor below the row it should be on. Clamps at the start of the
+ * buffer, so a cursor nearer the top than `screenRow` simply sits as low as
+ * the buffer allows rather than scrolling past line 0.
+ */
+function topLineForScreenRow(
+  inst: BlameInstance,
+  cursorLine: number,
+  screenRow: number,
+): number {
+  const headers = headerLines(inst);
+  let top = cursorLine;
+  // Rows already spent with the cursor's line at the top: its own header, if
+  // it starts a block, sits above it and so is on screen too.
+  let rows = headers.has(cursorLine) ? 1 : 0;
+  while (top > 0) {
+    // Moving the top up one line costs that line, plus its header if it
+    // starts a block.
+    const cost = 1 + (headers.has(top - 1) ? 1 : 0);
+    if (rows + cost > screenRow) break;
+    rows += cost;
+    top--;
+  }
+  return top;
+}
+
+/**
+ * Read the viewport of the split showing `inst`, or null if it is not on
+ * screen (another buffer is focused in that split, say).
+ */
+function viewportOf(inst: BlameInstance): { topLine: number; height: number } | null {
+  for (const split of editor.listSplits()) {
+    if (split.splitId !== inst.splitId) continue;
+    if (split.bufferId !== inst.bufferId) continue;
+    const topLine = split.viewport.topLine;
+    if (topLine === null) return null;
+    return { topLine, height: split.viewport.height };
+  }
+  return null;
+}
+
+/**
+ * The cursor's current line and the screen row it occupies right now.
+ *
+ * Reads the cursor through `getPrimaryCursor`, whose line is nullable: on a
+ * file too large to have been line-scanned yet there is no line index, and
+ * the deprecated `getCursorLine` would report line 0 for that case —
+ * indistinguishable from the buffer's real first line, and enough to scroll
+ * a reader to the top of the file for no reason. With no line to anchor to
+ * there is nothing to preserve, so callers leave the view alone.
+ */
+function captureView(inst: BlameInstance): { cursorLine: number; screenRow: number } | null {
+  const cursorLine = editor.getPrimaryCursor()?.line;
+  if (cursorLine === null || cursorLine === undefined) return null;
+  const vp = viewportOf(inst);
+  if (!vp) return null;
+  return { cursorLine, screenRow: screenRowOf(inst, vp.topLine, cursorLine) };
+}
+
+/**
+ * Put `cursorLine` back on screen row `screenRow`, moving the cursor there
+ * and scrolling so it lands on the same row it occupied before.
+ *
+ * `cursorLine` is clamped into the buffer: walking to a parent commit can
+ * land on a revision where the file is shorter than the line the reader was
+ * on, and the last line is the closest thing to "where they were" that
+ * still exists.
+ *
+ * Both halves are queued layout mutations rather than immediate writes, so
+ * anything that needs to observe the result has to `await editor.flush()`
+ * first. No caller reads them back; they only set a status message after.
+ */
+function restoreView(inst: BlameInstance, cursorLine: number, screenRow: number): void {
+  const lastLine = Math.max(0, inst.lineByteOffsets.length - 1);
+  const line = Math.min(Math.max(cursorLine, 0), lastLine);
+
+  editor.setBufferCursor(
+    inst.bufferId,
+    getLineByteOffset(inst.lineByteOffsets, utf8Length(inst.fileContent), line + 1),
+  );
+
+  if (inst.splitId === null) return;
+  // `setSplitScroll` takes no buffer id — it scrolls whatever the split is
+  // showing. If this view is not the buffer on screen (its split shows
+  // something else now, or it was closed while a git call was in flight),
+  // scrolling would move someone else's buffer to an offset derived from
+  // blame text.
+  if (!viewportOf(inst)) return;
+  const top = topLineForScreenRow(inst, line, screenRow);
+  editor.setSplitScroll(
+    inst.splitId,
+    getLineByteOffset(inst.lineByteOffsets, utf8Length(inst.fileContent), top + 1),
+  );
 }
 
 /**
@@ -395,7 +600,11 @@ function formatBlockHeader(block: BlameBlock): string {
     ? block.summary.slice(0, maxSummaryLen - 3) + "..."
     : block.summary;
 
-  return `── ${block.shortHash} (${block.author}, ${block.relativeDate}) "${summary}" ──`;
+  // No trailing rule: the band is painted full width, so a closing `──`
+  // would end at a different column on every header (the text length
+  // varies with author and summary) and read as ragged rather than as a
+  // rule. The leading `──` is fixed-width and does line up.
+  return `── ${block.shortHash} (${block.author}, ${block.relativeDate}) "${summary}"`;
 }
 
 /**
@@ -434,7 +643,9 @@ function buildContentEntries(fileContent: string, blocks: BlameBlock[]): TextPro
       },
     });
 
-    byteOffset += line.length + 1; // +1 for newline
+    // UTF-8, to stay in the same unit as `buildLineByteOffsets` — the blocks
+    // this looks up are keyed by those offsets.
+    byteOffset += utf8Length(line) + 1; // +1 for newline
     lineNum++;
   }
 
@@ -503,6 +714,21 @@ async function show_git_blame() : Promise<void> {
   // on-disk file the blame view shows, but the line index is still the
   // most semantically meaningful anchor).
   const sourceCursorLine = editor.getCursorLine();
+
+  // ...and the screen row it currently occupies, so the blame view can put
+  // it back on that exact row. Centring instead (what this used to do) moves
+  // the line the reader is looking at, which is disorienting when blame is
+  // opened to answer a question about that one line. The source buffer has
+  // no virtual rows, so its screen row is a plain top-of-viewport delta.
+  let sourceScreenRow: number | null = null;
+  let sourceTopLine = 0;
+  for (const split of editor.listSplits()) {
+    if (split.splitId === splitId && split.viewport.topLine !== null) {
+      sourceTopLine = split.viewport.topLine;
+      sourceScreenRow = sourceCursorLine - sourceTopLine;
+      break;
+    }
+  }
 
   // Resolve the file's repo once (its own sub-project in a monorepo); every
   // git call for this blame view runs there.
@@ -574,10 +800,37 @@ async function show_git_blame() : Promise<void> {
   // Add virtual lines for blame headers (persistent state model)
   addBlameHeaders(inst);
 
-  // Centre the cursor's line in the viewport. The cursor itself was placed
-  // by the host via `initialCursorLine` (race-free, multi-byte-correct).
+  // Scroll so the cursor's line lands on the same screen row it had in the
+  // source buffer. The cursor itself was placed by the host via
+  // `initialCursorLine` (race-free, multi-byte-correct); only the scroll is
+  // ours to set, and it has to account for the header rows just added.
   if (splitId !== null) {
-    editor.scrollToLineCenter(splitId, result.bufferId, sourceCursorLine);
+    if (sourceScreenRow === null) {
+      // The source split reported no line index — a file too large to have
+      // been scanned yet — so there is no row to preserve. Centring is the
+      // old behaviour and still the best available answer here.
+      editor.scrollToLineCenter(splitId, result.bufferId, sourceCursorLine);
+    } else {
+      // Holding the row means scrolling one line further down than the source
+      // for every header above the cursor. Where the source was already at
+      // the top of the buffer that trade is a pure loss: there is nothing
+      // above to reveal, so the scroll only pushes the first block's header
+      // (and line 1) off the top. Staying put costs the reader a row of
+      // offset and keeps the whole view.
+      //
+      // Deliberately a comparison of line numbers, not of rendered heights.
+      // Soft wrap is on by default, so a line can occupy several rows and any
+      // "does it all fit" arithmetic done in lines is wrong exactly when
+      // lines are long — an earlier attempt at this pinned a ten-line file of
+      // 500-column lines to the top and left the cursor off screen.
+      const top = sourceTopLine === 0
+        ? 0
+        : topLineForScreenRow(inst, sourceCursorLine, sourceScreenRow);
+      editor.setSplitScroll(
+        splitId,
+        getLineByteOffset(lineByteOffsets, utf8Length(fileContent), top + 1),
+      );
+    }
   }
 
   editor.setStatus(editor.t("status.blame_ready", { count: String(blocks.length) }));
@@ -586,7 +839,97 @@ async function show_git_blame() : Promise<void> {
 registerHandler("show_git_blame", show_git_blame);
 
 /**
- * Close the focused git blame view (no-op if the focused buffer isn't one).
+ * Step back out of the focused blame view: pop one `b` hop if there is one,
+ * otherwise close the view (no-op if the focused buffer isn't one).
+ *
+ * `b` walks into history one commit at a time, so `q` unwinds it the same
+ * way — a blame opened and walked two commits deep takes three `q` presses
+ * to leave. Closing outright from three levels in threw away the walk and
+ * meant re-running blame and re-pressing `b` to get back, which is why this
+ * retraces instead. `Escape` still closes the whole view in one press, for
+ * when unwinding is not what you want.
+ */
+async function git_blame_pop() : Promise<void> {
+  const inst = activeBlame();
+  if (!inst) {
+    return;
+  }
+
+  const frame = inst.commitStack.pop();
+  if (frame) {
+    await restoreCommit(inst, frame);
+    return;
+  }
+
+  git_blame_close();
+}
+registerHandler("git_blame_pop", git_blame_pop);
+
+/**
+ * Re-show the blame for a popped history frame and put the reader back on
+ * the line and screen row they were on when they left it.
+ *
+ * The frame is pushed back if the reload fails, so a transient git error
+ * costs the reader nothing: `q` again retries rather than having silently
+ * dropped a level of history.
+ */
+async function restoreCommit(inst: BlameInstance, frame: HistoryFrame): Promise<void> {
+  const filePath = inst.sourceFilePath;
+  if (filePath === null) {
+    inst.commitStack.push(frame);
+    return;
+  }
+
+  const label = revLabel(frame.commit);
+  editor.setStatus(editor.t("status.loading_at", { rev: label }));
+
+  const [fileContent, blameLines] = await Promise.all([
+    fetchFileContent(inst.repo, filePath, frame.commit),
+    fetchGitBlame(inst.repo, filePath, frame.commit),
+  ]);
+
+  // The awaits above are a window in which the view can go away — a second
+  // `q` can empty the stack and close the buffer, `Escape` can close it
+  // outright. Writing content or scrolling after that would land on whatever
+  // buffer took its place, since `setSplitScroll` names only the split.
+  if (blameInstances.get(inst.bufferId) !== inst) {
+    return;
+  }
+
+  if (blameLines.length === 0) {
+    inst.commitStack.push(frame);
+    editor.setStatus(editor.t("status.cannot_load_at", { rev: label }));
+    return;
+  }
+
+  inst.currentCommit = frame.commit;
+  inst.fileContent = fileContent;
+  inst.lineByteOffsets = buildLineByteOffsets(fileContent);
+  inst.blocks = groupIntoBlocks(blameLines, inst.lineByteOffsets, fileContent.length);
+
+  const entries = buildContentEntries(fileContent, inst.blocks);
+  editor.setVirtualBufferContent(inst.bufferId, entries);
+  addBlameHeaders(inst);
+  if (frame.view) {
+    restoreView(inst, frame.view.cursorLine, frame.view.screenRow);
+  }
+
+  // At depth 0 we are back where blame started, and the opening message is
+  // both already translated and the accurate one to show: from here `q`
+  // closes rather than retracing.
+  const depth = inst.commitStack.length;
+  if (depth === 0) {
+    editor.setStatus(editor.t("status.blame_ready", { count: String(inst.blocks.length) }));
+  } else {
+    editor.setStatus(
+      editor.t("status.blame_back_to", { rev: label, depth: String(depth) }),
+    );
+  }
+}
+
+/**
+ * Close the focused git blame view outright (no-op if the focused buffer
+ * isn't one). Bound to `Escape`; `q` goes through `git_blame_pop` first.
  */
 function git_blame_close() : void {
   const inst = activeBlame();
@@ -664,18 +1007,22 @@ async function git_blame_go_back() : Promise<void> {
   // Get the parent commit
   const parentCommit = `${currentHash}^`;
 
-  // Push current state to stack for potential future navigation
-  if (inst.currentCommit) {
-    inst.commitStack.push(inst.currentCommit);
-  } else {
-    inst.commitStack.push("HEAD");
-  }
+  // Remember where we are before walking back, both so `q` can retrace the
+  // walk and so the reader's line keeps its screen row across the reload.
+  const view = captureView(inst);
+  inst.commitStack.push({ commit: inst.currentCommit, view });
 
   // Fetch file content and blame at parent commit
   const [fileContent, blameLines] = await Promise.all([
     fetchFileContent(inst.repo, inst.sourceFilePath, parentCommit),
     fetchGitBlame(inst.repo, inst.sourceFilePath, parentCommit),
   ]);
+
+  // Same window as in `restoreCommit`: while those git calls ran, the view
+  // may have been closed or unwound out from under us.
+  if (blameInstances.get(inst.bufferId) !== inst) {
+    return;
+  }
 
   if (blameLines.length === 0) {
     // Pop the stack since we couldn't navigate
@@ -694,6 +1041,15 @@ async function git_blame_go_back() : Promise<void> {
   const entries = buildContentEntries(fileContent, inst.blocks);
   editor.setVirtualBufferContent(inst.bufferId, entries);
   addBlameHeaders(inst);
+
+  // The parent's file is a different text, so the same line index is the
+  // best anchor we have without a rename/oneline mapping — but the reader's
+  // eye is on a screen row, and that we can keep exactly. Without this the
+  // viewport snapped back to wherever the new content put it and the line
+  // being studied scrolled off screen entirely.
+  if (view) {
+    restoreView(inst, view.cursorLine, view.screenRow);
+  }
 
   const depth = inst.commitStack.length;
   editor.setStatus(editor.t("status.blame_at_parent", { hash: currentHash.slice(0, 7), depth: String(depth) }));

@@ -33,7 +33,7 @@ Inside a review:
 
 ## Git Blame
 
-**Git Blame** opens a magit-style blame for the current file. It lands on the line you were on when you ran it (multi-byte text included). **Git Blame: Go Back** re-blames at the parent commit of the current line so you can walk a line's history; **Git Blame: Close** dismisses the panel.
+**Git Blame** opens a magit-style blame for the current file. It lands on the line you were on when you ran it (multi-byte text included), keeping that line on the same screen row it already occupied so you do not have to re-find it. **Git Blame: Go Back** — `b` in the panel — re-blames at the parent commit of the current line so you can walk a line's history, again holding the line's screen row steady. `q` steps back out one hop at a time: it unwinds the last `b`, and closes the panel only once there are no hops left, so a blame walked two commits deep takes three presses to leave. `Escape`, and the **Git Blame: Close** command, dismiss the panel outright.
 
 ## Live Diff
 

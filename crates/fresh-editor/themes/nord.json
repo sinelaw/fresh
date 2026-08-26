@@ -24,8 +24,8 @@
     "bracket_rainbow_6": [180, 142, 173]
   },
   "ui": {
-    "blame_header_fg": [216, 222, 233],
-    "blame_header_bg": [67, 76, 94],
+    "blame_header_fg": [236, 239, 244],
+    "blame_header_bg": [90, 100, 120],
     "semantic_highlight_bg": [27, 27, 33],
     "tour_step_bg": [67, 76, 94],
     "tab_active_fg": [236, 239, 244],
