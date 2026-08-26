@@ -96,28 +96,54 @@ fn start_server(config: Config) {
 
 /// Switch on the git settings that rewrite `git diff`'s output. Each is
 /// something a real user's config may carry, and each on its own is enough to
-/// leave Review Diff's parser with zero hunks: an external driver prints its
-/// own format, a textconv filter diffs converted text, forced colour wraps
-/// every line in escapes, and the prefix settings strip the `a/`/`b/` paths
-/// the parser matches on.
+/// stop Review Diff's parser producing usable hunks: an external driver prints
+/// its own format, a textconv filter diffs converted text, forced colour wraps
+/// every line in escapes, and the prefix settings strip the `a/`/`b/` paths the
+/// parser matches on.
+///
+/// `core.pager` is deliberately not configured: git only starts a pager when
+/// stdout is a tty, and `editor.spawnProcess` reads through a pipe, so a pager
+/// shim could never run and would protect nothing.
 #[cfg(unix)]
 fn configure_hostile_diff_output(repo: &GitTestRepo) {
     use crate::common::git_test_helper::git_command;
     use std::os::unix::fs::PermissionsExt;
 
-    // Stand-ins for `difft` (diff.external) and `delta` (core.pager).
-    repo.setup_external_diff_and_pager();
+    // Everything the fixture installs lives under `.git/`, which git never
+    // reports as untracked. In the working tree these files would show up as
+    // untracked hunks inside the very panel the assertions read, competing for
+    // the rows the marker has to be visible on.
+    let shim = |name: &str, body: &str| -> String {
+        let path = repo.create_file(name, body);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("make diff shim executable");
+        path.to_string_lossy().into_owned()
+    };
 
-    // A textconv driver that collapses every `.rs` file to the same text, so
-    // an unsuppressed filter makes the change vanish rather than merely
-    // reformatting it.
-    let textconv = repo.create_file("textconv.sh", "#!/bin/sh\nprintf 'TEXTCONV\\n'\n");
-    fs::set_permissions(&textconv, fs::Permissions::from_mode(0o755))
-        .expect("make textconv script executable");
-    repo.create_file(".gitattributes", "*.rs diff=fresh-test\n");
-    let textconv = textconv.to_string_lossy().into_owned();
+    // A `difft`-style driver: side-by-side text where a patch is expected.
+    let external = shim(
+        ".git/difft",
+        "#!/bin/sh\nprintf '%s\\n' 'src/main.rs --- Rust' '1 fn main() | 1 fn main()'\n",
+    );
+
+    // The textconv filter *keeps* the difference and prepends two header
+    // lines, so an unsuppressed filter yields a perfectly parseable patch
+    // whose hunk line numbers are all off by two. A filter that erased the
+    // change instead would make git emit an empty diff, and the test would
+    // then fail for "no hunks" without ever exercising the line-number
+    // corruption `--no-textconv` exists to prevent -- the corruption that
+    // feeds `buildHunkPatch` and then `git apply`.
+    let textconv = shim(
+        ".git/textconv.sh",
+        "#!/bin/sh\nprintf 'HDR1\\nHDR2\\n'; cat \"$1\"\n",
+    );
+
+    // `.git/info/attributes` binds the driver exactly as a tracked
+    // `.gitattributes` would, without adding a file to the working tree.
+    repo.create_file(".git/info/attributes", "*.rs diff=fresh-test\n");
 
     for (key, value) in [
+        ("diff.external", external.as_str()),
         ("diff.fresh-test.textconv", textconv.as_str()),
         ("color.diff", "always"),
         ("diff.noprefix", "true"),
@@ -133,6 +159,23 @@ fn configure_hostile_diff_output(repo: &GitTestRepo) {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+/// The new-file line number the review panel prints in its gutter for the row
+/// carrying `marker`.
+///
+/// A row reads `<old> <new> +<content>`, drawn to the right of the file-list
+/// divider, so this scans back from the diff prefix rather than assuming a
+/// column: the rightmost `+` before the marker is the diff prefix, and the
+/// last whitespace-separated token in front of it is the new-file number.
+/// Added lines leave the old-number field blank, which is why the last token
+/// is unambiguous.
+#[cfg(unix)]
+fn marker_new_line_number(screen: &str, marker: &str) -> Option<u32> {
+    let row = screen.lines().find(|l| l.contains(marker))?;
+    let (before_marker, _) = row.split_once(marker)?;
+    let (gutter, _) = before_marker.rsplit_once('+')?;
+    gutter.split_whitespace().last()?.parse().ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -2156,6 +2199,16 @@ fn test_range_review_ignores_external_diff_and_format_settings() {
         "Review Range should render Git's native patch even when diff.external, \
          a textconv filter, colour and prefix settings are configured. Screen:\n{screen}"
     );
+    // The marker is the second line of the new file. Under the textconv filter
+    // git would diff two header lines' worth of extra content and report it as
+    // line 4, which parses cleanly and renders the marker just the same -- the
+    // line number is the only thing that gives the corruption away.
+    assert_eq!(
+        marker_new_line_number(&screen, "RANGE_EXTERNAL_DIFF_MARKER"),
+        Some(2),
+        "Review Range should number the marker by the real file, not by \
+         textconv output. Screen:\n{screen}"
+    );
 }
 
 /// The same for the working-tree review, which fetches its hunks through a
@@ -2195,6 +2248,16 @@ fn test_review_diff_ignores_external_diff_and_format_settings() {
         "Review Diff should render Git's native patch for the working tree even \
          when diff.external, a textconv filter, colour and prefix settings are \
          configured. Screen:\n{screen}"
+    );
+    // See the range test: with textconv left on, the patch still parses and the
+    // marker still renders, but every line number is shifted by the filter's
+    // two header lines -- and those numbers are what `buildHunkPatch` hands to
+    // `git apply` when staging or discarding the hunk.
+    assert_eq!(
+        marker_new_line_number(&screen, "WORKTREE_EXTERNAL_DIFF_MARKER"),
+        Some(2),
+        "Review Diff should number the marker by the real file, not by textconv \
+         output. Screen:\n{screen}"
     );
 }
 
