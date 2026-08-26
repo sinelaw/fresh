@@ -74,6 +74,18 @@ fn cell_bg(harness: &EditorTestHarness, col: u16, row: u16) -> Option<Color> {
     harness.get_cell_style(col, row).and_then(|style| style.bg)
 }
 
+/// Body rows whose scrollbar cell carries a themed bar colour, track or thumb.
+fn scrollbar_rows(harness: &EditorTestHarness) -> Vec<u16> {
+    let track = harness.editor().theme().scrollbar_track_fg;
+    let thumb = harness.editor().theme().scrollbar_thumb_fg;
+    explorer_body_rows(harness)
+        .into_iter()
+        .filter(|&row| {
+            cell_bg(harness, SCROLLBAR_COL, row).is_some_and(|bg| bg == track || bg == thumb)
+        })
+        .collect()
+}
+
 /// Body rows whose scrollbar cell carries the themed thumb colour.
 fn thumb_rows(harness: &EditorTestHarness) -> Vec<u16> {
     let thumb = harness.editor().theme().scrollbar_thumb_fg;
@@ -99,19 +111,14 @@ fn scrollable_file_explorer_draws_a_thumb_that_tracks_the_viewport() {
     let track_top = body[0];
     let track_bottom = *body.last().unwrap();
 
-    let track_color = harness.editor().theme().scrollbar_track_fg;
-    let thumb_color = harness.editor().theme().scrollbar_thumb_fg;
-
     // Every row of the lane belongs to the bar — thumb or track, nothing else.
-    for &row in &body {
-        let bg = cell_bg(&harness, SCROLLBAR_COL, row);
-        assert!(
-            bg == Some(track_color) || bg == Some(thumb_color),
-            "column {SCROLLBAR_COL}, row {row} should carry the Explorer scrollbar, \
-             saw {bg:?}.\nScreen:\n{}",
-            harness.screen_to_string()
-        );
-    }
+    assert_eq!(
+        scrollbar_rows(&harness),
+        body,
+        "the whole of column {SCROLLBAR_COL} beside an overflowing tree should \
+         carry the Explorer scrollbar.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 
     let at_top = thumb_rows(&harness);
     assert!(
@@ -213,30 +220,39 @@ fn file_explorer_scrollbar_thumb_drag_scrolls_without_moving_the_selection() {
     );
 }
 
-/// The bar is a scroll affordance, not decoration: a tree that fits leaves its
-/// lane blank.
+/// The bar is a scroll affordance, not decoration: it appears while the tree
+/// overflows and goes away when it stops. Both halves are asserted against the
+/// same panel in the same run, so the "no bar" half cannot pass by pointing at
+/// a column that was never the bar's.
 #[test]
-fn file_explorer_that_fits_paints_no_scrollbar() {
-    let harness = harness_with_files(3, &[]);
+fn file_explorer_scrollbar_appears_only_while_the_tree_overflows() {
+    let mut harness = harness_with_files(80, &[]);
 
-    let track_color = harness.editor().theme().scrollbar_track_fg;
-    let thumb_color = harness.editor().theme().scrollbar_thumb_fg;
-
-    let body = explorer_body_rows(&harness);
     assert!(
-        !body.is_empty(),
-        "the explorer should be on screen.\nScreen:\n{}",
+        !scrollbar_rows(&harness).is_empty(),
+        "an overflowing tree should paint the scrollbar — without this half the \
+         negative one below would pass against any column at all.\nScreen:\n{}",
         harness.screen_to_string()
     );
-    for row in body {
-        let bg = cell_bg(&harness, SCROLLBAR_COL, row);
-        assert!(
-            bg != Some(track_color) && bg != Some(thumb_color),
-            "a tree that fits must not paint a scrollbar, but column \
-             {SCROLLBAR_COL}, row {row} carries {bg:?}.\nScreen:\n{}",
-            harness.screen_to_string()
-        );
-    }
+
+    // Enter on the selected root collapses it, leaving a one-row tree.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let collapsed = harness.screen_to_string();
+    assert!(
+        !collapsed.contains("file_00.txt"),
+        "precondition: collapsing the root should hide its children, leaving a \
+         tree that fits.\nScreen:\n{collapsed}"
+    );
+
+    assert_eq!(
+        scrollbar_rows(&harness),
+        Vec::<u16>::new(),
+        "a tree that fits must leave the scrollbar's column blank.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 }
 
 /// The trailing status glyph is hit-tested where it is painted. The scrollbar
