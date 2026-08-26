@@ -322,6 +322,8 @@
           18,
           18
         ],
+        "blame_header_fg": null,
+        "blame_header_bg": null,
         "semantic_highlight_bg": [
           60,
           60,
@@ -1371,6 +1373,30 @@
             18,
             18
           ]
+        },
+        "blame_header_fg": {
+          "description": "Text color of a git-blame block header band. Falls back to\n`ui.menu_fg` — see `blame_header_bg` for why that pair.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "blame_header_bg": {
+          "description": "Background of a git-blame block header band. Falls back to\n`ui.menu_bg` (and the text to its `ui.menu_fg`): a menu is the\nclosest thing a theme already names to what a blame header is — a\nchrome band carrying its own text over the editor — so an\nunspecified header borrows a surface a theme has already made\nlegible rather than a color computed from another one.\n\nEvery shipped theme names both keys explicitly (a test enforces it),\nso this fallback only ever serves user themes. It is exact, not\nderived: a theme whose menu shares the editor background hands the\nheader that background too, and the fix is for it to name the keys.\n\nThe band used to borrow `ui.status_bar_bg`, which several themes set\nto their editor background (`dark` sets exactly it; `high-contrast`\npairs `[20, 20, 20]` with a black editor) — so the header that is\nmeant to separate one commit's block from the next drew on an\neffectively invisible background.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "semantic_highlight_bg": {
           "description": "Occurrence highlight (word under cursor, or the selected text)",

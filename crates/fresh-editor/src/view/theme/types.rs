@@ -963,6 +963,29 @@ pub struct UiColors {
     /// Compose mode margin background
     #[serde(default = "default_compose_margin_bg")]
     pub compose_margin_bg: ColorDef,
+    /// Text color of a git-blame block header band. Falls back to
+    /// `ui.menu_fg` — see `blame_header_bg` for why that pair.
+    #[serde(default)]
+    pub blame_header_fg: Option<ColorDef>,
+    /// Background of a git-blame block header band. Falls back to
+    /// `ui.menu_bg` (and the text to its `ui.menu_fg`): a menu is the
+    /// closest thing a theme already names to what a blame header is — a
+    /// chrome band carrying its own text over the editor — so an
+    /// unspecified header borrows a surface a theme has already made
+    /// legible rather than a color computed from another one.
+    ///
+    /// Every shipped theme names both keys explicitly (a test enforces it),
+    /// so this fallback only ever serves user themes. It is exact, not
+    /// derived: a theme whose menu shares the editor background hands the
+    /// header that background too, and the fix is for it to name the keys.
+    ///
+    /// The band used to borrow `ui.status_bar_bg`, which several themes set
+    /// to their editor background (`dark` sets exactly it; `high-contrast`
+    /// pairs `[20, 20, 20]` with a black editor) — so the header that is
+    /// meant to separate one commit's block from the next drew on an
+    /// effectively invisible background.
+    #[serde(default)]
+    pub blame_header_bg: Option<ColorDef>,
     /// Occurrence highlight (word under cursor, or the selected text)
     #[serde(default = "default_semantic_highlight_bg")]
     pub semantic_highlight_bg: ColorDef,
@@ -1578,6 +1601,12 @@ pub struct Theme {
     // Compose mode colors
     pub compose_margin_bg: Color,
 
+    /// Foreground / background of a git-blame block header band
+    /// (`ui.blame_header_fg` / `ui.blame_header_bg`), falling back to the
+    /// menu surface's own pair when a theme names neither.
+    pub blame_header_fg: Color,
+    pub blame_header_bg: Color,
+
     // Occurrence highlighting (word under cursor, or the selected text)
     pub semantic_highlight_bg: Color,
     /// SGR text attributes layered onto occurrence-highlight cells.
@@ -1750,8 +1779,8 @@ impl From<ThemeFile> for Theme {
             tab_separator_bg: file.ui.tab_separator_bg.into(),
             tab_close_hover_fg: file.ui.tab_close_hover_fg.into(),
             tab_hover_bg: file.ui.tab_hover_bg.into(),
-            menu_bg: file.ui.menu_bg.into(),
-            menu_fg: file.ui.menu_fg.into(),
+            menu_bg: file.ui.menu_bg.clone().into(),
+            menu_fg: file.ui.menu_fg.clone().into(),
             menu_active_bg: file.ui.menu_active_bg.into(),
             menu_active_fg: file.ui.menu_active_fg.into(),
             menu_dropdown_bg: file.ui.menu_dropdown_bg.into(),
@@ -1846,6 +1875,18 @@ impl From<ThemeFile> for Theme {
             scrollbar_track_hover_fg: file.ui.scrollbar_track_hover_fg.into(),
             scrollbar_thumb_hover_fg: file.ui.scrollbar_thumb_hover_fg.into(),
             compose_margin_bg: file.ui.compose_margin_bg.into(),
+            blame_header_fg: file
+                .ui
+                .blame_header_fg
+                .clone()
+                .unwrap_or_else(|| file.ui.menu_fg.clone())
+                .into(),
+            blame_header_bg: file
+                .ui
+                .blame_header_bg
+                .clone()
+                .unwrap_or_else(|| file.ui.menu_bg.clone())
+                .into(),
             semantic_highlight_bg: file.ui.semantic_highlight_bg.into(),
             semantic_highlight_modifier: file
                 .ui
@@ -2045,6 +2086,8 @@ impl From<Theme> for ThemeFile {
                 scrollbar_track_hover_fg: theme.scrollbar_track_hover_fg.into(),
                 scrollbar_thumb_hover_fg: theme.scrollbar_thumb_hover_fg.into(),
                 compose_margin_bg: theme.compose_margin_bg.into(),
+                blame_header_fg: Some(theme.blame_header_fg.into()),
+                blame_header_bg: Some(theme.blame_header_bg.into()),
                 semantic_highlight_bg: theme.semantic_highlight_bg.into(),
                 semantic_highlight_modifier: if theme.semantic_highlight_modifier.is_empty() {
                     None
@@ -2468,6 +2511,8 @@ theme_color_keys! {
         "bracket_rainbow_6" => color bracket_rainbow_6,
     },
     "ui" => {
+        "blame_header_bg" => color blame_header_bg,
+        "blame_header_fg" => color blame_header_fg,
         "compose_margin_bg" => color compose_margin_bg,
         "file_status_added_fg" => color file_status_added_fg,
         "file_status_conflicted_fg" => color file_status_conflicted_fg,
@@ -3449,6 +3494,68 @@ mod tests {
                 builtin.name
             );
         }
+    }
+
+    /// A git-blame header band separates one commit's block from the next,
+    /// so it must not be drawn on the editor's own background. The band used
+    /// to borrow `ui.status_bar_bg`, which `dark` sets to exactly `editor.bg`
+    /// and `high-contrast` sets a hair off black — the header was there and
+    /// invisible.
+    ///
+    /// The fallback (`ui.menu_bg` / `ui.menu_fg`) is an exact borrow, not a
+    /// computed shade, so it cannot guarantee a visible band on its own — a
+    /// theme whose menu shares the editor background would inherit that.
+    /// Every shipped theme therefore names both keys itself, and this pins
+    /// both halves of that: the keys are present in the JSON, and the colors
+    /// they name actually separate.
+    #[test]
+    fn test_all_builtin_themes_draw_blame_headers_off_the_editor_background() {
+        for builtin in BUILTIN_THEMES {
+            let raw: serde_json::Value = serde_json::from_str(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' is not valid JSON: {}", builtin.name, e));
+            let ui = raw.get("ui").and_then(|u| u.as_object());
+            for key in ["blame_header_bg", "blame_header_fg"] {
+                assert!(
+                    ui.is_some_and(|u| u.contains_key(key)),
+                    "Theme '{}' must name `ui.{}` explicitly instead of leaning on the \
+                     `ui.menu_*` fallback, which is an exact borrow and cannot promise a \
+                     band that separates from this theme's editor background",
+                    builtin.name,
+                    key
+                );
+            }
+
+            let theme = Theme::from_json(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
+            assert_ne!(
+                theme.blame_header_bg, theme.editor_bg,
+                "Theme '{}': the git-blame header band's background equals the editor \
+                 background, so the band that separates commit blocks is invisible",
+                builtin.name
+            );
+            assert_ne!(
+                theme.blame_header_fg, theme.blame_header_bg,
+                "Theme '{}': the git-blame header text is the same color as its band",
+                builtin.name
+            );
+        }
+    }
+
+    /// A theme that names neither blame-header key borrows the menu surface's
+    /// colors *exactly* — the header is not tinted, shaded, or otherwise
+    /// computed from another color, so what a theme author reads off
+    /// `ui.menu_bg` is what the band is painted with.
+    #[test]
+    fn blame_header_falls_back_to_the_exact_menu_colors() {
+        let json = r#"{
+            "name": "no-blame-keys",
+            "ui": { "menu_bg": [11, 22, 33], "menu_fg": [44, 55, 66] }
+        }"#;
+        let theme = Theme::from_json(json).expect("theme without blame keys");
+        assert_eq!(theme.blame_header_bg, theme.menu_bg);
+        assert_eq!(theme.blame_header_fg, theme.menu_fg);
+        assert_eq!(theme.blame_header_bg, Color::Rgb(11, 22, 33));
+        assert_eq!(theme.blame_header_fg, Color::Rgb(44, 55, 66));
     }
 
     #[test]

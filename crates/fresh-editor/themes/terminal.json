@@ -84,6 +84,8 @@
     "scrollbar_track_hover_fg": "Gray",
     "scrollbar_thumb_hover_fg": "White",
     "compose_margin_bg": "Default",
+    "blame_header_fg": "White",
+    "blame_header_bg": "DarkGray",
     "semantic_highlight_bg": "Default",
     "semantic_highlight_modifier": ["bold", "underlined"],
     "tour_step_bg": "DarkGray",

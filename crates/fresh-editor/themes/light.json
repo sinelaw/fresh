@@ -83,6 +83,8 @@
     "scrollbar_track_hover_fg": [200, 200, 200],
     "scrollbar_thumb_hover_fg": [140, 140, 140],
     "compose_margin_bg": [220, 220, 225],
+    "blame_header_fg": [30, 30, 30],
+    "blame_header_bg": [232, 238, 245],
     "semantic_highlight_bg": [206, 206, 206],
     "tour_step_bg": [220, 230, 240],
     "terminal_bg": "Default",
