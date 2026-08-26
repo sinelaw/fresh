@@ -2234,19 +2234,30 @@ mod tests {
         );
     }
 
+    /// A `Command` field pre-filled with `text`, caret at the end. Each chord
+    /// below gets its own dialog so the cases stay independent and readable.
+    fn typed_string_field_dialog(text: &str, ctx: &mut InputContext) -> SettingsState {
+        let mut state = string_field_dialog();
+        for c in text.chars() {
+            state.handle_key_event(&key(KeyCode::Char(c)), ctx);
+        }
+        assert_eq!(dialog_text_value(&state), text, "precondition: field typed");
+        state
+    }
+
     /// Routing the dialog's plain Text fields through the shared text-key
-    /// table also hands them the chords the dialog used to swallow: word
-    /// deletion (Ctrl+Backspace) and Shift+Home selection.
+    /// table hands them the chords the dialog used to swallow. The table's own
+    /// semantics are covered in `primitives::text_key` against a raw editor;
+    /// what is pinned here is that the *entry dialog* reaches it, which is the
+    /// seam issue #2875 was about. Every chord the change advertises is
+    /// exercised, because a table that works and a surface that never calls it
+    /// look identical from the outside.
     #[test]
     fn test_entry_dialog_text_field_word_and_selection_keys() {
-        let mut state = string_field_dialog();
         let mut ctx = InputContext::new();
 
-        for c in "foo bar".chars() {
-            state.handle_key_event(&key(KeyCode::Char(c)), &mut ctx);
-        }
-        assert_eq!(dialog_text_value(&state), "foo bar");
-
+        // Ctrl+Backspace deletes the word before the caret.
+        let mut state = typed_string_field_dialog("foo bar", &mut ctx);
         state.handle_key_event(
             &KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL),
             &mut ctx,
@@ -2257,14 +2268,67 @@ mod tests {
             "Ctrl+Backspace must delete the word before the caret"
         );
 
+        // Ctrl+Delete deletes the word at the caret.
+        let mut state = typed_string_field_dialog("foo bar", &mut ctx);
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(
+            &KeyEvent::new(KeyCode::Delete, KeyModifiers::CONTROL),
+            &mut ctx,
+        );
+        assert_eq!(
+            dialog_text_value(&state),
+            " bar",
+            "Ctrl+Delete must delete the word at the caret"
+        );
+
+        // Ctrl+Left parks the caret at the start of the preceding word, so
+        // the next character lands there.
+        let mut state = typed_string_field_dialog("foo bar baz", &mut ctx);
+        state.handle_key_event(
+            &KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL),
+            &mut ctx,
+        );
+        state.handle_key_event(&key(KeyCode::Char('|')), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "foo bar |baz",
+            "Ctrl+Left must move the caret one word left"
+        );
+
+        // Ctrl+Right parks it at the end of the following word.
+        let mut state = typed_string_field_dialog("alpha beta", &mut ctx);
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(
+            &KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL),
+            &mut ctx,
+        );
+        state.handle_key_event(&key(KeyCode::Char('|')), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "alpha| beta",
+            "Ctrl+Right must move the caret one word right"
+        );
+
         // Shift+Home selects back to the start; the next character replaces
         // the selection rather than being appended to it.
+        let mut state = typed_string_field_dialog("foo bar", &mut ctx);
         state.handle_key_event(&KeyEvent::new(KeyCode::Home, KeyModifiers::SHIFT), &mut ctx);
         state.handle_key_event(&key(KeyCode::Char('x')), &mut ctx);
         assert_eq!(
             dialog_text_value(&state),
             "x",
             "Shift+Home must select to the start of the field"
+        );
+
+        // Shift+End selects forward to the end, and is likewise replaced.
+        let mut state = typed_string_field_dialog("foo bar", &mut ctx);
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(&KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Char('x')), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "x",
+            "Shift+End must select to the end of the field"
         );
     }
 
