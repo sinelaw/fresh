@@ -850,10 +850,8 @@ impl Editor {
         if self.tokio_runtime.is_some() {
             let fs = std::sync::Arc::clone(&self.authority().filesystem);
             if is_new_file {
-                // Only a name with separators can leave the directory the
-                // temporary item was created in, and the walk canonicalizes
-                // every ancestor — a blocking round trip each on a remote
-                // filesystem. Flat names are already known to be inside.
+                // Only a name with separators can redirect the item out of
+                // the directory Ctrl+N already created it in unchecked.
                 if has_separator {
                     match creation_path_is_within_project(
                         fs.as_ref(),

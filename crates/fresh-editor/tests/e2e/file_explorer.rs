@@ -2367,6 +2367,54 @@ fn test_file_explorer_new_file_cannot_escape_project_directory() {
     );
 }
 
+/// The explorer lists a directory that symlinks out of the project, and
+/// Ctrl+N inside it creates the temporary item there. Naming that item with
+/// a plain name has to work too, otherwise the user is left holding an
+/// `untitled_*` file that the containment check will not let them rename.
+#[cfg(unix)]
+#[test]
+fn test_file_explorer_new_file_flat_name_in_symlinked_directory() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    let outside = project_root.parent().unwrap().join("outside");
+    fs::create_dir(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, project_root.join("linked_out")).unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_screen_contains("linked_out").unwrap();
+
+    // Directories sort first and the root has no other children, so one Down
+    // from the root lands on `linked_out/`.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("notes.md").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        outside.join("notes.md").is_file(),
+        "a plain name must be accepted in a directory the explorer itself lists"
+    );
+    let leftover: Vec<_> = fs::read_dir(&outside)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("untitled_"))
+        .collect();
+    assert!(
+        leftover.is_empty(),
+        "the temporary item should have been renamed, not left behind: {:?}",
+        leftover
+    );
+}
+
 /// Now that a new item's name may contain separators, it can address a file
 /// that already exists. `rename` would replace it without asking, so the
 /// contents of an unrelated file would be gone with no way back. The
