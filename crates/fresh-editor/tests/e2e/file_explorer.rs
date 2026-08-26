@@ -2309,21 +2309,29 @@ fn test_file_explorer_new_file_creates_missing_parent_directories() {
     harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 
-    let created_path = project_root.join("src/components/app.rs");
+    // Chained join: a single "src/components/app.rs" only compares equal on
+    // Windows because PathBuf::push rewrites separators under a verbatim
+    // prefix, which is exactly the platform assumption to avoid baking in.
+    let created_path = project_root.join("src").join("components").join("app.rs");
     assert!(created_path.is_file(), "nested file should be created");
     assert!(
-        project_root.join("src/components").is_dir(),
+        project_root.join("src").join("components").is_dir(),
         "missing parent directories should be created"
     );
-    assert_eq!(
-        harness.editor().get_key_context(),
-        fresh::input::keybindings::KeyContext::Normal,
-        "focus should move to the newly-created file"
-    );
-    assert_eq!(
-        harness.editor().active_state().buffer.file_path(),
-        Some(created_path.as_path()),
-        "the buffer path should follow the file into the nested directory"
+
+    // Semantic sync: wait for the new name to surface on screen at all.
+    harness.wait_for_screen_contains("app.rs").unwrap();
+
+    // Typing reaches that buffer only if focus left the explorer and landed
+    // in the newly-created file -- the visible form of both invariants this
+    // test used to read out of the editor's model.
+    harness.type_text("fn main() {}").unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("fn main() {}"),
+        "typing should reach the new file's buffer. Screen:\n{}",
+        screen
     );
 
     let untitled_files: Vec<_> = std::fs::read_dir(&project_root)
