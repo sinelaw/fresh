@@ -1356,6 +1356,42 @@ impl EntryDialogState {
         self.editing_text = false;
     }
 
+    /// Route a key through the shared text-key engine
+    /// ([`crate::primitives::text_key::apply_text_key`]) when a plain,
+    /// single-line `Text` field is being edited. Returns `true` when the key
+    /// was a universal text-editing key (caret motion, mutation, or
+    /// selection) and was applied, so the caller can stop; `false` leaves
+    /// chrome keys (Enter/Tab/Esc, Up/Down field-nav, Ctrl+A/C/V) — and every
+    /// composite control (TextList/Number/JSON) — to the caller's own match.
+    ///
+    /// This is the same seam the main Settings body uses
+    /// ([`super::state::SettingsState::apply_plain_text_key`]): one `key → op`
+    /// table for every plain text field, so a key can no longer work on one
+    /// surface and be dead on the other.
+    pub fn apply_plain_text_key(&mut self, event: &crossterm::event::KeyEvent) -> bool {
+        use crate::primitives::text_key::{apply_text_key, TextKeyContext, TextKeyResult};
+        if !self.editing_text {
+            return false;
+        }
+        let state = match self.current_item_mut().map(|item| &mut item.control) {
+            Some(SettingControl::Text(state)) => state,
+            _ => return false,
+        };
+        // Snapshot the value so only a real mutation marks the field edited:
+        // `mark_field_edited` also clears the field's inherited/null state, so
+        // a bare caret move or selection change must not trigger it.
+        let before = state.value();
+        let handled = matches!(
+            apply_text_key(&mut *state, event, TextKeyContext::single_line()),
+            TextKeyResult::Handled
+        );
+        let changed = state.value_str() != before;
+        if changed {
+            self.mark_field_edited();
+        }
+        handled
+    }
+
     /// Handle character input
     pub fn insert_char(&mut self, c: char) {
         if !self.editing_text {
@@ -1445,6 +1481,9 @@ impl EntryDialogState {
                 SettingControl::TextList(state) => {
                     state.move_left();
                 }
+                SettingControl::Number(state) => {
+                    state.move_left();
+                }
                 SettingControl::Json(state) => {
                     state.move_left();
                 }
@@ -1481,6 +1520,9 @@ impl EntryDialogState {
                     state.move_right();
                 }
                 SettingControl::TextList(state) => {
+                    state.move_right();
+                }
+                SettingControl::Number(state) => {
                     state.move_right();
                 }
                 SettingControl::Json(state) => {
@@ -1685,6 +1727,9 @@ impl EntryDialogState {
                 SettingControl::TextList(state) => {
                     state.delete();
                 }
+                SettingControl::Number(state) => {
+                    state.delete();
+                }
                 SettingControl::Json(state) => {
                     state.delete();
                 }
@@ -1706,6 +1751,9 @@ impl EntryDialogState {
                 SettingControl::TextList(state) => {
                     state.move_home();
                 }
+                SettingControl::Number(state) => {
+                    state.move_home();
+                }
                 SettingControl::Json(state) => {
                     state.move_home();
                 }
@@ -1725,6 +1773,9 @@ impl EntryDialogState {
                     state.move_end();
                 }
                 SettingControl::TextList(state) => {
+                    state.move_end();
+                }
+                SettingControl::Number(state) => {
                     state.move_end();
                 }
                 SettingControl::Json(state) => {

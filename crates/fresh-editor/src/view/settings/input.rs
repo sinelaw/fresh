@@ -141,6 +141,19 @@ impl SettingsState {
             return InputResult::Consumed;
         };
 
+        // A plain single-line Text field routes every caret-motion and
+        // text-mutation key through the one shared text-key engine
+        // (`primitives::text_key::apply_text_key`) — the same table the main
+        // Settings body and the plugin widget runtime feed, so forward-Delete,
+        // word motion, word deletion, and shift-selection can no longer be
+        // present on one surface and missing on another. Chrome keys
+        // (Enter/Tab/Esc, Up/Down field-nav, Ctrl+A/C/V) come back unhandled
+        // and fall through to the match below, as do the composite and
+        // non-Text controls (TextList/Number/JSON), which keep their own arms.
+        if dialog.apply_plain_text_key(event) {
+            return InputResult::Consumed;
+        }
+
         match event.code {
             KeyCode::Esc => {
                 // Escape cancels the in-progress field edit and restores the
@@ -205,12 +218,24 @@ impl SettingsState {
                 dialog.backspace();
             }
             KeyCode::Delete => {
-                if is_editing_json {
-                    // Delete character at cursor in JSON editor
-                    dialog.delete();
-                } else {
-                    // Delete item in TextList
+                // A plain Text field never reaches here — the shared text-key
+                // engine above consumed its Delete. What is left is a
+                // composite TextList, which has no caret of its own while a
+                // row is focused and so drops the focused row (matching the
+                // navigation-mode handler and the standalone control), or one
+                // of the remaining caret controls (JSON, Number), which
+                // forward-delete at the caret. The previous JSON-only guard
+                // sent scalar Text fields down the list-removal path, a no-op
+                // that left their Delete key dead even though Backspace
+                // worked (issue #2875).
+                let is_text_list = matches!(
+                    dialog.current_item().map(|i| &i.control),
+                    Some(SettingControl::TextList(_))
+                );
+                if is_text_list {
                     dialog.delete_list_item();
+                } else {
+                    dialog.delete();
                 }
             }
             KeyCode::Home => {
@@ -2015,5 +2040,424 @@ mod tests {
             "Xabcdef",
             "Delete must forward-delete the character at the caret"
         );
+    }
+
+    /// Build a `SettingsState` with an entry ("Edit Item") dialog open on a
+    /// one-field object entry, that field focused and already in text-edit
+    /// mode. The shape mirrors the dialog from issue #2875 — an LSP server's
+    /// `Command` sitting beside its `Enabled` toggle.
+    fn entry_dialog_editing_field(
+        field_key: &str,
+        label: &str,
+        setting_type: super::super::schema::SettingType,
+        default: serde_json::Value,
+        entry_value: serde_json::Value,
+        nullable: bool,
+    ) -> SettingsState {
+        use super::super::entry_dialog::EntryDialogState;
+        use super::super::schema::{SettingSchema, SettingType};
+        use std::collections::HashMap;
+
+        let prop = SettingSchema {
+            path: format!("/{field_key}"),
+            name: label.to_string(),
+            description: None,
+            setting_type,
+            default: Some(default),
+            read_only: false,
+            section: None,
+            order: None,
+            nullable,
+            enum_from: None,
+            dual_list_sibling: None,
+            dynamically_extendable_status_bar_elements: false,
+        };
+        let schema = SettingSchema {
+            path: "/test".to_string(),
+            name: "Test".to_string(),
+            description: None,
+            setting_type: SettingType::Object {
+                properties: vec![prop],
+            },
+            default: None,
+            read_only: false,
+            section: None,
+            order: None,
+            nullable: false,
+            enum_from: None,
+            dual_list_sibling: None,
+            dynamically_extendable_status_bar_elements: false,
+        };
+
+        let config_schema = include_str!("../../../plugins/config-schema.json");
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::new(config_schema, &config).unwrap();
+
+        let dialog = EntryDialogState::from_schema(
+            "entry".to_string(),
+            &entry_value,
+            &schema,
+            "/test",
+            true, // new entry
+            false,
+            &HashMap::new(),
+        );
+        state.entry_dialog_stack.push(dialog);
+
+        let dialog = state.entry_dialog_mut().expect("dialog present");
+        let idx = dialog
+            .items
+            .iter()
+            .position(|i| i.name == label)
+            .expect("field present in dialog");
+        dialog.selected_item = idx;
+        dialog.start_editing();
+        assert!(dialog.editing_text, "precondition: editing {label}");
+        state
+    }
+
+    /// The value of the entry dialog's focused plain `Text` control.
+    fn dialog_text_value(state: &SettingsState) -> String {
+        match state
+            .entry_dialog()
+            .and_then(|d| d.current_item())
+            .map(|i| &i.control)
+        {
+            Some(SettingControl::Text(s)) => s.value(),
+            _ => panic!("current dialog item is not a Text control"),
+        }
+    }
+
+    /// The text sitting in the entry dialog's focused `Number` control edit
+    /// buffer — the digits the user sees while the field is being typed into.
+    fn dialog_number_edit_buffer(state: &SettingsState) -> String {
+        match state
+            .entry_dialog()
+            .and_then(|d| d.current_item())
+            .map(|i| &i.control)
+        {
+            Some(SettingControl::Number(s)) => s
+                .editor
+                .as_ref()
+                .expect("number control should be in edit mode")
+                .value(),
+            _ => panic!("current dialog item is not a Number control"),
+        }
+    }
+
+    /// The issue's own case: a dialog holding one editable `Command` string.
+    fn string_field_dialog() -> SettingsState {
+        use super::super::schema::SettingType;
+        entry_dialog_editing_field(
+            "command",
+            "Command",
+            SettingType::String,
+            serde_json::json!(""),
+            serde_json::json!({ "command": "" }),
+            false,
+        )
+    }
+
+    /// A plain `Text` field inside the entry ("Edit Item") dialog must honor
+    /// forward-Delete. The dialog's text-editing handler previously routed
+    /// Delete to list-item removal for every non-JSON control, so a scalar
+    /// Text field's Delete key was dead even though Backspace worked
+    /// (issue #2875). Regression guard.
+    #[test]
+    fn test_entry_dialog_text_field_forward_delete() {
+        let mut state = string_field_dialog();
+        let mut ctx = InputContext::new();
+
+        for c in "abc".chars() {
+            state.handle_key_event(&key(KeyCode::Char(c)), &mut ctx);
+        }
+        assert_eq!(dialog_text_value(&state), "abc");
+
+        // Home moves the caret to the start; Delete removes the char at the
+        // caret. Before the fix this routed to list-item removal — a no-op on
+        // a scalar Text field — leaving the value untouched.
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "bc",
+            "Delete must forward-delete the character at the caret in the entry dialog"
+        );
+    }
+
+    /// Forward-Delete removes one *grapheme cluster*, not one byte and not
+    /// one `char`. The field holds `a`, a decomposed `e` + combining acute,
+    /// and a three-byte `漢`, so each of the three properties is separable:
+    ///
+    /// * a byte-indexed delete would split the combining mark or `漢` and
+    ///   panic on the resulting non-boundary — ad-hoc slicing at sites like
+    ///   this is a known recurring source of multibyte crashes;
+    /// * a char-indexed delete would survive but leave the orphaned
+    ///   combining mark behind, so the caret would need two presses to clear
+    ///   one visible character;
+    /// * only a cluster-indexed delete clears `e` + mark in a single press.
+    ///
+    /// A precomposed `é` cannot tell these apart — it is one byte sequence,
+    /// one `char`, and one cluster at once — so the decomposed form is what
+    /// makes this test load-bearing.
+    #[test]
+    fn test_entry_dialog_text_field_forward_delete_multibyte() {
+        let mut state = string_field_dialog();
+        let mut ctx = InputContext::new();
+
+        // "ae\u{301}漢": 'a', then 'e' + COMBINING ACUTE ACCENT (one cluster,
+        // two chars, three bytes), then a three-byte ideograph.
+        for c in "ae\u{301}漢".chars() {
+            state.handle_key_event(&key(KeyCode::Char(c)), &mut ctx);
+        }
+        assert_eq!(dialog_text_value(&state), "ae\u{301}漢");
+
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "e\u{301}漢",
+            "Delete must remove exactly the one-byte 'a' at the caret"
+        );
+
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "漢",
+            "one Delete must clear the whole 'e' + combining-mark cluster, \
+             not just its base character"
+        );
+
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "",
+            "Delete must remove all three bytes of the ideograph at the caret"
+        );
+    }
+
+    /// A `Command` field pre-filled with `text`, caret at the end. Each chord
+    /// below gets its own dialog so the cases stay independent and readable.
+    fn typed_string_field_dialog(text: &str, ctx: &mut InputContext) -> SettingsState {
+        let mut state = string_field_dialog();
+        for c in text.chars() {
+            state.handle_key_event(&key(KeyCode::Char(c)), ctx);
+        }
+        assert_eq!(dialog_text_value(&state), text, "precondition: field typed");
+        state
+    }
+
+    /// Routing the dialog's plain Text fields through the shared text-key
+    /// table hands them the chords the dialog used to swallow. The table's own
+    /// semantics are covered in `primitives::text_key` against a raw editor;
+    /// what is pinned here is that the *entry dialog* reaches it, which is the
+    /// seam issue #2875 was about. Every chord the change advertises is
+    /// exercised, because a table that works and a surface that never calls it
+    /// look identical from the outside.
+    #[test]
+    fn test_entry_dialog_text_field_word_and_selection_keys() {
+        let mut ctx = InputContext::new();
+
+        // Ctrl+Backspace deletes the word before the caret.
+        let mut state = typed_string_field_dialog("foo bar", &mut ctx);
+        state.handle_key_event(
+            &KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL),
+            &mut ctx,
+        );
+        assert_eq!(
+            dialog_text_value(&state),
+            "foo ",
+            "Ctrl+Backspace must delete the word before the caret"
+        );
+
+        // Ctrl+Delete deletes the word at the caret.
+        let mut state = typed_string_field_dialog("foo bar", &mut ctx);
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(
+            &KeyEvent::new(KeyCode::Delete, KeyModifiers::CONTROL),
+            &mut ctx,
+        );
+        assert_eq!(
+            dialog_text_value(&state),
+            " bar",
+            "Ctrl+Delete must delete the word at the caret"
+        );
+
+        // Ctrl+Left parks the caret at the start of the preceding word, so
+        // the next character lands there.
+        let mut state = typed_string_field_dialog("foo bar baz", &mut ctx);
+        state.handle_key_event(
+            &KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL),
+            &mut ctx,
+        );
+        state.handle_key_event(&key(KeyCode::Char('|')), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "foo bar |baz",
+            "Ctrl+Left must move the caret one word left"
+        );
+
+        // Ctrl+Right parks it at the end of the following word.
+        let mut state = typed_string_field_dialog("alpha beta", &mut ctx);
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(
+            &KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL),
+            &mut ctx,
+        );
+        state.handle_key_event(&key(KeyCode::Char('|')), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "alpha| beta",
+            "Ctrl+Right must move the caret one word right"
+        );
+
+        // Shift+Home selects back to the start; the next character replaces
+        // the selection rather than being appended to it.
+        let mut state = typed_string_field_dialog("foo bar", &mut ctx);
+        state.handle_key_event(&KeyEvent::new(KeyCode::Home, KeyModifiers::SHIFT), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Char('x')), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "x",
+            "Shift+Home must select to the start of the field"
+        );
+
+        // Shift+End selects forward to the end, and is likewise replaced.
+        let mut state = typed_string_field_dialog("foo bar", &mut ctx);
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(&KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Char('x')), &mut ctx);
+        assert_eq!(
+            dialog_text_value(&state),
+            "x",
+            "Shift+End must select to the end of the field"
+        );
+    }
+
+    /// The same dead-key bug outlived the Text fix in the dialog's `Number`
+    /// fields: `start_editing` puts a Number control into text-edit mode, but
+    /// `delete`/`cursor_home`/`cursor_end`/`cursor_left`/`cursor_right` had no
+    /// `Number` arm, so every one of those keys was a silent no-op while the
+    /// field was being typed into.
+    #[test]
+    fn test_entry_dialog_number_field_caret_keys() {
+        use super::super::schema::SettingType;
+
+        let mut state = entry_dialog_editing_field(
+            "tab_size",
+            "Tab Size",
+            SettingType::Integer {
+                minimum: None,
+                maximum: None,
+            },
+            serde_json::json!(4),
+            serde_json::json!({ "tab_size": 42 }),
+            false,
+        );
+        let mut ctx = InputContext::new();
+        assert_eq!(dialog_number_edit_buffer(&state), "42");
+
+        // Home clears the select-all that start_editing arms and parks the
+        // caret before the '4'; Delete removes it.
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            dialog_number_edit_buffer(&state),
+            "2",
+            "Delete must forward-delete the digit at the caret in a Number field"
+        );
+
+        // The caret stayed at the start, so the next digit lands there.
+        state.handle_key_event(&key(KeyCode::Char('7')), &mut ctx);
+        assert_eq!(dialog_number_edit_buffer(&state), "72");
+
+        // End parks the caret after the '2'; Left steps back over it so the
+        // following Delete has something to remove.
+        state.handle_key_event(&key(KeyCode::End), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Left), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            dialog_number_edit_buffer(&state),
+            "7",
+            "End/Left must move the caret in a Number field so Delete lands on '2'"
+        );
+
+        // Home parks the caret before the '7'; Right steps over it, so the
+        // next digit appends instead of prepending.
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Right), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Char('9')), &mut ctx);
+        assert_eq!(
+            dialog_number_edit_buffer(&state),
+            "79",
+            "Right must move the caret in a Number field"
+        );
+    }
+
+    /// Marking a field edited does more than flip the dialog's dirty bit: it
+    /// also clears the field's inherited/null state, so the field stops
+    /// falling back to the parent value and starts being persisted with one
+    /// of its own. That is why the shared-table seam keys off the value
+    /// changing rather than off the key being handled — a user who tabs into
+    /// an inherited field and only moves the caret must leave it inherited,
+    /// and must not be asked to discard changes on the way out.
+    ///
+    /// The dirty bit and the inherited flag are model state with no direct
+    /// rendering of their own, so this is a unit test on the component.
+    #[test]
+    fn test_entry_dialog_caret_motion_leaves_an_inherited_field_alone() {
+        use super::super::schema::SettingType;
+
+        let mut state = entry_dialog_editing_field(
+            "command",
+            "Command",
+            SettingType::String,
+            serde_json::json!(null),
+            serde_json::json!({ "command": null }),
+            true, // nullable: the field opens inherited (unset)
+        );
+        let mut ctx = InputContext::new();
+
+        let inherited = |state: &SettingsState| -> bool {
+            let dialog = state.entry_dialog().expect("dialog present");
+            dialog.items[dialog.selected_item].is_null
+        };
+        let dirty = |state: &SettingsState| -> bool {
+            state.entry_dialog().expect("dialog present").is_dirty()
+        };
+        assert!(inherited(&state), "precondition: field opens inherited");
+        assert!(!dirty(&state), "precondition: dialog opens clean");
+
+        // Every caret and selection key the shared table handles. None of
+        // them changes the value, so none may touch either flag.
+        for event in [
+            key(KeyCode::Home),
+            key(KeyCode::End),
+            key(KeyCode::Left),
+            key(KeyCode::Right),
+            KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Home, KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT),
+        ] {
+            state.handle_key_event(&event, &mut ctx);
+        }
+        assert!(
+            inherited(&state),
+            "caret motion must not clear the field's inherited state"
+        );
+        assert!(
+            !dirty(&state),
+            "caret motion must not mark the dialog modified"
+        );
+
+        // A keystroke that does change the value still does both.
+        state.handle_key_event(&key(KeyCode::Char('p')), &mut ctx);
+        assert_eq!(dialog_text_value(&state), "p");
+        assert!(
+            !inherited(&state),
+            "typing must give the field a value of its own"
+        );
+        assert!(dirty(&state), "typing must mark the dialog modified");
     }
 }
