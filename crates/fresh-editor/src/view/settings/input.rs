@@ -2127,6 +2127,23 @@ mod tests {
         }
     }
 
+    /// The text sitting in the entry dialog's focused `Number` control edit
+    /// buffer — the digits the user sees while the field is being typed into.
+    fn dialog_number_edit_buffer(state: &SettingsState) -> String {
+        match state
+            .entry_dialog()
+            .and_then(|d| d.current_item())
+            .map(|i| &i.control)
+        {
+            Some(SettingControl::Number(s)) => s
+                .editor
+                .as_ref()
+                .expect("number control should be in edit mode")
+                .value(),
+            _ => panic!("current dialog item is not a Number control"),
+        }
+    }
+
     /// The issue's own case: a dialog holding one editable `Command` string.
     fn string_field_dialog() -> SettingsState {
         use super::super::schema::SettingType;
@@ -2226,6 +2243,65 @@ mod tests {
             dialog_text_value(&state),
             "x",
             "Shift+Home must select to the start of the field"
+        );
+    }
+
+    /// The same dead-key bug outlived the Text fix in the dialog's `Number`
+    /// fields: `start_editing` puts a Number control into text-edit mode, but
+    /// `delete`/`cursor_home`/`cursor_end`/`cursor_left`/`cursor_right` had no
+    /// `Number` arm, so every one of those keys was a silent no-op while the
+    /// field was being typed into.
+    #[test]
+    fn test_entry_dialog_number_field_caret_keys() {
+        use super::super::schema::SettingType;
+
+        let mut state = entry_dialog_editing_field(
+            "tab_size",
+            "Tab Size",
+            SettingType::Integer {
+                minimum: None,
+                maximum: None,
+            },
+            serde_json::json!(4),
+            serde_json::json!({ "tab_size": 42 }),
+        );
+        let mut ctx = InputContext::new();
+        assert_eq!(dialog_number_edit_buffer(&state), "42");
+
+        // Home clears the select-all that start_editing arms and parks the
+        // caret before the '4'; Delete removes it.
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            dialog_number_edit_buffer(&state),
+            "2",
+            "Delete must forward-delete the digit at the caret in a Number field"
+        );
+
+        // The caret stayed at the start, so the next digit lands there.
+        state.handle_key_event(&key(KeyCode::Char('7')), &mut ctx);
+        assert_eq!(dialog_number_edit_buffer(&state), "72");
+
+        // End parks the caret after the '2'; Left steps back over it so the
+        // following Delete has something to remove.
+        state.handle_key_event(&key(KeyCode::End), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Left), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            dialog_number_edit_buffer(&state),
+            "7",
+            "End/Left must move the caret in a Number field so Delete lands on '2'"
+        );
+
+        // Home parks the caret before the '7'; Right steps over it, so the
+        // next digit appends instead of prepending.
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Right), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Char('9')), &mut ctx);
+        assert_eq!(
+            dialog_number_edit_buffer(&state),
+            "79",
+            "Right must move the caret in a Number field"
         );
     }
 }

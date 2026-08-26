@@ -1481,6 +1481,9 @@ impl EntryDialogState {
                 SettingControl::TextList(state) => {
                     state.move_left();
                 }
+                SettingControl::Number(state) => {
+                    state.move_left();
+                }
                 SettingControl::Json(state) => {
                     state.move_left();
                 }
@@ -1517,6 +1520,9 @@ impl EntryDialogState {
                     state.move_right();
                 }
                 SettingControl::TextList(state) => {
+                    state.move_right();
+                }
+                SettingControl::Number(state) => {
                     state.move_right();
                 }
                 SettingControl::Json(state) => {
@@ -1721,6 +1727,9 @@ impl EntryDialogState {
                 SettingControl::TextList(state) => {
                     state.delete();
                 }
+                SettingControl::Number(state) => {
+                    state.delete();
+                }
                 SettingControl::Json(state) => {
                     state.delete();
                 }
@@ -1742,6 +1751,9 @@ impl EntryDialogState {
                 SettingControl::TextList(state) => {
                     state.move_home();
                 }
+                SettingControl::Number(state) => {
+                    state.move_home();
+                }
                 SettingControl::Json(state) => {
                     state.move_home();
                 }
@@ -1761,6 +1773,9 @@ impl EntryDialogState {
                     state.move_end();
                 }
                 SettingControl::TextList(state) => {
+                    state.move_end();
+                }
+                SettingControl::Number(state) => {
                     state.move_end();
                 }
                 SettingControl::Json(state) => {
