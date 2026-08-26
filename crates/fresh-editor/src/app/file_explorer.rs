@@ -2195,7 +2195,11 @@ fn canonicalize_deepest_existing(
                 }
                 return Ok(crate::app::normalize_path(&canonical));
             }
-            Err(error) => {
+            // Only a missing component means "not created yet". Treating
+            // every failure that way (EACCES, ELOOP, …) would silently
+            // downgrade the symlink escape check to a lexical one, so
+            // surface anything else to the caller.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let Some(parent) = ancestor.parent() else {
                     return Err(error);
                 };
@@ -2205,6 +2209,7 @@ fn canonicalize_deepest_existing(
                 missing_tail.push(component.to_path_buf());
                 ancestor = parent;
             }
+            Err(error) => return Err(error),
         }
     }
 }
@@ -2255,6 +2260,23 @@ mod creation_path_tests {
             &project.path().join("../escaped.rs")
         )
         .unwrap());
+    }
+
+    /// A canonicalize failure that does not mean "missing" must reach the
+    /// caller. Folding it into the not-yet-created case would leave only the
+    /// lexical check, which cannot see through symlinks.
+    #[cfg(unix)]
+    #[test]
+    fn creation_path_check_propagates_non_missing_errors() {
+        let project = tempfile::tempdir().unwrap();
+        // A symlink pointing at itself resolves to ELOOP, not ENOENT.
+        std::os::unix::fs::symlink("loop", project.path().join("loop")).unwrap();
+        let fs = StdFileSystem;
+
+        let error =
+            creation_path_is_within_project(&fs, project.path(), &project.path().join("loop/a.rs"))
+                .expect_err("a symlink loop must not be reported as a usable creation path");
+        assert_ne!(error.kind(), std::io::ErrorKind::NotFound);
     }
 
     #[cfg(unix)]
