@@ -1,21 +1,24 @@
 //! Regression test for issue #779: UX enhancement — displaying lines after EOF.
 //!
-//! Before the enhancement, rows past end-of-file were either marked with a
-//! `~` character (matching the theme's editor background) or left blank.
-//! The issue requested a subtle background shade that distinguishes post-EOF
-//! space from buffer content.
+//! #779 asked for post-EOF rows to be shaded instead of being marked with a
+//! `~`, and the fix threaded a theme color `editor.after_eof_bg` into the
+//! row-fill path. The derived default (a shade off `editor.bg`) turned the
+//! space below a short buffer into a grayed out strip that matched no color
+//! in the active theme, so the default now follows `editor.bg`; a theme that
+//! wants the shade names `after_eof_bg` explicitly.
 //!
-//! The fix threads a new theme color `editor.after_eof_bg` (with a computed
-//! default derived from `editor.bg`) into the row-fill path in
-//! `render_line.rs`. This test verifies:
+//! This test verifies:
 //!
-//! 1. The default `after_eof_bg` differs from `editor.bg` — themes now
-//!    produce a visible shade automatically.
-//! 2. Rows past end-of-file carry the `after_eof_bg` background, regardless
-//!    of whether `show_tilde` is enabled.
+//! 1. The default `after_eof_bg` equals `editor.bg`, so post-EOF space
+//!    stays on the theme's main background.
+//! 2. A theme that names `after_eof_bg` still gets that color.
+//! 3. Rows past end-of-file carry `after_eof_bg`, regardless of whether
+//!    `show_tilde` is enabled.
 
 use crate::common::harness::EditorTestHarness;
 use fresh::config::Config;
+use fresh::view::theme::Theme;
+use ratatui::style::Color;
 
 fn first_post_eof_row(harness: &EditorTestHarness, content_lines: usize) -> u16 {
     let (first, _last) = harness.content_area_rows();
@@ -23,13 +26,30 @@ fn first_post_eof_row(harness: &EditorTestHarness, content_lines: usize) -> u16 
 }
 
 #[test]
-fn default_theme_derives_distinct_after_eof_bg() {
+fn default_theme_keeps_after_eof_bg_on_the_editor_background() {
     let harness = EditorTestHarness::with_config(80, 24, Config::default()).unwrap();
     let theme = harness.editor().theme();
-    assert_ne!(
+    assert_eq!(
         theme.after_eof_bg, theme.editor_bg,
-        "Default after_eof_bg must differ from editor.bg so that post-EOF \
-         rows are visually distinguishable from buffer content (#779)"
+        "Without an explicit override, post-EOF rows must stay on the \
+         theme's editor background rather than a derived shade"
+    );
+}
+
+#[test]
+fn explicit_after_eof_bg_is_honored() {
+    let theme = Theme::from_json(
+        r#"{
+            "name": "post-eof-shade",
+            "editor": { "bg": [30, 30, 30], "after_eof_bg": [60, 60, 60] }
+        }"#,
+    )
+    .expect("theme fixture should parse");
+    assert_eq!(theme.editor_bg, Color::Rgb(30, 30, 30));
+    assert_eq!(
+        theme.after_eof_bg,
+        Color::Rgb(60, 60, 60),
+        "a theme that names after_eof_bg still gets the post-EOF shade (#779)"
     );
 }
 
