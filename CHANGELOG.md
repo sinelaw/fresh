@@ -236,7 +236,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * **A remote workspace's buffers load off the editor loop.**
 * **Opening a C# file can no longer run project code** - `dotnet restore` is now gated behind Workspace Trust (#2063, reported by @z3moo).
 * **git-gutter works with an external difftool** - it now forces git's own diff format (#2721, by @asukaminato0721).
-* **Review Diff works with an external difftool** - range, working-tree, stash, and single-file reviews now force Git's native patch format instead of mistaking tools such as `difft` for an empty diff (#3066, by @asukaminato0721).
+* **Review Diff works with an external difftool** - range, working-tree, and stash reviews now force Git's native patch format instead of mistaking tools such as `difft` for an empty diff (#3066, by @asukaminato0721).
 * **No blank frame at the horizontal scroll bound** (by @ttenneb).
 * **Modal dialogs are no longer clipped**, and worktree trust isn't re-asked.
 

@@ -178,6 +178,23 @@ fn marker_new_line_number(screen: &str, marker: &str) -> Option<u32> {
     gutter.split_whitespace().last()?.parse().ok()
 }
 
+/// Stash the working tree so `Review Stash` has something to show. Reverts the
+/// tree as a side effect, which is what makes the stash the only diff source.
+#[cfg(unix)]
+fn git_stash(repo: &GitTestRepo) {
+    use crate::common::git_test_helper::git_command;
+
+    let output = git_command(&repo.path)
+        .args(["stash", "push", "-m", "review-stash-fixture"])
+        .output()
+        .expect("run git stash");
+    assert!(
+        output.status.success(),
+        "git stash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // BUG-1: CompositeInputRouter dead code — side-by-side vim keys broken
 // ---------------------------------------------------------------------------
@@ -2260,6 +2277,64 @@ fn test_review_diff_ignores_external_diff_and_format_settings() {
         Some(2),
         "Review Diff should number the marker by the real file, not by textconv \
          output. Screen:\n{screen}"
+    );
+}
+
+/// The stash review is the only caller that reaches `git` through the
+/// `range.command` override, so it is the only test that exercises splicing the
+/// format flags into a multi-word sub-command (`stash show`). It is also where
+/// the choice of `-c diff.srcPrefix=` over `--src-prefix=` is load-bearing:
+/// `git stash show` mangles the latter, which would strip the `a/`/`b/` paths
+/// the diff parser matches on.
+#[test]
+#[cfg(unix)]
+fn test_stash_review_ignores_external_diff_and_format_settings() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    repo.create_file("src/main.rs", "fn main() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    // STASH_EXTERNAL_DIFF_MARKER\n}\n",
+    );
+    git_stash(&repo);
+    configure_hostile_diff_output(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    harness.run_palette_command("Review Stash").unwrap();
+    // The ref prompt opens prefilled with `stash@{0}`, which is the entry we
+    // just pushed, so confirm it as-is.
+    harness.wait_for_prompt().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("next hunk"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("STASH_EXTERNAL_DIFF_MARKER"),
+        "Review Stash should render Git's native patch even when diff.external, \
+         colour and prefix settings are configured. Screen:\n{screen}"
+    );
+    assert_eq!(
+        marker_new_line_number(&screen, "STASH_EXTERNAL_DIFF_MARKER"),
+        Some(2),
+        "Review Stash should number the marker by the real file. Screen:\n{screen}"
     );
 }
 
