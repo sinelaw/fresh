@@ -3520,7 +3520,15 @@ mod tests {
     }
 
     /// Relative luminance (WCAG 2.1) of an 8-bit RGB colour.
-    fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+    ///
+    /// Deliberately not named `relative_luminance`: this module already has
+    /// one of those via `use super::*`, a plain linear weighting that
+    /// `brightness` builds on, and a same-named helper here shadows it for
+    /// the whole module rather than only its own callers. This one applies
+    /// the sRGB gamma decode WCAG contrast requires, which is a different
+    /// quantity — shadowing silently changed what `brightness` measured and
+    /// broke the occurrence-highlight test (#3011) two screens away.
+    fn wcag_relative_luminance(r: u8, g: u8, b: u8) -> f64 {
         fn channel(v: u8) -> f64 {
             let v = f64::from(v) / 255.0;
             if v <= 0.03928 {
@@ -3540,8 +3548,8 @@ mod tests {
             return None;
         };
         let (la, lb) = (
-            relative_luminance(ar, ag, ab),
-            relative_luminance(br, bg, bb),
+            wcag_relative_luminance(ar, ag, ab),
+            wcag_relative_luminance(br, bg, bb),
         );
         let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
         Some((hi + 0.05) / (lo + 0.05))
