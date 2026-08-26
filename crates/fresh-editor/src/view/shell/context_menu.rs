@@ -73,9 +73,9 @@ pub fn context_menu(menu: &Menu) -> Node<UiMsg> {
         .enumerate()
         .map(|(i, label)| {
             let theme = if i == menu.highlighted {
-                "menu.item.highlighted"
+                crate::view::ui::MenuRowStyle::Highlighted.shell_theme()
             } else {
-                "menu.item"
+                crate::view::ui::MenuRowStyle::Normal.shell_theme()
             };
             gesture(
                 text(row_label(label, menu.width))
@@ -115,7 +115,10 @@ pub fn context_menu(menu: &Menu) -> Node<UiMsg> {
                 gesture(
                     col()
                         .border()
-                        .theme("menu")
+                        .theme(crate::app::shell_host::shell_theme::pair(
+                            "ui.menu_dropdown_fg",
+                            "ui.menu_dropdown_bg",
+                        ))
                         .w(Sizing::Cells(menu.width))
                         .children(rows),
                 )
@@ -286,10 +289,13 @@ mod paint_tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 20, 6));
         fold_native(&spec, &mut buf, &test_palette::palette, Band::Overlay);
 
-        assert_eq!(buf[(2, 1)].style(), test_palette::painted("menu.item"));
+        assert_eq!(
+            buf[(2, 1)].style(),
+            test_palette::painted(&crate::view::ui::MenuRowStyle::Normal.shell_theme())
+        );
         assert_eq!(
             buf[(2, 2)].style(),
-            test_palette::painted("menu.item.highlighted"),
+            test_palette::painted(&crate::view::ui::MenuRowStyle::Highlighted.shell_theme()),
             "the highlighted row is the one the menu says is highlighted"
         );
         assert_ne!(buf[(2, 1)].style(), buf[(2, 2)].style());

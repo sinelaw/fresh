@@ -179,7 +179,10 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // over them — the order `layer_rank::MENU` below `layer_rank::CONTEXT_MENU`
     // states in the precedence table, expressed here as the order they are
     // declared in.
-    let frame = frame.children(super::menu::dropdown_chain(&f.dropdowns));
+    let frame = match super::menu::dropdown_chain(&f.dropdowns) {
+        Some(chain) => frame.child(chain),
+        None => frame,
+    };
     match &f.menu {
         Some(menu) => frame.child(super::context_menu::context_menu(menu)),
         None => frame,

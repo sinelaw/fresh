@@ -1159,6 +1159,14 @@ pub struct Editor {
     /// before a layer's dismissal closed one. The menu bar's toggle reads it.
     /// See `UiFact::MenuBarPress`.
     pub(crate) shell_menu_open_before: Option<usize>,
+    /// THE menu walk for the frame being rendered: rectangles, the shell's
+    /// description, and the theme-key provenance, all from one pass.
+    ///
+    /// Set by `shell_frame` at the top of `render` and read by everything else
+    /// that needs the menu's geometry — the theme inspector, the web `Scene`.
+    /// It replaced three invocations from three different bar rectangles,
+    /// reconciled only by a `debug_assert_eq!` that release builds compile out.
+    pub(crate) menu_layout_frame: Option<crate::view::ui::menu::MenuLayout>,
     /// What the pointer is over *in the shell's tree*, as the tree itself
     /// reported it.
     ///
