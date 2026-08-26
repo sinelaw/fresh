@@ -422,15 +422,34 @@ function topLineForScreenRow(
  * Read the viewport of the split showing `inst`, or null if it is not on
  * screen (another buffer is focused in that split, say).
  */
-function viewportOf(inst: BlameInstance): { topLine: number } | null {
+function viewportOf(inst: BlameInstance): { topLine: number; height: number } | null {
   for (const split of editor.listSplits()) {
     if (split.splitId !== inst.splitId) continue;
     if (split.bufferId !== inst.bufferId) continue;
     const topLine = split.viewport.topLine;
     if (topLine === null) return null;
-    return { topLine };
+    return { topLine, height: split.viewport.height };
   }
   return null;
+}
+
+/**
+ * Whether the whole view — every source line plus every header row — fits
+ * inside a viewport `height` rows tall.
+ *
+ * When it does there is nothing to scroll to, and scrolling anyway hides
+ * rows off the top to reveal blank space below. That is what holding the
+ * screen row did to a short file: the source buffer had no header rows, so
+ * its row offset was one smaller than blame could deliver, and blame made
+ * up the difference by scrolling the first block's header off screen.
+ *
+ * A buffer taller than the viewport is left alone: this editor does allow
+ * scrolling past the last line, the source view the row was measured
+ * against can itself be scrolled that way, and mirroring it is the point.
+ */
+function fitsInViewport(inst: BlameInstance, height: number): boolean {
+  const lineCount = Math.max(1, inst.lineByteOffsets.length);
+  return lineCount + inst.blocks.length <= height;
 }
 
 /**
@@ -474,7 +493,9 @@ function restoreView(inst: BlameInstance, cursorLine: number, screenRow: number)
   );
 
   if (inst.splitId === null) return;
-  const top = topLineForScreenRow(inst, line, screenRow);
+  const vp = viewportOf(inst);
+  let top = topLineForScreenRow(inst, line, screenRow);
+  if (vp && fitsInViewport(inst, vp.height)) top = 0;
   editor.setSplitScroll(
     inst.splitId,
     getLineByteOffset(inst.lineByteOffsets, inst.fileContent.length, top + 1),
@@ -678,9 +699,11 @@ async function show_git_blame() : Promise<void> {
   // opened to answer a question about that one line. The source buffer has
   // no virtual rows, so its screen row is a plain top-of-viewport delta.
   let sourceScreenRow: number | null = null;
+  let sourceViewportHeight = 0;
   for (const split of editor.listSplits()) {
     if (split.splitId === splitId && split.viewport.topLine !== null) {
       sourceScreenRow = sourceCursorLine - split.viewport.topLine;
+      sourceViewportHeight = split.viewport.height;
       break;
     }
   }
@@ -766,7 +789,12 @@ async function show_git_blame() : Promise<void> {
       // old behaviour and still the best available answer here.
       editor.scrollToLineCenter(splitId, result.bufferId, sourceCursorLine);
     } else {
-      const top = topLineForScreenRow(inst, sourceCursorLine, sourceScreenRow);
+      // The blame buffer is not on screen yet, so its own viewport cannot be
+      // read back here — but it takes the split the source buffer just had,
+      // so that height is the one it will get.
+      const top = fitsInViewport(inst, sourceViewportHeight)
+        ? 0
+        : topLineForScreenRow(inst, sourceCursorLine, sourceScreenRow);
       editor.setSplitScroll(
         splitId,
         getLineByteOffset(lineByteOffsets, fileContent.length, top + 1),

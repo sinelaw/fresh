@@ -2050,6 +2050,67 @@ fn test_git_blame_header_has_no_trailing_rule() {
     }
 }
 
+/// Holding the focused line's screen row must not scroll a file that
+/// already fits on screen. The source buffer has no header rows, so its row
+/// offset is one smaller than the blame view can deliver, and an unclamped
+/// scroll makes up the difference by pushing the first block's header off
+/// the top — leaving a blame view with no visible header at all.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_does_not_scroll_a_file_that_fits_on_screen() {
+    let repo = GitTestRepo::new();
+
+    // Short enough that every line plus the single header fits in the 40-row
+    // harness with room to spare, so there is nothing to scroll to.
+    let mut content = String::new();
+    for i in 1..=20 {
+        content.push_str(&format!("Line {i}\n"));
+    }
+    repo.create_file("test.txt", &content);
+    repo.git_add(&["test.txt"]);
+    repo.git_commit("Initial commit");
+    repo.setup_git_blame_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("test.txt");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("Line 20"))
+        .unwrap();
+
+    // Put the cursor down the file, so a row-preserving scroll would have
+    // something to get wrong.
+    for _ in 0..14 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(15))
+        .unwrap();
+
+    trigger_git_blame(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("──"),
+        "the block header scrolled off the top of a file that fits on screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("Line 1\n") || screen.contains("Line 1 "),
+        "the first line scrolled off the top of a file that fits on screen:\n{screen}"
+    );
+}
+
 /// `b` walks into history one commit at a time, so `q` unwinds it the same
 /// way: from one hop deep, the first `q` returns to the blame it came from
 /// and only the second closes the view. Closing outright from several hops
