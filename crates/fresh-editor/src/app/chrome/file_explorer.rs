@@ -161,7 +161,7 @@ impl Editor {
         let viewport = track.height as usize;
         let view = self.file_explorer()?;
         let max_scroll = view.max_scroll_offset();
-        if max_scroll == 0 || viewport == 0 {
+        if max_scroll == 0 || viewport < 2 {
             return None;
         }
         let state = crate::view::ui::scrollbar::ScrollbarState::new(
