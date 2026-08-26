@@ -2052,6 +2052,7 @@ mod tests {
         setting_type: super::super::schema::SettingType,
         default: serde_json::Value,
         entry_value: serde_json::Value,
+        nullable: bool,
     ) -> SettingsState {
         use super::super::entry_dialog::EntryDialogState;
         use super::super::schema::{SettingSchema, SettingType};
@@ -2066,7 +2067,7 @@ mod tests {
             read_only: false,
             section: None,
             order: None,
-            nullable: false,
+            nullable,
             enum_from: None,
             dual_list_sibling: None,
             dynamically_extendable_status_bar_elements: false,
@@ -2153,6 +2154,7 @@ mod tests {
             SettingType::String,
             serde_json::json!(""),
             serde_json::json!({ "command": "" }),
+            false,
         )
     }
 
@@ -2350,6 +2352,7 @@ mod tests {
             },
             serde_json::json!(4),
             serde_json::json!({ "tab_size": 42 }),
+            false,
         );
         let mut ctx = InputContext::new();
         assert_eq!(dialog_number_edit_buffer(&state), "42");
@@ -2389,5 +2392,72 @@ mod tests {
             "79",
             "Right must move the caret in a Number field"
         );
+    }
+
+    /// Marking a field edited does more than flip the dialog's dirty bit: it
+    /// also clears the field's inherited/null state, so the field stops
+    /// falling back to the parent value and starts being persisted with one
+    /// of its own. That is why the shared-table seam keys off the value
+    /// changing rather than off the key being handled — a user who tabs into
+    /// an inherited field and only moves the caret must leave it inherited,
+    /// and must not be asked to discard changes on the way out.
+    ///
+    /// The dirty bit and the inherited flag are model state with no direct
+    /// rendering of their own, so this is a unit test on the component.
+    #[test]
+    fn test_entry_dialog_caret_motion_leaves_an_inherited_field_alone() {
+        use super::super::schema::SettingType;
+
+        let mut state = entry_dialog_editing_field(
+            "command",
+            "Command",
+            SettingType::String,
+            serde_json::json!(null),
+            serde_json::json!({ "command": null }),
+            true, // nullable: the field opens inherited (unset)
+        );
+        let mut ctx = InputContext::new();
+
+        let inherited = |state: &SettingsState| -> bool {
+            let dialog = state.entry_dialog().expect("dialog present");
+            dialog.items[dialog.selected_item].is_null
+        };
+        let dirty = |state: &SettingsState| -> bool {
+            state.entry_dialog().expect("dialog present").is_dirty()
+        };
+        assert!(inherited(&state), "precondition: field opens inherited");
+        assert!(!dirty(&state), "precondition: dialog opens clean");
+
+        // Every caret and selection key the shared table handles. None of
+        // them changes the value, so none may touch either flag.
+        for event in [
+            key(KeyCode::Home),
+            key(KeyCode::End),
+            key(KeyCode::Left),
+            key(KeyCode::Right),
+            KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Home, KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT),
+        ] {
+            state.handle_key_event(&event, &mut ctx);
+        }
+        assert!(
+            inherited(&state),
+            "caret motion must not clear the field's inherited state"
+        );
+        assert!(
+            !dirty(&state),
+            "caret motion must not mark the dialog modified"
+        );
+
+        // A keystroke that does change the value still does both.
+        state.handle_key_event(&key(KeyCode::Char('p')), &mut ctx);
+        assert_eq!(dialog_text_value(&state), "p");
+        assert!(
+            !inherited(&state),
+            "typing must give the field a value of its own"
+        );
+        assert!(dirty(&state), "typing must mark the dialog modified");
     }
 }
