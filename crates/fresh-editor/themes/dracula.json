@@ -29,7 +29,7 @@
   },
   "ui": {
     "blame_header_fg": [248, 248, 242],
-    "blame_header_bg": [68, 71, 90],
+    "blame_header_bg": [96, 96, 96],
     "semantic_highlight_bg": [96, 96, 96],
     "tour_step_bg": [68, 71, 90],
     "tab_active_fg": [248, 248, 242],

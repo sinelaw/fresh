@@ -3519,20 +3519,56 @@ mod tests {
         }
     }
 
+    /// Relative luminance (WCAG 2.1) of an 8-bit RGB colour.
+    fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+        fn channel(v: u8) -> f64 {
+            let v = f64::from(v) / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    /// WCAG contrast ratio between two colours, or `None` when either defers
+    /// to the terminal palette (`terminal` names its colours, and what the
+    /// emulator paints them is not knowable here).
+    fn contrast_ratio(a: Color, b: Color) -> Option<f64> {
+        let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) = (a, b) else {
+            return None;
+        };
+        let (la, lb) = (
+            relative_luminance(ar, ag, ab),
+            relative_luminance(br, bg, bb),
+        );
+        let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+        Some((hi + 0.05) / (lo + 0.05))
+    }
+
     /// A git-blame header band separates one commit's block from the next,
     /// so it must not be drawn on the editor's own background. The band used
     /// to borrow `ui.status_bar_bg`, which `dark` sets to exactly `editor.bg`
     /// and `high-contrast` sets a hair off black — the header was there and
     /// invisible.
     ///
+    /// "Not equal" turned out to be far too weak a bar: `light` separated by
+    /// a ratio of 1.17 and `dark`, `dracula` and `nord` by 1.45–1.56, all of
+    /// which read as one flat surface. So the thresholds are contrast ratios,
+    /// not inequality — the band has to be a step off the body, and its text
+    /// has to clear WCAG AA against the band it sits on.
+    ///
     /// The fallback (`ui.menu_bg` / `ui.menu_fg`) is an exact borrow, not a
-    /// computed shade, so it cannot guarantee a visible band on its own — a
-    /// theme whose menu shares the editor background would inherit that.
-    /// Every shipped theme therefore names both keys itself, and this pins
-    /// both halves of that: the keys are present in the JSON, and the colors
-    /// they name actually separate.
+    /// computed shade, so it cannot guarantee any of this on its own. Every
+    /// shipped theme therefore names both keys itself, which this also pins.
     #[test]
     fn test_all_builtin_themes_draw_blame_headers_off_the_editor_background() {
+        /// A visible step between the band and the code around it.
+        const MIN_BAND_VS_BODY: f64 = 2.0;
+        /// WCAG AA for normal-size text.
+        const MIN_TEXT_VS_BAND: f64 = 4.5;
+
         for builtin in BUILTIN_THEMES {
             let raw: serde_json::Value = serde_json::from_str(builtin.json)
                 .unwrap_or_else(|e| panic!("Theme '{}' is not valid JSON: {}", builtin.name, e));
@@ -3550,17 +3586,29 @@ mod tests {
 
             let theme = Theme::from_json(builtin.json)
                 .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
-            assert_ne!(
-                theme.blame_header_bg, theme.editor_bg,
-                "Theme '{}': the git-blame header band's background equals the editor \
-                 background, so the band that separates commit blocks is invisible",
-                builtin.name
-            );
-            assert_ne!(
-                theme.blame_header_fg, theme.blame_header_bg,
-                "Theme '{}': the git-blame header text is the same color as its band",
-                builtin.name
-            );
+
+            if let Some(ratio) = contrast_ratio(theme.blame_header_bg, theme.editor_bg) {
+                assert!(
+                    ratio >= MIN_BAND_VS_BODY,
+                    "Theme '{}': the git-blame header band contrasts with the editor \
+                     background by only {:.2}, under the {:.2} needed for the band to read \
+                     as separating one commit's block from the next",
+                    builtin.name,
+                    ratio,
+                    MIN_BAND_VS_BODY
+                );
+            }
+
+            if let Some(ratio) = contrast_ratio(theme.blame_header_fg, theme.blame_header_bg) {
+                assert!(
+                    ratio >= MIN_TEXT_VS_BAND,
+                    "Theme '{}': the git-blame header text contrasts with its own band by \
+                     only {:.2}, under the WCAG AA bar of {:.2}",
+                    builtin.name,
+                    ratio,
+                    MIN_TEXT_VS_BAND
+                );
+            }
         }
     }
 
