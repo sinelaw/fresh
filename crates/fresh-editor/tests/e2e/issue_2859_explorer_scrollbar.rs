@@ -299,12 +299,17 @@ fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
     let row = row as u16;
     // Count cells, not bytes, so the multi-byte border/marker glyphs don't
     // skew the column.
-    let glyph_col = line[..line.find('●').unwrap()].chars().count() as u16;
+    let glyph_col = line.chars().position(|c| c == '●').unwrap() as u16;
 
-    assert!(
-        glyph_col < SCROLLBAR_COL,
-        "the status glyph belongs in the row's content lane, left of the \
-         scrollbar at column {SCROLLBAR_COL}, but is painted at {glyph_col}.\nScreen:\n{screen}"
+    // Pin the column, not just "left of the bar": the marker is right-aligned
+    // into the last column of the row's content, which is the one immediately
+    // before the scrollbar. Anything else means the bar has pushed the row's
+    // layout around, which is what it must not do.
+    assert_eq!(
+        glyph_col,
+        SCROLLBAR_COL - 1,
+        "the status glyph belongs in the last content column, immediately \
+         left of the scrollbar at column {SCROLLBAR_COL}.\nScreen:\n{screen}"
     );
 
     harness.mouse_move(glyph_col, row).unwrap();
