@@ -965,8 +965,12 @@ fn render_widget_text(
             max_visible_chars,
             effective_field_width,
             full_width,
+            prev_scroll,
         );
-        new_scroll = 0;
+        // Single-line fields spend `scroll` on the horizontal window
+        // (the first painted value char), so a caret that walks into
+        // the hidden head brings the view with it.
+        new_scroll = rendered.scroll_chars;
         let mut entry = rendered.entry;
         // Lead the single-line input with the focus-marker gutter
         // (`▸ ` when focused, two spaces otherwise) so focus is

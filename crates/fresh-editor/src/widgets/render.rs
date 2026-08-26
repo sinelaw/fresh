@@ -2989,16 +2989,25 @@ pub struct RenderedTextInput {
     /// Total byte length of the (untruncated) value. A click past the
     /// last visible character clamps the cursor here (end-of-value).
     pub value_len: usize,
+    /// First value **char** the field painted — the horizontal scroll
+    /// window's left edge, to hand back on the next render so the view
+    /// only moves when the caret asks it to. `0` when the whole value
+    /// fits (or the field has no constant width).
+    pub scroll_chars: u32,
 }
 
 /// Render a `TextInput`.
 ///
 /// Layout: `Label: [<inner>]` (or `[<inner>]` with no label).
 /// `<inner>` is exactly `field_width` chars wide when
-/// `field_width > 0` — short values pad with trailing spaces, long
-/// values head-truncate with `…` so the cursor (typically near the
-/// tail) stays visible. With `field_width == 0` the input grows
-/// with the value (legacy behaviour, also used by tests).
+/// `field_width > 0` — short values pad with trailing spaces; a long
+/// value is shown through a horizontal window that follows the
+/// caret, with `…` marking whichever end is cut off. `scroll_chars`
+/// is the window's left edge from the previous render (the caller
+/// persists the returned `scroll_chars`), so the view holds still
+/// while the caret moves inside it and slides only when the caret
+/// would leave. With `field_width == 0` the input grows with the
+/// value (legacy behaviour, also used by tests).
 ///
 /// Placeholder: when unfocused and empty, the placeholder string
 /// is shown in `ui.menu_disabled_fg`. Focused inputs always show
@@ -3026,6 +3035,7 @@ pub fn render_text_input(
     max_visible_chars: u32,
     field_width: u32,
     full_width: bool,
+    scroll_chars: u32,
 ) -> RenderedTextInput {
     // Placeholder visibility: the value-empty state, regardless of
     // focus. The placeholder remains in the field until the user
@@ -3049,6 +3059,9 @@ pub fn render_text_input(
     // branch; stay 0 when the whole value is visible.
     let mut value_dropped_bytes = 0usize;
     let mut ellipsis_bytes = 0usize;
+    // Window left edge to hand back to the caller. Only the
+    // constant-width long-value path moves it off 0.
+    let mut scroll_out = 0u32;
 
     // Build `<inner>` plus the byte offset of the cursor *within*
     // `<inner>` (not yet including `[`/label offsets). This is the
@@ -3107,32 +3120,95 @@ pub fn render_text_input(
             }
             (padded, Some(raw_cursor_byte))
         } else {
-            // Long value: head-truncate to fit `target - 1` value
-            // chars + 1 ellipsis. When focused, append a trailing
-            // pad space (cursor parks there at end-of-value).
-            let keep = target - 1;
-            let drop_chars = value_chars.len() - keep;
-            let mut dropped_bytes = 0usize;
-            for ch in value_chars.iter().take(drop_chars) {
-                dropped_bytes += ch.len_utf8();
+            // Long value: a `target`-wide window slides over it,
+            // following the caret, with `…` on whichever end is cut
+            // off. Before this the field was pinned to the *tail* and
+            // a caret in the hidden head was clamped to the first
+            // visible char — so Home / Left / Ctrl+Left walked the
+            // caret back through text that was never painted, and the
+            // start of a long value could not be seen while editing
+            // it. When focused, a trailing pad space follows the
+            // window (the caret parks there at end-of-value).
+            let n = value_chars.len();
+            // Byte offset of every char boundary, so a window edge
+            // (a char index) slices the value without re-walking it.
+            let mut char_bytes: Vec<usize> = Vec::with_capacity(n + 1);
+            let mut acc = 0usize;
+            for ch in &value_chars {
+                char_bytes.push(acc);
+                acc += ch.len_utf8();
             }
-            let tail = &value[dropped_bytes..];
-            let mut s = String::with_capacity("…".len() + tail.len() + pad_extra);
-            s.push('…');
-            s.push_str(tail);
+            char_bytes.push(acc);
+            // The caret as a char index; a byte offset that lands
+            // mid-char (a malformed cursor) rounds down to its char.
+            let cursor_char = char_bytes
+                .iter()
+                .rposition(|&b| b <= raw_cursor_byte)
+                .unwrap_or(0);
+            // Columns a window starting at `start` can spend on value
+            // chars, and whether it needs a closing `…`: each cut end
+            // costs one column, and the right `…` is only worth
+            // painting if a value char still fits beside it.
+            let window_at = |start: usize| -> (usize, bool) {
+                let budget = target.saturating_sub(usize::from(start > 0));
+                if budget >= 2 && start + budget < n {
+                    (budget - 1, true)
+                } else {
+                    (budget, false)
+                }
+            };
+            // Never scroll past the point where the window still ends
+            // at the value's end — no blank columns at the tail.
+            let max_start = n.saturating_sub(target.saturating_sub(1));
+            let mut start = (scroll_chars as usize).min(max_start);
+            // Follow the caret: pull the window back when the caret
+            // walks off the head, push it on when it walks off the
+            // tail, and otherwise leave it exactly where the user left
+            // it. Moving `start` can add or drop an `…`, which changes
+            // the column budget, so re-check — it settles in two
+            // passes.
+            for _ in 0..3 {
+                let (cap, _) = window_at(start);
+                let end = (start + cap).min(n);
+                if cursor_char < start {
+                    start = cursor_char;
+                } else if cursor_char > end || (cursor_char == end && end < n) {
+                    // Park the caret on the window's last column.
+                    start = (cursor_char + 1).saturating_sub(cap).min(max_start);
+                } else {
+                    break;
+                }
+            }
+            let (cap, right_ellipsis) = window_at(start);
+            let end = (start + cap).min(n);
+            let left_ellipsis = start > 0;
+            let (start_byte, end_byte) = (char_bytes[start], char_bytes[end]);
+            let mut s = String::with_capacity(2 * "…".len() + (end_byte - start_byte) + pad_extra);
+            if left_ellipsis {
+                s.push('…');
+            }
+            s.push_str(&value[start_byte..end_byte]);
+            if right_ellipsis {
+                s.push('…');
+            }
             for _ in 0..pad_extra {
                 s.push(' ');
             }
-            // Cursor: if it sits in the dropped prefix, clamp to
-            // right after the `…` glyph; otherwise translate
-            // through the truncation.
-            let cursor_in_inner = if raw_cursor_byte < dropped_bytes {
-                "…".len()
+            // Cursor: inside the window it translates straight
+            // through; outside it (a stale offset the follow loop
+            // could not reach, e.g. a 1-column field) it clamps to
+            // the nearest visible edge.
+            let lead = if left_ellipsis { "…".len() } else { 0 };
+            let cursor_in_inner = if raw_cursor_byte <= start_byte {
+                lead
+            } else if raw_cursor_byte >= end_byte {
+                lead + (end_byte - start_byte)
             } else {
-                "…".len() + (raw_cursor_byte - dropped_bytes)
+                lead + (raw_cursor_byte - start_byte)
             };
-            value_dropped_bytes = dropped_bytes;
-            ellipsis_bytes = "…".len();
+            value_dropped_bytes = start_byte;
+            ellipsis_bytes = lead;
+            scroll_out = start as u32;
             (s, Some(cursor_in_inner))
         }
     } else if max_visible_chars > 0 && value.chars().count() > max_visible_chars as usize {
@@ -3254,6 +3330,7 @@ pub fn render_text_input(
         value_dropped_bytes,
         ellipsis_bytes,
         value_len: value.len(),
+        scroll_chars: scroll_out,
     }
 }
 
@@ -5024,20 +5101,21 @@ pub(crate) mod tests {
 
     #[test]
     fn text_input_renders_value_in_brackets() {
-        let entry = render_text_input("hello", -1, None, false, "", None, 0, 0, false).entry;
+        let entry = render_text_input("hello", -1, None, false, "", None, 0, 0, false, 0).entry;
         assert_eq!(entry.text, "[hello]");
         assert!(entry.inline_overlays.is_empty());
     }
 
     #[test]
     fn text_input_with_label_prefixes_with_label_space() {
-        let entry = render_text_input("foo", -1, None, false, "Search:", None, 0, 0, false).entry;
+        let entry =
+            render_text_input("foo", -1, None, false, "Search:", None, 0, 0, false, 0).entry;
         assert_eq!(entry.text, "Search: [foo]");
     }
 
     #[test]
     fn text_input_focused_adds_input_bg_overlay() {
-        let entry = render_text_input("x", -1, None, true, "", None, 0, 0, false).entry;
+        let entry = render_text_input("x", -1, None, true, "", None, 0, 0, false, 0).entry;
         // Focused → input-bg overlay (no cursor since cursor_byte < 0).
         assert_eq!(entry.inline_overlays.len(), 1);
         let bg = entry.inline_overlays[0].style.bg.as_ref().unwrap();
@@ -5048,8 +5126,19 @@ pub(crate) mod tests {
     fn text_input_focused_with_selection_adds_selection_bg_overlay() {
         // Focused + selection range → input-bg overlay AND a
         // selection-bg overlay scoped to the selected bytes.
-        let entry =
-            render_text_input("hello world", 5, Some((0, 5)), true, "", None, 0, 0, false).entry;
+        let entry = render_text_input(
+            "hello world",
+            5,
+            Some((0, 5)),
+            true,
+            "",
+            None,
+            0,
+            0,
+            false,
+            0,
+        )
+        .entry;
         // First char is at byte 1 (after `[`); selection over
         // bytes 0..5 of value → entry bytes 1..6.
         let sel = entry
@@ -5069,7 +5158,7 @@ pub(crate) mod tests {
         // Selection only paints when focused — an inactive widget
         // shows no highlight.
         let entry =
-            render_text_input("hello", -1, Some((0, 5)), false, "", None, 0, 0, false).entry;
+            render_text_input("hello", -1, Some((0, 5)), false, "", None, 0, 0, false, 0).entry;
         let has_sel_overlay = entry.inline_overlays.iter().any(|o| {
             o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some("ui.text_input_selection_bg")
         });
@@ -5112,7 +5201,7 @@ pub(crate) mod tests {
         // *within entry.text*. text = "[abc ]" (focused → trailing
         // pad space). 'a' at byte 1, 'b' at 2, 'c' at 3 — so a
         // cursor at value-byte 1 lands at entry-byte 2.
-        let r = render_text_input("abc", 1, None, true, "", None, 0, 0, false);
+        let r = render_text_input("abc", 1, None, true, "", None, 0, 0, false, 0);
         assert_eq!(r.cursor_byte_in_entry, Some(2));
     }
 
@@ -5123,7 +5212,7 @@ pub(crate) mod tests {
         // overlaps the closing bracket. text = "[ab ]" → cursor
         // at value-byte 2 lands at entry-byte 3 (the space), not
         // at byte 4 (the `]`).
-        let r = render_text_input("ab", 2, None, true, "", None, 0, 0, false);
+        let r = render_text_input("ab", 2, None, true, "", None, 0, 0, false, 0);
         assert_eq!(r.entry.text, "[ab ]");
         assert_eq!(r.cursor_byte_in_entry, Some(3));
         assert_ne!(r.cursor_byte_in_entry, Some(4), "must not overlap ]");
@@ -5132,7 +5221,7 @@ pub(crate) mod tests {
     #[test]
     fn text_input_unfocused_empty_shows_placeholder_in_muted() {
         let entry =
-            render_text_input("", -1, None, false, "", Some("type here"), 0, 0, false).entry;
+            render_text_input("", -1, None, false, "", Some("type here"), 0, 0, false, 0).entry;
         assert_eq!(entry.text, "[type here]");
         // Placeholder gets a muted-fg italic overlay.
         let placeholder_overlay = entry
@@ -5150,7 +5239,7 @@ pub(crate) mod tests {
         // New behaviour: placeholder remains visible while focused
         // until the user types something. Cursor parks at byte 0
         // of the placeholder so the first keystroke replaces it.
-        let r = render_text_input("", -1, None, true, "", Some("type here"), 0, 0, false);
+        let r = render_text_input("", -1, None, true, "", Some("type here"), 0, 0, false, 0);
         assert_eq!(r.entry.text, "[type here]");
         assert_eq!(r.cursor_byte_in_entry, Some(1));
     }
@@ -5159,7 +5248,7 @@ pub(crate) mod tests {
     fn text_input_field_width_pads_short_value_unfocused() {
         // field_width=10, unfocused, not full_width → inner is 10
         // chars (no extra cursor-park pad).
-        let r = render_text_input("hi", 2, None, false, "", None, 0, 10, false);
+        let r = render_text_input("hi", 2, None, false, "", None, 0, 10, false, 0);
         assert_eq!(r.entry.text, "[hi        ]");
     }
 
@@ -5168,7 +5257,7 @@ pub(crate) mod tests {
         // field_width=10, focused, value fills exactly 10 → inner
         // is 11 chars (10 + 1 cursor-park space) so the cursor at
         // end-of-value never lands on `]`.
-        let r = render_text_input("0123456789", 10, None, true, "", None, 0, 10, false);
+        let r = render_text_input("0123456789", 10, None, true, "", None, 0, 10, false, 0);
         assert_eq!(r.entry.text, "[0123456789 ]");
         // Cursor at byte 10 of value → byte 10 of inner → byte 11
         // of entry.text (after `[`). That's the cursor-park space,
@@ -5182,7 +5271,7 @@ pub(crate) mod tests {
         // full_width=true makes the inner reserve the cursor-park
         // space whether or not the input is focused, so the field
         // doesn't "jump" wider on focus.
-        let r = render_text_input("hi", -1, None, false, "", None, 0, 10, true);
+        let r = render_text_input("hi", -1, None, false, "", None, 0, 10, true, 0);
         assert_eq!(r.entry.text, "[hi         ]"); // 10 + 1 trailing pad
     }
 
@@ -5200,26 +5289,94 @@ pub(crate) mod tests {
             0,
             10,
             false,
+            0,
         );
         assert!(r.entry.text.contains("…lmnopqrst"));
     }
 
     #[test]
-    fn text_input_field_width_clamps_cursor_in_dropped_prefix() {
-        // Long value, field_width=5, focused, cursor at byte 0 (in
-        // dropped prefix) → clamped to right after the `…`.
-        let r = render_text_input("abcdefghij", 0, None, true, "", None, 0, 5, false);
-        // Inner = `…fghij ` (1 ellipsis + 4 tail chars + 1 pad).
-        // Cursor at "right after `…`" = byte 3 of inner (3 = `…`'s
-        // UTF-8 byte length). entry.text has `[` before, so
-        // absolute byte = 1 + 3 = 4.
+    fn text_input_field_width_window_follows_caret_to_the_value_start() {
+        // Long value, field_width=5, focused, caret at byte 0: the
+        // window scrolls home so the caret sits on the value's first
+        // char — it used to clamp to just right of a `…` that never
+        // moved, leaving the head of the value unreachable on screen.
+        let r = render_text_input("abcdefghij", 0, None, true, "", None, 0, 5, false, 9);
+        // Inner = `abcd…` (4 value chars + the cut-tail marker) plus
+        // the focused pad space; `[` precedes it in `entry.text`.
+        assert_eq!(r.entry.text, "[abcd… ]");
+        assert_eq!(r.cursor_byte_in_entry, Some(1));
+        assert_eq!(r.scroll_chars, 0);
+        // Nothing is hidden off the left, so a click maps straight
+        // through (no leading ellipsis to step over).
+        assert_eq!(r.value_dropped_bytes, 0);
+        assert_eq!(r.ellipsis_bytes, 0);
+    }
+
+    #[test]
+    fn text_input_field_width_window_holds_still_while_the_caret_moves_inside_it() {
+        // Window parked at char 5 (`fghi` + markers). A caret inside
+        // it moves without dragging the view along.
+        let r = render_text_input("abcdefghijklmn", 7, None, true, "", None, 0, 6, false, 5);
+        assert_eq!(r.entry.text, "[…fghi… ]");
+        assert_eq!(r.scroll_chars, 5);
+        // Caret on 'h' = value byte 7 = 2 chars past the window start,
+        // after `[` and the leading `…`.
+        assert_eq!(r.cursor_byte_in_entry, Some(1 + "…".len() + 2));
+        assert_eq!(r.value_dropped_bytes, 5);
+        assert_eq!(r.ellipsis_bytes, "…".len());
+    }
+
+    #[test]
+    fn text_input_field_width_window_slides_one_char_when_the_caret_steps_out() {
+        // Caret one char left of the window start pulls the window
+        // back by exactly that much — a Left-key walk scrolls the
+        // value smoothly instead of stopping dead.
+        let r = render_text_input("abcdefghijklmn", 4, None, true, "", None, 0, 6, false, 5);
+        assert_eq!(r.scroll_chars, 4);
+        assert_eq!(r.entry.text, "[…efgh… ]");
         assert_eq!(r.cursor_byte_in_entry, Some(1 + "…".len()));
+    }
+
+    #[test]
+    fn text_input_field_width_window_pushes_right_when_the_caret_passes_its_end() {
+        // Caret past the window's last column pushes the window on so
+        // the caret stays painted (typing at the tail, End, a click
+        // beyond the view).
+        let r = render_text_input("abcdefghijklmn", 14, None, true, "", None, 0, 6, false, 0);
+        // Window at the far end: `…jklmn` + the caret's pad space.
+        assert_eq!(r.entry.text, "[…jklmn ]");
+        assert_eq!(r.scroll_chars, 9);
+        assert_eq!(r.cursor_byte_in_entry, Some(1 + "…".len() + 5));
+    }
+
+    #[test]
+    fn text_input_field_width_window_resets_once_the_value_fits_again() {
+        // Value trimmed back under the field width: the window snaps
+        // home and the persisted offset clears, so the field doesn't
+        // stay scrolled off a value it can show whole.
+        let r = render_text_input("abc", 3, None, true, "", None, 0, 6, false, 9);
+        assert_eq!(r.entry.text, "[abc    ]");
+        assert_eq!(r.scroll_chars, 0);
+    }
+
+    #[test]
+    fn text_input_field_width_window_handles_multibyte_values() {
+        // Multi-byte chars: the window is measured in chars, sliced on
+        // char boundaries, and the caret byte maps through both `…`
+        // and the wide chars before it.
+        let value = "αβγδεζηθικλμ";
+        let caret = value.char_indices().nth(6).unwrap().0; // before 'η'
+        let r = render_text_input(value, caret as i32, None, true, "", None, 0, 5, false, 8);
+        assert_eq!(r.scroll_chars, 6);
+        assert_eq!(r.entry.text, "[…ηθι… ]");
+        assert_eq!(r.cursor_byte_in_entry, Some(1 + "…".len()));
+        assert_eq!(r.value_dropped_bytes, "αβγδεζ".len());
     }
 
     #[test]
     fn text_input_truncates_long_value_keeping_tail_visible() {
         let value: String = "0123456789abcdefghij".to_string();
-        let entry = render_text_input(&value, -1, None, false, "", None, 6, 0, false).entry;
+        let entry = render_text_input(&value, -1, None, false, "", None, 6, 0, false, 0).entry;
         // Tail-truncated to "…fghij" (max=6, take=5 chars).
         assert_eq!(entry.text, "[…fghij]");
     }
@@ -6205,6 +6362,79 @@ pub(crate) mod tests {
         assert!(out.entries[0].text.starts_with("Note:"));
         let fc = out.focus_cursor.unwrap();
         assert_eq!(fc.buffer_row, 1);
+    }
+
+    /// A single-line field whose value outgrows it keeps its
+    /// horizontal window in instance state, so the window survives
+    /// the renders that happen between keystrokes: the caret walking
+    /// into the hidden head drags the view back with it (the field
+    /// used to paint the tail unconditionally, stranding the start of
+    /// a long value off-screen for good), and a caret moving *inside*
+    /// the window leaves the view alone.
+    #[test]
+    fn single_line_field_window_follows_the_caret_across_renders() {
+        let value = "0123456789abcdefghij";
+        let field = |cursor: usize, scroll: u32| {
+            let spec = WidgetSpec::Text {
+                sel_start: -1,
+                sel_end: -1,
+                block_caret: false,
+                label_width: 0,
+                value: value.into(),
+                cursor_byte: cursor as i32,
+                focused: true,
+                label: String::new(),
+                placeholder: None,
+                rows: 1,
+                field_width: 8,
+                max_visible_chars: 0,
+                full_width: false,
+                completions: Vec::new(),
+                completions_visible_rows: 0,
+                read_only: false,
+                markdown: false,
+                key: Some("f".into()),
+            };
+            let mut editor = crate::primitives::text_edit::TextEdit::single_line_with_text(value);
+            editor.set_cursor_from_flat(cursor);
+            let mut prev = HashMap::new();
+            prev.insert(
+                "f".into(),
+                WidgetInstanceState::Text {
+                    editor,
+                    scroll,
+                    completions: Vec::new(),
+                    completion_selected_index: 0,
+                    completion_scroll_offset: 0,
+                    completion_navigated: false,
+                    user_scrolled: false,
+                },
+            );
+            let out = render_spec(&spec, &prev, "f", 80);
+            let row = out.entries[0].text.trim_end_matches('\n').to_string();
+            let scroll = match out.instance_states.get("f") {
+                Some(WidgetInstanceState::Text { scroll, .. }) => *scroll,
+                other => panic!("expected Text instance state, got {:?}", other),
+            };
+            (row, scroll)
+        };
+
+        // Caret at end: the window sits at the tail, as it always did.
+        let (row, scroll) = field(value.len(), 0);
+        assert!(row.contains("…defghij"), "row: {row}");
+        assert_eq!(scroll, 13);
+
+        // Caret walked home: the window comes back to the value's
+        // start and the head is painted.
+        let (row, scroll) = field(0, 13);
+        assert!(row.contains("[0123456…"), "row: {row}");
+        assert_eq!(scroll, 0);
+
+        // Caret one step right of the window start: the view holds
+        // still rather than re-anchoring on the caret.
+        let (row, scroll) = field(1, 0);
+        assert!(row.contains("[0123456…"), "row: {row}");
+        assert_eq!(scroll, 0);
     }
 
     #[test]
