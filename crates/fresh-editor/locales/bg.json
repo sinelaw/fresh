@@ -1006,6 +1006,8 @@
   "explorer.moved_to_trash": "Преместено в кошчето: %{name}",
   "explorer.new_directory_prompt": "Име на новата папка: ",
   "explorer.new_file_prompt": "Име на новия файл: ",
+  "explorer.new_item_path_must_be_relative": "Пътят на новия елемент трябва да бъде относителен",
+  "explorer.new_item_path_outside_project": "Пътят на новия елемент трябва да остане в директорията на проекта",
   "explorer.opened": "Файловият браузър е отворен",
   "explorer.opened_file": "Отворен: %{name}",
   "explorer.paste_cancelled": "Поставянето е отменено",
