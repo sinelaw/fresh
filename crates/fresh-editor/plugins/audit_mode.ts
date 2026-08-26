@@ -817,6 +817,50 @@ async function getGitStatus(): Promise<GitStatusResult> {
 }
 
 /**
+ * Restore git's default `a/` / `b/` path prefixes. Written as `-c` overrides
+ * rather than `--src-prefix=`/`--dst-prefix=`: `git stash show` garbles those
+ * two, while `-c` behaves the same for every sub-command.
+ */
+const DIFF_PREFIX_CONFIG = [
+    "-c", "diff.noprefix=false",
+    "-c", "diff.mnemonicPrefix=false",
+    "-c", "diff.srcPrefix=a/",
+    "-c", "diff.dstPrefix=b/",
+];
+
+/**
+ * Build the `git` argv for a diff-producing sub-command whose stdout
+ * `parseDiffOutput` parses and `buildHunkPatch` rebuilds for `git apply`.
+ * Each knob neutralised here is one a user may legitimately have set, and any
+ * one alone leaves the parser with zero hunks: `diff.external` swaps in a
+ * tool's own format, textconv diffs converted text (so hunk line numbers stop
+ * addressing the real file), `color.diff=always` wraps every line in escapes,
+ * and the prefix settings break the `a/`/`b/` paths it matches on.
+ */
+function diffArgs(subcommand: string[], ...rest: string[]): string[] {
+    return [
+        ...DIFF_PREFIX_CONFIG,
+        ...subcommand,
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        ...rest,
+    ];
+}
+
+/**
+ * Route an already-assembled git argv through `diffArgs`, splitting it at its
+ * first option so the leading sub-command words (`diff`, `stash show`, …) stay
+ * in front. Lets callers that build the argv dynamically inherit the format
+ * pinning instead of each having to repeat the flag list.
+ */
+function withDiffArgs(command: string[]): string[] {
+    const firstOption = command.findIndex(a => a.startsWith("-"));
+    const cut = firstOption === -1 ? command.length : firstOption;
+    return diffArgs(command.slice(0, cut), ...command.slice(cut));
+}
+
+/**
  * Fetch unified diffs for the given file entries.
  * Groups by category to minimize git invocations.
  */
@@ -830,7 +874,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
     // Staged diffs
     if (hasStaged) {
-        const result = await editor.spawnProcess("git", ["diff", "--no-ext-diff", "--cached", "--unified=3"], cwd);
+        const result = await editor.spawnProcess("git", diffArgs(["diff"], "--cached", "--unified=3"), cwd);
         if (result.exit_code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'staged'));
         }
@@ -838,7 +882,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
     // Unstaged diffs
     if (hasUnstaged) {
-        const result = await editor.spawnProcess("git", ["diff", "--no-ext-diff", "--unified=3"], cwd);
+        const result = await editor.spawnProcess("git", diffArgs(["diff"], "--unified=3"), cwd);
         if (result.exit_code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'unstaged'));
         }
@@ -846,9 +890,11 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
     // Untracked file diffs
     for (const f of untrackedFiles) {
-        const result = await editor.spawnProcess("git", [
-            "diff", "--no-ext-diff", "--no-index", "--unified=3", "/dev/null", f.path
-        ], cwd);
+        const result = await editor.spawnProcess(
+            "git",
+            diffArgs(["diff"], "--no-index", "--unified=3", "/dev/null", f.path),
+            cwd,
+        );
         if (result.stdout.trim()) {
             const hunks = parseDiffOutput(result.stdout, 'untracked');
             for (const h of hunks) {
@@ -6874,10 +6920,10 @@ function parseRangeInput(input: string): ReviewRange | null {
  * still works; untracked / staged categories are meaningless here.
  */
 async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; files: FileEntry[] }> {
-    // This output is parsed as a unified patch below. A user-level
-    // `diff.external` setting (for example `difft`) changes the output format,
-    // so force Git's native formatter just as git-gutter does.
-    const args = range.command || ["diff", "--no-ext-diff", "--unified=3", `${range.from}..${range.to}`];
+    // The pinning flags go on *after* the override so every `range.command`
+    // inherits them; a source that spells out its own argv (the stash review)
+    // otherwise has to remember the whole list for itself.
+    const args = withDiffArgs(range.command || ["diff", "--unified=3", `${range.from}..${range.to}`]);
     const cwd = gitCwd();
     const result = await editor.spawnProcess("git", args, cwd);
     if (result.exit_code !== 0) {
@@ -7030,7 +7076,7 @@ editor.on("prompt_confirmed", (args) => {
         from: ref,
         to: ref,
         label: ref,
-        command: ["stash", "show", "-p", "--no-ext-diff", "--unified=3", ref],
+        command: ["stash", "show", "-p", "--unified=3", ref],
     });
     return true;
 });
@@ -7233,12 +7279,12 @@ async function side_by_side_diff_current_file() {
     let diffOutput: string;
     if (isUntracked) {
         // For untracked files, use --no-index to diff against /dev/null
-        const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "--no-ext-diff", "--no-index", "--unified=3", "--", "/dev/null", filePath]);
+        const result = await editor.spawnProcess("git", ["-C", gitRoot, ...diffArgs(["diff"], "--no-index", "--unified=3", "--", "/dev/null", filePath)]);
         // git diff --no-index exits with 1 when there are differences, which is expected
         diffOutput = result.stdout || "";
     } else {
         // For tracked files, use normal diff against HEAD
-        const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "--no-ext-diff", "HEAD", "--unified=3", "--", filePath]);
+        const result = await editor.spawnProcess("git", ["-C", gitRoot, ...diffArgs(["diff"], "HEAD", "--unified=3", "--", filePath)]);
         if (result.exit_code !== 0) {
             editor.setStatus(editor.t("status.failed_git_diff"));
             return;

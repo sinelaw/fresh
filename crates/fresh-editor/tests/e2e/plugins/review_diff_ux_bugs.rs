@@ -94,6 +94,47 @@ fn start_server(config: Config) {
     (repo, main_rs)
 }
 
+/// Switch on the git settings that rewrite `git diff`'s output. Each is
+/// something a real user's config may carry, and each on its own is enough to
+/// leave Review Diff's parser with zero hunks: an external driver prints its
+/// own format, a textconv filter diffs converted text, forced colour wraps
+/// every line in escapes, and the prefix settings strip the `a/`/`b/` paths
+/// the parser matches on.
+#[cfg(unix)]
+fn configure_hostile_diff_output(repo: &GitTestRepo) {
+    use crate::common::git_test_helper::git_command;
+    use std::os::unix::fs::PermissionsExt;
+
+    // Stand-ins for `difft` (diff.external) and `delta` (core.pager).
+    repo.setup_external_diff_and_pager();
+
+    // A textconv driver that collapses every `.rs` file to the same text, so
+    // an unsuppressed filter makes the change vanish rather than merely
+    // reformatting it.
+    let textconv = repo.create_file("textconv.sh", "#!/bin/sh\nprintf 'TEXTCONV\\n'\n");
+    fs::set_permissions(&textconv, fs::Permissions::from_mode(0o755))
+        .expect("make textconv script executable");
+    repo.create_file(".gitattributes", "*.rs diff=fresh-test\n");
+    let textconv = textconv.to_string_lossy().into_owned();
+
+    for (key, value) in [
+        ("diff.fresh-test.textconv", textconv.as_str()),
+        ("color.diff", "always"),
+        ("diff.noprefix", "true"),
+        ("diff.mnemonicPrefix", "true"),
+    ] {
+        let output = git_command(&repo.path)
+            .args(["config", "--local", key, value])
+            .output()
+            .expect("run git config");
+        assert!(
+            output.status.success(),
+            "git config {key} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // BUG-1: CompositeInputRouter dead code — side-by-side vim keys broken
 // ---------------------------------------------------------------------------
@@ -2077,12 +2118,12 @@ fn open_review_range_head(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
-/// A configured external diff driver may emit side-by-side text instead of a
-/// unified patch. Review Range parses Git's patch output, so it must bypass
-/// `diff.external` rather than mistaking the unparseable output for no changes.
+/// Review Range parses Git's patch output, so it has to pin the output format
+/// instead of mistaking a user's reformatted (or empty) diff for no changes.
 #[test]
 #[cfg(unix)]
-fn test_range_review_ignores_external_diff_and_pager() {
+fn test_range_review_ignores_external_diff_and_format_settings() {
+    init_tracing_from_env();
     let repo = GitTestRepo::new();
     setup_audit_mode_plugin(&repo);
 
@@ -2096,7 +2137,7 @@ fn test_range_review_ignores_external_diff_and_pager() {
     );
     repo.git_add_all();
     repo.git_commit("second commit");
-    repo.setup_external_diff_and_pager();
+    configure_hostile_diff_output(&repo);
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2112,7 +2153,48 @@ fn test_range_review_ignores_external_diff_and_pager() {
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("RANGE_EXTERNAL_DIFF_MARKER"),
-        "Review Range should render Git's native patch even when diff.external is configured. Screen:\n{screen}"
+        "Review Range should render Git's native patch even when diff.external, \
+         a textconv filter, colour and prefix settings are configured. Screen:\n{screen}"
+    );
+}
+
+/// The same for the working-tree review, which fetches its hunks through a
+/// different set of `git diff` invocations (staged / unstaged / untracked) and
+/// so needs the format pinned independently of the range path.
+#[test]
+#[cfg(unix)]
+fn test_review_diff_ignores_external_diff_and_format_settings() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    repo.create_file("src/main.rs", "fn main() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    // Leave the change in the working tree: this is the unstaged path.
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    // WORKTREE_EXTERNAL_DIFF_MARKER\n}\n",
+    );
+    configure_hostile_diff_output(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+
+    assert!(
+        screen.contains("WORKTREE_EXTERNAL_DIFF_MARKER"),
+        "Review Diff should render Git's native patch for the working tree even \
+         when diff.external, a textconv filter, colour and prefix settings are \
+         configured. Screen:\n{screen}"
     );
 }
 
