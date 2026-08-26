@@ -61,8 +61,24 @@ impl ViewLineMapping {
         // The first valid source byte marks the start, line_end_byte marks the end
         if let Some(first_byte) = self.char_source_bytes.iter().find_map(|b| *b) {
             byte_pos >= first_byte && byte_pos <= self.line_end_byte
+        } else if self.is_plugin_virtual {
+            // A plugin-injected row owns no byte of its own: its
+            // `line_end_byte` was inherited from the row above (0 when it is
+            // the first row on screen). Claiming that byte hides the real row
+            // that owns it from `find_visual_row`, which returns the *first*
+            // match — and every caller of that lookup is asking "which row is
+            // the cursor drawn on", never "which row was injected here".
+            //
+            // A git-blame header above the buffer's first line is the case
+            // where the two answers differ: it inherits `line_end_byte == 0`,
+            // so a cursor at byte 0 resolved to the header row, and MoveDown
+            // stepped from it onto line 1 — byte 0 again. Down did nothing
+            // until the cursor was moved off the start of the buffer some
+            // other way.
+            false
         } else {
-            // Empty/virtual row - only matches if byte_pos equals line_end_byte
+            // Empty row with no injected content (trailing line past the final
+            // newline, blank source line) - only matches at line_end_byte.
             byte_pos == self.line_end_byte
         }
     }
