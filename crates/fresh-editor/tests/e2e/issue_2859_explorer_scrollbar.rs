@@ -138,11 +138,24 @@ fn scrollable_file_explorer_draws_a_thumb_that_tracks_the_viewport() {
         harness.screen_to_string()
     );
 
-    // Wheel to the end of the tree; the thumb has to follow.
-    for _ in 0..60 {
+    // Wheel to the end of the tree; the thumb has to follow. Scrolling until
+    // the last entry shows says what we want, and doesn't quietly stop short
+    // if the file count, the panel height or the wheel step ever change. A
+    // notch that moves nothing means we will never get there, so say so
+    // rather than spinning.
+    loop {
+        let before = harness.screen_to_string();
+        if before.contains("file_79.txt") {
+            break;
+        }
         harness.mouse_scroll_down(3, body[1]).unwrap();
+        assert_ne!(
+            harness.screen_to_string(),
+            before,
+            "the wheel stopped scrolling before the end of the tree was \
+             reached.\nScreen:\n{before}"
+        );
     }
-    harness.render().unwrap();
 
     let at_bottom = thumb_rows(&harness);
     assert!(
@@ -273,11 +286,14 @@ fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
     harness.editor_mut().active_window_mut().focus_editor();
     harness.type_text("x").unwrap();
     harness.editor_mut().focus_file_explorer();
+    // Wait on one fact — the row being on screen — and assert the rest. A
+    // wait that conjoins several conditions turns any wrong expectation into
+    // a test-runner kill instead of a failure with a screen to look at.
     harness
         .wait_until(|h| {
             h.screen_to_string()
                 .lines()
-                .any(|l| l.starts_with('│') && l.contains("file_00.txt") && l.contains('●'))
+                .any(|l| l.starts_with('│') && l.contains("file_00.txt"))
         })
         .unwrap();
     // Refresh the layout cache (explorer rect, trailing-slot bounds) the
@@ -288,8 +304,12 @@ fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
     let (row, line) = screen
         .lines()
         .enumerate()
-        .find(|(_, l)| l.starts_with('│') && l.contains("file_00.txt") && l.contains('●'))
-        .unwrap_or_else(|| panic!("the unsaved file should carry ● .\nScreen:\n{screen}"));
+        .find(|(_, l)| l.starts_with('│') && l.contains("file_00.txt"))
+        .unwrap_or_else(|| panic!("the unsaved file should have a row.\nScreen:\n{screen}"));
+    assert!(
+        line.contains('●'),
+        "an unsaved buffer should mark its explorer row.\nScreen:\n{screen}"
+    );
     let row = row as u16;
     // Count cells, not bytes, so the multi-byte border/marker glyphs don't
     // skew the column.
