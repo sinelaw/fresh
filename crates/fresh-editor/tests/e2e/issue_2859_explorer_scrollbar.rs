@@ -260,3 +260,66 @@ fn file_explorer_that_fits_paints_no_scrollbar() {
         );
     }
 }
+
+/// The trailing status glyph is hit-tested where it is painted. The scrollbar
+/// lane is not part of a row's content, so hovering the bar reveals nothing
+/// about the file behind it.
+#[test]
+fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
+    let mut harness = harness_with_files(80);
+
+    // An unsaved buffer decorates its explorer row with "●" and a tooltip.
+    let project_root = harness.project_dir().unwrap();
+    harness
+        .open_file(&project_root.join("file_00.txt"))
+        .unwrap();
+    harness.editor_mut().active_window_mut().focus_editor();
+    harness.type_text("x").unwrap();
+    harness.editor_mut().focus_file_explorer();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|l| l.starts_with('│') && l.contains("file_00.txt") && l.contains('●'))
+        })
+        .unwrap();
+    // Refresh the layout cache (explorer rect, trailing-slot bounds) the
+    // hit-test reads.
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.starts_with('│') && l.contains("file_00.txt") && l.contains('●'))
+        .unwrap_or_else(|| panic!("the unsaved file should carry ● .\nScreen:\n{screen}"));
+    let row = row as u16;
+    // Count cells, not bytes, so the multi-byte border/marker glyphs don't
+    // skew the column.
+    let glyph_col = line[..line.find('●').unwrap()].chars().count() as u16;
+
+    assert!(
+        glyph_col < SCROLLBAR_COL,
+        "the status glyph belongs in the row's content lane, left of the \
+         scrollbar at column {SCROLLBAR_COL}, but is painted at {glyph_col}.\nScreen:\n{screen}"
+    );
+
+    harness.mouse_move(glyph_col, row).unwrap();
+    assert!(
+        harness
+            .screen_to_string()
+            .contains("Unsaved changes in editor"),
+        "hovering the status glyph should show its tooltip.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness.mouse_move(SCROLLBAR_COL, row).unwrap();
+    assert!(
+        !harness
+            .screen_to_string()
+            .contains("Unsaved changes in editor"),
+        "hovering the scrollbar must not show the status tooltip of the file \
+         behind it.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}
