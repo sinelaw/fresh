@@ -3816,7 +3816,8 @@ impl Editor {
         // (issue #2859). The ceiling is the model's own — pinned ancestors put
         // it past `total - rows`, and a bar that assumed otherwise showed the
         // thumb at the end while the wheel still moved the tree.
-        let scroll = (viewport_rows > 0 && display.len() > viewport_rows).then(|| {
+        // A one-row track cannot carry a useful thumb.
+        let scroll = (viewport_rows >= 2 && display.len() > viewport_rows).then(|| {
             let max_offset = view
                 .max_scroll_offset()
                 .min(display.len().saturating_sub(1));
