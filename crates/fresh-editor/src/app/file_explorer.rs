@@ -818,12 +818,23 @@ impl Editor {
             return;
         }
 
-        // Reject any platform path separator — `/` on all OSes plus `\` on
-        // Windows. `is_separator` is const-folded per platform so this keeps
-        // the same behavior on Linux (reject `/`) while also rejecting `\`
-        // when running on Windows.
-        if new_name.chars().any(std::path::is_separator) {
+        let requested_path = Path::new(&new_name);
+        let has_separator = new_name.chars().any(std::path::is_separator);
+
+        // Existing items are renamed in place, so their names must remain a
+        // single path component. Newly-created items may include separators:
+        // their missing parent directories are created below before the
+        // temporary item is moved into place.
+        if !is_new_file && has_separator {
             self.set_status_message(t!("explorer.rename_invalid_separator").to_string());
+            return;
+        }
+        // Joining an absolute/rooted path would discard the directory in
+        // which creation started. Prefix components cover Windows drive and
+        // UNC paths; RootDir covers `/foo` and `\foo`. Tilde and environment
+        // variable syntax remain ordinary, literal relative components.
+        if is_new_file && !is_relative_creation_path(requested_path) {
+            self.set_status_message(t!("explorer.new_item_path_must_be_relative").to_string());
             return;
         }
         if new_name == "." || new_name == ".." {
@@ -837,10 +848,55 @@ impl Editor {
             .unwrap_or_else(|| original_path.clone());
 
         if self.tokio_runtime.is_some() {
-            let result = self
-                .authority()
-                .filesystem
-                .rename(&original_path, &new_path);
+            let fs = std::sync::Arc::clone(&self.authority().filesystem);
+            if is_new_file {
+                // Only a name with separators can redirect the item out of
+                // the directory Ctrl+N already created it in unchecked.
+                if has_separator {
+                    match creation_path_is_within_project(
+                        fs.as_ref(),
+                        self.working_dir(),
+                        &new_path,
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            self.set_status_message(
+                                t!("explorer.new_item_path_outside_project").to_string(),
+                            );
+                            return;
+                        }
+                        Err(e) => {
+                            self.set_status_message(
+                                t!("explorer.error_renaming", error = e.to_string()).to_string(),
+                            );
+                            return;
+                        }
+                    }
+                }
+
+                // `rename` replaces an existing destination without warning,
+                // so a name that collides with a real file would destroy it.
+                // Refuse: the temporary item stays where it is and can be
+                // renamed again with F2.
+                if fs.exists(&new_path) {
+                    let name = truncate_name_for_prompt(&new_name, 40);
+                    self.set_status_message(
+                        t!("explorer.new_item_path_exists", name = &name).to_string(),
+                    );
+                    return;
+                }
+            }
+            let result = if is_new_file {
+                // `create_dir_all` is also safe when the parent already
+                // exists. Keep both operations on the active filesystem so
+                // local, virtual, and remote workspaces behave alike.
+                new_path
+                    .parent()
+                    .map_or(Ok(()), |parent| fs.create_dir_all(parent))
+                    .and_then(|()| fs.rename(&original_path, &new_path))
+            } else {
+                fs.rename(&original_path, &new_path)
+            };
 
             match result {
                 Ok(_) => {
@@ -2240,4 +2296,159 @@ fn split_stem_ext(name: &str) -> (&str, &str) {
         }
     }
     (name, "")
+}
+
+/// Whether a user-entered creation path stays relative to the selected
+/// directory. `Path::is_absolute` is insufficient on Windows because a drive
+/// prefix can replace the base path without being absolute (for example
+/// `C:foo`), so reject both root and prefix components explicitly.
+fn is_relative_creation_path(path: &Path) -> bool {
+    !matches!(
+        path.components().next(),
+        Some(std::path::Component::RootDir | std::path::Component::Prefix(_))
+    )
+}
+
+/// Check a not-yet-created target against the project root without creating
+/// any of its missing parents first.
+///
+/// The lexical check catches `..` escaping through missing directories. The
+/// canonical check resolves the deepest existing ancestor, catching paths
+/// that leave the project through a symlink. Reattaching the missing tail is
+/// safe because none of those components exist yet and therefore none can be
+/// symlinks at the time of this check.
+fn creation_path_is_within_project(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    project_root: &Path,
+    target: &Path,
+) -> std::io::Result<bool> {
+    let lexical_root = crate::app::normalize_path(project_root);
+    let lexical_target = crate::app::normalize_path(target);
+    if !lexical_target.starts_with(&lexical_root) {
+        return Ok(false);
+    }
+
+    let canonical_root = fs.canonicalize(project_root)?;
+    let canonical_target = canonicalize_deepest_existing(fs, target)?;
+    Ok(canonical_target.starts_with(canonical_root))
+}
+
+/// Canonicalize the deepest existing ancestor and append its missing path
+/// components. Unlike `Path::canonicalize`, this also works for a target file
+/// and parent directories that have not been created yet.
+fn canonicalize_deepest_existing(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    path: &Path,
+) -> std::io::Result<PathBuf> {
+    let mut ancestor = path;
+    let mut missing_tail = Vec::new();
+
+    loop {
+        match fs.canonicalize(ancestor) {
+            Ok(mut canonical) => {
+                for component in missing_tail.iter().rev() {
+                    canonical.push(component);
+                }
+                return Ok(crate::app::normalize_path(&canonical));
+            }
+            // Only a missing component means "not created yet". Treating
+            // every failure that way (EACCES, ELOOP, …) would silently
+            // downgrade the symlink escape check to a lexical one, so
+            // surface anything else to the caller.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(parent) = ancestor.parent() else {
+                    return Err(error);
+                };
+                let Ok(component) = ancestor.strip_prefix(parent) else {
+                    return Err(error);
+                };
+                missing_tail.push(component.to_path_buf());
+                ancestor = parent;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod creation_path_tests {
+    use super::{creation_path_is_within_project, is_relative_creation_path};
+    use crate::model::filesystem::StdFileSystem;
+    use std::path::Path;
+
+    #[test]
+    fn nested_and_parent_relative_creation_paths_are_allowed() {
+        assert!(is_relative_creation_path(Path::new(
+            "src/components/app.rs"
+        )));
+        assert!(is_relative_creation_path(Path::new("../shared/app.rs")));
+        assert!(is_relative_creation_path(Path::new("./app.rs")));
+        assert!(is_relative_creation_path(Path::new("~/app.rs")));
+        assert!(is_relative_creation_path(Path::new("$HOME/app.rs")));
+    }
+
+    #[test]
+    fn rooted_creation_paths_are_rejected() {
+        assert!(!is_relative_creation_path(Path::new("/tmp/app.rs")));
+
+        #[cfg(windows)]
+        {
+            assert!(!is_relative_creation_path(Path::new(r"C:\tmp\app.rs")));
+            assert!(!is_relative_creation_path(Path::new(r"C:app.rs")));
+            assert!(!is_relative_creation_path(Path::new(r"\tmp\app.rs")));
+        }
+    }
+
+    #[test]
+    fn creation_path_cannot_escape_project_with_parent_components() {
+        let project = tempfile::tempdir().unwrap();
+        let fs = StdFileSystem;
+
+        assert!(creation_path_is_within_project(
+            &fs,
+            project.path(),
+            &project.path().join("src/../app.rs")
+        )
+        .unwrap());
+        assert!(!creation_path_is_within_project(
+            &fs,
+            project.path(),
+            &project.path().join("../escaped.rs")
+        )
+        .unwrap());
+    }
+
+    /// A canonicalize failure that does not mean "missing" must reach the
+    /// caller. Folding it into the not-yet-created case would leave only the
+    /// lexical check, which cannot see through symlinks.
+    #[cfg(unix)]
+    #[test]
+    fn creation_path_check_propagates_non_missing_errors() {
+        let project = tempfile::tempdir().unwrap();
+        // A symlink pointing at itself resolves to ELOOP, not ENOENT.
+        std::os::unix::fs::symlink("loop", project.path().join("loop")).unwrap();
+        let fs = StdFileSystem;
+
+        let error =
+            creation_path_is_within_project(&fs, project.path(), &project.path().join("loop/a.rs"))
+                .expect_err("a symlink loop must not be reported as a usable creation path");
+        assert_ne!(error.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creation_path_cannot_escape_project_through_symlink() {
+        let container = tempfile::tempdir().unwrap();
+        let project = container.path().join("project");
+        let outside = container.path().join("outside");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, project.join("link")).unwrap();
+        let fs = StdFileSystem;
+
+        assert!(
+            !creation_path_is_within_project(&fs, &project, &project.join("link/escaped.rs"))
+                .unwrap()
+        );
+    }
 }

@@ -2284,6 +2284,199 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
     );
 }
 
+/// A slash in a newly-created file name is a relative path: Fresh creates
+/// any missing parent directories, moves the temporary file into place, and
+/// keeps the resulting file open in the editor.
+#[test]
+fn test_file_explorer_new_file_creates_missing_parent_directories() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    // Canonicalize: the editor stores the resolved path, so on platforms that
+    // reach the temp dir through a symlink (macOS) or spell it differently
+    // (Windows verbatim prefixes) the raw handout compares unequal.
+    let project_root = harness.project_dir().unwrap().canonicalize().unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("src/components/app.rs").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    // Chained join: a single "src/components/app.rs" only compares equal on
+    // Windows because PathBuf::push rewrites separators under a verbatim
+    // prefix, which is exactly the platform assumption to avoid baking in.
+    let created_path = project_root.join("src").join("components").join("app.rs");
+    assert!(created_path.is_file(), "nested file should be created");
+    assert!(
+        project_root.join("src").join("components").is_dir(),
+        "missing parent directories should be created"
+    );
+
+    // Semantic sync: wait for the new name to surface on screen at all.
+    harness.wait_for_screen_contains("app.rs").unwrap();
+
+    // Type, then save. The text can only reach this path through the buffer
+    // the rename left open, and only if focus followed it out of the
+    // explorer -- the two invariants this test used to read out of the
+    // editor's model. Asserting on the screen alone would not do: had focus
+    // stayed behind, the same characters would render in the explorer's
+    // search box.
+    harness.type_text("fn main() {}").unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    let saved_path = created_path.clone();
+    harness
+        .wait_until(move |_| {
+            std::fs::read_to_string(&saved_path)
+                .map(|contents| contents.contains("fn main() {}"))
+                .unwrap_or(false)
+        })
+        .unwrap();
+
+    let untitled_files: Vec<_> = std::fs::read_dir(&project_root)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("untitled_"))
+        .collect();
+    assert!(
+        untitled_files.is_empty(),
+        "the temporary file should be moved, not copied"
+    );
+}
+
+#[test]
+fn test_file_explorer_new_file_cannot_escape_project_directory() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    let escaped_path = project_root.parent().unwrap().join("escaped.rs");
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("../escaped.rs").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !escaped_path.exists(),
+        "a relative creation path must not escape the project"
+    );
+}
+
+/// The explorer lists a directory that symlinks out of the project, and
+/// Ctrl+N inside it creates the temporary item there. Naming that item with
+/// a plain name has to work too, otherwise the user is left holding an
+/// `untitled_*` file that the containment check will not let them rename.
+#[cfg(unix)]
+#[test]
+fn test_file_explorer_new_file_flat_name_in_symlinked_directory() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    let outside = project_root.parent().unwrap().join("outside");
+    fs::create_dir(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, project_root.join("linked_out")).unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_screen_contains("linked_out").unwrap();
+
+    // Directories sort first and the root has no other children, so one Down
+    // from the root lands on `linked_out/`.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("notes.md").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        outside.join("notes.md").is_file(),
+        "a plain name must be accepted in a directory the explorer itself lists"
+    );
+    let leftover: Vec<_> = fs::read_dir(&outside)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("untitled_"))
+        .collect();
+    assert!(
+        leftover.is_empty(),
+        "the temporary item should have been renamed, not left behind: {:?}",
+        leftover
+    );
+}
+
+/// Now that a new item's name may contain separators, it can address a file
+/// that already exists. `rename` would replace it without asking, so the
+/// contents of an unrelated file would be gone with no way back. The
+/// collision must be refused and the temporary item left alone.
+#[test]
+fn test_file_explorer_new_file_does_not_overwrite_existing_file() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let existing = project_root.join("src").join("main.rs");
+    fs::create_dir_all(existing.parent().unwrap()).unwrap();
+    fs::write(&existing, "fn main() { println!(\"keep me\"); }\n").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    harness.type_text("src/main.rs").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&existing).unwrap(),
+        "fn main() { println!(\"keep me\"); }\n",
+        "an existing file must survive a colliding new-item name"
+    );
+
+    // The temporary item was not moved, so the user can rename it again.
+    let untitled_files: Vec<_> = fs::read_dir(&project_root)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("untitled_"))
+        .collect();
+    assert_eq!(
+        untitled_files.len(),
+        1,
+        "the temporary file should stay put after a refused rename"
+    );
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("untitled_"),
+        "the temporary file should still be open and visible. Screen:\n{}",
+        screen
+    );
+}
+
 /// Test that renaming an existing file from file explorer updates buffer metadata
 /// but keeps focus in file explorer (not switching to editor)
 #[test]
