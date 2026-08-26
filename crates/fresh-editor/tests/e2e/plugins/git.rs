@@ -2050,6 +2050,86 @@ fn test_git_blame_header_has_no_trailing_rule() {
     }
 }
 
+/// Opening blame must leave the line under the cursor on the screen row it
+/// already occupied. Blame is opened to ask about one line, and centring it
+/// — what this used to do — moves that line out from under the reader's eye.
+///
+/// Asserted as a screen row rather than a line number: the cursor already
+/// landed on the right *line* before this, what moved was where that line
+/// was drawn.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_keeps_the_focused_line_on_its_screen_row() {
+    let repo = GitTestRepo::new();
+
+    // Long enough that the view must scroll, so "where the line is drawn" and
+    // "which line it is" come apart.
+    let mut content = String::new();
+    for i in 1..=100 {
+        content.push_str(&format!("Line {i} of the file\n"));
+    }
+    repo.create_file("test.txt", &content);
+    repo.git_add(&["test.txt"]);
+    repo.git_commit("Initial commit");
+    repo.setup_git_blame_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("test.txt");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("Line 100"))
+        .unwrap();
+
+    // Walk down to line 90. Following the cursor down leaves it near the
+    // bottom of the viewport — nowhere near the middle, so centring shows up
+    // as a large move rather than a rounding difference.
+    for _ in 0..89 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(90))
+        .unwrap();
+
+    // "Line 90 of the file" also matches nothing else on screen: "Line 9"
+    // is a prefix of "Line 90", so the trailing words matter.
+    let needle = "Line 90 of the file";
+    let source_row = harness
+        .screen_to_string()
+        .lines()
+        .position(|l| l.contains(needle))
+        .expect("the focused line should be on screen in the source buffer");
+
+    trigger_git_blame(&mut harness);
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(90))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let blame_row = screen
+        .lines()
+        .position(|l| l.contains(needle))
+        .unwrap_or_else(|| {
+            panic!("the focused line scrolled off the blame view entirely:\n{screen}")
+        });
+
+    assert_eq!(
+        blame_row, source_row,
+        "the focused line moved from screen row {source_row} to {blame_row} when blame \
+         opened, so the reader has to find it again:\n{screen}"
+    );
+}
+
 /// Holding the focused line's screen row must not scroll a file that
 /// already fits on screen. The source buffer has no header rows, so its row
 /// offset is one smaller than the blame view can deliver, and an unclamped
@@ -2149,25 +2229,15 @@ fn test_git_blame_q_unwinds_history_before_closing() {
 
     trigger_git_blame(&mut harness);
 
-    // Walk one commit back. The status line reports the depth, which is the
-    // signal that the hop actually happened rather than being refused.
+    // Walk one commit back. Every line of the file belongs to the second
+    // commit, whose parent is the initial commit, so the hop is available
+    // wherever the cursor sits and the status line must report depth 1.
     harness
         .send_key(KeyCode::Char('b'), KeyModifiers::NONE)
         .unwrap();
-    let walked = harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("depth: 1") || screen.contains("Cannot get blame")
-        })
-        .is_ok();
-    assert!(walked, "`b` neither walked back nor reported why");
-
-    if harness.screen_to_string().contains("Cannot get blame") {
-        // The cursor sat on a line whose last change was the initial commit,
-        // so there is no parent to walk to and nothing to unwind. Nothing to
-        // assert about popping in that case.
-        return;
-    }
+    harness
+        .wait_until(|h| h.screen_to_string().contains("depth: 1"))
+        .unwrap();
 
     // First `q`: retraces the hop, stays in blame.
     harness
