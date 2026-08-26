@@ -2153,11 +2153,13 @@ fn open_review_range_head(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
+    // Gate on the review toolbar, not on the range label or the "Generating"
+    // status. `bootstrapRangeReview` opens the panels only after the diff has
+    // been fetched and parsed, so the toolbar's appearance already implies a
+    // settled stream -- and unlike a status message, no code path can clobber
+    // it and no translation can reword it out from under the wait.
     harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("HEAD~..HEAD") && !s.contains("Generating Review")
-        })
+        .wait_until(|h| h.screen_to_string().contains("next hunk"))
         .unwrap();
 }
 
