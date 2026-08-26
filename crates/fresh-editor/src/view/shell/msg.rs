@@ -43,15 +43,19 @@ pub enum UiFact {
     /// Move the highlight one row up or down.
     StepContextMenu(MenuStep),
 
-    // -- menu bar ------------------------------------------------------------
-    /// The pointer entered or left something the menu reacts to.
+    // -- pointer position ----------------------------------------------------
+    /// The pointer entered or left something a migrated surface reacts to.
     ///
-    /// Carries a `HoverTarget` because the reaction is the existing state
-    /// machine (`menu_hover_reaction`): bar auto-switch, submenu open/close,
-    /// highlight. Migrating *where the pointer is* does not require rewriting
-    /// *what the menu does about it*, and the machine is the part with the
-    /// subtle cases (staying put on a submenu's parent so it does not blink).
-    MenuHover(Option<crate::app::types::HoverTarget>),
+    /// Carries a `HoverTarget` because the *reactions* are the existing ones:
+    /// the menu's auto-switch and submenu machine, the search row's restyle.
+    /// Migrating *where the pointer is* does not require rewriting *what each
+    /// surface does about it*, and those machines hold the subtle cases (a
+    /// submenu's parent must not blink when the pointer rests on it).
+    ///
+    /// One fact for every surface, because only one thing is under the pointer
+    /// at a time — the tree's answer, kept apart from the legacy walk's in
+    /// `Editor::shell_hover`.
+    Hover(Option<crate::app::types::HoverTarget>),
     /// A **press** on a bar label. Toggles that menu.
     ///
     /// Press, not click, and that is what makes the toggle work. The layer's

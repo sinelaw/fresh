@@ -514,7 +514,7 @@ mod tests {
         let f = Frame {
             menu_bar: true,
             status_bar: true,
-            search_options: true,
+            search_options: Some(Default::default()),
             prompt_line: true,
             ..Frame::default()
         };

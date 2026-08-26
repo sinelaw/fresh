@@ -231,9 +231,15 @@ chrome-event-model plan) is moving surfaces from the first to the second:
   `WindowLayoutCache` (per-window splits/tabs/explorer). `render_content` and the
   popup painters write rects here *during* paint; `collect` reads them at event
   time.
-- **Live-derived** — `status_bar_layout_now()`, `search_options_layout_now()`,
-  `menu_layout_now()` recompute geometry from state at event time, and the paint
-  pass debug-asserts paint == derivation. Their retired cache fields are gone.
+- **Live-derived** — `status_bar_layout_now()`, `menu_layout_now()` recompute
+  geometry from state at event time, and the paint pass debug-asserts paint ==
+  derivation. Their retired cache fields are gone. This class is itself a
+  waypoint, not a destination: a live derivation is still a *second* spelling of
+  the paint walk's arithmetic, kept honest by an assertion that release builds
+  compile out. A migrated surface has neither — the tree lays it out once and
+  everyone reads the result. `search_options_layout_now()` was the first to go
+  that way (§6.2); `Editor::search_option_spans_now()` reads its spans back off
+  the laid-out tree instead.
 
 A subset **stays paint-recorded by explicit ruling**: `popup_areas`,
 `global_popup_areas`, the prompt suggestions/toolbar/preview rects, the file
@@ -531,7 +537,7 @@ widgets. The `Scene` projection (§2.5) is the props each reads.
 | **File explorer** (`FileExplorerView`) | `Tree` (or `List::windowed` over `get_display_nodes()`), selection controlled by `Window` state, `expanded_dirs` controlled (it is serialized). Context menu as above. | The `FileTree` model (lazy `TreeNode`, sort/filter, incremental search, decorations) is app state the `Tree` renders; only rendering/hit-testing/scroll move onto the widget. |
 | **Dock + floating plugin panels** (`WidgetSurfaceView`) | The `WidgetSpec` → `Node<Action>` translation (§4.6) mounted in a dock column or a `Layer`. | `WidgetInstanceState` dissolves into element state. This is the plugin-API-visible wave. |
 | **Settings** | The schema-driven form built directly from `SettingControl` as `col()` of `Toggle`/`Number`/`Dropdown`/`TextField`/`DualList`/`List`/`Tree`, inside a `Modality::Exclusive` `Layer` + `FocusScope`. | Deletes `widget_map.rs` (no per-frame projection), the dual state store, the bespoke `input.rs` handlers, and `view/controls/*`. The keybinding editor becomes another form in the same modal. |
-| **Status bar / search-options row** (`StatusView`) | `row().h(1)` of `TextRun`/`Button` segments; already live-derived, so the least coupled. | The M1 warm-up wave. |
+| **Status bar / ~~search-options row~~** (`StatusView`) | `row().h(1)` of `TextRun`/`Button` segments; already live-derived, so the least coupled. | The M1 warm-up wave. The search-options row is **landed** — a `row()` of `gesture(text_runs(..))` toggles with fixed-width gaps between them, `Press` producing the real `Action::ToggleSearch*` and nothing positional but `UiFact::Hover`. |
 | **Full-screen modals** (`TrustDialogView`, `AuxModalView`, `KeybindingEditorView`) | `Layer{ anchor: Screen(Center), modality: Exclusive, scrim: Dim, dismiss }` + `FocusScope`. | `Modality::Exclusive` subsumes whole-channel capture, `blocks_terminal_input`, and the hover/cursor suppression lists as one property. |
 
 **Inline styling is an unsolved decision that cuts across this table.**
@@ -704,10 +710,12 @@ not necessarily moved its *content model*. So the bar is:
    the description pre-computed.
 
 Where a wave meets 1 and 2 but not 3, say so rather than calling it migrated.
-Today: the status bar and search-options row have not started; the **menu-bar
-dropdowns meet 1 and 2 but not 3** (§6.2 item 5); the context menus meet all
-three; the frame's regions meet 3 by construction, being `Host` leaves whose
-only description *is* a rectangle the tree assigns. What does change is the **direction**: §5.0 argues — and a PoC
+Today: the **search-options row meets all three** — the first surface that does,
+and the reason it was scheduled ahead of the file explorer despite being the
+smaller piece; the status bar has not started; the **menu-bar dropdowns meet 1
+and 2 but not 3** (§6.2 item 5); the context menus meet all three except that
+their opening point is handed in; the frame's regions meet 3 by construction,
+being `Host` leaves whose only description *is* a rectangle the tree assigns. What does change is the **direction**: §5.0 argues — and a PoC
 demonstrates — that the frame should migrate **first**, not last, which
 reverses M0's mount point and dissolves M9 into the stages that follow. The
 wave table in §5.2 is kept because its per-surface deletions are still the
@@ -1319,7 +1327,7 @@ display-list-is-not-a-diff rule, pinned at the cell.
 | Stage | What moves | Why here |
 |---|---|---|
 | **S1** | Frame skeleton: every region a `Host` leaf, painted by today's painters. Input fully delegated. | **Landed.** The frame's geometry is the shell's, the retained tree persists across frames, native items paint through the fold, and input is offered to the shell ahead of the legacy walk. Every region is still a `Host` leaf, so nothing has changed on screen — which is the point. Remaining before S3: threading real `BodyState`. |
-| **S2** | The live-derived regions — status bar, search-options row — become native descriptions. | Smallest possible first real swap; both already derive their geometry purely (§2.4). |
+| **S2** | The live-derived regions — status bar, search-options row — become native descriptions. | Smallest possible first real swap; both already derive their geometry purely (§2.4). **Search-options row: done** — and it is the first surface to meet the third acceptance criterion, which is what it was for: the description carries labels, shortcuts and checked flags, layout decides every column, and `option_spans` reads them back for the web projection. The status bar is left. |
 | **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. **Context menus: done** (below) — paint, pointer, dismissal, keyboard and geometry, with only the `blocks_terminal_input` rank entry left behind. **Menu bar: paint and pointer migrated** — the bar row is a native background region, the dropdown chain is a stack of layers, and the close guard is a dismissal property; only the keyboard grab and the rank entry remain. |
 | **S4** | Dock column, file explorer, plugin panels. | No longer waits on S3: the two-pass fold means a background region can migrate while the overlays above it have not. What it *does* wait on is §6.2's "colour that is not a theme name" — the explorer's slots and the panels' widgets both carry plugin-supplied colours, which a `ThemeKey` cannot name. The plugin API change (keyed `List`/`Tree` items) is deprecated ahead of it, so its release cycle runs in parallel rather than in series. |
 | **S5** | Splits, tabs, scrollbars decompose; the buffer becomes the only `Host` leaf. | Requires the per-leaf `render_content` decision (§6.2); last because it is the only stage that touches the KEEP side. |
@@ -1370,7 +1378,7 @@ plus the §4.7 rebuild benchmark. No wave is scheduled until this exit holds.
 
 | Wave | Surface | New mechanism exercised | Deletes (survey-grounded) |
 |---|---|---|---|
-| **M1** | Status bar, search-options row | static layout, click targets | the live-derived `status_bar_layout_now`/`search_options_layout_now` paths and their `StatusView` painters |
+| **M1** | Status bar, ~~search-options row~~ (**row done**) | static layout, click targets | the live-derived `status_bar_layout_now` path and its `StatusView` painter. The search-options half is landed: `chrome/search_options.rs`, `SearchOptionsLayout` (+`compute`/`checkbox_at`), `SearchOptionsHover`, `StatusBarRenderer::render_search_options` and both of the row's `debug_assert_eq!` oracles are deleted |
 | **M2** ⟵ **go/no-go** | Context menus (tab / new-tab / explorer / close-split) | `Layer`, `Modality::Exclusive`, `dismiss`, list nav | `chrome/context_menu.rs`, its close-guard box, its `on_key` pre-band grab, its rank entry, the four `Window` context-menu highlight fields |
 | **M3** | Menu bar, dropdowns, submenus | nested layers, hover auto-switch, mnemonics | `chrome/menu.rs`, the `view/ui/menu.rs` dispatch half, the menu close-guard box, the hover auto-switch machine |
 | **M4** | Info/hover/signature popups, theme inspector | transient dismissal via observers, scroll, text selection | `chrome/popups.rs`, `chrome/theme_info.rs`, `view/popup_mouse.rs` remnants, the transient-dismiss pre-band stage (the LSP hover *state machine* stays behind the leaf) |
@@ -1690,6 +1698,18 @@ list.
 13. **Theme-inspector granularity** (§4.5). Chrome provenance coarsens from
    per-cell to per-item; confirm the inspector survives, with buffer cells
    keeping the per-cell map via the leaf.
+   *Sharpened by the search-options row.* Every migrated surface now carries
+   its provenance in the display list already — a shell theme name **is** the
+   `fg_key/bg_key` pair the inspector records (§ `shell_theme`) — so the
+   inspector could be fed from the fold, once and for all surfaces, instead of
+   from a per-surface `theme_runs` walk. What stops it today is a type: the
+   fold's names are `String`s built at build time and `ThemeRun`'s keys are
+   `&'static str`. Until that is settled, a migrated surface whose legacy walk
+   is deleted records nothing, and the inspector says "No theme key recorded
+   here" — which is what the search-options row said before it migrated too
+   (issue #2362 pinned exactly that), so nothing regressed; it simply did not
+   improve. The menu bar is the exception only because its legacy walk still
+   runs to produce runs.
 14. **Wheel-semantics parity** (M4/M5). Today's wheel walk has no dedup and no
    opacity gate *by ruling*; `fresh-ui` chains wheels by "a `Viewport` claims
    only if its offset changed." Close but not identical — e.g. a

@@ -97,7 +97,7 @@ fn reference(f: Frame, size: Rect) -> Vec<(u64, Rect)> {
             Constraint::Length(if f.menu_bar { 1 } else { 0 }),
             Constraint::Min(0),
             Constraint::Length(if f.status_bar { 1 } else { 0 }),
-            Constraint::Length(if f.search_options { 1 } else { 0 }),
+            Constraint::Length(f.search_options.is_some() as u16),
             Constraint::Length(if f.prompt_line { 1 } else { 0 }),
         ])
         .split(chrome_area);
@@ -159,7 +159,9 @@ fn combos() -> Vec<Frame> {
                         v.push(Frame {
                             menu_bar: menu,
                             status_bar: status,
-                            search_options: search,
+                            // Content, not geometry, like the bar's labels:
+                            // the row occupies its one cell whatever it says.
+                            search_options: search.then(Default::default),
                             prompt_line: prompt,
                             dock,
                             explorer,
@@ -253,7 +255,7 @@ fn squeeze_band_starves_a_different_row_than_ratatui() {
     let f = Frame {
         menu_bar: false,
         status_bar: true,
-        search_options: true,
+        search_options: Some(Default::default()),
         prompt_line: true,
         dock: None,
         explorer: None,

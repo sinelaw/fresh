@@ -66,7 +66,12 @@ impl From<HostRegion> for HostId {
 pub struct Frame {
     pub menu_bar: bool,
     pub status_bar: bool,
-    pub search_options: bool,
+    /// The search-options row's toggles, or `None` when the row is hidden.
+    ///
+    /// Content, not a flag: this row is measured by the tree, so what it says
+    /// is what decides how wide each toggle is. The row's *existence* is
+    /// `is_some`.
+    pub search_options: Option<super::search_options::SearchOptions>,
     pub prompt_line: bool,
     /// Column width, already resolved against the frame width.
     pub dock: Option<u16>,
@@ -90,7 +95,7 @@ impl Default for Frame {
         Frame {
             menu_bar: true,
             status_bar: true,
-            search_options: false,
+            search_options: None,
             prompt_line: false,
             dock: None,
             explorer: None,
@@ -127,7 +132,7 @@ impl Frame {
     pub fn fixed_rows(&self) -> u16 {
         self.menu_bar as u16
             + self.status_bar as u16
-            + self.search_options as u16
+            + self.search_options.is_some() as u16
             + self.prompt_line as u16
     }
 }
@@ -168,7 +173,15 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         .h(cells(f.menu_bar)),
         body,
         region(HostRegion::StatusBar).h(cells(f.status_bar)),
-        region(HostRegion::SearchOptions).h(cells(f.search_options)),
+        // Native: the tree measures this row from its own text. See
+        // `shell::search_options`.
+        named(
+            HostRegion::SearchOptions,
+            super::search_options::search_options(
+                f.search_options.as_ref().unwrap_or(&Default::default()),
+            ),
+        )
+        .h(cells(f.search_options.is_some())),
         region(HostRegion::PromptLine).h(cells(f.prompt_line)),
     ]);
     let frame = row().children([
