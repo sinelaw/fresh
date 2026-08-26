@@ -51,7 +51,7 @@
 //!   `Inline` panics if used).
 
 use crate::common::scenario::layout_scenario::{
-    assert_layout_scenario, LayoutScenario, VirtualTextPositionSpec, VirtualTextSpec,
+    assert_layout_scenario, LayoutScenario, StepAssertion, VirtualTextPositionSpec, VirtualTextSpec,
 };
 use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
 use fresh::test_api::Action;
@@ -98,6 +98,59 @@ fn migrated_virtual_line_above_renders_above_source() {
             ],
             ..Default::default()
         },
+        ..Default::default()
+    });
+}
+
+#[test]
+fn down_moves_off_the_first_line_under_a_line_above_virtual_row() {
+    // Git blame draws a `LineAbove` header over the first line of the buffer,
+    // and Down then did nothing while the cursor sat at byte 0.
+    //
+    // The header row owns no source byte, so its `line_end_byte` is inherited
+    // from the row above — and above the buffer's first row there is none, so
+    // it inherited 0. `find_visual_row` returns the *first* row that claims a
+    // byte, so a cursor at byte 0 resolved to the header instead of line 1,
+    // and the visual-line walk stepped one row down onto line 1: byte 0 again.
+    //
+    // Two presses, so a fix that merely offsets the walk by one row (landing
+    // on "Line 2" for the first press but then repeating it) still fails.
+    assert_layout_scenario(LayoutScenario {
+        description: "LineAbove at byte 0: Down advances line by line from the buffer start".into(),
+        initial_text: "Line 1\nLine 2\nLine 3".into(),
+        width: 80,
+        height: 24,
+        initial_virtual_texts: vec![vt(
+            0,
+            "--- Blame Header ---",
+            VirtualTextPositionSpec::Above,
+            "git-blame",
+            0,
+        )],
+        actions: vec![Action::MoveDown, Action::MoveDown],
+        // Forces the render that materialises the header row into the layout
+        // cache before the first Down — visual-line movement reads that cache,
+        // and with no header row in it there is nothing to get stuck on.
+        initial_assertion: Some(RenderSnapshotExpect {
+            cursor_byte: Some(0),
+            ..Default::default()
+        }),
+        step_assertions: vec![
+            StepAssertion {
+                after_action_index: 0,
+                expect: RenderSnapshotExpect {
+                    cursor_byte: Some(7), // "Line 2"
+                    ..Default::default()
+                },
+            },
+            StepAssertion {
+                after_action_index: 1,
+                expect: RenderSnapshotExpect {
+                    cursor_byte: Some(14), // "Line 3"
+                    ..Default::default()
+                },
+            },
+        ],
         ..Default::default()
     });
 }
