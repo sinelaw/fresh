@@ -550,6 +550,7 @@ mod tests {
             show_line_numbers: true, // Tests show line numbers
             byte_offset_mode: false, // Tests use exact line numbers
             show_tilde: true,
+            effective_editor_bg: theme.editor_bg,
             highlight_current_line: true,
             indentation_guide,
             indentation_guide_glyph: &indentation_guide_glyph,
@@ -661,6 +662,7 @@ mod tests {
             show_line_numbers: true,
             byte_offset_mode: false,
             show_tilde: true,
+            effective_editor_bg: theme.editor_bg,
             highlight_current_line: true,
             indentation_guide: IndentationGuideMode::All,
             indentation_guide_glyph: &glyph,
@@ -3322,6 +3324,7 @@ mod tests {
             show_line_numbers: false,
             byte_offset_mode: false,
             show_tilde: true,
+            effective_editor_bg: theme.editor_bg,
             highlight_current_line,
             indentation_guide: IndentationGuideMode::None,
             indentation_guide_glyph: "▏",
