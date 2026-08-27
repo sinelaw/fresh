@@ -245,14 +245,35 @@ fn test_zero_width_block_selection_keeps_word_highlight() {
     harness
         .send_key(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT)
         .unwrap();
-    harness.render().unwrap();
-    harness.render().unwrap();
 
-    assert_eq!(
-        bg(&harness, col(1), line2),
-        word_bg,
-        "a zero-width block selection paints nothing, so it must not drop the word highlight"
-    );
+    // The move carries the one cursor down — a block selection is a single
+    // cursor with a `block_anchor`, not a second one — so it lands at line 2
+    // column 7, inside "alpha". The surviving highlight is therefore
+    // "alpha"'s, on both its occurrences (line 1 columns 0..5, line 2 columns
+    // 5..10), in the same background the "beta" pair had.
+    //
+    // Waited for, because the overlay pass debounces the target by 150 ms of
+    // *wall clock* (`ReferenceHighlightOverlay::update`, `Instant::now()`)
+    // and only advances that clock inside a render. Two bare `render()` calls
+    // after the key would read the frame where the target has changed but the
+    // debounce has not yet elapsed — the previous word's overlays, still on
+    // screen. That is what this test used to assert, and it held only while
+    // the two renders stayed within 150 ms of each other: on a loaded runner
+    // they straddle the debounce, the highlight has already moved to the word
+    // actually under the cursor, and the assertion fails. It failed exactly
+    // that way on the Windows and macOS legs while passing on Linux.
+    //
+    // Waiting for the settled state tests the behaviour instead of the
+    // timing, and it cannot pass vacuously: while "beta" is still the target,
+    // neither cell below carries the highlight, and before the fix — where
+    // the block's linear anchor counted as a selection — the word overlays
+    // were cleared outright and the multi-line range matched nothing, so
+    // nothing was ever highlighted again and this wait never resolves.
+    harness
+        .wait_until(|h| bg(h, col(1), line1) == word_bg && bg(h, col(6), line2) == word_bg)
+        .expect(
+            "a zero-width block selection paints nothing, so it must not drop the word highlight",
+        );
 }
 
 /// A single-line block selection is one contiguous run of text, so its
