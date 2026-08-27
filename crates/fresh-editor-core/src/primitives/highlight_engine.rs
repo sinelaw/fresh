@@ -2709,6 +2709,49 @@ mod tests {
     }
 
     #[test]
+    fn test_dafny_highlight_categories() {
+        let mut registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let mut engine = HighlightEngine::for_file(Path::new("verified.dfy"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "/* outer /* nested */ comment */\n",
+            "@verify(true)\n",
+            "method Max(x: int, y: int) returns (m: int)\n",
+            "  requires x >= 0\n",
+            "  ensures m >= x && m >= y\n",
+            "{\n",
+            "  var message := @\"verified \"\"value\"\"\";\n",
+            "  m := if x > y then x else y;\n",
+            "  print message;\n",
+            "}\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for (needle, expected) in [
+            ("nested", HighlightCategory::Comment),
+            ("@verify", HighlightCategory::Attribute),
+            ("method", HighlightCategory::Keyword),
+            ("Max", HighlightCategory::Function),
+            ("int", HighlightCategory::Type),
+            ("requires", HighlightCategory::Keyword),
+            ("0", HighlightCategory::Number),
+            ("verified", HighlightCategory::String),
+            (">=", HighlightCategory::Operator),
+        ] {
+            assert_eq!(
+                engine.category_at_position(content.find(needle).unwrap()),
+                Some(expected),
+                "unexpected Dafny category for {needle:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_fish_indented_control_keywords_stay_keywords() {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());

@@ -15,6 +15,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Smooth wheel scrolling** - a wheel notch walks the view a line at a time instead of jumping. Off with `editor.smooth_scroll` (#3091).
 * **Git Blame readability** - the header band has real contrast in every theme, and blame now keeps your place on `b`/`q` (#3088).
 * **Markdown types brackets and quotes literally** by default instead of auto-pairing them, since prose needs the literal character far more often than the pair.
+* **Dafny highlighting** - `.dfy` files now get built-in syntax highlighting for declarations, verification clauses, nested comments, attributes, strings, types, constants, numbers, calls, and operators.
 * **OCaml ecosystem highlighting** - new built-in grammars highlight Coq/Rocq (`.coq`, `_CoqProject`, `_RocqProject`) and Dune files (`dune`, `dune-project`, `dune-workspace*`, `*.dune`), and `.ocamlinit` is now detected as OCaml. The shared `.v` extension remains mapped to the V language for compatibility; conventional Coq/Rocq `.v` files can use manual language selection.
 
 ### Bug Fixes

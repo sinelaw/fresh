@@ -6051,6 +6051,33 @@ impl Config {
         );
 
         languages.insert(
+            "dafny".to_string(),
+            LanguageConfig {
+                extensions: vec!["dfy".to_string()],
+                filenames: vec![],
+                grammar: "Dafny".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
             "clojure".to_string(),
             LanguageConfig {
                 extensions: vec![
@@ -9686,6 +9713,17 @@ mod tests {
                 "expected `{path}` to be detected as {expected}"
             );
         }
+    }
+
+    #[test]
+    fn test_default_languages_map_dafny_files() {
+        use crate::services::lsp::manager::detect_language;
+        use std::path::Path;
+
+        assert_eq!(
+            detect_language(Path::new("verified.dfy"), &Config::default_languages()),
+            Some("dafny".to_string())
+        );
     }
 
     #[test]

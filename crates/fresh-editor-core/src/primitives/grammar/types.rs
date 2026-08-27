@@ -214,6 +214,8 @@ pub const FSHARP_GRAMMAR: &str = include_str!("../../grammars/fsharp.sublime-syn
 pub const COQ_GRAMMAR: &str = include_str!("../../grammars/coq.sublime-syntax");
 /// Embedded Dune build-language grammar
 pub const DUNE_GRAMMAR: &str = include_str!("../../grammars/dune.sublime-syntax");
+/// Embedded Dafny verification-language grammar
+pub const DAFNY_GRAMMAR: &str = include_str!("../../grammars/dafny.sublime-syntax");
 /// Embedded Nix grammar
 pub const NIX_GRAMMAR: &str = include_str!("../../grammars/nix.sublime-syntax");
 /// Embedded HCL/Terraform grammar
@@ -777,6 +779,7 @@ impl GrammarRegistry {
             (FSHARP_GRAMMAR, "FSharp"),
             (COQ_GRAMMAR, "Coq/Rocq"),
             (DUNE_GRAMMAR, "Dune"),
+            (DAFNY_GRAMMAR, "Dafny"),
             (NIX_GRAMMAR, "Nix"),
             (HCL_GRAMMAR, "HCL"),
             (PROTOBUF_GRAMMAR, "Protocol Buffers"),
@@ -901,6 +904,7 @@ impl GrammarRegistry {
             ("f#", "FSharp"),
             ("coq", "Coq/Rocq"),
             ("rocq", "Coq/Rocq"),
+            ("dfy", "Dafny"),
             ("terraform", "HCL"),
             ("tf", "HCL"),
             ("po", "Gettext PO"),
@@ -2496,6 +2500,29 @@ mod tests {
                 .expect("Rocq alias should resolve")
                 .display_name,
             "Coq/Rocq"
+        );
+    }
+
+    #[test]
+    fn test_dafny_embedded_grammar_loads_and_resolves() {
+        let syntax = SyntaxDefinition::load_from_str(DAFNY_GRAMMAR, true, Some("Dafny"))
+            .expect("Dafny grammar should parse");
+        assert!(syntax.file_extensions.iter().any(|ext| ext == "dfy"));
+
+        let mut registry = GrammarRegistry::default();
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let entry = registry
+            .find_by_path(Path::new("verified.dfy"), None)
+            .expect(".dfy files should resolve");
+        assert_eq!(entry.display_name, "Dafny");
+        assert!(entry.engines.syntect.is_some());
+        assert!(entry.engines.tree_sitter.is_none());
+        assert_eq!(
+            registry
+                .find_by_name("dfy")
+                .expect("dfy alias should resolve")
+                .display_name,
+            "Dafny"
         );
     }
 
