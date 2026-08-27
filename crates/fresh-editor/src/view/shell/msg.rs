@@ -56,6 +56,19 @@ pub enum UiFact {
     /// at a time — the tree's answer, kept apart from the legacy walk's in
     /// `Editor::shell_hover`.
     Hover(Option<crate::app::types::HoverTarget>),
+    /// A click on a status-bar element that answers one.
+    ///
+    /// The id, not an `Action`: the dispatch behind it is not a pure mapping —
+    /// most segments dismiss any open menu-style popup first, and the LSP,
+    /// remote and read-only menus deliberately do not, because each owns a
+    /// toggle that dismissing would defeat. That table stays where it is; this
+    /// only says which element was pressed.
+    StatusBarClicked(crate::view::ui::status_bar::StatusBarClickable),
+    /// A click on a plugin-registered status-bar token, by its registry key
+    /// (`"<plugin>:<token>"`). Fires the `status_bar_token_clicked` hook, so a
+    /// plugin's chip is as clickable as a built-in indicator.
+    StatusBarTokenClicked(String),
+
     /// A **press** on a bar label. Toggles that menu.
     ///
     /// Press, not click, and that is what makes the toggle work. The layer's
@@ -76,6 +89,28 @@ pub enum UiFact {
     /// Close the open menu (an outside click, or a click on an inert cell of
     /// the dropdown's own box).
     CloseMenu,
+
+    // -- file explorer -------------------------------------------------------
+    /// A left press on a tree row, named by its **viewport** index — the same
+    /// number `FileTreeView::get_display_node_at_viewport_row` takes.
+    ///
+    /// One fact for what used to be two routes (single click and double
+    /// click). `clicks` is which press of a run this is, straight off
+    /// `Event::clicks` — the editor counts the run, the library carries it,
+    /// and the handler reads it, so the two routes cannot disagree about which
+    /// row they mean.
+    ExplorerRowPress { index: usize, clicks: u8 },
+    /// A right click on a tree row: select it and open its context menu at the
+    /// pointer.
+    ExplorerRowContext { index: usize, x: u16, y: u16 },
+    /// The `×` on the panel's title line.
+    ExplorerClose,
+    /// A press on the panel's right-edge grip: start a width drag from here.
+    /// The drag itself is still the legacy one — see `shell::file_explorer`.
+    ExplorerResizeBegin { x: u16, y: u16 },
+    /// The wheel over the panel. Positive is down, matching `Input::Wheel`.
+    /// Carries the pointer so the plugin `wheel` hook still gets a position.
+    ExplorerScroll { delta: i32, x: u16, y: u16 },
 }
 
 /// Which way a menu's highlight moves.

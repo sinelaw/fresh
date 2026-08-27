@@ -693,9 +693,10 @@ pub struct FileExplorerView {
 impl Editor {
     /// Semantic file-explorer sidebar: the flattened visible tree rows (the same
     /// `get_display_nodes()` the TUI renderer uses) plus selection/scroll and the
-    /// sidebar rect. Rendered natively by the web frontend; row clicks route back
-    /// through `handle_mouse` at the sidebar's content cells, which the existing
-    /// file-explorer hit-test resolves to the same display index.
+    /// sidebar rect. Rendered natively by the web frontend; row clicks route
+    /// back through `handle_mouse` at the sidebar's content cells, where the
+    /// shell's own row nodes answer them — `viewport_rows[n]` and the tree's
+    /// n-th row key are the same number by construction.
     pub fn file_explorer_view(&self) -> Option<FileExplorerView> {
         let rect = self.active_layout().file_explorer_area?;
         let view = self.file_explorer()?;

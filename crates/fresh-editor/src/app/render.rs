@@ -338,15 +338,23 @@ impl Editor {
         let editor_content_area = region(HostRegion::Body);
         // Presence is app state, not geometry: a hidden sidebar still has a
         // (zero-width) rectangle, and callers distinguish the two by `Option`.
-        let file_explorer_area = shell.explorer.map(|_| region(HostRegion::Explorer));
+        let file_explorer_area = shell
+            .explorer
+            .as_ref()
+            .map(|_| region(HostRegion::Explorer));
         self.active_layout_mut().file_explorer_area = file_explorer_area;
 
-        // Where the sidebar wants the hardware caret (its selected row) when
-        // it owns the keyboard. Committed at the very end of this draw, with
-        // the editor's caret, so overlays painted after the sidebar can
-        // suppress it instead of having it blink through them.
-        let explorer_hardware_cursor = file_explorer_area
-            .and_then(|file_explorer_area| self.render_file_explorer(frame, file_explorer_area));
+        // Where the sidebar wants the hardware caret (its selected row) when it
+        // owns the keyboard. The panel is native now, so this is a *layout*
+        // query rather than something a painter hands back: the caret sits on
+        // the left edge of the row the description marked. Committed at the
+        // very end of this draw, with the editor's caret, so overlays painted
+        // after the sidebar can suppress it instead of having it blink through
+        // them.
+        let explorer_hardware_cursor = file_explorer_area.and_then(|area| {
+            let row = shell.explorer.as_ref()?.caret_row?;
+            Some((area.x + 1, area.y + 1 + row as u16))
+        });
 
         // Note: Tabs are now rendered within each split by SplitRenderer
 
@@ -1140,7 +1148,7 @@ impl Editor {
 
         // Status bar (hidden when toggled off, or when a suggestions/file-
         // browser popup covers the bottom row).
-        self.render_status_bar_row(frame, status_bar_area, has_suggestions, has_file_browser);
+        self.publish_status_bar(status_bar_area, has_suggestions, has_file_browser);
 
         // Prompt input line (non-overlay prompts only).
         self.render_prompt_line(frame, prompt_line_area, &prompt, &theme);
@@ -1483,6 +1491,43 @@ impl Editor {
         let frame = self.active_chrome().last_frame;
         let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
         Some(crate::view::shell::search_options::option_spans(ui, size))
+    }
+
+    /// Where layout put each clickable status-bar element, read off the
+    /// retained tree.
+    ///
+    /// This replaces `status_bar_layout_now`, which re-ran the whole placement
+    /// walk on live state every time a pointer event or a popup anchor needed
+    /// a column — a second derivation that could disagree with the painted one
+    /// whenever the state behind it had moved. The tree that painted is the
+    /// one answering.
+    pub(crate) fn status_bar_clickable_rects_now(
+        &self,
+    ) -> Vec<(
+        crate::view::ui::status_bar::StatusBarClickable,
+        ratatui::layout::Rect,
+    )> {
+        let Some(ui) = self.shell_ui.as_ref() else {
+            return Vec::new();
+        };
+        let Some(bar) = self.shell_frame_status_bar.as_ref() else {
+            return Vec::new();
+        };
+        let frame = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect::new(0, 0, frame.width, frame.height);
+        crate::view::shell::status_bar::clickable_rects(ui, bar, size)
+    }
+
+    /// Screen area `(row, start_col, end_col)` of one clickable element, for
+    /// the popups that anchor to their indicator.
+    pub(crate) fn status_bar_clickable_area_now(
+        &mut self,
+        id: crate::view::ui::status_bar::StatusBarClickable,
+    ) -> Option<(u16, u16, u16)> {
+        self.status_bar_clickable_rects_now()
+            .into_iter()
+            .find(|(cid, _)| *cid == id)
+            .map(|(_, r)| (r.y, r.x, r.x.saturating_add(r.width)))
     }
 
     /// Render the bottom prompt input line into `area`. Overlay prompts (e.g.
@@ -1914,20 +1959,34 @@ impl Editor {
     ///
     /// A *decision*, not a layout: the shell turns this into rectangles (see
     /// the frame layout at the top of `render`). Splitting the two is what let
-    /// the geometry move to `fresh-ui` without moving the policy with it.
-    fn file_explorer_layout_request(&self, chrome_width: u16) -> Option<(u16, bool)> {
+
+    /// The sidebar's content THIS instant: its chrome, and one row per visible
+    /// tree node.
+    ///
+    /// This is the old `FileExplorerRenderer::render` and `build_node_line`
+    /// (both now deleted) with the
+    /// geometry taken out. What is left is what the panel *says* — the title,
+    /// each row's runs and the theme name each run paints in — and layout
+    /// decides every column from it. `content_width`, `left_side_width`,
+    /// `padding`, `trailing_slot_screen_bounds`: all gone, replaced by a flex
+    /// spacer with a floor.
+    ///
+    /// `height` is the panel's, which the caller derives from the same rule
+    /// `Frame::fixed_rows` states — the viewport's row count is model state
+    /// (`set_viewport_height` drives scrolling and the web projection), so it
+    /// has to be known before the description exists.
+    fn explorer_content(
+        &mut self,
+        chrome_width: u16,
+        height: u16,
+    ) -> Option<crate::view::shell::file_explorer::Explorer> {
+        use crate::view::shell::file_explorer as fe;
         let should_show = self.file_explorer_visible()
             && (self.file_explorer().is_some()
                 || self.active_window().file_explorer_sync_in_progress);
         if !should_show {
             return None;
         }
-        tracing::trace!(
-            "render: file explorer layout active (present={}, sync_in_progress={}, side={:?})",
-            self.file_explorer().is_some(),
-            self.active_window().file_explorer_sync_in_progress,
-            self.active_window().file_explorer_side
-        );
         let cols = self
             .active_window()
             .file_explorer_width
@@ -1936,19 +1995,168 @@ impl Editor {
             self.active_window().file_explorer_side,
             FileExplorerSide::Left
         );
-        Some((cols, on_left))
+        // The explorer reads as focused only when it actually owns the
+        // keyboard — not when a focused orchestrator dock has stolen it out
+        // from under the (still-FileExplorer) window context.
+        let focused = self.active_window().key_context == KeyContext::FileExplorer
+            && !self.dock.as_ref().is_some_and(|d| d.focused);
+        let remote = self.connection_display_string();
+        let disconnected = remote
+            .as_deref()
+            .map(|c| c.contains("(Disconnected)"))
+            .unwrap_or(false);
+        let (title_theme, border_theme) = fe::chrome_themes(disconnected, focused);
+        let close_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerCloseButton));
+        let grip_hovered = matches!(self.shell_hover, Some(HoverTarget::FileExplorerBorder));
+        let title = self.explorer_title(remote.as_deref());
+        let body = self.explorer_body(height, focused);
+        let caret_row = focused.then(|| self.explorer_caret_row()).flatten();
+        Some(fe::Explorer {
+            cols,
+            on_left,
+            title,
+            title_theme,
+            border_theme,
+            close_theme: fe::close_theme(close_hovered),
+            body,
+            caret_row,
+            grip_hovered,
+        })
     }
 
-    /// Paint the file-explorer sidebar into `area`. Composable: it draws only
-    /// into the given rect and makes no layout decisions. A no-op when the
-    /// explorer isn't materialised (mid-sync the rect stays reserved but
-    /// blank).
-    /// Placeholder page for a dormant remote session's shell: the workspace
-    /// cannot show (or edit) anything until its backend connects, so instead
-    /// of a tab bar + empty scratch buffer the content area is a blank page
-    /// with the session's backend identity and live connection state —
-    /// Connecting… while the dive's connect is in flight, the failure reason
-    /// once it failed. The dock stays the way to switch away or retry.
+    /// The panel's title: the search query while an incremental search is
+    /// open, otherwise the name plus the focus keybinding, or the remote host.
+    fn explorer_title(&self, remote: Option<&str>) -> String {
+        if let Some(view) = self.file_explorer() {
+            if view.is_search_active() {
+                return format!(" /{} ", view.search_query());
+            }
+        }
+        let suffix = self
+            .keybindings
+            .read()
+            .unwrap()
+            .get_keybinding_for_action(
+                &crate::input::keybindings::Action::FocusFileExplorer,
+                self.active_window().key_context.clone(),
+            )
+            .map(|kb| format!(" ({})", kb))
+            .unwrap_or_default();
+        match remote {
+            Some(host) => {
+                // Just the hostname out of "user@host" or "user@host:port".
+                let name = host
+                    .split('@')
+                    .next_back()
+                    .unwrap_or(host)
+                    .split(':')
+                    .next()
+                    .unwrap_or(host);
+                format!(" [{}]{} ", name, suffix)
+            }
+            None => format!(" File Explorer{} ", suffix),
+        }
+    }
+
+    /// Which viewport row the caret sits on, when the panel owns the keyboard.
+    fn explorer_caret_row(&self) -> Option<usize> {
+        let view = self.file_explorer()?;
+        let selected = view.get_selected_index()?;
+        view.viewport_display_indices()
+            .iter()
+            .position(|&i| i == selected)
+    }
+
+    /// One row per visible tree node — or the loading placeholder while the
+    /// tree is still being built.
+    ///
+    /// The viewport height is set here because it is model state: scrolling and
+    /// the web projection both read it, and it must be current whether or not
+    /// anything paints.
+    fn explorer_body(
+        &mut self,
+        height: u16,
+        focused: bool,
+    ) -> crate::view::shell::file_explorer::Body {
+        use crate::view::shell::file_explorer as fe;
+        // Borders top and bottom, as the panel has always reserved.
+        let viewport_rows = height.saturating_sub(2) as usize;
+        if let Some(view) = self.file_explorer_mut() {
+            view.set_viewport_height(viewport_rows);
+        }
+        if self.file_explorer().is_none() {
+            return fe::Body::Loading(rust_i18n::t!("explorer.loading").to_string());
+        }
+        let unsaved = self.explorer_unsaved_paths();
+        let cut: Vec<std::path::PathBuf> = self
+            .active_window()
+            .file_explorer_clipboard
+            .as_ref()
+            .filter(|cb| cb.is_cut)
+            .map(|cb| cb.paths.clone())
+            .unwrap_or_default();
+        let indicators = (
+            self.config.file_explorer.tree_indicator_collapsed.clone(),
+            self.config.file_explorer.tree_indicator_expanded.clone(),
+        );
+        let slot_resolver = self.file_explorer_slot_resolver();
+        let theme = self.theme.read().unwrap().clone();
+        let win = self.active_window();
+        let view = win.file_explorer.as_ref().expect("checked above");
+        let display = view.get_display_nodes();
+        let indices = view.viewport_display_indices();
+        let selected = view.get_selected_index();
+        let multi = view.multi_selection();
+        let search = view.is_search_active();
+        let rows: Vec<fe::Row> = indices
+            .iter()
+            .enumerate()
+            .filter_map(|(row, &actual)| {
+                let &(node_id, indent) = display.get(actual)?;
+                let matched = search.then(|| view.get_match_for_node(node_id)).flatten();
+                crate::view::ui::file_explorer::describe_row(
+                    crate::view::ui::file_explorer::RowDesc {
+                        view,
+                        node_id,
+                        indent,
+                        row,
+                        is_cursor: selected == Some(actual),
+                        is_multi: multi.contains(&node_id),
+                        focused,
+                        unsaved: &unsaved,
+                        cut: &cut,
+                        fuzzy: matched.as_ref(),
+                        decorations: &win.file_explorer_decoration_cache,
+                        slot_overrides: &win.file_explorer_slot_override_cache,
+                        slot_resolver: &slot_resolver,
+                        theme: &theme,
+                        collapsed: &indicators.0,
+                        expanded: &indicators.1,
+                    },
+                )
+            })
+            .collect();
+        fe::Body::Rows(rows)
+    }
+
+    /// Paths with unsaved changes, which a row's status slot reads.
+    fn explorer_unsaved_paths(&self) -> std::collections::HashSet<std::path::PathBuf> {
+        let win = self.active_window();
+        let mut out = std::collections::HashSet::new();
+        for (buffer_id, state) in &win.buffers {
+            if state.buffer.is_modified() {
+                if let Some(p) = win
+                    .buffer_metadata
+                    .get(buffer_id)
+                    .and_then(|m| m.file_path())
+                {
+                    out.insert(p.clone());
+                }
+            }
+        }
+        out
+    }
+
     fn render_dormant_shell_page(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
         let active_id = self.active_window;
         let window = self.windows.get(&active_id).expect("active window exists");
@@ -2102,204 +2310,76 @@ impl Editor {
 
     /// Returns the cell the sidebar wants the hardware caret parked on (its
     /// selected row) when it owns the keyboard, for the caller to commit at
-    /// the end of the draw. See [`FileExplorerRenderer::render`].
-    fn render_file_explorer(
-        &mut self,
-        frame: &mut Frame,
-        area: ratatui::layout::Rect,
-    ) -> Option<(u16, u16)> {
-        // Get connection string before mutable borrow of file_explorer.
-        let remote_connection = self.connection_display_string();
-
-        // Render file explorer (only if we have it - during sync we just keep the area reserved).
-        // Uses direct `self.windows.get_mut(...)` (not `file_explorer_mut()`) so the body
-        // can keep reading other Editor fields (buffers, theme, keybindings, …) — Rust
-        // splits the borrow on `self.windows` from the borrows on those other fields.
-        let active_id = self.active_window;
-        // Read window-state inputs before taking the &mut borrow on the
-        // window for the explorer/buffer access below.
-        // The explorer reads as focused only when it actually owns the
-        // keyboard — not when a focused orchestrator dock has stolen it
-        // out from under the (still-FileExplorer) window context. Without
-        // this guard the explorer keeps its accent border while the dock
-        // is driving, making it ambiguous which panel is focused.
-        let is_focused = self.active_window().key_context == KeyContext::FileExplorer
-            && !self.dock.as_ref().is_some_and(|d| d.focused);
-        let key_context_clone = self.active_window().key_context.clone();
-        let close_button_hovered = matches!(
-            &self.active_window().mouse_state.hover_target,
-            Some(HoverTarget::FileExplorerCloseButton)
-        );
-        let slot_resolver = self.file_explorer_slot_resolver();
-        // Theme-key runs the explorer records as it paints; applied to the
-        // chrome cell map after the window borrow is released.
-        let mut fe_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-        // Web renders the sidebar natively from `file_explorer_view`; skip
-        // its cell drawing (layout/viewport still applied).
-        let fe_draw = !self.suppress_chrome_cells;
-        // Take one &mut on the active window; the explorer + buffers
-        // come from disjoint sub-fields so they can coexist.
-        let __win = self
-            .windows
-            .get_mut(&active_id)
-            .expect("active window must exist");
-        let __buffers_ref: &crate::app::window::WindowBuffers = &__win.buffers;
-        // Set by the materialised panel below; the loading placeholder has no
-        // selected row and so never asks for the caret.
-        let mut explorer_cursor = None;
-        if let Some(explorer) = __win.file_explorer.as_mut() {
-            // Build set of files with unsaved changes
-            let mut files_with_unsaved_changes = std::collections::HashSet::new();
-            for (buffer_id, state) in __buffers_ref {
-                if state.buffer.is_modified() {
-                    if let Some(metadata) = __win.buffer_metadata.get(buffer_id) {
-                        if let Some(file_path) = metadata.file_path() {
-                            files_with_unsaved_changes.insert(file_path.clone());
-                        }
-                    }
-                }
-            }
-
-            let keybindings = self.keybindings.read().unwrap();
-            let empty: Vec<std::path::PathBuf> = Vec::new();
-            let cut_paths = __win
-                .file_explorer_clipboard
-                .as_ref()
-                .filter(|cb| cb.is_cut)
-                .map(|cb| cb.paths.as_slice())
-                .unwrap_or(empty.as_slice());
-            let deco = ExplorerDecorations {
-                slot_resolver,
-                decorations: &__win.file_explorer_decoration_cache,
-                slot_overrides: &__win.file_explorer_slot_override_cache,
-            };
-            explorer_cursor = FileExplorerRenderer::render(
-                explorer,
-                frame,
-                area,
-                deco,
-                is_focused,
-                &files_with_unsaved_changes,
-                &keybindings,
-                key_context_clone,
-                &self.theme.read().unwrap(),
-                close_button_hovered,
-                remote_connection.as_deref(),
-                cut_paths,
-                &self.config.file_explorer,
-                &mut crate::app::types::CellThemeRecorder::new(&mut fe_runs),
-                fe_draw,
-            );
-        } else if fe_draw {
-            // The tree isn't materialised yet but the column is reserved
-            // (initial build or expand-to-path sync in progress). Paint the
-            // panel's FINAL chrome — same title, borders, and close button as
-            // the loaded panel — with a "Loading…" body, so the explorer
-            // *visibly* appears the instant its window does and the tree
-            // landing later changes nothing but the list content. The window
-            // therefore never paints in two stages around the (always async,
-            // local and remote alike) tree build: the layout and chrome of
-            // the first frame are already final.
-            let keybindings = self.keybindings.read().unwrap();
-            FileExplorerRenderer::render_loading(
-                frame,
-                area,
-                is_focused,
-                &keybindings,
-                key_context_clone,
-                &self.theme.read().unwrap(),
-                close_button_hovered,
-                remote_connection.as_deref(),
-            );
-        }
-        self.active_chrome_mut().apply_theme_runs(&fe_runs);
-        explorer_cursor
-    }
-
+    /// the end of the draw. See `view::shell::file_explorer`.
     /// Render the status bar into `area`, unless it's toggled off or a
     /// suggestions / file-browser popup is occupying the bottom row. The
     /// bar's inputs are gathered by [`Self::with_status_bar_ctx`], shared
     /// with the event-time layout derivation
     /// ([`Self::status_bar_layout_now`]).
-    fn render_status_bar_row(
+    /// Publish what the status bar painted — its region, its semantic
+    /// segments, and its theme-key provenance — all read off the laid-out
+    /// tree.
+    ///
+    /// It no longer paints. `StatusBarRenderer::render_status_bar` placed and
+    /// drew every element and recorded provenance in one walk; the tree does
+    /// the placing and the fold does the drawing, so what is left is telling
+    /// the rest of the editor where things ended up.
+    fn publish_status_bar(
         &mut self,
-        frame: &mut Frame,
         area: ratatui::layout::Rect,
         has_suggestions: bool,
         has_file_browser: bool,
     ) {
-        if self.active_window().status_bar_visible && !has_suggestions && !has_file_browser {
-            // Theme-key runs the status bar records as it paints; applied to
-            // the chrome's cell map after the window borrow is released.
-            let mut status_bar_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-            // Web renders the status bar natively from `status_view`; skip
-            // painting it (the semantic segments are still captured).
-            let sb_draw = !self.suppress_chrome_cells;
-            let status_bar_layout = self
-                .with_status_bar_ctx(|status_ctx, config| {
-                    let mut sb_rec =
-                        crate::app::types::CellThemeRecorder::new(&mut status_bar_runs);
-                    StatusBarRenderer::render_status_bar(
-                        frame,
-                        area,
-                        status_ctx,
-                        config,
-                        Some(&mut sb_rec),
-                        sb_draw,
-                    )
-                })
-                .expect("active buffer must be present");
-            self.active_chrome_mut().apply_theme_runs(&status_bar_runs);
-
-            // Two parity oracles, checking different things since the frame
-            // moved onto the shell.
-            //
-            // The first is no longer "derivation versus frame layout" — both
-            // sides resolve through `shell_frame` now. What it still catches is
-            // the *retained* tree disagreeing with a fresh one: `render` lays
-            // out through the `Ui` that persists across frames, while
-            // `status_bar_area_now` builds a throwaway one. Stale retained
-            // state skewing layout is precisely the failure a retained tree
-            // makes possible, and nothing else would notice it.
-            //
-            // The second is the original oracle and still means what it says:
-            // `compute_status_layout` is a genuinely separate walk from the
-            // paint pass. It retires when the status bar itself migrates.
-            #[cfg(debug_assertions)]
-            {
-                debug_assert_eq!(
-                    self.status_bar_area_now(),
-                    Some(area),
-                    "the retained tree and a fresh one must lay the frame out alike"
-                );
-                let now = self
-                    .status_bar_layout_now()
-                    .map(|(_, l)| (l.clickable, l.plugin_token_areas));
-                debug_assert_eq!(
-                    now,
-                    Some((
-                        status_bar_layout.clickable.clone(),
-                        status_bar_layout.plugin_token_areas.clone()
-                    )),
-                    "status-bar event-time layout and paint walk must agree"
-                );
-            }
-
-            // Paint capture for the web: `status_view` mirrors the painted
-            // frame's semantic segments (text + positions). This is paint
-            // OUTPUT, not event geometry — hit-testing derives the segment
-            // rects live via `status_bar_layout_now`.
-            let status_bar = &mut self.active_chrome_mut().status_bar;
-            status_bar.area = Some((area.y, area.x, area.width));
-            status_bar.segments = status_bar_layout.segments;
-        } else {
+        if !(self.active_window().status_bar_visible && !has_suggestions && !has_file_browser) {
             // No bar this frame — the user hid it, or a suggestions / file-
             // browser popup took the row. Drop last frame's capture instead of
             // leaving it to go stale: `status_view` would keep projecting a
             // status bar the web then draws under its prompt row (the TUI's
             // ghost-text bug).
             self.active_chrome_mut().status_bar = Default::default();
+            return;
         }
+        // The retained tree and a fresh one must still lay the frame out
+        // alike: `render` goes through the `Ui` that persists across frames,
+        // while `status_bar_area_now` builds a throwaway one, and stale
+        // retained state skewing layout is exactly the failure a retained tree
+        // makes possible.
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(
+            self.status_bar_area_now(),
+            Some(area),
+            "the retained tree and a fresh one must lay the frame out alike"
+        );
+
+        let Some(bar) = self.shell_frame_status_bar.clone() else {
+            return;
+        };
+        let frame_rect = {
+            let f = self.active_chrome().last_frame;
+            ratatui::layout::Rect::new(0, 0, f.width, f.height)
+        };
+        let (segments, runs) = {
+            let Some(ui) = self.shell_ui.as_ref() else {
+                return;
+            };
+            let segments = crate::view::shell::status_bar::segments(ui, &bar, frame_rect);
+            let runs = crate::view::shell::status_bar::provenance_runs(ui, &bar, frame_rect, area)
+                .into_iter()
+                .map(|(x, y, w, fg, bg)| crate::app::types::ThemeRun {
+                    x,
+                    y,
+                    w,
+                    fg_key: Some(fg),
+                    bg_key: Some(bg),
+                    region: "Status Bar",
+                })
+                .collect::<Vec<_>>();
+            (segments, runs)
+        };
+        self.active_chrome_mut().apply_theme_runs(&runs);
+        let status_bar = &mut self.active_chrome_mut().status_bar;
+        status_bar.area = Some((area.y, area.x, area.width));
+        status_bar.segments = segments;
     }
 
     /// Gather every status-bar input from live editor state and run `f`
@@ -2585,6 +2665,8 @@ impl Editor {
         // layout — the rectangle it would read is one frame stale, and asking
         // for it at all is the loop the library refuses. It needs no layout:
         // the bar is the chrome column's top row.
+        let win_status_bar = self.active_window().status_bar_visible;
+        let search_options = self.search_options_content();
         let menu_layout = menu_bar_visible.then(|| ratatui::layout::Rect {
             x: chrome_area.x,
             y: chrome_area.y,
@@ -2599,14 +2681,30 @@ impl Editor {
         // that release compiles out.
         let menu_layout = menu_layout.and_then(|bar| self.menu_layout_in(bar));
         self.menu_layout_frame = menu_layout.clone();
-        let win = self.active_window();
+        // The sidebar's content. Its height is the chrome column minus the
+        // fixed rows — the rule `Frame::fixed_rows` states, applied here
+        // because the panel's viewport row count is model state that has to be
+        // current before the description is built, not a rectangle read back
+        // afterwards.
+        let fixed = menu_bar_visible as u16
+            + (win_status_bar && !has_suggestions && !has_file_browser) as u16
+            + search_options.is_some() as u16
+            + prompt_row_visible as u16;
+        let explorer_h = chrome_area.height.saturating_sub(fixed);
+        let explorer = self.explorer_content(chrome_area.width, explorer_h);
+        // The bar's elements, measured from the chrome column it will occupy.
+        let status_bar_items = (win_status_bar && !has_suggestions && !has_file_browser)
+            .then(|| self.status_bar_description(chrome_area.width))
+            .flatten();
+        self.shell_frame_status_bar = status_bar_items.clone();
         crate::view::shell::frame::Frame {
             menu_bar: menu_bar_visible,
-            status_bar: win.status_bar_visible && !has_suggestions && !has_file_browser,
-            search_options: self.search_options_content(),
+            status_bar: win_status_bar && !has_suggestions && !has_file_browser,
+            search_options,
+            status_bar_items,
             prompt_line: prompt_row_visible,
             dock: dock_area.map(|d| d.width),
-            explorer: self.file_explorer_layout_request(chrome_area.width),
+            explorer,
             menu: self.open_context_menu_for_shell(),
             menu_bar_items: menu_layout
                 .as_ref()
@@ -2764,34 +2862,6 @@ impl Editor {
     /// `clickable` / `plugin_token_areas` cache on `StatusBarChrome` —
     /// geometry produced by layout, not recorded by paint. `None` when the
     /// bar is hidden.
-    pub(crate) fn status_bar_layout_now(
-        &mut self,
-    ) -> Option<(
-        ratatui::layout::Rect,
-        crate::view::ui::status_bar::StatusBarLayout,
-    )> {
-        let area = self.status_bar_area_now()?;
-        let layout = self.with_status_bar_ctx(|ctx, config| {
-            StatusBarRenderer::compute_status_layout(area, ctx, config)
-        })?;
-        Some((area, layout))
-    }
-
-    /// Screen area `(row, start_col, end_col)` of a clickable status-bar
-    /// segment, derived from live state. Used to anchor popups to their
-    /// indicator (the LSP / remote / read-only / update menus).
-    pub(crate) fn status_bar_clickable_area_now(
-        &mut self,
-        id: crate::view::ui::status_bar::StatusBarClickable,
-    ) -> Option<(u16, u16, u16)> {
-        let (_, layout) = self.status_bar_layout_now()?;
-        layout
-            .clickable
-            .iter()
-            .find(|(cid, _, _, _)| *cid == id)
-            .map(|(_, row, start, end)| (*row, *start, *end))
-    }
-
     /// Render the modal overlays that dim everything behind them: settings,
     /// calibration wizard, keybinding editor, and event-debug dialog. Each is
     /// drawn only for the TUI (`!suppress_chrome_cells`); the web projects
@@ -4845,29 +4915,10 @@ impl Editor {
                     }
                 }
             }
-            Some(HoverTarget::FileExplorerBorder) => {
-                // Highlight the file explorer border for resize
-                if let Some(explorer_area) = self.active_layout().file_explorer_area {
-                    let (hover_fg, editor_bg) = {
-                        let theme = self.theme.read().unwrap();
-                        (theme.split_separator_hover_fg, theme.editor_bg)
-                    };
-                    let hover_style = Style::default().fg(hover_fg).bg(editor_bg);
-                    let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
-                    for row_offset in 0..explorer_area.height {
-                        let paragraph = Paragraph::new(Span::styled("│", hover_style));
-                        frame.render_widget(
-                            paragraph,
-                            ratatui::layout::Rect::new(
-                                border_x,
-                                explorer_area.y + row_offset,
-                                1,
-                                1,
-                            ),
-                        );
-                    }
-                }
-            }
+            // The explorer's grip highlights itself: it is a node in the
+            // shell's tree and paints its own column, so there is nothing to
+            // re-derive here. See `view::shell::file_explorer::grip_ink`.
+            Some(HoverTarget::FileExplorerBorder) => {}
             // Menu hover is handled by MenuRenderer
             _ => {}
         }
@@ -6416,4 +6467,124 @@ fn byte_to_screen_col(text: &str, target_byte: usize) -> usize {
         byte += ch.len_utf8();
     }
     col
+}
+
+/// Building the status bar's description from live state.
+impl Editor {
+    /// The bar's elements, in the order they sit on the row.
+    ///
+    /// This is the half of `render_status` that decides *what is on the bar*.
+    /// The other half — where each element lands — is the tree's now; see
+    /// `view::shell::status_bar`.
+    pub(crate) fn status_bar_description(
+        &mut self,
+        width: u16,
+    ) -> Option<crate::view::shell::status_bar::StatusBar> {
+        use crate::app::shell_host::shell_theme::{attrs, literal};
+        use crate::view::shell::status_bar as sb;
+        use crate::view::ui::status_bar::{element_kind_name, StatusBarRenderer};
+
+        let (bar_fg, bar_bg, sep_fg, sep_bg) = {
+            let t = self.theme.read().unwrap();
+            (
+                t.status_bar_fg,
+                t.status_bar_bg,
+                t.status_separator_fg,
+                t.status_separator_bg,
+            )
+        };
+        self.with_status_bar_ctx(|ctx, config| {
+            let lsp_state = ctx.lsp_indicator_state;
+            // Whether the dedicated remote indicator is on the bar, so the
+            // filename branch can drop its now-redundant prefix. Read before
+            // the sides are rendered, exactly as before.
+            ctx.remote_indicator_on_bar = config
+                .left
+                .iter()
+                .chain(config.right.iter())
+                .any(|e| matches!(e, crate::config::StatusBarElement::RemoteIndicator));
+
+            let left = StatusBarRenderer::render_side(&config.left, ctx);
+            let mut right = StatusBarRenderer::render_side(&config.right, ctx);
+
+            // **Which right-hand elements survive** — a content decision, made
+            // from measured text, kept verbatim from `render_status`. Reserve
+            // a sane minimum for the left side so the buffer name and cursor
+            // position are not truncated to a single character on a narrow
+            // terminal, then drop low-priority right elements (configured
+            // right-most first) until the rest fits alongside it. The *first*
+            // right element is never dropped, so a user who configured any
+            // right-side status keeps some of it.
+            let available = width as usize;
+            let sep_w = crate::primitives::display_width::str_width(&config.separator);
+            let total_right: usize = right.iter().map(|(_, w, _, _)| *w).sum::<usize>()
+                + sep_w * right.len().saturating_sub(1);
+            let left_min_target = available.saturating_mul(2).saturating_div(5).min(40);
+            let right_budget = available.saturating_sub(left_min_target + 1);
+            if total_right > right_budget && right.len() > 1 {
+                let mut current = total_right;
+                while current > right_budget && right.len() > 1 {
+                    let Some(dropped) = right.pop() else { break };
+                    current = current.saturating_sub(dropped.1).saturating_sub(sep_w);
+                }
+            }
+
+            let item = |(spans, _w, kind, token_key): (
+                Vec<ratatui::text::Span<'static>>,
+                usize,
+                crate::view::ui::status_bar::ElementKind,
+                Option<String>,
+            )| {
+                let runs = spans
+                    .into_iter()
+                    .map(|s| {
+                        let fg = literal(s.style.fg.unwrap_or(bar_fg));
+                        let bg = literal(s.style.bg.unwrap_or(bar_bg));
+                        let mut mods: Vec<&str> = Vec::new();
+                        if s.style
+                            .add_modifier
+                            .contains(ratatui::style::Modifier::BOLD)
+                        {
+                            mods.push("bold");
+                        }
+                        if s.style
+                            .add_modifier
+                            .contains(ratatui::style::Modifier::ITALIC)
+                        {
+                            mods.push("italic");
+                        }
+                        if s.style
+                            .add_modifier
+                            .contains(ratatui::style::Modifier::UNDERLINED)
+                        {
+                            mods.push("underlined");
+                        }
+                        (s.content.to_string(), attrs(&fg, &bg, &mods))
+                    })
+                    .collect();
+                sb::Item {
+                    runs,
+                    name: element_kind_name(kind),
+                    clickable: StatusBarRenderer::clickable_for_kind(kind),
+                    token_key,
+                    provenance: StatusBarRenderer::element_keys(kind, lsp_state),
+                }
+            };
+
+            sb::StatusBar {
+                left: left.into_iter().map(item).collect(),
+                right: right.into_iter().map(item).collect(),
+                separator: config.separator.clone(),
+                base_theme: crate::app::shell_host::shell_theme::pair(
+                    "ui.status_bar_fg",
+                    "ui.status_bar_bg",
+                ),
+                sep_theme: crate::app::shell_host::shell_theme::attrs(
+                    &literal(sep_fg),
+                    &literal(sep_bg),
+                    &[],
+                ),
+            }
+        })
+    }
 }

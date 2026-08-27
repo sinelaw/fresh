@@ -668,6 +668,7 @@ impl Editor {
             suppress_chrome_cells: false,
             shell_menu_open_before: None,
             menu_layout_frame: None,
+            shell_frame_status_bar: None,
             shell_hover: None,
             unkeyed_widget_warnings: std::collections::HashSet::new(),
             shell_ui: Some(fresh_ui::Ui::new()),

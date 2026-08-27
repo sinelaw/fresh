@@ -173,13 +173,10 @@ impl crate::view::shell::fold::HostPainter for Editor {
             // reaches here for them because a native region emits no
             // `Draw::Host`. Listed so that un-migrating one is a compile
             // error rather than a blank row.
-            HostRegion::MenuBar | HostRegion::SearchOptions => {}
+            HostRegion::MenuBar | HostRegion::SearchOptions | HostRegion::Explorer => {}
             // Still painted by `Editor::render`; moved out one stage at a
             // time.
-            HostRegion::Dock
-            | HostRegion::Explorer
-            | HostRegion::StatusBar
-            | HostRegion::PromptLine => {}
+            HostRegion::Dock | HostRegion::StatusBar | HostRegion::PromptLine => {}
         }
     }
 }
@@ -223,7 +220,7 @@ impl crate::view::shell::fold::Palette for ShellPalette {
 /// provenance as exactly this pair (`ThemeRun { fg_key, bg_key }`). The display
 /// list and the inspector now say the same thing in the same words.
 pub mod shell_theme {
-    use ratatui::style::{Modifier, Style};
+    use ratatui::style::{Color, Modifier, Style};
 
     use crate::view::theme::Theme;
 
@@ -265,10 +262,8 @@ pub mod shell_theme {
         let Some((fg_key, bg_key)) = pair.split_once('/') else {
             return base(theme);
         };
-        let (Some(fg), Some(bg)) = (
-            theme.resolve_theme_key(fg_key),
-            theme.resolve_theme_key(bg_key),
-        ) else {
+        let (Some(fg), Some(bg)) = (resolve_half(fg_key, theme), resolve_half(bg_key, theme))
+        else {
             return base(theme);
         };
         // The attribute the theme declares for the foreground key, plus the
@@ -277,8 +272,127 @@ pub mod shell_theme {
         Style::default().fg(fg).bg(bg).add_modifier(modifier)
     }
 
+    /// One half of a pair: a theme key, or the `#rrggbb` literal escape.
+    ///
+    /// **The literal is an interim, and it is the only thing here that is not
+    /// traceable to a theme entry.** It exists because a plugin can hand the
+    /// editor an `OverlayColorSpec::Rgb` — an arbitrary runtime value that no
+    /// theme ever declared, so there is no key to name it with. Today those
+    /// colours are already untraceable: `resolve_overlay_color` turns them
+    /// straight into `Color::Rgb`, which the theme inspector cannot explain and
+    /// a user cannot override. Writing them as `#rrggbb` here loses nothing
+    /// that exists and unblocks the surfaces that carry them.
+    ///
+    /// What replaces it: plugins **register** their colours as named keys
+    /// (`plugin.git.status_added_fg`) and `resolve_theme_key` gains a dynamic
+    /// tier for them, at which point a plugin colour becomes an ordinary,
+    /// inspectable, user-overridable name and this arm can go. See §6.2 of the
+    /// migration doc. Nothing in this repository emits a literal: every
+    /// in-tree slot provider already sends a `ThemeKey`.
+    fn resolve_half(key: &str, theme: &Theme) -> Option<Color> {
+        if let Some(rest) = key.strip_prefix('#') {
+            return match rest.as_bytes() {
+                // `#7ee787` — a 24-bit literal.
+                _ if rest.len() == 6 && rest.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                    let byte = |i: usize| u8::from_str_radix(&rest[i..i + 2], 16).ok();
+                    Some(Color::Rgb(byte(0)?, byte(2)?, byte(4)?))
+                }
+                // `#i42` — a palette index.
+                [b'i', ..] => rest[1..].parse().ok().map(Color::Indexed),
+                // `#Yellow` — one of the sixteen names.
+                _ => crate::view::theme::named_color_from_str(rest),
+            };
+        }
+        theme.resolve_theme_key(key)
+    }
+
+    /// A concrete colour as a name, for the interim case above.
+    ///
+    /// **Total, on purpose.** An earlier version answered `editor.fg` for
+    /// anything that was not `Color::Rgb`, on the assumption that a resolved
+    /// colour would be a triple. Theme colours are frequently one of the
+    /// sixteen names instead — `file_status_modified_fg` is `Yellow` in the
+    /// built-in dark theme — so that fallback silently repainted every
+    /// plugin-decorated row in the panel's ordinary ink. Every `Color` variant
+    /// round-trips now, and [`resolve`] reads all three forms back.
+    pub fn literal(c: Color) -> String {
+        match c {
+            Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+            Color::Indexed(i) => format!("#i{i}"),
+            other => format!(
+                "#{}",
+                crate::view::theme::token_color_named_from_ratatui(other)
+            ),
+        }
+    }
+
     fn base(theme: &Theme) -> Style {
         Style::default().fg(theme.editor_fg).bg(theme.editor_bg)
+    }
+}
+
+#[cfg(test)]
+mod shell_theme_tests {
+    use super::shell_theme::{literal, pair, resolve};
+    use ratatui::style::Color;
+
+    /// **Every colour round-trips.** The literal form exists because a plugin's
+    /// colour arrives already resolved, with no key to name it; it is only
+    /// honest if it loses nothing.
+    ///
+    /// It did lose something. An earlier version answered `editor.fg` for
+    /// anything that was not `Color::Rgb`, and theme colours are frequently one
+    /// of the sixteen names — `file_status_modified_fg` is `Yellow` in the
+    /// built-in dark theme — so every plugin-decorated row in the file explorer
+    /// silently painted in the panel's ordinary ink instead of its status
+    /// colour. Nothing failed; it just looked undecorated.
+    #[test]
+    fn a_literal_colour_survives_the_round_trip() {
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        for c in [
+            Color::Rgb(126, 231, 135),
+            Color::Rgb(0, 0, 0),
+            Color::Yellow,
+            Color::LightMagenta,
+            Color::Black,
+            Color::White,
+            Color::Reset,
+            Color::Indexed(0),
+            Color::Indexed(42),
+            Color::Indexed(255),
+        ] {
+            let style = resolve(&pair(&literal(c), "editor.bg"), &theme);
+            assert_eq!(style.fg, Some(c), "{c:?} did not survive {:?}", literal(c));
+        }
+    }
+
+    /// A literal composes with the rest of the grammar, so a plugin colour can
+    /// still be bold or underlined.
+    #[test]
+    fn a_literal_composes_with_attributes() {
+        use ratatui::style::Modifier;
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        let style = resolve("#7ee787/editor.bg+bold", &theme);
+        assert_eq!(style.fg, Some(Color::Rgb(126, 231, 135)));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    /// A malformed literal falls back to the editor's ground rather than to a
+    /// colour nobody asked for.
+    #[test]
+    fn a_malformed_literal_falls_back() {
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        for bad in [
+            "#zzzzzz/editor.bg",
+            "#12345/editor.bg",
+            "#NotAColour/editor.bg",
+        ] {
+            let style = resolve(bad, &theme);
+            assert_eq!(style.fg, Some(theme.editor_fg), "{bad}");
+        }
     }
 }
 
@@ -339,6 +453,15 @@ impl Editor {
     fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact) {
         use crate::view::shell::msg::UiFact;
         match fact {
+            UiFact::StatusBarClicked(id) => {
+                // The id→behaviour table is unchanged and stays where it is
+                // (`chrome::status_bar`); what the tree replaced is finding
+                // *which* element the pointer was over.
+                if let Err(e) = self.dispatch_status_bar_click(id) {
+                    tracing::warn!("status bar click failed: {e}");
+                }
+            }
+            UiFact::StatusBarTokenClicked(key) => self.fire_status_bar_token_click(&key),
             UiFact::CloseContextMenu => {
                 self.active_window_mut().close_context_menus();
             }
@@ -405,6 +528,27 @@ impl Editor {
                     self.menu_state.open_menu(index);
                 }
             }
+            // -- file explorer ---------------------------------------------
+            UiFact::ExplorerRowPress { index, clicks } => self.explorer_row_pressed(index, clicks),
+            UiFact::ExplorerRowContext { index, x, y } => self.explorer_row_context(index, x, y),
+            UiFact::ExplorerClose => self.toggle_file_explorer(),
+            UiFact::ExplorerResizeBegin { x, y } => {
+                let w = self.active_window().file_explorer_width;
+                let st = &mut self.active_window_mut().mouse_state;
+                st.dragging_file_explorer = true;
+                st.drag_start_position = Some((x, y));
+                st.drag_start_explorer_width = Some(w);
+            }
+            UiFact::ExplorerScroll { delta, x, y } => {
+                // The surface's wheel, with the surface. Unchanged from the
+                // chrome component's `on_wheel`, including the plugin hook —
+                // the position it reports is the pointer's, which the tree
+                // carries on the event.
+                self.dismiss_transient_popups();
+                self.active_window().wheel_plugin_hook(x, y, delta);
+                self.active_window_mut().scroll_file_explorer_view(delta);
+            }
+
             UiFact::MenuItemClick { depth, index } => {
                 let Some(active) = self.menu_state.active_menu else {
                     return;

@@ -694,29 +694,21 @@ mod input_tests {
     }
 
     fn press(ui: &mut Ui<UiMsg>, x: i32, y: i32) -> fresh_ui::Dispatch<UiMsg> {
-        ui.dispatch(Input::Press {
-            pos: Point::new(x, y),
-            button: MouseButton::Left,
-            mods: Mods::NONE,
-        })
+        ui.dispatch(Input::press(
+            Point::new(x, y),
+            MouseButton::Left,
+            Mods::NONE,
+        ))
     }
 
     fn click(ui: &mut Ui<UiMsg>, x: i32, y: i32) -> Vec<UiFact> {
         let pos = Point::new(x, y);
         let mut out = ui
-            .dispatch(Input::Press {
-                pos,
-                button: MouseButton::Left,
-                mods: Mods::NONE,
-            })
+            .dispatch(Input::press(pos, MouseButton::Left, Mods::NONE))
             .msgs;
         out.extend(
-            ui.dispatch(Input::Release {
-                pos,
-                button: MouseButton::Left,
-                mods: Mods::NONE,
-            })
-            .msgs,
+            ui.dispatch(Input::release(pos, MouseButton::Left, Mods::NONE))
+                .msgs,
         );
         out.into_iter()
             .map(|m| match m {
@@ -751,11 +743,11 @@ mod input_tests {
     #[test]
     fn a_right_press_on_a_label_opens_nothing_and_is_not_claimed() {
         let mut ui = open_menu(None);
-        let got = ui.dispatch(Input::Press {
-            pos: Point::new(1, 0),
-            button: MouseButton::Right,
-            mods: Mods::NONE,
-        });
+        let got = ui.dispatch(Input::press(
+            Point::new(1, 0),
+            MouseButton::Right,
+            Mods::NONE,
+        ));
         assert!(
             !got.claimed,
             "a right press must reach the legacy pre-band, not stop at the bar"
@@ -1000,19 +992,11 @@ mod submenu_regression {
     fn click(ui: &mut Ui<UiMsg>, x: i32, y: i32) -> Vec<UiFact> {
         let pos = Point::new(x, y);
         let mut out = ui
-            .dispatch(Input::Press {
-                pos,
-                button: MouseButton::Left,
-                mods: Mods::NONE,
-            })
+            .dispatch(Input::press(pos, MouseButton::Left, Mods::NONE))
             .msgs;
         out.extend(
-            ui.dispatch(Input::Release {
-                pos,
-                button: MouseButton::Left,
-                mods: Mods::NONE,
-            })
-            .msgs,
+            ui.dispatch(Input::release(pos, MouseButton::Left, Mods::NONE))
+                .msgs,
         );
         facts(out)
     }
@@ -1053,11 +1037,11 @@ mod submenu_regression {
     #[test]
     fn clicking_outside_the_whole_chain_still_dismisses() {
         let mut ui = open_chain();
-        let press = ui.dispatch(Input::Press {
-            pos: Point::new(35, 10),
-            button: MouseButton::Left,
-            mods: Mods::NONE,
-        });
+        let press = ui.dispatch(Input::press(
+            Point::new(35, 10),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
         assert!(
             facts(press.msgs).contains(&UiFact::CloseMenu),
             "outside the chain is still outside"
