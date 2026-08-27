@@ -69,7 +69,7 @@ pub use scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 #[cfg(feature = "runtime")]
 pub use split_rendering::{EditorRenderConfig, RenderStyle, SplitRenderer};
 #[cfg(feature = "runtime")]
-pub use status_bar::{truncate_path, StatusBarLayout, StatusBarRenderer, TruncatedPath};
+pub use status_bar::{truncate_path, StatusBarRenderer, TruncatedPath};
 #[cfg(feature = "runtime")]
 pub use suggestions::SuggestionsRenderer;
 #[cfg(feature = "runtime")]

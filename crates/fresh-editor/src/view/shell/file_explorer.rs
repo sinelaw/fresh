@@ -54,6 +54,7 @@ use crate::app::shell_host::shell_theme::{attrs, pair};
 use crate::app::types::HoverTarget;
 
 use super::msg::{UiFact, UiMsg};
+use super::rect_of;
 
 /// A `(text, theme name)` pair — the same shape the menu bar's labels use.
 pub type Runs = Vec<(String, String)>;
@@ -501,21 +502,6 @@ pub fn neutral_key(is_hidden: bool, is_symlink: bool, is_dir: bool) -> &'static 
 }
 
 // -- reading the layout back -------------------------------------------------
-
-fn rect_of(
-    ui: &fresh_ui::Ui<UiMsg>,
-    key: &Key,
-    size: ratatui::layout::Rect,
-) -> Option<ratatui::layout::Rect> {
-    let e = ui.find_by_key(key)?;
-    let r = ui.rect_of(e);
-    (r.w > 0 && r.h > 0).then(|| ratatui::layout::Rect {
-        x: size.x.saturating_add(r.x.max(0) as u16),
-        y: size.y.saturating_add(r.y.max(0) as u16),
-        width: r.w,
-        height: r.h,
-    })
-}
 
 /// Where layout put a row.
 pub fn row_rect(

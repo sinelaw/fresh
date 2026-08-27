@@ -256,15 +256,7 @@ pub fn option_spans(
         if r.w == 0 {
             return None;
         }
-        Some((
-            o,
-            ratatui::layout::Rect {
-                x: size.x.saturating_add(r.x.max(0) as u16),
-                y: size.y.saturating_add(r.y.max(0) as u16),
-                width: r.w,
-                height: r.h,
-            },
-        ))
+        Some((o, super::screen_rect(r, size)))
     })
     .collect()
 }

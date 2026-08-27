@@ -443,6 +443,12 @@ impl Editor {
         // the layer's own dismissal — and a toggle has to know what it is
         // toggling. See `UiFact::MenuBarPress`.
         self.shell_menu_open_before = self.menu_state.active_menu;
+        // Where the pointer is, for the hover reactions a resulting
+        // `UiFact::Hover` will run — they anchor tooltips to it, and the fact
+        // itself carries only *what* is under the pointer.
+        if let Some(p) = input.position() {
+            self.shell_hover_at = (p.x.max(0) as u16, p.y.max(0) as u16);
+        }
         let result = ui.dispatch(input);
         self.shell_ui = Some(ui);
         // Claimed is reported, not inferred. Producing a message and taking
@@ -526,12 +532,32 @@ impl Editor {
                         .map(|m| crate::app::types::HoverTarget::MenuDropdownItem(m, item)),
                     other => other,
                 };
+                let old = self.shell_hover.clone();
                 self.shell_hover = target.clone();
-                // The menu's own reaction still runs — the tree says where the
-                // pointer is, the machine says what the menu does about it.
-                // Surfaces that only restyle (the search-options row) need
-                // nothing beyond the field itself.
-                self.menu_hover_reaction(target.as_ref());
+                if old == target {
+                    return;
+                }
+                // **Every registered reaction, not one hand-picked one.**
+                // The tree says where the pointer is; what each surface does
+                // about it stays with that surface, exactly as it does for the
+                // legacy walk (`update_hover_target`). Calling
+                // `menu_hover_reaction` directly instead silently dropped the
+                // reactions belonging to two surfaces that had *also*
+                // migrated: the explorer's git-status tooltip
+                // (`FileExplorerStatusIndicator`) and the status bar's
+                // indicator styling. Neither is reachable from the legacy walk
+                // any more — those components no longer publish boxes — so a
+                // reaction this fact does not reach is a reaction that never
+                // runs.
+                //
+                // The pointer cell the reactions want is the one the fact
+                // arrived at; a hover fact is always produced by a pointer
+                // event, and `shell_hover_at` is where that event's position
+                // is kept for exactly this.
+                let (col, row) = self.shell_hover_at;
+                for c in crate::app::chrome::components() {
+                    c.on_hover_change(self, old.as_ref(), target.as_ref(), col, row);
+                }
             }
             UiFact::MenuBarPress { index } => {
                 // `open_before` is what the menu was showing when this pointer
