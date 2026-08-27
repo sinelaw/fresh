@@ -112,6 +112,10 @@ pub struct App {
     pub resizing: bool,
     pub theme: Rc<Theme>,
     pub preview: bool,
+    /// Whether the overflow panel bounds its children. On by default, because
+    /// `border()` turns it on; the palette's "Toggle clipping" turns it off so
+    /// the escape is visible.
+    pub clip: bool,
     /// The row a context menu is open for, and where it was raised.
     pub context: Option<(usize, Point)>,
     /// The task a delete confirmation is open for.
@@ -127,7 +131,13 @@ pub struct App {
     pub sync_slot: super::view::SyncSlot,
 }
 
-pub const COMMANDS: [&str; 4] = ["Toggle theme", "Toggle preview", "Clear done", "Sync"];
+pub const COMMANDS: [&str; 5] = [
+    "Toggle theme",
+    "Toggle preview",
+    "Toggle clipping",
+    "Clear done",
+    "Sync",
+];
 
 impl Default for App {
     fn default() -> Self {
@@ -211,6 +221,7 @@ impl App {
             resizing: false,
             theme: Rc::new(LIGHT),
             preview: false,
+            clip: true,
             context: None,
             confirm: None,
             palette: None,
@@ -385,11 +396,18 @@ pub fn update(app: &mut App, msg: Msg) {
                     app.status = format!("preview {}", app.preview);
                 }
                 Some(2) => {
+                    app.clip = !app.clip;
+                    app.status = format!(
+                        "clip {} — watch the panel's right wall",
+                        if app.clip { "on" } else { "off" }
+                    );
+                }
+                Some(3) => {
                     Rc::make_mut(&mut app.tasks).retain(|t| !t.done);
                     app.selected = 0;
                     app.status = "cleared done".into();
                 }
-                Some(3) => app.status = "syncing…".into(),
+                Some(4) => app.status = "syncing…".into(),
                 _ => {}
             }
         }

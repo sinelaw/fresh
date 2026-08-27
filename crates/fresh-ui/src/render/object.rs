@@ -186,6 +186,17 @@ pub trait RenderObject {
         false
     }
 
+    /// How far inside this node's own rectangle the bound sits, when
+    /// [`clips`](Self::clips) is true: `(x, y)` cells on each side.
+    ///
+    /// A viewport bounds its descendants at its edge and answers `(0, 0)`. A
+    /// bordered box bounds them at the *inside* of its frame, because the ring
+    /// is the box's own paint and content that reaches it has escaped. Ignored
+    /// entirely when `clips()` is false.
+    fn clip_inset(&self) -> (u16, u16) {
+        (0, 0)
+    }
+
     /// Whether this node draws a scrollbar in its gutter — so the framework can
     /// route a press or drag there to the scroll offset. A viewport with a
     /// scrollbar says yes; nothing else does.
@@ -262,6 +273,9 @@ pub(crate) struct RenderNode {
     /// Cached from the object so the framework can ask while the object itself
     /// is checked out for `layout`.
     pub clips: bool,
+    /// `(x, y)` inset of the clip bound inside `rect`; see
+    /// [`RenderObject::clip_inset`]. Meaningful only when `clips` is set.
+    pub clip_inset: (u16, u16),
     pub out_of_flow: bool,
     pub reads_window: bool,
     pub raw_input: bool,

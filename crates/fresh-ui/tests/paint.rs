@@ -712,3 +712,139 @@ fn a_layer_inside_a_layer_places_against_where_its_parent_landed() {
          rectangle the outer one was finally given"
     );
 }
+
+// ── clipping ───────────────────────────────────────────────────────────────
+
+/// A row whose fixed children cannot fit, where one of them carries an
+/// unsatisfiable `min_w` floor. Ordinary over-wide children are clamped to the
+/// space left, so they never escape; a floor is a promise layout keeps even
+/// when keeping it puts a sibling outside the parent. That is the one way
+/// content reaches a box's own frame, and it is not exotic — a name, a gap
+/// that will not close, and a status slot is the shape of a file-tree row.
+fn overflowing_row<M: 'static>() -> Node<M> {
+    row().h(Sizing::Cells(1)).children([
+        text("a-name!").w(Sizing::Cells(7)),
+        row().flex(1).min_w(1),
+        text("M").w(Sizing::Cells(1)),
+    ])
+}
+
+/// The escape, with nothing to stop it: the slot lands on the frame's column.
+#[test]
+fn a_min_w_floor_can_place_a_child_outside_its_parent() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col()
+            .w(Sizing::Cells(10))
+            .border()
+            .clip(false)
+            .child(overflowing_row()),
+        Size { w: 20, h: 4 },
+    );
+    let slot = spec
+        .items
+        .iter()
+        .find(|i| matches!(&i.draw, Draw::Lines(l) if l.first().map(|s| &**s) == Some("M")))
+        .expect("the slot paints");
+    assert_eq!(
+        slot.visible_rect(),
+        Rect {
+            x: 9,
+            y: 1,
+            w: 1,
+            h: 1
+        },
+        "x=9 is the border's own column: unbounded, the slot overwrites the frame"
+    );
+}
+
+/// The same description, bounded — which is the default, because `border()`
+/// turns the bound on. The slot keeps the rectangle layout gave it and paints
+/// nothing, so the frame survives.
+#[test]
+fn a_bordered_box_bounds_what_its_children_paint() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col().w(Sizing::Cells(10)).border().child(overflowing_row()),
+        Size { w: 20, h: 4 },
+    );
+    assert!(
+        !spec
+            .items
+            .iter()
+            .any(|i| matches!(&i.draw, Draw::Lines(l) if l.first().map(|s| &**s) == Some("M"))),
+        "fully bounded away, so it is not in the display list at all"
+    );
+    // And nothing else reached the ring either.
+    for i in &spec.items {
+        if matches!(&i.draw, Draw::Lines(_)) {
+            let v = i.visible_rect();
+            assert!(v.x >= 1 && v.right() <= 9, "{v:?} escaped the content rect");
+        }
+    }
+}
+
+/// The bound is the *content* rect. A box that clips without a border still
+/// subtracts its padding, because padding is the box's own space too.
+#[test]
+fn the_bound_is_the_content_rect_not_the_outer_edge() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col()
+            .w(Sizing::Cells(10))
+            .h(Sizing::Cells(4))
+            .clip(true)
+            .pad(2, 1)
+            .child(overflowing_row()),
+        Size { w: 20, h: 6 },
+    );
+    for i in &spec.items {
+        let v = i.visible_rect();
+        if matches!(&i.draw, Draw::Lines(_)) && !v.is_empty() {
+            assert!(
+                v.x >= 2 && v.right() <= 8 && v.y >= 1,
+                "{v:?} escaped the padding"
+            );
+        }
+    }
+}
+
+/// Off by default, so a plain grouping box keeps whatever overflow behaviour
+/// its caller was relying on.
+#[test]
+fn a_plain_box_does_not_bound_its_children() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col().w(Sizing::Cells(8)).child(overflowing_row()),
+        Size { w: 20, h: 4 },
+    );
+    let slot = spec
+        .items
+        .iter()
+        .find(|i| matches!(&i.draw, Draw::Lines(l) if l.first().map(|s| &**s) == Some("M")))
+        .expect("the slot paints");
+    assert_eq!(slot.visible_rect().x, 8, "one past the box's own 8 cells");
+}
+
+/// A box too small to hold its own frame bounds its children to nothing,
+/// rather than to a rectangle that wrapped around into a large one.
+#[test]
+fn a_box_smaller_than_its_own_frame_bounds_to_nothing() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        col()
+            .w(Sizing::Cells(2))
+            .h(Sizing::Cells(2))
+            .border()
+            .child(text("xxxx").w(Sizing::Cells(4))),
+        Size { w: 20, h: 4 },
+    );
+    for i in &spec.items {
+        if matches!(&i.draw, Draw::Lines(_)) {
+            assert!(
+                i.visible_rect().is_empty(),
+                "a 2x2 frame has no inside for text to paint in"
+            );
+        }
+    }
+}

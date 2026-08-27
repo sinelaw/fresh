@@ -267,6 +267,21 @@ pub struct BoxRender {
 }
 
 impl RenderObject for BoxRender {
+    fn clips(&self) -> bool {
+        self.props.clip
+    }
+
+    /// The bound sits inside the border ring and the padding — the same inset
+    /// `layout` uses to place children, so the clip and the content rect are
+    /// the same rectangle by construction rather than by two copies of the sum.
+    fn clip_inset(&self) -> (u16, u16) {
+        let border = u16::from(self.props.border);
+        (
+            self.props.pad.x.saturating_add(border),
+            self.props.pad.y.saturating_add(border),
+        )
+    }
+
     fn layout(&mut self, c: Constraints, cx: &mut dyn LayoutCx) -> Size {
         let p = &self.props;
         let border = u16::from(p.border);

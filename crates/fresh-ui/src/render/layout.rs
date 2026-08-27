@@ -690,11 +690,12 @@ impl<M: 'static> Ui<M> {
     // -- positioning ---------------------------------------------------------
 
     pub(crate) fn arrange(&mut self, r: RenderId, origin: Point, clip: Rect) {
-        let (size, clips, translate, scroll, kids, dirty, was, cached) = {
+        let (size, clips, clip_inset, translate, scroll, kids, dirty, was, cached) = {
             let Some(n) = self.render.get(r) else { return };
             (
                 n.data.size,
                 n.clips,
+                n.clip_inset,
                 n.data.translate,
                 n.data.scroll,
                 n.children.clone(),
@@ -720,7 +721,14 @@ impl<M: 'static> Ui<M> {
             n.data.child_arrange_dirty = false;
         }
         let start = self.pending_layers.len();
-        let child_clip = if clips { clip.intersect(rect) } else { clip };
+        // A clipping node bounds its descendants at its *content* rect, not at
+        // its outer edge: a bordered box owns the ring it drew, so content that
+        // reaches it has escaped rather than arrived.
+        let child_clip = if clips {
+            clip.intersect(rect.deflate(clip_inset.0, clip_inset.1))
+        } else {
+            clip
+        };
         let sc = if clips && translate {
             scroll
         } else {

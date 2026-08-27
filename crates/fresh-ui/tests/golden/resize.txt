@@ -4,9 +4,9 @@ Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
 ( ) Open    │»[x] build the reconciler                #2
 ( ) Done    │»[ ] lay it out                          #3
-            │»[ ] route the pointer                   #4
-            │»[ ] wire up focus                       #5
-            │
+┌──────────┐│»[ ] route the pointer                   #4
+│clip-test ││»[ ] wire up focus                       #5
+└──────────┘│
             │
             │
             │
@@ -20,8 +20,8 @@ Filter      │new task…    Add
 (o) All░░░░░│ ribbon: click th
 ( ) Open    │»[x] build the re
 ( ) Done    │»[ ] lay it out
-            │»[ ] route the po
-            │»[ ] wire up focu
+┌──────────┐│»[ ] route the po
+└──────────┘│»[ ] wire up focu
 5 tasks · light · synced 0 · r
 
 === at 90x6
@@ -38,9 +38,9 @@ Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
 ( ) Open    │»[x] build the reconciler                #2
 ( ) Done    │»[ ] lay it out                          #3
-            │»[ ] route the pointer                   #4
-            │»[ ] wire up focus                       #5
-            │
+┌──────────┐│»[ ] route the pointer                   #4
+│clip-test ││»[ ] wire up focus                       #5
+└──────────┘│
             │
             │
             │

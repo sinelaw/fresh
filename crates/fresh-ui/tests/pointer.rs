@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use fresh_ui::Axis;
 use fresh_ui::{
-    col, gesture, stack, text, viewport, BuildCx, Component, ComponentExt, Event, GestureKind,
+    col, gesture, row, stack, text, viewport, BuildCx, Component, ComponentExt, Event, GestureKind,
     Input, Mods, MouseButton, Node, Point, PointerMode, Size, Sizing, Ui,
 };
 
@@ -701,5 +701,52 @@ fn an_opaque_child_of_a_transparent_strip_still_absorbs() {
         log.borrow().iter().any(|s| s.starts_with("button")),
         "on the button: {:?}",
         log.borrow()
+    );
+}
+
+/// A bound is a statement about input as well as paint. The same over-constrained
+/// row as in `paint.rs`: the status slot is placed on the frame's own column, so
+/// without a bound a press there reaches the slot instead of the box that drew
+/// the frame — a resize grip losing its column to a one-cell label.
+#[test]
+fn a_bound_keeps_a_press_from_reaching_what_was_clipped_away() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    let build =
+        |log: &Log, clip: bool| {
+            col().w(Sizing::Cells(10)).border().clip(clip).child(
+                row().h(Sizing::Cells(1)).children([
+                    text("a-name!").w(Sizing::Cells(7)),
+                    row().flex(1).min_w(1),
+                    traced("slot", log, text("M").w(Sizing::Cells(1))),
+                ]),
+            )
+        };
+
+    // Unbounded, x=9 is the slot's.
+    ui.frame(build(&log, false), FRAME);
+    click(&mut ui, 9, 1);
+    assert!(
+        log.borrow().iter().any(|s| s.starts_with("slot")),
+        "without a bound the escaped cell is the slot's"
+    );
+
+    // Bounded — the default under `border()` — it is not.
+    log.borrow_mut().clear();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(&log, true), FRAME);
+    click(&mut ui, 9, 1);
+    assert!(
+        log.borrow().is_empty(),
+        "a bounded child takes no input outside the bound: {:?}",
+        log.borrow()
+    );
+
+    // And the cells it legitimately occupies still answer.
+    log.borrow_mut().clear();
+    click(&mut ui, 3, 1);
+    assert!(
+        log.borrow().is_empty(),
+        "the name's cells are not the slot's"
     );
 }

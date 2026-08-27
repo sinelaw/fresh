@@ -114,7 +114,37 @@ fn sidebar(app: &App) -> Node<Msg> {
                 })
             })
             .node(),
+        overflow_panel(app),
     ])
+}
+
+/// A bordered panel whose content cannot fit, so a bound has something to do.
+///
+/// Ten cells inside the frame; eleven cells of promises. A nine-cell name, a
+/// gap that will not close below one cell, and a one-cell slot. An
+/// over-wide child is normally clamped to what remains and never escapes — but
+/// `min_w` is a floor layout keeps *even when keeping it puts the slot outside
+/// the parent*, and outside the parent is the column the border is drawn on.
+///
+/// **"Toggle clipping"** in the palette (Ctrl-P) turns the bound off and on.
+/// With it on — the default, because `border()` implies it — the wall survives
+/// and the slot is simply not drawn: `│clip-test │`. With it off, the slot is
+/// placed on the wall's column and paints over it: `│clip-test M`.
+fn overflow_panel(app: &App) -> Node<Msg> {
+    col()
+        .border()
+        .clip(app.clip)
+        .theme("sidebar")
+        .h(Sizing::Cells(3))
+        // A width of its own, not the sidebar's: ten cells inside the frame,
+        // for eleven cells of promises. Dragging the grip then moves the panel
+        // without changing what it is demonstrating.
+        .w(Sizing::Cells(12))
+        .child(row().h(Sizing::Cells(1)).children([
+            text("clip-test").w(Sizing::Cells(9)),
+            row().flex(1).min_w(1),
+            text("M").w(Sizing::Cells(1)).theme("sidebar.title"),
+        ]))
 }
 
 /// A one-cell column that resizes the sidebar. Pressing it captures the

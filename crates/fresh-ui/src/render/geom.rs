@@ -224,6 +224,22 @@ impl Rect {
         }
     }
 
+    /// Shrink by `dx` cells on the left and right and `dy` on the top and
+    /// bottom. A rectangle too small to give that up collapses to `ZERO`
+    /// rather than wrapping around into a large one.
+    pub fn deflate(&self, dx: u16, dy: u16) -> Rect {
+        let (dx, dy) = (dx as i32, dy as i32);
+        if self.w as i32 <= 2 * dx || self.h as i32 <= 2 * dy {
+            return Rect::ZERO;
+        }
+        Rect {
+            x: self.x + dx,
+            y: self.y + dy,
+            w: (self.w as i32 - 2 * dx) as u16,
+            h: (self.h as i32 - 2 * dy) as u16,
+        }
+    }
+
     pub fn translate(&self, dx: i32, dy: i32) -> Rect {
         Rect {
             x: self.x + dx,
@@ -266,4 +282,73 @@ pub fn distribute(total: u16, weights: &[u16]) -> Vec<u16> {
         left -= 1;
     }
     out
+}
+
+#[cfg(test)]
+mod rect_tests {
+    use super::Rect;
+
+    #[test]
+    fn deflate_shrinks_on_every_side() {
+        let r = Rect {
+            x: 2,
+            y: 3,
+            w: 10,
+            h: 6,
+        };
+        assert_eq!(
+            r.deflate(1, 1),
+            Rect {
+                x: 3,
+                y: 4,
+                w: 8,
+                h: 4
+            }
+        );
+        assert_eq!(
+            r.deflate(2, 0),
+            Rect {
+                x: 4,
+                y: 3,
+                w: 6,
+                h: 6
+            }
+        );
+        assert_eq!(r.deflate(0, 0), r);
+    }
+
+    /// The case a border hits at the small end: a box two cells wide has no
+    /// inside. Answering `ZERO` keeps that honest — the arithmetic done in
+    /// `u16` would have wrapped `0 - 2` around to 65534 and turned "no room"
+    /// into "unbounded".
+    #[test]
+    fn deflate_past_the_middle_collapses_rather_than_wrapping() {
+        let r = Rect {
+            x: 0,
+            y: 0,
+            w: 2,
+            h: 2,
+        };
+        assert_eq!(r.deflate(1, 1), Rect::ZERO);
+        assert_eq!(
+            Rect {
+                x: 0,
+                y: 0,
+                w: 3,
+                h: 1
+            }
+            .deflate(1, 1),
+            Rect::ZERO
+        );
+        assert_eq!(
+            Rect {
+                x: 5,
+                y: 5,
+                w: 1,
+                h: 40
+            }
+            .deflate(3, 0),
+            Rect::ZERO
+        );
+    }
 }
