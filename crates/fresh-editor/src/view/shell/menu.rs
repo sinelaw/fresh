@@ -285,12 +285,18 @@ fn dropdown(
             // answered would be followed by that close — which would shut
             // the menu on the way into a submenu.
             //
-            // Left only. `Click` is derived for every button except Right
-            // (which becomes `SecondaryClick`), so without the guard a
-            // *middle* click activates the item — something no menu has ever
-            // done, here or before the migration.
+            // Left only: without the guard a *middle* press activates the
+            // item — something no menu has ever done, here or before the
+            // migration.
+            //
+            // **Press, not `Click`,** like the bar's labels and every other
+            // migrated surface: `handle_menu_dropdown_click` ran from the
+            // `Down(Left)` arm. A terminal sends press *and* release so the
+            // two look alike there, but the web frontend synthesises the
+            // press alone at the row's cell, and a `Click` handler never
+            // fires for it.
             .on(
-                GestureKind::Click,
+                GestureKind::Press,
                 Rc::new(move |e: &Event| {
                     if e.button != fresh_ui::MouseButton::Left {
                         return None;
@@ -334,7 +340,25 @@ fn dropdown(
     })
     // An inert cell of the box — its border — closes the menu, which is what a
     // click inside the dropdown that hit no item always did.
-    .on_click(|_| UiMsg::Ui(UiFact::CloseMenu));
+    //
+    // On the **press**, like the rows it sits behind. It has to be the same
+    // gesture as theirs: a row `stop()`s what it answers, and a stop only
+    // reaches handlers of the gesture that was stopped. With the rows on
+    // `Press` and this on `Click`, activating a row said
+    // `[MenuItemClick, CloseMenu]` — the item ran and the menu shut on the way
+    // into its own submenu.
+    //
+    // Every button but Right, which is what `Click` was derived for; a right
+    // press is the context menu's.
+    .on(
+        GestureKind::Press,
+        Rc::new(|e: &Event| {
+            if e.button == fresh_ui::MouseButton::Right {
+                return None;
+            }
+            Some(UiMsg::Ui(UiFact::CloseMenu))
+        }),
+    );
 
     // The chain's keyboard, on the level that is always present. Focus
     // properties belong to a `Focusable`, and the whole chain is one surface —
@@ -441,6 +465,42 @@ mod tests {
         fold_native(&spec, &mut buf, &plain, Band::Background);
         fold_native(&spec, &mut buf, &plain, Band::Overlay);
         buf
+    }
+
+    /// **A press alone activates a dropdown row — no release needed.**
+    ///
+    /// The same rule the status bar's segments hold, for the same reason:
+    /// `handle_menu_dropdown_click` ran from the `Down(Left)` arm, and the web
+    /// frontend forwards a chrome click as a synthetic mouse-down with no
+    /// matching up. A `GestureKind::Click` handler needs the release.
+    #[test]
+    fn a_press_with_no_release_activates_a_dropdown_row() {
+        use crate::view::shell::msg::UiFact;
+        use fresh_ui::{Input, Mods, MouseButton, Point};
+        let mut ui: Ui<UiMsg> = Ui::new();
+        let frame = Frame {
+            dropdowns: vec![DropdownLevel {
+                x: 1,
+                y: 1,
+                width: 12,
+                rows: vec![row_of(" New      "), row_of(" Open     ")],
+            }],
+            ..Frame::default()
+        };
+        ui.frame(frame_tree(frame), Size::new(20, 8));
+        let r = ui.rect_of(ui.find_by_key(&dropdown_item_key(0, 1)).expect("row 1"));
+        let got = ui.dispatch(Input::press(
+            Point::new(r.x + 1, r.y),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::MenuItemClick { depth: 0, index: 1 }))),
+            "a press alone must activate, got {:?}",
+            got.msgs
+        );
     }
 
     fn line(buf: &Buffer, y: u16) -> String {

@@ -177,33 +177,6 @@ impl Editor {
             }
         }
 
-        // Then the migration shell — stage two of three, and deliberately
-        // *after* the capture band above. A full-screen modal (Settings, the
-        // keybinding editor, workspace trust) must outrank anything in the
-        // tree; running the shell first would invert that, letting a layer
-        // answer a pointer the modal had already claimed. The legacy walk
-        // below stays the floor.
-        //
-        // Whether the tree took the event is reported by `dispatch`, not
-        // inferred from whether it had anything to say: a hover moves a
-        // highlight without claiming, and a right-click outside a menu closes
-        // it while staying available to open the next one.
-        // Which press of a run this is, as the editor's own multi-click
-        // detector saw it. The tree carries it to its handlers on
-        // `Event::clicks`; nothing in the library counts.
-        let clicks = if is_triple_click {
-            3
-        } else if is_double_click {
-            2
-        } else {
-            1
-        };
-        if let Some(input) = crate::view::shell::input::mouse(mouse_event, clicks) {
-            if self.shell_dispatch(input) {
-                return Ok(true);
-            }
-        }
-
         // Cancel the LSP-rename prompt on ANY mouse interaction that
         // reaches normal routing. RULING — a pre-WALK observer of the
         // non-modal channel: it fires on every event kind the capture
@@ -287,6 +260,50 @@ impl Editor {
             crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32)
                 .into_iter()
                 .any(|i| tree[i].lb.pointer_opaque);
+
+        // Then the migration shell — stage two of three, and deliberately
+        // *after* the capture band above. A full-screen modal (Settings, the
+        // keybinding editor, workspace trust) must outrank anything in the
+        // tree; running the shell first would invert that, letting a layer
+        // answer a pointer the modal had already claimed. The legacy walk
+        // below stays the floor.
+        //
+        // It also runs after the tree is built, and consults it. The tree has
+        // no rank in this walk, so `placed_surface_outranks_shell` is where the
+        // ranks its surfaces used to have are said: the explorer's box was
+        // `z = 100` and the file-open browser's is 130, and losing that
+        // inversion let the explorer answer clicks landing inside a modal
+        // drawn over it — the browser's rows and its checkboxes are in the
+        // left 36 columns, which is exactly where the dock sits.
+        //
+        // Whether the tree took the event is reported by `dispatch`, not
+        // inferred from whether it had anything to say: a hover moves a
+        // highlight without claiming, and a right-click outside a menu closes
+        // it while staying available to open the next one.
+        //
+        // Which press of a run this is, as the editor's own multi-click
+        // detector saw it. The tree carries it to its handlers on
+        // `Event::clicks`; nothing in the library counts.
+        let clicks = if is_triple_click {
+            3
+        } else if is_double_click {
+            2
+        } else {
+            1
+        };
+        if !super::chrome::placed_surface_outranks_shell(
+            &tree,
+            self.active_chrome().last_frame.width,
+            self.active_chrome().last_frame.height,
+            col,
+            row,
+        ) {
+            if let Some(input) = crate::view::shell::input::mouse(mouse_event, clicks) {
+                if self.shell_dispatch(input) {
+                    return Ok(true);
+                }
+            }
+        }
         if !chrome_drag_active && !context_menu_open && !opaque_chrome_over_point {
             let forwarding = self.config.terminal.mouse_forwarding;
             if let Some(result) = self.active_window_mut().try_forward_mouse_to_terminal(

@@ -806,13 +806,25 @@ await page.screenshot({ path: `${SHOTS}/33-openfile-prompt.png` });
 for (let i = 0; i < 4; i++) { await page.keyboard.press('Backspace'); }
 await page.waitForTimeout(300);
 const b1 = await fb();
+// Geometry the click arithmetic depends on, printed so a failure below can be
+// read without a second run: the browser's own list rect and the spans the
+// editor reported, next to the explorer rect the shell's tree now hit-tests
+// first. A shell surface that overlaps a modal is the shape to look for.
+console.log('  [dbg] listRect=' + JSON.stringify(b1.listRect) +
+  ' rows0..2=' + JSON.stringify(b1.rows.slice(0, 3).map(r => ({ n: r.name, row: r.row, i: r.index }))) +
+  ' toggles=' + JSON.stringify(b1.toggles.map(t => ({ n: t.name, x: t.x, y: t.y, w: t.w }))) +
+  ' columns=' + JSON.stringify(b1.columns.map(c => ({ n: c.name, x: c.x, y: c.y, w: c.w }))) +
+  ' selected=' + b1.selected +
+  ' explorer=' + JSON.stringify(((await scene(page)).regions.fileExplorer || {}).rect || null));
 const dirIdx = b1.rows.findIndex(r => r.isDir && r.name !== '..');
 if (dirIdx >= 0) {
+  const clickCell = { col: b1.listRect.x + 1, row: b1.rows[dirIdx].row };
   await page.locator('.palette.filebrowser .fbrow').nth(dirIdx).click();
   await page.waitForTimeout(250);
   const afterClick = await fb();
   check('clicking a row selects it in the editor', afterClick.selected === b1.rows[dirIdx].index,
-    `selected=${afterClick.selected} want=${b1.rows[dirIdx].index}`);
+    `selected=${afterClick.selected} want=${b1.rows[dirIdx].index} cell=${JSON.stringify(clickCell)} ` +
+    `name=${b1.rows[dirIdx].name} rowsNow=${JSON.stringify(afterClick.rows.slice(0, 3).map(r => r.name))}`);
   await page.locator('.palette.filebrowser .fbrow').nth(dirIdx).dblclick();
   await page.waitForTimeout(400);
   const afterNav = await fb();
@@ -827,8 +839,11 @@ check('clicking a column header re-sorts through the editor',
 const hidden0 = (await fb()).toggles.find(t => t.name === 'showHidden').active;
 await page.locator('.palette.filebrowser .fbtoggle').first().click();
 await page.waitForTimeout(300);
+const tog0 = (await fb()).toggles[0];
 check('clicking a checkbox toggles it through the editor',
-  (await fb()).toggles.find(t => t.name === 'showHidden').active === !hidden0);
+  (await fb()).toggles.find(t => t.name === 'showHidden').active === !hidden0,
+  `first toggle=${JSON.stringify({ n: tog0 && tog0.name, x: tog0 && tog0.x, y: tog0 && tog0.y, w: tog0 && tog0.w })} ` +
+  `was=${hidden0} now=${(await fb()).toggles.find(t => t.name === 'showHidden').active}`);
 await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 check('Escape closed the Open File prompt', !(await scene(page)).regions.palette);
 check('status bar comes back once the prompt releases the row',
