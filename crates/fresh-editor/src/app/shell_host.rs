@@ -306,6 +306,23 @@ pub mod shell_theme {
         theme.resolve_theme_key(key)
     }
 
+    /// The two halves of a pair, where each is a *name* rather than a literal.
+    ///
+    /// A cell's theme-key provenance, read back out of the grammar instead of
+    /// carried beside it. A half that is a literal (`#7ee787`) has no name by
+    /// construction — that is what a literal *is* — and reports `None`, which
+    /// is the honest answer for a colour a plugin supplied.
+    pub fn names<'a>(theme: &'a str) -> (Option<&'a str>, Option<&'a str>) {
+        let body = theme.split('+').next().unwrap_or(theme);
+        let (fg, bg) = match body.split_once('/') {
+            Some(p) => p,
+            None => (body, ""),
+        };
+        let named =
+            |h: &'a str| -> Option<&'a str> { (!h.is_empty() && !h.starts_with('#')).then_some(h) };
+        (named(fg), named(bg))
+    }
+
     /// A concrete colour as a name, for the interim case above.
     ///
     /// **Total, on purpose.** An earlier version answered `editor.fg` for

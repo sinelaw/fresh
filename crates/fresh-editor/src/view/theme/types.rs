@@ -2428,6 +2428,27 @@ macro_rules! theme_color_keys {
                 }
             }
 
+            /// The `'static` spelling of a theme key, if it is one.
+            ///
+            /// Generated from the same table as [`Theme::resolve_theme_key`],
+            /// so validating a key and getting a name that outlives the caller
+            /// are one step. Provenance wants both — a
+            /// [`ThemeRun`](crate::app::types::ThemeRun) borrows for `'static`
+            /// — and a key parsed out of a run at paint time is a `&str` with
+            /// a frame's lifetime until it comes through here.
+            pub fn static_theme_key(key: &str) -> Option<&'static str> {
+                let (section, field) = split_theme_key(key)?;
+                match section {
+                    $(
+                        $section => match field {
+                            $( $field_key => Some(concat!($section, ".", $field_key)), )*
+                            _ => None,
+                        },
+                    )*
+                    _ => None,
+                }
+            }
+
             /// Mutable companion to [`Theme::resolve_theme_key`]. Generated
             /// from the same table, so the readable and writable key sets stay
             /// identical by construction.

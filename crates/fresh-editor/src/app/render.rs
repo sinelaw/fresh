@@ -2369,8 +2369,15 @@ impl Editor {
                     x,
                     y,
                     w,
-                    fg_key: Some(fg),
-                    bg_key: Some(bg),
+                    // Validated and given back as `'static` in one step: a
+                    // name that is not a real theme key reports `None`, which
+                    // is what the inspector should say about it.
+                    fg_key: fg
+                        .as_deref()
+                        .and_then(crate::view::theme::Theme::static_theme_key),
+                    bg_key: bg
+                        .as_deref()
+                        .and_then(crate::view::theme::Theme::static_theme_key),
                     region: "Status Bar",
                 })
                 .collect::<Vec<_>>();
@@ -6495,6 +6502,11 @@ impl Editor {
                 t.status_separator_bg,
             )
         };
+        // What a theme key resolves to, for deciding whether a span's colour
+        // *is* the one its element's key names. Snapshotted here so the read
+        // guard does not have to be held across the description build.
+        let theme_snapshot = self.theme.read().unwrap().clone();
+        let theme_of = move |key: &str| theme_snapshot.resolve_theme_key(key);
         self.with_status_bar_ctx(|ctx, config| {
             let lsp_state = ctx.lsp_indicator_state;
             // Whether the dedicated remote indicator is on the bar, so the
@@ -6537,11 +6549,36 @@ impl Editor {
                 crate::view::ui::status_bar::ElementKind,
                 Option<String>,
             )| {
+                // **Names where a name exists.** Every colour on this bar comes
+                // from a named theme field — `element_spans` resolves
+                // `status_error_indicator_fg` and friends into a `Style`, and
+                // re-encoding that as `#rrggbb` threw the name away, which is
+                // why provenance had to be carried in a second field beside
+                // the paint.
+                //
+                // A span whose colours are the ones `element_keys` names for
+                // this element carries those names; anything else is a colour
+                // with no name and carries a literal. That is the honest
+                // distinction, and it is the same one the grammar already
+                // draws — so provenance is *read back out of* the run's theme
+                // rather than duplicated next to it.
+                let (kfg, kbg) = StatusBarRenderer::element_keys(kind, lsp_state);
+                let named = |c: ratatui::style::Color,
+                             key: &'static str,
+                             fallback: ratatui::style::Color|
+                 -> String {
+                    let resolved = theme_of(key).unwrap_or(fallback);
+                    if c == resolved {
+                        key.to_string()
+                    } else {
+                        literal(c)
+                    }
+                };
                 let runs = spans
                     .into_iter()
                     .map(|s| {
-                        let fg = literal(s.style.fg.unwrap_or(bar_fg));
-                        let bg = literal(s.style.bg.unwrap_or(bar_bg));
+                        let fg = named(s.style.fg.unwrap_or(bar_fg), kfg, bar_fg);
+                        let bg = named(s.style.bg.unwrap_or(bar_bg), kbg, bar_bg);
                         let mut mods: Vec<&str> = Vec::new();
                         if s.style
                             .add_modifier
@@ -6569,7 +6606,6 @@ impl Editor {
                     name: element_kind_name(kind),
                     clickable: StatusBarRenderer::clickable_for_kind(kind),
                     token_key,
-                    provenance: StatusBarRenderer::element_keys(kind, lsp_state),
                 }
             };
 
