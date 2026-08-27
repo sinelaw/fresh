@@ -567,7 +567,7 @@ pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
 }
 
 /// Truncate a string to fit within `max_width` display columns, appending "..." if truncated.
-fn truncate_to_width(s: &str, max_width: usize) -> String {
+pub(crate) fn truncate_to_width(s: &str, max_width: usize) -> String {
     let width = str_width(s);
     if width <= max_width {
         return s.to_string();

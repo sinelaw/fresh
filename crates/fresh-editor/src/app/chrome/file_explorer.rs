@@ -161,6 +161,24 @@ impl Editor {
         );
     }
 
+    /// A right-press on the panel that no row claimed.
+    ///
+    /// Resolves the viewport row from the panel's own rectangle and hands off
+    /// to [`Self::explorer_row_context`], which already tolerates an index
+    /// past the last entry — `get_display_node_at_viewport_row` returns
+    /// `None`, no selection moves, and the menu opens in its root form. That
+    /// is the component's behaviour: `relative_row = ev.row - (area.y + 1)`,
+    /// with the title row declining rather than opening anything.
+    pub(crate) fn explorer_body_context(&mut self, x: u16, y: u16) {
+        let area = self.shell_region_now(crate::view::shell::frame::HostRegion::Explorer);
+        // The title row is not a right-click target.
+        if area.height == 0 || y <= area.y {
+            return;
+        }
+        let index = y.saturating_sub(area.y + 1) as usize;
+        self.explorer_row_context(index, x, y);
+    }
+
     /// Show a tooltip for a file explorer status indicator
     pub(super) fn show_file_explorer_status_tooltip(
         &mut self,

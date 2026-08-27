@@ -231,9 +231,12 @@ fn menu_intents(n: Node<UiMsg>, keys: &[MenuShortcut]) -> Node<UiMsg> {
         .action(Intent::Right, |_| nav(MenuNav::Forward))
         .action(Intent::Home, |_| nav(MenuNav::First))
         .action(Intent::End, |_| nav(MenuNav::Last))
-        .action(Intent::Confirm, |_| nav(MenuNav::Activate));
-    // Cancel is deliberately absent: the layer declares `ESCAPE` dismissal,
-    // and a key that dismisses a layer is answered by that layer.
+        .action(Intent::Confirm, |_| nav(MenuNav::Activate))
+        // Every key that means "close", not only `Esc`. The layer's `ESCAPE`
+        // dismissal answered `Esc` alone, so a keymap's own close binding —
+        // emacs Ctrl+G → `menu_close` → `Intent::Cancel` — resolved to an
+        // intent nothing acted on.
+        .action(Intent::Cancel, |_| UiMsg::Ui(UiFact::CloseMenu));
     //
     // `hjkl` were hard-coded arms in the handler this replaced and are bound in
     // no keymap, so without these they would simply have stopped working. They
@@ -362,11 +365,21 @@ fn dropdown(
         // open-ness from build time rather than asking after the close.
         l = l
             .modality(Modality::None)
-            // Escape closes the chain. It is declared here rather than handled
-            // as an intent because a key that dismisses a layer is answered by
-            // that layer — which is what `menu_intents` deliberately leaves
-            // `Intent::Cancel` out for.
-            .dismiss(Dismiss::OUTSIDE_POINTER.or(Dismiss::ESCAPE))
+            // Pointer only. Closing on a *key* is `Intent::Cancel`, handled in
+            // `menu_intents` — one mechanism for every key that means "close",
+            // not just for `Esc`.
+            //
+            // `ESCAPE` dismissal used to be declared here instead, and it
+            // closed on `Esc` correctly. What it could not do is close on
+            // anything else: the emacs keymap binds Ctrl+G in the `menu`
+            // context to `menu_close`, which `menu_shortcuts` already turns
+            // into `Intent::Cancel` — and with `Cancel` unhandled that intent
+            // reached nobody, so Ctrl+G left the menu open
+            // (`menu_ctrl_g_closes_the_menu`). `Esc` still closes: the library
+            // maps it to `Intent::Cancel` intrinsically
+            // (`focus/intent.rs`), so it arrives by the same route now rather
+            // than by a second one.
+            .dismiss(Dismiss::OUTSIDE_POINTER)
             .on_dismiss(|_| UiMsg::Ui(UiFact::CloseMenu));
     }
     l

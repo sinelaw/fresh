@@ -139,6 +139,55 @@ fn hover_msg(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
     Rc::new(move |_: &Event| Some(UiMsg::Ui(UiFact::Hover(t.clone()))))
 }
 
+/// How much of each left-hand element survives once the right side is
+/// reserved — the rule `render_status` spelled `left_max_width`.
+///
+/// Returns one width per *surviving* left element, in order: each is the
+/// element's natural width except possibly the last, which is the truncated
+/// remainder. Elements past the end of the returned slice do not fit at all.
+///
+/// **Why this is not layout's job.** The flex gap places the right side
+/// against the edge, but placement is not priority: `prim.rs` resolves
+/// children in order against `avail - fixed_used`, so the left side (first)
+/// takes its natural width and the right side gets what is left, down to
+/// zero. Deciding *who yields* is a content decision, and it is made here
+/// from measured text, before any node exists.
+///
+/// Ported from the deleted `render_status`, boundaries included: below 15
+/// cells nothing is reserved, and an element that cannot fit ends the side.
+pub fn left_budget(
+    left_widths: &[usize],
+    right_width: usize,
+    sep_w: usize,
+    available: usize,
+) -> Vec<usize> {
+    let left_max = if available < 15 {
+        available
+    } else if available > right_width + 1 {
+        available - right_width - 1
+    } else {
+        1
+    };
+    let mut out = Vec::with_capacity(left_widths.len());
+    let mut used = 0usize;
+    for (idx, &w) in left_widths.iter().enumerate() {
+        let sep = if idx == 0 { 0 } else { sep_w };
+        if used + sep >= left_max {
+            break;
+        }
+        used += sep;
+        let remaining = left_max - used;
+        if w <= remaining {
+            used += w;
+            out.push(w);
+        } else {
+            out.push(remaining);
+            break;
+        }
+    }
+    out
+}
+
 fn separator(bar: &StatusBar) -> Node<UiMsg> {
     text_runs([Run::themed(bar.separator.clone(), bar.sep_theme.clone())]).h(Sizing::Cells(1))
 }
@@ -292,6 +341,53 @@ mod tests {
     use fresh_ui::{Size, Ui};
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+
+    /// **The regression this rule exists for.** A long message must not cost
+    /// the right side its place.
+    ///
+    /// `visual_comprehensive_a` caught it as a snapshot diff: the message
+    /// rendered in full and `LSP (off)  Palette: Ctrl+P` was pushed off the
+    /// edge, where the old bar truncated the message to `...` instead. The
+    /// assertion is the *right side's* survival, not the message's width —
+    /// asserting the latter is what let this through, because a bar that
+    /// drops its right half also "renders the message correctly".
+    #[test]
+    fn a_long_message_yields_to_the_right_side() {
+        // 100 cells; right side wants 30; a 60-cell message on the left.
+        let got = left_budget(&[8, 60], 30, 2, 100);
+        let total: usize = got.iter().sum::<usize>() + 2 * got.len().saturating_sub(1);
+        assert!(
+            total + 30 < 100,
+            "left {got:?} (total {total}) must leave room for the right side's 30"
+        );
+        assert_eq!(got[0], 8, "the short element keeps its width");
+        assert!(got[1] < 60, "the message is the one that yields");
+    }
+
+    /// The partner: when both sides fit, nobody is truncated.
+    #[test]
+    fn a_bar_with_room_truncates_nothing() {
+        assert_eq!(left_budget(&[8, 12], 30, 2, 100), vec![8, 12]);
+    }
+
+    /// An element that cannot fit at all ends the side — the rest are dropped
+    /// rather than being squeezed to nothing.
+    #[test]
+    fn an_element_that_cannot_fit_ends_the_side() {
+        let got = left_budget(&[40, 40, 40], 30, 2, 100);
+        assert_eq!(got.len(), 2, "the third does not fit: {got:?}");
+        assert_eq!(got[0], 40);
+        assert!(got[1] < 40, "the second is truncated to the remainder");
+    }
+
+    /// Below 15 cells the old bar reserved nothing and gave the left side the
+    /// whole row. Kept verbatim: a boundary is behaviour.
+    #[test]
+    fn a_very_narrow_bar_reserves_nothing() {
+        assert_eq!(left_budget(&[10], 30, 2, 14), vec![10]);
+        // …and at 15 the reservation switches on.
+        assert_eq!(left_budget(&[10], 30, 2, 15), vec![1]);
+    }
 
     fn plain(text: &str, name: &'static str) -> Item {
         Item {

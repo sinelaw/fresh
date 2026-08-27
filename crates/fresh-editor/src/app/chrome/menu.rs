@@ -9,10 +9,38 @@
 use anyhow::Result as AnyhowResult;
 
 use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use crate::app::types::HoverTarget;
 
 pub(crate) struct Menu;
 
 impl ChromeComponent for Menu {
+    /// Opening a submenu is a *reaction to hover*, and it lives here.
+    ///
+    /// Paint and pointer input migrated, so this component pushes no boxes —
+    /// which means the legacy hover walk can no longer reach it. The shell's
+    /// `UiFact::Hover` fans out to every registered component precisely so a
+    /// migrated surface keeps its reactions; the menu was registered but had
+    /// no `on_hover_change`, so it took the trait's `false` and
+    /// `menu_hover_reaction` was left with no callers at all. Hovering a
+    /// submenu parent therefore opened nothing
+    /// (`test_submenu_first_item_aligns_with_parent_item`).
+    ///
+    /// The fan-out was the right shape; this is the half that was missing
+    /// from it.
+    fn on_hover_change(
+        &self,
+        ed: &mut Editor,
+        old: Option<&HoverTarget>,
+        new: Option<&HoverTarget>,
+        _col: u16,
+        _row: u16,
+    ) -> bool {
+        if old == new {
+            return false;
+        }
+        ed.menu_hover_reaction(new)
+    }
+
     fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {
         // Nothing. The bar row is a native region in the shell's tree and the
         // open chain is a stack of `Layer`s; both answer the pointer
