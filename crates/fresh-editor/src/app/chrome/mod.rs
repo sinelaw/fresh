@@ -588,6 +588,43 @@ pub(crate) fn chrome_tree(ed: &Editor) -> Vec<ChromeBox> {
     fresh
 }
 
+/// The rank the shell's background surfaces used to hold in this walk.
+///
+/// The file explorer's box was `z = 100` and the status bar's `z = 40`. Both
+/// are gone: those surfaces are nodes in the shell's tree now and answer their
+/// own pointer. But the tree is offered the pointer *before* this walk and
+/// carries no rank of its own, so a legacy surface that used to outrank them —
+/// the file-open browser at 130, a suggestions popup at 170 — silently stopped
+/// doing so. This constant is where that precedence is said again.
+pub(crate) const SHELL_BACKGROUND_Z: u8 = 100;
+
+/// Does a legacy surface own this cell outright, ahead of the shell's tree?
+///
+/// Only a **placed** box counts. The bands above this rank that cover the
+/// whole frame — `chrome:popup_guard`, `chrome:overlay_prompt_modal`,
+/// `chrome:prompt_suggestions`, the right-click and dismissal guards — are
+/// per-gesture arms that decline for almost everything and are collected on
+/// every frame; treating them as owners would suppress the tree everywhere.
+/// A box that names a rectangle is a surface that is actually *there*.
+pub(crate) fn placed_surface_outranks_shell(
+    tree: &[ChromeBox],
+    frame_w: u16,
+    frame_h: u16,
+    col: u16,
+    row: u16,
+) -> bool {
+    crate::widgets::layout_box::hit_stack(tree, row as u32, col as u32)
+        .into_iter()
+        .any(|i| {
+            let lb = &tree[i].lb;
+            let full_frame = lb.col == 0
+                && lb.row == 0
+                && lb.width >= frame_w as u32
+                && lb.height >= frame_h as u32;
+            lb.z > SHELL_BACKGROUND_Z && !full_frame
+        })
+}
+
 fn chrome_tree_uncached(ed: &Editor) -> Vec<ChromeBox> {
     let frame = ed.active_chrome().last_frame;
     let mut t = ChromeTreeBuilder::new(frame.width as u32, frame.height as u32);
@@ -601,6 +638,45 @@ fn chrome_tree_uncached(ed: &Editor) -> Vec<ChromeBox> {
 #[cfg(test)]
 mod tests {
     use super::layer_rank::*;
+
+    /// **A modal drawn over the dock owns its own cells.**
+    ///
+    /// The file-open browser is a centered dialog whose box sits at `z = 130`;
+    /// the file explorer's was `z = 100`, so the walk gave the browser the
+    /// cells where they overlap. The explorer is a node in the shell's tree
+    /// now, and the tree runs before this walk with no rank — which let the
+    /// dock answer clicks aimed at the browser's rows and checkboxes, both of
+    /// which sit in the dialog's left columns. Measured in the browser:
+    /// explorer `{x:0,y:1,w:36,h:34}`, a row's cell `{col:2,row:20}`, the
+    /// first checkbox's `{col:12,row:16}` — and the one control that kept
+    /// working was the `size` column header at `col:97`, clear of the dock.
+    #[test]
+    fn a_placed_surface_above_the_shells_band_owns_its_cells() {
+        use super::{placed_surface_outranks_shell, ChromeBox};
+        use crate::widgets::LayoutBox;
+        let boxed = |kind, z, col, row, w, h| {
+            let mut lb = LayoutBox::plain(kind, row, col, w, h);
+            lb.z = z;
+            ChromeBox { lb, owner: 0 }
+        };
+        // The dialog as the walk sees it, plus the full-frame per-gesture
+        // bands that ride above it on every single frame.
+        let tree = vec![
+            boxed("chrome:file_browser", 130, 10, 15, 100, 20),
+            boxed("chrome:overlay_prompt_modal", 160, 0, 0, 120, 40),
+            boxed("chrome:popup_guard", 140, 0, 0, 120, 40),
+        ];
+        assert!(
+            placed_surface_outranks_shell(&tree, 120, 40, 12, 20),
+            "inside the dialog, the dialog owns the cell"
+        );
+        assert!(
+            !placed_surface_outranks_shell(&tree, 120, 40, 2, 5),
+            "outside it, the full-frame bands must not stand in for a surface \
+             — they are collected every frame and would silence the tree \
+             everywhere"
+        );
+    }
 
     /// The rank block is the ONE precedence source for the keyboard
     /// walk, the mouse capture band, the PTY gate, `get_key_context`,

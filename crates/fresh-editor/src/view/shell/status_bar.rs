@@ -121,8 +121,15 @@ fn element(bar: &StatusBar, it: &Item, key: Key) -> Node<UiMsg> {
     };
     let hover = it.clickable.map(HoverTarget::StatusBarClickable);
     gesture(runs)
+        // **Press, not `Click`.** The old `chrome::StatusBar::on_pointer` fired
+        // on `PointerPress::Left` — a mouse-*down* — and every other migrated
+        // surface kept that (the explorer's rows, the menu bar's labels, the
+        // search-options row). A terminal sends a press and a release, so
+        // `Click` looked equivalent there; the web frontend synthesises the
+        // press alone at the segment's cell, so a `Click` handler never fired
+        // and the Remote/LSP/read-only menus stopped opening in the browser.
         .on(
-            GestureKind::Click,
+            GestureKind::Press,
             Rc::new(move |e: &Event| {
                 if e.button != fresh_ui::MouseButton::Left {
                     return None;
@@ -430,6 +437,125 @@ mod tests {
             Size::new(w, h),
         );
         ui
+    }
+
+    /// **Reconciliation, not first paint.**
+    ///
+    /// The editor keeps ONE `Ui` for the life of the window and calls `frame`
+    /// again every render (`render.rs`: `shell_ui.take()` … `ui.frame(..)` …
+    /// put back), so every frame after the first is a *reconcile* against the
+    /// previous tree. Every other test in this file — and in the whole shell —
+    /// builds `Ui::new()` and frames once, so none of them exercises that.
+    ///
+    /// A changed message must reach the cells on the second frame. It did not,
+    /// **whenever a layer was present in the tree** — open in both frames, or
+    /// open in the first and gone in the second, either way the status bar
+    /// kept painting the first frame's row. Without a layer it passed, which
+    /// is why nothing caught it.
+    ///
+    /// That was the shape of every remaining e2e failure: a context menu is
+    /// open, a click both runs the item and closes the menu, and the assertion
+    /// checks the screen changed.
+    ///
+    /// The cause was in `fresh-ui`'s layout drain, not in this crate:
+    /// `drain_layout` gave up on the rest of its dirty list the moment one
+    /// boundary had no cached constraints to re-enter on. Reconciliation was
+    /// fine all along — `update_render` pushed the new runs into the text
+    /// object — but `TextRender` shapes its rows at *measure* time and paints
+    /// from them, so a boundary that never re-measured painted last frame's
+    /// rows. The layer is what made the difference: it dirties the root, the
+    /// root sorts first and has no cache, and the status bar's boundary was
+    /// dropped behind it. See `fresh-ui/src/render/layout.rs`.
+    #[test]
+    fn a_second_frame_repaints_a_changed_message() {
+        let mk = |msg: &str| {
+            bar_of(
+                vec![plain(" Trusted ", "trusted"), plain(msg, "message")],
+                Vec::new(),
+            )
+        };
+        let (w, h) = (60u16, 4u16);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        // The real transition: a context menu is OPEN when the item is
+        // clicked, and the click both closes it and changes the message. So
+        // frame 1 carries the layer and frame 2 does not.
+        let frame_of = |bar: StatusBar, menu: bool| {
+            frame_tree(Frame {
+                status_bar: true,
+                status_bar_items: Some(bar),
+                menu: menu.then(|| crate::view::shell::context_menu::Menu {
+                    x: 4,
+                    y: 1,
+                    width: 20,
+                    highlighted: 0,
+                    items: vec!["Copy".into(), "Paste".into()],
+                }),
+                ..Frame::default()
+            })
+        };
+        let palette = |k: &fresh_ui::ThemeKey| super::super::fold::test_palette::of(k.as_str());
+        // **frame → fold → frame → fold**, which is the editor's real cycle
+        // (`render.rs` folds `ui.spec()` every draw). Framing twice and
+        // folding once does not exercise it.
+        ui.frame(frame_of(mk(" Opened rel.txt "), true), Size::new(w, h));
+        let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
+        fold_native(ui.spec(), &mut buf, &palette, Band::Background);
+
+        ui.frame(
+            frame_of(mk(" Copied path: rel.txt "), false),
+            Size::new(w, h),
+        );
+        let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
+        fold_native(ui.spec(), &mut buf, &palette, Band::Background);
+        let y = {
+            let e = ui
+                .find_by_key(&region_key(HostRegion::StatusBar))
+                .expect("the bar");
+            ui.rect_of(e).y as u16
+        };
+        let row: String = (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect();
+        assert!(
+            row.contains("Copied path: rel.txt"),
+            "the second frame's message must reach the cells, got {row:?}"
+        );
+    }
+
+    /// **A press alone activates a segment — no release needed.**
+    ///
+    /// The web frontend forwards a chrome click as a synthetic mouse-*down* at
+    /// the segment's cell and never sends the matching up (`web-ui/js` —
+    /// every chrome surface does this, and the document-level `mouseup`
+    /// handler skips chrome). The old `chrome::StatusBar::on_pointer` fired on
+    /// `PointerPress::Left`, so that worked; a `GestureKind::Click` handler
+    /// needs the release and silently did nothing, which took out the browser's
+    /// Remote / LSP / read-only menus while every terminal test still passed.
+    #[test]
+    fn a_press_with_no_release_activates_a_segment() {
+        use fresh_ui::{Input, Mods, MouseButton, Point};
+        let bar = bar_of(
+            vec![clicky(" Remote ", StatusBarClickable::RemoteIndicator)],
+            Vec::new(),
+        );
+        let mut ui = laid_out(bar, 40, 3);
+        let r = ui.rect_of(
+            ui.find_by_key(&item_key(Side::Left, 0))
+                .expect("the segment"),
+        );
+        let got = ui.dispatch(Input::press(
+            Point::new(r.x + 1, r.y),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert!(
+            got.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::StatusBarClicked(
+                    StatusBarClickable::RemoteIndicator
+                ))
+            )),
+            "a press alone must activate, got {:?}",
+            got.msgs
+        );
     }
 
     fn row_text(bar: StatusBar, w: u16, h: u16) -> String {
