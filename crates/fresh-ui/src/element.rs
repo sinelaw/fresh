@@ -814,6 +814,7 @@ impl<M: 'static> Ui<M> {
             return;
         };
         let clips = obj.clips();
+        let clip_inset = obj.clip_inset();
         let out_of_flow = obj.out_of_flow();
         let reads_window = obj.reads_window();
         let raw_input = obj.takes_raw_input();
@@ -830,6 +831,7 @@ impl<M: 'static> Ui<M> {
             min_h: 0,
             pointer: None,
             clips,
+            clip_inset,
             out_of_flow,
             reads_window,
             raw_input,
@@ -857,6 +859,7 @@ impl<M: 'static> Ui<M> {
             .desc
             .sync_render(Some(obj.as_mut()));
         let clips = obj.clips();
+        let clip_inset = obj.clip_inset();
         let out_of_flow = obj.out_of_flow();
         let reads_window = obj.reads_window();
         let raw_input = obj.takes_raw_input();
@@ -865,6 +868,7 @@ impl<M: 'static> Ui<M> {
         if let Some(n) = self.render.get_mut(r) {
             n.obj = Some(obj);
             n.clips = clips;
+            n.clip_inset = clip_inset;
             n.out_of_flow = out_of_flow;
             n.reads_window = reads_window;
             n.raw_input = raw_input;

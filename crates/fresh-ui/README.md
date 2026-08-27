@@ -70,6 +70,13 @@ render tree (constraints down, sizes up, parents place children), and fold the
 result into a display list. Input runs the other way: hit-test the render tree,
 then capture → target → bubble along the resulting path.
 
+**Layout may over-constrain; paint and hit need not follow it out.** A child is
+normally clamped to the space its parent has left, but a floor it cannot
+satisfy — `min_w` / `min_h` — is a promise layout keeps even when keeping it
+places a sibling outside the parent. A node that says `clip(true)` bounds what
+its descendants may paint *and* hit to its content rect; `border()` implies it,
+because a frame its own content can paint over is not a frame.
+
 ## Subsystems
 
 | Area | What it does | Source |

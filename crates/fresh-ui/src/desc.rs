@@ -185,6 +185,14 @@ pub struct BoxProps {
     pub gap: u16,
     pub border: bool,
     pub align: Align,
+    /// Bound what descendants may paint and hit to this box's *content* rect —
+    /// inside the border ring and the padding.
+    ///
+    /// Off by default: a plain `row()` or `col()` is a layout grouping, and
+    /// clipping every one of them would cost a bound per node for no gain.
+    /// [`border`](Node::border) turns it on, because a frame its own content
+    /// can paint over is not a frame.
+    pub clip: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -972,8 +980,29 @@ impl<M> Node<M> {
         self
     }
 
+    /// Draw a box outline just inside this node's rectangle, and bound what is
+    /// inside it to the remaining content rect.
+    ///
+    /// The clip comes with the border on purpose. Content laid out in a
+    /// bordered box can still be given a rectangle that reaches the ring — an
+    /// unsatisfiable [`min_w`](Node::min_w) floor is the usual way — and
+    /// without a bound it paints over the frame, turning a corner into a
+    /// letter. Call [`clip(false)`](Node::clip) to keep the border and drop the
+    /// bound.
     pub fn border(mut self) -> Self {
-        self.box_props().border = true;
+        let p = self.box_props();
+        p.border = true;
+        p.clip = true;
+        self
+    }
+
+    /// Bound what descendants may paint and hit to this box's content rect.
+    ///
+    /// Implied by [`border`](Node::border); set it explicitly for an unbordered
+    /// box whose children must not escape — a pane in a split grid, a cell in a
+    /// table.
+    pub fn clip(mut self, on: bool) -> Self {
+        self.box_props().clip = on;
         self
     }
 
