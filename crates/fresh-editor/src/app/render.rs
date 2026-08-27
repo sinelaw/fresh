@@ -118,6 +118,13 @@ impl Editor {
         // Reset per-cell theme key map for this frame
         self.active_chrome_mut().reset_cell_theme_map();
 
+        // Hand over whatever lines a playing-out wheel gesture owes by
+        // now, before anything is laid out, so they land in this frame.
+        // A multi-line notch walks across several frames this way, which
+        // is what makes it read as a slide — and gives the scroll fade a
+        // row at a time to work with.
+        self.step_pending_wheel_scroll();
+
         self.pre_sync_and_scroll_sync();
 
         // NOTE: Viewport sync with cursor is handled by split_rendering.rs which knows the
@@ -637,6 +644,12 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .active_split();
         self.maybe_start_cursor_jump_animation(pending_hardware_cursor, active_split);
+
+        // Shade the top and bottom rows of every split, so the text
+        // meets the edge of its pane by fading out rather than being cut
+        // off mid-line. Runs here, after the content pass, because it
+        // reads the rows that pass just painted.
+        self.shade_scroll_edges(frame.buffer_mut(), &split_areas);
 
         // A dormant remote session's shell shows a placeholder page instead
         // of an (empty, uneditable) buffer: nothing can be shown or edited
@@ -2809,7 +2822,96 @@ impl Editor {
         self.cursor_jump_animation = Some(id);
     }
 
-    /// Returns true if `(x, y)` falls inside any popup-style overlay that
+    /// Rows at each edge of a split that are shaded, and how far the
+    /// shading reaches. The row hard against the edge is painted a third
+    /// of the way up from its background, the one inside it two thirds,
+    /// and the third row in is fully painted.
+    const EDGE_FADE_ROWS: u16 = 2;
+
+    /// Shade the top and bottom rows of every split's content.
+    ///
+    /// A pane cuts text off mid-line at its edges; shading the last
+    /// couple of rows lets it trail off instead, which reads as "this
+    /// continues" and gives a scroll somewhere to come from and go to.
+    /// Constant rather than animated: the same rows are shaded whether
+    /// the view is moving or still, so nothing flickers, nothing has to
+    /// settle, and scrolling stays a plain shift of the text through a
+    /// fixed gradient.
+    ///
+    /// An edge only shades when there is something beyond it to trail
+    /// off into: at the top or bottom of a document the text simply
+    /// ends, and dimming it there would say the opposite. A file that
+    /// fits its pane gets no shading at all.
+    ///
+    /// Above is read off the viewport, which knows exactly. Below needs
+    /// the document's extent, and the scrollbar thumb already carries
+    /// it: a thumb short of the end of its track is content past the
+    /// bottom row. A split rendered without a vertical scrollbar has no
+    /// extent to read, so its bottom edge shades — the affordance is
+    /// the better guess when the answer is unavailable.
+    fn shade_scroll_edges(
+        &mut self,
+        buf: &mut ratatui::buffer::Buffer,
+        split_areas: &[(
+            crate::model::event::LeafId,
+            BufferId,
+            ratatui::layout::Rect,
+            ratatui::layout::Rect,
+            usize,
+            usize,
+        )],
+    ) {
+        if !self.config.editor.viewport_edge_fade {
+            return;
+        }
+        let editor_bg = self.theme.read().unwrap().editor_bg;
+
+        let window = self.active_window();
+        let Some((_, view_states)) = window.buffers.splits() else {
+            return;
+        };
+        for (leaf, buffer_id, area, scrollbar, _thumb_start, thumb_end) in split_areas {
+            if area.width == 0 || area.height == 0 {
+                continue;
+            }
+            // A terminal's grid is its own; shading its edges would dim
+            // live process output rather than a document being read
+            // through a window.
+            if window.is_terminal_buffer(*buffer_id) {
+                continue;
+            }
+            let Some(view_state) = view_states.get(leaf) else {
+                continue;
+            };
+            let anchor = view_state.viewport.anchor;
+            let content_above = anchor.byte > 0 || anchor.row_offset != 0;
+            let content_below = scrollbar.height == 0 || *thumb_end < scrollbar.height as usize;
+
+            for row in 0..area.height {
+                let from_top = row;
+                let from_bottom = area.height - 1 - row;
+                let in_top = content_above && from_top < Self::EDGE_FADE_ROWS;
+                let in_bottom = content_below && from_bottom < Self::EDGE_FADE_ROWS;
+                // A pane short enough for the two bands to overlap takes
+                // whichever edge the row is nearer, so it never comes out
+                // brighter for being close to both.
+                let distance = match (in_top, in_bottom) {
+                    (true, true) => from_top.min(from_bottom),
+                    (true, false) => from_top,
+                    (false, true) => from_bottom,
+                    (false, false) => continue,
+                };
+                // Hard against the edge is dimmest; each row inward is a
+                // step brighter, and the row past the band is untouched.
+                let level = (distance + 1) as f32 / (Self::EDGE_FADE_ROWS + 1) as f32;
+                crate::view::animation::shade_row_toward_background(
+                    buf, *area, row, level, editor_bg,
+                );
+            }
+        }
+    }
+
+    /// Returns true if `(x, y)` falls inside any popup-style overlay that    /// Returns true if `(x, y)` falls inside any popup-style overlay that
     /// was rendered this frame. Used to decide whether the hardware cursor
     /// should be shown or hidden so it does not bleed through a popup.
     fn cursor_obscured_by_overlay(&self, x: u16, y: u16) -> bool {

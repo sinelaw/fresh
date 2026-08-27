@@ -610,7 +610,12 @@ impl EditorServer {
                 // switch paints its first frame and then freezes mid-slide
                 // until the user nudges the terminal. Mirrors the direct
                 // (non-server) loop in `main.rs`.
-                if editor.active_window().animations.is_active() {
+                // Same for a wheel gesture still walking its lines: each
+                // frame hands over the next one, so without this a
+                // multi-line notch would stop part-way through.
+                if editor.active_window().animations.is_active()
+                    || editor.has_pending_wheel_scroll()
+                {
                     needs_render = true;
                 }
             }

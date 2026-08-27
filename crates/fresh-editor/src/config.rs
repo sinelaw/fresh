@@ -1152,6 +1152,20 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub cursor_jump_animation: bool,
 
+    /// Shade the top and bottom rows of each pane, so text meets the
+    /// edge by fading out rather than being cut off mid-line.
+    ///
+    /// The row hard against the edge is painted a third of the way up
+    /// from its background, the one inside it two thirds, and the third
+    /// row in normally. Constant, not animated — the same rows are
+    /// shaded whether the view is moving or still, so scrolling is a
+    /// plain shift of the text through a fixed gradient. The top edge
+    /// only shades when there is something above it, so the first lines
+    /// of a file are not dimmed for no reason.
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub viewport_edge_fade: bool,
+
     /// Show line numbers in the gutter (default for new buffers)
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
@@ -1629,6 +1643,29 @@ pub struct EditorConfig {
     pub diagnostics_inline_text: bool,
 
     // ===== Mouse =====
+    /// How many lines one notch of the mouse wheel scrolls.
+    ///
+    /// Applies to every surface the wheel scrolls by lines, not just
+    /// buffer text. Shift+wheel pans sideways by columns and is
+    /// unaffected. Clamped to at least 1 — a zero would make the wheel
+    /// dead. Default: 3.
+    #[serde(default = "default_mouse_wheel_scroll_lines")]
+    #[schemars(extend("x-section" = "Mouse"))]
+    pub mouse_wheel_scroll_lines: usize,
+
+    /// Walk a multi-line wheel notch one line at a time instead of
+    /// jumping the view by the whole `mouse_wheel_scroll_lines` at once.
+    ///
+    /// The first line lands immediately, so the view still answers the
+    /// wheel on the same frame; the rest follow at about a line a frame.
+    /// The walk is paced by the clock, not by frames, so a terminal too
+    /// slow to show it collapses the remainder back into a single jump
+    /// rather than lagging behind the wheel. Has no effect when
+    /// `animations` is `false`, or when a notch is only one line.
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Mouse"))]
+    pub smooth_scroll: bool,
+
     /// Whether mouse hover triggers LSP hover requests.
     /// When enabled, hovering over code with the mouse will show documentation.
     /// On Windows, this also controls the mouse tracking mode: when disabled,
@@ -1937,6 +1974,10 @@ fn default_highlight_context_bytes() -> usize {
     10_000 // 10KB context for accurate syntax highlighting
 }
 
+fn default_mouse_wheel_scroll_lines() -> usize {
+    3
+}
+
 fn default_mouse_hover_enabled() -> bool {
     !cfg!(windows)
 }
@@ -1968,6 +2009,7 @@ impl Default for EditorConfig {
             virtual_space: VirtualSpaceMode::default(),
             animations: true,
             cursor_jump_animation: true,
+            viewport_edge_fade: true,
             line_numbers: true,
             relative_line_numbers: false,
             scroll_offset: default_scroll_offset(),
@@ -1997,6 +2039,8 @@ impl Default for EditorConfig {
             recovery_enabled: true,
             auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),
             highlight_context_bytes: default_highlight_context_bytes(),
+            mouse_wheel_scroll_lines: default_mouse_wheel_scroll_lines(),
+            smooth_scroll: true,
             mouse_hover_enabled: default_mouse_hover_enabled(),
             mouse_hover_delay_ms: default_mouse_hover_delay(),
             double_click_time_ms: default_double_click_time(),

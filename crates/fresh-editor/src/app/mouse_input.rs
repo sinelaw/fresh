@@ -14,6 +14,79 @@ use crate::view::popup_mouse::{popup_areas_to_layout_info, PopupHitTester};
 use crate::view::prompt::PromptType;
 use anyhow::Result as AnyhowResult;
 use ratatui::layout::Rect;
+use std::time::{Duration, Instant};
+
+/// Columns one notch of a sideways wheel pans. Horizontal panning has
+/// no line-oriented setting to follow — `mouse_wheel_scroll_lines`
+/// counts lines — so it keeps the fixed step it always had.
+const WHEEL_COLUMNS: i32 = 3;
+
+/// How long one line of a smoothed wheel gesture is meant to take.
+/// Roughly a frame at 60Hz, so a three-line notch walks across about
+/// three frames — enough to read as a slide rather than a jump, and
+/// short enough that the view never feels behind the wheel.
+const SMOOTH_SCROLL_LINE: Duration = Duration::from_millis(16);
+
+/// A wheel gesture still playing out.
+///
+/// One notch asks for several lines at once. Handing them over one at a
+/// time makes the view slide instead of jumping — and gives the scroll
+/// fade a row at a time to work with — but only while the frames to
+/// show it in are actually arriving. So the walk is paced by the clock
+/// rather than by frames: whatever the last frame did not get to is
+/// still owed, and a caller that has been away long enough for all of
+/// it delivers the remainder in one go. A terminal too slow to animate
+/// therefore gets the plain jump it had before, rather than a scroll
+/// that drags on behind the wheel.
+pub(crate) struct PendingWheelScroll {
+    /// Where the pointer was. The lines still owed are replayed through
+    /// the same dispatch as the original event, so they land on
+    /// whatever surface that event routed to.
+    col: u16,
+    row: u16,
+    /// -1 for up, +1 for down.
+    direction: i32,
+    /// Lines still owed to that surface.
+    remaining: u32,
+    /// How many lines may stay owed before the walk starts handing over
+    /// the surplus with the current frame. Two notches' worth, so the
+    /// view never trails the wheel by more than a moment.
+    max_backlog: u32,
+    /// When the last line was handed over. Advanced by exactly the
+    /// lines delivered, so the pace does not drift with frame times.
+    last_step: Instant,
+}
+
+/// How many of `remaining` lines the clock has made due after
+/// `elapsed`, at one line per `interval`: none until the first comes
+/// due, and the whole remainder at once for a caller that has been away
+/// long enough for all of them.
+fn lines_due(elapsed: Duration, interval: Duration, remaining: u32) -> u32 {
+    if interval.is_zero() {
+        return remaining;
+    }
+    let due = elapsed.as_nanos() / interval.as_nanos();
+    u32::try_from(due).unwrap_or(u32::MAX).min(remaining)
+}
+
+/// Lines to hand over this frame: the ones the clock has made due, plus
+/// anything past `max_backlog` that would otherwise leave the view
+/// trailing the wheel.
+///
+/// The backlog is what keeps a flick honest. Notches can arrive faster
+/// than a line a frame, and a gesture must travel exactly as far as it
+/// asks for — dropping the excess would make fast scrolling cover less
+/// ground than slow scrolling. So nothing is ever dropped: past the
+/// backlog the surplus rides along with this frame's line, and the walk
+/// degrades toward the jump it replaced instead of falling behind.
+fn lines_to_deliver(
+    elapsed: Duration,
+    interval: Duration,
+    remaining: u32,
+    max_backlog: u32,
+) -> u32 {
+    lines_due(elapsed, interval, remaining).max(remaining.saturating_sub(max_backlog))
+}
 
 /// Map a screen row on a suggestion list's scrollbar track to the prompt
 /// scroll offset that puts the thumb's top on exactly that row.
@@ -341,21 +414,21 @@ impl Editor {
                 needs_render = self.update_widget_hover(col, row, None) || needs_render;
             }
             MouseEventKind::ScrollUp => {
-                self.handle_vertical_scroll(&tree, col, row, mouse_event.modifiers, -3)?;
+                self.begin_wheel_scroll(&tree, col, row, mouse_event.modifiers, -1)?;
                 needs_render = true;
             }
             MouseEventKind::ScrollDown => {
-                self.handle_vertical_scroll(&tree, col, row, mouse_event.modifiers, 3)?;
+                self.begin_wheel_scroll(&tree, col, row, mouse_event.modifiers, 1)?;
                 needs_render = true;
             }
             MouseEventKind::ScrollLeft => {
                 // Native horizontal scroll left
-                self.handle_horizontal_scroll(&tree, col, row, -3)?;
+                self.handle_horizontal_scroll(&tree, col, row, -WHEEL_COLUMNS)?;
                 needs_render = true;
             }
             MouseEventKind::ScrollRight => {
                 // Native horizontal scroll right
-                self.handle_horizontal_scroll(&tree, col, row, 3)?;
+                self.handle_horizontal_scroll(&tree, col, row, WHEEL_COLUMNS)?;
                 needs_render = true;
             }
             MouseEventKind::Down(MouseButton::Right) => {
@@ -453,17 +526,147 @@ impl Editor {
         Ok(())
     }
 
-    fn handle_vertical_scroll(
+    /// Take one notch of the wheel, `direction` being -1 for up and +1
+    /// for down.
+    ///
+    /// A notch is worth `mouse_wheel_scroll_lines` lines. The first
+    /// lands immediately, so the view answers the wheel on the same
+    /// frame; the rest are owed and walked one at a time by
+    /// [`Self::step_pending_wheel_scroll`], which is what makes a
+    /// multi-line notch slide rather than jump.
+    fn begin_wheel_scroll(
         &mut self,
         tree: &[super::chrome::ChromeBox],
         col: u16,
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
-        delta: i32,
+        direction: i32,
     ) -> AnyhowResult<()> {
         // Shift turns the wheel horizontal (same engine, other axis).
-        let horizontal = modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
-        self.dispatch_wheel(tree, horizontal, col, row, delta)
+        // That pans by columns, which the line-oriented setting has
+        // nothing to say about and there is no line-by-line walk for.
+        if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+            self.flush_pending_wheel_scroll(tree)?;
+            return self.dispatch_wheel(tree, true, col, row, direction * WHEEL_COLUMNS);
+        }
+
+        // A zero would make the wheel dead; the config's own clamp is
+        // not load-bearing here, but a hand-edited file reaches this too.
+        let lines = self.config.editor.mouse_wheel_scroll_lines.max(1) as u32;
+        // Nothing to walk for a single-line notch, and a user who turned
+        // motion off gets the jump.
+        let walk = lines > 1 && self.config.editor.smooth_scroll && self.config.editor.animations;
+        if !walk {
+            self.flush_pending_wheel_scroll(tree)?;
+            return self.dispatch_wheel(tree, false, col, row, direction * lines as i32);
+        }
+
+        // A flick sends notches faster than they can be walked, so the
+        // lines the last one still owed carry over into this one — the
+        // walk tracks a single running total rather than a queue of
+        // notches. One aimed elsewhere, or the other way, cannot carry
+        // over; its lines are handed to the surface they were routed to
+        // instead, so a nudge of the mouse mid-scroll cannot swallow
+        // distance. Either way nothing is dropped.
+        let carried = match self.pending_wheel_scroll.take() {
+            Some(pending)
+                if pending.direction == direction && (pending.col, pending.row) == (col, row) =>
+            {
+                pending.remaining
+            }
+            Some(pending) => {
+                self.deliver_owed(tree, &pending)?;
+                0
+            }
+            None => 0,
+        };
+        self.dispatch_wheel(tree, false, col, row, direction)?;
+        self.pending_wheel_scroll = Some(PendingWheelScroll {
+            col,
+            row,
+            direction,
+            remaining: carried + lines - 1,
+            max_backlog: lines * 2,
+            last_step: Instant::now(),
+        });
+        Ok(())
+    }
+
+    /// Hand a gesture the lines it still owes, all at once, to the
+    /// surface its own notches were routed to.
+    fn deliver_owed(
+        &mut self,
+        tree: &[super::chrome::ChromeBox],
+        pending: &PendingWheelScroll,
+    ) -> AnyhowResult<()> {
+        if pending.remaining == 0 {
+            return Ok(());
+        }
+        let delta = pending.direction * pending.remaining as i32;
+        self.dispatch_wheel(tree, false, pending.col, pending.row, delta)
+    }
+
+    /// End any playing-out gesture, delivering what it still owes rather
+    /// than dropping it. A wheel turned sideways, or a walk switched off
+    /// mid-gesture, must not cost the view the distance already asked
+    /// for.
+    fn flush_pending_wheel_scroll(
+        &mut self,
+        tree: &[super::chrome::ChromeBox],
+    ) -> AnyhowResult<()> {
+        let Some(pending) = self.pending_wheel_scroll.take() else {
+            return Ok(());
+        };
+        self.deliver_owed(tree, &pending)
+    }
+
+    /// True while a wheel gesture still owes lines. The event loop keeps
+    /// producing frames while it does — without them the walk would
+    /// stall part-way through a notch.
+    pub fn has_pending_wheel_scroll(&self) -> bool {
+        self.pending_wheel_scroll.is_some()
+    }
+
+    /// When the next owed line comes due, for the loop's wait.
+    pub fn pending_wheel_scroll_deadline(&self) -> Option<Instant> {
+        self.pending_wheel_scroll
+            .as_ref()
+            .map(|pending| pending.last_step + SMOOTH_SCROLL_LINE)
+    }
+
+    /// Hand the surface under the pointer however many lines a
+    /// playing-out wheel gesture owes it by now. Called once per frame,
+    /// before layout, so the lines land in the frame about to be
+    /// painted.
+    pub(crate) fn step_pending_wheel_scroll(&mut self) {
+        let Some(pending) = self.pending_wheel_scroll.as_mut() else {
+            return;
+        };
+        let due = lines_to_deliver(
+            pending.last_step.elapsed(),
+            SMOOTH_SCROLL_LINE,
+            pending.remaining,
+            pending.max_backlog,
+        );
+        if due == 0 {
+            return;
+        }
+        let (col, row, direction) = (pending.col, pending.row, pending.direction);
+        pending.remaining -= due;
+        // Advance by what was delivered rather than to now, so a late
+        // frame does not push the rest of the walk back with it.
+        pending.last_step += SMOOTH_SCROLL_LINE * due;
+        if pending.remaining == 0 {
+            self.pending_wheel_scroll = None;
+        }
+
+        let tree = super::chrome::chrome_tree(self);
+        if let Err(err) = self.dispatch_wheel(&tree, false, col, row, direction * due as i32) {
+            // The gesture is already cleared or decremented above, so a
+            // failed replay drops those lines rather than retrying into
+            // the same error every frame.
+            tracing::warn!("smooth scroll step failed: {err}");
+        }
     }
 
     /// Route a horizontal scroll (Shift+wheel, native ScrollLeft /
@@ -1091,5 +1294,79 @@ impl Editor {
         ms.dragging_popup_scrollbar = None;
         ms.dragging_prompt_scrollbar = false;
         ms.selecting_in_popup = None;
+    }
+}
+
+#[cfg(test)]
+mod smooth_scroll_tests {
+    use super::{lines_due, lines_to_deliver, SMOOTH_SCROLL_LINE};
+    use std::time::Duration;
+
+    /// The walk is paced by the clock: a line comes due once its share
+    /// of time has passed, and not before.
+    #[test]
+    fn lines_come_due_one_interval_at_a_time() {
+        assert_eq!(lines_due(Duration::ZERO, SMOOTH_SCROLL_LINE, 4), 0);
+        assert_eq!(
+            lines_due(
+                SMOOTH_SCROLL_LINE - Duration::from_millis(1),
+                SMOOTH_SCROLL_LINE,
+                4
+            ),
+            0
+        );
+        assert_eq!(lines_due(SMOOTH_SCROLL_LINE, SMOOTH_SCROLL_LINE, 4), 1);
+        assert_eq!(lines_due(SMOOTH_SCROLL_LINE * 3, SMOOTH_SCROLL_LINE, 4), 3);
+    }
+
+    /// A frame rate too slow to show the walk collapses it back into a
+    /// jump rather than letting the view lag behind the wheel: a caller
+    /// away long enough for every remaining line gets all of them at
+    /// once, and never more than it is owed.
+    #[test]
+    fn a_slow_frame_delivers_the_whole_remainder_at_once() {
+        assert_eq!(
+            lines_due(Duration::from_millis(250), SMOOTH_SCROLL_LINE, 4),
+            4
+        );
+        assert_eq!(lines_due(Duration::from_secs(60), SMOOTH_SCROLL_LINE, 2), 2);
+        // Nothing owed, nothing delivered, however long the wait.
+        assert_eq!(lines_due(Duration::from_secs(60), SMOOTH_SCROLL_LINE, 0), 0);
+    }
+
+    /// A zero interval is a walk with no pacing at all — everything at
+    /// once, rather than a division by zero.
+    #[test]
+    fn a_zero_interval_delivers_everything() {
+        assert_eq!(lines_due(Duration::ZERO, Duration::ZERO, 7), 7);
+    }
+
+    /// Notches can arrive faster than a line a frame. Whatever the walk
+    /// cannot pace out within the backlog rides along with this frame,
+    /// so a flick covers exactly the ground it asked for — dropping the
+    /// surplus instead would make fast scrolling travel less far than
+    /// slow scrolling.
+    #[test]
+    fn a_backlog_past_the_limit_rides_along_with_this_frame() {
+        // Within the backlog, only the clock decides.
+        assert_eq!(
+            lines_to_deliver(Duration::ZERO, SMOOTH_SCROLL_LINE, 6, 6),
+            0
+        );
+        // Past it, the surplus comes too.
+        assert_eq!(
+            lines_to_deliver(Duration::ZERO, SMOOTH_SCROLL_LINE, 10, 6),
+            4
+        );
+        // The clock still wins when it is further along.
+        assert_eq!(
+            lines_to_deliver(SMOOTH_SCROLL_LINE * 8, SMOOTH_SCROLL_LINE, 10, 6),
+            8
+        );
+        // And never more than is owed.
+        assert_eq!(
+            lines_to_deliver(SMOOTH_SCROLL_LINE * 99, SMOOTH_SCROLL_LINE, 3, 6),
+            3
+        );
     }
 }

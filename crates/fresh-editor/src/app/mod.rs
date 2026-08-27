@@ -1324,6 +1324,10 @@ pub struct Editor {
     /// cancel the prior one instead of stacking trail effects.
     pub(crate) cursor_jump_animation: Option<crate::view::animation::AnimationId>,
 
+    /// A wheel gesture still playing out, one line at a time. See
+    /// [`PendingWheelScroll`].
+    pub(crate) pending_wheel_scroll: Option<crate::app::mouse_input::PendingWheelScroll>,
+
     /// Deferred plugin animations targeting a virtual buffer whose
     /// on-screen Rect wasn't in the cached split layout at command
     /// dispatch time. Drained at the top of each render pass once

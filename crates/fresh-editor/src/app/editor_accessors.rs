@@ -328,10 +328,18 @@ impl Editor {
         // (~16ms) for smooth animation, which would turn the ~1s title poll
         // into a 60Hz busy loop. The loop's existing 50ms idle poll is fine
         // granularity to notice `terminal_titles_need_poll` going true.
-        [lsp_progress_deadline, anim_deadline, paste_deadline]
-            .into_iter()
-            .flatten()
-            .min()
+        // A wheel gesture walking its remaining lines needs a frame per
+        // line; without this the walk would stall on an idle loop.
+        let wheel_deadline = self.pending_wheel_scroll_deadline();
+        [
+            lsp_progress_deadline,
+            anim_deadline,
+            paste_deadline,
+            wheel_deadline,
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// Earliest time a terminal tab needs its foreground-process title

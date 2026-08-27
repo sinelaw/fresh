@@ -246,6 +246,15 @@ fn bug1_mouse_wheel_scenario(width: u16, height: u16) -> Outcome {
             return Outcome::SetupSkipped("mouse_scroll_down failed".into());
         }
     }
+    // A wheel notch walks the view a line at a time across several
+    // frames (`editor.smooth_scroll`), so the burst above is still
+    // playing out. Where it lands is the claim here, so let it land.
+    if harness
+        .wait_until(|h| !h.editor().has_pending_wheel_scroll())
+        .is_err()
+    {
+        return Outcome::SetupSkipped("wheel scroll never settled".into());
+    }
     bug1_check_clamped(&harness)
 }
 

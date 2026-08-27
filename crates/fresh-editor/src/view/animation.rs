@@ -972,6 +972,39 @@ fn blend_rgb(fg: (u8, u8, u8), bg: (u8, u8, u8), alpha: f32) -> Color {
     Color::Rgb(mix(fg.0, bg.0), mix(fg.1, bg.1), mix(fg.2, bg.2))
 }
 
+/// Shade one row of `area` toward its own background: `level` is how
+/// much of each cell's painted foreground survives, 0.0 leaving it on
+/// the background and 1.0 leaving it untouched.
+///
+/// Each cell fades toward the background it is actually sitting on,
+/// falling back to `editor_bg` where that can't be resolved to RGB — so
+/// text on a selection or the current-line highlight fades into that
+/// band rather than into the editor background it isn't on.
+pub fn shade_row_toward_background(
+    buf: &mut Buffer,
+    area: Rect,
+    row: u16,
+    level: f32,
+    editor_bg: Color,
+) {
+    if level >= 1.0 || row >= area.height {
+        return;
+    }
+    let fallback = color_to_rgb(editor_bg);
+    for dx in 0..area.width {
+        let Some(cell) = buf.cell_mut((area.x + dx, area.y + row)) else {
+            continue;
+        };
+        let Some(bg) = color_to_rgb(cell.bg).or(fallback) else {
+            continue;
+        };
+        let Some(fg) = color_to_rgb(cell.fg) else {
+            continue;
+        };
+        cell.set_fg(blend_rgb(fg, bg, level));
+    }
+}
+
 fn color_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
     match color {
         Color::Rgb(r, g, b) => Some((r, g, b)),
@@ -1221,6 +1254,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Paint one glyph row per entry, left-aligned in `area`.
+    fn paint_rows(buf: &mut Buffer, area: Rect, rows: &[&str], fg: Color, bg: Color) {
+        for (dy, row) in rows.iter().enumerate() {
+            let mut chars = row.chars();
+            for dx in 0..area.width {
+                if let Some(cell) = buf.cell_mut((area.x + dx, area.y + dy as u16)) {
+                    cell.set_symbol(&chars.next().unwrap_or(' ').to_string());
+                    cell.set_fg(fg);
+                    cell.set_bg(bg);
+                }
+            }
+        }
+    }
+
+    fn fg_at(buf: &Buffer, x: u16, y: u16) -> Color {
+        buf.cell((x, y)).unwrap().fg
     }
 
     #[test]

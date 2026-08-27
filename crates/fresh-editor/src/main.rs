@@ -6182,7 +6182,10 @@ where
         // re-render to advance even when no other event fires.
         let animations_active = editor.active_window().animations.is_active();
         let lsp_progress_active = editor.active_window().has_active_lsp_progress();
-        if animations_active || lsp_progress_active {
+        // Same for a wheel gesture still walking its lines: each frame
+        // hands over the next one.
+        let wheel_scroll_active = editor.has_pending_wheel_scroll();
+        if animations_active || lsp_progress_active || wheel_scroll_active {
             needs_render = true;
         }
 

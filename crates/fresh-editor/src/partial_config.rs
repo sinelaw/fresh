@@ -156,6 +156,7 @@ pub struct PartialEditorConfig {
     pub virtual_space: Option<crate::config::VirtualSpaceMode>,
     pub animations: Option<bool>,
     pub cursor_jump_animation: Option<bool>,
+    pub viewport_edge_fade: Option<bool>,
     pub line_numbers: Option<bool>,
     pub relative_line_numbers: Option<bool>,
     pub scroll_offset: Option<usize>,
@@ -185,6 +186,8 @@ pub struct PartialEditorConfig {
     pub ephemeral_file_patterns: Option<Vec<String>>,
     pub auto_create_empty_buffer_on_last_buffer_close: Option<bool>,
     pub highlight_context_bytes: Option<usize>,
+    pub mouse_wheel_scroll_lines: Option<usize>,
+    pub smooth_scroll: Option<bool>,
     pub mouse_hover_enabled: Option<bool>,
     pub mouse_hover_delay_ms: Option<u64>,
     pub double_click_time_ms: Option<u64>,
@@ -248,6 +251,8 @@ impl Merge for PartialEditorConfig {
         self.animations.merge_from(&other.animations);
         self.cursor_jump_animation
             .merge_from(&other.cursor_jump_animation);
+        self.viewport_edge_fade
+            .merge_from(&other.viewport_edge_fade);
         self.line_numbers.merge_from(&other.line_numbers);
         self.relative_line_numbers
             .merge_from(&other.relative_line_numbers);
@@ -287,6 +292,9 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.auto_create_empty_buffer_on_last_buffer_close);
         self.highlight_context_bytes
             .merge_from(&other.highlight_context_bytes);
+        self.mouse_wheel_scroll_lines
+            .merge_from(&other.mouse_wheel_scroll_lines);
+        self.smooth_scroll.merge_from(&other.smooth_scroll);
         self.mouse_hover_enabled
             .merge_from(&other.mouse_hover_enabled);
         self.mouse_hover_delay_ms
@@ -610,6 +618,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             virtual_space: Some(cfg.virtual_space),
             animations: Some(cfg.animations),
             cursor_jump_animation: Some(cfg.cursor_jump_animation),
+            viewport_edge_fade: Some(cfg.viewport_edge_fade),
             line_numbers: Some(cfg.line_numbers),
             relative_line_numbers: Some(cfg.relative_line_numbers),
             scroll_offset: Some(cfg.scroll_offset),
@@ -643,6 +652,8 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
                 cfg.auto_create_empty_buffer_on_last_buffer_close,
             ),
             highlight_context_bytes: Some(cfg.highlight_context_bytes),
+            mouse_wheel_scroll_lines: Some(cfg.mouse_wheel_scroll_lines),
+            smooth_scroll: Some(cfg.smooth_scroll),
             mouse_hover_enabled: Some(cfg.mouse_hover_enabled),
             mouse_hover_delay_ms: Some(cfg.mouse_hover_delay_ms),
             double_click_time_ms: Some(cfg.double_click_time_ms),
@@ -713,6 +724,9 @@ impl PartialEditorConfig {
             cursor_jump_animation: self
                 .cursor_jump_animation
                 .unwrap_or(defaults.cursor_jump_animation),
+            viewport_edge_fade: self
+                .viewport_edge_fade
+                .unwrap_or(defaults.viewport_edge_fade),
             line_numbers: self.line_numbers.unwrap_or(defaults.line_numbers),
             relative_line_numbers: self
                 .relative_line_numbers
@@ -778,6 +792,10 @@ impl PartialEditorConfig {
             highlight_context_bytes: self
                 .highlight_context_bytes
                 .unwrap_or(defaults.highlight_context_bytes),
+            mouse_wheel_scroll_lines: self
+                .mouse_wheel_scroll_lines
+                .unwrap_or(defaults.mouse_wheel_scroll_lines),
+            smooth_scroll: self.smooth_scroll.unwrap_or(defaults.smooth_scroll),
             mouse_hover_enabled: self
                 .mouse_hover_enabled
                 .unwrap_or(defaults.mouse_hover_enabled),
