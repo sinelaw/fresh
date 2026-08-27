@@ -1,0 +1,145 @@
+%YAML 1.2
+---
+name: Dafny
+file_extensions: [dfy]
+scope: source.dafny
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: attributes
+    - include: declarations
+    - include: verification
+    - include: keywords
+    - include: function-calls
+    - include: types
+    - include: constants
+    - include: numbers
+    - include: operators
+    - include: punctuation
+
+  comments:
+    - match: '//'
+      scope: punctuation.definition.comment.begin.dafny
+      push:
+        - meta_scope: comment.line.double-slash.dafny
+        - match: '$'
+          pop: true
+    - include: block-comments
+
+  block-comments:
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.dafny
+      push:
+        - meta_scope: comment.block.dafny
+        - include: block-comments
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.dafny
+          pop: true
+
+  strings:
+    - match: '@"'
+      scope: punctuation.definition.string.begin.dafny
+      push:
+        - meta_scope: string.quoted.double.verbatim.dafny
+        - match: '""'
+          scope: constant.character.escape.dafny
+        - match: '"(?!")'
+          scope: punctuation.definition.string.end.dafny
+          pop: true
+    - match: '"'
+      scope: punctuation.definition.string.begin.dafny
+      push:
+        - meta_scope: string.quoted.double.dafny
+        - match: '\\(?:[''"\\0abfnrtv]|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})'
+          scope: constant.character.escape.dafny
+        - match: '"'
+          scope: punctuation.definition.string.end.dafny
+          pop: true
+        - match: '$'
+          pop: true
+    - match: '''(?:\\(?:[''"\\0abfnrtv]|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})|[^''\\\n])'''
+      scope: string.quoted.single.dafny
+
+  attributes:
+    - match: '@[[:alpha:]_][[:alnum:]_?'']*'
+      scope: entity.other.attribute-name.dafny
+    - match: '\{:'
+      scope: punctuation.definition.annotation.begin.dafny
+      push:
+        - meta_scope: meta.annotation.dafny
+        - match: '\b[[:alpha:]_][[:alnum:]_?'']*\b'
+          scope: entity.other.attribute-name.dafny
+        - include: strings
+        - include: numbers
+        - match: '\}'
+          scope: punctuation.definition.annotation.end.dafny
+          pop: true
+
+  declarations:
+    - match: '\b(module|export)\s+([[:alpha:]_][[:alnum:]_?'']*)'
+      captures:
+        1: keyword.declaration.module.dafny
+        2: entity.name.namespace.dafny
+    - match: '\b(class|trait|datatype|codatatype|newtype|type)\s+([[:alpha:]_][[:alnum:]_?'']*)'
+      captures:
+        1: keyword.declaration.type.dafny
+        2: entity.name.type.dafny
+    - match: '\b((?:(?:ghost|static|opaque|twostate)\s+)*(?:method|function|predicate|lemma|iterator|constructor))\s+([[:alpha:]_][[:alnum:]_?'']*)'
+      captures:
+        1: keyword.declaration.function.dafny
+        2: entity.name.function.dafny
+    - match: '\b(var|const)\s+([[:alpha:]_][[:alnum:]_?'']*)'
+      captures:
+        1: keyword.declaration.variable.dafny
+        2: variable.other.dafny
+    - match: '\b(class|trait|datatype|codatatype|newtype|type|module|export|method|function|predicate|lemma|iterator|constructor|var|const)\b'
+      scope: keyword.declaration.dafny
+
+  verification:
+    - match: '\b(requires|ensures|modifies|reads|invariant|decreases|witness|reveals|provides)\b'
+      scope: keyword.other.verification.dafny
+    - match: '\b(assert|assume|expect|calc|by|reveal|fresh|allocated|unchanged|old)\b'
+      scope: keyword.control.verification.dafny
+
+  keywords:
+    - match: '\b(abstract|as|break|case|continue|else|exists|extends|forall|for|greatest|if|import|in|include|is|label|least|match|modify|nameonly|new|opened|print|refines|return|returns|then|to|downto|while|yield|yields)\b'
+      scope: keyword.control.dafny
+    - match: '\b(ghost|opaque|static|twostate)\b'
+      scope: storage.modifier.dafny
+    - match: '\b(this)\b'
+      scope: variable.language.dafny
+
+  types:
+    - match: '\bobject\?'
+      scope: support.type.builtin.dafny
+    - match: '\b(bool|char|int|nat|real|string|object|ORDINAL|set|iset|multiset|seq|map|imap|array|array[1-9][0-9]*|bv0|bv[1-9][0-9]*)\b'
+      scope: support.type.builtin.dafny
+    - match: '\b[A-Z][[:alnum:]_?'']*\b'
+      scope: entity.name.type.dafny
+
+  constants:
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.boolean.dafny
+
+  numbers:
+    - match: '\b0[xX][0-9A-Fa-f](?:_?[0-9A-Fa-f])*\b'
+      scope: constant.numeric.hex.dafny
+    - match: '\b0[bB][01](?:_?[01])*\b'
+      scope: constant.numeric.binary.dafny
+    - match: '\b[0-9](?:_?[0-9])*(?:\.[0-9](?:_?[0-9])*)?\b'
+      scope: constant.numeric.dafny
+
+  function-calls:
+    - match: '\b[[:alpha:]_][[:alnum:]_?'']*(?=\s*\()'
+      scope: entity.name.function.call.dafny
+
+  operators:
+    - match: '<==>|==>|<==|:=|:-|:\||::|!!|!in|&&|\|\||==|!=|<=|>=|\.\.|[+*/%<>=!&|#@^-]'
+      scope: keyword.operator.dafny
+
+  punctuation:
+    - match: '[(){}\[\]]'
+      scope: punctuation.section.brackets.dafny
+    - match: '[,;:.]'
+      scope: punctuation.separator.dafny
