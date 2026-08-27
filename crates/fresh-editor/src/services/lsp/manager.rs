@@ -110,53 +110,25 @@ enum SpawnDecision {
     CooledDown,
 }
 
-/// Convert a directory path to an LSP `file://` URI without the `url` crate.
+/// Convert a directory path to an LSP `file://` URI.
+///
+/// This routes through the shared, platform-aware converter in
+/// `fresh_core::file_uri` — the same one that produces the per-document
+/// `didOpen` URIs — so the workspace `root_uri` is encoded identically.
+/// The previous hand-rolled encoder here only handled `RootDir`/`Normal`
+/// components and dropped `Component::Prefix`, which stripped the Windows
+/// drive letter (`file:///Users/…` instead of `file:///C:/Users/…`) and
+/// broke root-dependent LSP operations with "os error 3" (issue #3067).
 fn path_to_uri(path: &Path) -> Option<Uri> {
+    // The shared converter returns `None` for relative paths; preserve the
+    // long-standing behavior of resolving them against the working directory
+    // before encoding.
     let abs = if path.is_absolute() {
         path.to_path_buf()
     } else {
         std::env::current_dir().ok()?.join(path)
     };
-    // Percent-encode each path component for RFC 3986 compliance
-    let encoded: String = abs
-        .components()
-        .filter_map(|c| match c {
-            std::path::Component::RootDir => None, // handled by leading '/' in Normal
-            std::path::Component::Normal(s) => {
-                let s = s.to_str()?;
-                let mut out = String::with_capacity(s.len() + 1);
-                out.push('/');
-                for b in s.bytes() {
-                    if b.is_ascii_alphanumeric()
-                        || matches!(
-                            b,
-                            b'-' | b'.'
-                                | b'_'
-                                | b'~'
-                                | b'@'
-                                | b'!'
-                                | b'$'
-                                | b'&'
-                                | b'\''
-                                | b'('
-                                | b')'
-                                | b'+'
-                                | b','
-                                | b';'
-                                | b'='
-                        )
-                    {
-                        out.push(b as char);
-                    } else {
-                        out.push_str(&format!("%{:02X}", b));
-                    }
-                }
-                Some(out)
-            }
-            _ => None,
-        })
-        .collect();
-    format!("file://{}", encoded).parse().ok()
+    fresh_core::file_uri::path_to_lsp_uri(&abs)
 }
 
 /// Detect workspace root by walking upward from a file looking for marker files/directories.
@@ -2780,6 +2752,23 @@ mod tests {
     fn test_path_to_uri_with_spaces() {
         let uri = path_to_uri(Path::new("/tmp/my project/src")).unwrap();
         assert_eq!(uri.as_str(), "file:///tmp/my%20project/src");
+    }
+
+    /// Regression test for issue #3067: on Windows the workspace `root_uri`
+    /// dropped the drive letter (`file:///Users/…` instead of
+    /// `file:///C:/Users/…`), breaking root-dependent LSP operations with
+    /// "os error 3". The old hand-rolled encoder ignored `Component::Prefix`;
+    /// routing through the shared converter preserves the drive. Runs on the
+    /// Windows CI runner, where a `C:\…` path parses to a `Prefix` component.
+    #[cfg(windows)]
+    #[test]
+    fn test_path_to_uri_preserves_windows_drive_letter() {
+        let uri = path_to_uri(Path::new(r"C:\Users\Lance\.config\opencode")).unwrap();
+        assert_eq!(
+            uri.as_str(),
+            "file:///C:/Users/Lance/.config/opencode",
+            "root_uri must keep the Windows drive letter (issue #3067)"
+        );
     }
 
     #[test]
