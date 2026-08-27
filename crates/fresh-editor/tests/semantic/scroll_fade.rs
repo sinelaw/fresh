@@ -77,6 +77,14 @@ fn last_visible_line(harness: &EditorTestHarness, total: usize) -> (usize, (u16,
     (n, locate(harness, &format!("line {:03}", n)))
 }
 
+/// The lowest-numbered line currently on screen.
+fn top_visible_line(harness: &EditorTestHarness, total: usize) -> usize {
+    let screen = harness.screen_to_string();
+    (1..=total)
+        .find(|i| screen.contains(&format!("line {:03}", i)))
+        .expect("some numbered line must be on screen")
+}
+
 /// Open a scrollable buffer and settle every animation the open kicked
 /// off, so the scroll under test starts from a static screen.
 fn harness_with_scrollable_file(lines: usize) -> EditorTestHarness {
@@ -269,18 +277,69 @@ fn scroll_fade_disabled_paints_revealed_rows_at_full_strength() {
     );
 }
 
-/// `mouse_wheel_scroll_lines` is how far one notch takes the view, and
-/// one line is the default: the wheel moves the view a line at a time
-/// rather than jumping it in blocks.
+/// A multi-line notch walks the view a line at a time instead of
+/// jumping it. The first line lands on the frame the event produces —
+/// the view answers the wheel immediately — and the rest follow over
+/// the next frames.
+#[test]
+fn a_multi_line_notch_walks_the_view_a_line_at_a_time() {
+    const LINES: usize = 200;
+    let mut harness = harness_with_scrollable_file(LINES);
+    assert_eq!(
+        harness.config().editor.mouse_wheel_scroll_lines,
+        3,
+        "this test is about a notch worth more than one line"
+    );
+
+    // `mouse_scroll_down` renders the frame the event produces.
+    harness.mouse_scroll_down(20, 10).unwrap();
+    assert_eq!(
+        top_visible_line(&harness, LINES),
+        2,
+        "the first line of the notch lands right away, screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // And the walk carries the view the rest of the notch.
+    harness
+        .wait_until(|h| top_visible_line(h, LINES) == 4)
+        .unwrap();
+}
+
+/// With the walk turned off, a notch moves the view by the whole
+/// `mouse_wheel_scroll_lines` at once.
+#[test]
+fn smooth_scroll_disabled_jumps_the_whole_notch() {
+    const LINES: usize = 200;
+    let mut config = scroll_fade_config();
+    config.editor.smooth_scroll = false;
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config).unwrap();
+    let path = harness.project_dir().unwrap().join("long.txt");
+    std::fs::write(&path, numbered_lines(LINES)).unwrap();
+    harness.open_file(&path).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("line 001"))
+        .unwrap();
+
+    harness.mouse_scroll_down(20, 10).unwrap();
+    assert_eq!(
+        top_visible_line(&harness, LINES),
+        4,
+        "the whole three-line notch lands at once, screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// `mouse_wheel_scroll_lines` is how far one notch takes the view in
+/// total, walk or no walk.
 #[test]
 fn one_wheel_notch_scrolls_the_configured_number_of_lines() {
     const LINES: usize = 200;
 
-    let top_after_one_notch = |lines_per_notch: Option<usize>| -> usize {
+    let top_after_one_notch = |lines_per_notch: usize| -> usize {
         let mut config = scroll_fade_config();
-        if let Some(lines) = lines_per_notch {
-            config.editor.mouse_wheel_scroll_lines = lines;
-        }
+        config.editor.mouse_wheel_scroll_lines = lines_per_notch;
         let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config).unwrap();
         let path = harness.project_dir().unwrap().join("long.txt");
         std::fs::write(&path, numbered_lines(LINES)).unwrap();
@@ -289,21 +348,13 @@ fn one_wheel_notch_scrolls_the_configured_number_of_lines() {
             .wait_until(|h| h.screen_to_string().contains("line 001"))
             .unwrap();
         harness.mouse_scroll_down(20, 10).unwrap();
-        let screen = harness.screen_to_string();
-        (1..=LINES)
-            .find(|i| screen.contains(&format!("line {:03}", i)))
-            .expect("some numbered line must be on screen")
+        // Let the walk finish before reading where it landed.
+        harness
+            .wait_until(|h| !h.editor().has_pending_wheel_scroll())
+            .unwrap();
+        top_visible_line(&harness, LINES)
     };
 
-    assert_eq!(
-        top_after_one_notch(None),
-        2,
-        "by default one notch moves the view one line, so line 002 is \
-         now at the top"
-    );
-    assert_eq!(
-        top_after_one_notch(Some(5)),
-        6,
-        "and the setting is how many lines a notch is worth"
-    );
+    assert_eq!(top_after_one_notch(1), 2, "one line puts line 002 on top");
+    assert_eq!(top_after_one_notch(5), 6, "five lines puts line 006 on top");
 }

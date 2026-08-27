@@ -1639,15 +1639,26 @@ pub struct EditorConfig {
     // ===== Mouse =====
     /// How many lines one notch of the mouse wheel scrolls.
     ///
-    /// One line is the finest the terminal grid allows, and keeps a
-    /// scroll continuous rather than jumping the view in blocks; raise
-    /// it for the coarser three-line step most GUI editors use. Applies
-    /// to every surface the wheel scrolls by lines, not just buffer
-    /// text. Shift+wheel pans sideways by columns and is unaffected.
-    /// Clamped to at least 1 — a zero would make the wheel dead.
+    /// Applies to every surface the wheel scrolls by lines, not just
+    /// buffer text. Shift+wheel pans sideways by columns and is
+    /// unaffected. Clamped to at least 1 — a zero would make the wheel
+    /// dead. Default: 3.
     #[serde(default = "default_mouse_wheel_scroll_lines")]
     #[schemars(extend("x-section" = "Mouse"))]
     pub mouse_wheel_scroll_lines: usize,
+
+    /// Walk a multi-line wheel notch one line at a time instead of
+    /// jumping the view by the whole `mouse_wheel_scroll_lines` at once.
+    ///
+    /// The first line lands immediately, so the view still answers the
+    /// wheel on the same frame; the rest follow at about a line a frame.
+    /// The walk is paced by the clock, not by frames, so a terminal too
+    /// slow to show it collapses the remainder back into a single jump
+    /// rather than lagging behind the wheel. Has no effect when
+    /// `animations` is `false`, or when a notch is only one line.
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Mouse"))]
+    pub smooth_scroll: bool,
 
     /// Whether mouse hover triggers LSP hover requests.
     /// When enabled, hovering over code with the mouse will show documentation.
@@ -1958,7 +1969,7 @@ fn default_highlight_context_bytes() -> usize {
 }
 
 fn default_mouse_wheel_scroll_lines() -> usize {
-    1
+    3
 }
 
 fn default_mouse_hover_enabled() -> bool {
@@ -2023,6 +2034,7 @@ impl Default for EditorConfig {
             auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),
             highlight_context_bytes: default_highlight_context_bytes(),
             mouse_wheel_scroll_lines: default_mouse_wheel_scroll_lines(),
+            smooth_scroll: true,
             mouse_hover_enabled: default_mouse_hover_enabled(),
             mouse_hover_delay_ms: default_mouse_hover_delay(),
             double_click_time_ms: default_double_click_time(),

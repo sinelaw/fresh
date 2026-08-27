@@ -118,6 +118,13 @@ impl Editor {
         // Reset per-cell theme key map for this frame
         self.active_chrome_mut().reset_cell_theme_map();
 
+        // Hand over whatever lines a playing-out wheel gesture owes by
+        // now, before anything is laid out, so they land in this frame.
+        // A multi-line notch walks across several frames this way, which
+        // is what makes it read as a slide — and gives the scroll fade a
+        // row at a time to work with.
+        self.step_pending_wheel_scroll();
+
         self.pre_sync_and_scroll_sync();
 
         // NOTE: Viewport sync with cursor is handled by split_rendering.rs which knows the

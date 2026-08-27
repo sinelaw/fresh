@@ -187,6 +187,7 @@ pub struct PartialEditorConfig {
     pub auto_create_empty_buffer_on_last_buffer_close: Option<bool>,
     pub highlight_context_bytes: Option<usize>,
     pub mouse_wheel_scroll_lines: Option<usize>,
+    pub smooth_scroll: Option<bool>,
     pub mouse_hover_enabled: Option<bool>,
     pub mouse_hover_delay_ms: Option<u64>,
     pub double_click_time_ms: Option<u64>,
@@ -293,6 +294,7 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.highlight_context_bytes);
         self.mouse_wheel_scroll_lines
             .merge_from(&other.mouse_wheel_scroll_lines);
+        self.smooth_scroll.merge_from(&other.smooth_scroll);
         self.mouse_hover_enabled
             .merge_from(&other.mouse_hover_enabled);
         self.mouse_hover_delay_ms
@@ -651,6 +653,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             ),
             highlight_context_bytes: Some(cfg.highlight_context_bytes),
             mouse_wheel_scroll_lines: Some(cfg.mouse_wheel_scroll_lines),
+            smooth_scroll: Some(cfg.smooth_scroll),
             mouse_hover_enabled: Some(cfg.mouse_hover_enabled),
             mouse_hover_delay_ms: Some(cfg.mouse_hover_delay_ms),
             double_click_time_ms: Some(cfg.double_click_time_ms),
@@ -792,6 +795,7 @@ impl PartialEditorConfig {
             mouse_wheel_scroll_lines: self
                 .mouse_wheel_scroll_lines
                 .unwrap_or(defaults.mouse_wheel_scroll_lines),
+            smooth_scroll: self.smooth_scroll.unwrap_or(defaults.smooth_scroll),
             mouse_hover_enabled: self
                 .mouse_hover_enabled
                 .unwrap_or(defaults.mouse_hover_enabled),

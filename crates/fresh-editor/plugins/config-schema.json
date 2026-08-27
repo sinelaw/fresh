@@ -120,7 +120,8 @@
         "enable_inlay_hints": true,
         "enable_semantic_tokens_full": false,
         "diagnostics_inline_text": false,
-        "mouse_wheel_scroll_lines": 1,
+        "mouse_wheel_scroll_lines": 3,
+        "smooth_scroll": true,
         "mouse_hover_enabled": true,
         "mouse_hover_delay_ms": 500,
         "double_click_time_ms": 500,
@@ -812,11 +813,17 @@
           "x-section": "Diagnostics"
         },
         "mouse_wheel_scroll_lines": {
-          "description": "How many lines one notch of the mouse wheel scrolls.\n\nOne line is the finest the terminal grid allows, and keeps a\nscroll continuous rather than jumping the view in blocks; raise\nit for the coarser three-line step most GUI editors use. Applies\nto every surface the wheel scrolls by lines, not just buffer\ntext. Shift+wheel pans sideways by columns and is unaffected.\nClamped to at least 1 — a zero would make the wheel dead.",
+          "description": "How many lines one notch of the mouse wheel scrolls.\n\nApplies to every surface the wheel scrolls by lines, not just\nbuffer text. Shift+wheel pans sideways by columns and is\nunaffected. Clamped to at least 1 — a zero would make the wheel\ndead. Default: 3.",
           "type": "integer",
           "format": "uint",
           "minimum": 0,
-          "default": 1,
+          "default": 3,
+          "x-section": "Mouse"
+        },
+        "smooth_scroll": {
+          "description": "Walk a multi-line wheel notch one line at a time instead of\njumping the view by the whole `mouse_wheel_scroll_lines` at once.\n\nThe first line lands immediately, so the view still answers the\nwheel on the same frame; the rest follow at about a line a frame.\nThe walk is paced by the clock, not by frames, so a terminal too\nslow to show it collapses the remainder back into a single jump\nrather than lagging behind the wheel. Has no effect when\n`animations` is `false`, or when a notch is only one line.",
+          "type": "boolean",
+          "default": true,
           "x-section": "Mouse"
         },
         "mouse_hover_enabled": {
