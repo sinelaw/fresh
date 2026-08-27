@@ -64,16 +64,6 @@ pub struct Item {
     /// `"<plugin>:<token>"` for a plugin-registered token, which is how the
     /// click rail finds it to fire `status_bar_token_clicked`.
     pub token_key: Option<String>,
-    /// The theme *key names* this element's cells belong to, for the theme
-    /// inspector: `element_keys`' answer, which is what the old
-    /// `CellThemeRecorder` recorded per element.
-    ///
-    /// Separate from the colours in `runs` because those ride the §6.2 interim
-    /// — `element_spans` hands back resolved styles, so paint carries
-    /// `literal()` values. Provenance must stay in names or the inspector
-    /// would report `#7ee787` where it used to report `ui.status_lsp_on_fg`.
-    /// When colours become names this field and `runs` collapse into one.
-    pub provenance: (&'static str, &'static str),
 }
 
 impl Item {
@@ -243,18 +233,31 @@ pub fn provenance_runs(
     bar: &StatusBar,
     size: ratatui::layout::Rect,
     row: ratatui::layout::Rect,
-) -> Vec<(u16, u16, u16, &'static str, &'static str)> {
+) -> Vec<(u16, u16, u16, Option<String>, Option<String>)> {
     let mut out = vec![(
         row.x,
         row.y,
         row.width,
-        "ui.status_bar_fg",
-        "ui.status_bar_bg",
+        Some("ui.status_bar_fg".to_string()),
+        Some("ui.status_bar_bg".to_string()),
     )];
     for (side, i, it) in sides(bar) {
-        if let Some(r) = rect_of(ui, &item_key(side, i), size) {
-            out.push((r.x, r.y, r.width, it.provenance.0, it.provenance.1));
-        }
+        let Some(r) = rect_of(ui, &item_key(side, i), size) else {
+            continue;
+        };
+        // Read out of the run's own theme rather than from a field beside it.
+        // The first run's names stand for the element: a run whose colour has
+        // no name reports `None`, which is what the inspector should say about
+        // a colour nobody named.
+        let theme = it.runs.first().map(|(_, t)| t.as_str()).unwrap_or("");
+        let (fg, bg) = crate::app::shell_host::shell_theme::names(theme);
+        out.push((
+            r.x,
+            r.y,
+            r.width,
+            fg.map(str::to_string),
+            bg.map(str::to_string),
+        ));
     }
     out
 }
@@ -309,7 +312,6 @@ mod tests {
             name,
             clickable: None,
             token_key: None,
-            provenance: ("ui.status_bar_fg", "ui.status_bar_bg"),
         }
     }
 
