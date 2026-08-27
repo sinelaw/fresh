@@ -1190,6 +1190,13 @@ pub struct Editor {
     /// Separate ownership is the answer: the tree writes here, the walk writes
     /// there, and neither reads the other's. This field retires with the walk.
     pub(crate) shell_hover: Option<crate::app::types::HoverTarget>,
+    /// The cell the pointer was on when the shell last reported a hover.
+    ///
+    /// The hover reactions take a position — a tooltip anchors to it — and a
+    /// `UiFact::Hover` carries only *what* is under the pointer, not where.
+    /// Recorded when the event is offered to the tree, which is the one moment
+    /// both facts are in hand.
+    pub(crate) shell_hover_at: (u16, u16),
     /// `(plugin, widget)` pairs already warned about for missing per-item
     /// keys, so the deprecation notice fires once rather than on every panel
     /// update. See `crate::widgets::keying`.

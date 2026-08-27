@@ -72,8 +72,15 @@ pub struct Frame {
     /// is what decides how wide each toggle is. The row's *existence* is
     /// `is_some`.
     pub search_options: Option<super::search_options::SearchOptions>,
-    /// The status bar's elements, when it is shown. `None` hides the row, the
-    /// same way `status_bar: false` did — which it replaces.
+    /// The status bar's elements, when it has any.
+    ///
+    /// Content, not visibility — the same split as `menu_bar` /
+    /// `menu_bar_items` above: `status_bar` decides whether the row exists,
+    /// this decides what it says. `None` with `status_bar: true` is a row the
+    /// legacy painter fills as a `Host`; it does not hide anything. (The
+    /// comment here used to claim this field replaced `status_bar: false`,
+    /// which `frame_tree` never did — both arms take their height from the
+    /// bool.)
     pub status_bar_items: Option<super::status_bar::StatusBar>,
     pub prompt_line: bool,
     /// Column width, already resolved against the frame width.
@@ -115,20 +122,45 @@ impl Default for Frame {
     }
 }
 
+/// How many one-cell rows the chrome column spends, given which are visible.
+///
+/// The free form exists because `render` needs this number *before* it has a
+/// `Frame` — the explorer's viewport row count is model state, and the
+/// description cannot be built without it. It was written out there as a sum
+/// of the same four bools, next to a comment pointing at `Frame::fixed_rows`
+/// as the rule; now it is the rule, and [`Frame::fixed_rows`] is the form for
+/// callers that already hold a description.
+pub fn fixed_rows(menu_bar: bool, status_bar: bool, search_options: bool, prompt: bool) -> u16 {
+    menu_bar as u16 + status_bar as u16 + search_options as u16 + prompt as u16
+}
+
+/// Columns the editor keeps for itself, whatever the dock asks for.
+pub const EDITOR_MIN: u16 = 20;
+/// Narrower than this and a dock is not worth showing at all.
+pub const DOCK_MIN: u16 = 24;
+
+/// How wide the dock actually gets, or `None` when it does not fit.
+///
+/// **The one copy of the rule.** It lived here *and* in `compute_dock_split`,
+/// each with its own `EDITOR_MIN`/`DOCK_MIN`, and the frame-parity test
+/// exercised this copy while the editor painted from the other — so the test
+/// could stay green through a divergence in the very geometry it exists to
+/// pin. `compute_dock_split` now carves its rectangles from this answer.
+pub fn dock_width(requested: Option<u16>, frame_width: u16) -> Option<u16> {
+    let requested = requested?;
+    let max_dock = frame_width.saturating_sub(EDITOR_MIN);
+    (max_dock >= DOCK_MIN).then(|| requested.min(max_dock).max(1))
+}
+
 impl Frame {
-    /// The dock's bail-out rules from `compute_dock_split`.
+    /// The dock's bail-out rule, applied to this description.
     ///
     /// This is **app logic keyed on the frame width**, not a layout
     /// constraint — it decides whether a dock exists at all. `build()` cannot
     /// read geometry, so it is resolved here, from the last known frame width,
     /// before the description is built.
     pub fn resolve_dock(mut self, frame_width: u16) -> Frame {
-        const EDITOR_MIN: u16 = 20;
-        const DOCK_MIN: u16 = 24;
-        self.dock = self.dock.and_then(|requested| {
-            let max_dock = frame_width.saturating_sub(EDITOR_MIN);
-            (max_dock >= DOCK_MIN).then(|| requested.min(max_dock).max(1))
-        });
+        self.dock = dock_width(self.dock, frame_width);
         self
     }
 
@@ -139,10 +171,12 @@ impl Frame {
     /// Callers that care decide which rows to drop themselves rather than
     /// inheriting either engine's starvation order.
     pub fn fixed_rows(&self) -> u16 {
-        self.menu_bar as u16
-            + self.status_bar as u16
-            + self.search_options.is_some() as u16
-            + self.prompt_line as u16
+        fixed_rows(
+            self.menu_bar,
+            self.status_bar,
+            self.search_options.is_some(),
+            self.prompt_line,
+        )
     }
 }
 
@@ -268,15 +302,7 @@ pub fn regions_of(
         .filter_map(|r| {
             let e = ui.find_by_key(&region_key(r))?;
             let rect = ui.rect_of(e);
-            Some((
-                r,
-                ratatui::layout::Rect {
-                    x: size.x.saturating_add(rect.x.max(0) as u16),
-                    y: size.y.saturating_add(rect.y.max(0) as u16),
-                    width: rect.w,
-                    height: rect.h,
-                },
-            ))
+            Some((r, super::screen_rect(rect, size)))
         })
         .collect()
 }

@@ -276,7 +276,7 @@ impl Editor {
         // the standing proof, and it keeps both derivations honest now that
         // only one of them runs here.
         // See docs/internal/fresh-editor-ui-migration.md (S1).
-        let shell = self.shell_frame(size);
+        let shell = self.shell_frame(size, (dock_area, chrome_area));
         // The shell's tree is retained across frames — element state, focus and
         // the dirty set live on it — so it is moved out for the duration of the
         // frame rather than borrowed from `self`. See `Editor::shell_ui`.
@@ -2652,9 +2652,16 @@ impl Editor {
     /// This replaced `shell_frame`, which ran its own copy of the vertical
     /// `Layout` split at event time. Two implementations of one layout is the
     /// condition this migration exists to remove.
+    /// `split` is the frame's dock/chrome division, computed once by the
+    /// caller. It is passed rather than recomputed because `render` has
+    /// already run `compute_dock_split` for this same `size` — and because a
+    /// frame whose geometry came from one split while the paint used another
+    /// is the class of bug this migration exists to remove, even when the
+    /// function is pure and the two agree today.
     pub(crate) fn shell_frame(
         &mut self,
         size: ratatui::layout::Rect,
+        split: (Option<ratatui::layout::Rect>, ratatui::layout::Rect),
     ) -> crate::view::shell::frame::Frame {
         let BottomRowFlags {
             prompt_is_overlay: _,
@@ -2662,7 +2669,7 @@ impl Editor {
             has_file_browser,
             prompt_row_visible,
         } = self.bottom_row_flags();
-        let (dock_area, chrome_area) = self.compute_dock_split(size);
+        let (dock_area, chrome_area) = split;
         let menu_bar_visible = self.active_window().menu_bar_visible;
         // One walk for the whole menu: the bar's labels and, when one is open,
         // its dropdown chain. Skipped entirely when the bar is hidden.
@@ -2693,21 +2700,27 @@ impl Editor {
         // because the panel's viewport row count is model state that has to be
         // current before the description is built, not a rectangle read back
         // afterwards.
-        let fixed = menu_bar_visible as u16
-            + (win_status_bar && !has_suggestions && !has_file_browser) as u16
-            + search_options.is_some() as u16
-            + prompt_row_visible as u16;
+        // Whether the bar's row exists at all. Computed once: it decides the
+        // row's height, whether its elements are built, and how many rows the
+        // explorer has left — and those three must not be able to disagree.
+        let status_row = win_status_bar && !has_suggestions && !has_file_browser;
+        let fixed = crate::view::shell::frame::fixed_rows(
+            menu_bar_visible,
+            status_row,
+            search_options.is_some(),
+            prompt_row_visible,
+        );
         let explorer_h = chrome_area.height.saturating_sub(fixed);
         let explorer = self.explorer_content(chrome_area.width, explorer_h);
         // The bar's elements, measured from the chrome column it will occupy.
-        let status_bar_items = (win_status_bar && !has_suggestions && !has_file_browser)
+        let status_bar_items = status_row
             .then(|| self.status_bar_description(chrome_area.width))
             .flatten();
         self.shell_frame_status_bar = status_bar_items.clone();
         let menu_keys = self.menu_shortcuts();
         crate::view::shell::frame::Frame {
             menu_bar: menu_bar_visible,
-            status_bar: win_status_bar && !has_suggestions && !has_file_browser,
+            status_bar: status_row,
             search_options,
             status_bar_items,
             prompt_line: prompt_row_visible,
@@ -5275,29 +5288,22 @@ impl Editor {
         &self,
         size: ratatui::layout::Rect,
     ) -> (Option<ratatui::layout::Rect>, ratatui::layout::Rect) {
-        // The editor is the priority. Reserve at least EDITOR_MIN columns
-        // for the buffer, and once the terminal is too narrow to fit a
-        // worthwhile dock alongside that editor, hide the dock entirely
-        // (it reappears when the terminal grows). Previously the dock kept
-        // ALL but 4 columns, squishing the editor to a useless sliver on a
-        // narrow terminal.
-        const EDITOR_MIN: u16 = 20;
-        const DOCK_MIN: u16 = 24;
+        // The editor is the priority: it keeps `EDITOR_MIN` columns, the dock
+        // honors its drag-set width below that, and once the terminal is too
+        // narrow for a worthwhile dock alongside the editor the dock hides
+        // entirely (reappearing when the terminal grows).
+        //
+        // That rule is `frame::dock_width` — one copy, shared with
+        // `Frame::resolve_dock`, which is what the frame-parity test runs.
+        // They were separate before, each with its own constants, so the test
+        // could pass while this path disagreed with it.
         let requested = match self.dock.as_ref().map(|f| f.placement) {
-            Some(super::PanelPlacement::LeftDock { width_cols }) => width_cols,
-            _ => return (None, size),
+            Some(super::PanelPlacement::LeftDock { width_cols }) => Some(width_cols),
+            _ => None,
         };
-        // Widest the dock may be while leaving the editor its minimum.
-        let max_dock = size.width.saturating_sub(EDITOR_MIN);
-        if max_dock < DOCK_MIN {
-            // Not enough room for a usable dock + editor — give the editor
-            // the whole frame this render.
+        let Some(width) = crate::view::shell::frame::dock_width(requested, size.width) else {
             return (None, size);
-        }
-        // Honor the requested (drag-set) width, but never crowd the editor
-        // below EDITOR_MIN. In the shrink band the dock narrows from its
-        // requested width down to DOCK_MIN before it hides.
-        let width = requested.min(max_dock).max(1);
+        };
         let dock = ratatui::layout::Rect {
             x: size.x,
             y: size.y,

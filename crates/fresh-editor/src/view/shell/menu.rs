@@ -91,8 +91,8 @@ pub fn menu_bar(bar: &MenuBar) -> Node<UiMsg> {
                 // `MouseEventKind::Down(Left)` alone). Without the guard a
                 // right-click on a label opens its menu *and* claims the
                 // press, so it never reaches the theme inspector's pre-band —
-                // the same regression the search-options row's toggles have,
-                // where issue #2362's inspector test caught it.
+                // the regression issue #2362's inspector test caught on the
+                // search-options row, which carries the same guard.
                 .on(
                     GestureKind::Press,
                     Rc::new(move |e: &Event| {
@@ -130,11 +130,30 @@ pub fn menu_bar(bar: &MenuBar) -> Node<UiMsg> {
     // On the press, with the labels above it: the whole bar acts on the
     // same gesture, so the dismissal, the close and the toggle are one
     // dispatch and cannot see each other's aftermath.
+    // Left only, like the labels above it and for the same reason: the
+    // pre-migration close ran off `MouseEventKind::Down(Left)`. Answering a
+    // right press here would close the menu on the way to the theme
+    // inspector's Ctrl+Right — the gesture reaches it through the legacy
+    // pre-band, which only sees what the tree declined.
     .on(
         GestureKind::Press,
-        Rc::new(|_: &Event| Some(UiMsg::Ui(UiFact::CloseMenu))),
+        Rc::new(|e: &Event| {
+            if e.button != fresh_ui::MouseButton::Left {
+                return None;
+            }
+            Some(UiMsg::Ui(UiFact::CloseMenu))
+        }),
     )
     .on_enter(hover(None))
+}
+
+/// A dropdown row's identity across rebuilds, unique per level.
+///
+/// `Pair` rather than a formatted string: this runs for every row of every
+/// open level on every rebuild, and the chain rebuilds on each highlight move.
+/// Depth and index pack into the one `u64` the key already carries.
+pub fn dropdown_item_key(depth: usize, index: usize) -> fresh_ui::Key {
+    fresh_ui::Key::Pair("menu_item".into(), ((depth as u64) << 32) | index as u64)
 }
 
 /// One row of one dropdown: what it says, and the name of how it looks.
@@ -215,6 +234,19 @@ fn menu_intents(n: Node<UiMsg>, keys: &[MenuShortcut]) -> Node<UiMsg> {
         .action(Intent::Confirm, |_| nav(MenuNav::Activate));
     // Cancel is deliberately absent: the layer declares `ESCAPE` dismissal,
     // and a key that dismisses a layer is answered by that layer.
+    //
+    // `hjkl` were hard-coded arms in the handler this replaced and are bound in
+    // no keymap, so without these they would simply have stopped working. They
+    // are declared *before* the keymap's own shortcuts below, so a user who
+    // binds those letters to something else still wins.
+    for (ch, intent) in [
+        ('h', Intent::Left),
+        ('j', Intent::Down),
+        ('k', Intent::Up),
+        ('l', Intent::Right),
+    ] {
+        n = n.shortcut(fresh_ui::KeyPress::new(fresh_ui::KeyCode::Char(ch)), intent);
+    }
     for s in keys {
         n = n.shortcut(s.key, s.intent);
     }
@@ -241,13 +273,25 @@ fn dropdown(
                     .theme(r.theme.clone())
                     .h(Sizing::Cells(1)),
             )
+            // Keyed for the same reason the dropdown box itself is: the chain
+            // rebuilds whenever the highlight moves or a submenu opens, and an
+            // unkeyed row's identity is its position in a list that changes.
+            .key(dropdown_item_key(depth, index))
             // Stops, for the same reason the bar's labels do: the box
             // behind the rows closes the menu, and a row that only
             // answered would be followed by that close — which would shut
             // the menu on the way into a submenu.
+            //
+            // Left only. `Click` is derived for every button except Right
+            // (which becomes `SecondaryClick`), so without the guard a
+            // *middle* click activates the item — something no menu has ever
+            // done, here or before the migration.
             .on(
                 GestureKind::Click,
                 Rc::new(move |e: &Event| {
+                    if e.button != fresh_ui::MouseButton::Left {
+                        return None;
+                    }
                     e.stop();
                     Some(UiMsg::Ui(UiFact::MenuItemClick { depth, index }))
                 }),
@@ -318,7 +362,11 @@ fn dropdown(
         // open-ness from build time rather than asking after the close.
         l = l
             .modality(Modality::None)
-            .dismiss(Dismiss::OUTSIDE_POINTER)
+            // Escape closes the chain. It is declared here rather than handled
+            // as an intent because a key that dismisses a layer is answered by
+            // that layer — which is what `menu_intents` deliberately leaves
+            // `Intent::Cancel` out for.
+            .dismiss(Dismiss::OUTSIDE_POINTER.or(Dismiss::ESCAPE))
             .on_dismiss(|_| UiMsg::Ui(UiFact::CloseMenu));
     }
     l
@@ -777,6 +825,74 @@ mod input_tests {
             .collect()
     }
 
+    /// A **right** press on the bar's ground says nothing and claims nothing.
+    ///
+    /// Tested with **no menu open**, deliberately. With one open the layer's
+    /// own `OUTSIDE_POINTER` dismissal closes it on any press out there, which
+    /// is the layer's business and not this handler's — asserting against that
+    /// would be asserting the wrong thing. What this pins is the handler: a
+    /// right press must not produce a message or a claim, so Ctrl+Right-click
+    /// still reaches the theme inspector through the legacy pre-band.
+    #[test]
+    fn a_right_press_on_the_bar_ground_says_nothing() {
+        let mut ui = open_menu(None);
+        // x=20 is past both labels: the bar's ground, not a label.
+        let got = ui.dispatch(Input::press(
+            Point::new(20, 0),
+            MouseButton::Right,
+            Mods::NONE,
+        ));
+        assert!(got.msgs.is_empty(), "got {:?}", got.msgs);
+        assert!(!got.claimed, "a right press must reach the legacy pre-band");
+    }
+
+    /// A **left** press on that same ground still closes.
+    ///
+    /// The partner of the test above: the guard must not cost the close it
+    /// was guarding.
+    #[test]
+    fn a_left_press_on_the_bar_ground_still_closes() {
+        let mut ui = open_menu(None);
+        let got = facts(press(&mut ui, 20, 0).msgs);
+        assert_eq!(got, vec![UiFact::CloseMenu]);
+    }
+
+    /// A **middle** click on a dropdown row activates nothing.
+    ///
+    /// `Click` is derived for every button but Right, so the row answered a
+    /// middle click by running its item — and `stop()`ing, so nothing else saw
+    /// it either. (3,2) is inside the first row: the box is at y=1 and its
+    /// border takes that line, so rows start at y=2.
+    #[test]
+    fn a_middle_click_on_a_dropdown_row_activates_nothing() {
+        let mut ui = open_menu(Some(0));
+        let pos = Point::new(3, 2);
+        let mut msgs = ui
+            .dispatch(Input::press(pos, MouseButton::Middle, Mods::NONE))
+            .msgs;
+        msgs.extend(
+            ui.dispatch(Input::release(pos, MouseButton::Middle, Mods::NONE))
+                .msgs,
+        );
+        assert!(
+            !msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::MenuItemClick { .. }))),
+            "got {msgs:?}"
+        );
+    }
+
+    /// A **left** click on that same row still activates it — the guard must
+    /// not cost the activation it was guarding.
+    #[test]
+    fn a_left_click_on_a_dropdown_row_still_activates_it() {
+        let mut ui = open_menu(Some(0));
+        assert_eq!(
+            click(&mut ui, 3, 2),
+            vec![UiFact::MenuItemClick { depth: 0, index: 0 }]
+        );
+    }
+
     /// A label toggles its menu — and says *only* that.
     ///
     /// **The exact list matters.** A press bubbles to every handler on its
@@ -1197,15 +1313,40 @@ mod intent_tests {
         ));
     }
 
-    /// Escape is not an intent the chain claims: the layer declares `ESCAPE`
-    /// dismissal, and a key that dismisses a layer is answered by that layer.
+    /// Escape closes the menu, and it does so as the layer's dismissal rather
+    /// than as an intent the chain claims.
+    ///
+    /// The first version of this test asserted only that no `MenuNav` was
+    /// produced — which passes just as well when Escape does *nothing at all*,
+    /// and that is exactly what it did: the chain declared `OUTSIDE_POINTER`
+    /// dismissal and no `ESCAPE`, so deleting the old handler's `Esc` arm left
+    /// the key unanswered by anyone. Assert the effect, not the absence.
     #[test]
-    fn escape_is_left_to_the_layer() {
+    fn escape_closes_the_menu() {
         let mut ui = open(Vec::new());
         let got = press(&mut ui, KeyCode::Esc, Mods::NONE);
         assert!(
-            !matches!(got.as_slice(), [UiMsg::Ui(UiFact::MenuNav(_))]),
+            matches!(got.as_slice(), [UiMsg::Ui(UiFact::CloseMenu)]),
             "got {got:?}"
         );
+    }
+
+    /// `hjkl` navigate, as they did before the migration — they were hard-coded
+    /// arms in the old handler and are bound in no keymap.
+    #[test]
+    fn hjkl_navigate() {
+        let mut ui = open(Vec::new());
+        for (ch, want) in [
+            ('j', MenuNav::NextItem),
+            ('k', MenuNav::PrevItem),
+            ('h', MenuNav::Back),
+            ('l', MenuNav::Forward),
+        ] {
+            let got = press(&mut ui, KeyCode::Char(ch), Mods::NONE);
+            assert!(
+                matches!(got.as_slice(), [UiMsg::Ui(UiFact::MenuNav(n))] if *n == want),
+                "{ch}: got {got:?}"
+            );
+        }
     }
 }

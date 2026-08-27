@@ -3,9 +3,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::app::types::CellThemeRecorder;
 use crate::app::WarningLevel;
-use crate::config::{StatusBarConfig, StatusBarElement, VirtualSpaceMode};
+use crate::config::{StatusBarElement, VirtualSpaceMode};
 use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
 use crate::view::prompt::Prompt;
@@ -26,11 +25,14 @@ const SSH_PREFIX_TERMINATOR: &str = "] ";
 /// Stable identity of a *clickable* status-bar segment.
 ///
 /// This is the generic rail that replaces per-element layout fields, hover
-/// enum variants, and bespoke mouse-detective branches. The renderer records
-/// each clickable element's screen area under its `StatusBarClickable` id in
-/// [`StatusBarLayout::clickable`]; the app layer (`mouse_input.rs`) runs a
-/// single hit-test over that list for both hover and click, mapping the id to
-/// an editor `Action` in one place (`dispatch_status_bar_click`).
+/// enum variants, and bespoke mouse-detective branches. Rectangles are read
+/// back off the laid-out tree by `view::shell::status_bar::clickable_rects`,
+/// keyed by this id; the app layer runs a single hit-test over that list for
+/// both hover and click, mapping the id to an editor `Action` in one place
+/// (`dispatch_status_bar_click`).
+///
+/// The paint-time `StatusBarLayout` that used to carry these is gone: the bar
+/// migrated to the shell, and the walk that recorded them had no callers left.
 ///
 /// Wiring a new clickable built-in element is therefore: give it an
 /// `ElementKind`, list it in [`StatusBarRenderer::clickable_for_kind`], and add
@@ -336,33 +338,6 @@ pub struct TerminalRestartState {
     /// Whether restarting rejoins an agent conversation rather than starting a
     /// fresh process. Drives "Resume" vs "Restart" wording.
     pub resumes_agent: bool,
-}
-
-/// Layout information returned from status bar rendering for mouse click detection
-#[derive(Debug, Clone, Default)]
-pub struct StatusBarLayout {
-    /// Every clickable built-in segment drawn this frame, as
-    /// `(id, row, start_col, end_col)`, in render order. One generic list
-    /// instead of a field per indicator — both hover hit-testing and click
-    /// dispatch walk it (see `StatusBarClickable`).
-    pub clickable: Vec<(StatusBarClickable, u16, u16, u16)>,
-    /// Plugin-registered status-bar token areas, keyed by the
-    /// `"<plugin_name>:<token_name>"` registry key (same key the
-    /// editor uses in `status_bar_token_registry`). Populated by the
-    /// renderer when it draws each plugin token. Mouse click dispatch
-    /// (`handle_click_status_bar`) walks this map after the built-in
-    /// indicators; on a hit, it fires the `status_bar_token_clicked`
-    /// hook so the plugin can react. This is what makes the env
-    /// pill, trust chip, and any future plugin chip first-class
-    /// affordances back to their decisions — see
-    /// `docs/internal/trust-env-devcontainer-ux-plan.md`
-    /// §"Path from here to the North Star".
-    pub plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
-    /// Every rendered element, in screen order, with its semantic name, text and
-    /// cell position. This is the status bar's semantic model: a frontend renders
-    /// it directly (web) instead of scraping the drawn cells, and the TUI cell
-    /// rendering is just one consumer of the same data.
-    pub segments: Vec<StatusSegmentInfo>,
 }
 
 /// One rendered status-bar element, captured semantically (text + position)
@@ -741,40 +716,6 @@ pub(crate) fn input_hscroll(cursor_cells: usize, width: usize) -> usize {
 pub struct StatusBarRenderer;
 
 impl StatusBarRenderer {
-    /// Render only the status bar (without prompt).
-    ///
-    /// Returns layout information with positions of clickable indicators.
-    pub fn render_status_bar(
-        frame: &mut Frame,
-        area: Rect,
-        ctx: &mut StatusBarContext<'_>,
-        config: &StatusBarConfig,
-        rec: Option<&mut CellThemeRecorder>,
-        // When false, build the full semantic model (`StatusBarLayout.segments` +
-        // indicator rects) but paint no cells — the web renders the status bar
-        // natively from `status_view`. The TUI always passes `true`.
-        draw: bool,
-    ) -> StatusBarLayout {
-        Self::render_status(Some(frame), area, ctx, config, rec, draw)
-    }
-
-    /// Compute the bar's layout (clickable segments + plugin token areas +
-    /// semantic segments) from live state without painting a cell — the SAME
-    /// element/width/placement walk the paint pass runs
-    /// (`render_status_bar_row` asserts the two agree in debug builds).
-    /// Geometry is content-dependent (rendered label widths: encoding, LSP
-    /// state, cursor position, messages), so it is derived from the same
-    /// `StatusBarContext` the painter consumes. This is the per-event
-    /// geometry source (chrome hit-testing, click resolution, popup
-    /// anchoring): geometry produced by layout, not recorded by paint.
-    pub fn compute_status_layout(
-        area: Rect,
-        ctx: &mut StatusBarContext<'_>,
-        config: &StatusBarConfig,
-    ) -> StatusBarLayout {
-        Self::render_status(None, area, ctx, config, None, false)
-    }
-
     /// Render the prompt/minibuffer
     pub fn render_prompt(
         frame: &mut Frame,
@@ -1700,30 +1641,6 @@ impl StatusBarRenderer {
         }
     }
 
-    /// Record an element's screen area for click/hover dispatch. Clickable
-    /// built-ins land in the generic `clickable` list keyed by their
-    /// `StatusBarClickable` id; plugin tokens (`ElementKind::Custom` carrying a
-    /// `token_key`) land in `plugin_token_areas` keyed by their registry key.
-    fn update_layout_for_element(
-        layout: &mut StatusBarLayout,
-        kind: ElementKind,
-        token_key: Option<&str>,
-        row: u16,
-        start_col: u16,
-        end_col: u16,
-    ) {
-        if let Some(id) = Self::clickable_for_kind(kind) {
-            layout.clickable.push((id, row, start_col, end_col));
-        }
-        if kind == ElementKind::Custom {
-            if let Some(key) = token_key {
-                layout
-                    .plugin_token_areas
-                    .insert(key.to_string(), (row, start_col, end_col));
-            }
-        }
-    }
-
     /// Build the styled spans for a single rendered element, honoring the
     /// special-case two-color rendering for a disconnected remote filename.
     ///
@@ -1823,316 +1740,6 @@ impl StatusBarRenderer {
                 (spans, width, kind, token_key)
             })
             .collect()
-    }
-
-    /// Render the normal status bar (config-driven).
-    fn render_status(
-        // `None` on the event-time layout path (`compute_status_layout`),
-        // which never paints; always `Some` when `draw` is true.
-        mut frame: Option<&mut Frame>,
-        area: Rect,
-        ctx: &mut StatusBarContext<'_>,
-        config: &StatusBarConfig,
-        mut rec: Option<&mut CellThemeRecorder>,
-        draw: bool,
-    ) -> StatusBarLayout {
-        let mut layout = StatusBarLayout::default();
-        let base_style = Style::default()
-            .fg(ctx.theme.status_bar_fg)
-            .bg(ctx.theme.status_bar_bg);
-        let available_width = area.width as usize;
-
-        if available_width == 0 || area.height == 0 {
-            return layout;
-        }
-
-        // Lay down the bar's base keys across the whole row so padding / gaps
-        // resolve to the status bar; each element below overwrites its own
-        // cells with their specific keys as it's emitted.
-        let lsp_state = ctx.lsp_indicator_state;
-        if let Some(r) = rec.as_deref_mut() {
-            r.run(
-                area.x,
-                area.y,
-                area.width,
-                Some("ui.status_bar_fg"),
-                Some("ui.status_bar_bg"),
-                "Status Bar",
-            );
-        }
-
-        // Tell the per-element renderer whether the dedicated
-        // RemoteIndicator is on the bar so the Filename branch
-        // can drop its now-redundant `[Container:<id>] ` /
-        // SSH prefix.
-        ctx.remote_indicator_on_bar = config
-            .left
-            .iter()
-            .chain(config.right.iter())
-            .any(|e| matches!(e, StatusBarElement::RemoteIndicator));
-
-        let left_items = Self::render_side(&config.left, ctx);
-        let mut right_items = Self::render_side(&config.right, ctx);
-
-        // Separator drawn between elements, used verbatim from config.
-        // An empty value disables separators and consumes no width.
-        let separator: &str = &config.separator;
-        let separator_width = str_width(separator);
-        // The separator glyph is colored by the theme's dedicated separator
-        // keys so it can be dimmed against the bar; both fall back to the bar.
-        let separator_style = Style::default()
-            .fg(ctx.theme.status_separator_fg)
-            .bg(ctx.theme.status_separator_bg);
-
-        // Reserve a sane minimum for the left side so the buffer name and
-        // cursor position aren't truncated to a single character on narrow
-        // terminals (regression originally reported as
-        // `t  LF  ASCII  Markdown ...`).  Drop low-priority right elements
-        // (configured right-most first) until the remaining right side fits
-        // alongside that minimum left budget.  We never drop the *first*
-        // right element so the user keeps at least one piece of right-side
-        // status if any was configured.
-        let total_right_width: usize = right_items.iter().map(|(_, w, _, _)| *w).sum::<usize>()
-            + separator_width * right_items.len().saturating_sub(1);
-        let left_min_target = available_width
-            .saturating_mul(2)
-            .saturating_div(5) // ~40% of width reserved for left when feasible
-            .min(40); // but never demand more than 40 cols even on wide terminals
-        let right_budget = available_width.saturating_sub(left_min_target + 1);
-        if total_right_width > right_budget && right_items.len() > 1 {
-            let mut current = total_right_width;
-            while current > right_budget && right_items.len() > 1 {
-                if let Some(dropped) = right_items.pop() {
-                    current = current.saturating_sub(dropped.1);
-                    // Also remove the separator that preceded the dropped
-                    // element (always present since we never drop the first)
-                    current = current.saturating_sub(separator_width);
-                } else {
-                    break;
-                }
-            }
-        }
-
-        let right_width: usize = right_items.iter().map(|(_, w, _, _)| *w).sum::<usize>()
-            + separator_width * right_items.len().saturating_sub(1);
-
-        let narrow = available_width < 15;
-        let left_max_width = if narrow {
-            available_width
-        } else if available_width > right_width + 1 {
-            available_width - right_width - 1
-        } else {
-            1
-        };
-
-        // Emit left side, consuming `left_items` so each element's spans move
-        // directly into the output without a clone. Widths are cached so the
-        // truncation check doesn't re-measure text.
-        let mut spans: Vec<Span<'static>> = Vec::new();
-        let mut used_left: usize = 0;
-
-        for (idx, (item_spans, width, kind, token_key)) in left_items.into_iter().enumerate() {
-            let sep_width = if idx == 0 { 0 } else { separator_width };
-            if used_left + sep_width >= left_max_width {
-                break;
-            }
-            if sep_width > 0 {
-                if let Some(r) = rec.as_deref_mut() {
-                    r.run(
-                        area.x + used_left as u16,
-                        area.y,
-                        sep_width as u16,
-                        Some("ui.status_separator_fg"),
-                        Some("ui.status_separator_bg"),
-                        "Status Bar",
-                    );
-                }
-                spans.push(Span::styled(separator.to_string(), separator_style));
-                used_left += sep_width;
-            }
-
-            let remaining = left_max_width - used_left;
-            let start_col = used_left;
-
-            if width <= remaining {
-                // `segments` is consumed only by the web (`status_view`); the
-                // TUI (`draw`) never reads it, so don't allocate the per-segment
-                // text/Vec on the terminal hot path.
-                let seg_text = (!draw).then(|| {
-                    item_spans
-                        .iter()
-                        .map(|s| s.content.as_ref())
-                        .collect::<String>()
-                });
-                spans.extend(item_spans);
-                used_left += width;
-
-                if let Some(r) = rec.as_deref_mut() {
-                    let (fg, bg) = Self::element_keys(kind, lsp_state);
-                    r.run(
-                        area.x + start_col as u16,
-                        area.y,
-                        width as u16,
-                        Some(fg),
-                        Some(bg),
-                        "Status Bar",
-                    );
-                }
-
-                Self::update_layout_for_element(
-                    &mut layout,
-                    kind,
-                    token_key.as_deref(),
-                    area.y,
-                    area.x + start_col as u16,
-                    area.x + (start_col + width) as u16,
-                );
-                if let Some(text) = seg_text {
-                    layout.segments.push(StatusSegmentInfo {
-                        name: element_kind_name(kind),
-                        key: token_key.clone(),
-                        text,
-                        x: area.x + start_col as u16,
-                        w: width as u16,
-                        side: "left",
-                    });
-                }
-            } else {
-                // Overflow: truncate the concatenated text of this element.
-                // Per-span styling is lost for the overflowed slice — we fall
-                // back to whatever `element_style` would have returned.
-                let group_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
-                let truncated = truncate_to_width(&group_text, remaining);
-                let truncated_width = str_width(&truncated);
-                let overflow_is_hovering =
-                    Self::clickable_for_kind(kind).is_some_and(|c| Some(c) == ctx.hovered);
-                let overflow_style = Self::element_style(
-                    kind,
-                    ctx.theme,
-                    overflow_is_hovering,
-                    ctx.warning_level,
-                    ctx.lsp_indicator_state,
-                );
-                let seg_text = (!draw).then(|| truncated.clone());
-                spans.push(Span::styled(truncated, overflow_style));
-
-                if let Some(r) = rec.as_deref_mut() {
-                    let (fg, bg) = Self::element_keys(kind, lsp_state);
-                    r.run(
-                        area.x + start_col as u16,
-                        area.y,
-                        truncated_width as u16,
-                        Some(fg),
-                        Some(bg),
-                        "Status Bar",
-                    );
-                }
-                used_left += truncated_width;
-
-                Self::update_layout_for_element(
-                    &mut layout,
-                    kind,
-                    token_key.as_deref(),
-                    area.y,
-                    area.x + start_col as u16,
-                    area.x + (start_col + truncated_width) as u16,
-                );
-                if let Some(text) = seg_text {
-                    layout.segments.push(StatusSegmentInfo {
-                        name: element_kind_name(kind),
-                        key: token_key.clone(),
-                        text,
-                        x: area.x + start_col as u16,
-                        w: truncated_width as u16,
-                        side: "left",
-                    });
-                }
-                break;
-            }
-        }
-
-        if narrow {
-            if used_left < available_width {
-                spans.push(Span::styled(
-                    " ".repeat(available_width - used_left),
-                    base_style,
-                ));
-            }
-            if draw {
-                if let Some(frame) = frame.as_deref_mut() {
-                    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-                }
-            }
-            return layout;
-        }
-
-        let mut col_offset = used_left;
-        if col_offset + right_width < available_width {
-            let padding = available_width - col_offset - right_width;
-            spans.push(Span::styled(" ".repeat(padding), base_style));
-            col_offset = available_width - right_width;
-        } else if col_offset < available_width {
-            spans.push(Span::styled(" ", base_style));
-            col_offset += 1;
-        }
-
-        let mut current_col = area.x + col_offset as u16;
-        for (idx, (item_spans, width, kind, token_key)) in right_items.into_iter().enumerate() {
-            if idx > 0 && separator_width > 0 {
-                if let Some(r) = rec.as_deref_mut() {
-                    r.run(
-                        current_col,
-                        area.y,
-                        separator_width as u16,
-                        Some("ui.status_separator_fg"),
-                        Some("ui.status_separator_bg"),
-                        "Status Bar",
-                    );
-                }
-                spans.push(Span::styled(separator.to_string(), separator_style));
-                current_col += separator_width as u16;
-            }
-            if let Some(r) = rec.as_deref_mut() {
-                let (fg, bg) = Self::element_keys(kind, lsp_state);
-                r.run(
-                    current_col,
-                    area.y,
-                    width as u16,
-                    Some(fg),
-                    Some(bg),
-                    "Status Bar",
-                );
-            }
-            Self::update_layout_for_element(
-                &mut layout,
-                kind,
-                token_key.as_deref(),
-                area.y,
-                current_col,
-                current_col + width as u16,
-            );
-            if !draw {
-                // Web-only semantic model; skip the allocation on the TUI path.
-                let seg_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
-                layout.segments.push(StatusSegmentInfo {
-                    name: element_kind_name(kind),
-                    key: token_key.clone(),
-                    text: seg_text,
-                    x: current_col,
-                    w: width as u16,
-                    side: "right",
-                });
-            }
-            spans.extend(item_spans);
-            current_col += width as u16;
-        }
-
-        if draw {
-            if let Some(frame) = frame {
-                frame.render_widget(Paragraph::new(Line::from(spans)), area);
-            }
-        }
-        layout
     }
 }
 

@@ -180,6 +180,12 @@ fn combos() -> Vec<Frame> {
                             // Content, not geometry: an empty bar row occupies
                             // the same cells a full one does.
                             menu_bar_items: Default::default(),
+                            // Likewise the status bar: whether it has elements
+                            // on it does not move a single rectangle, which is
+                            // exactly what this test asserts across all 192
+                            // visibility combinations.
+                            status_bar_items: None,
+                            menu_keys: Vec::new(),
                         });
                     }
                 }
@@ -270,6 +276,10 @@ fn squeeze_band_starves_a_different_row_than_ratatui() {
         menu: None,
         dropdowns: Vec::new(),
         menu_bar_items: Default::default(),
+        // Content, not geometry — the row occupies its one cell whatever is
+        // on it, which is the whole claim this test exists to check.
+        status_bar_items: None,
+        menu_keys: Vec::new(),
     };
     let size = Rect {
         x: 0,

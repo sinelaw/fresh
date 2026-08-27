@@ -27,6 +27,7 @@ use std::rc::Rc;
 
 use fresh_ui::{gesture, row, text_runs, Event, GestureKind, Key, Node, Run, Sizing};
 
+use super::rect_of;
 use crate::app::types::HoverTarget;
 use crate::view::ui::status_bar::StatusBarClickable;
 
@@ -176,25 +177,11 @@ pub fn status_bar(bar: &StatusBar) -> Node<UiMsg> {
 
 // ── reading the laid-out bar back ──────────────────────────────────────────
 
-fn rect_of(
-    ui: &fresh_ui::Ui<UiMsg>,
-    key: &Key,
-    size: ratatui::layout::Rect,
-) -> Option<ratatui::layout::Rect> {
-    let e = ui.find_by_key(key)?;
-    let r = ui.rect_of(e);
-    (r.w > 0 && r.h > 0).then(|| ratatui::layout::Rect {
-        x: size.x.saturating_add(r.x.max(0) as u16),
-        y: size.y.saturating_add(r.y.max(0) as u16),
-        width: r.w,
-        height: r.h,
-    })
-}
-
 /// Every clickable element's screen rectangle, in render order.
 ///
-/// This is `StatusBarLayout::clickable` — but read from the tree that painted
-/// rather than recomputed by a second walk over state that has moved on.
+/// This is what `StatusBarLayout::clickable` was — but read from the tree that
+/// painted rather than recomputed by a second walk over state that has moved
+/// on. That type and its walk are deleted; this is the only source now.
 pub fn clickable_rects(
     ui: &fresh_ui::Ui<UiMsg>,
     bar: &StatusBar,

@@ -33,6 +33,16 @@ use super::msg::{MenuStep, UiFact, UiMsg};
 /// items in the display list.
 const MENU_KEY: &str = "context_menu";
 
+/// A row's identity across rebuilds.
+///
+/// The box was keyed and its rows were not, so a row's identity was its
+/// position — and this menu rebuilds on every highlight move. Keying them the
+/// way the explorer keys its rows means the element that was under the pointer
+/// stays the same element when the list beneath it changes.
+pub fn item_key(index: usize) -> Key {
+    Key::Pair("context_menu_item".into(), index as u64)
+}
+
 /// What one menu needs to draw: where it goes, what is in it, and which row is
 /// highlighted.
 ///
@@ -82,6 +92,7 @@ pub fn context_menu(menu: &Menu) -> Node<UiMsg> {
                     .theme(theme)
                     .h(Sizing::Cells(1)),
             )
+            .key(item_key(i))
             // A click moves the highlight and activates, exactly as the old
             // click handler did — activation runs the same path Enter does.
             .on_click(move |_| UiMsg::Ui(UiFact::ActivateContextMenuItem(i)))
