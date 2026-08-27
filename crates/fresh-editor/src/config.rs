@@ -1152,13 +1152,19 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub cursor_jump_animation: bool,
 
-    /// Fade text in as it scrolls into view: rows the scroll just
-    /// revealed rise from the background colour to their normal
-    /// foreground instead of appearing at full strength. Has no effect
-    /// when `animations` is `false`.
+    /// Shade the top and bottom rows of each pane, so text meets the
+    /// edge by fading out rather than being cut off mid-line.
+    ///
+    /// The row hard against the edge is painted a third of the way up
+    /// from its background, the one inside it two thirds, and the third
+    /// row in normally. Constant, not animated — the same rows are
+    /// shaded whether the view is moving or still, so scrolling is a
+    /// plain shift of the text through a fixed gradient. The top edge
+    /// only shades when there is something above it, so the first lines
+    /// of a file are not dimmed for no reason.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
-    pub scroll_fade_animation: bool,
+    pub viewport_edge_fade: bool,
 
     /// Show line numbers in the gutter (default for new buffers)
     #[serde(default = "default_true")]
@@ -2003,7 +2009,7 @@ impl Default for EditorConfig {
             virtual_space: VirtualSpaceMode::default(),
             animations: true,
             cursor_jump_animation: true,
-            scroll_fade_animation: true,
+            viewport_edge_fade: true,
             line_numbers: true,
             relative_line_numbers: false,
             scroll_offset: default_scroll_offset(),

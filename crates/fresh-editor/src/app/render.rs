@@ -645,11 +645,11 @@ impl Editor {
             .active_split();
         self.maybe_start_cursor_jump_animation(pending_hardware_cursor, active_split);
 
-        // Scroll fade: any split whose viewport moved since the last
-        // frame fades the rows the move revealed up from the background.
-        // Runs here, after the content pass, because that is when the
-        // painted frame and the viewport that produced it agree.
-        self.maybe_start_scroll_fade_animations(&split_areas);
+        // Shade the top and bottom rows of every split, so the text
+        // meets the edge of its pane by fading out rather than being cut
+        // off mid-line. Runs here, after the content pass, because it
+        // reads the rows that pass just painted.
+        self.shade_scroll_edges(frame.buffer_mut(), &split_areas);
 
         // A dormant remote session's shell shows a placeholder page instead
         // of an (empty, uneditable) buffer: nothing can be shown or edited
@@ -2822,26 +2822,30 @@ impl Editor {
         self.cursor_jump_animation = Some(id);
     }
 
-    /// How long one row takes to rise from the background to its painted
-    /// colour. Short enough that a fast scroll reads as a trailing glow
-    /// rather than a viewport that lags behind the wheel.
-    const SCROLL_FADE_DURATION: std::time::Duration = std::time::Duration::from_millis(180);
+    /// Rows at each edge of a split that are shaded, and how far the
+    /// shading reaches. The row hard against the edge is painted a third
+    /// of the way up from its background, the one inside it two thirds,
+    /// and the third row in is fully painted.
+    const EDGE_FADE_ROWS: u16 = 2;
 
-    /// Start (or feed) the scroll fade for every split that moved.
+    /// Shade the top and bottom rows of every split's content.
     ///
-    /// A split's viewport anchor is compared against the one it had when
-    /// this ran last frame: a change is a scroll, and the fade effect then
-    /// works out from the frame itself *which* rows the scroll revealed
-    /// (see `AnimationKind::ScrollFade`). A split that switched buffers is
-    /// left alone — that is a tab switch, which already animates with a
-    /// slide over the very same rect.
+    /// A pane cuts text off mid-line at its edges; shading the last
+    /// couple of rows lets it trail off instead, which reads as "this
+    /// continues" and gives a scroll somewhere to come from and go to.
+    /// Constant rather than animated: the same rows are shaded whether
+    /// the view is moving or still, so nothing flickers, nothing has to
+    /// settle, and scrolling stays a plain shift of the text through a
+    /// fixed gradient.
     ///
-    /// One effect spans a whole gesture: while the fade is still running,
-    /// each further scroll `refresh`es it instead of starting a
-    /// replacement, so rows already mid-fade keep their own timelines and
-    /// a held-down scroll trails a gradient instead of flickering.
-    fn maybe_start_scroll_fade_animations(
+    /// The bottom edge is shaded unconditionally — past the end of the
+    /// buffer there are no glyphs to shade, so it costs nothing to skip
+    /// the check. The top only shades when something is actually above
+    /// it, or the first two lines of every file would sit permanently
+    /// dimmed.
+    fn shade_scroll_edges(
         &mut self,
+        buf: &mut ratatui::buffer::Buffer,
         split_areas: &[(
             crate::model::event::LeafId,
             BufferId,
@@ -2851,101 +2855,56 @@ impl Editor {
             usize,
         )],
     ) {
-        // Same gating as the cursor-jump trail: the master toggle, plus a
-        // dedicated one so the fade can be dropped without giving up
-        // ambient animations. Tests default `animations` off, so a single
-        // `render()` observes settled colours.
-        if !self.config.editor.animations || !self.config.editor.scroll_fade_animation {
-            self.active_window_mut().scroll_fades.clear();
+        if !self.config.editor.viewport_edge_fade {
             return;
         }
+        let editor_bg = self.theme.read().unwrap().editor_bg;
 
-        let bg_color = self.theme.read().unwrap().editor_bg;
-
-        // Snapshot what was painted this frame before touching the
-        // runner: the split view-states and the animation runner both
-        // live on the window.
-        let mut painted: Vec<(
-            crate::model::event::LeafId,
-            BufferId,
-            ratatui::layout::Rect,
-            crate::view::viewport::ViewAnchor,
-        )> = Vec::new();
-        {
-            let window = self.active_window();
-            let Some((_, view_states)) = window.buffers.splits() else {
-                return;
+        let window = self.active_window();
+        let Some((_, view_states)) = window.buffers.splits() else {
+            return;
+        };
+        for (leaf, buffer_id, area, ..) in split_areas {
+            if area.width == 0 || area.height == 0 {
+                continue;
+            }
+            // A terminal's grid is its own; shading its edges would dim
+            // live process output rather than a document being read
+            // through a window.
+            if window.is_terminal_buffer(*buffer_id) {
+                continue;
+            }
+            let Some(view_state) = view_states.get(leaf) else {
+                continue;
             };
-            for (leaf, buffer_id, content_rect, ..) in split_areas {
-                if content_rect.width == 0 || content_rect.height == 0 {
-                    continue;
-                }
-                // A terminal scrolls itself as its process writes. Fading
-                // there would dim live output, not text the reader moved
-                // into view.
-                if window.is_terminal_buffer(*buffer_id) {
-                    continue;
-                }
-                let Some(view_state) = view_states.get(leaf) else {
-                    continue;
+            let anchor = view_state.viewport.anchor;
+            let content_above = anchor.byte > 0 || anchor.row_offset != 0;
+
+            for row in 0..area.height {
+                let from_top = row;
+                let from_bottom = area.height - 1 - row;
+                let in_top = content_above && from_top < Self::EDGE_FADE_ROWS;
+                let in_bottom = from_bottom < Self::EDGE_FADE_ROWS;
+                // A pane short enough for the two bands to overlap takes
+                // whichever edge the row is nearer, so it never comes out
+                // brighter for being close to both.
+                let distance = match (in_top, in_bottom) {
+                    (true, true) => from_top.min(from_bottom),
+                    (true, false) => from_top,
+                    (false, true) => from_bottom,
+                    (false, false) => continue,
                 };
-                painted.push((*leaf, *buffer_id, *content_rect, view_state.viewport.anchor));
+                // Hard against the edge is dimmest; each row inward is a
+                // step brighter, and the row past the band is untouched.
+                let level = (distance + 1) as f32 / (Self::EDGE_FADE_ROWS + 1) as f32;
+                crate::view::animation::shade_row_toward_background(
+                    buf, *area, row, level, editor_bg,
+                );
             }
-        }
-
-        let mut started_any = false;
-        let mut next: HashMap<crate::model::event::LeafId, crate::app::window::ScrollFadeTrack> =
-            HashMap::with_capacity(painted.len());
-        for (leaf, buffer_id, area, anchor) in painted {
-            let previous = self.active_window().scroll_fades.get(&leaf).copied();
-            let scrolled =
-                previous.is_some_and(|prev| prev.buffer == buffer_id && prev.anchor != anchor);
-            let mut effect = previous.and_then(|prev| prev.effect);
-            if scrolled {
-                let gutter_width = self.leaf_gutter_width(leaf, buffer_id);
-                let runner = &mut self.active_window_mut().animations;
-                let fed =
-                    effect.is_some_and(|id| runner.refresh(id, area, Self::SCROLL_FADE_DURATION));
-                if !fed {
-                    effect = Some(runner.start(
-                        area,
-                        crate::view::animation::AnimationKind::ScrollFade {
-                            duration: Self::SCROLL_FADE_DURATION,
-                            bg_color,
-                            gutter_width,
-                        },
-                    ));
-                    started_any = true;
-                }
-            }
-            next.insert(
-                leaf,
-                crate::app::window::ScrollFadeTrack {
-                    buffer: buffer_id,
-                    anchor,
-                    effect,
-                },
-            );
-        }
-        // Rebuilt rather than updated in place so splits that closed
-        // stop being tracked.
-        self.active_window_mut().scroll_fades = next;
-
-        // A fade started here missed this frame's `capture_before_all`,
-        // which ran before anything was painted. Offer it the previous
-        // frame now — that is the pre-scroll screen it has to tell the
-        // revealed rows apart from. Effects that already hold a snapshot
-        // ignore the second offer.
-        if started_any {
-            let previous_frame = self.last_rendered_frame.take();
-            self.active_window_mut()
-                .animations
-                .capture_before_all(previous_frame.as_ref());
-            self.last_rendered_frame = previous_frame;
         }
     }
 
-    /// Returns true if `(x, y)` falls inside any popup-style overlay that
+    /// Returns true if `(x, y)` falls inside any popup-style overlay that    /// Returns true if `(x, y)` falls inside any popup-style overlay that
     /// was rendered this frame. Used to decide whether the hardware cursor
     /// should be shown or hidden so it does not bleed through a popup.
     fn cursor_obscured_by_overlay(&self, x: u16, y: u16) -> bool {

@@ -156,7 +156,7 @@ pub struct PartialEditorConfig {
     pub virtual_space: Option<crate::config::VirtualSpaceMode>,
     pub animations: Option<bool>,
     pub cursor_jump_animation: Option<bool>,
-    pub scroll_fade_animation: Option<bool>,
+    pub viewport_edge_fade: Option<bool>,
     pub line_numbers: Option<bool>,
     pub relative_line_numbers: Option<bool>,
     pub scroll_offset: Option<usize>,
@@ -251,8 +251,8 @@ impl Merge for PartialEditorConfig {
         self.animations.merge_from(&other.animations);
         self.cursor_jump_animation
             .merge_from(&other.cursor_jump_animation);
-        self.scroll_fade_animation
-            .merge_from(&other.scroll_fade_animation);
+        self.viewport_edge_fade
+            .merge_from(&other.viewport_edge_fade);
         self.line_numbers.merge_from(&other.line_numbers);
         self.relative_line_numbers
             .merge_from(&other.relative_line_numbers);
@@ -618,7 +618,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             virtual_space: Some(cfg.virtual_space),
             animations: Some(cfg.animations),
             cursor_jump_animation: Some(cfg.cursor_jump_animation),
-            scroll_fade_animation: Some(cfg.scroll_fade_animation),
+            viewport_edge_fade: Some(cfg.viewport_edge_fade),
             line_numbers: Some(cfg.line_numbers),
             relative_line_numbers: Some(cfg.relative_line_numbers),
             scroll_offset: Some(cfg.scroll_offset),
@@ -724,9 +724,9 @@ impl PartialEditorConfig {
             cursor_jump_animation: self
                 .cursor_jump_animation
                 .unwrap_or(defaults.cursor_jump_animation),
-            scroll_fade_animation: self
-                .scroll_fade_animation
-                .unwrap_or(defaults.scroll_fade_animation),
+            viewport_edge_fade: self
+                .viewport_edge_fade
+                .unwrap_or(defaults.viewport_edge_fade),
             line_numbers: self.line_numbers.unwrap_or(defaults.line_numbers),
             relative_line_numbers: self
                 .relative_line_numbers

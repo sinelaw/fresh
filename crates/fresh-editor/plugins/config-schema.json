@@ -37,7 +37,7 @@
       "default": {
         "animations": true,
         "cursor_jump_animation": true,
-        "scroll_fade_animation": true,
+        "viewport_edge_fade": true,
         "line_numbers": true,
         "relative_line_numbers": false,
         "highlight_current_line": true,
@@ -396,8 +396,8 @@
           "default": true,
           "x-section": "Display"
         },
-        "scroll_fade_animation": {
-          "description": "Fade text in as it scrolls into view: rows the scroll just\nrevealed rise from the background colour to their normal\nforeground instead of appearing at full strength. Has no effect\nwhen `animations` is `false`.",
+        "viewport_edge_fade": {
+          "description": "Shade the top and bottom rows of each pane, so text meets the\nedge by fading out rather than being cut off mid-line.\n\nThe row hard against the edge is painted a third of the way up\nfrom its background, the one inside it two thirds, and the third\nrow in normally. Constant, not animated — the same rows are\nshaded whether the view is moving or still, so scrolling is a\nplain shift of the text through a fixed gradient. The top edge\nonly shades when there is something above it, so the first lines\nof a file are not dimmed for no reason.",
           "type": "boolean",
           "default": true,
           "x-section": "Display"
