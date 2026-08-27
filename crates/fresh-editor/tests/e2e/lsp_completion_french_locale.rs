@@ -11,8 +11,8 @@
 //! "Completion", so pressing Enter/Tab to accept a completion does nothing
 //! when using a non-English locale.
 
+use crate::common::global_state::pin_config_globals;
 use crate::common::harness::EditorTestHarness;
-use crate::common::locale_lock::lock_locale;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, LocaleName};
 use fresh::model::event::{
@@ -25,11 +25,11 @@ const FRENCH_COMPLETION_TITLE: &str = "Compl\u{00e9}tion";
 /// Helper: set up an editor with French locale and a completion popup.
 /// Uses the translated popup title to match what the real LSP code does.
 ///
-/// Returns the harness paired with the locale-lock guard so the caller
-/// holds the lock for the test's lifetime; drop the guard last so the
-/// global locale resets to English before the next test runs.
+/// Returns the harness paired with the config-globals pin so the caller
+/// holds it for the test's lifetime; drop the guard last so the global
+/// locale resets to English before the next test runs.
 fn setup_french_completion_popup(prefix: &str) -> anyhow::Result<(EditorTestHarness, impl Drop)> {
-    let lock = lock_locale();
+    let lock = pin_config_globals();
     let config = Config {
         locale: LocaleName(Some("fr".to_string())),
         ..Default::default()

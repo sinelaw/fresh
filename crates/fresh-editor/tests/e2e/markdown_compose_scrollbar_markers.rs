@@ -212,26 +212,34 @@ fn only_top_level_headings_are_marked_by_default() {
 fn heading_marks_survive_exploring_the_document() {
     let (mut harness, _tmp) = compose_harness(&document_with_headings(20, 14));
 
-    harness
-        .wait_until(|h| !marker_rows(h).is_empty())
-        .expect("initial heading marks");
-    // The first mark is not the whole set: compose mode's pre-scan walks the
-    // document over the async plugin bridge (see
-    // `every_heading_is_marked_without_scrolling`), so the marks arrive over
-    // several ticks. Reading the set on the frame the first mark lands
-    // compares a partial set against the complete one later — a scroll that
-    // "added" marks is how this test failed on CI, with an `initial` of two
-    // rows against an `after` of eighteen. Wait for the plugin pipeline
-    // itself to go quiet; a screen-stability streak does not do, because a
-    // plugin thread that has fallen behind emits identical stale frames.
+    // What follows compares this set against the one after scrolling, so it
+    // has to be the *complete* set: read it early and the test compares two
+    // partial sets and proves nothing.
+    //
+    // Two marks is what the per-batch `lines_changed` pass publishes for the
+    // headings in the opening viewport; the rest of the document is marked by
+    // `prescanHeadingMarkers`, which reads the whole buffer over the async
+    // bridge and then publishes every heading in one whole-namespace call.
+    // So the complete set arrives in a single step, and waiting for *it* is
+    // the gate — `wait_until(|h| !marker_rows(h).is_empty())` resolves on the
+    // viewport pass, several ticks earlier.
+    //
+    // Quiescence is not that gate either, and that is how this test failed on
+    // CI with an `initial` of `[2, 3]`: the pre-scan is fire-and-forget
+    // (`void prescanHeadingMarkers(...)`), so while its `getBufferText` round
+    // trip is outstanding the editor reports no work for the tick and
+    // `wait_for_async_quiescence` returns with only the viewport's marks
+    // published. Gate on the marks themselves, the way
+    // `every_heading_is_marked_without_scrolling` does — the viewport pass
+    // cannot reach ten on a document this long, so the threshold is a real
+    // gate on the pre-scan having landed. Quiescence afterwards only settles
+    // any per-batch republish on top of a set that is already whole.
+    harness.wait_until(|h| marker_rows(h).len() >= 10).expect(
+        "the pre-scan should mark the whole document before scrolling starts, \
+             otherwise this test compares two partial sets and proves nothing",
+    );
     harness.wait_for_async_quiescence(8).unwrap();
     let initial = marker_rows(&harness);
-    assert!(
-        initial.len() >= 10,
-        "the pre-scan should have marked the whole document before scrolling \
-         starts, otherwise this test compares two partial sets and proves \
-         nothing; saw {initial:?}"
-    );
 
     // Page down through the document so later sections enter the viewport,
     // letting the plugin's marks settle after each page.

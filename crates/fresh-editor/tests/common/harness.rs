@@ -660,25 +660,27 @@ impl EditorTestHarness {
         }
         config.check_for_updates = false; // Disable update checking in tests
 
+        // From here to `Editor::for_test` below we write the two
+        // *process-global* registries the editor derives from config — the
+        // i18n locale (`rust_i18n::set_locale`) and the user indentation
+        // rules (`config::reload_indent_overrides`, which clears
+        // `indent_rules::USER_RULES` before re-registering its own). Cargo
+        // runs the test functions of one binary in parallel threads, so
+        // without a discipline around them a harness built here flips the
+        // locale out from under a test asserting on Spanish UI, or wipes
+        // the `[languages.<id>.indent]` rule a config-indent test just
+        // registered — both intermittent, both depending only on when some
+        // unrelated test happens to build its editor.
+        //
+        // The read side is what every construction takes; tests that need
+        // one of those globals to hold still take the write side for their
+        // whole body (`common::global_state::pin_config_globals`). Readers
+        // do not exclude each other, so ordinary tests still build editors
+        // in parallel; the guard drops the moment the editor exists.
+        let globals_guard = crate::common::global_state::guard_harness_construction();
+
         // Initialize i18n with the config's locale before creating the editor
         // This ensures menu defaults are created with the correct translations.
-        //
-        // TODO(flakiness): this mutates a *process-global* locale
-        // (`rust_i18n::set_locale`). Cargo runs all test functions in one
-        // process in parallel, so harness-created tests can race each other:
-        // a German-locale harness can flip the global to `de` while an
-        // unrelated test is asserting on English UI strings, producing
-        // intermittent failures like
-        // `e2e::locale::test_default_locale_shows_english_search_options`
-        // when the full suite is run in parallel. (The tests in
-        // `tests/e2e/locale.rs` use a module-local mutex, which serializes
-        // them against each other but not against the rest of the suite.)
-        //
-        // Pre-exists this branch; see master for identical parallel-run
-        // failures. A robust fix means either moving rust_i18n locale into
-        // a thread-local, or holding a *global* (process-wide) test lock
-        // around every harness-driven render. Not worth the scope creep
-        // from this perf fix; flagging here so the next reader knows.
         fresh::i18n::init_with_config(config.locale.as_option());
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
         t.phase("config_and_i18n");
@@ -752,6 +754,10 @@ impl EditorTestHarness {
         )?;
 
         t.phase("Editor::for_test");
+
+        // Both config-derived globals are now written; let a waiting
+        // `pin_config_globals` through.
+        drop(globals_guard);
 
         // Process any pending plugin commands
         editor.process_async_messages();

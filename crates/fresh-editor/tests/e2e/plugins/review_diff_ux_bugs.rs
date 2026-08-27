@@ -24,6 +24,36 @@ fn setup_audit_mode_plugin(repo: &GitTestRepo) {
     copy_plugin_lib(&plugins_dir);
 }
 
+/// Wait until a review panel has *settled* — the toolbar is up **and** the
+/// diff stream behind it has been filled.
+///
+/// The toolbar alone is not that gate. Both bootstraps (`start_review_diff`
+/// and `bootstrapRangeReview`) set the "Generating Review Diff Stream..."
+/// status before their first `git` call and leave it up until
+/// `openReviewPanels` finishes; the toolbar is painted by the
+/// `createBufferGroup` near the *start* of `openReviewPanels`, while the
+/// stream's body is written by the `updateMagitDisplay` that follows and the
+/// status is only replaced by the `updateReviewStatus` after that. So a wait
+/// for "next hunk" on its own resolves on a frame whose diff area is still
+/// blank — observed as `test_range_review_lays_out_every_file` reading an
+/// empty stream with "Generating Review Diff Stream..." still on the status
+/// line.
+///
+/// Requiring both conditions cannot resolve early either: the status is set
+/// before the panels exist, so "toolbar present" and "not generating" are
+/// first true together only once the panels have been filled.
+fn wait_for_review_ready(harness: &mut EditorTestHarness) {
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            if screen.contains("TypeError") || screen.contains("Error:") {
+                panic!("Error loading review diff. Screen:\n{}", screen);
+            }
+            screen.contains("next hunk") && !screen.contains("Generating Review")
+        })
+        .unwrap();
+}
+
 /// Open Review Diff via command palette and wait for it to load.
 /// Returns the initial screen string.
 fn open_review_diff(harness: &mut EditorTestHarness) -> String {
@@ -34,19 +64,7 @@ fn open_review_diff(harness: &mut EditorTestHarness) -> String {
     harness.run_palette_command("Review Diff").unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            if screen.contains("TypeError") || screen.contains("Error:") {
-                panic!("Error loading review diff. Screen:\n{}", screen);
-            }
-            // The toolbar ("next hunk") renders immediately, before the diff
-            // stream finishes generating. Also wait for the transient
-            // "Generating Review..." status to clear so tests observe the
-            // actual diff content rather than an empty mid-generation frame.
-            screen.contains("next hunk") && !screen.contains("Generating Review")
-        })
-        .unwrap();
+    wait_for_review_ready(harness);
 
     harness.screen_to_string()
 }
@@ -2149,17 +2167,25 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
 
 /// Open Review Range on `HEAD~..HEAD` and wait for the stream to render.
 fn open_review_range_head(harness: &mut EditorTestHarness) {
+    // Through `run_palette_command`, which waits for the row to be listed as
+    // a *result* before confirming. "Review Range" is registered by the
+    // audit_mode plugin and Quick Open re-filters on input change only, so
+    // typing the name and pressing Enter blind fires on whichever row was
+    // selected when the last keystroke landed — running some other command,
+    // after which none of the waits below can resolve.
+    harness.run_palette_command("Review Range").unwrap();
+
+    // Wait for the *range picker*, not merely for "a prompt". The palette is
+    // itself a prompt, so `wait_for_prompt` is satisfied by the one we just
+    // confirmed — a wait that gates nothing (CONTRIBUTING.md Code §16) and
+    // that leaves the keystrokes below editing the palette's query instead
+    // of the picker's prefilled "HEAD". The label is the picker's own
+    // (`prompt.review_range`), so it can only be on screen once it is open.
     harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .wait_for_screen_contains("Review (range A..B or commit SHA)")
         .unwrap();
-    harness.wait_for_prompt().unwrap();
-    harness.type_text("Review Range").unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    // The range picker opens prefilled with "HEAD" — clear it and type ours.
-    harness.wait_for_prompt().unwrap();
+
+    // The picker opens prefilled with "HEAD" — clear it and type ours.
     for _ in 0..8 {
         harness
             .send_key(KeyCode::Backspace, KeyModifiers::NONE)
@@ -2170,14 +2196,7 @@ fn open_review_range_head(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
-    // Gate on the review toolbar, not on the range label or the "Generating"
-    // status. `bootstrapRangeReview` opens the panels only after the diff has
-    // been fetched and parsed, so the toolbar's appearance already implies a
-    // settled stream -- and unlike a status message, no code path can clobber
-    // it and no translation can reword it out from under the wait.
-    harness
-        .wait_until(|h| h.screen_to_string().contains("next hunk"))
-        .unwrap();
+    wait_for_review_ready(harness);
 }
 
 /// Review Range parses Git's patch output, so it has to pin the output format

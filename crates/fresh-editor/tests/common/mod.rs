@@ -17,10 +17,10 @@ pub mod fixtures;
 pub mod git_test_helper;
 #[cfg(test)]
 #[allow(dead_code)]
-pub mod harness;
+pub mod global_state;
 #[cfg(test)]
 #[allow(dead_code)]
-pub mod locale_lock;
+pub mod harness;
 #[cfg(test)]
 #[allow(dead_code)]
 pub mod scenario;
