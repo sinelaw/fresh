@@ -34,7 +34,7 @@ use fresh_ui::{
 
 use crate::app::types::HoverTarget;
 
-use super::msg::{UiFact, UiMsg};
+use super::msg::{MenuNav, UiFact, UiMsg};
 
 fn hover(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
     Rc::new(move |_: &Event| Some(UiMsg::Ui(UiFact::Hover(t.clone()))))
@@ -157,6 +157,23 @@ pub struct DropdownLevel {
     pub rows: Vec<DropdownRow>,
 }
 
+/// A key the open menu answers, and what it means.
+///
+/// **This is the whole fix for the precedence bug.** The menu used to own a
+/// capture-all key handler, and the `menu` section of the keymap was consulted
+/// from inside the *legacy* walk — which runs after the shell is offered the
+/// key. Anything a user bound there was swallowed before the keymap was asked.
+///
+/// Now the keymap flows *down* into the description as shortcuts, the way
+/// state is supposed to reach a description, and the tree resolves key →
+/// intent → action with no handler in front of it. A binding cannot be
+/// pre-empted by the surface it is bound for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MenuShortcut {
+    pub key: fresh_ui::KeyPress,
+    pub intent: fresh_ui::Intent,
+}
+
 /// The open chain, **nested**: each level is declared inside the one it opened
 /// from, not beside it.
 ///
@@ -172,15 +189,48 @@ pub struct DropdownLevel {
 /// path, so a press anywhere in the chain is inside all of it. Paint order is
 /// unchanged — `resolve_layers` walks a worklist that grows as it goes, so a
 /// nested layer resolves after its parent and paints after it too.
-pub fn dropdown_chain(levels: &[DropdownLevel]) -> Option<Node<UiMsg>> {
+pub fn dropdown_chain(levels: &[DropdownLevel], keys: &[MenuShortcut]) -> Option<Node<UiMsg>> {
     let mut inner: Option<Node<UiMsg>> = None;
     for (depth, level) in levels.iter().enumerate().rev() {
-        inner = Some(dropdown(depth, level, inner.take()));
+        inner = Some(dropdown(depth, level, inner.take(), keys));
     }
     inner
 }
 
-fn dropdown(depth: usize, level: &DropdownLevel, nested: Option<Node<UiMsg>>) -> Node<UiMsg> {
+/// The intents an open menu carries out, declared once on the outermost level.
+///
+/// Nothing here names a key. `Intent::Up` is "move to the previous item"
+/// whether it arrived as Up, as `k`, or as whatever the user bound — the
+/// binding table decides that, and it decides it in one place.
+fn menu_intents(n: Node<UiMsg>, keys: &[MenuShortcut]) -> Node<UiMsg> {
+    use fresh_ui::Intent;
+    let mut n = fresh_ui::focusable(n)
+        .autofocus()
+        .action(Intent::Up, |_| nav(MenuNav::PrevItem))
+        .action(Intent::Down, |_| nav(MenuNav::NextItem))
+        .action(Intent::Left, |_| nav(MenuNav::Back))
+        .action(Intent::Right, |_| nav(MenuNav::Forward))
+        .action(Intent::Home, |_| nav(MenuNav::First))
+        .action(Intent::End, |_| nav(MenuNav::Last))
+        .action(Intent::Confirm, |_| nav(MenuNav::Activate));
+    // Cancel is deliberately absent: the layer declares `ESCAPE` dismissal,
+    // and a key that dismisses a layer is answered by that layer.
+    for s in keys {
+        n = n.shortcut(s.key, s.intent);
+    }
+    n
+}
+
+fn nav(n: MenuNav) -> UiMsg {
+    UiMsg::Ui(UiFact::MenuNav(n))
+}
+
+fn dropdown(
+    depth: usize,
+    level: &DropdownLevel,
+    nested: Option<Node<UiMsg>>,
+    keys: &[MenuShortcut],
+) -> Node<UiMsg> {
     let rows: Vec<Node<UiMsg>> = level
         .rows
         .iter()
@@ -216,37 +266,46 @@ fn dropdown(depth: usize, level: &DropdownLevel, nested: Option<Node<UiMsg>>) ->
         })
         .collect();
 
+    let content = gesture({
+        let mut b = col()
+            .border()
+            // Border ink over the dropdown ground; the fill draws spaces, so
+            // only the background of this key reaches the eye there.
+            .theme(crate::app::shell_host::shell_theme::pair(
+                "ui.menu_border_fg",
+                "ui.menu_dropdown_bg",
+            ))
+            .w(Sizing::Cells(level.width))
+            .children(rows);
+        // The level this one opened, inside it. A layer is out of flow, so it
+        // takes none of this box's space — it is here for ancestry, which is
+        // what dismissal tests.
+        if let Some(child) = nested {
+            b = b.child(child);
+        }
+        b
+    })
+    // An inert cell of the box — its border — closes the menu, which is what a
+    // click inside the dropdown that hit no item always did.
+    .on_click(|_| UiMsg::Ui(UiFact::CloseMenu));
+
+    // The chain's keyboard, on the level that is always present. Focus
+    // properties belong to a `Focusable`, and the whole chain is one surface —
+    // a submenu is declared *inside* the level that opened it, so the
+    // outermost level's focusable covers every level.
+    let content = if depth == 0 {
+        menu_intents(content, keys)
+    } else {
+        content
+    };
+
     let mut l = layer()
         .key(fresh_ui::Key::Pair("menu_dropdown".into(), depth as u64))
-        // The rectangle the old placement walk chose, not a fresh one: while
-        // the keyboard half is still legacy it must keep agreeing with the
-        // cells.
+        // The rectangle the old placement walk chose, not a fresh one: the
+        // cells and the anchor must keep agreeing while placement is still
+        // computed outside the tree.
         .anchor(Anchor::Point(level.x, level.y))
-        .child(
-            gesture({
-                let mut b = col()
-                    .border()
-                    // Border ink over the dropdown ground; the fill draws
-                    // spaces, so only the background of this key reaches the
-                    // eye there.
-                    .theme(crate::app::shell_host::shell_theme::pair(
-                        "ui.menu_border_fg",
-                        "ui.menu_dropdown_bg",
-                    ))
-                    .w(Sizing::Cells(level.width))
-                    .children(rows);
-                // The level this one opened, inside it. A layer is out of
-                // flow, so it takes none of this box's space — it is here for
-                // ancestry, which is what dismissal tests.
-                if let Some(child) = nested {
-                    b = b.child(child);
-                }
-                b
-            })
-            // An inert cell of the box — its border — closes the menu, which
-            // is what a click inside the dropdown that hit no item always did.
-            .on_click(|_| UiMsg::Ui(UiFact::CloseMenu)),
-        );
+        .child(content);
     if depth == 0 {
         // **The close guard, replaced by a property.** A click anywhere else
         // closes the menu and is spent doing so.
@@ -1045,6 +1104,108 @@ mod submenu_regression {
         assert!(
             facts(press.msgs).contains(&UiFact::CloseMenu),
             "outside the chain is still outside"
+        );
+    }
+}
+
+#[cfg(test)]
+mod intent_tests {
+    use super::*;
+    use crate::view::shell::frame::{frame_tree, Frame};
+    use fresh_ui::{Input, Intent, KeyCode, KeyPress, Mods, Size, Ui};
+
+    fn level() -> DropdownLevel {
+        DropdownLevel {
+            x: 0,
+            y: 1,
+            width: 12,
+            rows: vec![DropdownRow {
+                text: "New".into(),
+                theme: crate::app::shell_host::shell_theme::pair(
+                    "ui.menu_dropdown_fg",
+                    "ui.menu_dropdown_bg",
+                ),
+            }],
+        }
+    }
+
+    fn open(keys: Vec<MenuShortcut>) -> Ui<UiMsg> {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                menu_bar: true,
+                dropdowns: vec![level()],
+                menu_keys: keys,
+                ..Frame::default()
+            }),
+            Size::new(40, 10),
+        );
+        ui
+    }
+
+    fn press(ui: &mut Ui<UiMsg>, code: KeyCode, mods: Mods) -> Vec<UiMsg> {
+        ui.dispatch(Input::Key(KeyPress::with(code, mods))).msgs
+    }
+
+    /// The built-in arrows work with no keymap at all: they are the library's
+    /// default shortcuts resolving to the intents the chain declares.
+    #[test]
+    fn the_default_arrows_navigate() {
+        let mut ui = open(Vec::new());
+        assert!(matches!(
+            press(&mut ui, KeyCode::Down, Mods::NONE).as_slice(),
+            [UiMsg::Ui(UiFact::MenuNav(MenuNav::NextItem))]
+        ));
+        assert!(matches!(
+            press(&mut ui, KeyCode::Up, Mods::NONE).as_slice(),
+            [UiMsg::Ui(UiFact::MenuNav(MenuNav::PrevItem))]
+        ));
+    }
+
+    /// **The bug this migration fixes.** A user binds `C-n` to `menu_down` in
+    /// the `menu` section. Before, the menu's capture-all key handler ran
+    /// first and swallowed it, and the keymap — consulted from inside the
+    /// legacy walk, which runs *after* the shell sees the key — never got
+    /// asked. The binding now arrives as a shortcut on the chain and resolves
+    /// like any other.
+    #[test]
+    fn a_user_bound_key_reaches_the_menu() {
+        let mut ui = open(vec![MenuShortcut {
+            key: KeyPress::with(KeyCode::Char('n'), Mods::CTRL),
+            intent: Intent::Down,
+        }]);
+        assert!(
+            matches!(
+                press(&mut ui, KeyCode::Char('n'), Mods::CTRL).as_slice(),
+                [UiMsg::Ui(UiFact::MenuNav(MenuNav::NextItem))]
+            ),
+            "a menu-context binding must not be pre-empted by the menu"
+        );
+    }
+
+    /// A binding overrides the default meaning of the same key rather than
+    /// competing with it — one table decides, and it is the keymap's.
+    #[test]
+    fn a_binding_overrides_the_default_for_that_key() {
+        let mut ui = open(vec![MenuShortcut {
+            key: KeyPress::with(KeyCode::Down, Mods::NONE),
+            intent: Intent::Up,
+        }]);
+        assert!(matches!(
+            press(&mut ui, KeyCode::Down, Mods::NONE).as_slice(),
+            [UiMsg::Ui(UiFact::MenuNav(MenuNav::PrevItem))],
+        ));
+    }
+
+    /// Escape is not an intent the chain claims: the layer declares `ESCAPE`
+    /// dismissal, and a key that dismisses a layer is answered by that layer.
+    #[test]
+    fn escape_is_left_to_the_layer() {
+        let mut ui = open(Vec::new());
+        let got = press(&mut ui, KeyCode::Esc, Mods::NONE);
+        assert!(
+            !matches!(got.as_slice(), [UiMsg::Ui(UiFact::MenuNav(_))]),
+            "got {got:?}"
         );
     }
 }

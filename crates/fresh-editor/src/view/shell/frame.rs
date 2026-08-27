@@ -89,6 +89,8 @@ pub struct Frame {
     /// The open menu-bar dropdown chain, outermost level first. Empty when no
     /// menu is open.
     pub dropdowns: Vec<super::menu::DropdownLevel>,
+    /// The `menu` section of the keymap, as shortcuts on the open chain.
+    pub menu_keys: Vec<super::menu::MenuShortcut>,
     /// The menu bar's labels. Content, not visibility: `menu_bar` above says
     /// whether the row exists at all, and an existing row with no labels is a
     /// blank row of the bar's own colour.
@@ -107,6 +109,7 @@ impl Default for Frame {
             explorer: None,
             menu: None,
             dropdowns: Vec::new(),
+            menu_keys: Vec::new(),
             menu_bar_items: super::menu::MenuBar::default(),
         }
     }
@@ -209,7 +212,7 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // over them — the order `layer_rank::MENU` below `layer_rank::CONTEXT_MENU`
     // states in the precedence table, expressed here as the order they are
     // declared in.
-    let frame = match super::menu::dropdown_chain(&f.dropdowns) {
+    let frame = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {
         Some(chain) => frame.child(chain),
         None => frame,
     };

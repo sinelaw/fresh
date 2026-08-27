@@ -69,6 +69,16 @@ pub enum UiFact {
     /// plugin's chip is as clickable as a built-in indicator.
     StatusBarTokenClicked(String),
 
+    /// One step of menu-bar navigation, named by what it means rather than by
+    /// the key that produced it.
+    ///
+    /// The key → meaning half is the keymap's, declared on the chain as
+    /// `.shortcut(key, intent)`; the meaning → effect half is the applier's.
+    /// That split is the whole point: a user who binds `C-n` to `menu_down`
+    /// gets a shortcut for `Intent::Down`, and nothing has to consult the
+    /// keymap from inside a key handler to find out.
+    MenuNav(MenuNav),
+
     /// A **press** on a bar label. Toggles that menu.
     ///
     /// Press, not click, and that is what makes the toggle work. The layer's
@@ -111,6 +121,26 @@ pub enum UiFact {
     /// The wheel over the panel. Positive is down, matching `Input::Wheel`.
     /// Carries the pointer so the plugin `wheel` hook still gets a position.
     ExplorerScroll { delta: i32, x: u16, y: u16 },
+}
+
+/// What a menu-bar navigation step does to the open chain.
+///
+/// `Back` and `Forward` are one step each rather than four, because at the top
+/// level they move between menus and inside a submenu they close or open one —
+/// which is what Left and Right have always meant here, and stating it as two
+/// facts rather than four keeps the applier from re-deciding which case it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuNav {
+    PrevItem,
+    NextItem,
+    /// Close a submenu, or step to the previous menu at the top level.
+    Back,
+    /// Open a submenu, or step to the next menu at the top level.
+    Forward,
+    First,
+    Last,
+    /// Open the highlighted submenu, or run the highlighted action and close.
+    Activate,
 }
 
 /// Which way a menu's highlight moves.

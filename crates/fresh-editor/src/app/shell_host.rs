@@ -462,6 +462,7 @@ impl Editor {
                 }
             }
             UiFact::StatusBarTokenClicked(key) => self.fire_status_bar_token_click(&key),
+            UiFact::MenuNav(step) => self.menu_nav(step),
             UiFact::CloseContextMenu => {
                 self.active_window_mut().close_context_menus();
             }

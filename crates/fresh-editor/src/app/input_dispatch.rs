@@ -415,7 +415,7 @@ impl Editor {
     }
 
     /// Convert a menu action string to a keybinding Action.
-    fn menu_action_to_action(
+    pub(crate) fn menu_action_to_action(
         &self,
         action_name: &str,
         args: std::collections::HashMap<String, serde_json::Value>,
