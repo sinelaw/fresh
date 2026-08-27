@@ -1152,6 +1152,14 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub cursor_jump_animation: bool,
 
+    /// Fade text in as it scrolls into view: rows the scroll just
+    /// revealed rise from the background colour to their normal
+    /// foreground instead of appearing at full strength. Has no effect
+    /// when `animations` is `false`.
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub scroll_fade_animation: bool,
+
     /// Show line numbers in the gutter (default for new buffers)
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
@@ -1629,6 +1637,18 @@ pub struct EditorConfig {
     pub diagnostics_inline_text: bool,
 
     // ===== Mouse =====
+    /// How many lines one notch of the mouse wheel scrolls.
+    ///
+    /// One line is the finest the terminal grid allows, and keeps a
+    /// scroll continuous rather than jumping the view in blocks; raise
+    /// it for the coarser three-line step most GUI editors use. Applies
+    /// to every surface the wheel scrolls by lines, not just buffer
+    /// text. Shift+wheel pans sideways by columns and is unaffected.
+    /// Clamped to at least 1 — a zero would make the wheel dead.
+    #[serde(default = "default_mouse_wheel_scroll_lines")]
+    #[schemars(extend("x-section" = "Mouse"))]
+    pub mouse_wheel_scroll_lines: usize,
+
     /// Whether mouse hover triggers LSP hover requests.
     /// When enabled, hovering over code with the mouse will show documentation.
     /// On Windows, this also controls the mouse tracking mode: when disabled,
@@ -1937,6 +1957,10 @@ fn default_highlight_context_bytes() -> usize {
     10_000 // 10KB context for accurate syntax highlighting
 }
 
+fn default_mouse_wheel_scroll_lines() -> usize {
+    1
+}
+
 fn default_mouse_hover_enabled() -> bool {
     !cfg!(windows)
 }
@@ -1968,6 +1992,7 @@ impl Default for EditorConfig {
             virtual_space: VirtualSpaceMode::default(),
             animations: true,
             cursor_jump_animation: true,
+            scroll_fade_animation: true,
             line_numbers: true,
             relative_line_numbers: false,
             scroll_offset: default_scroll_offset(),
@@ -1997,6 +2022,7 @@ impl Default for EditorConfig {
             recovery_enabled: true,
             auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),
             highlight_context_bytes: default_highlight_context_bytes(),
+            mouse_wheel_scroll_lines: default_mouse_wheel_scroll_lines(),
             mouse_hover_enabled: default_mouse_hover_enabled(),
             mouse_hover_delay_ms: default_mouse_hover_delay(),
             double_click_time_ms: default_double_click_time(),

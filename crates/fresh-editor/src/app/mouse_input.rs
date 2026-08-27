@@ -15,6 +15,11 @@ use crate::view::prompt::PromptType;
 use anyhow::Result as AnyhowResult;
 use ratatui::layout::Rect;
 
+/// Columns one notch of a sideways wheel pans. Horizontal panning has
+/// no line-oriented setting to follow — `mouse_wheel_scroll_lines`
+/// counts lines — so it keeps the fixed step it always had.
+const WHEEL_COLUMNS: i32 = 3;
+
 /// Map a screen row on a suggestion list's scrollbar track to the prompt
 /// scroll offset that puts the thumb's top on exactly that row.
 ///
@@ -341,21 +346,21 @@ impl Editor {
                 needs_render = self.update_widget_hover(col, row, None) || needs_render;
             }
             MouseEventKind::ScrollUp => {
-                self.handle_vertical_scroll(&tree, col, row, mouse_event.modifiers, -3)?;
+                self.handle_vertical_scroll(&tree, col, row, mouse_event.modifiers, -1)?;
                 needs_render = true;
             }
             MouseEventKind::ScrollDown => {
-                self.handle_vertical_scroll(&tree, col, row, mouse_event.modifiers, 3)?;
+                self.handle_vertical_scroll(&tree, col, row, mouse_event.modifiers, 1)?;
                 needs_render = true;
             }
             MouseEventKind::ScrollLeft => {
                 // Native horizontal scroll left
-                self.handle_horizontal_scroll(&tree, col, row, -3)?;
+                self.handle_horizontal_scroll(&tree, col, row, -WHEEL_COLUMNS)?;
                 needs_render = true;
             }
             MouseEventKind::ScrollRight => {
                 // Native horizontal scroll right
-                self.handle_horizontal_scroll(&tree, col, row, 3)?;
+                self.handle_horizontal_scroll(&tree, col, row, WHEEL_COLUMNS)?;
                 needs_render = true;
             }
             MouseEventKind::Down(MouseButton::Right) => {
@@ -453,17 +458,29 @@ impl Editor {
         Ok(())
     }
 
+    /// One notch of the wheel, as `direction` (-1 up, +1 down) times
+    /// however many lines a notch is worth.
     fn handle_vertical_scroll(
         &mut self,
         tree: &[super::chrome::ChromeBox],
         col: u16,
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
-        delta: i32,
+        direction: i32,
     ) -> AnyhowResult<()> {
         // Shift turns the wheel horizontal (same engine, other axis).
+        // That pans by columns, which the line-oriented setting has
+        // nothing to say about.
         let horizontal = modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
-        self.dispatch_wheel(tree, horizontal, col, row, delta)
+        let step = if horizontal {
+            WHEEL_COLUMNS
+        } else {
+            // A zero would make the wheel dead; the config's own clamp
+            // is not load-bearing here, but a hand-edited file reaches
+            // this too.
+            self.config.editor.mouse_wheel_scroll_lines.max(1) as i32
+        };
+        self.dispatch_wheel(tree, horizontal, col, row, direction * step)
     }
 
     /// Route a horizontal scroll (Shift+wheel, native ScrollLeft /

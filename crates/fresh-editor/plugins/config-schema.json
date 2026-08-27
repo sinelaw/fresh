@@ -37,6 +37,7 @@
       "default": {
         "animations": true,
         "cursor_jump_animation": true,
+        "scroll_fade_animation": true,
         "line_numbers": true,
         "relative_line_numbers": false,
         "highlight_current_line": true,
@@ -119,6 +120,7 @@
         "enable_inlay_hints": true,
         "enable_semantic_tokens_full": false,
         "diagnostics_inline_text": false,
+        "mouse_wheel_scroll_lines": 1,
         "mouse_hover_enabled": true,
         "mouse_hover_delay_ms": 500,
         "double_click_time_ms": 500,
@@ -389,6 +391,12 @@
         },
         "cursor_jump_animation": {
           "description": "Enable the cursor-jump trail animation on long cursor moves\n(search jumps, go-to-definition, pane switches). Has no effect\nwhen `animations` is `false`.",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "scroll_fade_animation": {
+          "description": "Fade text in as it scrolls into view: rows the scroll just\nrevealed rise from the background colour to their normal\nforeground instead of appearing at full strength. Has no effect\nwhen `animations` is `false`.",
           "type": "boolean",
           "default": true,
           "x-section": "Display"
@@ -802,6 +810,14 @@
           "type": "boolean",
           "default": false,
           "x-section": "Diagnostics"
+        },
+        "mouse_wheel_scroll_lines": {
+          "description": "How many lines one notch of the mouse wheel scrolls.\n\nOne line is the finest the terminal grid allows, and keeps a\nscroll continuous rather than jumping the view in blocks; raise\nit for the coarser three-line step most GUI editors use. Applies\nto every surface the wheel scrolls by lines, not just buffer\ntext. Shift+wheel pans sideways by columns and is unaffected.\nClamped to at least 1 — a zero would make the wheel dead.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 1,
+          "x-section": "Mouse"
         },
         "mouse_hover_enabled": {
           "description": "Whether mouse hover triggers LSP hover requests.\nWhen enabled, hovering over code with the mouse will show documentation.\nOn Windows, this also controls the mouse tracking mode: when disabled,\nthe editor uses xterm mode 1002 (cell motion — click, drag, release only);\nwhen enabled, it uses mode 1003 (all motion — full mouse movement tracking).\nMode 1003 generates high event volume on Windows and may cause input\ncorruption on some systems. On macOS and Linux this setting only controls\nLSP hover; the mouse tracking mode is always full motion.\nDefault: true (macOS/Linux), false (Windows)",

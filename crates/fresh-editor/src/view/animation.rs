@@ -6,10 +6,10 @@
 //! active effects from the render clock. The layer knows nothing about
 //! virtual buffers; callers resolve areas and pass them in.
 //!
-//! Current effects: `SlideIn`, `CursorJump`, `ColorTransition`, `Wave`.
-//! Easing is an implementation detail. `Wave` is the odd one out — a
-//! stateful particle simulation that takes over the whole frame, rather
-//! than an area transition.
+//! Current effects: `SlideIn`, `CursorJump`, `ColorTransition`,
+//! `ScrollFade`, `Wave`. Easing is an implementation detail. `Wave` is
+//! the odd one out — a stateful particle simulation that takes over the
+//! whole frame, rather than an area transition.
 
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
@@ -55,6 +55,31 @@ pub enum AnimationKind {
     /// instead of flipping. Cells whose colors can't be resolved to RGB
     /// (`Reset` / indexed) switch instantly.
     ColorTransition { duration: Duration },
+    /// Fade text in as it scrolls into view: a row the scroll reveals
+    /// arrives dimmed and climbs to its painted colour over the next few
+    /// rows of travel. Rows that were already on screen — the ones the
+    /// scroll merely shifted — are left alone, so a fixed, shallow band
+    /// at the edge the content enters through is all that is ever
+    /// dimmed, however fast the scroll runs. `duration` is the clock the
+    /// band runs out on once the scroll stops carrying it.
+    ///
+    /// The effect spans a whole scroll gesture rather than a single
+    /// notch: it keeps diffing each frame against the last, so rows that
+    /// arrive while it runs join the band. Feed it by refreshing it
+    /// (`AnimationRunner::refresh`) on each new scroll rather than
+    /// starting a replacement, which would snap every dimmed row to full
+    /// colour.
+    ///
+    /// `gutter_width` columns at the left edge are excluded from the
+    /// row comparison (they still fade): line numbers churn for reasons
+    /// that are not scrolling — relative numbering renumbers the whole
+    /// gutter whenever the cursor moves — and a gutter-driven mismatch
+    /// would fade rows that never moved.
+    ScrollFade {
+        duration: Duration,
+        bg_color: Color,
+        gutter_width: u16,
+    },
     /// Playful full-screen effect: a crest of wave glyphs rises from the
     /// bottom edge and, as it sweeps past each row, kicks every painted
     /// cell ("ink" particle) on that row upward and sideways. Each
@@ -436,6 +461,239 @@ impl FrameEffect for ColorTransition {
         }
 
         EffectStatus::Running
+    }
+}
+
+/// Scroll-fade effect — see `AnimationKind::ScrollFade`.
+///
+/// Each frame it fingerprints the glyphs of every row in `area` and
+/// matches them against the previous frame's: a row that turns up
+/// somewhere in it was only shifted by the scroll and carries its
+/// progress along, while a row that matches nothing just scrolled in
+/// and starts dimmed. Matching against the whole previous frame rather
+/// than the same row index is what makes this scroll-aware — a scroll
+/// shifts every row, so a row-to-row comparison would call the entire
+/// viewport new.
+///
+/// How far along a row is, is a matter of *distance* rather than time:
+/// a row's progress is set by how many rows it sits from the edge the
+/// content is entering through. That keeps the dimmed band a fixed few
+/// rows deep no matter how fast the scroll runs — on a clock, a fast
+/// scroll piles up every row that arrived within the fade duration and
+/// darkens half the viewport at once, which reads as a block of the
+/// screen stepping to dark rather than as text easing in.
+///
+/// The clock only takes over once a row stops moving, so a scroll that
+/// ends — one notch, or the end of a long drag — still runs its last
+/// rows up to full colour instead of leaving them dimmed. Progress
+/// never runs backwards.
+///
+/// Fingerprints cover glyphs only, so the fade is blind to colour: it
+/// never re-triggers off its own output, a moving cursor, or a
+/// current-line highlight sliding down the screen.
+pub struct ScrollFade {
+    duration: Duration,
+    /// Fallback fade-from colour (the editor background), used where a
+    /// cell's own background can't be resolved to RGB.
+    bg: Color,
+    /// Left-edge columns excluded from row fingerprints (the gutter).
+    gutter_width: u16,
+    /// Glyph fingerprint of every row as of the last frame we looked at.
+    /// Seeded in `capture_before` from the pre-scroll frame, so the very
+    /// first `apply` already knows which rows the scroll revealed.
+    prev_rows: Vec<u64>,
+    /// How far each row is from its painted colour: 0.0 is the
+    /// background, 1.0 is fully painted. Carried across frames by
+    /// content, so a row the next notch shifts takes its progress with
+    /// it, and monotonic, so it never dims back down.
+    progress: Vec<f32>,
+    /// When each row last moved (or arrived), as elapsed-since-effect-
+    /// start. The clock runs from here, so it only advances a row that
+    /// the scroll has stopped carrying.
+    still_since: Vec<Duration>,
+    /// Geometry the row vectors were built for. A mismatch (first frame,
+    /// or a resize) re-seeds them instead of fading against rows that no
+    /// longer line up.
+    sized_for: Option<Rect>,
+}
+
+/// How many rows an arriving row takes to climb to full colour. Also
+/// sets how dim it starts: the row right at the edge opens at
+/// `1 / (FADE_ROWS + 1)` of its colour, so text arrives dimmed rather
+/// than blank and each row of the band is a step brighter than the one
+/// below it.
+const FADE_ROWS: f32 = 4.0;
+
+impl ScrollFade {
+    pub fn new(duration: Duration, bg: Color, gutter_width: u16) -> Self {
+        Self {
+            duration,
+            bg,
+            gutter_width,
+            prev_rows: Vec::new(),
+            progress: Vec::new(),
+            still_since: Vec::new(),
+            sized_for: None,
+        }
+    }
+
+    /// Position-sensitive hash of one row's glyphs, skipping the gutter
+    /// columns.
+    fn row_hash(buf: &Buffer, area: Rect, dy: u16, gutter_width: u16) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for dx in gutter_width..area.width {
+            let symbol = buf
+                .cell((area.x + dx, area.y + dy))
+                .map(|c| c.symbol())
+                .unwrap_or(" ");
+            for b in symbol.as_bytes() {
+                h ^= *b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            // Separator, so "ab" + "c" and "a" + "bc" don't collide.
+            h ^= 0xff;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h
+    }
+
+    fn hash_rows(buf: &Buffer, area: Rect, gutter_width: u16) -> Vec<u64> {
+        (0..area.height)
+            .map(|dy| Self::row_hash(buf, area, dy, gutter_width))
+            .collect()
+    }
+
+    /// Adopt `area`'s current rows as the baseline, all fully painted.
+    fn reseed(&mut self, buf: &Buffer, area: Rect) {
+        self.prev_rows = Self::hash_rows(buf, area, self.gutter_width);
+        self.progress = vec![1.0; area.height as usize];
+        self.still_since = vec![Duration::ZERO; area.height as usize];
+        self.sized_for = Some(area);
+    }
+
+    /// Which edge the content is arriving through, as `true` for the
+    /// bottom, from how the matched rows moved. Rows the scroll only
+    /// shifted all move by the same amount, so the shift they agree on
+    /// is the scroll: content moving up (a negative shift) means the
+    /// view went down, and the new rows are at the bottom.
+    ///
+    /// `None` when no row moved (the scroll has stopped, so there is no
+    /// edge to measure from) or when nothing matched at all — a jump
+    /// replaced the whole viewport, which belongs to no edge either.
+    fn entry_edge(matched: &[Option<usize>]) -> Option<bool> {
+        let mut votes: Vec<(isize, usize)> = Vec::new();
+        for (dy, was) in matched.iter().enumerate() {
+            let Some(was) = was else { continue };
+            let shift = dy as isize - *was as isize;
+            if shift == 0 {
+                continue;
+            }
+            match votes.iter_mut().find(|(v, _)| *v == shift) {
+                Some((_, count)) => *count += 1,
+                None => votes.push((shift, 1)),
+            }
+        }
+        votes
+            .into_iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(shift, _)| shift < 0)
+    }
+}
+
+impl FrameEffect for ScrollFade {
+    fn capture_before(&mut self, buf: &Buffer, area: Rect) {
+        if self.sized_for.is_none() {
+            self.reseed(buf, area);
+        }
+    }
+
+    fn apply(&mut self, buf: &mut Buffer, area: Rect, elapsed: Duration) -> EffectStatus {
+        if self.sized_for != Some(area) {
+            // No usable "before" (nothing was rendered ahead of us, or a
+            // resize moved the split): take this frame as the baseline.
+            // The next scroll fades against it.
+            self.reseed(buf, area);
+            return EffectStatus::Done;
+        }
+
+        let rows = Self::hash_rows(buf, area, self.gutter_width);
+        let matched: Vec<Option<usize>> = rows
+            .iter()
+            .map(|hash| self.prev_rows.iter().position(|prev| prev == hash))
+            .collect();
+        let edge = Self::entry_edge(&matched);
+        let height = rows.len();
+
+        let mut progress = vec![0.0f32; height];
+        let mut still_since = vec![elapsed; height];
+        for dy in 0..height {
+            let carried = match matched[dy] {
+                Some(was) => {
+                    // A row the scroll is still carrying has its clock
+                    // held at zero; only one that has come to rest ages.
+                    if was == dy {
+                        still_since[dy] = self.still_since[was];
+                    }
+                    self.progress[was]
+                }
+                None => 0.0,
+            };
+
+            // Distance from the edge the content is arriving through.
+            // With no edge — the scroll stopped, or a jump replaced
+            // everything — every row counts as sitting on it, which
+            // leaves the clock to do the work.
+            let distance = match edge {
+                Some(true) => (height - 1 - dy) as f32,
+                Some(false) => dy as f32,
+                None => 0.0,
+            };
+            let by_distance = (distance + 1.0) / (FADE_ROWS + 1.0);
+
+            let by_clock = if self.duration.is_zero() {
+                1.0
+            } else {
+                let still = elapsed.saturating_sub(still_since[dy]);
+                ease_out_cubic(still.as_secs_f32() / self.duration.as_secs_f32())
+            };
+
+            progress[dy] = carried.max(by_distance).max(by_clock).clamp(0.0, 1.0);
+        }
+        self.prev_rows = rows;
+        self.progress = progress;
+        self.still_since = still_since;
+
+        let bg_fallback = color_to_rgb(self.bg);
+        let mut fading = false;
+        for dy in 0..area.height {
+            let progress = self.progress[dy as usize];
+            if progress >= 1.0 {
+                continue;
+            }
+            fading = true;
+            for dx in 0..area.width {
+                let Some(cell) = buf.cell_mut((area.x + dx, area.y + dy)) else {
+                    continue;
+                };
+                // Fade toward the cell's own background where it has one,
+                // so text on a selection or the current-line highlight
+                // rises out of that band rather than out of the editor
+                // background it isn't sitting on.
+                let Some(bg) = color_to_rgb(cell.bg).or(bg_fallback) else {
+                    continue;
+                };
+                let Some(fg) = color_to_rgb(cell.fg) else {
+                    continue;
+                };
+                cell.set_fg(blend_rgb(fg, bg, progress));
+            }
+        }
+
+        if fading {
+            EffectStatus::Running
+        } else {
+            EffectStatus::Done
+        }
     }
 }
 
@@ -1088,6 +1346,15 @@ impl AnimationRunner {
                     Duration::ZERO,
                     duration,
                 ),
+                AnimationKind::ScrollFade {
+                    duration,
+                    bg_color,
+                    gutter_width,
+                } => (
+                    Box::new(ScrollFade::new(duration, bg_color, gutter_width)),
+                    Duration::ZERO,
+                    duration,
+                ),
                 AnimationKind::Wave { duration } => (
                     Box::new(WaveEffect::new(duration)),
                     Duration::ZERO,
@@ -1110,6 +1377,30 @@ impl AnimationRunner {
 
     pub fn cancel(&mut self, id: AnimationId) {
         self.active.retain(|e| e.id != id);
+    }
+
+    /// Push a running effect's deadline out to `now + duration`, and
+    /// report whether it is still there over `area`. `false` means it
+    /// finished or the layout moved under it — the caller starts a fresh
+    /// one instead.
+    ///
+    /// This is how a long effect gets fed rather than replaced. The
+    /// scroll fade spans a whole gesture: each new scroll hands it more
+    /// rows, and replacing it (as `start_with_id` would, same area) would
+    /// snap every row still mid-fade to full colour. Its deadline has to
+    /// travel with the gesture, since that is what keeps the main loop
+    /// waking for frames.
+    pub fn refresh(&mut self, id: AnimationId, area: Rect, duration: Duration) -> bool {
+        let now = Instant::now();
+        let Some(effect) = self
+            .active
+            .iter_mut()
+            .find(|e| e.id == id && e.area == area && e.status == EffectStatus::Running)
+        else {
+            return false;
+        };
+        effect.deadline = now + duration;
+        true
     }
 
     /// True if an interactive, dismiss-on-input effect (the wave) is
@@ -1221,6 +1512,294 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Paint one glyph row per entry, left-aligned in `area`.
+    fn paint_rows(buf: &mut Buffer, area: Rect, rows: &[&str], fg: Color, bg: Color) {
+        for (dy, row) in rows.iter().enumerate() {
+            let mut chars = row.chars();
+            for dx in 0..area.width {
+                if let Some(cell) = buf.cell_mut((area.x + dx, area.y + dy as u16)) {
+                    cell.set_symbol(&chars.next().unwrap_or(' ').to_string());
+                    cell.set_fg(fg);
+                    cell.set_bg(bg);
+                }
+            }
+        }
+    }
+
+    fn fg_at(buf: &Buffer, x: u16, y: u16) -> Color {
+        buf.cell((x, y)).unwrap().fg
+    }
+
+    /// Brightness of the first cell of a row, as a fraction of the way
+    /// from the background to the fully painted foreground.
+    fn level(buf: &Buffer, x: u16, y: u16, bg: u8, fg: u8) -> f32 {
+        let Color::Rgb(r, _, _) = buf.cell((x, y)).unwrap().fg else {
+            panic!("faded colour must resolve to RGB");
+        };
+        (r as f32 - bg as f32) / (fg as f32 - bg as f32)
+    }
+
+    /// A scroll shifts every row on screen, so "did this row's content
+    /// change" cannot be what picks the rows to dim. Only the row the
+    /// scroll actually revealed arrives dimmed; the three that merely
+    /// moved up keep their painted foreground.
+    #[test]
+    fn scroll_fade_only_fades_the_row_the_scroll_revealed() {
+        let area = Rect::new(0, 0, 3, 4);
+        let bg = Color::Rgb(0, 0, 0);
+        let fg = Color::Rgb(200, 200, 200);
+
+        let mut before = make_buf(3, 4);
+        paint_rows(&mut before, area, &["aaa", "bbb", "ccc", "ddd"], fg, bg);
+        let mut after = make_buf(3, 4);
+        paint_rows(&mut after, area, &["bbb", "ccc", "ddd", "eee"], fg, bg);
+
+        let mut effect = ScrollFade::new(Duration::from_millis(100), bg, 0);
+        effect.capture_before(&before, area);
+        let status = effect.apply(&mut after, area, Duration::ZERO);
+
+        assert_eq!(status, EffectStatus::Running);
+        for dy in 0..3 {
+            assert_eq!(
+                fg_at(&after, 0, dy),
+                fg,
+                "row {} only moved — it must keep its colour",
+                dy
+            );
+        }
+        let revealed = level(&after, 0, 3, 0, 200);
+        assert!(
+            revealed > 0.0 && revealed < 0.5,
+            "the revealed row arrives dimmed but readable, at {:.2}",
+            revealed
+        );
+    }
+
+    /// The dimmed band is a fixed few rows deep at the entry edge, and
+    /// stays that way however fast the scroll runs. Driven by a clock
+    /// instead, a fast scroll piles up every row that arrived within the
+    /// fade duration, and half the viewport steps to dark at once.
+    #[test]
+    fn scroll_fade_band_does_not_grow_with_scroll_speed() {
+        let area = Rect::new(0, 0, 3, 12);
+        let bg = Color::Rgb(0, 0, 0);
+        let fg = Color::Rgb(200, 200, 200);
+        let label = |n: usize| format!("{:03}", n);
+        let paint = |top: usize| {
+            let rows: Vec<String> = (top..top + 12).map(label).collect();
+            let refs: Vec<&str> = rows.iter().map(|r| r.as_str()).collect();
+            let mut buf = make_buf(3, 12);
+            paint_rows(&mut buf, area, &refs, fg, bg);
+            buf
+        };
+
+        let mut effect = ScrollFade::new(Duration::from_millis(100), bg, 0);
+        effect.capture_before(&paint(0), area);
+
+        // Eight notches back to back, far quicker than the fade clock.
+        let mut frame = paint(0);
+        for notch in 1..=8 {
+            frame = paint(notch);
+            effect.apply(&mut frame, area, Duration::from_millis(notch as u64));
+        }
+
+        // The band reaches FADE_ROWS up from the bottom edge and no
+        // further: everything above it is fully painted.
+        for dy in 0..(12 - FADE_ROWS as u16) {
+            assert_eq!(
+                fg_at(&frame, 0, dy),
+                fg,
+                "row {} sits above the band and must be fully painted",
+                dy
+            );
+        }
+        // And inside the band each row is brighter than the one below.
+        for dy in (12 - FADE_ROWS as u16)..11 {
+            let here = level(&frame, 0, dy, 0, 200);
+            let below = level(&frame, 0, dy + 1, 0, 200);
+            assert!(
+                here > below,
+                "row {} ({:.2}) must be brighter than row {} ({:.2})",
+                dy,
+                here,
+                dy + 1,
+                below
+            );
+        }
+    }
+
+    /// A row the next notch pushes up climbs out of the band. Keyed by
+    /// screen row rather than by content, every row under a continuous
+    /// scroll would restart at the bottom of the band on every notch.
+    #[test]
+    fn scroll_fade_carries_a_rows_progress_with_it_as_it_shifts() {
+        let area = Rect::new(0, 0, 3, 6);
+        let bg = Color::Rgb(0, 0, 0);
+        let fg = Color::Rgb(200, 200, 200);
+        let paint = |rows: &[&str]| {
+            let mut buf = make_buf(3, 6);
+            paint_rows(&mut buf, area, rows, fg, bg);
+            buf
+        };
+
+        let mut effect = ScrollFade::new(Duration::from_millis(100), bg, 0);
+        effect.capture_before(&paint(&["aaa", "bbb", "ccc", "ddd", "eee", "fff"]), area);
+
+        let mut first = paint(&["bbb", "ccc", "ddd", "eee", "fff", "ggg"]);
+        effect.apply(&mut first, area, Duration::ZERO);
+        let arrived = level(&first, 0, 5, 0, 200);
+
+        // Next notch pushes "ggg" up a row and brings "hhh" in below it.
+        let mut second = paint(&["ccc", "ddd", "eee", "fff", "ggg", "hhh"]);
+        effect.apply(&mut second, area, Duration::from_millis(10));
+        let climbed = level(&second, 0, 4, 0, 200);
+
+        assert!(
+            climbed > arrived,
+            "the shifted row climbs out of the band: {:.2} -> {:.2}",
+            arrived,
+            climbed
+        );
+        assert!(
+            (level(&second, 0, 5, 0, 200) - arrived).abs() < 0.01,
+            "the row this notch revealed opens where the last one did"
+        );
+    }
+
+    /// Once the scroll stops carrying them, the rows left in the band
+    /// run up to the painted colour on the clock rather than staying
+    /// dimmed, and the effect reports Done so the runner drops it.
+    #[test]
+    fn scroll_fade_lands_on_the_painted_colour_once_the_scroll_stops() {
+        let area = Rect::new(0, 0, 3, 4);
+        let bg = Color::Rgb(0, 0, 0);
+        let fg = Color::Rgb(200, 200, 200);
+        let paint = || {
+            let mut buf = make_buf(3, 4);
+            paint_rows(&mut buf, area, &["bbb", "ccc", "ddd", "eee"], fg, bg);
+            buf
+        };
+
+        let mut before = make_buf(3, 4);
+        paint_rows(&mut before, area, &["aaa", "bbb", "ccc", "ddd"], fg, bg);
+        let mut effect = ScrollFade::new(Duration::from_millis(100), bg, 0);
+        effect.capture_before(&before, area);
+
+        let mut first = paint();
+        effect.apply(&mut first, area, Duration::ZERO);
+        let arrived = level(&first, 0, 3, 0, 200);
+
+        // The screen holds still: the clock takes over.
+        let mut mid = paint();
+        assert_eq!(
+            effect.apply(&mut mid, area, Duration::from_millis(30)),
+            EffectStatus::Running
+        );
+        let midway = level(&mid, 0, 3, 0, 200);
+        assert!(
+            midway > arrived && midway < 1.0,
+            "the row climbs on the clock: {:.2} -> {:.2}",
+            arrived,
+            midway
+        );
+
+        let mut done = paint();
+        assert_eq!(
+            effect.apply(&mut done, area, Duration::from_millis(100)),
+            EffectStatus::Done
+        );
+        assert_eq!(fg_at(&done, 0, 3), fg);
+    }
+
+    /// Relative line numbers renumber the whole gutter whenever the
+    /// cursor moves. Those columns are excluded from the row matching,
+    /// so a gutter-wide change on rows that never moved must not dim
+    /// them.
+    #[test]
+    fn scroll_fade_ignores_gutter_churn() {
+        let area = Rect::new(0, 0, 5, 3);
+        let bg = Color::Rgb(0, 0, 0);
+        let fg = Color::Rgb(200, 200, 200);
+
+        let mut before = make_buf(5, 3);
+        paint_rows(&mut before, area, &["1 aaa", "2 bbb", "3 ccc"], fg, bg);
+        // Same text, every gutter number one lower — what a cursor move
+        // does to a relative gutter.
+        let mut after = make_buf(5, 3);
+        paint_rows(&mut after, area, &["0 aaa", "1 bbb", "2 ccc"], fg, bg);
+
+        let mut effect = ScrollFade::new(Duration::from_millis(100), bg, 2);
+        effect.capture_before(&before, area);
+        let status = effect.apply(&mut after, area, Duration::ZERO);
+
+        assert_eq!(status, EffectStatus::Done, "nothing scrolled, nothing dims");
+        for dy in 0..3 {
+            assert_eq!(fg_at(&after, 2, dy), fg, "row {} must keep its colour", dy);
+        }
+    }
+
+    /// Text sitting on a selection or the current-line highlight rises
+    /// out of *that* band, not out of the editor background it isn't on.
+    #[test]
+    fn scroll_fade_fades_toward_the_cells_own_background() {
+        let area = Rect::new(0, 0, 3, 2);
+        let editor_bg = Color::Rgb(0, 0, 0);
+        let highlight_bg = Color::Rgb(40, 60, 80);
+        let fg = Color::Rgb(200, 200, 200);
+
+        let mut before = make_buf(3, 2);
+        paint_rows(&mut before, area, &["aaa", "bbb"], fg, editor_bg);
+        let mut after = make_buf(3, 2);
+        paint_rows(&mut after, area, &["bbb", "ccc"], fg, editor_bg);
+        // The revealed row is the highlighted one.
+        for dx in 0..area.width {
+            after.cell_mut((dx, 1)).unwrap().set_bg(highlight_bg);
+        }
+
+        let mut effect = ScrollFade::new(Duration::from_millis(100), editor_bg, 0);
+        effect.capture_before(&before, area);
+        effect.apply(&mut after, area, Duration::ZERO);
+
+        let Color::Rgb(r, g, b) = fg_at(&after, 0, 1) else {
+            panic!("faded colour must resolve to RGB");
+        };
+        // Dimmed toward the highlight, which is bluer than it is red —
+        // fading toward the editor background would have kept the
+        // channels equal.
+        assert!(
+            b > r,
+            "faded toward the highlight band, got ({r}, {g}, {b})"
+        );
+        assert!(r > 40, "and still on its way up to the painted colour");
+    }
+
+    /// A gesture feeds one effect: `refresh` confirms it is still there
+    /// (and pushes its deadline out), and reports false once it has
+    /// finished or the split has moved, which is the caller's cue to
+    /// start a fresh one.
+    #[test]
+    fn refresh_reports_whether_the_effect_is_still_running() {
+        let area = Rect::new(0, 0, 4, 3);
+        let mut runner = AnimationRunner::new();
+        let id = runner.start(
+            area,
+            AnimationKind::ScrollFade {
+                duration: Duration::from_millis(100),
+                bg_color: Color::Rgb(0, 0, 0),
+                gutter_width: 0,
+            },
+        );
+
+        assert!(runner.refresh(id, area, Duration::from_millis(100)));
+        assert!(
+            !runner.refresh(id, Rect::new(0, 0, 4, 4), Duration::from_millis(100)),
+            "a different rect is a different split — do not feed it"
+        );
+
+        runner.cancel(id);
+        assert!(!runner.refresh(id, area, Duration::from_millis(100)));
     }
 
     #[test]

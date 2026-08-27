@@ -67,6 +67,25 @@ use std::sync::Arc;
 /// (`active_layout()`, `split_manager()`, `file_explorer()`, `lsp()`,
 /// `panel_ids()`, `file_mod_times()`, …). Cross-window access goes
 /// through `Editor.windows.get(&id)` directly.
+/// What one split needs for the scroll fade, kept in
+/// [`Window::scroll_fades`].
+///
+/// `anchor` is the split's viewport as of the last frame — the frame the
+/// fade would be comparing against — so a difference on the next frame is
+/// exactly "this split scrolled". `effect` is the fade currently running
+/// over it, kept so a continuing gesture feeds the same effect instead of
+/// replacing it (see `AnimationRunner::refresh`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ScrollFadeTrack {
+    /// Buffer painted in the split last frame. A different one means the
+    /// split changed tabs, not that it scrolled — and the tab switch has
+    /// its own slide effect over the very same rect, which a fade
+    /// started here would evict.
+    pub buffer: BufferId,
+    pub anchor: crate::view::viewport::ViewAnchor,
+    pub effect: Option<crate::view::animation::AnimationId>,
+}
+
 /// A clickable path-link highlighted under a Ctrl+hover in the live terminal
 /// grid. Coordinates are relative to the terminal content area.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -671,6 +690,14 @@ pub struct Window {
     /// render frame. Keyed by `LeafId`, per-window because the splits
     /// it tracks are per-window.
     pub previous_viewports: HashMap<LeafId, (usize, u16, u16)>,
+
+    /// Per-split scroll-fade bookkeeping: the viewport anchor as of the
+    /// last render, and the fade effect currently running over that
+    /// split (if any). A change of anchor between frames is what marks a
+    /// scroll; the id is what lets the running fade be fed more rows
+    /// instead of replaced. Keyed by `LeafId`, per-window because the
+    /// splits and the animation runner both are.
+    pub(crate) scroll_fades: HashMap<LeafId, ScrollFadeTrack>,
 
     /// Whether scroll syncing applies to splits showing the same
     /// buffer. Per-window UX toggle.
@@ -2314,6 +2341,7 @@ impl Window {
             terminal_link_hover: None,
             seen_byte_ranges: HashMap::new(),
             previous_viewports: HashMap::new(),
+            scroll_fades: HashMap::new(),
             same_buffer_scroll_sync: false,
             interactive_replace_state: None,
             scroll_sync_manager: crate::view::scroll_sync::ScrollSyncManager::new(),
