@@ -10117,16 +10117,27 @@ fn lsp_spawn_failure_writes_stub_log_for_view_log_popup() -> anyhow::Result<()> 
         }]),
     );
 
+    // Clear any pre-existing log *before* the editor exists, so the wait
+    // below can only be satisfied by a stub this test provoked.
+    //
+    // Ordering is load-bearing, not tidiness: the LSP config is already in
+    // the `Config` the harness is built from, so construction is a point at
+    // which the editor can reach `force_spawn` and write the stub. Deleting
+    // the file after construction races that write — and losing the race
+    // deletes the very stub the wait below is waiting for, which is not a
+    // failed assertion but a wait that can no longer resolve (a 180 s
+    // nextest kill) unless a later spawn attempt happens to rewrite it.
+    // Deleting first cannot lose: the only writer afterwards is this test's
+    // own failed spawn.
+    let log_path = fresh::services::log_dirs::lsp_log_path("pascal");
+    let _ = std::fs::remove_file(&log_path);
+
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         100,
         30,
         config,
         temp_dir.path().to_path_buf(),
     )?;
-
-    // Snapshot any pre-existing log to detect the stub overwrite.
-    let log_path = fresh::services::log_dirs::lsp_log_path("pascal");
-    let _ = std::fs::remove_file(&log_path);
 
     // Open the file: triggers auto-spawn → spawn fails →
     // stub log is written.
