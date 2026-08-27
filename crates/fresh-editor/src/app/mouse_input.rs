@@ -188,7 +188,17 @@ impl Editor {
         // inferred from whether it had anything to say: a hover moves a
         // highlight without claiming, and a right-click outside a menu closes
         // it while staying available to open the next one.
-        if let Some(input) = crate::view::shell::input::mouse(mouse_event) {
+        // Which press of a run this is, as the editor's own multi-click
+        // detector saw it. The tree carries it to its handlers on
+        // `Event::clicks`; nothing in the library counts.
+        let clicks = if is_triple_click {
+            3
+        } else if is_double_click {
+            2
+        } else {
+            1
+        };
+        if let Some(input) = crate::view::shell::input::mouse(mouse_event, clicks) {
             if self.shell_dispatch(input) {
                 return Ok(true);
             }

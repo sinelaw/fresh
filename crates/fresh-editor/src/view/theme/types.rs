@@ -361,7 +361,7 @@ pub fn named_color_from_str(name: &str) -> Option<Color> {
 /// string form used by `ViewTokenStyle` (for everything except
 /// `Color::Rgb`, which uses the array variant). The corresponding
 /// inverse lives on [`TokenColorExt::to_ratatui`].
-fn token_color_named_from_ratatui(color: Color) -> &'static str {
+pub fn token_color_named_from_ratatui(color: Color) -> &'static str {
     match color {
         Color::Black => "Black",
         Color::Red => "Red",

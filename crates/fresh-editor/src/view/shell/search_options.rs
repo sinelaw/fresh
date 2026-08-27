@@ -456,11 +456,11 @@ mod tests {
             .find_by_key(&SearchOption::WholeWord.key())
             .expect("the toggle");
         let r = ui.rect_of(e);
-        let got = ui.dispatch(Input::Press {
-            pos: Point::new(r.x + 1, r.y),
-            button: MouseButton::Left,
-            mods: Mods::default(),
-        });
+        let got = ui.dispatch(Input::press(
+            Point::new(r.x + 1, r.y),
+            MouseButton::Left,
+            Mods::default(),
+        ));
         assert!(got.claimed, "the press is spent on the toggle");
         assert!(
             matches!(
@@ -490,11 +490,11 @@ mod tests {
             .find_by_key(&SearchOption::WholeWord.key())
             .expect("the toggle");
         let r = ui.rect_of(e);
-        let got = ui.dispatch(Input::Press {
-            pos: Point::new(r.x + 1, r.y),
-            button: MouseButton::Right,
-            mods: Mods::default(),
-        });
+        let got = ui.dispatch(Input::press(
+            Point::new(r.x + 1, r.y),
+            MouseButton::Right,
+            Mods::default(),
+        ));
         assert!(!got.claimed, "a right press must reach the legacy pre-band");
         assert!(got.msgs.is_empty(), "got {:?}", got.msgs);
     }

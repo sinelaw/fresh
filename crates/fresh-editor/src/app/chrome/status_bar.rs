@@ -1,6 +1,5 @@
 //! The status bar row.
 
-use crate::app::types::HoverTarget;
 use crate::input::keybindings::Action;
 use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
@@ -10,6 +9,11 @@ use super::{ChromeComponent, ChromeTreeBuilder, Editor};
 pub(crate) struct StatusBar;
 
 impl ChromeComponent for StatusBar {
+    /// **Nothing of the bar's input.** Every element is a keyed node in the
+    /// shell's tree and answers its own press and hover — built-in indicators
+    /// and plugin tokens alike. What is left is the box that claims the row,
+    /// so a press on a *gap* between elements still lands on the bar rather
+    /// than falling through to whatever is beneath it.
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
         if let Some(area) = ed.status_bar_area_now() {
             let mut b = LayoutBox::plain(
@@ -22,38 +26,6 @@ impl ChromeComponent for StatusBar {
             b.z = 40;
             t.push(b);
         }
-    }
-
-    fn hover(&self, ed: &mut Editor, _bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
-        // One generic hit-test over every clickable segment, on geometry
-        // derived from live state (encoding, LSP, remote, ...).
-        let (area, layout) = ed.status_bar_layout_now()?;
-        if row != area.y {
-            return None;
-        }
-        for (id, indicator_row, start, end) in &layout.clickable {
-            if row == *indicator_row && col >= *start && col < *end {
-                return Some(HoverTarget::StatusBarClickable(*id));
-            }
-        }
-        None
-    }
-
-    fn on_pointer(
-        &self,
-        ed: &mut Editor,
-        _bx: &LayoutBox,
-        ev: &super::ChromePointer,
-    ) -> anyhow::Result<super::Disposition> {
-        use super::{Disposition, PointerPress};
-        if ev.press != PointerPress::Left {
-            return Ok(Disposition::Pass);
-        }
-        if let Some(r) = ed.handle_click_status_bar(ev.col, ev.row) {
-            r?;
-            return Ok(Disposition::Consumed);
-        }
-        Ok(Disposition::Pass)
     }
 }
 
@@ -73,7 +45,7 @@ impl Editor {
     /// remote, and read-only menus are the exceptions — each owns a toggle
     /// (a second click closes it), so dismissing first would defeat the toggle;
     /// they clear other popups themselves after their toggle check.
-    fn dispatch_status_bar_click(
+    pub(crate) fn dispatch_status_bar_click(
         &mut self,
         id: crate::view::ui::status_bar::StatusBarClickable,
     ) -> AnyhowResult<()> {
@@ -118,45 +90,25 @@ impl Editor {
         }
     }
 
-    pub(super) fn handle_click_status_bar(
-        &mut self,
-        col: u16,
-        row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        let (area, layout) = self.status_bar_layout_now()?;
-        if row != area.y {
-            return None;
-        }
-        // Generic click rail: one hit-test over every clickable segment,
-        // on geometry derived from live state. The id→Action mapping (and
-        // each element's popup-dismiss nuance) lives in
-        // `dispatch_status_bar_click`.
-        for (id, r, s, e) in layout.clickable {
-            if row == r && col >= s && col < e {
-                return Some(self.dispatch_status_bar_click(id));
-            }
-        }
-        // Plugin-registered tokens. On a hit, fire
-        // `status_bar_token_clicked` so the registering plugin can react.
-        // We split the registry key (`"<plugin>:<token>"`) on the first
-        // colon — that's how `register_status_bar_element` builds it.
-        for (key, (r, s, e)) in layout.plugin_token_areas {
-            if row == r && col >= s && col < e {
-                let (plugin_name, token_name) = match key.split_once(':') {
-                    Some((p, t)) => (p.to_string(), t.to_string()),
-                    None => (String::new(), key.clone()),
-                };
-                self.dismiss_menu_popups_for_prompt();
-                self.plugin_manager.read().unwrap().run_hook(
-                    "status_bar_token_clicked",
-                    crate::services::plugins::hooks::HookArgs::StatusBarTokenClicked {
-                        plugin_name,
-                        token_name,
-                    },
-                );
-                return Some(Ok(()));
-            }
-        }
-        None
+    /// Fire a plugin's `status_bar_token_clicked` hook.
+    ///
+    /// The registry key is `"<plugin>:<token>"` — how
+    /// `register_status_bar_element` builds it — so it splits on the first
+    /// colon. Reached from the tree now: the token is a keyed element that
+    /// answers its own press, rather than a rectangle a click rail searched
+    /// for after missing every built-in indicator.
+    pub(crate) fn fire_status_bar_token_click(&mut self, key: &str) {
+        let (plugin_name, token_name) = match key.split_once(':') {
+            Some((p, t)) => (p.to_string(), t.to_string()),
+            None => (String::new(), key.to_string()),
+        };
+        self.dismiss_menu_popups_for_prompt();
+        self.plugin_manager.read().unwrap().run_hook(
+            "status_bar_token_clicked",
+            crate::services::plugins::hooks::HookArgs::StatusBarTokenClicked {
+                plugin_name,
+                token_name,
+            },
+        );
     }
 }

@@ -445,19 +445,11 @@ mod input_tests {
     fn click(ui: &mut Ui<UiMsg>, x: i32, y: i32) -> Vec<UiMsg> {
         let pos = Point::new(x, y);
         let mut out = ui
-            .dispatch(Input::Press {
-                pos,
-                button: MouseButton::Left,
-                mods: Mods::NONE,
-            })
+            .dispatch(Input::press(pos, MouseButton::Left, Mods::NONE))
             .msgs;
         out.extend(
-            ui.dispatch(Input::Release {
-                pos,
-                button: MouseButton::Left,
-                mods: Mods::NONE,
-            })
-            .msgs,
+            ui.dispatch(Input::release(pos, MouseButton::Left, Mods::NONE))
+                .msgs,
         );
         out
     }
@@ -548,16 +540,8 @@ mod input_tests {
         let pos = Point::new(4, 2);
         // A right-click inside is claimed, and claiming is now what the
         // dispatcher reports — there is no message to look for.
-        let press = ui.dispatch(Input::Press {
-            pos,
-            button: MouseButton::Right,
-            mods: Mods::NONE,
-        });
-        let release = ui.dispatch(Input::Release {
-            pos,
-            button: MouseButton::Right,
-            mods: Mods::NONE,
-        });
+        let press = ui.dispatch(Input::press(pos, MouseButton::Right, Mods::NONE));
+        let release = ui.dispatch(Input::release(pos, MouseButton::Right, Mods::NONE));
         assert!(
             release.claimed,
             "the menu must swallow a right-click inside it"
@@ -624,11 +608,7 @@ mod input_tests {
     fn a_right_click_outside_dismisses_without_swallowing_the_press() {
         let mut ui = open(20, 8);
         let outside = Point::new(18, 7);
-        let press = ui.dispatch(Input::Press {
-            pos: outside,
-            button: MouseButton::Right,
-            mods: Mods::NONE,
-        });
+        let press = ui.dispatch(Input::press(outside, MouseButton::Right, Mods::NONE));
         assert!(
             facts(press.msgs.clone()).contains(&UiFact::CloseContextMenu),
             "the menu must still close"
@@ -644,11 +624,11 @@ mod input_tests {
     #[test]
     fn a_left_click_outside_is_spent_closing_the_menu() {
         let mut ui = open(20, 8);
-        let press = ui.dispatch(Input::Press {
-            pos: Point::new(18, 7),
-            button: MouseButton::Left,
-            mods: Mods::NONE,
-        });
+        let press = ui.dispatch(Input::press(
+            Point::new(18, 7),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
         assert!(press.claimed, "closing is the whole of a left click here");
     }
 }

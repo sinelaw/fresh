@@ -110,7 +110,7 @@ fn reference(f: Frame, size: Rect) -> Vec<(u64, Rect)> {
     out.push((id(HostRegion::PromptLine), chunks[4]));
 
     // split_file_explorer_area on the content row.
-    match f.explorer {
+    match f.explorer.as_ref().map(|e| (e.cols, e.on_left)) {
         Some((cols, on_left)) => {
             let (explorer, editor) = if on_left {
                 let c = Layout::default()
@@ -155,7 +155,7 @@ fn combos() -> Vec<Frame> {
         for &status in &[true, false] {
             for &(search, prompt) in &[(false, false), (true, false), (false, true), (true, true)] {
                 for &dock in &[None, Some(24u16)] {
-                    for &explorer in &[None, Some((20u16, true)), Some((20u16, false))] {
+                    for explorer in [None, Some((20u16, true)), Some((20u16, false))] {
                         v.push(Frame {
                             menu_bar: menu,
                             status_bar: status,
@@ -164,7 +164,15 @@ fn combos() -> Vec<Frame> {
                             search_options: search.then(Default::default),
                             prompt_line: prompt,
                             dock,
-                            explorer,
+                            // Content, not geometry: the panel occupies its
+                            // column whatever it holds.
+                            explorer: explorer.map(|(cols, on_left)| {
+                                fresh::view::shell::file_explorer::Explorer {
+                                    cols,
+                                    on_left,
+                                    ..Default::default()
+                                }
+                            }),
                             // The frame layout is the same with or without an
                             // overlay: a menu is a layer, out of flow.
                             menu: None,

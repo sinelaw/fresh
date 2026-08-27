@@ -96,20 +96,20 @@ fn button(b: CtButton) -> MouseButton {
 /// node that took the press keeps receiving motion without the backend having
 /// to distinguish the two. That is the whole drag mechanism, and it is what
 /// replaces the `PointerGrab` flag ladder.
-pub fn mouse(m: crossterm::event::MouseEvent) -> Option<Input> {
+///
+/// `clicks` is which press of a run this is — 1 for a single, 2 for a double, 3
+/// for a triple. The editor already computes it, from its own configured
+/// threshold and its own substitutable time source (`detect_multi_click`), and
+/// the library deliberately has no clock: a double is a fact about time, and
+/// the party that owns the input device owns it. So it is *reported* here, and
+/// a handler reads it off `Event::clicks` rather than the applier consulting a
+/// field snapshotted beside the dispatch.
+pub fn mouse(m: crossterm::event::MouseEvent, clicks: u8) -> Option<Input> {
     let pos = Point::new(m.column as i32, m.row as i32);
     let mods = mods(m.modifiers);
     Some(match m.kind {
-        MouseEventKind::Down(b) => Input::Press {
-            pos,
-            button: button(b),
-            mods,
-        },
-        MouseEventKind::Up(b) => Input::Release {
-            pos,
-            button: button(b),
-            mods,
-        },
+        MouseEventKind::Down(b) => Input::press_n(pos, button(b), mods, clicks),
+        MouseEventKind::Up(b) => Input::release(pos, button(b), mods),
         MouseEventKind::Moved | MouseEventKind::Drag(_) => Input::Move { pos, mods },
         MouseEventKind::ScrollDown => Input::Wheel {
             pos,
@@ -141,6 +141,11 @@ pub fn mouse(m: crossterm::event::MouseEvent) -> Option<Input> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A single press, for the tests that do not care about runs.
+    fn mouse_1(m: MouseEvent) -> Option<Input> {
+        mouse(m, 1)
+    }
     use crossterm::event::{KeyEvent, MouseEvent};
 
     fn press(code: CtKey, m: KeyModifiers) -> fresh_input_parser::KeyPress {
@@ -190,7 +195,8 @@ mod tests {
 
     #[test]
     fn buttons_and_positions_survive() {
-        let got = mouse(mouse_at(MouseEventKind::Down(CtButton::Right), 7, 3)).expect("translates");
+        let got =
+            mouse_1(mouse_at(MouseEventKind::Down(CtButton::Right), 7, 3)).expect("translates");
         match got {
             Input::Press { pos, button, .. } => {
                 assert_eq!((pos.x, pos.y), (7, 3));
@@ -205,15 +211,16 @@ mod tests {
     /// the `PointerGrab` flag ladder.
     #[test]
     fn a_drag_is_a_move() {
-        let drag = mouse(mouse_at(MouseEventKind::Drag(CtButton::Left), 4, 9)).expect("translates");
-        let moved = mouse(mouse_at(MouseEventKind::Moved, 4, 9)).expect("translates");
+        let drag =
+            mouse_1(mouse_at(MouseEventKind::Drag(CtButton::Left), 4, 9)).expect("translates");
+        let moved = mouse_1(mouse_at(MouseEventKind::Moved, 4, 9)).expect("translates");
         assert_eq!(drag, moved);
     }
 
     #[test]
     fn wheel_direction_is_down_positive() {
-        let down = mouse(mouse_at(MouseEventKind::ScrollDown, 0, 0)).expect("translates");
-        let up = mouse(mouse_at(MouseEventKind::ScrollUp, 0, 0)).expect("translates");
+        let down = mouse_1(mouse_at(MouseEventKind::ScrollDown, 0, 0)).expect("translates");
+        let up = mouse_1(mouse_at(MouseEventKind::ScrollUp, 0, 0)).expect("translates");
         match (down, up) {
             (Input::Wheel { delta: d, .. }, Input::Wheel { delta: u, .. }) => {
                 assert_eq!((d, u), (1, -1));
@@ -227,8 +234,8 @@ mod tests {
     /// adapter needed it — see the `fresh-ui` wheel-axis change.
     #[test]
     fn horizontal_wheel_keeps_its_axis() {
-        let right = mouse(mouse_at(MouseEventKind::ScrollRight, 2, 2)).expect("translates");
-        let left = mouse(mouse_at(MouseEventKind::ScrollLeft, 2, 2)).expect("translates");
+        let right = mouse_1(mouse_at(MouseEventKind::ScrollRight, 2, 2)).expect("translates");
+        let left = mouse_1(mouse_at(MouseEventKind::ScrollLeft, 2, 2)).expect("translates");
         match (right, left) {
             (
                 Input::Wheel {
@@ -248,7 +255,7 @@ mod tests {
     /// And vertical scroll still reports the vertical axis.
     #[test]
     fn vertical_wheel_reports_the_vertical_axis() {
-        match mouse(mouse_at(MouseEventKind::ScrollDown, 0, 0)).expect("translates") {
+        match mouse_1(mouse_at(MouseEventKind::ScrollDown, 0, 0)).expect("translates") {
             Input::Wheel { axis, .. } => assert_eq!(axis, Axis::Vertical),
             other => panic!("expected a wheel, got {other:?}"),
         }

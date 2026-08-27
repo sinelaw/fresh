@@ -1659,11 +1659,11 @@ list.
    constructed anywhere — library, tests, demo, or editor. Whoever uses one owes
    it a test first.
 
-6. **Inline styled text** (blocks M3/M5). Styled spans in
-   `TextProps`/`Draw::Lines` as a one-time library change, or one `TextRun`
-   node per span editor-side (§4.2 note). Mnemonics, match highlights,
-   markdown popups, and explorer git coloring all need it under a
-   cell-identical bar.
+6. ~~**Inline styled text**~~ — **not a gap; it was already there.** Listed as
+   blocking M3/M5, but `text_runs` takes styled pieces as one logical string
+   that measures, wraps and truncates as a unit. Mnemonics, match highlights
+   and the explorer's git colouring all use it. Checked against the library
+   rather than the note, while surveying for the second base PR.
 7. **Per-leaf decomposition of `render_content`** (blocks M9). Its unit today
    is the whole split tree; the target grid wants per-leaf `Host` nodes with
    `fresh-ui` tabs and dividers. Either the whole grid stays one `Host` leaf
@@ -1710,7 +1710,25 @@ list.
    (issue #2362 pinned exactly that), so nothing regressed; it simply did not
    improve. The menu bar is the exception only because its legacy walk still
    runs to produce runs.
-14. **Wheel-semantics parity** (M4/M5). Today's wheel walk has no dedup and no
+14. ~~**A bordered box does not clip its children**~~ — **fixed in the second
+   base PR** (#3095). `.border()` insets what is inside it but nothing bounded
+   it, and only a `Viewport` bounded anything at all — so a row the panel could
+   not fit painted over the panel's own right border. `BoxProps.clip` now
+   exists, `border()` implies it, and the bound is the *content* rect rather
+   than the outer edge. Pinned in `shell::file_explorer`'s tests as the escape
+   (`clip(false)`) and the frame surviving (the default). The fourth item in
+   the family that produced the first base PR — `pointer_mode` on any node,
+   `min_w`/`min_h`, `Event::clicks` — and the first that was a correctness bug
+   rather than a missing expression.
+
+   Three things listed here as gaps were not gaps, and are closed rather than
+   deferred: inline styled spans are `text_runs` (was item 6); modal focus
+   containment is `Modality::Exclusive` + `FocusScope`; and content shaped by
+   its own extent — a rule, a divider, the explorer's own full-height grip
+   glyph — is what `layout_reader` is for. Still genuinely absent: markers on
+   `Draw::Scrollbar` (item 8).
+
+15. **Wheel-semantics parity** (M4/M5). Today's wheel walk has no dedup and no
    opacity gate *by ruling*; `fresh-ui` chains wheels by "a `Viewport` claims
    only if its offset changed." Close but not identical — e.g. a
    scrolled-to-bound popup over the buffer. Land an explicit parity test

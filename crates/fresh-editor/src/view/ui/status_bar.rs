@@ -56,7 +56,7 @@ pub enum StatusBarClickable {
 
 /// Categorization of how a rendered element should be styled and tracked for click detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ElementKind {
+pub(crate) enum ElementKind {
     /// Normal text using base status bar colors
     Normal,
     /// Line ending indicator (clickable)
@@ -385,7 +385,7 @@ pub struct StatusSegmentInfo {
 }
 
 /// Map an [`ElementKind`] to the stable semantic name `status_view` uses.
-fn element_kind_name(kind: ElementKind) -> &'static str {
+pub(crate) fn element_kind_name(kind: ElementKind) -> &'static str {
     match kind {
         ElementKind::Lsp => "lsp",
         ElementKind::WarningBadge => "warning",
@@ -1614,7 +1614,7 @@ impl StatusBarRenderer {
     /// The (fg, bg) theme-key strings an element paints with — its non-hover
     /// provenance for the theme inspector, mirroring `element_style`. Hover is
     /// transient so the recorded key is always the element's semantic key.
-    fn element_keys(
+    pub(crate) fn element_keys(
         kind: ElementKind,
         lsp_state: LspIndicatorState,
     ) -> (&'static str, &'static str) {
@@ -1679,7 +1679,7 @@ impl StatusBarRenderer {
     /// click + hover rail generic: it's the *only* place that decides
     /// whether a built-in element is clickable. Plugin tokens are handled
     /// separately (they dispatch a hook, not a core `Action`).
-    fn clickable_for_kind(kind: ElementKind) -> Option<StatusBarClickable> {
+    pub(crate) fn clickable_for_kind(kind: ElementKind) -> Option<StatusBarClickable> {
         match kind {
             ElementKind::LineEnding => Some(StatusBarClickable::LineEnding),
             ElementKind::Encoding => Some(StatusBarClickable::Encoding),
@@ -1799,7 +1799,7 @@ impl StatusBarRenderer {
     /// token key (`Some` only for `ElementKind::Custom`) so the
     /// placement loops can record the screen area under the same key
     /// the plugin registered.
-    fn render_side(
+    pub(crate) fn render_side(
         config_side: &[StatusBarElement],
         ctx: &mut StatusBarContext<'_>,
     ) -> Vec<(Vec<Span<'static>>, usize, ElementKind, Option<String>)> {
