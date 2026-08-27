@@ -4348,7 +4348,7 @@ fn blog_showcase_fresh_0_4_0_review_diff() {
         "Review Diff, Reimagined",
         "A real review workflow: a file sidebar grouped by directory, a true \
          side-by-side OLD/NEW view, and comments anywhere — collected in a \
-         dedicated panel. (Plus Review Stash and a watch mode that auto-reloads \
+         dedicated panel. (Plus Review Diff: Stash and a watch mode that auto-reloads \
          on save.)",
     );
 

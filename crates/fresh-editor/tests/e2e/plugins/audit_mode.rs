@@ -4200,7 +4200,7 @@ fn rename_head_branch(repo: &GitTestRepo, name: &str) {
     run_git(repo, &["branch", "-M", name]);
 }
 
-/// PR Branch Log should default the base-ref prompt to the repo's
+/// Git Log: PR Branch should default the base-ref prompt to the repo's
 /// actual default branch (master in this test), not a hardcoded "main"
 /// that doesn't even exist here.
 #[test]
@@ -4236,7 +4236,7 @@ fn test_branch_log_prompt_defaults_to_repo_default_branch() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("PR Branch Log").unwrap();
+    harness.type_text("Git Log: PR Branch").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -4266,7 +4266,7 @@ fn test_branch_log_prompt_defaults_to_repo_default_branch() {
     );
 }
 
-/// PageDown in the detail pane of PR Branch Log should page the
+/// PageDown in the detail pane of Git Log: PR Branch should page the
 /// buffer, not trip the "Action page_down is not defined as a global
 /// function" error. The bug was that the branch-log mode bound
 /// PageUp/PageDown to action names that don't exist; they should map
@@ -4311,7 +4311,7 @@ fn test_branch_log_detail_pane_page_down_works() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("PR Branch Log").unwrap();
+    harness.type_text("Git Log: PR Branch").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -4375,7 +4375,7 @@ fn test_branch_log_detail_pane_page_down_works() {
         .unwrap();
 }
 
-/// The PR Branch Log status messages should be the translated strings, not
+/// The Git Log: PR Branch status messages should be the translated strings, not
 /// the raw i18n keys. `editor.t()` returns the key itself when a string is
 /// missing, so the plugin's `editor.t("status.closed") || "..."` idiom never
 /// reached its fallback: closing the panel printed a literal `status.closed`
@@ -4409,7 +4409,7 @@ fn test_branch_log_status_messages_are_translated() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("PR Branch Log").unwrap();
+    harness.type_text("Git Log: PR Branch").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -4458,9 +4458,57 @@ fn test_branch_log_status_messages_are_translated() {
     );
 }
 
+/// The renamed commands keep their old names in their descriptions, and the
+/// palette matches descriptions as well as names — so a user typing the name
+/// they had in muscle memory still finds the command it became.
+///
+/// Only the commands that are always in the palette are covered here. The ones
+/// that act on an open review session (`Review Diff: Stop`, `Add Comment`, the
+/// exports) are scoped to `review-mode` and stay hidden until a review exists;
+/// they carry the same `(formerly …)` suffix by the same mechanism.
+#[test]
+fn test_old_command_names_still_find_the_renamed_commands() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    repo.create_file("a.txt", "one\n");
+    repo.git_add_all();
+    repo.git_commit("base commit");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    // (name a user has in muscle memory, command it is called now)
+    let renamed = [
+        ("Review PR Branch", "Git Log: PR Branch"),
+        ("Review Stash", "Review Diff: Stash"),
+    ];
+
+    for (old_name, new_name) in renamed {
+        harness
+            .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.wait_for_prompt().unwrap();
+        harness.type_text(old_name).unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains(new_name))
+            .unwrap();
+
+        harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        harness.wait_for_prompt_closed().unwrap();
+    }
+}
+
 /// Regression test for https://github.com/sinelaw/fresh/issues/1962.
 ///
-/// When the detail panel of PR Branch Log is focused and the cursor
+/// When the detail panel of Git Log: PR Branch is focused and the cursor
 /// sits on a line from the diff that has file context, pressing Enter
 /// should drill into that file at the selected commit's version (in a
 /// read-only virtual buffer). Before the fix, Enter on the detail panel
@@ -4479,7 +4527,7 @@ fn test_branch_log_detail_enter_opens_file_at_commit() {
     rename_head_branch(&repo, "master");
 
     // Feature branch with a commit that modifies a file. The detail
-    // panel of PR Branch Log shows `git show --stat --patch` for the
+    // panel of Git Log: PR Branch shows `git show --stat --patch` for the
     // selected commit, so the diff lines carry `(file, line)` text
     // properties that the new Enter-on-detail path reads.
     run_git(&repo, &["checkout", "-b", "feature"]);
@@ -4507,7 +4555,7 @@ fn test_branch_log_detail_enter_opens_file_at_commit() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("PR Branch Log").unwrap();
+    harness.type_text("Git Log: PR Branch").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)

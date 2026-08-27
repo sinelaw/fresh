@@ -6901,7 +6901,7 @@ registerHandler("stop_review_diff", stop_review_diff);
 //     select). Rejected because that view is commit-by-commit and we
 //     specifically want a *flattened* diff for batch commenting.
 //   - Single prompt with a small suggestion list. Chosen — matches the
-//     tone of the existing PR Branch Log prompt and lets power
+//     tone of the existing branch-log prompt and lets power
 //     users type arbitrary revspecs without a multi-step UI.
 
 /**
@@ -7488,10 +7488,12 @@ async function side_by_side_diff_current_file() {
 registerHandler("side_by_side_diff_current_file", side_by_side_diff_current_file);
 
 // =============================================================================
-// PR Branch Log
+// Git Log: PR Branch
 //
 // A git-log view scoped to a PR branch: the commits in `base..HEAD` rather
-// than the working-tree changes `start_review_diff` shows. It opens a buffer
+// than the working-tree changes `start_review_diff` shows. It is named into
+// the git_log plugin's `Git Log: …` family because that is what it is; the
+// `Review Diff: …` family is the review tool. It opens a buffer
 // group with the commit history on the left (rendered by the shared
 // `lib/git_history.ts` helpers the git_log plugin uses) and a live-updating
 // `git show` of the selected commit on the right. This reuses the same
@@ -7499,8 +7501,9 @@ registerHandler("side_by_side_diff_current_file", side_by_side_diff_current_file
 // theme keys in one place.
 //
 // This is a *browser*, not a review session: it opens no review buffers and
-// takes no comments. To code-review the same commits, use `Review Range`
-// with `base..HEAD`, which flattens them into a single reviewable diff.
+// takes no comments. To code-review the same commits, use `Review Diff:
+// Range` with `base..HEAD`, which flattens them into a single reviewable
+// diff.
 // =============================================================================
 
 interface BranchLogState {
@@ -7710,7 +7713,7 @@ async function start_branch_log(): Promise<void> {
     // `createBufferGroup` is a runtime-only binding (not in the generated
     // EditorAPI type); cast to `any` so the type-checker doesn't complain.
     const group = await (editor as any).createBufferGroup(
-        `*Branch Log ${base}..HEAD*`,
+        `*Git Log: ${base}..HEAD*`,
         "branch-log",
         layout,
     );
@@ -7969,16 +7972,17 @@ editor.defineMode(
 
 // Register Modes and Commands
 //
-// Everything named "Review …" opens the code review tool: the working tree
-// (`Review Diff`), a range or branch flattened into one diff (`Review Range`),
-// or a stash entry (`Review Stash`). The branch log is a commit browser, not a
-// review session, so it is named for what it is.
+// Two families, each under one prefix. `Review Diff: …` is the code review
+// tool — the working tree (`Review Diff` itself), a range or branch flattened
+// into one diff, a stash entry, and the commands that act on an open review
+// session. `Git Log: …` is the commit browser the git_log plugin owns; the PR
+// branch log below joins that family because that is what it is.
 editor.registerCommand("%cmd.review_diff", "%cmd.review_diff_desc", "start_review_diff", null);
 editor.registerCommand("%cmd.stop_review_diff", "%cmd.stop_review_diff_desc", "stop_review_diff", "review-mode");
 editor.registerCommand("%cmd.refresh_review_diff", "%cmd.refresh_review_diff_desc", "review_refresh", "review-mode");
 editor.registerCommand("%cmd.side_by_side_diff", "%cmd.side_by_side_diff_desc", "side_by_side_diff_current_file", null);
 
-// PR Branch Log (a git log scoped to `base..HEAD`, not a review session)
+// Git Log: PR Branch (a git log scoped to `base..HEAD`, not a review session)
 editor.registerCommand("%cmd.branch_log", "%cmd.branch_log_desc", "start_branch_log", null);
 editor.registerCommand("%cmd.branch_log_close", "%cmd.branch_log_close_desc", "stop_branch_log", "branch-log");
 editor.registerCommand("%cmd.branch_log_refresh", "%cmd.branch_log_refresh_desc", "branch_log_refresh", "branch-log");

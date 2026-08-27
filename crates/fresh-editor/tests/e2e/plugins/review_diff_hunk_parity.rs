@@ -317,7 +317,7 @@ fn test_review_comment_from_header_opens_prompt() {
         .unwrap();
 }
 
-/// §5.13 — "Review Stash" reviews a git stash entry: the stashed file and
+/// §5.13 — "Review Diff: Stash" reviews a git stash entry: the stashed file and
 /// the stash ref show up in the review.
 #[test]
 fn test_review_stash_shows_stashed_diff() {
@@ -343,12 +343,12 @@ fn test_review_stash_shows_stashed_diff() {
     );
 
     let mut harness = harness_for(&repo);
-    // Run the "Review Stash" command, then accept the default stash@{0}.
+    // Run the "Review Diff: Stash" command, then accept the default stash@{0}.
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Review Stash").unwrap();
+    harness.type_text("Review Diff: Stash").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)

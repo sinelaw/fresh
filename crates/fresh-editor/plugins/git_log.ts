@@ -566,7 +566,7 @@ function selectedCommit(): GitCommit | null {
 /**
  * Open the magit-style log view. `pathFilter` of `null` shows the full
  * repository history; a path scopes it to that file's commits. Shared by
- * the "Git Log" and "Git Log (Current File)" commands.
+ * the "Git Log" and "Git Log: Current File" commands.
  */
 /**
  * Root of the repository this log view is bound to. Falls back to the editor
