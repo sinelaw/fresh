@@ -55,6 +55,28 @@ pub struct Node<M> {
     /// `Component` that does not itself lay anything out.
     pub w: Sizing,
     pub h: Sizing,
+    /// Floors on the resolved extent, in cells. `0` is "no floor".
+    ///
+    /// A node-level attribute for the same reason [`Node::w`] is: the extent a
+    /// container hands a child is negotiated between them, and the floor is the
+    /// child's half of that negotiation. It is what makes a *gap that must not
+    /// vanish* expressible — `Sizing::Flex` says "take what is left", which is
+    /// nothing when nothing is left, and a separator or a padding column
+    /// usually means "take what is left, but never less than this".
+    pub min_w: u16,
+    pub min_h: u16,
+    /// Whether pointer hits stop at this node. `None` leaves it to the render
+    /// object, which is [`PointerMode::Opaque`] for everything that has one.
+    ///
+    /// Node-level, again for the same reason: any node can stand in front of
+    /// another, so any node can need to say it is not what the pointer meant —
+    /// an overlay strip carrying a title, a spacer inside one, a decorative
+    /// frame drawn over a list. Before this, only a `Gesture` could say it, so
+    /// a transparent overlay had to be a gesture with no listeners wrapped
+    /// around every container inside it, and even that did not work: the
+    /// wrapper became transparent while the container it wrapped stayed
+    /// opaque.
+    pub pointer: Option<PointerMode>,
     /// Per-item provenance for the display list. Inherited by descendants that
     /// do not set their own. The library never interprets it.
     pub theme: Option<Rc<str>>,
@@ -260,14 +282,12 @@ pub enum PointerMode {
 }
 
 pub struct GestureProps<M> {
-    pub mode: PointerMode,
     pub listeners: Vec<Listener<M>>,
 }
 
 impl<M> Default for GestureProps<M> {
     fn default() -> Self {
         GestureProps {
-            mode: PointerMode::default(),
             listeners: Vec::new(),
         }
     }
@@ -554,6 +574,9 @@ impl<M> Clone for Node<M> {
             key: self.key.clone(),
             w: self.w,
             h: self.h,
+            min_w: self.min_w,
+            min_h: self.min_h,
+            pointer: self.pointer,
             theme: self.theme.clone(),
             anchor: self.anchor.clone(),
             desc: self.desc.clone(),
@@ -583,7 +606,6 @@ impl<M> Clone for Desc<M> {
 impl<M> Clone for GestureProps<M> {
     fn clone(&self) -> Self {
         GestureProps {
-            mode: self.mode,
             listeners: self.listeners.clone(),
         }
     }
@@ -657,6 +679,9 @@ impl<M> Node<M> {
             key: None,
             w: Sizing::Auto,
             h: Sizing::Auto,
+            min_w: 0,
+            min_h: 0,
+            pointer: None,
             theme: None,
             anchor: None,
             desc,
@@ -670,6 +695,9 @@ impl<M> Node<M> {
             key: None,
             w: Sizing::Cells(0),
             h: Sizing::Cells(0),
+            min_w: 0,
+            min_h: 0,
+            pointer: None,
             theme: None,
             anchor: None,
             desc: Desc::Box(BoxProps::default()),
@@ -915,6 +943,18 @@ impl<M> Node<M> {
         self
     }
 
+    /// Never narrower than this, whatever the sizing resolves to.
+    pub fn min_w(mut self, cells: u16) -> Self {
+        self.min_w = cells;
+        self
+    }
+
+    /// Never shorter than this.
+    pub fn min_h(mut self, cells: u16) -> Self {
+        self.min_h = cells;
+        self
+    }
+
     fn box_props(&mut self) -> &mut BoxProps {
         match &mut self.desc {
             Desc::Box(p) => p,
@@ -1007,8 +1047,11 @@ impl<M> Node<M> {
         self.on(GestureKind::Leave, h)
     }
 
+    /// Whether pointer hits stop here.
+    ///
+    /// Applies to any node, not only a `Gesture`: see [`Node::pointer`].
     pub fn pointer_mode(mut self, m: PointerMode) -> Self {
-        self.gesture_props().mode = m;
+        self.pointer = Some(m);
         self
     }
 
@@ -1201,7 +1244,9 @@ impl<M: 'static> Desc<M> {
                 || ViewportRender::new(p.clone()),
                 |o| o.props = p.clone(),
             ),
-            Desc::Gesture(g) => sync(obj, || GestureRender { mode: g.mode }, |o| o.mode = g.mode),
+            // A gesture is a pointer region and a listener list; whether it
+            // absorbs a hit is `Node::pointer`, which any node carries.
+            Desc::Gesture(_) => sync(obj, || GestureRender, |_| {}),
             Desc::Focusable(f) => {
                 let reg = FocusReg {
                     ordinal: f.ordinal,

@@ -97,11 +97,17 @@ impl<M: 'static> Ui<M> {
                     MouseButton::Left,
                     mods,
                     Wheel::NONE,
+                    1,
                     out,
                 );
                 claimed
             }
-            Input::Press { pos, button, mods } => {
+            Input::Press {
+                pos,
+                button,
+                mods,
+                clicks,
+            } => {
                 // A press on a viewport's scrollbar gutter drives its scroll
                 // directly — click to jump, then drag to follow. Scroll is
                 // framework-owned, so this produces no application message.
@@ -129,7 +135,9 @@ impl<M: 'static> Ui<M> {
                 // pressed, and both are clicked.
                 let targets: Vec<ElementId> =
                     paths.iter().filter_map(|p| p.last().copied()).collect();
-                self.press = Some((targets, button));
+                // The run count travels with the press so the `Click` this
+                // completes can carry it too.
+                self.press = Some((targets, button, clicks));
                 let (claimed, _) = self.propagate_all(
                     &paths,
                     GestureKind::Press,
@@ -137,6 +145,7 @@ impl<M: 'static> Ui<M> {
                     button,
                     mods,
                     Wheel::NONE,
+                    clicks,
                     out,
                 );
                 claimed || dismiss_claims
@@ -153,11 +162,12 @@ impl<M: 'static> Ui<M> {
                     button,
                     mods,
                     Wheel::NONE,
+                    1,
                     out,
                 );
                 // A click is a press and a release over the same element, one
                 // per stacked path.
-                if let Some((pressed, b)) = self.press.take() {
+                if let Some((pressed, b, clicks)) = self.press.take() {
                     if b == button {
                         let kind = match button {
                             MouseButton::Right => GestureKind::SecondaryClick,
@@ -175,6 +185,7 @@ impl<M: 'static> Ui<M> {
                             button,
                             mods,
                             Wheel::NONE,
+                            clicks,
                             out,
                         );
                         claimed |= c;
@@ -198,6 +209,7 @@ impl<M: 'static> Ui<M> {
                     MouseButton::Left,
                     mods,
                     wheel,
+                    1,
                     out,
                 );
                 if !claimed && !prevented {
@@ -227,11 +239,13 @@ impl<M: 'static> Ui<M> {
         button: MouseButton,
         mods: Mods,
         wheel: Wheel,
+        clicks: u8,
         out: &mut Vec<M>,
     ) -> (bool, bool) {
         let mut prevented = false;
         for path in paths {
-            let (claimed, p) = self.propagate(path, kind, pos, button, mods, wheel, None, out);
+            let (claimed, p) =
+                self.propagate(path, kind, pos, button, mods, wheel, None, clicks, out);
             prevented |= p;
             if claimed {
                 return (true, prevented);
@@ -309,7 +323,16 @@ impl<M: 'static> Ui<M> {
         };
         let rect = n.data.rect;
         let local = Point::new(p.x - rect.x, p.y - rect.y);
-        let disposition = n.obj.as_ref().map(|o| o.hit(local)).unwrap_or(Hit::Opaque);
+        // What the description says, if it says anything; otherwise the render
+        // object's own answer. A node that draws nothing still hits by default
+        // — a plain container is a surface until it says it is not — so saying
+        // so is what `pointer_mode` is for.
+        let disposition = match n.pointer {
+            Some(crate::desc::PointerMode::Opaque) => Hit::Opaque,
+            Some(crate::desc::PointerMode::Transparent) => Hit::Transparent,
+            Some(crate::desc::PointerMode::Ignore) => Hit::Ignore,
+            None => n.obj.as_ref().map(|o| o.hit(local)).unwrap_or(Hit::Opaque),
+        };
         if disposition == Hit::Ignore {
             return false;
         }
@@ -406,6 +429,7 @@ impl<M: 'static> Ui<M> {
         mods: Mods,
         wheel: Wheel,
         key: Option<KeyPress>,
+        clicks: u8,
         out: &mut Vec<M>,
     ) -> (bool, bool) {
         let Some(&target) = path.last() else {
@@ -434,6 +458,7 @@ impl<M: 'static> Ui<M> {
                     delta: wheel.delta,
                     axis: wheel.axis,
                     key,
+                    clicks,
                     selection: SelectionOnFocus::None,
                     target: self.retarget(target, n),
                     current: n,
@@ -550,6 +575,7 @@ impl<M: 'static> Ui<M> {
             delta: 0,
             axis: Axis::Vertical,
             key: None,
+            clicks: 1,
             selection: SelectionOnFocus::None,
             target: n,
             current: n,
@@ -686,6 +712,7 @@ impl<M: 'static> Ui<M> {
                     delta: 0,
                     axis: Axis::Vertical,
                     key: None,
+                    clicks: 1,
                     selection: SelectionOnFocus::None,
                     target: lid,
                     current: lid,
@@ -729,6 +756,7 @@ impl<M: 'static> Ui<M> {
                     local: Point::ZERO,
                     button: MouseButton::Left,
                     mods: k.mods,
+                    clicks: 1,
                     delta: 0,
                     axis: Axis::Vertical,
                     key: Some(k),

@@ -140,11 +140,64 @@ fn grip() -> Node<Msg> {
 // -- the task list -----------------------------------------------------------
 
 fn body(app: &App) -> Node<Msg> {
-    col().children([
-        new_task_row(app).h(Sizing::Cells(1)),
-        divider(0).h(Sizing::Cells(0)),
-        task_list(app).flex(1),
+    // The list, with a ribbon drawn *over* its first row rather than above it.
+    // See `ribbon`.
+    stack().children([
+        col().children([
+            new_task_row(app).h(Sizing::Cells(1)),
+            divider(0).h(Sizing::Cells(0)),
+            task_list(app).flex(1),
+        ]),
+        // The overlay column spans the whole body — a stack child stretches —
+        // so it, and the spacer that positions the strip, have to say they are
+        // not pointer targets. A container that draws nothing still hits by
+        // default, and without this the column swallows every click on the
+        // list below it.
+        col()
+            .pointer_mode(fresh_ui::desc::PointerMode::Transparent)
+            .children([
+                // One row down: past the entry field, onto the list's own
+                // first row. (The divider between them is zero-height.)
+                row()
+                    .h(Sizing::Cells(1))
+                    .pointer_mode(fresh_ui::desc::PointerMode::Transparent),
+                ribbon(app).h(Sizing::Cells(1)),
+            ]),
     ])
+}
+
+/// A one-row strip drawn on top of the list's first row.
+///
+/// **The point of it is what it does *not* absorb.** The strip spans the whole
+/// width, but only its button is a pointer target: everything else is
+/// `PointerMode::Transparent`, so a press on the strip's text reaches the task
+/// row underneath and selects it. Without a pointer mode on ordinary
+/// containers this could not be written — a container that draws nothing still
+/// hits, so the strip would swallow the whole first row.
+///
+/// It is the shape a title bar drawn on a panel's border takes, or a pinned
+/// header over a list.
+fn ribbon(app: &App) -> Node<Msg> {
+    // The run count the host reported for the last row press, shown here
+    // because the row's own `toggled #N` status would overwrite it.
+    let last = match app.last_click {
+        Some((i, n)) => format!("row {i} ×{n}"),
+        None => "—".into(),
+    };
+    let label = format!(" ribbon: click the text, it falls through · last press: {last} ");
+    row()
+        // The strip itself, and the spacer inside it, let presses through.
+        .pointer_mode(fresh_ui::desc::PointerMode::Transparent)
+        .children([
+            text(label)
+                .theme("ribbon")
+                .pointer_mode(fresh_ui::desc::PointerMode::Transparent),
+            row()
+                .flex(1)
+                .pointer_mode(fresh_ui::desc::PointerMode::Transparent),
+            // …and this one does not.
+            gesture(text(" [clear filter] ").theme("ribbon.button")).on_click(|_| Msg::RibbonClear),
+        ])
 }
 
 fn new_task_row(app: &App) -> Node<Msg> {
@@ -188,14 +241,32 @@ fn task_list(app: &App) -> Node<Msg> {
 fn task_row(task: &Task, i: usize, accent: &'static str) -> Node<Msg> {
     let mark = if task.done { "[x]" } else { "[ ]" };
     let id = task.id;
-    // No Click handler here: the enclosing List activates a row on click and
-    // on Enter alike, and this row's list is wired with on_activate(Toggle), so
-    // a click toggles it once. The row keeps only what the List does not do —
-    // the secondary-click context menu.
-    let _ = id;
-    gesture(row().children([text(format!("{accent}{mark} ")), text(task.title.clone())])).on(
+    // No Click handler for *activation* here: the enclosing List activates a
+    // row on click and on Enter alike, and this row's list is wired with
+    // on_activate(Toggle), so a click toggles it once. The row keeps only what
+    // the List does not do — the secondary-click context menu, and the run
+    // count below.
+    gesture(row().children([
+        text(format!("{accent}{mark} ")),
+        text(task.title.clone()),
+        // **A gap that refuses to close.** `flex(1)` alone gives the badge its
+        // right edge, and `min_w(3)` keeps three cells between the title and
+        // the badge once the column is too narrow for both — the title
+        // truncates instead of the gap silently vanishing. Drag the sidebar
+        // grip right to squeeze this and watch the gap hold.
+        row().flex(1).min_w(3),
+        text(format!("#{id}")).theme("badge"),
+    ]))
+    .on(
         GestureKind::SecondaryClick,
         Rc::new(move |e: &Event| Some(Msg::OpenContext(i, e.pos))),
+    )
+    // How many presses in a run this was, straight off the event. The library
+    // has no clock: the host counts the run and reports it, and a `Click`
+    // carries the count of the press it completes.
+    .on(
+        GestureKind::Click,
+        Rc::new(move |e: &Event| Some(Msg::Clicked(i, e.clicks))),
     )
 }
 

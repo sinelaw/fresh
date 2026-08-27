@@ -264,6 +264,7 @@ impl<M: 'static> Ui<M> {
             local: Point::ZERO,
             button: MouseButton::Left,
             mods: key.map(|k| k.mods).unwrap_or(Mods::NONE),
+            clicks: 1,
             delta: 0,
             axis: Axis::Vertical,
             key,

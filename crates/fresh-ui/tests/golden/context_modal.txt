@@ -1,11 +1,11 @@
 === context menu on a row
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it┌─────────┐
-            │»[ ] route │Toggle░░░│
-            │»[ ] wire u│Delete…  │
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x] build the reconciler                #2
+( ) Done    │»[ ] lay it┌─────────┐                   #3
+            │»[ ] route │Toggle░░░│                   #4
+            │»[ ] wire u│Delete…  │                   #5
             │           └─────────┘
             │
             │
@@ -17,11 +17,11 @@ Filter      │new task…                              Add
 === moved to Delete
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it┌─────────┐
-            │»[ ] route │Toggle   │
-            │»[ ] wire u│Delete…░░│
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x] build the reconciler                #2
+( ) Done    │»[ ] lay it┌─────────┐                   #3
+            │»[ ] route │Toggle   │                   #4
+            │»[ ] wire u│Delete…░░│                   #5
             │           └─────────┘
             │
             │
@@ -65,11 +65,11 @@ Filter      │new task…                              Add
 === escape dismisses it, and focus goes back
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
-(o) All░░░░░│»[x] write the spec░░░░░░░░░░░░░░░░░░░░░░░░
-( ) Open    │»[x] build the reconciler
-( ) Done    │»[ ] lay it out
-            │»[ ] route the pointer
-            │»[ ] wire up focus
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x] build the reconciler                #2
+( ) Done    │»[ ] lay it out                          #3
+            │»[ ] route the pointer                   #4
+            │»[ ] wire up focus                       #5
             │
             │
             │

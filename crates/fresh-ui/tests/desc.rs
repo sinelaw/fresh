@@ -80,3 +80,39 @@ fn layer_and_leaf_props_are_constructible() {
     let h: Node<()> = host(7u64);
     assert_eq!(node_type(&h).0, ElemType::Host);
 }
+
+/// Cloning a description keeps every attribute the builders set.
+///
+/// `Node` has a hand-written `Clone` — it cannot derive one, because `M` is not
+/// `Clone` — so every attribute added to the struct has to be added to the impl
+/// by hand, and one that is forgotten is *silent*: the description still
+/// builds, the tree still lays out, and the attribute is simply gone by the
+/// time anything reads it. That is exactly what happened while `min_w`/`min_h`
+/// and `pointer` were being added, and the symptom was a container that
+/// ignored `pointer_mode(Transparent)` several layers away from the cause.
+///
+/// Descriptions are cloned on every reconcile, so this is not a corner.
+#[test]
+fn cloning_a_node_preserves_every_attribute() {
+    use fresh_ui::{col, Key, PointerMode, Sizing};
+    let original = col()
+        .key(Key::Int(7))
+        .w(Sizing::Cells(3))
+        .h(Sizing::Pct(50))
+        .min_w(4)
+        .min_h(5)
+        .pointer_mode(PointerMode::Transparent)
+        .theme("some.key");
+    let copy: fresh_ui::Node<()> = original.clone();
+    assert_eq!(copy.key, original.key);
+    assert_eq!(copy.w, original.w);
+    assert_eq!(copy.h, original.h);
+    assert_eq!(copy.min_w, 4, "min_w survived the clone");
+    assert_eq!(copy.min_h, 5, "min_h survived the clone");
+    assert_eq!(
+        copy.pointer,
+        Some(PointerMode::Transparent),
+        "pointer mode survived the clone"
+    );
+    assert_eq!(copy.theme, original.theme);
+}

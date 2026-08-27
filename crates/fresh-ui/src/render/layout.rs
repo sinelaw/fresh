@@ -28,6 +28,9 @@ pub(crate) struct Carry {
     parent: Option<RenderId>,
     w: Sizing,
     h: Sizing,
+    min_w: u16,
+    min_h: u16,
+    pointer: Option<crate::desc::PointerMode>,
     theme: Option<Rc<str>>,
     key: Option<crate::key::Key>,
     focus_parent: Option<crate::focus::FocusId>,
@@ -57,6 +60,11 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
     fn sizing(&self, child: RenderId) -> (Sizing, Sizing) {
         let n = &self.ui.render[child];
         (n.w, n.h)
+    }
+
+    fn floor(&self, child: RenderId) -> (u16, u16) {
+        let n = &self.ui.render[child];
+        (n.min_w, n.min_h)
     }
 
     fn measure(&mut self, child: RenderId, c: Constraints) -> Size {
@@ -295,6 +303,13 @@ impl<M: 'static> Ui<M> {
         let (nw, nh) = node_sizing(&el.desc);
         let w = if carry.w != Sizing::Auto { carry.w } else { nw };
         let h = if carry.h != Sizing::Auto { carry.h } else { nh };
+        // Floors and pointer mode travel the same way sizing does: down from a
+        // description that has no geometry of its own, onto the first node that
+        // has. The outer one wins, because it is the one the caller wrote on
+        // the wrapper it handed over.
+        let min_w = carry.min_w.max(el.desc.min_w);
+        let min_h = carry.min_h.max(el.desc.min_h);
+        let pointer = carry.pointer.or(el.desc.pointer);
         let theme = el
             .desc
             .theme
@@ -326,6 +341,9 @@ impl<M: 'static> Ui<M> {
                     n.parent = carry.parent;
                     n.w = w;
                     n.h = h;
+                    n.min_w = min_w;
+                    n.min_h = min_h;
+                    n.pointer = pointer;
                     n.theme = theme;
                     n.key = key;
                 }
@@ -370,6 +388,9 @@ impl<M: 'static> Ui<M> {
                             parent: carry.parent,
                             w,
                             h,
+                            min_w,
+                            min_h,
+                            pointer,
                             theme: theme.clone(),
                             key: key.clone(),
                             focus_parent,

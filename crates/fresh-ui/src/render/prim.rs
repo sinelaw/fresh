@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use crate::desc::{Align, BoxProps, Dir, LayerProps, Sizing, TextProps, ViewportProps};
 use crate::render::geom::{distribute, Constraints, Point, Rect, Size};
-use crate::render::object::{FocusReg, Geom, Hit, LayerGeom, LayoutCx, LayoutInfo, RenderObject};
+use crate::render::object::{FocusReg, Geom, LayerGeom, LayoutCx, LayoutInfo, RenderObject};
 use crate::render::spec::{Draw, DrawList};
 
 // -- axes --------------------------------------------------------------------
@@ -72,6 +72,14 @@ pub(crate) fn range(s: Sizing, extent: u16, definite: bool, align: Align) -> (u1
                 (0, extent)
             }
         }
+    }
+}
+
+/// The main-axis half of a `(min_w, min_h)` pair.
+fn main_floor(dir: Dir, floor: (u16, u16)) -> u16 {
+    match dir {
+        Dir::Row => floor.0,
+        Dir::Col => floor.1,
     }
 }
 
@@ -295,6 +303,10 @@ impl RenderObject for BoxRender {
         let mut weights = vec![0u16; n];
         let mut fixed_used: u16 = 0;
 
+        // Each child's main-axis floor, read once: it is consulted when the
+        // child is sized and again when it is placed.
+        let floors: Vec<u16> = (0..n).map(|i| main_floor(dir, cx.floor(kids[i]))).collect();
+
         // Everything that is not flex resolves first; flex divides what is left.
         for i in 0..n {
             let (sw, sh) = cx.sizing(kids[i]);
@@ -307,6 +319,7 @@ impl RenderObject for BoxRender {
                 continue;
             }
             let room = avail.saturating_sub(fixed_used);
+            let floor = floors[i];
             let main = match s_main {
                 Sizing::Cells(v) => (v.min(room), v.min(room)),
                 Sizing::Pct(pc) => {
@@ -316,6 +329,11 @@ impl RenderObject for BoxRender {
                 Sizing::Auto => (0, room),
                 Sizing::Flex(_) => unreachable!(),
             };
+            // The floor wins over the room left: a child that says it is never
+            // narrower than N is never narrower than N, and the overflow is the
+            // container's problem — which is the honest answer, because the
+            // alternative is a gap that silently closes.
+            let main = (main.0.max(floor), main.1.max(floor));
             let cross = range(s_cross, cross_extent, cross_definite, p.align);
             let s = cx.measure(kids[i], axes(dir, main, cross));
             mains[i] = main_of(dir, s);
@@ -335,7 +353,8 @@ impl RenderObject for BoxRender {
                 Dir::Col => sw,
             };
             let cross = range(s_cross, cross_extent, cross_definite, p.align);
-            let s = cx.measure(kids[i], axes(dir, (shares[i], shares[i]), cross));
+            let share = shares[i].max(floors[i]);
+            let s = cx.measure(kids[i], axes(dir, (share, share), cross));
             mains[i] = main_of(dir, s);
             crosses[i] = cross_of(dir, s);
         }
@@ -404,11 +423,21 @@ impl RenderObject for BoxRender {
         // out of its own parent and paint over whatever is beside it.
         let limit = ins_main as i32 + main_of(dir, own).saturating_sub(2 * ins_main) as i32;
         let mut pos = ins_main as i32;
+        // How far back the clamp may pull a child. It moves forward past every
+        // child that declared a floor: those cells were asked for explicitly,
+        // and sliding the next child over them would honour the floor in the
+        // arithmetic while erasing it on screen — a separator that measures
+        // three cells and shows one. Content overflows and is clipped instead,
+        // which is the outcome the caller asked for by naming a minimum.
+        let mut barrier = ins_main as i32;
         for i in 0..n {
             let off = align_offset(p.align, inner_cross, crosses[i]);
-            let at = pos.min(limit - mains[i] as i32).max(ins_main as i32);
+            let at = pos.min(limit - mains[i] as i32).max(barrier);
             cx.place(kids[i], point_of(dir, at, ins_cross as i32 + off));
             pos = at + mains[i] as i32 + p.gap as i32;
+            if floors[i] > 0 {
+                barrier = at + mains[i] as i32;
+            }
         }
         own
     }
@@ -731,21 +760,16 @@ impl RenderObject for ViewportRender {
 
 // -- Gesture -----------------------------------------------------------------
 
-pub struct GestureRender {
-    pub mode: crate::desc::PointerMode,
-}
+/// A pointer region and its listeners.
+///
+/// It has no `hit` of its own any more: whether a node absorbs a pointer is
+/// `Node::pointer`, which every node carries, and the hit walk reads it there.
+/// A gesture that says nothing about it is opaque, as it always was.
+pub struct GestureRender;
 
 impl RenderObject for GestureRender {
     fn layout(&mut self, c: Constraints, cx: &mut dyn LayoutCx) -> Size {
         stack_in(c, cx, Align::Stretch, Point::ZERO)
-    }
-
-    fn hit(&self, _local: Point) -> Hit {
-        match self.mode {
-            crate::desc::PointerMode::Opaque => Hit::Opaque,
-            crate::desc::PointerMode::Transparent => Hit::Transparent,
-            crate::desc::PointerMode::Ignore => Hit::Ignore,
-        }
     }
 
     fn render_name(&self) -> &'static str {
