@@ -6549,6 +6549,58 @@ impl Editor {
                 }
             }
 
+            // **And the other half of the budget: cap the left side.**
+            //
+            // `render_status` reserved the right side first and spent what was
+            // left on the left, truncating the element that did not fit and
+            // dropping the rest. Only the right-hand drop above was ported;
+            // this was not, and layout does not stand in for it — see
+            // `sb::left_budget`, which is the rule and where it is tested.
+            // Without it a long status message pushed `LSP (off)` and
+            // `Palette: Ctrl+P` off the edge, where before the message itself
+            // became `...`.
+            let right_width: usize = right.iter().map(|(_, w, _, _)| *w).sum::<usize>()
+                + sep_w * right.len().saturating_sub(1);
+            let widths: Vec<usize> = left.iter().map(|(_, w, _, _)| *w).collect();
+            let allowed = sb::left_budget(&widths, right_width, sep_w, available);
+            let left: Vec<_> = left
+                .into_iter()
+                .zip(allowed)
+                .map(|((spans, w, kind, token_key), cap)| {
+                    if w <= cap {
+                        return (spans, w, kind, token_key);
+                    }
+                    // The element that did not fit is truncated over its
+                    // concatenated text, as before. Its runs keep their own
+                    // themes rather than collapsing to one style — the only
+                    // difference from `render_status`, and invisible for a
+                    // single-run element like the message.
+                    let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+                    let cut = crate::view::ui::status_bar::truncate_to_width(&text, cap);
+                    let cut_w = crate::primitives::display_width::str_width(&cut);
+                    let mut budget = cut_w;
+                    let mut kept: Vec<ratatui::text::Span<'static>> = Vec::new();
+                    for sp in spans {
+                        if budget == 0 {
+                            break;
+                        }
+                        let w = crate::primitives::display_width::str_width(&sp.content);
+                        if w <= budget {
+                            budget -= w;
+                            kept.push(sp);
+                        } else {
+                            let part = crate::view::ui::status_bar::truncate_to_width(
+                                sp.content.as_ref(),
+                                budget,
+                            );
+                            budget = 0;
+                            kept.push(ratatui::text::Span::styled(part, sp.style));
+                        }
+                    }
+                    (kept, cut_w, kind, token_key)
+                })
+                .collect();
+
             let item = |(spans, _w, kind, token_key): (
                 Vec<ratatui::text::Span<'static>>,
                 usize,

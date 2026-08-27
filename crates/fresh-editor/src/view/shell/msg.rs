@@ -113,6 +113,16 @@ pub enum UiFact {
     /// A right click on a tree row: select it and open its context menu at the
     /// pointer.
     ExplorerRowContext { index: usize, x: u16, y: u16 },
+    /// A right-press on the panel that did not land on a row.
+    ///
+    /// The old component bound its right-press to the *whole* explorer — its
+    /// comment said "the union box spans the whole explorer" — so a click
+    /// past the last entry still opened the menu, in its root mode. Binding
+    /// only to rows dropped that: empty space below the files answered
+    /// nothing. The row index is resolved app-side from the panel's own
+    /// rectangle, as the component resolved `relative_row`, because the
+    /// description cannot read geometry.
+    ExplorerBodyContext { x: u16, y: u16 },
     /// The `×` on the panel's title line.
     ExplorerClose,
     /// A press on the panel's right-edge grip: start a width drag from here.

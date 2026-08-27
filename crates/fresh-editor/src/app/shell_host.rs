@@ -575,6 +575,7 @@ impl Editor {
             // -- file explorer ---------------------------------------------
             UiFact::ExplorerRowPress { index, clicks } => self.explorer_row_pressed(index, clicks),
             UiFact::ExplorerRowContext { index, x, y } => self.explorer_row_context(index, x, y),
+            UiFact::ExplorerBodyContext { x, y } => self.explorer_body_context(x, y),
             UiFact::ExplorerClose => self.toggle_file_explorer(),
             UiFact::ExplorerResizeBegin { x, y } => {
                 let w = self.active_window().file_explorer_width;
