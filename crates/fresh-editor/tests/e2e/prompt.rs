@@ -1,7 +1,7 @@
 use crate::common::harness::EditorTestHarness;
 
 /// Regression test for the mid-render plugin command race observed
-/// when invoking the audit_mode plugin's "Review PR Branch" command
+/// when invoking the audit_mode plugin's "PR Branch Log" command
 /// from the command palette under auto-hide mode.
 ///
 /// `Editor::render` (`crates/fresh-editor/src/app/render.rs:402`) drains
