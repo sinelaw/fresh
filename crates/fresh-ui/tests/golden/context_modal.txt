@@ -4,9 +4,9 @@ Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
 ( ) Open    │»[x] build the reconciler                #2
 ( ) Done    │»[ ] lay it┌─────────┐                   #3
-            │»[ ] route │Toggle░░░│                   #4
-            │»[ ] wire u│Delete…  │                   #5
-            │           └─────────┘
+┌──────────┐│»[ ] route │Toggle░░░│                   #4
+│clip-test ││»[ ] wire u│Delete…  │                   #5
+└──────────┘│           └─────────┘
             │
             │
             │
@@ -20,9 +20,9 @@ Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
 ( ) Open    │»[x] build the reconciler                #2
 ( ) Done    │»[ ] lay it┌─────────┐                   #3
-            │»[ ] route │Toggle   │                   #4
-            │»[ ] wire u│Delete…░░│                   #5
-            │           └─────────┘
+┌──────────┐│»[ ] route │Toggle   │                   #4
+│clip-test ││»[ ] wire u│Delete…░░│                   #5
+└──────────┘│           └─────────┘
             │
             │
             │
@@ -68,9 +68,9 @@ Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
 ( ) Open    │»[x] build the reconciler                #2
 ( ) Done    │»[ ] lay it out                          #3
-            │»[ ] route the pointer                   #4
-            │»[ ] wire up focus                       #5
-            │
+┌──────────┐│»[ ] route the pointer                   #4
+│clip-test ││»[ ] wire up focus                       #5
+└──────────┘│
             │
             │
             │

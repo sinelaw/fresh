@@ -4,9 +4,9 @@ Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
 ( ) Open    │»[ ] task 1                             #2│
 ( ) Done    │»[ ] task 2                             #3│
-            │»[x] task 3                             #4│
-            │»[ ] task 4                             #5│
-            │»[ ] task 5                             #6│
+┌──────────┐│»[x] task 3                             #4│
+│clip-test ││»[ ] task 4                             #5│
+└──────────┘│»[ ] task 5                             #6│
             │»[x] task 6                             #7│
             │»[ ] task 7                             #8│
             │»[ ] task 8                             #9│
@@ -20,9 +20,9 @@ Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
 ( ) Open    │»[ ] task 1                             #2│
 ( ) Done    │»[ ] task 2                             #3│
-            │»[x] task 3                             #4│
-            │»[ ] task 4                             #5│
-            │»[ ] task 5                             #6│
+┌──────────┐│»[x] task 3                             #4│
+│clip-test ││»[ ] task 4                             #5│
+└──────────┘│»[ ] task 5                             #6│
             │»[x] task 6                             #7│
             │»[ ] task 7                             #8│
             │»[ ] task 8                             #9│
@@ -36,9 +36,9 @@ Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
 ( ) Open    │»[ ] task 1                             #2│
 ( ) Done    │»[ ] task 2                             #3│
-            │»[x] task 3                             #4│
-            │»[ ] task 4                             #5│
-            │»[ ] task 5                             #6│
+┌──────────┐│»[x] task 3                             #4│
+│clip-test ││»[ ] task 4                             #5│
+└──────────┘│»[ ] task 5                             #6│
             │»[x] task 6                             #7│
             │»[ ] task 7                             #8│
             │»[ ] task 8                             #9│
@@ -52,9 +52,9 @@ Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
 ( ) Open    │»[ ] task 1                             #2│
 ( ) Done    │»[ ] task 2                             #3│
-            │»[x] task 3                             #4│
-            │»[ ] task 4                             #5│
-            │»[ ] task 5                             #6│
+┌──────────┐│»[x] task 3                             #4│
+│clip-test ││»[ ] task 4                             #5│
+└──────────┘│»[ ] task 5                             #6│
             │»[x] task 6                             #7│
             │»[ ] task 7                             #8│
             │»[ ] task 8                             #9│

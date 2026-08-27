@@ -88,6 +88,30 @@ fn main() {
     demo.deliver_sync(42);
     show(&demo, "a result arrives from another thread", &mut step);
 
+    // The bound, in both directions. The sidebar panel has ten cells inside its
+    // frame and eleven cells of promises: a nine-cell name, a gap that will not
+    // close below one cell, and a one-cell slot. Watch the panel's right wall —
+    // `│clip-test │` becomes `│clip-test M` when nothing bounds the row.
+    demo.input(Input::Key(KeyPress::with(KeyCode::Char('p'), Mods::CTRL)));
+    demo.input(key(KeyCode::Char('c')));
+    demo.input(key(KeyCode::Char('l')));
+    demo.input(key(KeyCode::Enter));
+    show(
+        &demo,
+        "clip off: the slot lands on the panel's wall",
+        &mut step,
+    );
+
+    demo.input(Input::Key(KeyPress::with(KeyCode::Char('p'), Mods::CTRL)));
+    demo.input(key(KeyCode::Char('c')));
+    demo.input(key(KeyCode::Char('l')));
+    demo.input(key(KeyCode::Enter));
+    show(
+        &demo,
+        "clip on: the wall is whole and the slot is not drawn",
+        &mut step,
+    );
+
     let mut huge = Demo::with_app(support::demo::App::huge(1_000_000), Size::new(64, 16));
     huge.input(Input::Wheel {
         pos: Point::new(30, 6),
