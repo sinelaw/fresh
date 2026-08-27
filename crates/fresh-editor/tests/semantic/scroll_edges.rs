@@ -234,6 +234,82 @@ fn the_top_edge_is_left_alone_when_nothing_is_above_it() {
     );
 }
 
+/// At the bottom of a file there is nothing below to trail off into,
+/// so the last lines are left alone — the same rule as the top, the
+/// other way up.
+#[test]
+fn the_bottom_edge_is_left_alone_when_nothing_is_below_it() {
+    const LINES: usize = 40;
+    const TEXT_COL: u16 = 20;
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(80, 24, edge_config()).unwrap();
+    let path = harness.project_dir().unwrap().join("long.txt");
+    std::fs::write(&path, numbered_lines(LINES)).unwrap();
+    harness.open_file(&path).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("line 001"))
+        .unwrap();
+
+    // Scroll to the end of the file.
+    for _ in 0..40 {
+        harness.mouse_scroll_down(20, 10).unwrap();
+    }
+    harness
+        .wait_until(|h| !h.editor().has_pending_wheel_scroll())
+        .unwrap();
+    assert!(
+        harness
+            .screen_to_string()
+            .contains(&format!("line {:03}", LINES)),
+        "the end of the file must be on screen, screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    let (first, last) = text_rows(&harness, LINES);
+    let painted = colors_at(&harness, TEXT_COL, first + 6).0;
+    assert_eq!(
+        colors_at(&harness, TEXT_COL, last).0,
+        painted,
+        "the last line of the file has nothing below it to fade into, \
+         screen:\n{}",
+        harness.screen_to_string()
+    );
+    // The top edge still shades: the file continues above.
+    assert!(
+        level(&harness, TEXT_COL, first, painted) < 1.0,
+        "the top edge shades at the bottom of the file"
+    );
+}
+
+/// A file that fits its pane is scrollable in neither direction, so no
+/// edge shades and the whole document reads at full strength.
+#[test]
+fn a_file_that_fits_the_pane_is_not_shaded_at_all() {
+    const TEXT_COL: u16 = 20;
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(80, 24, edge_config()).unwrap();
+    let path = harness.project_dir().unwrap().join("short.txt");
+    // Well short of the ~20 content rows an 80x24 pane has.
+    std::fs::write(&path, numbered_lines(6)).unwrap();
+    harness.open_file(&path).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("line 006"))
+        .unwrap();
+
+    let (first, last) = text_rows(&harness, 6);
+    let painted = colors_at(&harness, TEXT_COL, first + 3).0;
+    for row in first..=last {
+        assert_eq!(
+            colors_at(&harness, TEXT_COL, row).0,
+            painted,
+            "row {} of a file that fits must be fully painted, \
+             screen:\n{}",
+            row,
+            harness.screen_to_string()
+        );
+    }
+}
+
 /// The toggle turns the shading off entirely: every row paints at full
 /// strength, edges included.
 #[test]
@@ -316,6 +392,47 @@ fn smooth_scroll_disabled_jumps_the_whole_notch() {
         4,
         "the whole three-line notch lands at once, screen:\n{}",
         harness.screen_to_string()
+    );
+}
+
+/// The walk tracks one running total of lines still owed, not a queue
+/// of notches — and a notch aimed at a different spot cannot swallow
+/// what the last one still owed. Nudging the mouse between notches is
+/// easy while spinning a wheel, and must not cost the view distance.
+#[test]
+fn a_notch_from_a_new_pointer_position_keeps_what_the_last_one_owed() {
+    const LINES: usize = 200;
+
+    let top_after_two_notches = |second_at: (u16, u16)| -> usize {
+        let mut harness =
+            EditorTestHarness::with_temp_project_and_config(80, 24, edge_config()).unwrap();
+        let path = harness.project_dir().unwrap().join("long.txt");
+        std::fs::write(&path, numbered_lines(LINES)).unwrap();
+        harness.open_file(&path).unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("line 001"))
+            .unwrap();
+
+        // Two notches back to back, the second before the first has
+        // finished walking.
+        harness.mouse_scroll_down(20, 10).unwrap();
+        harness.mouse_scroll_down(second_at.0, second_at.1).unwrap();
+        harness
+            .wait_until(|h| !h.editor().has_pending_wheel_scroll())
+            .unwrap();
+        top_visible_line(&harness, LINES)
+    };
+
+    // Two three-line notches travel six lines, so line 007 ends on top.
+    assert_eq!(
+        top_after_two_notches((20, 10)),
+        7,
+        "two notches from the same spot travel both notches"
+    );
+    assert_eq!(
+        top_after_two_notches((40, 14)),
+        7,
+        "and so do two notches from different spots over the same pane"
     );
 }
 

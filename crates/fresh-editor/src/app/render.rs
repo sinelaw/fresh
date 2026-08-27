@@ -2838,11 +2838,17 @@ impl Editor {
     /// settle, and scrolling stays a plain shift of the text through a
     /// fixed gradient.
     ///
-    /// The bottom edge is shaded unconditionally — past the end of the
-    /// buffer there are no glyphs to shade, so it costs nothing to skip
-    /// the check. The top only shades when something is actually above
-    /// it, or the first two lines of every file would sit permanently
-    /// dimmed.
+    /// An edge only shades when there is something beyond it to trail
+    /// off into: at the top or bottom of a document the text simply
+    /// ends, and dimming it there would say the opposite. A file that
+    /// fits its pane gets no shading at all.
+    ///
+    /// Above is read off the viewport, which knows exactly. Below needs
+    /// the document's extent, and the scrollbar thumb already carries
+    /// it: a thumb short of the end of its track is content past the
+    /// bottom row. A split rendered without a vertical scrollbar has no
+    /// extent to read, so its bottom edge shades — the affordance is
+    /// the better guess when the answer is unavailable.
     fn shade_scroll_edges(
         &mut self,
         buf: &mut ratatui::buffer::Buffer,
@@ -2864,7 +2870,7 @@ impl Editor {
         let Some((_, view_states)) = window.buffers.splits() else {
             return;
         };
-        for (leaf, buffer_id, area, ..) in split_areas {
+        for (leaf, buffer_id, area, scrollbar, _thumb_start, thumb_end) in split_areas {
             if area.width == 0 || area.height == 0 {
                 continue;
             }
@@ -2879,12 +2885,13 @@ impl Editor {
             };
             let anchor = view_state.viewport.anchor;
             let content_above = anchor.byte > 0 || anchor.row_offset != 0;
+            let content_below = scrollbar.height == 0 || *thumb_end < scrollbar.height as usize;
 
             for row in 0..area.height {
                 let from_top = row;
                 let from_bottom = area.height - 1 - row;
                 let in_top = content_above && from_top < Self::EDGE_FADE_ROWS;
-                let in_bottom = from_bottom < Self::EDGE_FADE_ROWS;
+                let in_bottom = content_below && from_bottom < Self::EDGE_FADE_ROWS;
                 // A pane short enough for the two bands to overlap takes
                 // whichever edge the row is nearer, so it never comes out
                 // brighter for being close to both.

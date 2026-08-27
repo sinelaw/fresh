@@ -546,7 +546,7 @@ impl Editor {
         // That pans by columns, which the line-oriented setting has
         // nothing to say about and there is no line-by-line walk for.
         if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
-            self.pending_wheel_scroll = None;
+            self.flush_pending_wheel_scroll(tree)?;
             return self.dispatch_wheel(tree, true, col, row, direction * WHEEL_COLUMNS);
         }
 
@@ -557,24 +557,30 @@ impl Editor {
         // motion off gets the jump.
         let walk = lines > 1 && self.config.editor.smooth_scroll && self.config.editor.animations;
         if !walk {
-            self.pending_wheel_scroll = None;
+            self.flush_pending_wheel_scroll(tree)?;
             return self.dispatch_wheel(tree, false, col, row, direction * lines as i32);
         }
 
-        self.dispatch_wheel(tree, false, col, row, direction)?;
         // A flick sends notches faster than they can be walked, so the
-        // lines the last one still owed carry over. Nothing is dropped:
-        // `lines_to_deliver` hands over the surplus rather than letting
-        // a backlog build, so the gesture travels exactly as far as it
-        // asks for.
+        // lines the last one still owed carry over into this one — the
+        // walk tracks a single running total rather than a queue of
+        // notches. One aimed elsewhere, or the other way, cannot carry
+        // over; its lines are handed to the surface they were routed to
+        // instead, so a nudge of the mouse mid-scroll cannot swallow
+        // distance. Either way nothing is dropped.
         let carried = match self.pending_wheel_scroll.take() {
             Some(pending)
                 if pending.direction == direction && (pending.col, pending.row) == (col, row) =>
             {
                 pending.remaining
             }
-            _ => 0,
+            Some(pending) => {
+                self.deliver_owed(tree, &pending)?;
+                0
+            }
+            None => 0,
         };
+        self.dispatch_wheel(tree, false, col, row, direction)?;
         self.pending_wheel_scroll = Some(PendingWheelScroll {
             col,
             row,
@@ -584,6 +590,34 @@ impl Editor {
             last_step: Instant::now(),
         });
         Ok(())
+    }
+
+    /// Hand a gesture the lines it still owes, all at once, to the
+    /// surface its own notches were routed to.
+    fn deliver_owed(
+        &mut self,
+        tree: &[super::chrome::ChromeBox],
+        pending: &PendingWheelScroll,
+    ) -> AnyhowResult<()> {
+        if pending.remaining == 0 {
+            return Ok(());
+        }
+        let delta = pending.direction * pending.remaining as i32;
+        self.dispatch_wheel(tree, false, pending.col, pending.row, delta)
+    }
+
+    /// End any playing-out gesture, delivering what it still owes rather
+    /// than dropping it. A wheel turned sideways, or a walk switched off
+    /// mid-gesture, must not cost the view the distance already asked
+    /// for.
+    fn flush_pending_wheel_scroll(
+        &mut self,
+        tree: &[super::chrome::ChromeBox],
+    ) -> AnyhowResult<()> {
+        let Some(pending) = self.pending_wheel_scroll.take() else {
+            return Ok(());
+        };
+        self.deliver_owed(tree, &pending)
     }
 
     /// True while a wheel gesture still owes lines. The event loop keeps
