@@ -1,12 +1,21 @@
-//! Input handling for the Menu system.
+//! What an open menu does with a key it does not act on: nothing, loudly.
 //!
-//! Provides InputHandler implementation for menu navigation.
-//! Uses a wrapper struct to bundle MenuState with menu configuration.
+//! Menu *navigation* is no longer here. Every arm this file used to hold is an
+//! `Intent` the open chain declares, bound to keys by the keymap and resolved
+//! by the tree before the legacy walk runs — see `shell::menu::menu_intents`
+//! and `Editor::menu_shortcuts`.
+//!
+//! The swallow is what remains, and it is load-bearing: an open menu is modal
+//! to the keyboard, so a key it does not act on must not reach the buffer and
+//! type into the document. `Modality` cannot express that today — it gates
+//! pointer routing and focus traversal, and the dropdown chain is deliberately
+//! `Modality::None` so the bar stays clickable for switching menus. This file
+//! retires when keyboard-only modality does.
 
 use super::menu::MenuState;
 use crate::config::Menu;
-use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
-use crossterm::event::{KeyCode, KeyEvent};
+use crate::input::handler::{InputContext, InputHandler, InputResult};
+use crossterm::event::KeyEvent;
 
 /// Wrapper that provides InputHandler for MenuState with menu configuration.
 pub struct MenuInputHandler<'a> {
@@ -21,90 +30,28 @@ impl<'a> MenuInputHandler<'a> {
 }
 
 impl InputHandler for MenuInputHandler<'_> {
-    fn handle_key_event(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
+    fn handle_key_event(&mut self, event: &KeyEvent, _ctx: &mut InputContext) -> InputResult {
         // Only handle if menu is active
         if self.state.active_menu.is_none() {
             return InputResult::Ignored;
         }
 
-        match event.code {
-            // Close menu
-            KeyCode::Esc => {
-                ctx.defer(DeferredAction::CloseMenu);
-                InputResult::Consumed
-            }
-
-            // Execute/confirm
-            KeyCode::Enter => {
-                // Check if highlighted item is a submenu - if so, open it
-                if self.state.is_highlighted_submenu(self.menus) {
-                    self.state.open_submenu(self.menus);
-                    return InputResult::Consumed;
-                }
-
-                // Get the action to execute
-                if let Some((action, args)) = self.state.get_highlighted_action(self.menus) {
-                    ctx.defer(DeferredAction::ExecuteMenuAction { action, args });
-                    ctx.defer(DeferredAction::CloseMenu);
-                }
-                InputResult::Consumed
-            }
-
-            // Navigation
-            KeyCode::Up | KeyCode::Char('k') if event.modifiers.is_empty() => {
-                if let Some(active_idx) = self.state.active_menu {
-                    if let Some(menu) = self.menus.get(active_idx) {
-                        self.state.prev_item(menu);
-                    }
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Down | KeyCode::Char('j') if event.modifiers.is_empty() => {
-                if let Some(active_idx) = self.state.active_menu {
-                    if let Some(menu) = self.menus.get(active_idx) {
-                        self.state.next_item(menu);
-                    }
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Left | KeyCode::Char('h') if event.modifiers.is_empty() => {
-                // If in a submenu, close it and go back to parent
-                // Otherwise, go to the previous menu
-                if !self.state.close_submenu() {
-                    self.state.prev_menu(self.menus);
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Right | KeyCode::Char('l') if event.modifiers.is_empty() => {
-                // If on a submenu item, open it
-                // Otherwise, go to the next menu
-                if !self.state.open_submenu(self.menus) {
-                    self.state.next_menu(self.menus);
-                }
-                InputResult::Consumed
-            }
-
-            // Home/End for quick navigation
-            KeyCode::Home => {
-                self.state.highlighted_item = Some(0);
-                InputResult::Consumed
-            }
-            KeyCode::End => {
-                if let Some(active_idx) = self.state.active_menu {
-                    if let Some(menu) = self.menus.get(active_idx) {
-                        if let Some(items) = self.state.get_current_items_cloned(menu) {
-                            if !items.is_empty() {
-                                self.state.highlighted_item = Some(items.len() - 1);
-                            }
-                        }
-                    }
-                }
-                InputResult::Consumed
-            }
-
-            // Consume all other keys (modal behavior)
-            _ => InputResult::Consumed,
-        }
+        // **Navigation is the tree's.** Every arm that used to be here — Esc,
+        // Enter, the arrows and `hjkl`, Home, End — is now an `Intent` the
+        // open chain declares and the keymap binds keys to
+        // (`Editor::menu_shortcuts`, `shell::menu::menu_intents`). The shell
+        // is offered the key first, so those resolve before this handler runs
+        // at all.
+        //
+        // What is left is the swallow, and it is the reason this handler still
+        // exists: an open menu is modal to the keyboard, so a key it does not
+        // act on must not reach the buffer underneath and type into the
+        // document. `Modality` cannot say that yet — it gates pointer routing
+        // and focus traversal, and the chain is deliberately `Modality::None`
+        // so the bar stays clickable for switching menus. When keyboard-only
+        // modality exists in the library, this file goes.
+        let _ = event;
+        InputResult::Consumed
     }
 
     fn is_modal(&self) -> bool {
@@ -116,154 +63,66 @@ impl InputHandler for MenuInputHandler<'_> {
 mod tests {
     use super::*;
     use crate::config::MenuItem;
-    use crossterm::event::KeyModifiers;
+    use crossterm::event::{KeyCode, KeyModifiers};
     use std::collections::HashMap;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    fn create_test_menus() -> Vec<Menu> {
-        vec![
-            Menu {
-                id: None,
-                label: "File".to_string(),
-                items: vec![
-                    MenuItem::Action {
-                        label: "New".to_string(),
-                        action: "new_file".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Separator { separator: true },
-                    MenuItem::Action {
-                        label: "Save".to_string(),
-                        action: "save".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                ],
+    fn menus() -> Vec<Menu> {
+        vec![Menu {
+            id: None,
+            when: None,
+            label: "File".to_string(),
+            items: vec![MenuItem::Action {
+                label: "New".to_string(),
+                action: "new_file".to_string(),
+                args: HashMap::new(),
                 when: None,
-            },
-            Menu {
-                id: None,
-                label: "Edit".to_string(),
-                items: vec![
-                    MenuItem::Action {
-                        label: "Undo".to_string(),
-                        action: "undo".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                    MenuItem::Action {
-                        label: "Redo".to_string(),
-                        action: "redo".to_string(),
-                        args: HashMap::new(),
-                        when: None,
-                        checkbox: None,
-                    },
-                ],
-                when: None,
-            },
-        ]
+                checkbox: None,
+            }],
+        }]
     }
 
+    /// The navigation tests that used to live here have moved to
+    /// `view::shell::menu::intent_tests`, because navigation has: keys resolve
+    /// to intents on the open chain, and the keymap binds them. What is tested
+    /// here is the one thing left — that an open menu is modal to the keyboard.
     #[test]
-    fn test_menu_navigation_down() {
-        let menus = create_test_menus();
+    fn an_open_menu_swallows_what_it_does_not_act_on() {
+        let all = menus();
         let mut state = MenuState::for_testing();
         state.open_menu(0);
-
-        let mut handler = MenuInputHandler::new(&mut state, &menus);
         let mut ctx = InputContext::new();
+        let mut h = MenuInputHandler::new(&mut state, &all);
+        // A printable key must not reach the buffer and type into it.
+        assert_eq!(
+            h.handle_key_event(&key(KeyCode::Char('x')), &mut ctx),
+            InputResult::Consumed
+        );
+    }
 
-        // Initially at first item
-        assert_eq!(handler.state.highlighted_item, Some(0));
-
-        // Down arrow moves to next (skipping separator)
-        handler.handle_key_event(&key(KeyCode::Down), &mut ctx);
-        assert_eq!(handler.state.highlighted_item, Some(2)); // Skipped separator at 1
+    /// With no menu open it claims nothing, so the key takes its ordinary
+    /// route.
+    #[test]
+    fn a_closed_menu_claims_nothing() {
+        let all = menus();
+        let mut state = MenuState::for_testing();
+        let mut ctx = InputContext::new();
+        let mut h = MenuInputHandler::new(&mut state, &all);
+        assert_eq!(
+            h.handle_key_event(&key(KeyCode::Char('x')), &mut ctx),
+            InputResult::Ignored
+        );
     }
 
     #[test]
-    fn test_menu_navigation_between_menus() {
-        let menus = create_test_menus();
+    fn is_modal_follows_the_open_menu() {
+        let all = menus();
         let mut state = MenuState::for_testing();
+        assert!(!MenuInputHandler::new(&mut state, &all).is_modal());
         state.open_menu(0);
-
-        let mut handler = MenuInputHandler::new(&mut state, &menus);
-        let mut ctx = InputContext::new();
-
-        // Initially on File menu
-        assert_eq!(handler.state.active_menu, Some(0));
-
-        // Right arrow moves to next menu
-        handler.handle_key_event(&key(KeyCode::Right), &mut ctx);
-        assert_eq!(handler.state.active_menu, Some(1));
-
-        // Left arrow moves back
-        handler.handle_key_event(&key(KeyCode::Left), &mut ctx);
-        assert_eq!(handler.state.active_menu, Some(0));
-    }
-
-    #[test]
-    fn test_menu_escape_closes() {
-        let menus = create_test_menus();
-        let mut state = MenuState::for_testing();
-        state.open_menu(0);
-
-        let mut handler = MenuInputHandler::new(&mut state, &menus);
-        let mut ctx = InputContext::new();
-
-        handler.handle_key_event(&key(KeyCode::Esc), &mut ctx);
-        assert!(ctx
-            .deferred_actions
-            .iter()
-            .any(|a| matches!(a, DeferredAction::CloseMenu)));
-    }
-
-    #[test]
-    fn test_menu_enter_executes() {
-        let menus = create_test_menus();
-        let mut state = MenuState::for_testing();
-        state.open_menu(0);
-        state.highlighted_item = Some(0); // "New" action
-
-        let mut handler = MenuInputHandler::new(&mut state, &menus);
-        let mut ctx = InputContext::new();
-
-        handler.handle_key_event(&key(KeyCode::Enter), &mut ctx);
-        assert!(ctx.deferred_actions.iter().any(|a| matches!(
-            a,
-            DeferredAction::ExecuteMenuAction { action, .. } if action == "new_file"
-        )));
-    }
-
-    #[test]
-    fn test_menu_is_modal_when_active() {
-        let menus = create_test_menus();
-        let mut state = MenuState::for_testing();
-
-        let handler = MenuInputHandler::new(&mut state, &menus);
-        assert!(!handler.is_modal());
-
-        state.open_menu(0);
-        let handler = MenuInputHandler::new(&mut state, &menus);
-        assert!(handler.is_modal());
-    }
-
-    #[test]
-    fn test_menu_ignored_when_inactive() {
-        let menus = create_test_menus();
-        let mut state = MenuState::for_testing();
-
-        let mut handler = MenuInputHandler::new(&mut state, &menus);
-        let mut ctx = InputContext::new();
-
-        let result = handler.handle_key_event(&key(KeyCode::Down), &mut ctx);
-        assert_eq!(result, InputResult::Ignored);
+        assert!(MenuInputHandler::new(&mut state, &all).is_modal());
     }
 }

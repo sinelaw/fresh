@@ -2459,6 +2459,28 @@ impl KeybindingResolver {
         names
     }
 
+    /// Every chord bound in one context, defaults included, with custom
+    /// bindings winning.
+    ///
+    /// For surfaces that carry their bindings *into* a description as
+    /// shortcuts rather than resolving a key at dispatch time — see
+    /// `Editor::menu_shortcuts`. Resolution order matches
+    /// [`Self::find_keybinding_for_action`]: customs shadow defaults for the
+    /// same chord.
+    pub fn bindings_in_context(
+        &self,
+        context: KeyContext,
+    ) -> Vec<((KeyCode, KeyModifiers), Action)> {
+        let mut out: HashMap<(KeyCode, KeyModifiers), Action> = HashMap::new();
+        if let Some(m) = self.default_bindings.get(&context) {
+            out.extend(m.iter().map(|(k, a)| (*k, a.clone())));
+        }
+        if let Some(m) = self.bindings.get(&context) {
+            out.extend(m.iter().map(|(k, a)| (*k, a.clone())));
+        }
+        out.into_iter().collect()
+    }
+
     pub fn find_keybinding_for_action(
         &self,
         action_name: &str,

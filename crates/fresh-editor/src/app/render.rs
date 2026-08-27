@@ -2697,6 +2697,7 @@ impl Editor {
             .then(|| self.status_bar_description(chrome_area.width))
             .flatten();
         self.shell_frame_status_bar = status_bar_items.clone();
+        let menu_keys = self.menu_shortcuts();
         crate::view::shell::frame::Frame {
             menu_bar: menu_bar_visible,
             status_bar: win_status_bar && !has_suggestions && !has_file_browser,
@@ -2706,6 +2707,7 @@ impl Editor {
             dock: dock_area.map(|d| d.width),
             explorer,
             menu: self.open_context_menu_for_shell(),
+            menu_keys,
             menu_bar_items: menu_layout
                 .as_ref()
                 .map(|l| l.shell_bar.clone())
