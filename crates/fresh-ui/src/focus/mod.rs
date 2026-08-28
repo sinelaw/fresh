@@ -623,6 +623,27 @@ impl<M: 'static> Ui<M> {
     }
 
     fn default_for_intent(&mut self, intent: Intent) -> bool {
+        // **A direction needs somewhere to move from.**
+        //
+        // Tab enters the interface from nowhere — that is what Tab is for, and
+        // `move_focus` picking a first node is the right answer for it. An
+        // arrow key is not that gesture. With nothing focused it belongs to
+        // whoever else is listening, and in a host that offers its keys to this
+        // tree before its own handlers, "whoever else" is the application.
+        //
+        // The editor found this the expensive way: adding one focusable to the
+        // frame — a suggestion list that is driven by the app and has no
+        // keyboard of its own — gave directional traversal somewhere to go, so
+        // `Right` in a command palette started moving focus instead of the
+        // text cursor. `Home` was unaffected, which is the tell: it has no
+        // default here.
+        let directional = matches!(
+            intent,
+            Intent::Up | Intent::Down | Intent::Left | Intent::Right
+        );
+        if directional && self.focus.is_none() {
+            return false;
+        }
         match intent {
             Intent::Next => self.move_focus(FocusDir::Next),
             Intent::Prev => self.move_focus(FocusDir::Prev),
