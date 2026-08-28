@@ -242,12 +242,33 @@ fn heading_marks_survive_exploring_the_document() {
     let initial = marker_rows(&harness);
 
     // Page down through the document so later sections enter the viewport,
-    // letting the plugin's marks settle after each page.
+    // settling the frame after each page rather than waiting for the whole
+    // async pipeline to fall silent.
+    //
+    // This loop is the only place in the file that settles per iteration, and
+    // it is the one test in the file that timed out on CI. Quiescence is
+    // bounded but not cheap: it needs several consecutive no-work ticks at
+    // 50ms apiece, and with the plugin re-decorating every newly visible page
+    // it measured over a second per call on a loaded runner — 13 calls, ~19s,
+    // against ~8s for the whole test unloaded — and gives up only after 30s
+    // when the pipeline never goes quiet.
+    //
+    // The property under test survives without the per-page settle: every
+    // page's `lines_changed` batch is queued by the scroll whether or not this
+    // thread waits for it, and a whole-namespace republish — the bug this test
+    // exists for — is still visible in the set the final settle below hands to
+    // the comparison.
+    //
+    // Not "wait for the screen to change", though: a PageDown at the end of
+    // the document is a no-op, and this sweep runs twelve pages over a
+    // document only about thirteen deep, so that wait would be one viewport
+    // row away from never resolving. A settled frame is true whether or not
+    // the page moved.
     for _ in 0..12 {
         harness
             .send_key(KeyCode::PageDown, KeyModifiers::NONE)
             .unwrap();
-        harness.wait_for_async_quiescence(4).unwrap();
+        harness.wait_until_stable(|_| true).unwrap();
     }
     harness.wait_for_async_quiescence(8).unwrap();
 

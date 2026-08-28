@@ -2008,15 +2008,17 @@ fn test_review_diff_scrolling_many_files() {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    // Wait for review diff to load — toolbar's "next hunk" hint marks the
-    // unified-stream layout as ready.
+    // Wait for review diff to load. The toolbar's "next hunk" hint marks the
+    // unified-stream layout as up, but it is painted before the stream body is
+    // written, so the "Generating Review Diff Stream..." status clearing is
+    // what says the diff itself has landed.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
             if screen.contains("TypeError") || screen.contains("Error:") {
                 panic!("Error loading review diff. Screen:\n{}", screen);
             }
-            screen.contains("next hunk")
+            screen.contains("next hunk") && !screen.contains("Generating Review")
         })
         .unwrap();
 
