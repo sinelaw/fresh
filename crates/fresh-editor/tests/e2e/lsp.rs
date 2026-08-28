@@ -4971,14 +4971,14 @@ fn test_popup_mouse_wheel_scrolls() -> anyhow::Result<()> {
         "Popup should be visible before scroll"
     );
 
-    // Get initial scroll offset
-    let initial_offset = harness
-        .editor()
-        .active_state()
-        .popups
-        .top()
-        .map(|p| p.scroll_state().2)
-        .unwrap_or(0);
+    // What the user can see, not what the popup stores: the window belongs to
+    // the viewport in the shell's tree now, so `scroll_offset` is no longer
+    // where the answer lives — the top visible row is.
+    let before = harness.screen_to_string();
+    assert!(
+        before.contains("completion_item_0"),
+        "the list starts at the top. Screen:\n{before}"
+    );
 
     // Send scroll down event at a position over the popup (center of screen)
     let scroll_event = MouseEvent {
@@ -4996,20 +4996,10 @@ fn test_popup_mouse_wheel_scrolls() -> anyhow::Result<()> {
         "Popup should still be visible after scroll"
     );
 
-    // Verify scroll offset changed
-    let new_offset = harness
-        .editor()
-        .active_state()
-        .popups
-        .top()
-        .map(|p| p.scroll_state().2)
-        .unwrap_or(0);
-
+    let after = harness.screen_to_string();
     assert!(
-        new_offset > initial_offset,
-        "Scroll offset should increase after scroll down: {} -> {}",
-        initial_offset,
-        new_offset
+        !after.contains("completion_item_0"),
+        "the wheel scrolled the list past its first row. Screen:\n{after}"
     );
 
     Ok(())
@@ -5180,13 +5170,25 @@ fn test_popup_mouse_wheel_scroll_up() -> anyhow::Result<()> {
     }
     harness.render()?;
 
-    let offset_after_down = harness
-        .editor()
-        .active_state()
-        .popups
-        .top()
-        .map(|p| p.scroll_state().2)
-        .unwrap_or(0);
+    // Read the window off the screen: the viewport in the shell's tree owns it
+    // now, so the top visible row is where the answer is.
+    let top_row = |h: &EditorTestHarness| -> String {
+        let screen = h.screen_to_string();
+        // The row's border hugs its text (`│item_15`), so this reads from the
+        // marker to the next space rather than splitting on whitespace.
+        screen
+            .lines()
+            .find_map(|l| {
+                let at = l.find("item_")?;
+                Some(l[at..].split(' ').next().unwrap_or("").to_string())
+            })
+            .unwrap_or_else(|| panic!("no row. Screen:\n{screen}"))
+    };
+    let after_down = top_row(&harness);
+    assert_ne!(
+        after_down, "item_0",
+        "five notches moved the window off the first row"
+    );
 
     // Now scroll up
     let scroll_up = MouseEvent {
@@ -5198,26 +5200,16 @@ fn test_popup_mouse_wheel_scroll_up() -> anyhow::Result<()> {
     harness.send_mouse(scroll_up)?;
     harness.render()?;
 
-    let offset_after_up = harness
-        .editor()
-        .active_state()
-        .popups
-        .top()
-        .map(|p| p.scroll_state().2)
-        .unwrap_or(0);
-
     // Verify popup is still visible
     assert!(
         harness.editor().active_state().popups.is_visible(),
         "Popup should still be visible after scroll up"
     );
 
-    // Verify scroll offset decreased
-    assert!(
-        offset_after_up < offset_after_down,
-        "Scroll offset should decrease after scroll up: {} -> {}",
-        offset_after_down,
-        offset_after_up
+    assert_ne!(
+        top_row(&harness),
+        after_down,
+        "scrolling up moved the window back toward the first row"
     );
 
     Ok(())

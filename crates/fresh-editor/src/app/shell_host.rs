@@ -892,6 +892,38 @@ impl Editor {
             // resolved a row.
             UiFact::ExplorerBodyPress => self.take_focus_for_file_explorer(),
             UiFact::PopupSelect(i) => self.select_popup_item(i),
+            UiFact::PopupDismissTransient => self.dismiss_transient_popups(),
+            // What a press inside a popup's text *means*. The tree said where
+            // it landed, in the content's own coordinates; this is the rest of
+            // `handle_click_buffer_popups` — a link if one is there, and the
+            // start of a selection otherwise. Finding B is the reason it is
+            // still here: the library says where selecting is meaningful and
+            // holds no selection model.
+            UiFact::PopupTextPress { line, col } => {
+                let link = self
+                    .active_state()
+                    .popups
+                    .top()
+                    .and_then(|p| p.link_at_position(col, line));
+                if let Some(url) = link {
+                    #[cfg(feature = "runtime")]
+                    match open::that(&url) {
+                        Err(e) => self.set_status_message(format!("Failed to open URL: {e}")),
+                        Ok(()) => self.set_status_message(format!("Opening: {url}")),
+                    }
+                    #[cfg(not(feature = "runtime"))]
+                    let _ = url;
+                    return;
+                }
+                if let Some(popup) = self.active_state_mut().popups.top_mut() {
+                    popup.start_selection(line, col);
+                }
+            }
+            UiFact::PopupTextDrag { line, col } => {
+                if let Some(popup) = self.active_state_mut().popups.top_mut() {
+                    popup.extend_selection(line, col);
+                }
+            }
             // The list row knew its own index; both of these used to be a
             // coordinate hit-test that resolved one.
             UiFact::SuggestionSelect(i) => {

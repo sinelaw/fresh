@@ -137,6 +137,17 @@ pub enum UiFact {
     /// it is — the coordinate hit-test in `chrome::Popups` recovered an index
     /// the row already had.
     PopupSelect(usize),
+    /// A pointer landed outside a transient popup, which is what dismisses one.
+    /// The layer declares the condition; hiding the popup is the app's move.
+    PopupDismissTransient,
+    /// A press inside a text or markdown popup, in the content's own
+    /// coordinates. What it means is the host's: a link if one is there, and
+    /// the start of a text selection otherwise. The rectangle it used to be
+    /// hit-tested against is the tree's now, so only the cell is reported.
+    PopupTextPress { line: usize, col: usize },
+    /// The pointer moving while that press is still held. Extends the
+    /// selection the press began.
+    PopupTextDrag { line: usize, col: usize },
     /// A pointer moved the suggestion selection to this row.
     SuggestionSelect(usize),
     /// A double-click confirmed this suggestion — the same path Enter takes.

@@ -62,7 +62,9 @@ impl From<HostRegion> for HostId {
 /// decisions that today read `size` at the top of `render` — the dock's
 /// bail-out, the explorer's column count — are resolved from state before the
 /// description is built. See [`Frame::resolve_dock`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+// Not `Eq`: a popup carries its content, and a markdown span's `Style` is only
+// `PartialEq`. Nothing compares frames for total equality.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
     pub menu_bar: bool,
     pub status_bar: bool,
@@ -106,6 +108,10 @@ pub struct Frame {
     /// Content rather than a flag, like the other migrated surfaces: the rows
     /// are what the tree measures, and the layer's presence is `is_some`.
     pub suggestions: Option<super::prompt::Suggestions>,
+    /// Every popup on screen, in paint order: the buffer's stack, then the
+    /// top of the global one over it — the order `render_buffer_popups` and
+    /// `render_top_global_popup` already run in.
+    pub popups: Vec<super::popup::Placed>,
     /// The floating-overlay prompt's card, or `None` when no overlay prompt is
     /// open. Its bands are still `Host` leaves — the input line, the plugin's
     /// toolbar, the preview pane and the plugin's footer are all painters — so
@@ -129,6 +135,7 @@ impl Default for Frame {
             menu_keys: Vec::new(),
             menu_bar_items: super::menu::MenuBar::default(),
             suggestions: None,
+            popups: Vec::new(),
             card: None,
         }
     }
@@ -281,6 +288,10 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         Some(s) => frame.child(super::prompt::suggestions_layer(s)),
         None => frame,
     };
+    // Popups sit over the frame and over the prompt's list, and under the
+    // menus — a context menu opened from a popup row still paints on top, the
+    // same declaration-order rule everything else here follows.
+    let frame = frame.children(super::popup::placed_layers(&f.popups));
     let frame = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {
         Some(chain) => frame.child(chain),
         None => frame,
