@@ -106,6 +106,12 @@ pub struct Frame {
     /// Content rather than a flag, like the other migrated surfaces: the rows
     /// are what the tree measures, and the layer's presence is `is_some`.
     pub suggestions: Option<super::prompt::Suggestions>,
+    /// The floating-overlay prompt's card, or `None` when no overlay prompt is
+    /// open. Its bands are still `Host` leaves — the input line, the plugin's
+    /// toolbar, the preview pane and the plugin's footer are all painters — so
+    /// what the tree owns here is the arithmetic that placed them, which is
+    /// what two copies of it disagreed about.
+    pub card: Option<super::overlay_prompt::Card>,
 }
 
 impl Default for Frame {
@@ -123,6 +129,7 @@ impl Default for Frame {
             menu_keys: Vec::new(),
             menu_bar_items: super::menu::MenuBar::default(),
             suggestions: None,
+            card: None,
         }
     }
 }
@@ -256,6 +263,13 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // same "order of declaration is paint order" rule the dropdowns follow.
     let frame = match &f.suggestions {
         Some(s) => frame.child(super::prompt::suggestions_layer(s)),
+        None => frame,
+    };
+    // The overlay prompt's card, over everything the frame holds and under the
+    // menus — a context menu opened from inside it still paints on top, the
+    // same declaration-order rule the dropdowns follow.
+    let frame = match &f.card {
+        Some(c) => frame.child(super::overlay_prompt::card(c)),
         None => frame,
     };
     let frame = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {

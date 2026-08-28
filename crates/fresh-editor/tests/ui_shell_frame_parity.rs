@@ -190,6 +190,7 @@ fn combos() -> Vec<Frame> {
                             // rectangle in the frame, which is the same reason
                             // `menu` is None above.
                             suggestions: None,
+                            card: None,
                         });
                     }
                 }
@@ -285,6 +286,7 @@ fn squeeze_band_starves_a_different_row_than_ratatui() {
         status_bar_items: None,
         menu_keys: Vec::new(),
         suggestions: None,
+        card: None,
     };
     let size = Rect {
         x: 0,

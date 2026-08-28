@@ -1030,24 +1030,6 @@ impl Editor {
     /// selection that had never visibly moved.
     ///
     /// Returns true if scroll was handled, false if no prompt is active or has no suggestions.
-    pub fn handle_prompt_scroll(&mut self, delta: i32) -> bool {
-        // Scroll by what the renderer actually drew (`suggestions_area` is
-        // `(inner_rect, scroll_start_idx, visible_count, total_count)`), so
-        // the offset can't run past the end of the list. Read before
-        // borrowing the prompt: `active_window_mut()` is a method call, so
-        // the compiler can't see the two are disjoint sub-fields.
-        let visible_rows = self.active_chrome().suggestions_area.map(|(_, _, v, _)| v);
-        if let Some(ref mut prompt) = self.active_window_mut().prompt {
-            if prompt.suggestions.is_empty() {
-                return false;
-            }
-            let visible = visible_rows
-                .unwrap_or_else(|| prompt.suggestions.len().min(MAX_VISIBLE_SUGGESTIONS));
-            prompt.scroll_results(delta, visible);
-            return true;
-        }
-        false
-    }
 
     /// Get the confirmed input and prompt type, consuming the prompt
     /// For command palette, returns the selected suggestion if available, otherwise the raw input

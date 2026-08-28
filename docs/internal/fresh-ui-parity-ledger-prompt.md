@@ -121,17 +121,36 @@ unconditional commit. `handle_click_suggestions` and
 `handle_click_suggestions_confirm` — the two coordinate hit-tests that recovered
 an index the row already knew — have nothing left to do once the rail moves.
 
-### C. Position-blind wheel capture
+### C. Position-blind wheel capture — *not carried; the routing changed*
 
 `chrome:prompt_suggestions` is a **full-frame** box at z155 whose only job is:
 while a prompt with suggestions is open, the wheel scrolls that list *wherever
 the pointer sits*. fresh-ui routes the wheel by position — a viewport scrolls
 when the pointer is over it.
 
-This is deliberate behaviour (the bottom-anchored dropdown is small and the
-pointer is usually elsewhere), so it cannot simply be dropped. No concept states
-it. Smallest honest options: a `wheel_capture` flag on `Layer`, or keep one
-editor-side arm and record it as residue with a test.
+The bottom-anchored list now scrolls when the pointer is over it, and not
+otherwise. That is a real behaviour change and it is deliberate. Two reasons,
+neither of them "the library made me":
+
+* The capture no longer *works*. `handle_prompt_scroll` writes
+  `Prompt::scroll_offset`, and the migrated list's window belongs to its
+  viewport, so the write goes nowhere — while the box still swallows the wheel.
+  Left in place it would scroll neither the list nor what is under the pointer.
+  So the choice was never "keep it or drop it"; it was "route the wheel to the
+  list from anywhere, or route it where the pointer is".
+* Routing input by position is not an implementation detail of fresh-ui, it is
+  what the tree *is*. A full-frame box that claims one gesture on behalf of a
+  small surface elsewhere is the encoding the migration exists to remove — and
+  the original justification ("the dropdown is small and the pointer is usually
+  elsewhere") argues for a bigger hit area, not for a global one.
+
+The box is still pushed for the overlay prompt, whose list is still the
+painter's. `Editor::shell_owns_suggestions` is what tells the two apart — a fact
+about the frame's description rather than a guess reconstructed from prompt
+state.
+
+If this turns out to matter in use, the honest fix is a wheel hit area larger
+than the popup, not a frame-sized one.
 
 ### D. Per-gesture modality — *withdrawn; it was the wrong reading*
 
@@ -222,6 +241,23 @@ CJK glyph.
 One cosmetic difference, deliberate: the painter wrote `...` for a description
 and `…` for a name. The library writes `…` for both, so the mark costs one cell
 everywhere and the arithmetic is `width - 1` rather than a second measurement.
+
+### G. A layer could not be as wide as what it hangs off — *closed, `stretch_to_anchor`*
+
+`render` computed the popup's width as `chrome.width` and passed it in. Anchored
+to the prompt row, the layer measured its own content instead and came out as
+wide as the longest command name.
+
+Neither of the two available spellings works. A layer measures against the whole
+frame, so `flex` or `Sizing::Grow` inside it reach the frame's edge — past the
+dock, which is exactly the column the prompt row does not span. A cell count is
+the caller measuring the anchor by hand, which is the arithmetic anchoring
+exists to remove, and it drifts the moment a dock opens.
+
+`Layer::stretch_to_anchor()` takes the anchor's extent on the axis the placement
+leaves free: width under `Above`/`Below`, height under `LeftOf`/`RightOf`.
+`Place::Fill` is the all-axes form and ignores it. It is the same relationship a
+dropdown has to its button, which is the second caller waiting for it.
 
 ## How each rule is tested
 

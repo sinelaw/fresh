@@ -3,10 +3,7 @@
 //! position-blind suggestion capture, and the overlay-prompt modal
 //! scrim.
 
-use crate::app::mouse_input::prompt_scrollbar_offset_for_row;
-use crate::app::types::HoverTarget;
 use crate::input::keybindings::Action;
-use crate::view::prompt::MAX_VISIBLE_SUGGESTIONS;
 use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 
@@ -18,39 +15,13 @@ pub(crate) struct Prompt;
 
 impl ChromeComponent for Prompt {
     fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
-        // The suggestion list's scrollbar track at its painted rect
-        // (shared by the floating-overlay prompt and the
-        // bottom-anchored dropdown). No box when none was painted.
-        // Pushed BEFORE the opaque suggestions box: within a band the
-        // earlier-pushed box is consulted first, and a specific target
-        // must resolve before the opaque surface absorbs the click.
-        if let Some(r) = ed.active_chrome().suggestions_scrollbar_rect {
-            t.rect("chrome:prompt_scrollbar", 170, r);
-        }
-        // The suggestions box spans the OUTER rect (click targets the
-        // scrollbar border too); handlers with inner-rect geometry
-        // (hover) re-check and decline. OPAQUE: a click on the popup's
-        // chrome (border cells) that no handler claims is absorbed by
-        // the scan's opacity gate — it must not fall through and move
-        // the buffer cursor beneath (the deleted popup_absorb guard
-        // covered this rect; the box's own opacity replaces it).
-        let opaque_rect = |t: &mut ChromeTreeBuilder, r: ratatui::layout::Rect| {
-            let mut b = crate::widgets::LayoutBox::plain(
-                "chrome:suggestions",
-                r.y as u32,
-                r.x as u32,
-                r.width as u32,
-                r.height as u32,
-            );
-            b.z = 170;
-            b.pointer_opaque = true;
-            t.push(b);
-        };
-        if let Some(outer) = ed.active_chrome().suggestions_outer_area {
-            opaque_rect(t, outer);
-        } else if let Some((inner_rect, _, _, _)) = &ed.active_chrome().suggestions_area {
-            opaque_rect(t, *inner_rect);
-        }
+        // No box for the suggestion list. Both prompt forms grow it from the
+        // shell tree now: the rows claim their own click and their own
+        // double-click, `hit.rs` owns the scrollbar's jump and its drag, the
+        // viewport takes the wheel, and the popup absorbs a press on its own
+        // chrome. What is left here is the overlay *card* — its preview pane,
+        // and the guards that stop a gesture reaching the buffer while it is
+        // up.
         if ed.overlay_prompt_active() {
             if let Some(r) = ed.active_chrome().prompt_preview_area {
                 t.rect("chrome:prompt_preview", 170, r);
@@ -67,12 +38,6 @@ impl ChromeComponent for Prompt {
         // via the suggestions box). Sits ABOVE the suggestion capture:
         // while the overlay is up, its own scroll model wins.
         t.full("chrome:overlay_prompt_modal", 160);
-        // DELIBERATE full-frame capture, not a geometry proxy: while a
-        // prompt with suggestions is open, the wheel scrolls that list
-        // wherever the pointer sits (position-blind capture for the
-        // bottom-anchored dropdown). Other gestures have no handler
-        // for it and fall through.
-        t.full("chrome:prompt_suggestions", 155);
         // The overlay prompt's CLICK scrim rides low — just above the
         // editor content band — so chrome controls that peek out from
         // under the overlay (tabs, scrollbars, status bar) still take
@@ -84,23 +49,6 @@ impl ChromeComponent for Prompt {
         t.full("chrome:overlay_prompt_scrim", 15);
     }
 
-    fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
-        if bx.kind != "chrome:suggestions" {
-            return None;
-        }
-        // Command palette / autocomplete list.
-        let (inner_rect, start_idx, _visible_count, total_count) =
-            ed.active_chrome().suggestions_area.as_ref()?;
-        if in_rect(col, row, *inner_rect) {
-            let relative_row = (row - inner_rect.y) as usize;
-            let item_idx = start_idx + relative_row;
-            if item_idx < *total_count {
-                return Some(HoverTarget::SuggestionItem(item_idx));
-            }
-        }
-        None
-    }
-
     fn on_pointer(
         &self,
         ed: &mut Editor,
@@ -109,22 +57,8 @@ impl ChromeComponent for Prompt {
     ) -> AnyhowResult<Disposition> {
         if ev.press == PointerPress::Left {
             return match bx.kind {
-                "chrome:suggestions" => {
-                    if let Some(r) = ed.handle_click_suggestions(ev.col, ev.row) {
-                        r?;
-                        return Ok(Disposition::Consumed);
-                    }
-                    Ok(Disposition::Pass)
-                }
-                "chrome:prompt_scrollbar" => {
-                    if let Some(r) = ed.handle_click_prompt_scrollbar(ev.col, ev.row) {
-                        r?;
-                        return Ok(Disposition::Consumed);
-                    }
-                    Ok(Disposition::Pass)
-                }
-                // A floating-overlay prompt is mouse-modal: its own
-                // targets (result list, scrollbar) were handled above.
+                // A floating-overlay prompt is mouse-modal. Its result list
+                // takes its own clicks in the tree, before any of this runs.
                 // A click on a toolbar control toggles it through the
                 // host (which emits a widget_event); anything else —
                 // the input row, separator, preview pane, empty space,
@@ -186,14 +120,6 @@ impl ChromeComponent for Prompt {
             return Ok(Disposition::Pass);
         }
         match bx.kind {
-            // Double-click on a suggestion row confirms it (#1660).
-            "chrome:suggestions" => {
-                if let Some(r) = ed.handle_click_suggestions_confirm(ev.col, ev.row) {
-                    r?;
-                    return Ok(Disposition::Consumed);
-                }
-                Ok(Disposition::Pass)
-            }
             // Mouse-modal: swallow anything that wasn't a result row so
             // it can't word-select in the buffer below.
             "chrome:overlay_prompt_modal" => {
@@ -220,13 +146,6 @@ impl ChromeComponent for Prompt {
                     return Ok(Disposition::Pass);
                 }
                 if ed.handle_overlay_prompt_scroll(col, row, delta) {
-                    Ok(Disposition::Consumed)
-                } else {
-                    Ok(Disposition::Pass)
-                }
-            }
-            "chrome:prompt_suggestions" => {
-                if ed.handle_prompt_scroll(delta) {
                     Ok(Disposition::Consumed)
                 } else {
                     Ok(Disposition::Pass)
@@ -474,37 +393,6 @@ impl Editor {
         .then_some(action)
     }
 
-    /// Hit-test (col, row) against the suggestions popup. Returns the index
-    /// of the suggestion under the click, or `None` if the click is outside
-    /// the inner item area or no suggestions are visible.
-    fn suggestion_at(&self, col: u16, row: u16) -> Option<usize> {
-        let (inner_rect, start_idx, _visible_count, total_count) =
-            self.active_chrome().suggestions_area?;
-        if col < inner_rect.x
-            || col >= inner_rect.x + inner_rect.width
-            || row < inner_rect.y
-            || row >= inner_rect.y + inner_rect.height
-        {
-            return None;
-        }
-        let relative_row = (row - inner_rect.y) as usize;
-        let item_idx = start_idx + relative_row;
-        if item_idx < total_count {
-            Some(item_idx)
-        } else {
-            None
-        }
-    }
-
-    pub(super) fn handle_click_suggestions(
-        &mut self,
-        col: u16,
-        row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        let item_idx = self.suggestion_at(col, row)?;
-        self.select_suggestion(item_idx)
-    }
-
     /// The same, for a row that already knows which one it is.
     ///
     /// Split out of the coordinate form the way `activate_menu_item` was: a
@@ -529,18 +417,6 @@ impl Editor {
         Some(Ok(()))
     }
 
-    /// Click handler that always commits the suggestion under the cursor,
-    /// regardless of `click_confirms`. Used for double-clicks so that
-    /// preview-on-click prompts still have a mouse-only commit path.
-    pub(super) fn handle_click_suggestions_confirm(
-        &mut self,
-        col: u16,
-        row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        let item_idx = self.suggestion_at(col, row)?;
-        self.confirm_suggestion(item_idx)
-    }
-
     /// The same, by index. `click_confirms` is not consulted: a double-click
     /// is the mouse-only commit path for the prompts that preview on a single
     /// click, which is the whole reason this variant exists.
@@ -553,55 +429,6 @@ impl Editor {
         Some(self.handle_action(Action::PromptConfirm))
     }
 
-    /// Click/drag on a suggestion-list scrollbar: the floating-overlay
-    /// prompt's (issue #1796) and the bottom-anchored dropdown's
-    /// (issues #623 / #1593), which share `suggestions_scrollbar_rect`.
-    pub(super) fn handle_click_prompt_scrollbar(
-        &mut self,
-        col: u16,
-        row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        let sb_rect = self.active_chrome().suggestions_scrollbar_rect?;
-        if col < sb_rect.x
-            || col >= sb_rect.x + sb_rect.width
-            || row < sb_rect.y
-            || row >= sb_rect.y + sb_rect.height
-        {
-            return None;
-        }
-        // Read what the renderer drew so the drag math matches what
-        // the user sees. `suggestions_area` carries
-        // (inner_rect, scroll_start_idx, visible_count, total_count).
-        // Snapshot suggestions_area before borrowing the window's
-        // prompt — `active_window_mut()` is a method call so the
-        // compiler can't see that `prompt` and `chrome_layout` are
-        // disjoint sub-fields.
-        let suggestions_area_visible = self.active_chrome().suggestions_area.map(|(_, _, v, _)| v);
-        let active_window_id = self.active_window;
-        let prompt = self
-            .windows
-            .get_mut(&active_window_id)
-            .and_then(|w| w.prompt.as_mut())?;
-        let visible = suggestions_area_visible
-            .unwrap_or_else(|| prompt.suggestions.len().min(MAX_VISIBLE_SUGGESTIONS));
-        prompt.scroll_offset = prompt_scrollbar_offset_for_row(
-            prompt.suggestions.len(),
-            visible,
-            prompt.scroll_offset,
-            sb_rect,
-            row,
-        );
-        // Latch manual scroll so the renderer's keep-selection-visible
-        // pass doesn't immediately yank the offset back to the selection
-        // (same latch the wheel uses; released when the selection moves).
-        prompt.manual_scroll = true;
-        // Hand off to the drag follow-up so subsequent mouse moves
-        // keep tracking the thumb.
-        self.active_window_mut()
-            .mouse_state
-            .dragging_prompt_scrollbar = true;
-        Some(Ok(()))
-    }
     /// Route a wheel event inside the floating-overlay prompt (Live Grep).
     ///
     /// The overlay is mouse-modal, so it always consumes the wheel (returns
@@ -610,9 +437,9 @@ impl Editor {
     /// * Anywhere else (result list, input, toolbar, frame) → scroll the
     ///   result list *without* moving the selection.
     ///
-    /// Bottom-anchored prompts (command palette, file finder) are left to
-    /// `handle_prompt_scroll`, which scrolls their dropdown the same
-    /// selection-preserving way.
+    /// Bottom-anchored prompts have no arm here at all: their list is a
+    /// `fresh-ui` viewport and takes the wheel itself when the pointer is
+    /// over it.
     pub(super) fn handle_overlay_prompt_scroll(&mut self, col: u16, row: u16, delta: i32) -> bool {
         if !self.overlay_prompt_active() {
             return false;
@@ -634,35 +461,5 @@ impl Editor {
             prompt.scroll_results(delta, results_visible);
         }
         true
-    }
-
-    /// Suggestion-list scrollbar drag (`PointerGrab::PromptScrollbar`,
-    /// issue #1796): update the prompt's scroll offset with the same
-    /// math as the press (`prompt_scrollbar_offset_for_row`).
-    pub(crate) fn handle_prompt_scrollbar_drag(&mut self, row: u16) {
-        // Snapshot chrome rects up front so the prompt borrow on
-        // active_window_mut() doesn't conflict.
-        let sb_rect = self.active_chrome().suggestions_scrollbar_rect;
-        let suggestions_area_visible = self.active_chrome().suggestions_area.map(|(_, _, v, _)| v);
-        let active_window_id = self.active_window;
-        if let (Some(sb_rect), Some(prompt)) = (
-            sb_rect,
-            self.windows
-                .get_mut(&active_window_id)
-                .and_then(|w| w.prompt.as_mut()),
-        ) {
-            let visible = suggestions_area_visible
-                .unwrap_or_else(|| prompt.suggestions.len().min(MAX_VISIBLE_SUGGESTIONS));
-            prompt.scroll_offset = prompt_scrollbar_offset_for_row(
-                prompt.suggestions.len(),
-                visible,
-                prompt.scroll_offset,
-                sb_rect,
-                row,
-            );
-            // Keep the manual-scroll latch through the drag so the
-            // renderer doesn't pull the offset back to the selection.
-            prompt.manual_scroll = true;
-        }
     }
 }

@@ -2716,6 +2716,9 @@ impl Editor {
             .flatten();
         self.shell_frame_status_bar = status_bar_items.clone();
         let menu_keys = self.menu_shortcuts();
+        let suggestions = self.suggestions_description();
+        self.shell_owns_suggestions = suggestions.is_some();
+        let card = self.overlay_card_description(chrome_area);
         crate::view::shell::frame::Frame {
             menu_bar: menu_bar_visible,
             status_bar: status_row,
@@ -2734,11 +2737,52 @@ impl Editor {
             // description and the rectangles the not-yet-migrated hit-testing
             // uses cannot disagree — they are one computation.
             dropdowns: menu_layout.map(|l| l.shell_dropdowns).unwrap_or_default(),
-            // Held back, deliberately: see `suggestions_description`. Building
-            // it here and letting the overlay band paint it would put the new
-            // list on top of the painter's, which still draws.
-            suggestions: None,
+            suggestions,
+            card,
         }
+    }
+
+    /// The floating-overlay prompt's card, as the shell describes it.
+    ///
+    /// Only the outer rectangle and two counts. Everything the painter derived
+    /// from them — the header band's height, where the body starts, how the
+    /// body splits — is what the description states, and
+    /// `overlay_prompt::regions_of` is where the painter reads it back.
+    ///
+    /// The toolbar's row count is the one thing that has to be *measured*
+    /// rather than declared: a plugin's toolbar is two rows on a wide terminal
+    /// and wraps to more on a narrow one, and only the widget runtime knows.
+    /// `render_overlay_prompt` measured it too, at the same width and with the
+    /// same arguments; this is now the only call, and the painter reads the
+    /// answer back with the rest of the geometry.
+    fn overlay_card_description(
+        &self,
+        chrome: ratatui::layout::Rect,
+    ) -> Option<crate::view::shell::overlay_prompt::Card> {
+        use crate::view::shell::overlay_prompt::Card;
+        let prompt = self.active_window().prompt.as_ref()?;
+        if !prompt.overlay {
+            return None;
+        }
+        let at = Self::centered_overlay_rect(chrome, 90, 90);
+        let inner_w = at.width.saturating_sub(2);
+        let toolbar_rows = match prompt.toolbar_widget.as_ref() {
+            Some(spec) => crate::widgets::render_spec_no_autofocus(
+                spec,
+                &std::collections::HashMap::new(),
+                prompt.toolbar_focus.as_deref().unwrap_or(""),
+                inner_w as u32,
+            )
+            .entries
+            .len() as u16,
+            // No widget toolbar: the title row takes one, or nothing does.
+            None => !prompt.title.is_empty() as u16,
+        };
+        Some(Card {
+            at: fresh_ui::Rect::new(at.x as i32, at.y as i32, at.width, at.height),
+            toolbar_rows,
+            footer: !prompt.footer.is_empty(),
+        })
     }
 
     /// The prompt's suggestion list as the shell describes it.
@@ -2749,29 +2793,36 @@ impl Editor {
     /// `Anchor::Node` + `Place::Above` place the layer, so neither is stored
     /// on this side any more.
     ///
-    /// **Not yet handed to the frame.** `SuggestionsRenderer::render_with_hover`
-    /// still draws this list, and only one of the two may draw it: the layer
-    /// paints in the overlay band and would land on top of the painter's cells.
-    /// Every rule is now expressed and covered: the rows, the four-column yield
-    /// order with its ellipsis and its truncation direction, the selection, a
-    /// plugin's styled description spans, the scrollbar, single- and
-    /// double-click, the window (`prompt::suggestions_window` reads it back off
-    /// the tree, so `Prompt::scroll_offset` stops being one number that five
-    /// places write to), and the placement above the prompt row.
-    ///
-    /// The popup's own chrome is here too — its ring, its two-cell gutter, and
-    /// the ground under the rows the list does not fill. What is left is one
-    /// swap rather than a concept: moving the click rail off the recorded
-    /// rectangles in `ChromeLayout` and onto the layer. Both prompts have to
-    /// move together, because the overlay one shares
-    /// `suggestions_scrollbar_rect` and the scroll offset with this one.
-    #[allow(dead_code)]
+    /// **Only the bottom-anchored form.** The floating-overlay prompt draws
+    /// its list inside a card whose rectangle its own painter computes later
+    /// in the frame, so `Place::Inside` has nothing to be given yet; and the
+    /// file-browser prompts draw a different popup entirely. Both are the
+    /// painter's still, and both return `None` here so the two never draw the
+    /// same list.
     fn suggestions_description(&self) -> Option<crate::view::shell::prompt::Suggestions> {
         use crate::view::shell::prompt::{SuggestionRow, Suggestions};
         let prompt = self.active_window().prompt.as_ref()?;
         if prompt.suggestions.is_empty() {
             return None;
         }
+        // The file-browser prompts draw a different popup entirely — a browser
+        // card, not a list — and it is still the painter's.
+        if matches!(
+            prompt.prompt_type,
+            crate::view::prompt::PromptType::OpenFile
+                | crate::view::prompt::PromptType::SwitchProject
+                | crate::view::prompt::PromptType::SaveFileAs
+        ) {
+            return None;
+        }
+        // Which of the two lists this is, and therefore where it goes. The
+        // overlay's rectangle is the card's results band, which the shell tree
+        // placed a moment ago — that is what `overlay_prompt` moving made
+        // possible.
+        let place = match prompt.overlay {
+            true => crate::view::shell::prompt::Place::InCard,
+            false => crate::view::shell::prompt::Place::AbovePrompt,
+        };
         Some(Suggestions {
             rows: prompt
                 .suggestions
@@ -2795,10 +2846,11 @@ impl Editor {
                 })
                 .collect(),
             selected: prompt.selected_suggestion,
-            place: crate::view::shell::prompt::Place::default(),
+            place,
             // The row the painter drew under the popup, now stacked in the
             // layer with it. `render_quick_open_hints` is what this replaces.
-            hints: (prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen)
+            hints: (!prompt.overlay
+                && prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen)
                 .then(|| rust_i18n::t!("quick_open.mode_hints").to_string()),
         })
     }
@@ -3523,33 +3575,6 @@ impl Editor {
     }
 
     /// Render the Quick Open hints line showing available mode prefixes
-    fn render_quick_open_hints(
-        frame: &mut Frame,
-        area: ratatui::layout::Rect,
-        theme: &crate::view::theme::Theme,
-    ) {
-        use fresh_i18n::t;
-        use ratatui::style::{Modifier, Style};
-        use ratatui::text::{Line, Span};
-        use ratatui::widgets::Paragraph;
-
-        let hints_style = Style::default()
-            .fg(theme.line_number_fg)
-            .bg(theme.suggestion_selected_bg)
-            .add_modifier(Modifier::DIM);
-        let hints_text = t!("quick_open.mode_hints");
-        // Left-align with small margin
-        let left_margin = 2;
-        let hints_width = crate::primitives::display_width::str_width(&hints_text);
-        let mut spans = Vec::new();
-        spans.push(Span::styled(" ".repeat(left_margin), hints_style));
-        spans.push(Span::styled(hints_text.to_string(), hints_style));
-        let remaining = (area.width as usize).saturating_sub(left_margin + hints_width);
-        spans.push(Span::styled(" ".repeat(remaining), hints_style));
-
-        let paragraph = Paragraph::new(Line::from(spans));
-        frame.render_widget(paragraph, area);
-    }
 
     /// Apply dimming effect to UI elements outside the focused terminal area
     /// This visually indicates that keyboard capture mode is active
@@ -3626,95 +3651,63 @@ impl Editor {
             return;
         }
 
-        let is_quick_open = prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen;
-        let hints_height: u16 = if is_quick_open { 1 } else { 0 };
-        let suggestion_count = prompt
-            .suggestions
-            .len()
-            .min(crate::view::prompt::MAX_VISIBLE_SUGGESTIONS);
-        let height = suggestion_count as u16 + 2 + hints_height;
+        // Nothing is painted here any more. The layer drew the popup, the
+        // hints row and the scrollbar in the overlay band before this method
+        // ran, and everything below is the geometry the not-yet-migrated
+        // rails still ask `ChromeLayout` for — read off the tree that placed
+        // it rather than computed a second time.
+        //
+        // Gone with the painter: the `Clear` that blanked the cells under the
+        // box (a themed box fills its own ground), the `y` arithmetic that had
+        // to agree with a second copy in `chrome::Prompt::collect`, and the
+        // quick-open hints row, which is now the layer's own last row.
+        self.record_suggestions_geometry();
+    }
 
-        let suggestions_area = ratatui::layout::Rect {
-            x: prompt_area.x,
-            y: prompt_area.y.saturating_sub(height),
-            width,
-            height: height - hints_height,
-        };
-
-        // Blank the buffer cells under the suggestions box only when the
-        // pipeline is actually drawing chrome into cells (the TUI). In web mode
-        // (`suppress_chrome_cells`) the palette is drawn as native DOM on top of
-        // the cell buffer, so clearing here would punch a visible hole in the
-        // buffer wherever the native palette is NOT positioned over these rows
-        // (e.g. a centered-modal layout). Mirrors the gating every other chrome
-        // `Clear` already uses (overlay prompt, preview pane): compute geometry,
-        // don't mutate the cell buffer for chrome the frontend renders itself.
-        if !self.suppress_chrome_cells {
-            frame.render_widget(ratatui::widgets::Clear, suggestions_area);
-        }
-
-        // Adjust the prompt's scroll position to keep the selected item
-        // visible, scrolling the minimum amount required — unless the user
-        // has scrolled the list with the scrollbar, in which case pulling
-        // the offset back would undo their scroll (same reasoning as the
-        // overlay prompt, issue #2119).
-        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-            if !prompt.manual_scroll {
-                prompt.ensure_selected_visible_within(suggestion_count);
-            }
-        }
-        let Some(prompt) = &self.active_window().prompt else {
+    /// Copy the suggestion list's rectangles out of the shell tree.
+    ///
+    /// A bridge, and it is meant to read like one. `suggestions_area`,
+    /// `suggestions_outer_area` and `suggestions_scrollbar_rect` are consumed
+    /// by four rails that still work in coordinates — the click and hover
+    /// walks in `chrome::Prompt`, the buffer-cursor absorb guard in
+    /// `mouse_input`, the wheel's row budget in `prompt_lifecycle`, and the
+    /// web `Scene`. Each of them is a separate migration. Until then they read
+    /// one answer, produced once, by the layout that actually placed the box —
+    /// which is already better than the painter's return value, because there
+    /// is no longer a second derivation to disagree with.
+    fn record_suggestions_geometry(&mut self) {
+        use crate::view::shell::prompt as p;
+        let read = self.shell_ui.as_ref().map(|ui| {
+            let spec = ui.spec();
+            (
+                p::suggestions_rect(spec),
+                p::suggestions_list_rect(spec),
+                p::suggestions_scrollbar_rect(spec),
+                p::suggestions_window(spec),
+            )
+        });
+        let Some((outer, list, bar, window)) = read else {
             return;
         };
-
-        let new_suggestions_area = SuggestionsRenderer::render_with_hover(
-            frame,
-            suggestions_area,
-            prompt,
-            &self.theme.read().unwrap(),
-            self.active_window().mouse_state.hover_target.as_ref(),
-            true,
-            !self.suppress_chrome_cells,
-        );
+        let total = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .map(|p| p.suggestions.len())
+            .unwrap_or(0);
+        let to_rect = |r: fresh_ui::Rect| ratatui::layout::Rect {
+            x: r.x.max(0) as u16,
+            y: r.y.max(0) as u16,
+            width: r.w,
+            height: r.h,
+        };
         let chrome = self.active_chrome_mut();
-        chrome.suggestions_area = new_suggestions_area;
-        if chrome.suggestions_area.is_some() {
-            chrome.suggestions_outer_area = Some(suggestions_area);
-        }
-        // When the list overflows, the renderer drew a scrollbar over the
-        // popup's right border; record its rect so the shared prompt-
-        // scrollbar mouse handlers (click-to-jump, thumb drag) work here
-        // exactly like in the overlay prompt (issue #623 / #1593).
-        chrome.suggestions_scrollbar_rect =
-            new_suggestions_area.and_then(|(inner, _, visible, total)| {
-                (total > visible).then_some(ratatui::layout::Rect {
-                    x: inner.x + inner.width,
-                    y: inner.y,
-                    width: 1,
-                    height: inner.height,
-                })
-            });
-
-        // The quick-open hints row is chrome drawn into cells; the web renders
-        // no hints, so in `suppress_chrome_cells` mode we skip it entirely
-        // rather than stamp hint glyphs into the buffer cells the frontend
-        // slices (which would show through a centered-modal palette).
-        if is_quick_open && !self.suppress_chrome_cells {
-            let hints_area = ratatui::layout::Rect {
-                // Align with the prompt / suggestions box, which sit in the
-                // chrome area to the right of a left dock (`prompt_area.x`).
-                // Hardcoding `x: 0` here drew the hints starting at the very
-                // left edge — under the dock column — so the bar was
-                // partially obscured by the dock and visibly misaligned with
-                // the suggestions box stacked directly above it.
-                x: prompt_area.x,
-                y: prompt_area.y.saturating_sub(hints_height),
-                width,
-                height: hints_height,
-            };
-            frame.render_widget(ratatui::widgets::Clear, hints_area);
-            Self::render_quick_open_hints(frame, hints_area, &self.theme.read().unwrap());
-        }
+        chrome.suggestions_outer_area = outer.map(to_rect);
+        chrome.suggestions_scrollbar_rect = bar.map(to_rect);
+        chrome.suggestions_area = list.map(|r| {
+            let (first, visible) = window.unwrap_or((0, r.h as usize));
+            (to_rect(r), first, visible.max(r.h as usize), total)
+        });
     }
 
     /// Resolve the overlay's currently-selected match into a real
@@ -4383,38 +4376,25 @@ impl Editor {
         // on a narrow terminal. Measuring it (vs assuming 1) keeps
         // `suggestions_visible_rows` honest, so `ensure_selected_visible`
         // doesn't let the selection scroll just past the real list bottom.
-        let inner_w = overlay_rect.width.saturating_sub(2);
-        let toolbar_rows: usize = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .map(|p| {
-                if let Some(spec) = p.toolbar_widget.as_ref() {
-                    crate::widgets::render_spec_no_autofocus(
-                        spec,
-                        &std::collections::HashMap::new(),
-                        p.toolbar_focus.as_deref().unwrap_or(""),
-                        inner_w as u32,
-                    )
-                    .entries
-                    .len()
-                } else if p.title.is_empty() {
-                    0
-                } else {
-                    1
-                }
-            })
-            .unwrap_or(0);
-        let footer_visible = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .map(|p| !p.footer.is_empty())
-            .unwrap_or(false);
-        // Chrome around the result list: frame border (2) + input (1) +
-        // separator (1) + toolbar (`toolbar_rows`) + optional full-width footer (1).
-        let chrome_rows: usize = 4 + toolbar_rows + usize::from(footer_visible);
-        let suggestions_visible_rows = (overlay_rect.height as usize).saturating_sub(chrome_rows);
+        // How many rows the list can actually show, so the selection only
+        // scrolls when it genuinely passes the bottom — not when it crosses
+        // the bottom-popup default cap of `MAX_VISIBLE_SUGGESTIONS`, which
+        // would scroll prematurely.
+        //
+        // Read off the card, not counted here. This was
+        // `4 + toolbar_rows + footer` — border, input, separator, toolbar,
+        // footer — with the toolbar measured a second time to get its row
+        // count, and it had to be kept in step with the band arithmetic two
+        // hundred lines below that produced the list's actual rectangle. The
+        // description states the bands once and this is the height of one of
+        // them.
+        let suggestions_visible_rows = crate::view::shell::overlay_prompt::regions_of(
+            self.shell_ui.as_ref().expect("the shell tree is in place"),
+        )
+        .iter()
+        .find(|(k, _)| *k == crate::view::shell::overlay_prompt::CardRegion::Results)
+        .map(|(_, r)| r.height as usize)
+        .unwrap_or(0);
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             // Skip when the user has wheel-scrolled the list — keeping the
             // selection pinned in view would undo their scroll (issue #2119).
@@ -4560,45 +4540,28 @@ impl Editor {
         // left half beside the preview — and places the preview *under* the
         // toolbar, side-by-side with the result list. See
         // docs/internal/global-search-ux.md §12.
-        let toolbar_h: u16 = match &toolbar_widget_out {
-            Some(out) => out.entries.len() as u16,
-            None if !prompt.title.is_empty() => 1,
-            None => 0,
+        // The bands, read off the tree that placed them. This block used to
+        // compute them: `header_h = 2 + toolbar_h`, a `body` rect, and a
+        // `body.width / 2` split above 120 columns — with `chrome_rows =
+        // 4 + toolbar_rows + footer` forty lines above saying the same thing a
+        // second way, and `chrome::Prompt::collect` re-deriving the preview's
+        // rectangle from the cached copy. See `view::shell::overlay_prompt`.
+        let bands = crate::view::shell::overlay_prompt::regions_of(
+            self.shell_ui.as_ref().expect("the shell tree is in place"),
+        );
+        let band = |r: crate::view::shell::overlay_prompt::CardRegion| {
+            bands
+                .iter()
+                .find(|(k, _)| *k == r)
+                .map(|(_, rect)| *rect)
+                .unwrap_or_default()
         };
-        let footer_h: u16 = if prompt.footer.is_empty() { 0 } else { 1 };
-        // Header rows = input(1) + toolbar(toolbar_h) + separator(1).
-        let header_h: u16 = 2 + toolbar_h;
-        let body = Rect {
-            x: inner.x,
-            y: inner.y.saturating_add(header_h),
-            width: inner.width,
-            height: inner.height.saturating_sub(header_h + footer_h),
-        };
-
-        // Split the body into results | preview. Below ~120 cols, stack
-        // results-only (preview hidden — see design doc §5 "preview pane size
-        // when terminal is narrow").
-        let preview_min_cols: u16 = 120;
-        let show_preview = overlay_rect.width >= preview_min_cols && body.height > 0;
-        let (results_area, preview_area) = if show_preview {
-            let results_w = body.width / 2;
-            (
-                Rect {
-                    x: body.x,
-                    y: body.y,
-                    width: results_w,
-                    height: body.height,
-                },
-                Some(Rect {
-                    x: body.x + results_w,
-                    y: body.y,
-                    width: body.width - results_w,
-                    height: body.height,
-                }),
-            )
-        } else {
-            (body, None)
-        };
+        use crate::view::shell::overlay_prompt::CardRegion;
+        let toolbar_h: u16 = band(CardRegion::Toolbar).height;
+        let footer_h: u16 = band(CardRegion::Footer).height;
+        let results_area = band(CardRegion::Results);
+        let preview = band(CardRegion::Preview);
+        let preview_area = (preview.width > 0 && preview.height > 0).then_some(preview);
 
         // Cache the result/preview rects so the mouse-wheel handler can route
         // the wheel to the pane under the pointer (issue #2119).
@@ -4745,71 +4708,13 @@ impl Editor {
         // through the result set the selection is — only when the result set
         // actually exceeds the visible rows; otherwise the scrollbar is
         // visual noise.
-        if results_area.height >= 1 {
-            // No `-2` for popup-own-border — we render the
-            // borderless variant below since the overlay frame is
-            // already a border.
-            let inner_rows = results_area.height as usize;
-            let needs_scrollbar = prompt.suggestions.len() > inner_rows.max(1);
-            let scrollbar_w: u16 = if needs_scrollbar { 1 } else { 0 };
-            let list_area = Rect {
-                x: results_area.x,
-                y: results_area.y,
-                width: results_area.width.saturating_sub(scrollbar_w),
-                height: results_area.height,
-            };
-            let draw_chrome = !self.suppress_chrome_cells;
-            self.active_chrome_mut().suggestions_area = SuggestionsRenderer::render_with_hover(
-                frame,
-                list_area,
-                &prompt,
-                &theme,
-                self.active_window_mut().mouse_state.hover_target.as_ref(),
-                false,
-                draw_chrome,
-            );
-            if self.active_chrome_mut().suggestions_area.is_some() {
-                self.active_chrome_mut().suggestions_outer_area = Some(list_area);
-            }
-            // Render the scrollbar in the carved lane. Reuses the
-            // shared `view::ui::scrollbar` widget so thumb sizing
-            // and theme colours match scrollbars elsewhere in the
-            // editor (split rendering, file explorer, …).
-            if needs_scrollbar {
-                use crate::view::ui::scrollbar::{
-                    render_scrollbar, ScrollbarColors, ScrollbarState,
-                };
-                // Scrollbar rect aligns with the borderless
-                // suggestions list — same y/height as the list itself
-                // since there's no popup-own border to skip.
-                let scrollbar_rect = Rect {
-                    x: results_area.x + results_area.width - 1,
-                    y: list_area.y,
-                    width: 1,
-                    height: list_area.height,
-                };
-                let state = ScrollbarState::new(
-                    prompt.suggestions.len(),
-                    inner_rows.max(1),
-                    prompt.scroll_offset,
-                );
-                if draw {
-                    render_scrollbar(
-                        frame,
-                        scrollbar_rect,
-                        &state,
-                        &ScrollbarColors::from_theme(&theme),
-                    );
-                }
-                // Cache the rect for mouse hit testing in
-                // `chrome/prompt.rs::handle_click_prompt_scrollbar`.
-                self.active_chrome_mut().suggestions_scrollbar_rect = Some(scrollbar_rect);
-            } else {
-                self.active_chrome_mut().suggestions_scrollbar_rect = None;
-            }
-        } else {
-            self.active_chrome_mut().suggestions_scrollbar_rect = None;
-        }
+        // The list is the layer's, filling the results band. Gone with the
+        // painter's call: the carved scrollbar lane and its `needs_scrollbar`
+        // test (a viewport emits a bar exactly when its content overflows, and
+        // reserves the lane itself), and the three `ChromeLayout` rectangles
+        // recorded here — `record_suggestions_geometry` reads all three off the
+        // tree for both prompt forms now.
+        self.record_suggestions_geometry();
 
         // Plugin-supplied footer chrome row (Primitive #2 chrome
         // region). Each segment is a `StyledText` — same styling
