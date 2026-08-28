@@ -21,6 +21,7 @@ pub mod frame;
 pub mod input;
 pub mod menu;
 pub mod msg;
+pub mod overlay_prompt;
 pub mod prompt;
 pub mod search_options;
 pub mod status_bar;

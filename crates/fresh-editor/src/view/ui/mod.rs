@@ -5,7 +5,6 @@
 //! - `menu` - Menu bar rendering
 //! - `tabs` - Tab bar rendering for multiple buffers
 //! - `status_bar` - Status bar and prompt/minibuffer display
-//! - `suggestions` - Autocomplete and command palette UI
 //! - `split_rendering` - Split pane layout and rendering
 //! - `file_explorer` - File tree explorer rendering
 //! - `scrollbar` - Reusable scrollbar widget
@@ -41,7 +40,6 @@ pub mod split_rendering;
 #[cfg(feature = "runtime")]
 pub mod status_bar;
 #[cfg(feature = "runtime")]
-pub mod suggestions;
 #[cfg(feature = "runtime")]
 pub mod tabs;
 
@@ -71,6 +69,5 @@ pub use split_rendering::{EditorRenderConfig, RenderStyle, SplitRenderer};
 #[cfg(feature = "runtime")]
 pub use status_bar::{truncate_path, StatusBarRenderer, TruncatedPath};
 #[cfg(feature = "runtime")]
-pub use suggestions::SuggestionsRenderer;
 #[cfg(feature = "runtime")]
 pub use tabs::{TabHit, TabHitArea, TabLayout, TabsRenderer};

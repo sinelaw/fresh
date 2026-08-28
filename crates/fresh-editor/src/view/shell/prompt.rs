@@ -105,9 +105,14 @@ pub enum Place {
     /// Above the prompt row, in its own bordered popup, flipping below when
     /// there is no room above.
     AbovePrompt,
-    /// Filling a rectangle someone else measured, with no frame of its own.
-    /// The overlay card's results column.
-    Inside(fresh_ui::Rect),
+    /// Filling the overlay card's results band, with no frame of its own.
+    ///
+    /// No rectangle: the band is a node in the same tree, so the layer names
+    /// it and layout answers. Layers resolve after the main walk — that is
+    /// what `Anchor::Node` is for — so the band has its rectangle by the time
+    /// this one is placed, and nothing has to be measured twice or passed
+    /// between two passes.
+    InCard,
 }
 
 impl Default for Place {
@@ -354,6 +359,33 @@ fn node_row(index: usize, r: &SuggestionRow, st: RowState, name_elide: Elide) ->
     row().h(Sizing::Cells(1)).children(cells)
 }
 
+/// A press that reaches the popup's own chrome stops there.
+///
+/// `chrome:suggestions` was a `pointer_opaque` box over the popup's outer rect
+/// whose whole job was this: a click on the border, or on the padding below the
+/// last row, must not fall through and move the buffer cursor underneath.
+///
+/// The library stops the *hit search* at any box that draws — "a plain
+/// container is a surface until it says it is not" — but claiming is a separate
+/// question from hitting: `Dispatch::claimed` is true only when a handler said
+/// `stop()`, because producing a message and taking the event are different
+/// things. So the absorb is one handler, and it is the same one the explorer's
+/// panel body uses for the same reason.
+///
+/// Any button: the old box absorbed the right-click too, which is what kept the
+/// buffer's context menu from opening through the palette.
+fn absorb(n: Node<UiMsg>) -> Node<UiMsg> {
+    use fresh_ui::{gesture, Event, GestureKind};
+    gesture(n).on(
+        GestureKind::Press,
+        Rc::new(|ev: &Event| {
+            // Rows stop their own press, so this fires only where none did.
+            ev.stop();
+            None
+        }),
+    )
+}
+
 /// The suggestion list as a description.
 ///
 /// `windowed` is what replaces the painter's `scroll_offset` bookkeeping: the
@@ -439,11 +471,17 @@ fn popup(s: &Suggestions) -> Node<UiMsg> {
         .key(POPUP_KEY.with(|k| k.clone()))
         .theme(pair("ui.popup_border_fg", "ui.suggestion_bg"))
         .child(suggestions(s));
-    if s.place.bordered() {
-        body.border()
-    } else {
-        body
+    if !s.place.bordered() {
+        // Inside a card, the card decides how tall this is.
+        return absorb(body);
     }
+    // How tall the box is, in the terms the painter used: as many rows as it
+    // has, up to the cap, plus the ring. A content rule rather than a
+    // measurement — `suggestion_count.min(MAX_VISIBLE) as u16 + 2` was the same
+    // sentence in `render`, and it belongs with the list it describes because
+    // nothing outside knows the cap.
+    let visible = s.rows.len().min(MAX_VISIBLE_SUGGESTIONS) as u16;
+    absorb(body.border().h(Sizing::Cells(visible + 2)))
 }
 
 /// The list as an overlay above the prompt row.
@@ -463,21 +501,25 @@ pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
                 super::frame::HostRegion::PromptLine,
             )))
             .place(fresh_ui::Place::Above)
+            // As wide as the row it sits above, which is what `width =
+            // chrome.width` said in `render` — with the difference that the
+            // row's width is now something the tree knows rather than
+            // something the caller measures and passes in.
+            .stretch_to_anchor()
             .fit(Fit::FLIP.or(Fit::CLAMP)),
-        // The card measured this; the layer only occupies it. `Anchor::Point`
-        // for the corner and an explicit size for the rest — no `Fit`, because
-        // a rectangle the card carved out of the frame is already inside it.
-        Place::Inside(r) => l
-            .anchor(Anchor::Point(r.x.max(0) as u16, r.y.max(0) as u16))
-            .place(fresh_ui::Place::Over),
+        // The card's results band, by name. `Fill` takes its whole rectangle,
+        // and no `Fit` — a band the card carved out of the frame is already
+        // inside it.
+        Place::InCard => l
+            .anchor(Anchor::Node(super::overlay_prompt::region_key(
+                super::overlay_prompt::CardRegion::Results,
+            )))
+            .place(fresh_ui::Place::Fill),
     };
     // Not modal. The old encoding covered the frame below z15 to stop a
     // click reaching the *body*, which is a rule about a host leaf rather
     // than about this layer — see the ledger's withdrawn finding D.
-    let mut card = popup(s);
-    if let Place::Inside(r) = &s.place {
-        card = card.w(Sizing::Cells(r.w)).h(Sizing::Cells(r.h));
-    }
+    let card = popup(s);
     match &s.hints {
         Some(h) => l.child(col().children([card, hints_row(h)])),
         None => l.child(card),
@@ -525,6 +567,33 @@ pub fn suggestions_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Rect> {
         .iter()
         .find(|(k, _)| *k == key)
         .and_then(|(_, r)| spec.items.get(r.start).map(|i| i.rect))
+}
+
+/// The rows' own rectangle — inside the ring and above the hints.
+///
+/// What `SuggestionsRenderer` returned as `inner_rect`, and what the hover and
+/// click rails hit-tested against while they still worked in coordinates.
+pub fn suggestions_list_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Rect> {
+    let key = LIST_KEY.with(|k| k.clone());
+    spec.index
+        .iter()
+        .find(|(k, _)| *k == key)
+        .and_then(|(_, r)| spec.items.get(r.start).map(|i| i.rect))
+}
+
+/// The scrollbar's track, when the list has one.
+///
+/// `render` computed this by hand — one column at the popup's right edge, only
+/// when `total > visible` — and cached it in `ChromeLayout` for the drag
+/// handlers. The viewport emits the bar as an item when it needs one, so its
+/// presence and its rectangle are the same answer.
+pub fn suggestions_scrollbar_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Rect> {
+    let key = LIST_KEY.with(|k| k.clone());
+    let range = spec.index.iter().find(|(k, _)| *k == key)?.1.clone();
+    spec.items[range]
+        .iter()
+        .find(|i| matches!(i.draw, fresh_ui::Draw::Scrollbar { .. }))
+        .map(|i| i.rect)
 }
 
 /// Which slice of the list is on screen, read back off the laid-out tree.
@@ -928,85 +997,197 @@ mod tests {
     }
 
     /// **One list, two placements.** The overlay prompt draws its own frame
-    /// around the results column, so its list is borderless and fills a
-    /// rectangle the card measured; the bottom-anchored prompt brings its own
-    /// popup and sits above the row. They were two calls into one painter with
-    /// a `with_border` flag between them, and two copies of the placement
-    /// arithmetic that had to agree for a click to land.
+    /// around the results band, so its list is borderless and fills that band;
+    /// the bottom-anchored prompt brings its own popup and sits above the row.
+    /// They were two calls into one painter with a `with_border` flag between
+    /// them, and two copies of the placement arithmetic that had to agree for a
+    /// click to land.
+    ///
+    /// The band is named, not measured. `Anchor::Node` resolves after the main
+    /// walk, so the card has placed it by the time this layer is placed — no
+    /// rectangle passes between the two, and there is no second pass.
     #[test]
-    fn a_list_placed_inside_a_card_fills_it_and_brings_no_frame() {
-        let at = fresh_ui::Rect::new(10, 4, 24, 6);
+    fn a_list_placed_in_the_card_fills_its_band_and_brings_no_frame() {
+        use crate::view::shell::frame::{frame_tree, Frame};
+        use crate::view::shell::overlay_prompt::{
+            region_key as band_key, Card, CardRegion, PREVIEW_MIN_COLS,
+        };
         let mut ui: Ui<UiMsg> = Ui::new();
         let spec = ui
             .frame(
-                // Wrapped, because a layer resolves against a parent: it is
-                // out of flow *within* a tree, not a tree of its own.
-                col().child(suggestions_layer(&Suggestions {
-                    rows: rows(3),
-                    selected: Some(0),
-                    place: Place::Inside(at),
-                    hints: None,
-                })),
-                Size::new(60, 20),
+                frame_tree(Frame {
+                    prompt_line: true,
+                    card: Some(Card {
+                        at: fresh_ui::Rect::new(4, 2, PREVIEW_MIN_COLS + 20, 30),
+                        toolbar_rows: 2,
+                        footer: true,
+                    }),
+                    suggestions: Some(Suggestions {
+                        rows: rows(3),
+                        selected: Some(0),
+                        place: Place::InCard,
+                        hints: None,
+                    }),
+                    ..Frame::default()
+                }),
+                Size::new(200, 50),
             )
             .clone();
+        let band = ui.rect_of(
+            ui.find_by_key(&band_key(CardRegion::Results))
+                .expect("the band"),
+        );
+        assert!(band.w > 0 && band.h > 0, "the card placed a results band");
         assert_eq!(
             suggestions_rect(&spec),
-            Some(at),
-            "the layer fills the card"
+            Some(band),
+            "the list fills the band the card measured"
         );
         assert!(
             !spec
                 .items
                 .iter()
-                .any(|i| matches!(i.draw, fresh_ui::Draw::Border)),
+                .any(|i| matches!(i.draw, fresh_ui::Draw::Border)
+                    && i.theme.as_str() == "ui.popup_border_fg/ui.suggestion_bg"
+                    && i.rect == band),
             "a frame inside the card's frame is a double frame"
         );
     }
 
-    /// **The quick-open hints sit between the popup and the prompt row.**
-    ///
-    /// The painter computed that twice: the hints at "the prompt row minus
-    /// one", and the popup's `y` at "the prompt row minus the popup minus that
-    /// same one". Stacked in the layer, the agreement is the stacking — and
-    /// the popup rises by exactly the row the hints occupy, with no second
-    /// subtraction to keep in step.
+    /// **The popup is as wide as the prompt row.** `render` said
+    /// `width = chrome.width` and passed it in; the layer takes it from the
+    /// row it is anchored to, so the two cannot drift when a dock opens and
+    /// the chrome column narrows.
     #[test]
-    fn the_hints_row_sits_under_the_popup_and_lifts_it() {
+    fn the_popup_spans_the_prompt_row() {
         use crate::view::shell::frame::{frame_tree, region_key, Frame, HostRegion};
-        let build = |hints: Option<String>| {
-            let mut ui: Ui<UiMsg> = Ui::new();
-            let spec = ui
-                .frame(
-                    frame_tree(Frame {
-                        prompt_line: true,
-                        suggestions: Some(Suggestions {
-                            rows: rows(3),
-                            selected: Some(0),
-                            place: Place::AbovePrompt,
-                            hints,
-                        }),
-                        ..Frame::default()
+        let mut ui: Ui<UiMsg> = Ui::new();
+        let spec = ui
+            .frame(
+                frame_tree(Frame {
+                    prompt_line: true,
+                    // A dock takes cells off the left, so the prompt row is
+                    // narrower than the frame — which is the case the passed-in
+                    // width had to be kept in step with.
+                    dock: Some(12),
+                    suggestions: Some(Suggestions {
+                        rows: rows(3),
+                        selected: Some(0),
+                        place: Place::AbovePrompt,
+                        hints: None,
                     }),
-                    Size::new(60, 20),
-                )
-                .clone();
-            let prompt = ui.rect_of(ui.find_by_key(&region_key(HostRegion::PromptLine)).unwrap());
-            (suggestions_rect(&spec).expect("placed"), prompt)
+                    ..Frame::default()
+                }),
+                Size::new(60, 20),
+            )
+            .clone();
+        let prompt = ui.rect_of(ui.find_by_key(&region_key(HostRegion::PromptLine)).unwrap());
+        let popup = suggestions_rect(&spec).expect("placed");
+        assert_eq!((popup.x, popup.w), (prompt.x, prompt.w));
+    }
+
+    /// **A long list does not make a tall box.** `render` capped the popup's
+    /// height at `MAX_VISIBLE_SUGGESTIONS + 2`; a layer measures its content,
+    /// so without the cap said here a thousand-row palette would ask for a
+    /// thousand-row box.
+    #[test]
+    fn the_popup_stops_at_the_visible_row_cap() {
+        let tall = |n: usize| {
+            let mut ui: Ui<UiMsg> = Ui::new();
+            ui.frame(
+                col().child(suggestions_layer(&Suggestions {
+                    rows: rows(n),
+                    selected: Some(0),
+                    place: Place::AbovePrompt,
+                    hints: None,
+                })),
+                Size::new(60, 40),
+            );
+            ui.rect_of(
+                ui.find_by_key(&POPUP_KEY.with(|k| k.clone()))
+                    .expect("the box"),
+            )
+            .h
         };
-        let (bare, prompt) = build(None);
-        let (with, _) = build(Some("^F files  ^S symbols".into()));
         assert_eq!(
-            bare.bottom(),
-            prompt.y,
-            "with no hints the popup meets the prompt row"
+            tall(3),
+            3 + 2,
+            "a short list is its own height, plus the ring"
         );
         assert_eq!(
-            with.bottom(),
-            prompt.y - 1,
-            "the hints row is the cell between them"
+            tall(1000),
+            MAX_VISIBLE_SUGGESTIONS as u16 + 2,
+            "a long one stops at the cap"
         );
-        assert_eq!(with.h, bare.h, "and the popup itself is unchanged");
+    }
+
+    /// **A press on the popup's own chrome stops there.**
+    ///
+    /// `chrome:suggestions` was a `pointer_opaque` box over the outer rect
+    /// whose only job was this: a click on the border, or on the ground below
+    /// the last row, must not fall through and move the buffer cursor
+    /// underneath. The library stops the hit *search* at any box that draws,
+    /// but claiming is a separate question — `Dispatch::claimed` is true only
+    /// when a handler said `stop()` — so the absorb is one handler.
+    ///
+    /// Any button, because the old box absorbed the right-click too, which is
+    /// what kept the buffer's context menu from opening through the palette.
+    #[test]
+    fn a_press_on_the_popup_chrome_is_claimed_and_says_nothing() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            col().child(suggestions_layer(&Suggestions {
+                rows: rows(3),
+                selected: Some(0),
+                place: Place::AbovePrompt,
+                hints: None,
+            })),
+            Size::new(60, 20),
+        );
+        let box_rect = ui.rect_of(
+            ui.find_by_key(&POPUP_KEY.with(|k| k.clone()))
+                .expect("the box"),
+        );
+        // The border's own cell: inside the popup, outside every row.
+        let corner = Point::new(box_rect.x, box_rect.y);
+        for button in [MouseButton::Left, MouseButton::Right] {
+            let got = ui.dispatch(Input::press(corner, button, Mods::NONE));
+            assert!(
+                got.claimed,
+                "{button:?} on the border must not fall through"
+            );
+            assert!(got.msgs.is_empty(), "and must say nothing: {:?}", got.msgs);
+        }
+    }
+
+    /// **A list that overflows gets a scrollbar; one that fits does not.**
+    ///
+    /// `overflowing_list_draws_scrollbar_on_right_border` and
+    /// `fitting_list_keeps_plain_right_border` in the painter, which drew the
+    /// bar over the popup's right border when `suggestions.len() > visible`
+    /// and left the border plain otherwise — and, in the overlay's borderless
+    /// form, carved a column off the list to put it in. A viewport emits the
+    /// bar exactly when its content overflows and reserves the lane itself, so
+    /// the presence, the rectangle and the lane are one answer.
+    #[test]
+    fn the_scrollbar_appears_only_when_the_list_overflows() {
+        let bar = |n: usize| {
+            let mut ui: Ui<UiMsg> = Ui::new();
+            ui.frame(
+                suggestions(&Suggestions {
+                    rows: rows(n),
+                    selected: Some(0),
+                    place: Place::AbovePrompt,
+                    hints: None,
+                }),
+                Size::new(40, 6),
+            );
+            suggestions_scrollbar_rect(ui.spec())
+        };
+        assert!(bar(3).is_none(), "three rows in six: no bar");
+        let over = bar(60).expect("sixty rows in six: a bar");
+        assert_eq!(over.w, 1, "one column of track");
+        assert_eq!(over.x, 39, "at the list's right edge");
     }
 
     /// **Ledger finding A: the column yield order.** The name is sized before

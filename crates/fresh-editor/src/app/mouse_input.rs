@@ -88,30 +88,6 @@ fn lines_to_deliver(
     lines_due(elapsed, interval, remaining).max(remaining.saturating_sub(max_backlog))
 }
 
-/// Map a screen row on a suggestion list's scrollbar track to the prompt
-/// scroll offset that puts the thumb's top on exactly that row.
-///
-/// Shared by the press and the drag-follow-up so the thumb tracks the cursor
-/// identically in both. [`ScrollbarState::offset_for_thumb_top`] is the real
-/// inverse of the thumb geometry the renderer draws — the ONE track mapping
-/// (its off-by-a-row `click_to_offset` sibling is deleted).
-///
-/// Rows above/below the track clamp to its ends rather than being rejected,
-/// so a fast drag doesn't drop the thumb.
-pub(super) fn prompt_scrollbar_offset_for_row(
-    total: usize,
-    visible: usize,
-    scroll_offset: usize,
-    sb_rect: Rect,
-    row: u16,
-) -> usize {
-    use crate::view::ui::scrollbar::ScrollbarState;
-    let clamped_row = row.clamp(sb_rect.y, sb_rect.y + sb_rect.height.saturating_sub(1));
-    let track_row = clamped_row.saturating_sub(sb_rect.y) as usize;
-    ScrollbarState::new(total, visible, scroll_offset)
-        .offset_for_thumb_top(sb_rect.height as usize, track_row)
-}
-
 impl Editor {
     /// Handle a mouse event.
     /// Returns true if a re-render is needed.
@@ -1201,19 +1177,21 @@ impl Editor {
         let Some(grab) = super::chrome::pointer_grab(self) else {
             return Ok(());
         };
-        // Mouse-modal overlay: the only legitimate drags are the
-        // overlay's own result-list scrollbar and the grabs the old
-        // ladder ran ahead of the swallow (dock resize, widget text,
-        // widget scrollbar). Anything else — text selection in the
-        // buffer, a buffer scrollbar behind the overlay — is
-        // swallowed so the buffer stays put.
+        // Mouse-modal overlay: the only legitimate drags are the grabs the
+        // old ladder ran ahead of the swallow (dock resize, widget text,
+        // widget scrollbar). Anything else — text selection in the buffer, a
+        // buffer scrollbar behind the overlay — is swallowed so the buffer
+        // stays put.
+        //
+        // The overlay's own result-list scrollbar used to be on this list.
+        // It is not a grab any more: the list is a `fresh-ui` viewport and
+        // `hit.rs` owns its thumb, capturing the pointer itself for the
+        // duration of the drag, so nothing reaches this walk to be let
+        // through.
         if self.overlay_prompt_active()
             && !matches!(
                 grab,
-                PointerGrab::PromptScrollbar
-                    | PointerGrab::DockResize
-                    | PointerGrab::WidgetText
-                    | PointerGrab::WidgetScrollbar
+                PointerGrab::DockResize | PointerGrab::WidgetText | PointerGrab::WidgetScrollbar
             )
         {
             return Ok(());
@@ -1251,13 +1229,6 @@ impl Editor {
             // Selecting text in an info popup: extend the selection.
             PointerGrab::PopupSelect => {
                 self.handle_popup_select_drag(col, row);
-            }
-            // The floating-overlay prompt's scrollbar (issue #1796):
-            // update its scroll_offset using the same math as the
-            // click handler. Same shared-widget logic the
-            // popup-scrollbar drag uses below.
-            PointerGrab::PromptScrollbar => {
-                self.handle_prompt_scrollbar_drag(row);
             }
             // A buffer popup's scrollbar: update its scroll position.
             PointerGrab::PopupScrollbar => {
@@ -1343,7 +1314,6 @@ impl Editor {
         ms.drag_selection_word_end = None;
         ms.terminal_drag_pending = None;
         ms.dragging_popup_scrollbar = None;
-        ms.dragging_prompt_scrollbar = false;
         ms.selecting_in_popup = None;
     }
 }
