@@ -26,7 +26,7 @@ const editor = getEditor();
 //     reshape).
 //   - Auto-refreshes every 5 seconds while visible.
 //   - All colors are theme keys → repaints for free on theme switch.
-//   - Clickable rows (repo URL, branch name, PR numbers, review-branch
+//   - Clickable rows (repo URL, branch name, PR numbers, branch-log
 //     action) route clicks through the mouse_click hook, so they work
 //     in terminals that swallow OSC-8 hyperlinks. The OSC-8 `url` span
 //     is still set as a fallback for terminals that do honor it.
@@ -1408,16 +1408,16 @@ const gitRefresh: SectionRefresh = async (ctx) => {
         modified > 0 ? "warn" : "muted",
     );
 
-    // Clickable "review branch" action. Triggers the audit_mode
-    // plugin's `start_review_branch` handler via the plugin-action
+    // Clickable "branch log" action. Triggers the audit_mode
+    // plugin's `start_branch_log` handler via the plugin-action
     // bridge — executeAction falls through to Action::PluginAction
     // for any name that's not a built-in, and the plugin manager
     // dispatches that to the registered handler by name.
-    ctx.text("    " + pad("review", 10), { color: "muted" });
-    ctx.text("review branch", {
+    ctx.text("    " + pad("log", 10), { color: "muted" });
+    ctx.text("branch log", {
         color: "accent",
         bold: true,
-        onClick: () => editor.executeAction("start_review_branch"),
+        onClick: () => editor.executeAction("start_branch_log"),
     });
     ctx.newline();
 };

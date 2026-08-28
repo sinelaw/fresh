@@ -1,4 +1,4 @@
-//! E2E test for the "Git Log (Current File)" command.
+//! E2E test for the "Git Log: Current File" command.
 //!
 //! The command scopes the magit-style log to the focused buffer's file
 //! (`git log -- <file>`), as opposed to the full-repository "Git Log"
@@ -56,9 +56,9 @@ fn git_log_current_file_filters_to_focused_file() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Git Log (Current File)").unwrap();
+    harness.type_text("Git Log: Current File").unwrap();
     harness
-        .wait_for_screen_contains("Git Log (Current File)")
+        .wait_for_screen_contains("Git Log: Current File")
         .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)

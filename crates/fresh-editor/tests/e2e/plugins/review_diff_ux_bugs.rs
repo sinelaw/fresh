@@ -196,7 +196,7 @@ fn marker_new_line_number(screen: &str, marker: &str) -> Option<u32> {
     gutter.split_whitespace().last()?.parse().ok()
 }
 
-/// Stash the working tree so `Review Stash` has something to show. Reverts the
+/// Stash the working tree so `Review Diff: Stash` has something to show. Reverts the
 /// tree as a side effect, which is what makes the stash the only diff source.
 #[cfg(unix)]
 fn git_stash(repo: &GitTestRepo) {
@@ -1995,12 +1995,12 @@ fn test_issue2036_range_refresh_explains_working_tree_excluded() {
     harness.open_file(&main_rs).unwrap();
     harness.render().unwrap();
 
-    // Open Review Range against HEAD~..HEAD.
+    // Open Review Diff: Range against HEAD~..HEAD.
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Review Range").unwrap();
+    harness.type_text("Review Diff: Range").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -2165,15 +2165,15 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
 // Oversized changesets
 // ---------------------------------------------------------------------------
 
-/// Open Review Range on `HEAD~..HEAD` and wait for the stream to render.
+/// Open Review Diff: Range on `HEAD~..HEAD` and wait for the stream to render.
 fn open_review_range_head(harness: &mut EditorTestHarness) {
     // Through `run_palette_command`, which waits for the row to be listed as
-    // a *result* before confirming. "Review Range" is registered by the
+    // a *result* before confirming. "Review Diff: Range" is registered by the
     // audit_mode plugin and Quick Open re-filters on input change only, so
     // typing the name and pressing Enter blind fires on whichever row was
     // selected when the last keystroke landed — running some other command,
     // after which none of the waits below can resolve.
-    harness.run_palette_command("Review Range").unwrap();
+    harness.run_palette_command("Review Diff: Range").unwrap();
 
     // Wait for the *range picker*, not merely for "a prompt". The palette is
     // itself a prompt, so `wait_for_prompt` is satisfied by the one we just
@@ -2199,7 +2199,7 @@ fn open_review_range_head(harness: &mut EditorTestHarness) {
     wait_for_review_ready(harness);
 }
 
-/// Review Range parses Git's patch output, so it has to pin the output format
+/// Review Diff: Range parses Git's patch output, so it has to pin the output format
 /// instead of mistaking a user's reformatted (or empty) diff for no changes.
 #[test]
 #[cfg(unix)]
@@ -2234,7 +2234,7 @@ fn test_range_review_ignores_external_diff_and_format_settings() {
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("RANGE_EXTERNAL_DIFF_MARKER"),
-        "Review Range should render Git's native patch even when diff.external, \
+        "Review Diff: Range should render Git's native patch even when diff.external, \
          a textconv filter, colour and prefix settings are configured. Screen:\n{screen}"
     );
     // The marker is the second line of the new file. Under the textconv filter
@@ -2244,7 +2244,7 @@ fn test_range_review_ignores_external_diff_and_format_settings() {
     assert_eq!(
         marker_new_line_number(&screen, "RANGE_EXTERNAL_DIFF_MARKER"),
         Some(2),
-        "Review Range should number the marker by the real file, not by \
+        "Review Diff: Range should number the marker by the real file, not by \
          textconv output. Screen:\n{screen}"
     );
 }
@@ -2332,7 +2332,7 @@ fn test_stash_review_ignores_external_diff_and_format_settings() {
     .unwrap();
     harness.render().unwrap();
 
-    harness.run_palette_command("Review Stash").unwrap();
+    harness.run_palette_command("Review Diff: Stash").unwrap();
     // The ref prompt opens prefilled with `stash@{0}`, which is the entry we
     // just pushed, so confirm it as-is.
     harness.wait_for_prompt().unwrap();
@@ -2347,13 +2347,13 @@ fn test_stash_review_ignores_external_diff_and_format_settings() {
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("STASH_EXTERNAL_DIFF_MARKER"),
-        "Review Stash should render Git's native patch even when diff.external, \
+        "Review Diff: Stash should render Git's native patch even when diff.external, \
          colour and prefix settings are configured. Screen:\n{screen}"
     );
     assert_eq!(
         marker_new_line_number(&screen, "STASH_EXTERNAL_DIFF_MARKER"),
         Some(2),
-        "Review Stash should number the marker by the real file. Screen:\n{screen}"
+        "Review Diff: Stash should number the marker by the real file. Screen:\n{screen}"
     );
 }
 

@@ -1,12 +1,12 @@
 # Git
 
-> **Palette:** `Review Diff`, `Review: Commit Range`, `Review: PR Branch`, `Git Log`, `Next Diff Chunk`, `Previous Diff Chunk`. Run **Keybinding Editor** to see or change the keys.
+> **Palette:** `Review Diff`, `Review Diff: Range (Commit or Branch)`, `Review Diff: Stash`, `Git Log`, `Git Log: PR Branch`, `Next Diff Chunk`, `Previous Diff Chunk`. Run **Keybinding Editor** to see or change the keys.
 
 Fresh has built-in tooling for reviewing diffs, navigating git history, and jumping between changes. Everything here is driven from the command palette.
 
 *   **Review Diff** — unified buffer of working-tree hunks, with stage / unstage / discard on the cursor row.
-*   **Review: Commit Range / PR Branch** — same buffer against an arbitrary range or a branch's commits.
-*   **Git Log** — magit-style log with a live-preview diff panel on the right.
+*   **Review Diff: Range / Stash** — same buffer against an arbitrary range, a branch, or a stash entry.
+*   **Git Log** — magit-style log with a live-preview diff panel on the right, over the repo, one file, or a PR branch.
 *   **Git Blame** — magit-style blame for the current file.
 *   **Diff Chunk Navigation** — jump between hunks from git *or* saved diff files with the same commands.
 
@@ -17,8 +17,10 @@ Fresh has built-in tooling for reviewing diffs, navigating git history, and jump
 Entry points (all in the command palette):
 
 - **Review Diff** — everything staged, unstaged, and untracked in the working tree right now.
-- **Review: Commit Range** — any range expression, e.g. `main..feature` or `HEAD~5...HEAD`.
-- **Review: PR Branch** — walk a branch's commits, with a side-by-side `git show` for the currently selected commit.
+- **Review Diff: Range (Commit or Branch)** — any range expression, e.g. `main..feature` or `HEAD~5...HEAD`, or a single commit SHA. This is how you review a whole branch: the commits arrive flattened into one diff.
+- **Review Diff: Stash** — a stash entry, `stash@{0}` by default.
+
+Everything that acts on an open review — **Review Diff: Stop**, **Refresh**, **Add Comment**, **Edit Note**, **Export to Markdown**, **Export to JSON** — shares the same `Review Diff: ` prefix and appears in the palette once a review is open.
 
 Inside a review:
 
@@ -29,7 +31,7 @@ Inside a review:
 
 ## Git Log
 
-**Git Log** opens a live-preview commit history. Moving through the log updates the right panel with the diff for the selected commit — no need to open each one to see what it touched. Commit messages wrap, columns align, and the toolbar is clickable. **Git Log (Current File)** scopes the history to the active buffer's file.
+**Git Log** opens a live-preview commit history. Moving through the log updates the right panel with the diff for the selected commit — no need to open each one to see what it touched. Commit messages wrap, columns align, and the toolbar is clickable. **Git Log: Current File** scopes the history to the active buffer's file, and **Git Log: PR Branch** scopes it to the commits on the current branch against a base ref, with a side-by-side `git show` for the selected commit (**Git Log: Close PR Branch** and **Git Log: Refresh PR Branch** act on that panel). To *review* those commits rather than browse them, use **Review Diff: Range**.
 
 ## Git Blame
 

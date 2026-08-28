@@ -39,6 +39,18 @@ import {
 } from "./lib/widgets.ts";
 const VirtualBufferFactory = createVirtualBufferFactory(editor);
 
+/**
+ * `editor.t` returns the key itself when a string is missing, so the common
+ * `editor.t(key) || fallback` idiom never reaches the fallback — the user sees
+ * `status.loading` on screen instead. `tr` does the check the idiom meant to.
+ */
+function tr(key: string, args?: Record<string, string>): string | null {
+    const raw = args ? editor.t(key, args) : editor.t(key);
+    if (!raw || raw === key) return null;
+    return raw;
+}
+
+
 
 
 /**
@@ -6885,11 +6897,11 @@ registerHandler("stop_review_diff", stop_review_diff);
 // Alternatives considered for the picker UI:
 //   - A dedicated two-panel picker (from / to). Clean but adds a big new
 //     UI surface for a small benefit.
-//   - The existing `start_review_branch` commit list (inline, Enter-to-
+//   - The existing `start_branch_log` commit list (inline, Enter-to-
 //     select). Rejected because that view is commit-by-commit and we
 //     specifically want a *flattened* diff for batch commenting.
 //   - Single prompt with a small suggestion list. Chosen — matches the
-//     tone of the existing `start_review_branch` prompt and lets power
+//     tone of the existing branch-log prompt and lets power
 //     users type arbitrary revspecs without a multi-step UI.
 
 /**
@@ -7021,7 +7033,7 @@ editor.on("prompt_confirmed", (args) => {
     if (args.prompt_type !== "review-range") return true;
     const range = parseRangeInput(args.input);
     if (!range) {
-        editor.setStatus(editor.t("status.cancelled") || "Cancelled");
+        editor.setStatus(tr("status.cancelled") ?? "Cancelled");
         return true;
     }
     // Kick off the async bootstrap; the prompt is already dismissed so we
@@ -7476,18 +7488,25 @@ async function side_by_side_diff_current_file() {
 registerHandler("side_by_side_diff_current_file", side_by_side_diff_current_file);
 
 // =============================================================================
-// Review PR Branch
+// Git Log: PR Branch
 //
-// A companion view to `start_review_diff` for reviewing the full set of
-// commits on a PR branch (rather than just the working-tree changes). It
-// opens a buffer group with the commit history on the left (rendered by
-// the shared `lib/git_history.ts` helpers the git_log plugin uses) and a
-// live-updating `git show` of the selected commit on the right. This reuses
-// the same rendering pipeline so both plugins stay visually consistent and
-// respect theme keys in one place.
+// A git-log view scoped to a PR branch: the commits in `base..HEAD` rather
+// than the working-tree changes `start_review_diff` shows. It is named into
+// the git_log plugin's `Git Log: …` family because that is what it is; the
+// `Review Diff: …` family is the review tool. It opens a buffer
+// group with the commit history on the left (rendered by the shared
+// `lib/git_history.ts` helpers the git_log plugin uses) and a live-updating
+// `git show` of the selected commit on the right. This reuses the same
+// rendering pipeline so both plugins stay visually consistent and respect
+// theme keys in one place.
+//
+// This is a *browser*, not a review session: it opens no review buffers and
+// takes no comments. To code-review the same commits, use `Review Diff:
+// Range` with `base..HEAD`, which flattens them into a single reviewable
+// diff.
 // =============================================================================
 
-interface ReviewBranchState {
+interface BranchLogState {
     isOpen: boolean;
     groupId: number | null;
     logBufferId: number | null;
@@ -7501,14 +7520,14 @@ interface ReviewBranchState {
     logRowByteOffsets: number[];
 }
 
-const branchState: ReviewBranchState = {
+const branchState: BranchLogState = {
     isOpen: false,
     groupId: null,
     logBufferId: null,
     detailBufferId: null,
     commits: [],
     selectedIndex: 0,
-    // Empty means "not yet detected"; start_review_branch fills this in
+    // Empty means "not yet detected"; start_branch_log fills this in
     // from the repo's actual default branch (main, master, or whatever
     // origin/HEAD points at) before showing the prompt.
     baseRef: "",
@@ -7587,10 +7606,10 @@ function branchIndexFromCursor(bytePos: number): number {
 
 function branchRenderLog(): void {
     if (branchState.groupId === null) return;
-    const rawHeader = editor.t("panel.review_branch_header", { base: branchState.baseRef });
-    const header = (rawHeader && !rawHeader.startsWith("panel.")) ? rawHeader : `Commits (${branchState.baseRef}..HEAD)`;
-    const rawFooter = editor.t("panel.review_branch_footer");
-    const footer = (rawFooter && !rawFooter.startsWith("panel.")) ? rawFooter : "j/k: navigate · Enter: focus detail · r: refresh · q: close";
+    const header = tr("panel.branch_log_header", { base: branchState.baseRef })
+        ?? `Commits (${branchState.baseRef}..HEAD)`;
+    const footer = tr("panel.branch_log_footer")
+        ?? "j/k: navigate · Enter: focus detail · r: refresh · q: close";
     const entries = buildCommitLogEntries(branchState.commits, {
         selectedIndex: branchState.selectedIndex,
         header,
@@ -7615,7 +7634,7 @@ function branchByteOffsetOfFirstCommit(): number {
 async function branchRefreshDetail(): Promise<void> {
     if (branchState.groupId === null) return;
     if (branchState.commits.length === 0) {
-        const msg = editor.t("status.review_branch_empty") || "No commits in the selected range.";
+        const msg = tr("status.branch_log_empty") ?? "No commits in the selected range.";
         editor.setPanelContent(
             branchState.groupId,
             "detail",
@@ -7637,7 +7656,7 @@ async function branchRefreshDetail(): Promise<void> {
         branchState.groupId,
         "detail",
         buildDetailPlaceholderEntries(
-            editor.t("status.loading_commit", { hash: commit.shortHash }) || `Loading ${commit.shortHash}…`,
+            tr("status.loading_commit", { hash: commit.shortHash }) ?? `Loading ${commit.shortHash}…`,
         ),
     );
     const output = await fetchCommitShow(editor, commit.hash, gitCwd());
@@ -7651,9 +7670,9 @@ async function branchRefreshDetail(): Promise<void> {
     );
 }
 
-async function start_review_branch(): Promise<void> {
+async function start_branch_log(): Promise<void> {
     if (branchState.isOpen) {
-        editor.setStatus(editor.t("status.already_open") || "Review branch already open");
+        editor.setStatus(tr("status.branch_log_already_open") ?? "Branch log already open");
         return;
     }
     // Prompt for the base ref so the user can review any PR, not just
@@ -7669,18 +7688,17 @@ async function start_review_branch(): Promise<void> {
         : `Base ref to compare against (default: ${suggested}):`;
     const input = await editor.prompt(promptText + " ", suggested);
     if (input === null) {
-        editor.setStatus(editor.t("status.cancelled") || "Cancelled");
+        editor.setStatus(tr("status.cancelled") ?? "Cancelled");
         return;
     }
     const base = input.trim() || suggested;
     branchState.baseRef = base;
 
-    editor.setStatus(editor.t("status.loading") || "Loading commits…");
+    editor.setStatus(tr("status.branch_log_loading") ?? "Loading commits…");
     branchState.commits = await fetchGitLog(editor, { range: `${base}..HEAD`, maxCommits: 500, cwd: gitCwd() });
     if (branchState.commits.length === 0) {
         editor.setStatus(
-            editor.t("status.review_branch_empty", { base }) ||
-                `No commits in ${base}..HEAD — nothing to review.`,
+            tr("status.branch_log_empty", { base }) ?? `No commits in ${base}..HEAD`,
         );
         return;
     }
@@ -7695,8 +7713,8 @@ async function start_review_branch(): Promise<void> {
     // `createBufferGroup` is a runtime-only binding (not in the generated
     // EditorAPI type); cast to `any` so the type-checker doesn't complain.
     const group = await (editor as any).createBufferGroup(
-        `*Review Branch ${base}..HEAD*`,
-        "review-branch",
+        `*Git Log: ${base}..HEAD*`,
+        "branch-log",
         layout,
     );
     branchState.groupId = group.groupId as number;
@@ -7722,21 +7740,21 @@ async function start_review_branch(): Promise<void> {
     if (branchState.groupId !== null) {
         editor.focusBufferGroupPanel(branchState.groupId, "log");
     }
-    editor.on("cursor_moved", on_review_branch_cursor_moved);
+    editor.on("cursor_moved", on_branch_log_cursor_moved);
 
     editor.setStatus(
-        editor.t("status.review_branch_ready", {
+        tr("status.branch_log_ready", {
             count: String(branchState.commits.length),
             base,
-        }) || `Reviewing ${branchState.commits.length} commits in ${base}..HEAD`,
+        }) ?? `${branchState.commits.length} commits in ${base}..HEAD`,
     );
 }
-registerHandler("start_review_branch", start_review_branch);
+registerHandler("start_branch_log", start_branch_log);
 
-function stop_review_branch(): void {
+function stop_branch_log(): void {
     if (!branchState.isOpen) return;
     if (branchState.groupId !== null) editor.closeBufferGroup(branchState.groupId);
-    editor.off("cursor_moved", on_review_branch_cursor_moved);
+    editor.off("cursor_moved", on_branch_log_cursor_moved);
     branchState.isOpen = false;
     branchState.groupId = null;
     branchState.logBufferId = null;
@@ -7744,11 +7762,11 @@ function stop_review_branch(): void {
     branchState.commits = [];
     branchState.selectedIndex = 0;
     branchState.detailCache = null;
-    editor.setStatus(editor.t("status.closed") || "Review branch closed");
+    editor.setStatus(tr("status.branch_log_closed") ?? "Branch log closed");
 }
-registerHandler("stop_review_branch", stop_review_branch);
+registerHandler("stop_branch_log", stop_branch_log);
 
-async function review_branch_refresh(): Promise<void> {
+async function branch_log_refresh(): Promise<void> {
     if (!branchState.isOpen) return;
     const base = branchState.baseRef;
     branchState.commits = await fetchGitLog(editor, { range: `${base}..HEAD`, maxCommits: 500, cwd: gitCwd() });
@@ -7759,10 +7777,10 @@ async function review_branch_refresh(): Promise<void> {
     branchRenderLog();
     await branchRefreshDetail();
 }
-registerHandler("review_branch_refresh", review_branch_refresh);
+registerHandler("branch_log_refresh", branch_log_refresh);
 
 /** Is the detail panel the currently-focused buffer? */
-function isReviewBranchDetailFocused(): boolean {
+function isBranchLogDetailFocused(): boolean {
     return (
         branchState.detailBufferId !== null &&
         editor.getActiveBufferId() === branchState.detailBufferId
@@ -7770,7 +7788,7 @@ function isReviewBranchDetailFocused(): boolean {
 }
 
 /** The currently-selected commit in the log panel, or null. */
-function selectedReviewBranchCommit(): GitCommit | null {
+function selectedBranchLogCommit(): GitCommit | null {
     if (branchState.commits.length === 0) return null;
     const i = Math.max(
         0,
@@ -7783,25 +7801,25 @@ function selectedReviewBranchCommit(): GitCommit | null {
  * Enter: on the log panel jumps focus into the detail panel; on the detail
  * panel opens the file at the cursor position at the selected commit (if any).
  */
-function review_branch_enter(): void {
+function branch_log_enter(): void {
     if (branchState.groupId === null) return;
-    if (isReviewBranchDetailFocused()) {
-        void review_branch_detail_open_file();
+    if (isBranchLogDetailFocused()) {
+        void branch_log_detail_open_file();
         return;
     }
     editor.focusBufferGroupPanel(branchState.groupId, "detail");
 }
-registerHandler("review_branch_enter", review_branch_enter);
+registerHandler("branch_log_enter", branch_log_enter);
 
 /**
  * Open the file at the cursor's `(file, line)` text-properties at the
  * currently-selected commit, in a read-only virtual buffer. Mirrors the
  * git-log plugin's `git_log_detail_open_file` so users get the same
- * drill-down from the review-branch detail panel.
+ * drill-down from the branch-log detail panel.
  */
-async function review_branch_detail_open_file(): Promise<void> {
+async function branch_log_detail_open_file(): Promise<void> {
     if (branchState.detailBufferId === null) return;
-    const commit = selectedReviewBranchCommit();
+    const commit = selectedBranchLogCommit();
     if (!commit) return;
 
     const props = editor.getTextPropertiesAtCursor(branchState.detailBufferId);
@@ -7841,7 +7859,7 @@ async function review_branch_detail_open_file(): Promise<void> {
     const name = `*${commit.shortHash}:${file}*`;
     const view = await editor.createVirtualBuffer({
         name,
-        mode: "review-branch-file-view",
+        mode: "branch-log-file-view",
         readOnly: true,
         editingDisabled: true,
         showLineNumbers: true,
@@ -7862,33 +7880,33 @@ async function review_branch_detail_open_file(): Promise<void> {
     }
 }
 registerHandler(
-    "review_branch_detail_open_file",
-    review_branch_detail_open_file,
+    "branch_log_detail_open_file",
+    branch_log_detail_open_file,
 );
 
 /** Tab: toggle focus between the log and detail panels. */
-function review_branch_tab(): void {
+function branch_log_tab(): void {
     if (branchState.groupId === null) return;
     editor.focusBufferGroupPanel(
         branchState.groupId,
-        isReviewBranchDetailFocused() ? "log" : "detail",
+        isBranchLogDetailFocused() ? "log" : "detail",
     );
 }
-registerHandler("review_branch_tab", review_branch_tab);
+registerHandler("branch_log_tab", branch_log_tab);
 
 /** q/Escape: focus-back from detail, or close when already on log. */
-function review_branch_close_or_back(): void {
+function branch_log_close_or_back(): void {
     if (branchState.groupId === null) return;
     const active = editor.getActiveBufferId();
     if (branchState.detailBufferId !== null && active === branchState.detailBufferId) {
         editor.focusBufferGroupPanel(branchState.groupId, "log");
         return;
     }
-    stop_review_branch();
+    stop_branch_log();
 }
-registerHandler("review_branch_close_or_back", review_branch_close_or_back);
+registerHandler("branch_log_close_or_back", branch_log_close_or_back);
 
-function on_review_branch_cursor_moved(data: {
+function on_branch_log_cursor_moved(data: {
     buffer_id: number;
     cursor_id: number;
     old_position: number;
@@ -7902,10 +7920,10 @@ function on_review_branch_cursor_moved(data: {
     branchRenderLog();
     branchRefreshDetail();
 }
-registerHandler("on_review_branch_cursor_moved", on_review_branch_cursor_moved);
+registerHandler("on_branch_log_cursor_moved", on_branch_log_cursor_moved);
 
 editor.defineMode(
-    "review-branch",
+    "branch-log",
     [
         // vi-style aliases for Up/Down. Everything else (arrows,
         // Page{Up,Down}, Home/End, selection motion, …) is inherited
@@ -7914,38 +7932,38 @@ editor.defineMode(
         ["j", "move_down"],
         // Enter: from the log, focus the detail panel; from the detail
         // panel, open the file at the cursor at the selected commit.
-        ["Return", "review_branch_enter"],
+        ["Return", "branch_log_enter"],
         // Tab: toggle focus between the log and detail panels.
-        ["Tab", "review_branch_tab"],
-        ["r", "review_branch_refresh"],
-        ["q", "review_branch_close_or_back"],
-        ["Escape", "review_branch_close_or_back"],
+        ["Tab", "branch_log_tab"],
+        ["r", "branch_log_refresh"],
+        ["q", "branch_log_close_or_back"],
+        ["Escape", "branch_log_close_or_back"],
     ],
     true, // readOnly
     false, // allowTextInput — keeps plain letters from inserting into the RO buffer
     true, // inheritNormalBindings — PageUp/PageDown/arrows/Home/End come from Normal
 );
 
-/** Close the file-view virtual buffer opened from the review-branch detail panel. */
-function review_branch_file_view_close(): void {
+/** Close the file-view virtual buffer opened from the branch-log detail panel. */
+function branch_log_file_view_close(): void {
     const id = editor.getActiveBufferId();
     if (id) editor.closeBuffer(id);
 }
-registerHandler("review_branch_file_view_close", review_branch_file_view_close);
+registerHandler("branch_log_file_view_close", branch_log_file_view_close);
 
 // Mode for the read-only "git show <hash>:<file>" buffer opened from the
-// review-branch detail panel. Mirrors git-log's `git-log-file-view`:
+// branch-log detail panel. Mirrors git-log's `git-log-file-view`:
 // q/Escape close the view, j/k alias Up/Down, and all other Normal
 // bindings (arrows, PageUp/Down, Home/End, Ctrl+C copy) are inherited so
 // unbound keys don't fall through to edit actions and trip the
 // `editing_disabled` status message (see #566).
 editor.defineMode(
-    "review-branch-file-view",
+    "branch-log-file-view",
     [
         ["k", "move_up"],
         ["j", "move_down"],
-        ["q", "review_branch_file_view_close"],
-        ["Escape", "review_branch_file_view_close"],
+        ["q", "branch_log_file_view_close"],
+        ["Escape", "branch_log_file_view_close"],
     ],
     true, // read-only
     false, // allow_text_input
@@ -7953,13 +7971,21 @@ editor.defineMode(
 );
 
 // Register Modes and Commands
+//
+// Two families, each under one prefix. `Review Diff: …` is the code review
+// tool — the working tree (`Review Diff` itself), a range or branch flattened
+// into one diff, a stash entry, and the commands that act on an open review
+// session. `Git Log: …` is the commit browser the git_log plugin owns; the PR
+// branch log below joins that family because that is what it is.
 editor.registerCommand("%cmd.review_diff", "%cmd.review_diff_desc", "start_review_diff", null);
-editor.registerCommand("%cmd.review_branch", "%cmd.review_branch_desc", "start_review_branch", null);
-editor.registerCommand("%cmd.stop_review_branch", "%cmd.stop_review_branch_desc", "stop_review_branch", "review-branch");
-editor.registerCommand("%cmd.refresh_review_branch", "%cmd.refresh_review_branch_desc", "review_branch_refresh", "review-branch");
 editor.registerCommand("%cmd.stop_review_diff", "%cmd.stop_review_diff_desc", "stop_review_diff", "review-mode");
 editor.registerCommand("%cmd.refresh_review_diff", "%cmd.refresh_review_diff_desc", "review_refresh", "review-mode");
 editor.registerCommand("%cmd.side_by_side_diff", "%cmd.side_by_side_diff_desc", "side_by_side_diff_current_file", null);
+
+// Git Log: PR Branch (a git log scoped to `base..HEAD`, not a review session)
+editor.registerCommand("%cmd.branch_log", "%cmd.branch_log_desc", "start_branch_log", null);
+editor.registerCommand("%cmd.branch_log_close", "%cmd.branch_log_close_desc", "stop_branch_log", "branch-log");
+editor.registerCommand("%cmd.branch_log_refresh", "%cmd.branch_log_refresh_desc", "branch_log_refresh", "branch-log");
 
 // Review Comment Commands
 editor.registerCommand("%cmd.add_comment", "%cmd.add_comment_desc", "review_add_comment", "review-mode");

@@ -4200,11 +4200,11 @@ fn rename_head_branch(repo: &GitTestRepo, name: &str) {
     run_git(repo, &["branch", "-M", name]);
 }
 
-/// Review PR Branch should default the base-ref prompt to the repo's
+/// Git Log: PR Branch should default the base-ref prompt to the repo's
 /// actual default branch (master in this test), not a hardcoded "main"
 /// that doesn't even exist here.
 #[test]
-fn test_review_branch_prompt_defaults_to_repo_default_branch() {
+fn test_branch_log_prompt_defaults_to_repo_default_branch() {
     let repo = GitTestRepo::new();
     setup_audit_mode_plugin(&repo);
 
@@ -4236,7 +4236,7 @@ fn test_review_branch_prompt_defaults_to_repo_default_branch() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Review PR Branch").unwrap();
+    harness.type_text("Git Log: PR Branch").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -4266,13 +4266,13 @@ fn test_review_branch_prompt_defaults_to_repo_default_branch() {
     );
 }
 
-/// PageDown in the detail pane of Review PR Branch should page the
+/// PageDown in the detail pane of Git Log: PR Branch should page the
 /// buffer, not trip the "Action page_down is not defined as a global
-/// function" error. The bug was that the review-branch mode bound
+/// function" error. The bug was that the branch-log mode bound
 /// PageUp/PageDown to action names that don't exist; they should map
 /// to the built-in `move_page_up` / `move_page_down`.
 #[test]
-fn test_review_branch_detail_pane_page_down_works() {
+fn test_branch_log_detail_pane_page_down_works() {
     init_tracing_from_env();
     let repo = GitTestRepo::new();
     setup_audit_mode_plugin(&repo);
@@ -4311,7 +4311,7 @@ fn test_review_branch_detail_pane_page_down_works() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Review PR Branch").unwrap();
+    harness.type_text("Git Log: PR Branch").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -4328,7 +4328,7 @@ fn test_review_branch_detail_pane_page_down_works() {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    // Wait for the review-branch view to finish loading.
+    // Wait for the branch-log view to finish loading.
     harness
         .wait_until(|h| h.screen_to_string().contains("add big file"))
         .unwrap();
@@ -4377,13 +4377,13 @@ fn test_review_branch_detail_pane_page_down_works() {
 
 /// Regression test for https://github.com/sinelaw/fresh/issues/1962.
 ///
-/// When the detail panel of Review PR Branch is focused and the cursor
+/// When the detail panel of Git Log: PR Branch is focused and the cursor
 /// sits on a line from the diff that has file context, pressing Enter
 /// should drill into that file at the selected commit's version (in a
 /// read-only virtual buffer). Before the fix, Enter on the detail panel
 /// was a no-op (it only "focused" the panel — which it already was).
 #[test]
-fn test_review_branch_detail_enter_opens_file_at_commit() {
+fn test_branch_log_detail_enter_opens_file_at_commit() {
     init_tracing_from_env();
     let repo = GitTestRepo::new();
     setup_audit_mode_plugin(&repo);
@@ -4396,7 +4396,7 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
     rename_head_branch(&repo, "master");
 
     // Feature branch with a commit that modifies a file. The detail
-    // panel of Review PR Branch shows `git show --stat --patch` for the
+    // panel of Git Log: PR Branch shows `git show --stat --patch` for the
     // selected commit, so the diff lines carry `(file, line)` text
     // properties that the new Enter-on-detail path reads.
     run_git(&repo, &["checkout", "-b", "feature"]);
@@ -4424,7 +4424,7 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Review PR Branch").unwrap();
+    harness.type_text("Git Log: PR Branch").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -4441,7 +4441,7 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    // Wait for the review-branch view to finish loading and the detail
+    // Wait for the branch-log view to finish loading and the detail
     // panel to populate (`git show` is async).
     harness
         .wait_until(|h| h.screen_to_string().contains("add notes.txt"))
@@ -4490,7 +4490,7 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
     }
     assert!(
         file_view_active(&harness),
-        "Enter on a diff line in the review-branch detail panel should \
+        "Enter on a diff line in the branch-log detail panel should \
          open the file at the selected commit. Screen:\n{}",
         harness.screen_to_string()
     );
@@ -4507,7 +4507,7 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
         screen
     );
 
-    // q closes the file-view buffer cleanly (review-branch-file-view mode
+    // q closes the file-view buffer cleanly (branch-log-file-view mode
     // binds q to its own close handler so the user can drill back out).
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::NONE)

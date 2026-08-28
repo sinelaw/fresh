@@ -66,6 +66,7 @@ pub mod plugin_keybinding_execution;
 pub mod plugin_snapshot_scaling;
 pub mod plugin_text_property_freshness;
 pub mod plugins_dir_in_working_dir;
+pub mod review_and_git_log_commands;
 pub mod review_diff_collapsed_paging;
 pub mod review_diff_cursor_and_layout;
 pub mod review_diff_hunk_parity;
