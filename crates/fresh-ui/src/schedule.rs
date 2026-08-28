@@ -454,6 +454,20 @@ pub struct Ui<M> {
     pub(crate) frame_size: Size,
     /// Relayout boundaries awaiting a measure pass.
     pub(crate) layout_dirty: Vec<crate::render::object::RenderId>,
+    /// Rectangles the host supplied for keys no element carries.
+    ///
+    /// An [`Anchor::Node`] names a thing; usually that thing is an element and
+    /// the tree knows where it is. Sometimes it is a point *inside* a host leaf
+    /// — a text caret, a terminal's cursor — and the tree hands that leaf a
+    /// rectangle and knows nothing about what is in it. The owner of the space
+    /// supplies the rectangle instead, and the anchor is still a name rather
+    /// than a number in a description.
+    ///
+    /// The web platform calls this an anchor element with a virtual reference;
+    /// the rule here is the same one: whoever owns the space answers where the
+    /// thing is. Cleared at the start of every frame, because a stale caret is
+    /// worse than none.
+    pub(crate) host_anchors: std::collections::HashMap<crate::key::Key, Rect>,
     /// Out-of-flow layers found by the last arrange walk, with their parents.
     pub(crate) pending_layers: Vec<(
         crate::render::object::RenderId,
@@ -519,6 +533,7 @@ impl<M: 'static> Ui<M> {
             frame_no: 0,
             frame_size: Size::ZERO,
             layout_dirty: Vec::new(),
+            host_anchors: std::collections::HashMap::new(),
             pending_layers: Vec::new(),
             spec: LayoutSpec::default(),
             hover: Vec::new(),
@@ -541,9 +556,40 @@ impl<M: 'static> Ui<M> {
     /// One frame: take a freshly built root description, reconcile it, lay it
     /// out for a terminal of `size`, and return the display list.
     pub fn frame(&mut self, root: Node<M>, size: Size) -> &LayoutSpec {
+        self.host_anchors.clear();
         self.run_flush(Some(root));
         self.flush_layout(size);
         self.settle(size);
+        self.flush_paint(size);
+        &self.spec
+    }
+
+    /// Tell the tree where something inside a host leaf is, so an
+    /// [`Anchor::Node`] naming it can resolve.
+    ///
+    /// The tree gives a host a rectangle and knows nothing about its interior,
+    /// so a layer anchored to a text caret names something only the host can
+    /// locate. This is how the host answers. See [`Ui::host_anchors`].
+    ///
+    /// An element carrying the key always wins: this fills a gap, it cannot
+    /// shadow a real node. Anchors are per-frame and [`Ui::frame`] clears them.
+    /// Call [`Ui::place_layers`] afterwards to put the layers where the new
+    /// anchors say.
+    pub fn set_host_anchor(&mut self, key: crate::key::Key, rect: Rect) {
+        self.host_anchors.insert(key, rect);
+    }
+
+    /// Place every layer again, against the anchors as they now stand, and
+    /// repaint.
+    ///
+    /// For a host whose own pipeline is interleaved with the tree's: it needs
+    /// the frame laid out before it can work out where its caret is, and the
+    /// caret before a layer hanging off it can be placed. Re-running the frame
+    /// would reconcile a description that has not changed and pump every
+    /// behaviour a second time; this re-walks the arrangement and repaints,
+    /// which is what actually has to happen.
+    pub fn place_layers(&mut self, size: Size) -> &LayoutSpec {
+        self.replace_layers(size);
         self.flush_paint(size);
         &self.spec
     }

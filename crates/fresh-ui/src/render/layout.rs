@@ -543,10 +543,7 @@ impl<M: 'static> Ui<M> {
         // A constraint-dependent builder may have replaced part of its subtree.
         self.process_disposals();
 
-        self.pending_layers.clear();
-        self.arrange(root, Point::ZERO, Rect::from_size(frame));
-        self.resolve_layers(frame);
-        self.process_disposals();
+        self.replace_layers(frame);
 
         // Commands an owner queued through a handle, applied once geometry
         // exists and before anything reads it.
@@ -554,13 +551,26 @@ impl<M: 'static> Ui<M> {
             // The layers found by the first walk are stale the moment anything
             // moves: re-arranging without clearing them would resolve, paint
             // and dismiss every one of them twice.
-            self.pending_layers.clear();
-            self.arrange(root, Point::ZERO, Rect::from_size(frame));
-            self.resolve_layers(frame);
-            self.process_disposals();
+            self.replace_layers(frame);
         }
 
         self.refresh_geometry();
+    }
+
+    /// Arrange the tree and place every layer against the anchors as they
+    /// stand.
+    ///
+    /// Re-runnable by construction, and run more than once already: a scroll
+    /// command applied after the first walk moves content, which moves anything
+    /// anchored to it. The layer list is rebuilt rather than reused because
+    /// `arrange` appends to it — resolving the accumulated list would place,
+    /// paint and dismiss every layer twice.
+    pub(crate) fn replace_layers(&mut self, frame: Size) {
+        let Some(root) = self.render_root else { return };
+        self.pending_layers.clear();
+        self.arrange(root, Point::ZERO, Rect::from_size(frame));
+        self.resolve_layers(frame);
+        self.process_disposals();
     }
 
     /// Update the geometry of every element somebody holds a handle to. The
@@ -789,10 +799,15 @@ impl<M: 'static> Ui<M> {
             };
             let anchor = match &props.anchor {
                 Anchor::Parent => self.render[parent].data.rect,
+                // An element carrying the key first; then a rectangle the
+                // host published for it, for a thing that lives inside a host
+                // leaf and has no element of its own; then the parent, which is
+                // what a name nobody answers has always fallen back to.
                 Anchor::Node(k) => self
                     .find_by_key(k)
                     .and_then(|e| self.render_for(e))
                     .map(|r| self.render[r].data.rect)
+                    .or_else(|| self.host_anchors.get(k).copied())
                     .unwrap_or(self.render[parent].data.rect),
                 Anchor::Point(x, y) => Rect::new(*x as i32, *y as i32, 0, 0),
                 // One cell, which is the whole difference: `Place::Below` a

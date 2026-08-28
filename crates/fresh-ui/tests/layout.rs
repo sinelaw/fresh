@@ -828,3 +828,79 @@ fn a_layer_aligns_on_the_axis_its_placement_leaves_free() {
     // Stretch is the case `stretch_to_anchor` already spelled, unchanged.
     assert_eq!(at(Some(Align::Stretch)), (0, 30));
 }
+
+/// **A host can say where something inside it is, and an anchor can name it.**
+///
+/// The tree hands a host leaf a rectangle and knows nothing about its interior,
+/// so a layer anchored to a text caret names a thing the tree cannot locate.
+/// The alternative is a screen coordinate in the description, which is the
+/// caller doing the layout engine's job and carrying a number that goes stale.
+/// So the owner of the space answers where the thing is, and the description
+/// still names it.
+#[test]
+fn a_layer_can_anchor_to_a_rectangle_the_host_published() {
+    let caret = Key::Str("caret".into());
+    let popup = Key::Str("popup".into());
+    let tree = || -> Node<()> {
+        col().child(fresh_ui::host(1u64).flex(1)).child(
+            fresh_ui::layer()
+                .key(popup.clone())
+                .anchor(fresh_ui::Anchor::Node(caret.clone()))
+                .place(fresh_ui::Place::Below)
+                .child(col().w(Sizing::Cells(10)).h(Sizing::Cells(3)).theme("p")),
+        )
+    };
+    let rect_of = |ui: &Ui<()>| ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+
+    // No element and no published rectangle: the anchor falls back, as a name
+    // nobody answers always has.
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(tree(), FRAME);
+    let fallback = rect_of(&ui);
+
+    // The host says where its caret is; the layer lands on the row below it.
+    ui.set_host_anchor(caret.clone(), Rect::new(30, 8, 1, 1));
+    ui.place_layers(FRAME);
+    let placed = rect_of(&ui);
+    assert_eq!((placed.x, placed.y), (30, 9), "below the published cell");
+    assert_ne!(placed, fallback, "publishing an anchor moved the layer");
+
+    // It moves with the caret, without the description changing.
+    ui.set_host_anchor(caret.clone(), Rect::new(12, 3, 1, 1));
+    ui.place_layers(FRAME);
+    assert_eq!((rect_of(&ui).x, rect_of(&ui).y), (12, 4));
+
+    // Anchors are per-frame: a new frame with nothing published falls back
+    // again rather than reusing a caret that has since moved.
+    ui.frame(tree(), FRAME);
+    assert_eq!(rect_of(&ui), fallback, "a stale caret is worse than none");
+}
+
+/// An element carrying the key wins: a published rectangle fills a gap, it
+/// cannot shadow a real node.
+#[test]
+fn an_element_outranks_a_published_anchor_for_the_same_key() {
+    let k = Key::Str("thing".into());
+    let popup = Key::Str("popup".into());
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col()
+            .child(col().key(k.clone()).w(Sizing::Cells(4)).h(Sizing::Cells(2)))
+            .child(
+                fresh_ui::layer()
+                    .key(popup.clone())
+                    .anchor(fresh_ui::Anchor::Node(k.clone()))
+                    .place(fresh_ui::Place::Below)
+                    .child(col().w(Sizing::Cells(6)).h(Sizing::Cells(1)).theme("p")),
+            ),
+        FRAME,
+    );
+    let with_element = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+    ui.set_host_anchor(k.clone(), Rect::new(50, 20, 1, 1));
+    ui.place_layers(FRAME);
+    assert_eq!(
+        ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap(),
+        with_element,
+        "the real node still answers for its own key"
+    );
+}
