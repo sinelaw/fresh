@@ -110,6 +110,8 @@ impl Editor {
             tracing::debug!("Failed to delete buffer recovery on close: {}", e);
         }
 
+        self.active_window_mut().notify_lsp_buffer_closed(id);
+
         // If closing a terminal buffer, tear down its terminal-side state.
         // Removing the entry drops the buffer's remembered mode with it.
         if let Some(tb) = self.active_window_mut().terminal_buffers.remove(&id) {

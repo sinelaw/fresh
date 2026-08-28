@@ -111,7 +111,7 @@ enum SpawnDecision {
 }
 
 /// Convert a directory path to an LSP `file://` URI without the `url` crate.
-fn path_to_uri(path: &Path) -> Option<Uri> {
+pub fn path_to_uri(path: &Path) -> Option<Uri> {
     let abs = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -989,6 +989,11 @@ impl LspManager {
     /// Every running server handle, regardless of the language it serves.
     pub fn all_handles(&self) -> &[ServerHandle] {
         &self.handles
+    }
+
+    /// Every running server handle, mutably.
+    pub fn all_handles_mut(&mut self) -> Vec<&mut ServerHandle> {
+        self.handles.iter_mut().collect()
     }
 
     /// Get all mutable handles that accept a language (both language-specific and universal).

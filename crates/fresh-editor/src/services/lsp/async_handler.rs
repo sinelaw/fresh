@@ -4553,7 +4553,16 @@ pub struct LspHandle {
     /// copy: the next notification fresh sends for it is a full-text
     /// `didChange` rather than a range edit.
     desynced: Arc<std::sync::Mutex<std::collections::HashSet<PathBuf>>>,
+
+    /// `didSave` notifications that could not be queued, keyed by document,
+    /// holding the text as it was at save time. Re-sent by
+    /// `retry_pending_saves` once the server has room again (#3038).
+    pending_saves: Arc<std::sync::Mutex<PendingSaves>>,
 }
+
+/// `didSave` notifications awaiting a retry, by document path: the URI to send
+/// and the text the document had when it was saved.
+type PendingSaves = HashMap<PathBuf, (Uri, Option<String>)>;
 
 // Channel sends and state transitions in LspHandle are best-effort: async_tx.send()
 // failures mean the editor is shutting down, state transition errors in error-handling
@@ -4694,6 +4703,7 @@ impl LspHandle {
             runtime: runtime.clone(),
             document_versions,
             desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            pending_saves: Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -4870,9 +4880,14 @@ impl LspHandle {
                 Ok(())
             }
             Err(_) => {
-                // Only documents the server actually has open can desync;
-                // a change for anything else is dropped by the task too, and
-                // the document is opened from its full text when it arrives.
+                // Flagged unconditionally. Gating this on `document_versions`
+                // — the task's record of what the server has open — loses the
+                // change whose loss matters most: `document_versions` is only
+                // written when the task *dequeues* the didOpen, so a didChange
+                // dropped while that open is still sitting in the queue would
+                // go unflagged, and the server would be left holding the text
+                // the open carried. A flag on a document the server never
+                // opens costs one full-text change the task discards.
                 //
                 // Note the version counter is deliberately left alone. It is a
                 // shared allocator: the task stamps each change as it dequeues
@@ -4881,9 +4896,7 @@ impl LspHandle {
                 // `document_version` ahead of what the server has actually
                 // seen, which `apply_text_document_edit` compares for equality
                 // when deciding whether a versioned workspace edit is stale.
-                if self.document_versions.lock().unwrap().contains_key(&path) {
-                    self.desynced.lock().unwrap().insert(path);
-                }
+                self.desynced.lock().unwrap().insert(path);
                 Err("Failed to send did_change command".to_string())
             }
         }
@@ -4916,18 +4929,69 @@ impl LspHandle {
             .try_send(LspCommand::DidClose { uri })
             .map(|()| {
                 // Only once the close is actually queued is there nothing left
-                // to repair; a dropped didClose leaves the server holding the
-                // stale document, so the flag has to survive it.
+                // to repair.
                 self.desynced.lock().unwrap().remove(&path);
             })
-            .map_err(|_| "Failed to send did_close command".to_string())
+            .map_err(|_| {
+                // A dropped didClose leaves the server holding the document,
+                // and the task never forgets its version — so a later didOpen
+                // for it would be discarded as a duplicate and the server would
+                // keep serving text from a buffer that is gone. Flag it so the
+                // repair pass retries the close.
+                self.desynced.lock().unwrap().insert(path);
+                "Failed to send did_close command".to_string()
+            })
     }
 
     /// Send didSave notification
+    /// Notify the server a document was saved.
+    ///
+    /// A server that runs its checks on save (rust-analyzer's `checkOnSave`,
+    /// and anything else that only re-analyses at that point) publishes
+    /// nothing until it sees this, so a notification lost to a full queue
+    /// leaves the editor showing diagnostics from before the save until the
+    /// user saves again. The dropped notification is kept — with the text as
+    /// it was at save time, not as the buffer is later — and re-sent by
+    /// [`Self::retry_pending_saves`] (#3038).
     pub fn did_save(&self, uri: Uri, text: Option<String>) -> Result<(), String> {
-        self.command_tx
-            .try_send(LspCommand::DidSave { uri, text })
-            .map_err(|_| "Failed to send did_save command".to_string())
+        let path = PathBuf::from(uri.path().as_str());
+        match self.command_tx.try_send(LspCommand::DidSave {
+            uri: uri.clone(),
+            text: text.clone(),
+        }) {
+            Ok(()) => {
+                self.pending_saves.lock().unwrap().remove(&path);
+                Ok(())
+            }
+            Err(_) => {
+                self.pending_saves.lock().unwrap().insert(path, (uri, text));
+                Err("Failed to send did_save command".to_string())
+            }
+        }
+    }
+
+    /// Re-send any `didSave` that could not be queued when it happened.
+    ///
+    /// Returns whether anything was sent. Cheap when nothing is pending, which
+    /// is the common case: one lock and an `is_empty` check.
+    pub fn retry_pending_saves(&self) -> bool {
+        let pending: Vec<(Uri, Option<String>)> = {
+            let saves = self.pending_saves.lock().unwrap();
+            if saves.is_empty() {
+                return false;
+            }
+            saves.values().cloned().collect()
+        };
+
+        let mut sent = false;
+        for (uri, text) in pending {
+            // did_save clears the entry itself on success, and leaves it for a
+            // later attempt on failure.
+            if self.did_save(uri, text).is_ok() {
+                sent = true;
+            }
+        }
+        sent
     }
 
     /// Add a workspace folder to the running LSP server
@@ -6214,6 +6278,7 @@ mod tests {
                 1i64,
             )]))),
             desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            pending_saves: Arc::new(std::sync::Mutex::new(HashMap::new())),
         };
         (handle, command_rx, path)
     }
@@ -6227,6 +6292,408 @@ mod tests {
             range_length: None,
             text: text.to_string(),
         }]
+    }
+
+    /// Whatever order the editor's document-sync events arrive in, and however
+    /// many notifications the queue refuses along the way, the server must end
+    /// up holding the buffer's text once it has drained (#3038).
+    ///
+    /// This drives the **real** `LspHandle` and the real
+    /// [`decide_change_to_send`] policy against a model of the LSP task that
+    /// mirrors what the real one does to the shared state: it skips a
+    /// `didOpen` for a document already in `document_versions`, skips a
+    /// `didChange` for one that is not there, and forgets the document on
+    /// `didClose`. What is *not* covered here is the `Window` plumbing that
+    /// finds buffers and builds range payloads — the e2e test covers that.
+    ///
+    /// Buffers are single-line, so an LSP position's `character` is its
+    /// offset. Range arithmetic across lines is `collect_lsp_changes`'
+    /// business and is tested separately; what is under test here is *which*
+    /// notification gets sent, not how a range is computed.
+    mod sync_convergence {
+        use super::*;
+        use crate::services::lsp::sync_policy::{decide_change_to_send, ChangeToSend, SyncState};
+        use proptest::prelude::*;
+
+        /// One step the editor or the server can take.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub(super) enum Ev {
+            /// Type a character at `pos % (len + 1)`.
+            Insert(u8),
+            /// Delete the character at `pos % len`, if any.
+            Delete(u8),
+            /// The server drains up to `n` queued commands.
+            Drain(u8),
+            /// An editor tick runs the repair pass.
+            Tick,
+            /// Save the buffer.
+            Save,
+            /// Close the buffer in the editor.
+            Close,
+            /// Reopen it.
+            Open,
+        }
+
+        /// Apply one LSP content change the way a server does, clamping
+        /// positions — a server that has fallen behind is routinely sent
+        /// positions past the end of the copy it is holding.
+        fn apply_change(text: &str, change: &TextDocumentContentChangeEvent) -> String {
+            let Some(range) = change.range else {
+                return change.text.clone();
+            };
+            let start = (range.start.character as usize).min(text.len());
+            let end = (range.end.character as usize).min(text.len()).max(start);
+            format!("{}{}{}", &text[..start], change.text, &text[end..])
+        }
+
+        pub(super) struct Sim {
+            handle: LspHandle,
+            rx: mpsc::Receiver<LspCommand>,
+            versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
+            uri: Uri,
+            path: PathBuf,
+            /// The buffer, and the editor's source of truth.
+            buffer: String,
+            /// What the server holds; `None` when it has no such document.
+            server: Option<String>,
+            /// Whether the editor has the buffer open.
+            editor_open: bool,
+            /// Whether a `didOpen` for it was accepted by the queue.
+            opened_with_server: bool,
+            /// Notifications the queue refused, so the corpus can be checked
+            /// for actually exercising the failure this all exists for.
+            pub(super) drops: usize,
+        }
+
+        impl Sim {
+            pub(super) fn new(capacity: usize) -> Self {
+                let (command_tx, rx) = mpsc::channel(capacity);
+                let path = PathBuf::from("/doc.rs");
+                let versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>> =
+                    Arc::new(std::sync::Mutex::new(HashMap::new()));
+                let handle = LspHandle {
+                    id: 1,
+                    scope: LanguageScope::single("test"),
+                    command_tx,
+                    state: Arc::new(Mutex::new(LspClientState::Starting)),
+                    runtime: tokio::runtime::Handle::current(),
+                    document_versions: versions.clone(),
+                    desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+                    pending_saves: Arc::new(std::sync::Mutex::new(HashMap::new())),
+                };
+                Self {
+                    handle,
+                    rx,
+                    versions,
+                    uri: "file:///doc.rs".parse().unwrap(),
+                    path,
+                    buffer: "start".to_string(),
+                    server: None,
+                    editor_open: true,
+                    opened_with_server: false,
+                    drops: 0,
+                }
+            }
+
+            fn record(&mut self, sent: Result<(), String>) -> bool {
+                if sent.is_err() {
+                    self.drops += 1;
+                    false
+                } else {
+                    true
+                }
+            }
+
+            /// The editor's send path: open the document if the server has not
+            /// been given it, otherwise let the policy choose the payload.
+            fn send(&mut self, changes: Vec<TextDocumentContentChangeEvent>, resync_only: bool) {
+                if !self.editor_open {
+                    return;
+                }
+                if !self.opened_with_server {
+                    // Mirrors `send_lsp_changes_for_buffer`: a buffer the
+                    // server has not been given is opened rather than changed,
+                    // and only an accepted open is recorded as sent.
+                    let r = self.handle.did_open(
+                        self.uri.clone(),
+                        self.buffer.clone(),
+                        "test".to_string(),
+                    );
+                    self.opened_with_server = self.record(r);
+                    return;
+                }
+                let state = SyncState {
+                    desynced: self.handle.needs_full_resync(&self.path),
+                    has_capacity: self.handle.has_command_capacity(),
+                    text_available: true,
+                    resync_only,
+                };
+                let payload = match decide_change_to_send(state) {
+                    ChangeToSend::FullText => vec![TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: self.buffer.clone(),
+                    }],
+                    ChangeToSend::Incremental => changes,
+                    ChangeToSend::Skip => return,
+                };
+                let r = self.handle.did_change(self.uri.clone(), payload);
+                self.record(r);
+            }
+
+            fn edit(&mut self, changes: Vec<TextDocumentContentChangeEvent>) {
+                self.send(changes, false);
+            }
+
+            /// The repair pass, as `resync_desynced_lsp_documents` runs it.
+            fn tick(&mut self) {
+                self.handle.retry_pending_saves();
+                if !self.handle.has_command_capacity() {
+                    return;
+                }
+                let stale = self.handle.desynced_documents();
+                if stale.is_empty() {
+                    return;
+                }
+                if self.editor_open {
+                    let noop = vec![TextDocumentContentChangeEvent {
+                        range: Some(lsp_types::Range::new(
+                            lsp_types::Position::new(0, 0),
+                            lsp_types::Position::new(0, 0),
+                        )),
+                        range_length: None,
+                        text: String::new(),
+                    }];
+                    self.send(noop, true);
+                } else {
+                    // Orphaned: no buffer to rebuild from, so close it.
+                    let r = self.handle.did_close(self.uri.clone());
+                    self.record(r);
+                }
+            }
+
+            /// The LSP task, doing to the shared state exactly what the real
+            /// one does.
+            fn drain(&mut self, n: usize) {
+                for _ in 0..n {
+                    let Ok(cmd) = self.rx.try_recv() else { return };
+                    match cmd {
+                        LspCommand::DidOpen { text, .. } => {
+                            let mut v = self.versions.lock().unwrap();
+                            if v.contains_key(&self.path) {
+                                continue; // should_skip_did_open
+                            }
+                            v.insert(self.path.clone(), 0);
+                            self.server = Some(text);
+                        }
+                        LspCommand::DidChange {
+                            content_changes, ..
+                        } => {
+                            let mut v = self.versions.lock().unwrap();
+                            let Some(version) = v.get_mut(&self.path) else {
+                                continue; // document not open on the server
+                            };
+                            *version += 1;
+                            let mut text = self.server.clone().unwrap_or_default();
+                            for change in &content_changes {
+                                text = apply_change(&text, change);
+                            }
+                            self.server = Some(text);
+                        }
+                        LspCommand::DidClose { .. } => {
+                            self.versions.lock().unwrap().remove(&self.path);
+                            self.server = None;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            pub(super) fn step(&mut self, ev: Ev) {
+                match ev {
+                    Ev::Insert(pos) => {
+                        if !self.editor_open {
+                            return;
+                        }
+                        let at = (pos as usize) % (self.buffer.len() + 1);
+                        self.buffer.insert(at, 'x');
+                        let p = lsp_types::Position::new(0, at as u32);
+                        self.edit(vec![TextDocumentContentChangeEvent {
+                            range: Some(lsp_types::Range::new(p, p)),
+                            range_length: None,
+                            text: "x".to_string(),
+                        }]);
+                    }
+                    Ev::Delete(pos) => {
+                        if !self.editor_open || self.buffer.is_empty() {
+                            return;
+                        }
+                        let at = (pos as usize) % self.buffer.len();
+                        self.buffer.remove(at);
+                        self.edit(vec![TextDocumentContentChangeEvent {
+                            range: Some(lsp_types::Range::new(
+                                lsp_types::Position::new(0, at as u32),
+                                lsp_types::Position::new(0, at as u32 + 1),
+                            )),
+                            range_length: None,
+                            text: String::new(),
+                        }]);
+                    }
+                    Ev::Drain(n) => self.drain(n as usize),
+                    Ev::Tick => self.tick(),
+                    Ev::Save => {
+                        if self.editor_open && self.opened_with_server {
+                            let r = self
+                                .handle
+                                .did_save(self.uri.clone(), Some(self.buffer.clone()));
+                            self.record(r);
+                        }
+                    }
+                    Ev::Close => {
+                        if self.editor_open {
+                            self.editor_open = false;
+                            // Closing discards the buffer's metadata, so the
+                            // editor forgets it ever opened the document with
+                            // this server whether or not the notification got
+                            // through; a refused close is retried by the
+                            // repair pass instead.
+                            self.opened_with_server = false;
+                            let r = self.handle.did_close(self.uri.clone());
+                            self.record(r);
+                        }
+                    }
+                    Ev::Open => {
+                        if !self.editor_open {
+                            self.editor_open = true;
+                        }
+                    }
+                }
+            }
+
+            /// Let everything settle: drain the queue and run repair passes
+            /// until nothing changes. Bounded, so a system that cannot settle
+            /// fails the assertion below rather than looping forever.
+            pub(super) fn quiesce(&mut self) {
+                for _ in 0..64 {
+                    self.drain(256);
+                    self.tick();
+                    self.drain(256);
+                    if self.editor_open && !self.opened_with_server {
+                        self.send(Vec::new(), false);
+                        continue;
+                    }
+                    if !self.handle.needs_full_resync(&self.path) && self.settled() {
+                        return;
+                    }
+                }
+            }
+
+            fn settled(&self) -> bool {
+                if self.editor_open {
+                    self.server.as_deref() == Some(self.buffer.as_str())
+                } else {
+                    true
+                }
+            }
+
+            /// The invariant.
+            pub(super) fn assert_converged(&self, events: &[Ev]) {
+                if !self.editor_open {
+                    return;
+                }
+                assert_eq!(
+                    self.server.as_deref(),
+                    Some(self.buffer.as_str()),
+                    "server's copy must converge on the buffer after {events:?}"
+                );
+            }
+        }
+
+        /// All orderings of a reduced event alphabet, exhaustively, to a depth
+        /// where every interleaving of an edit, a partial drain, a repair pass
+        /// and a close/reopen can occur.
+        #[tokio::test]
+        async fn every_ordering_converges() {
+            const ALPHABET: [Ev; 6] = [
+                Ev::Insert(0),
+                Ev::Delete(0),
+                Ev::Drain(1),
+                Ev::Tick,
+                Ev::Close,
+                Ev::Open,
+            ];
+            const DEPTH: usize = 5;
+
+            let mut total_drops = 0usize;
+            let mut sequences = 0usize;
+            let mut indices = [0usize; DEPTH];
+            loop {
+                let events: Vec<Ev> = indices.iter().map(|&i| ALPHABET[i]).collect();
+                // Capacity 1 so the queue refuses constantly and the dropped
+                // paths are the common case rather than a rare one.
+                let mut sim = Sim::new(1);
+                for ev in &events {
+                    sim.step(*ev);
+                }
+                sim.quiesce();
+                sim.assert_converged(&events);
+                total_drops += sim.drops;
+                sequences += 1;
+
+                // Odometer over ALPHABET^DEPTH.
+                let mut i = 0;
+                loop {
+                    if i == DEPTH {
+                        assert_eq!(sequences, ALPHABET.len().pow(DEPTH as u32));
+                        assert!(
+                            total_drops > 0,
+                            "the corpus never made the queue refuse a \
+                             notification, so it proves nothing"
+                        );
+                        return;
+                    }
+                    indices[i] += 1;
+                    if indices[i] < ALPHABET.len() {
+                        break;
+                    }
+                    indices[i] = 0;
+                    i += 1;
+                }
+            }
+        }
+
+        proptest::proptest! {
+            /// Longer sequences with arbitrary positions and drain sizes,
+            /// including saves.
+            #[test]
+            fn random_orderings_converge(
+                events in proptest::collection::vec(
+                    prop_oneof![
+                        any::<u8>().prop_map(Ev::Insert),
+                        any::<u8>().prop_map(Ev::Delete),
+                        (0u8..4).prop_map(Ev::Drain),
+                        Just(Ev::Tick),
+                        Just(Ev::Save),
+                        Just(Ev::Close),
+                        Just(Ev::Open),
+                    ],
+                    1..40usize,
+                ),
+                capacity in 1usize..4,
+            ) {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap();
+                rt.block_on(async {
+                    let mut sim = Sim::new(capacity);
+                    for ev in &events {
+                        sim.step(*ev);
+                    }
+                    sim.quiesce();
+                    sim.assert_converged(&events);
+                });
+            }
+        }
     }
 
     /// A `didChange` that cannot be queued must not be lost silently: the
@@ -6372,18 +6839,31 @@ mod tests {
     /// `didOpen` carries the full text — so a dropped change for one must not
     /// leave a resync pending forever.
     #[tokio::test]
-    async fn test_dropped_change_for_unopened_document_is_not_flagged() {
+    async fn test_dropped_change_is_flagged_while_the_open_is_still_queued() {
+        // `document_versions` is written by the task when it dequeues the
+        // didOpen, so a document whose open is still sitting in the queue does
+        // not appear there. A change dropped in that window is exactly the one
+        // that must not be lost: the server will apply the queued open and be
+        // left holding the text it carried.
         let (handle, _command_rx, _path) = handle_with_undrained_queue(1);
-        let other: Uri = "file:///never-opened.rs".parse().unwrap();
+        let fresh_doc: Uri = "file:///not-yet-dequeued.rs".parse().unwrap();
+        let fresh_path = PathBuf::from("/not-yet-dequeued.rs");
 
         assert!(handle
-            .did_change(other.clone(), insert_at_origin("a"))
+            .did_open(fresh_doc.clone(), "text".to_string(), "test".to_string())
             .is_ok());
-        assert!(handle.did_change(other, insert_at_origin("b")).is_err());
+        assert!(
+            !handle.needs_full_resync(&fresh_path),
+            "nothing has been lost yet"
+        );
+
+        // The queue is now full, and the task has not run.
+        assert!(handle.did_change(fresh_doc, insert_at_origin("a")).is_err());
 
         assert!(
-            handle.desynced_documents().is_empty(),
-            "an unopened document has no server-side copy to repair"
+            handle.needs_full_resync(&fresh_path),
+            "a change dropped while the open is still queued must be flagged, \
+             or the server keeps the text the open carried"
         );
     }
 
