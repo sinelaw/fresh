@@ -15,6 +15,8 @@
 //! into the rectangles this same layout produced.
 
 pub mod context_menu;
+pub mod dock;
+pub mod file_browser;
 pub mod file_explorer;
 pub mod fold;
 pub mod frame;
@@ -26,6 +28,7 @@ pub mod popup;
 pub mod prompt;
 pub mod search_options;
 pub mod status_bar;
+pub mod theme_info;
 
 // ── layout read-back ────────────────────────────────────────────────────────
 

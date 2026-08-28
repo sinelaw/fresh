@@ -674,6 +674,8 @@ impl Editor {
             shell_hover: None,
             unkeyed_widget_warnings: std::collections::HashSet::new(),
             shell_ui: Some(fresh_ui::Ui::new()),
+            pending_body_state: Default::default(),
+            pending_body_output: None,
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
             // Boot-loaded state came *from* disk — nothing is dirty yet.

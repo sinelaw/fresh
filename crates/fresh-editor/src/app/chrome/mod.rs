@@ -22,7 +22,6 @@
 mod base;
 mod context_menu;
 mod dock;
-mod file_browser;
 mod file_explorer;
 mod floating_modal;
 mod menu;
@@ -31,7 +30,6 @@ mod popups;
 mod prompt;
 mod splits;
 mod status_bar;
-mod theme_info;
 
 use super::types::HoverTarget;
 use super::Editor;
@@ -172,9 +170,6 @@ impl ChromeTreeBuilder {
 
     /// Frame height in rows — for components whose box spans the
     /// full column height (the dock column and its resize border).
-    pub(crate) fn frame_height(&self) -> u32 {
-        self.frame_height
-    }
 
     /// A full-frame surface — a guard/capture whose semantics ARE
     /// full-screen (close guards, absorb/dismiss, modal scrims,
@@ -511,15 +506,9 @@ pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
         &modals::KeybindingEditor,
         &modals::CalibrationWizard,
         &modals::WorkspaceTrust,
-        // The theme inspector: its trigger and popup ride the very
-        // top of the routable bands (a debug instrument that must see
-        // Ctrl+Right-Click under any surface), and its key dismissal
-        // must run before the context menu's keyboard grab.
-        &theme_info::ThemeInfo,
         &context_menu::ContextMenu,
         &prompt::Prompt,
         &popups::Popups,
-        &file_browser::FileBrowser,
         &floating_modal::FloatingModal,
         &dock::Dock,
         &splits::Splits,
@@ -624,17 +613,21 @@ fn chrome_tree_uncached(ed: &Editor) -> Vec<ChromeBox> {
 mod tests {
     use super::layer_rank::*;
 
-    /// **A modal drawn over the dock owns its own cells.**
+    /// **A modal drawn over a native surface owns its own cells.**
     ///
-    /// The file-open browser is a centered dialog whose box sits at `z = 130`;
-    /// the file explorer's was `z = 100`, so the walk gave the browser the
-    /// cells where they overlap. The explorer is a node in the shell's tree
-    /// now, and the tree runs before this walk with no rank — which let the
-    /// dock answer clicks aimed at the browser's rows and checkboxes, both of
-    /// which sit in the dialog's left columns. Measured in the browser:
-    /// explorer `{x:0,y:1,w:36,h:34}`, a row's cell `{col:2,row:20}`, the
-    /// first checkbox's `{col:12,row:16}` — and the one control that kept
-    /// working was the `size` column header at `col:97`, clear of the dock.
+    /// The rule this pins was learnt from the file-open browser: a centered
+    /// dialog whose box sat at `z = 130` over a file explorer whose box was
+    /// `z = 100`, so the walk gave the dialog the cells where they overlap.
+    /// The explorer became a node, the tree runs before this walk with no rank
+    /// of its own, and clicks aimed at the dialog's rows and checkboxes — both
+    /// in its left columns — were answered by the panel underneath instead.
+    ///
+    /// The dialog is a node too now, and with it the last placed box above
+    /// `SHELL_BACKGROUND_Z` is gone: the surfaces still in this walk are the
+    /// split grid's, which sit at 70 and 80, below the band. So the rule has
+    /// no live subject at the moment and is pinned on synthetic boxes — it is
+    /// the precedence any surface that stays behind acquires, and the split
+    /// grid is the one still to come.
     #[test]
     fn a_placed_surface_above_the_shells_band_owns_its_cells() {
         use super::{placed_surface_outranks_shell, ChromeBox};
@@ -647,7 +640,7 @@ mod tests {
         // The dialog as the walk sees it, plus the full-frame per-gesture
         // bands that ride above it on every single frame.
         let tree = vec![
-            boxed("chrome:file_browser", 130, 10, 15, 100, 20),
+            boxed("a placed dialog", 130, 10, 15, 100, 20),
             boxed("chrome:overlay_prompt_modal", 160, 0, 0, 120, 40),
             boxed("chrome:popup_guard", 140, 0, 0, 120, 40),
         ];

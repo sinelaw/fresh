@@ -148,6 +148,15 @@ pub enum UiFact {
     /// The pointer moving while that press is still held. Extends the
     /// selection the press began.
     PopupTextDrag { line: usize, col: usize },
+    /// A press on the overlay card's toolbar band, in the band's own
+    /// coordinates. The controls are a plugin's `WidgetSpec`, laid out by the
+    /// widget runtime rather than by the tree, so the host hit-tests its own
+    /// boxes — the band reports where, which is all the tree can know until
+    /// `WidgetSpec` becomes a `Node`.
+    CardToolbarPress { x: u16, y: u16 },
+    /// A wheel over the overlay card's preview pane. The pane is a painter's
+    /// still, so it has no window for the wheel to chain into.
+    CardPreviewScroll(i32),
     /// A pointer moved the suggestion selection to this row.
     SuggestionSelect(usize),
     /// A double-click confirmed this suggestion — the same path Enter takes.
@@ -160,6 +169,43 @@ pub enum UiFact {
     /// The wheel over the panel. Positive is down, matching `Input::Wheel`.
     /// Carries the pointer so the plugin `wheel` hook still gets a position.
     ExplorerScroll { delta: i32, x: u16, y: u16 },
+    /// A left press inside the dock column, in screen coordinates. The panel's
+    /// widgets are a plugin's `WidgetSpec` rather than nodes, so the runtime
+    /// hit-tests its own boxes and the tree reports only where — the same seam
+    /// as `CardToolbarPress`.
+    DockPress { x: u16, y: u16 },
+    /// A right press inside the dock column: the plugin raises a per-session
+    /// context menu from it.
+    DockContext { x: u16, y: u16 },
+    /// The wheel over the dock column. Positive is down, and the pointer rides
+    /// along for the panel's own hit test.
+    DockScroll { delta: i32, x: u16, y: u16 },
+    /// A press on the dock's right-edge grip: start a width drag. The drag
+    /// itself is still the legacy grab — see `shell::dock`.
+    DockResizeBegin,
+    /// A left press landed outside the dock column. Blurs a focused dock and
+    /// does nothing to one already blurred; either way the press goes on.
+    DockBlur,
+    /// A press outside the theme inspector, or any key while it is up. Both
+    /// dismiss it and both go on to what they were aimed at.
+    ThemeInfoDismiss,
+    /// The inspector's action row was clicked: open the theme editor on the
+    /// key it is showing.
+    ThemeInfoOpenEditor,
+    /// The pointer entered or left that row.
+    ThemeInfoButtonHover(bool),
+    /// Ctrl+Right-Click: inspect the theme keys behind this screen cell.
+    ThemeInspect { x: u16, y: u16 },
+    /// A left press in the file-open dialog, in screen coordinates. The
+    /// dialog's elements are cell spans its painter recorded, so the tree
+    /// reports where and the hit test is the painter's — the same seam as
+    /// `CardToolbarPress`.
+    BrowserPress { x: u16, y: u16, double: bool },
+    /// The pointer moved over the dialog. The hover target is resolved against
+    /// the same recorded spans.
+    BrowserHover { x: u16, y: u16 },
+    /// The wheel over the dialog. Positive is down.
+    BrowserScroll(i32),
 }
 
 /// What a menu-bar navigation step does to the open chain.

@@ -1,26 +1,27 @@
-//! The file explorer sidebar and its off-panel menu-clear guard.
+//! The file explorer sidebar: its hover reactions, and the handlers the
+//! tree's messages land in.
 
 use crate::app::types::HoverTarget;
-use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, ChromePointer, ChromeTreeBuilder, Disposition, Editor, PointerPress};
+use super::{ChromeComponent, ChromeTreeBuilder, Editor};
 
 pub(crate) struct FileExplorer;
 
 impl ChromeComponent for FileExplorer {
-    fn collect(&self, _ed: &Editor, t: &mut ChromeTreeBuilder) {
-        // **Nothing of the panel.** It is a native region in the shell's tree
-        // and answers its own pointer — rows, title, close button and the
-        // right-edge resize grip alike. What is left here is the guard for
-        // clicks that land *outside* it.
-        //
-        // The grip could migrate because `pointer_mode` reaches an ordinary
-        // container: the strip carrying it lets presses through to the rows
-        // beneath, and only the one column absorbs. What it starts is still
-        // the legacy drag; see `view::shell::file_explorer`.
-        t.full("chrome:clear_explorer_menu", 90);
-    }
+    /// **Nothing.** The panel is a native region in the shell's tree and
+    /// answers its own pointer — rows, title, close button and the right-edge
+    /// resize grip alike. Its context menu is the shell's context-menu layer,
+    /// which declares `Dismiss::OUTSIDE_POINTER`; the tree runs that for any
+    /// button and claims only for the primary one, which is the
+    /// off-explorer right-click guard exactly: dismiss, and let the press go
+    /// on to open the next menu.
+    ///
+    /// The grip could migrate because `pointer_mode` reaches an ordinary
+    /// container: the strip carrying it lets presses through to the rows
+    /// beneath, and only the one column absorbs. What it starts is still the
+    /// legacy drag; see `view::shell::file_explorer`.
+    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
 
     fn on_hover_change(
         &self,
@@ -45,21 +46,6 @@ impl ChromeComponent for FileExplorer {
             return true;
         }
         false
-    }
-
-    fn on_pointer(
-        &self,
-        ed: &mut Editor,
-        bx: &LayoutBox,
-        ev: &ChromePointer,
-    ) -> AnyhowResult<Disposition> {
-        if (ev.press, bx.kind) == (PointerPress::Right, "chrome:clear_explorer_menu") {
-            // Off-explorer right-click dismisses its menu, then routing
-            // continues (act-then-continue guard).
-            ed.active_window_mut().file_explorer_context_menu = None;
-            return Ok(Disposition::PassAfter);
-        }
-        Ok(Disposition::Pass)
     }
 }
 

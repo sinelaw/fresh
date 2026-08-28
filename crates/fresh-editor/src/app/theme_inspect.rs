@@ -5,11 +5,7 @@ use super::Editor;
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::theme::color_to_rgb;
 use anyhow::Result as AnyhowResult;
-use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use ratatui::Frame;
 
 impl Editor {
     /// Show the theme info popup at the given screen position (Ctrl+Right-Click).
@@ -150,209 +146,109 @@ impl Editor {
         })
     }
 
-    /// Render the theme info popup.
-    pub(super) fn render_theme_info_popup(&self, frame: &mut Frame) {
-        let popup = match &self.active_window().theme_info_popup {
-            Some(p) => p,
-            None => return,
-        };
+    /// The inspector's description: its lines, its button, and where it goes.
+    ///
+    /// **One derivation.** `render_theme_info_popup` built these lines and
+    /// drew them; `theme_info_popup_rect` walked the same conditions again
+    /// with a `line_count` to say how tall the box was and which row the
+    /// button sat on, under a comment saying it "must match
+    /// render_theme_info_popup logic". The tree measures the lines it is
+    /// given, and the button is a node rather than a row offset, so both
+    /// second derivations are gone with the painter.
+    pub(crate) fn theme_info_description(
+        &self,
+    ) -> Option<crate::view::shell::theme_info::ThemeInfo> {
+        use crate::view::markdown::StyledLine;
+        use crate::view::shell::theme_info::{Button, ThemeInfo};
+
+        let popup = self.active_window().theme_info_popup.as_ref()?;
         let theme = &*self.theme.read().unwrap();
         let info = &popup.info;
 
         // Key names render in the popup's own text colour (always legible on
         // popup_bg) with bold to set them apart from the "Foreground:" label.
-        // `menu_highlight_fg` was wrong here: it's the fg for `menu_highlight_bg`
-        // and on some themes (e.g. dracula) equals popup_bg, so the key vanished.
+        // `menu_highlight_fg` was wrong here: it's the fg for
+        // `menu_highlight_bg` and on some themes (e.g. dracula) equals
+        // popup_bg, so the key vanished.
         let key_style = Style::default()
             .fg(theme.popup_text_fg)
             .add_modifier(ratatui::style::Modifier::BOLD);
+        let plain = Style::default().fg(theme.popup_text_fg);
+        let line = |spans: Vec<(String, Style)>| StyledLine {
+            spans: spans
+                .into_iter()
+                .map(|(text, style)| crate::view::markdown::StyledSpan {
+                    text,
+                    style,
+                    link_url: None,
+                })
+                .collect(),
+        };
+        let one = |text: String, style: Style| line(vec![(text, style)]);
 
-        // When no theme key was recorded for this cell there is nothing the
-        // theme editor could open, so we show an explanatory message instead
-        // of a "▶ Open in Theme Editor" button that would silently do nothing.
-        let has_keys = info.fg_key.is_some() || info.bg_key.is_some();
-
-        let mut lines = vec![];
+        let mut lines: Vec<StyledLine> = Vec::new();
         if !info.region.is_empty() {
-            lines.push(Line::from(format!(" Region: {}", info.region)));
-            lines.push(Line::from(""));
+            lines.push(one(format!(" Region: {}", info.region), plain));
+            lines.push(StyledLine::new());
         }
 
-        if !has_keys {
-            lines.push(Line::from(Span::styled(
-                " No theme key recorded here. ",
-                Style::default().fg(theme.popup_text_fg),
-            )));
-            lines.push(Line::from(Span::styled(
-                " This element isn't inspectable yet. ",
+        // Nothing the theme editor could open, so an explanatory message
+        // instead of a button that would silently do nothing.
+        if info.fg_key.is_none() && info.bg_key.is_none() {
+            lines.push(one(" No theme key recorded here. ".into(), plain));
+            lines.push(one(
+                " This element isn't inspectable yet. ".into(),
                 Style::default().fg(theme.menu_disabled_fg),
-            )));
-
-            let width = POPUP_WIDTH;
-            let height = lines.len() as u16 + 2; // +2 for borders
-
-            let screen = frame.area();
-            let rect =
-                compute_popup_rect(popup.position, width, height, screen.width, screen.height);
-
-            frame.render_widget(Clear, rect);
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.popup_border_fg))
-                .title(" Theme Info ")
-                .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
-            let paragraph = Paragraph::new(lines).block(block);
-            frame.render_widget(paragraph, rect);
-            return;
+            ));
+            return Some(ThemeInfo {
+                at: popup.position,
+                lines,
+                button: None,
+            });
         }
 
-        if let Some(ref fg_key) = info.fg_key {
-            lines.push(Line::from(vec![
-                Span::styled(" Foreground: ", Style::default().fg(theme.popup_text_fg)),
-                Span::styled(fg_key.clone(), key_style),
+        // One half of the pair: its key, its swatch in its own colour, and —
+        // for the foreground — the syntax category behind it.
+        let half = |out: &mut Vec<StyledLine>,
+                    label: &str,
+                    key: &Option<String>,
+                    color: Option<Color>,
+                    cat: bool| {
+            let Some(k) = key else { return };
+            out.push(line(vec![
+                (format!(" {label}: "), plain),
+                (k.clone(), key_style),
             ]));
-            if let Some(color) = info.fg_color {
-                let rgb_str = format_color_rgb(color);
-                lines.push(Line::from(vec![
-                    Span::raw("   "),
-                    Span::styled("\u{2589} ", Style::default().fg(color)),
-                    Span::raw(rgb_str),
+            if let Some(color) = color {
+                out.push(line(vec![
+                    ("   ".to_string(), Style::default()),
+                    ("\u{2589} ".to_string(), Style::default().fg(color)),
+                    (format_color_rgb(color), Style::default()),
                 ]));
             }
-            if let Some(ref cat) = info.syntax_category {
-                lines.push(Line::from(format!("   Category: {}", cat)));
+            if cat {
+                if let Some(cat) = info.syntax_category.as_ref() {
+                    out.push(one(format!("   Category: {}", cat), Style::default()));
+                }
             }
-        }
-
-        lines.push(Line::from(""));
-        if let Some(ref bg_key) = info.bg_key {
-            lines.push(Line::from(vec![
-                Span::styled(" Background: ", Style::default().fg(theme.popup_text_fg)),
-                Span::styled(bg_key.clone(), key_style),
-            ]));
-            if let Some(color) = info.bg_color {
-                let rgb_str = format_color_rgb(color);
-                lines.push(Line::from(vec![
-                    Span::raw("   "),
-                    Span::styled("\u{2589} ", Style::default().fg(color)),
-                    Span::raw(rgb_str),
-                ]));
-            }
-        }
-
-        lines.push(Line::from(""));
-        // Highlight derived from the chrome hover walk's target — the
-        // ThemeInfo component names the button row; no per-move state.
-        let button_hovered = matches!(
-            self.active_window().mouse_state.hover_target,
-            Some(crate::app::types::HoverTarget::ThemeInfoButton)
-        );
-        let button_style = if button_hovered {
-            Style::default()
-                .fg(theme.popup_selection_fg)
-                .bg(theme.popup_selection_bg)
-        } else {
-            Style::default().fg(theme.popup_text_fg)
         };
-        lines.push(Line::from(Span::styled(
-            " \u{25b6} Open in Theme Editor ",
-            button_style,
-        )));
+        half(&mut lines, "Foreground", &info.fg_key, info.fg_color, true);
+        lines.push(StyledLine::new());
+        half(&mut lines, "Background", &info.bg_key, info.bg_color, false);
+        lines.push(StyledLine::new());
 
-        let width = POPUP_WIDTH;
-        let height = lines.len() as u16 + 2; // +2 for borders
-
-        let screen = frame.area();
-        let rect = compute_popup_rect(popup.position, width, height, screen.width, screen.height);
-
-        frame.render_widget(Clear, rect);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.popup_border_fg))
-            .title(" Theme Info ")
-            .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(paragraph, rect);
+        Some(ThemeInfo {
+            at: popup.position,
+            lines,
+            button: Some(Button {
+                label: " \u{25b6} Open in Theme Editor ".to_string(),
+                hovered: matches!(
+                    self.active_window().mouse_state.hover_target,
+                    Some(crate::app::types::HoverTarget::ThemeInfoButton)
+                ),
+            }),
+        })
     }
-
-    /// Compute the bounding rect of the theme info popup (for hit-testing),
-    /// plus the row offset of the "Open in Theme Editor" button relative to
-    /// `rect.y` (i.e. the button's screen row is `rect.y + offset`). The
-    /// offset is `None` when the popup carries no theme keys (the "no theme
-    /// key recorded" message variant has no button).
-    pub(super) fn theme_info_popup_rect(&self) -> Option<(Rect, Option<u16>)> {
-        let popup = self.active_window().theme_info_popup.as_ref()?;
-        let info = &popup.info;
-        let has_keys = info.fg_key.is_some() || info.bg_key.is_some();
-
-        // Count lines (must match render_theme_info_popup logic)
-        let mut line_count: u16 = 0;
-        if !info.region.is_empty() {
-            line_count += 2; // region + blank
-        }
-
-        let button_row_offset = if has_keys {
-            if info.fg_key.is_some() {
-                line_count += 1; // foreground key
-                if info.fg_color.is_some() {
-                    line_count += 1; // color swatch
-                }
-                if info.syntax_category.is_some() {
-                    line_count += 1; // category
-                }
-            }
-            line_count += 1; // blank
-            if info.bg_key.is_some() {
-                line_count += 1; // background key
-                if info.bg_color.is_some() {
-                    line_count += 1; // color swatch
-                }
-            }
-            line_count += 1; // blank before button
-            line_count += 1; // button (the last content row)
-                             // The button is the final content line, so its
-                             // screen row is `popup_rect.y + total_line_count`
-                             // (matches the click/hover hit-testing math).
-            Some(line_count)
-        } else {
-            line_count += 2; // two-line "no theme key recorded" message
-            None
-        };
-
-        let width = POPUP_WIDTH;
-        let height = line_count + 2; // +2 for borders
-
-        // Use the same screen-aware positioning as render to match the actual drawn rect
-        let screen_w = self.active_chrome().last_frame.width;
-        let screen_h = self.active_chrome().last_frame.height;
-        let rect = compute_popup_rect(popup.position, width, height, screen_w, screen_h);
-
-        Some((rect, button_row_offset))
-    }
-}
-
-/// Width of the theme info popup (wide enough for keys like "editor.line_number_bg").
-const POPUP_WIDTH: u16 = 40;
-
-/// Compute the final popup rect, flipping near screen edges.
-fn compute_popup_rect(
-    position: (u16, u16),
-    width: u16,
-    height: u16,
-    screen_w: u16,
-    screen_h: u16,
-) -> Rect {
-    let x = if position.0 + width > screen_w {
-        screen_w.saturating_sub(width)
-    } else {
-        position.0
-    };
-    let y = if position.1 + height > screen_h {
-        position.1.saturating_sub(height + 1)
-    } else {
-        position.1
-    };
-    Rect::new(x, y, width.min(screen_w), height.min(screen_h))
 }
 
 fn format_color_rgb(color: Color) -> String {

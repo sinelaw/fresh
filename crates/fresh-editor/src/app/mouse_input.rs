@@ -13,7 +13,6 @@ use crate::services::plugins::hooks::HookArgs;
 use crate::view::popup_mouse::{popup_areas_to_layout_info, PopupHitTester};
 use crate::view::prompt::PromptType;
 use anyhow::Result as AnyhowResult;
-use ratatui::layout::Rect;
 use std::time::{Duration, Instant};
 
 /// Columns one notch of a sideways wheel pans. Horizontal panning has
@@ -980,14 +979,6 @@ impl Editor {
         let layouts = popup_areas_to_layout_info(&self.active_chrome().popup_areas);
         let hit_tester = PopupHitTester::new(&layouts, &self.active_state().popups);
         hit_tester.is_over_transient_popup(col, row)
-    }
-
-    /// Check if mouse position is over the file browser popup
-    pub(super) fn is_mouse_over_file_browser(&self, col: u16, row: u16) -> bool {
-        self.active_window()
-            .file_browser_layout
-            .as_ref()
-            .is_some_and(|layout| layout.contains(col, row))
     }
 
     // `split_at_position` lives on `impl Window` — call it via

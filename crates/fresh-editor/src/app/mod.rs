@@ -266,10 +266,7 @@ use crate::view::prompt::PromptType;
 use crate::view::split::{SplitManager, SplitViewState};
 use crate::view::ui::{SplitRenderer, StatusBarRenderer};
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    Frame,
-};
+use ratatui::Frame;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -1222,6 +1219,15 @@ pub struct Editor {
     /// which is the same disjointness the library's own tutorial gets by
     /// keeping `app` and `ui` side by side in `main`.
     pub(crate) shell_ui: Option<fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
+
+    /// What the split grid needs to know about this frame, and what it
+    /// produced. Both travel here rather than through the call because the
+    /// fold reaches the grid through `HostPainter::paint_host`, whose
+    /// signature is a region and a rectangle — a display list carries
+    /// geometry, not the editor's hover state. `render` sets the state before
+    /// it folds and takes the output after; see `app::shell_host`.
+    pub(crate) pending_body_state: crate::app::shell_host::BodyState,
+    pub(crate) pending_body_output: Option<crate::app::shell_host::BodyOutput>,
 
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.

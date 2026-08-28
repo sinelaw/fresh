@@ -15,7 +15,7 @@ use crate::input::keybindings::KeyContext;
 use crate::input::quick_open::{BufferInfo, QuickOpenContext};
 use crate::services::async_bridge::AsyncMessage;
 use crate::services::plugins::PluginManager;
-use crate::view::prompt::{Prompt, PromptType, MAX_VISIBLE_SUGGESTIONS};
+use crate::view::prompt::{Prompt, PromptType};
 
 use super::file_open;
 use super::window::Window;

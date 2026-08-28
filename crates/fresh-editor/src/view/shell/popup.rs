@@ -280,7 +280,7 @@ pub fn body(b: &Body) -> Node<UiMsg> {
 /// word-select through it on a double click. `chrome:popups` was a rectangle
 /// carrying `pointer_opaque` for the same purpose, which is the tree property
 /// this is.
-fn absorb(n: Node<UiMsg>) -> Node<UiMsg> {
+pub(super) fn absorb(n: Node<UiMsg>) -> Node<UiMsg> {
     fresh_ui::gesture(n).on(
         fresh_ui::GestureKind::Press,
         Rc::new(|e: &fresh_ui::Event| {
@@ -589,7 +589,7 @@ fn row_theme(selected: bool, hovered: bool) -> String {
 /// colour nobody named. A span that sets only a foreground keeps the popup's
 /// background, which is what a ratatui `Style` with one field set already
 /// meant.
-fn styled_runs(line: &crate::view::markdown::StyledLine) -> Vec<Run> {
+pub(super) fn styled_runs(line: &crate::view::markdown::StyledLine) -> Vec<Run> {
     line.spans
         .iter()
         .map(|s| {

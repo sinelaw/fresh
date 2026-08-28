@@ -13,11 +13,14 @@
 //! from the `Ui`. It can, on one condition: the `Ui` must not live on the
 //! `Editor`. See `fold`'s module documentation.
 //!
-//! The assembly below mirrors `Editor::render`'s, one for one. The per-frame
-//! *state* arguments (hover targets, LSP waiting, cursor hiding) are taken as
-//! [`BodyState`] rather than recomputed here: they are plain values, they play
-//! no part in the borrow question, and threading the real ones is a mechanical
-//! step for the wave that puts this on the render path.
+//! The assembly below **is** `Editor::render`'s, and is the only copy of it.
+//! It began as a mirror — a second, unreached assembly that proved the borrow
+//! while `render` kept its own — and a second assembly of a 28-parameter call
+//! is a thing that drifts: this one dropped five of the seven results and
+//! passed `BodyState::default()` for the hover state, so it would have painted
+//! a grid with no hovered tab even if anything had reached it. The per-frame
+//! state now arrives as a real [`BodyState`], set by `render` before it folds,
+//! and every result comes back on [`BodyOutput`].
 
 use std::collections::{HashMap, HashSet};
 
@@ -35,23 +38,44 @@ use crate::view::shell::fold::Caret;
 use crate::view::shell::frame::HostRegion;
 
 /// Per-frame facts the split renderer needs that are not borrows.
+///
+/// `paint_host` takes a region and a rectangle and nothing else — which is
+/// right, because a host painter is reached from a display list and a display
+/// list carries geometry, not the editor's hover state. So `render` leaves
+/// this on the editor before it folds, and the callback reads it there.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BodyState {
     pub lsp_waiting: bool,
     pub hide_cursor: bool,
+    pub hovered_tab: Option<(crate::view::split::TabTarget, LeafId, bool)>,
     pub hovered_close_split: Option<LeafId>,
     pub hovered_maximize_split: Option<LeafId>,
+    /// The tab bar lays out but paints no cells when false — the web renders
+    /// tabs natively. Panes always draw.
+    pub draw_tab_bar: bool,
 }
 
 /// What the split grid publishes back across the seam.
 ///
-/// These are the caches chrome reads *after* paint today. Under the shell the
-/// fold owns them, keyed by host region, and hands them to whatever needs them
-/// on the next event — click-to-byte mapping, most of all.
+/// Every rectangle the grid produces, which is what chrome reads *after* paint:
+/// click-to-byte mapping, the scrollbar and separator drags, the tab hit tests.
+/// `render` takes this off the editor once the fold returns and files it in
+/// `WindowLayoutCache`, exactly as it filed the call's return value before.
 #[derive(Default)]
 pub struct BodyOutput {
-    pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
+    pub split_areas: Vec<(LeafId, crate::app::BufferId, Rect, Rect, usize, usize)>,
     pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
+    pub close_split_areas: Vec<(LeafId, u16, u16, u16)>,
+    pub maximize_split_areas: Vec<(LeafId, u16, u16, u16)>,
+    pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
+    pub horizontal_scrollbar_areas: Vec<(LeafId, crate::app::BufferId, Rect, usize, usize, usize)>,
+    pub grouped_separator_areas: Vec<(
+        crate::model::event::ContainerId,
+        crate::model::event::SplitDirection,
+        u16,
+        u16,
+        u16,
+    )>,
 }
 
 /// Paint the split grid into `area`, writing the caret it wants into `caret`.
@@ -72,7 +96,6 @@ pub fn paint_body(
         editor.background_fade,
         editor.software_cursor_only,
     );
-    let draw_tab_bar = !editor.suppress_chrome_cells;
     let session_mode = editor.session_mode || !editor.software_cursor_only;
     let screen_width = buf.area.width;
     let active_window_id = editor.active_window;
@@ -130,7 +153,7 @@ pub fn paint_body(
             Some(vs_map),
             grouped_ref,
             state.hide_cursor,
-            None, // hovered_tab
+            state.hovered_tab,
             state.hovered_close_split,
             state.hovered_maximize_split,
             is_maximized,
@@ -140,14 +163,27 @@ pub fn paint_body(
             cell_theme_map_mut,
             screen_width,
             caret,
-            draw_tab_bar,
+            state.draw_tab_bar,
         )
     });
 
     match rendered {
-        Some((_, tab_layouts, _, _, view_line_mappings, _, _)) => BodyOutput {
-            view_line_mappings,
+        Some((
+            split_areas,
             tab_layouts,
+            close_split_areas,
+            maximize_split_areas,
+            view_line_mappings,
+            horizontal_scrollbar_areas,
+            grouped_separator_areas,
+        )) => BodyOutput {
+            split_areas,
+            tab_layouts,
+            close_split_areas,
+            maximize_split_areas,
+            view_line_mappings,
+            horizontal_scrollbar_areas,
+            grouped_separator_areas,
         },
         None => BodyOutput::default(),
     }
@@ -158,24 +194,29 @@ pub fn paint_body(
 /// During the migration this is what shrinks: every region still listed here
 /// is one the old painters own, and each stage moves one of them out into a
 /// native `fresh-ui` description until only [`HostRegion::Body`] — the buffer
-/// and terminal grid — is left. That last one never migrates.
+/// and terminal grid — is left. That last one never migrates; what remains for
+/// it is S5's decomposition, which subdivides the leaf into one per pane
+/// rather than removing it.
 impl crate::view::shell::fold::HostPainter for Editor {
     fn paint_host(&mut self, region: HostRegion, rect: Rect, buf: &mut Buffer, caret: &mut Caret) {
         match region {
             HostRegion::Body => {
-                // TODO(migration S1): thread the real per-frame state instead
-                // of the default, and publish `BodyOutput` to the geometry
-                // bridge. Neither affects the borrow, which is what this path
-                // exists to establish.
-                let _ = paint_body(self, rect, buf, caret, BodyState::default());
+                // The state `render` left here, and the rectangles the grid
+                // produces left back for it. A `paint_host` signature carries
+                // geometry and nothing else, which is why both travel on the
+                // editor rather than through the call.
+                let state = self.pending_body_state;
+                let out = paint_body(self, rect, buf, caret, state);
+                self.pending_body_output = Some(out);
             }
             // Native already — the tree paints these, and the fold never
             // reaches here for them because a native region emits no
             // `Draw::Host`. Listed so that un-migrating one is a compile
             // error rather than a blank row.
             HostRegion::MenuBar | HostRegion::SearchOptions | HostRegion::Explorer => {}
-            // Still painted by `Editor::render`; moved out one stage at a
-            // time.
+            // The dock's column is native around a `Host` content leaf that
+            // the panel painter still owns, and the two one-row regions are
+            // the prompt's. All three are painted by `Editor::render`.
             HostRegion::Dock | HostRegion::StatusBar | HostRegion::PromptLine => {}
         }
     }
@@ -893,6 +934,32 @@ impl Editor {
             UiFact::ExplorerBodyPress => self.take_focus_for_file_explorer(),
             UiFact::PopupSelect(i) => self.select_popup_item(i),
             UiFact::PopupDismissTransient => self.dismiss_transient_popups(),
+            // The toolbar's controls are a plugin's `WidgetSpec`, hit-tested
+            // against the widget runtime's own boxes. The band said where the
+            // press landed inside it; this is the walk `chrome:prompt_scrim`
+            // did after subtracting a stored origin by hand.
+            UiFact::CardToolbarPress { x, y } => {
+                let hit = {
+                    let boxes = &self.active_chrome().prompt_toolbar_boxes;
+                    crate::widgets::layout_box::hit_path(boxes, y as u32, x as u32)
+                        .into_iter()
+                        .rev()
+                        .filter(|&i| boxes[i].focusable)
+                        .find_map(|i| boxes[i].key.clone())
+                };
+                if let Some(widget_key) = hit {
+                    // Move keyboard focus to the clicked control so Tab
+                    // continues from here, then flip it through the host.
+                    if let Some(p) = self.active_window_mut().prompt.as_mut() {
+                        p.toolbar_focus = Some(widget_key.clone());
+                    }
+                    self.toggle_overlay_toolbar_widget(&widget_key);
+                }
+            }
+            UiFact::CardPreviewScroll(delta) => {
+                self.active_window_mut()
+                    .scroll_overlay_preview_by_lines(delta);
+            }
             // What a press inside a popup's text *means*. The tree said where
             // it landed, in the content's own coordinates; this is the rest of
             // `handle_click_buffer_popups` — a link if one is there, and the
@@ -943,6 +1010,80 @@ impl Editor {
                 st.dragging_file_explorer = true;
                 st.drag_start_position = Some((x, y));
                 st.drag_start_explorer_width = Some(w);
+            }
+            // The dock's column, all four of its gestures. Each body is the
+            // arm `chrome::Dock::on_pointer` ran; what is gone is the pair of
+            // boxes that decided *which* arm, and the insertion-order rule
+            // that put the grip above the column.
+            UiFact::DockPress { x, y } => {
+                // Re-focus first when blurred: the un-blur notifies the plugin
+                // via a `focus` widget_event, so any mirror of dock-focus
+                // state updates before the click's row-select event fires its
+                // scheduling logic.
+                if self.dock.as_ref().is_some_and(|f| !f.focused) {
+                    self.refocus_floating_panel(crate::app::PanelSlot::Dock);
+                }
+                self.handle_floating_widget_click(crate::app::PanelSlot::Dock, x, y);
+            }
+            UiFact::DockContext { x, y } => {
+                if self.dock.as_ref().is_some_and(|f| !f.focused) {
+                    self.refocus_floating_panel(crate::app::PanelSlot::Dock);
+                }
+                self.handle_floating_widget_context_click(crate::app::PanelSlot::Dock, x, y);
+            }
+            UiFact::DockScroll { delta, x, y } => {
+                self.handle_floating_widget_panel_wheel(crate::app::PanelSlot::Dock, x, y, delta);
+            }
+            UiFact::DockResizeBegin => self.dock_resizing = true,
+            UiFact::DockBlur => {
+                if self.dock.as_ref().is_some_and(|f| f.focused) {
+                    self.blur_floating_panel(crate::app::PanelSlot::Dock);
+                }
+            }
+            // The inspector. Dismissing it is the same statement three
+            // places used to make: an outside-press guard returning
+            // `PassAfter`, an `on_key` that cleared the field and returned
+            // `None`, and the popup's own opacity in between.
+            // The file-open dialog. Each body is the arm
+            // `chrome::FileBrowser` ran; the box that decided *which* — and
+            // its full-frame stand-in for the frame before the first paint —
+            // is gone.
+            UiFact::BrowserPress { x, y, double } => {
+                if double {
+                    self.handle_file_open_double_click(x, y);
+                } else {
+                    self.handle_file_open_click(x, y);
+                }
+            }
+            UiFact::BrowserHover { x, y } => {
+                let target = self.compute_file_browser_hover(x, y);
+                if self.active_window().mouse_state.hover_target != target {
+                    self.active_window_mut().mouse_state.hover_target = target;
+                }
+            }
+            UiFact::BrowserScroll(delta) => {
+                self.handle_file_open_scroll(delta);
+            }
+            UiFact::ThemeInfoDismiss => self.active_window_mut().theme_info_popup = None,
+            UiFact::ThemeInspect { x, y } => {
+                if let Err(e) = self.show_theme_info_popup(x, y) {
+                    tracing::warn!("theme inspect failed: {e}");
+                }
+            }
+            UiFact::ThemeInfoOpenEditor => {
+                let key = self
+                    .active_window()
+                    .theme_info_popup
+                    .as_ref()
+                    .and_then(|p| p.info.fg_key.clone().or_else(|| p.info.bg_key.clone()));
+                self.active_window_mut().theme_info_popup = None;
+                if let Some(key) = key {
+                    self.fire_theme_inspect_hook(key);
+                }
+            }
+            UiFact::ThemeInfoButtonHover(on) => {
+                let target = on.then_some(crate::app::types::HoverTarget::ThemeInfoButton);
+                self.active_window_mut().mouse_state.hover_target = target;
             }
             UiFact::ExplorerScroll { delta, x, y } => {
                 // The surface's wheel, with the surface. Unchanged from the
