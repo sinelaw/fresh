@@ -158,27 +158,26 @@ vi plugin, so the "missing registers and macros" claim is correct in scope.
 
 ## 5. Internationalization (i18n) — SHIPPED, with a doc discrepancy
 
-UI strings are externalized to JSON locales across many languages. The crate is
-`rust-i18n`, and locale JSON bytes are embedded at compile time.
+UI strings are externalized to JSON locales across many languages. Lookup goes
+through `fresh-i18n`, an in-tree library, and locale JSON bytes are embedded at
+compile time.
 
 **Plugin strings are localized too,** via a separate mechanism: per-plugin i18n
 JSON files sit next to plugins, loaded through register/translate plugin-string
 helpers (a lock-guarded map with variable interpolation) — independent of the
-rust-i18n backend.
+embedded catalogs.
 
 **Locale selection precedence** (CLI > config > env): a `--locale` flag, then the
 configured locale, then locale detection from environment variables
 (`LC_ALL`→`LC_MESSAGES`→`LANG`, region-aware, e.g. `pt_BR`→`pt-BR`, else `"en"`).
 
 > **DISCREPANCY — the design's i18n note says "compile-time embedding, zero runtime
-> overhead." That is inaccurate.** Fresh overrides rust-i18n's default backend with
-> a custom runtime backend. JSON *bytes* are embedded at compile time, but they are
-> **parsed at runtime** — the backend lazily parses, flattens, and leaks the JSON on
-> first use per locale. The module's own doc-comment states the intent: it replaces
-> the compile-time macro expansion with runtime JSON parsing to significantly reduce
-> compiler memory usage. So the real trade was **lower compile-time memory at the
-> cost of a one-time runtime parse per locale** — not "zero runtime overhead." The
-> stale header comment still repeats the old framing and should be corrected.
+> overhead." That is inaccurate.** JSON *bytes* are embedded at compile time, but
+> they are **parsed at runtime**: `fresh-i18n` lazily parses, flattens, and leaks a
+> catalog on first use per locale. That was the point of replacing compile-time
+> macro expansion with runtime JSON parsing — it significantly reduces compiler
+> memory usage. So the real trade is **lower compile-time memory at the cost of a
+> one-time runtime parse per locale**, not "zero runtime overhead."
 
 ---
 
