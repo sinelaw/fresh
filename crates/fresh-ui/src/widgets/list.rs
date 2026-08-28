@@ -36,6 +36,65 @@ pub struct ListState {
     pub(crate) revealed: crate::behavior::Cache<usize, ()>,
 }
 
+/// Which click in a run activates a row.
+///
+/// Not a detail of the widget: it is the difference between a menu and a file
+/// list. A palette row commits on the first click, because selecting it *is*
+/// choosing it; a file list selects on the first and opens on the second,
+/// because the user may want to look at what they picked before committing to
+/// it. Both were `on_activate` before, and the widget chose the first for
+/// everyone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Activate {
+    /// The first click both selects and activates.
+    #[default]
+    Click,
+    /// The second click activates; the first only selects.
+    DoubleClick,
+}
+
+impl Activate {
+    fn wants(self, clicks: u8) -> bool {
+        match self {
+            Activate::Click => true,
+            Activate::DoubleClick => clicks >= 2,
+        }
+    }
+}
+
+/// A row's visual state, as the list knows it.
+///
+/// **The widget owns the state machine; the host owns the palette.** `List`
+/// already tracks which row is selected, which the pointer is over, and whether
+/// the list has focus — and two of those live in `ListState`, so a host cannot
+/// compute them from the outside. What it *can* decide is what each state looks
+/// like, which is why [`List::row_theme`] hands the state out rather than a
+/// name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowState {
+    Normal,
+    /// The pointer is over this row.
+    Hover,
+    /// Selected, in a list that has focus.
+    Selected,
+    /// Selected, in a list that does not — so the eye can tell which list among
+    /// several the keyboard is driving.
+    SelectedBlur,
+}
+
+impl RowState {
+    /// The default name for this state: the vocabulary a host gets when it does
+    /// not name its own.
+    pub fn theme(self) -> &'static str {
+        match self {
+            RowState::Normal => "list.row",
+            RowState::Hover => "list.row.hover",
+            RowState::Selected => "list.row.selected",
+            RowState::SelectedBlur => "list.row.selected.blur",
+        }
+    }
+}
+
 enum Source<M> {
     Eager(Rc<Vec<(Key, Node<M>)>>),
     #[allow(clippy::type_complexity)]
@@ -84,9 +143,12 @@ pub struct List<M> {
     selected: Option<usize>,
     on_select: Option<Rc<dyn Fn(usize) -> M>>,
     on_activate: Option<Rc<dyn Fn(usize) -> Option<M>>>,
+    activate_on: Activate,
     focusable: bool,
     autofocus: bool,
     scrollbar: bool,
+    #[allow(clippy::type_complexity)]
+    row_theme: Option<Rc<dyn Fn(usize, RowState) -> String>>,
 }
 
 impl<M: 'static> List<M> {
@@ -123,9 +185,11 @@ impl<M: 'static> List<M> {
             selected: None,
             on_select: None,
             on_activate: None,
+            activate_on: Activate::default(),
             focusable: true,
             autofocus: false,
             scrollbar: false,
+            row_theme: None,
         }
     }
 
@@ -152,6 +216,13 @@ impl<M: 'static> List<M> {
         self
     }
 
+    /// Which click activates a row. See [`Activate`]; the default is the first,
+    /// which is what every caller got before this existed.
+    pub fn activate_on(mut self, a: Activate) -> Self {
+        self.activate_on = a;
+        self
+    }
+
     pub fn focusable(mut self, yes: bool) -> Self {
         self.focusable = yes;
         self
@@ -160,6 +231,20 @@ impl<M: 'static> List<M> {
     /// Take focus when this list first appears.
     pub fn autofocus(mut self) -> Self {
         self.autofocus = true;
+        self
+    }
+
+    /// Name each row's appearance, given its index and the state the list has
+    /// it in.
+    ///
+    /// Without this a row is stamped with [`RowState::theme`] — `list.row`,
+    /// `list.row.selected` and the rest — which is a vocabulary the backend has
+    /// to bind. A host that already has theme names for the surface it is
+    /// migrating says them here instead, and the stamped name never appears.
+    /// The name overwrites whatever the row builder set, so this is the only
+    /// way for the caller's own name to survive.
+    pub fn row_theme(mut self, f: impl Fn(usize, RowState) -> String + 'static) -> Self {
+        self.row_theme = Some(Rc::new(f));
         self
     }
 
@@ -201,6 +286,7 @@ impl<M: 'static> Component<M> for List<M> {
         let source = self.source.clone();
         let hov = s.hovered;
         let focused = s.focused;
+        let row_theme = self.row_theme.clone();
         // Clicking a row selects it, the same selection the keyboard drives.
         // Built here so it rides along with each visible row the reader emits.
         let click: Option<RowClick<M>> = if self.focusable {
@@ -208,6 +294,7 @@ impl<M: 'static> Component<M> for List<M> {
             let anchor = anchor.clone();
             let on_select = self.on_select.clone();
             let on_activate = self.on_activate.clone();
+            let activate_on = self.activate_on;
             Some(Rc::new(move |i: usize| {
                 let up = up.clone();
                 let anchor = anchor.clone();
@@ -217,12 +304,15 @@ impl<M: 'static> Component<M> for List<M> {
                     e.request_focus(crate::event::SelectionOnFocus::Preserve);
                     up.set(move |st: &mut ListState| st.selected = i);
                     let _ = &anchor;
-                    // A click both moves the selection and activates the row:
-                    // for a menu or the palette that is the whole interaction,
-                    // for a plain list it is select-and-open. A handler may
-                    // return only one message, so activation wins when both are
-                    // present and the selection is delivered through state.
+                    // A click always moves the selection; whether it also
+                    // activates is `activate_on`'s answer, read off the click
+                    // run the host reported. A handler may return only one
+                    // message, so activation wins when it fires and the
+                    // selection is delivered through state either way.
                     let selected = on_select.as_ref().map(|f| f(i));
+                    if !activate_on.wants(e.clicks) {
+                        return selected;
+                    }
                     match on_activate.as_ref().and_then(|f| f(i)) {
                         Some(m) => Some(m),
                         None => selected,
@@ -265,19 +355,22 @@ impl<M: 'static> Component<M> for List<M> {
             let last = (first + visible + OVERSCAN).min(n);
             col().children((first..last).map(|i| {
                 let (k, row) = source.at(i).expect("index inside the source");
-                let theme = if i == sel {
+                let state = if i == sel {
                     // A selected row reads as focused only when the list has
-                    // focus; otherwise it is muted, so the eye can tell which
-                    // list among several the keyboard is driving.
+                    // focus; otherwise it is muted.
                     if focused {
-                        "list.row.selected"
+                        RowState::Selected
                     } else {
-                        "list.row.selected.blur"
+                        RowState::SelectedBlur
                     }
                 } else if hov == Some(i) {
-                    "list.row.hover"
+                    RowState::Hover
                 } else {
-                    "list.row"
+                    RowState::Normal
+                };
+                let theme: String = match &row_theme {
+                    Some(f) => f(i, state),
+                    None => state.theme().to_string(),
                 };
                 let content = row.key(k).theme(theme).h(Sizing::Cells(1));
                 let g = gesture(content).on_enter(hover(i)).on_leave(hover(i));

@@ -829,6 +829,7 @@ impl<M: 'static> Ui<M> {
             h: crate::desc::Sizing::Auto,
             min_w: 0,
             min_h: 0,
+            priority: 0,
             pointer: None,
             clips,
             clip_inset,

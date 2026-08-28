@@ -244,6 +244,77 @@ fn the_selected_row_is_marked_in_the_display_list() {
     assert_eq!(themes_of(&ui, "item 3"), vec!["list.row"]);
 }
 
+/// **A host names its own row appearance.** The stamped vocabulary
+/// (`list.row.selected` and the rest) overwrites whatever the row builder set,
+/// so a host migrating a surface that already has theme names had no way to
+/// keep them — and it cannot compute the name itself either, because `hovered`
+/// and `focused` live in `ListState`. `row_theme` hands out the state instead
+/// of the name.
+#[test]
+fn a_host_can_name_each_row_state_itself() {
+    let items: Vec<usize> = (0..6).collect();
+    let list = List::keyed(
+        &items,
+        |i| fresh_ui::Key::from(*i),
+        |i| fresh_ui::text(format!("item {i}")),
+    )
+    .selected(2)
+    .row_theme(|i, st| match st {
+        fresh_ui::widgets::RowState::Normal => format!("mine.plain.{i}"),
+        fresh_ui::widgets::RowState::Selected => "mine.on".into(),
+        fresh_ui::widgets::RowState::SelectedBlur => "mine.on.blur".into(),
+        fresh_ui::widgets::RowState::Hover => "mine.hover".into(),
+    })
+    .node();
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list, FRAME);
+    assert_eq!(themes_of(&ui, "item 2"), vec!["mine.on.blur"]);
+    assert_eq!(themes_of(&ui, "item 3"), vec!["mine.plain.3"]);
+}
+
+/// **Which click commits is the host's rule, not the widget's.**
+///
+/// `on_activate` fired on the first click and won over `on_select`, so a list
+/// that wants select-then-open — a file browser, the editor's suggestion list
+/// with its double-click confirm — could not have both: setting the two
+/// handlers confirmed on every click. The click run is already carried to the
+/// handler on `Event::clicks`; this is only a matter of the widget consulting
+/// it.
+#[test]
+fn a_double_click_list_selects_first_and_activates_second() {
+    use fresh_ui::widgets::Activate;
+    let items: Vec<usize> = (0..6).collect();
+    let list = || {
+        List::keyed(
+            &items,
+            |i| fresh_ui::Key::from(*i),
+            |i| fresh_ui::text(format!("item {i}")),
+        )
+        .selected(0)
+        .on_select(Msg::Selected)
+        .on_activate(Msg::Activated)
+        .activate_on(Activate::DoubleClick)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(list(), FRAME);
+    let at = ui.rect_of(ui.find_by_key(&fresh_ui::Key::from(2u64)).expect("row 2"));
+    let p = Point::new(at.x, at.y);
+
+    let mut click = |n: u8| {
+        let mut out = ui
+            .dispatch(Input::press_n(p, MouseButton::Left, Mods::NONE, n))
+            .msgs;
+        out.extend(
+            ui.dispatch(Input::release(p, MouseButton::Left, Mods::NONE))
+                .msgs,
+        );
+        out
+    };
+    assert_eq!(click(1), vec![Msg::Selected(2)], "the first click selects");
+    assert_eq!(click(2), vec![Msg::Activated(2)], "the second activates");
+}
+
 #[test]
 fn a_list_scrolls_to_keep_the_selection_visible() {
     let mut ui: Ui<Msg> = Ui::new();

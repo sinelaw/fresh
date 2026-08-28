@@ -3,7 +3,7 @@
 
 use fresh_ui::{
     col, distribute, layout_reader, row, text, viewport, Align, BuildCx, Component, ComponentExt,
-    Constraints, Node, Rect, Size, Sizing, Ui,
+    Constraints, Draw, Key, Node, Rect, Size, Sizing, Ui,
 };
 
 const FRAME: Size = Size { w: 80, h: 24 };
@@ -491,4 +491,340 @@ fn a_floor_holds_inside_a_viewport() {
         "the gap collapsed to {} inside a viewport",
         ui.rect(gap).w
     );
+}
+
+/// A second frame re-measures every dirty boundary, not just the root.
+///
+/// The mark that a node needs layout stops at the nearest relayout boundary —
+/// that is the point of boundaries. So re-measuring the *root* does not stand
+/// in for the rest of the dirty list: the root walk hits each boundary's cache
+/// and short-circuits above it, leaving it holding the previous frame's
+/// measurement. `TextRender` shapes its rows during measure and paints from
+/// them, so a boundary that was skipped paints last frame's text.
+///
+/// A layer is what made this reachable in practice: it dirties the root, the
+/// root has no cached constraints to re-enter on, and the pass used to drop
+/// the rest of the list on that account. The editor's status bar then painted
+/// a stale row for every frame in which a menu was open.
+#[test]
+fn a_stale_boundary_is_re_measured_even_when_the_root_is_too() {
+    let tree = |msg: &str, overlay: bool| {
+        // `h(Cells(1))` hands the row tight constraints, which makes it a
+        // relayout boundary — the marker from the text below stops there.
+        // The inner `col` matters: it sits between the root and the boundary
+        // and is itself clean, so a walk from the root stops there. Without
+        // something in between, the root's own re-measure would reach the
+        // boundary by accident and the bug would not show.
+        let base = col().children([col().flex(1).children([
+            row().h(Sizing::Cells(1)).children([text(msg.to_string())]),
+            text("body").flex(1),
+        ])]);
+        if overlay {
+            base.child(
+                fresh_ui::layer()
+                    .anchor(fresh_ui::Anchor::Screen(Align::Center))
+                    .child(text("overlay")),
+            )
+        } else {
+            base
+        }
+    };
+    let lines = |ui: &Ui<()>| -> Vec<String> {
+        ui.spec()
+            .items
+            .iter()
+            .filter_map(|i| match &i.draw {
+                fresh_ui::Draw::Lines(l) => l.first().map(|s| s.to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // One `Ui` across both frames: the second frame is a reconcile, which is
+    // how a host drives it.
+    let mut ui = ui();
+    ui.frame(tree("before", true), FRAME);
+    assert!(lines(&ui).contains(&"before".to_string()));
+
+    ui.frame(tree("after", false), FRAME);
+    assert!(
+        lines(&ui).contains(&"after".to_string()),
+        "the boundary painted a stale row: {:?}",
+        lines(&ui)
+    );
+}
+
+/// **Priority decides who yields, declaration order decides who is placed
+/// where.** The two were the same thing before: a row sizes its children
+/// against the space that is left, in the order they were declared, so the
+/// first-declared won every contest.
+///
+/// The status bar is the case this exists for. Its rule is "reserve the right
+/// side, then spend what is left on the left side" — a precedence, which flex
+/// cannot say, so the editor computed the answer outside layout and passed in
+/// widths (`left_budget`). Here the same rule is two `priority` calls.
+#[test]
+fn a_higher_priority_child_is_sized_before_a_lower_one() {
+    let row_of = |left_priority: u8, right_priority: u8| {
+        row().children([
+            text("a-very-long-left-hand-label")
+                .w(Sizing::Cells(26))
+                .priority(left_priority),
+            text("RIGHT").w(Sizing::Cells(5)).priority(right_priority),
+        ])
+    };
+
+    // Declaration order alone: the left child takes what it asked for and the
+    // right one gets the remainder — three cells of a five-cell ask.
+    let mut plain = ui();
+    plain.frame(row_of(0, 0), Size::new(29, 1));
+    assert_eq!(plain.rect(plain.at(&[0]).unwrap()).w, 26);
+    assert_eq!(
+        plain.rect(plain.at(&[1]).unwrap()).w,
+        3,
+        "the right side yielded"
+    );
+
+    // The same tree, with the right side reserved first. It keeps all five
+    // cells and the left side truncates instead — and it is still drawn on
+    // the right, because placement did not change.
+    let mut reserved = ui();
+    reserved.frame(row_of(0, 1), Size::new(29, 1));
+    let left = reserved.rect(reserved.at(&[0]).unwrap());
+    let right = reserved.rect(reserved.at(&[1]).unwrap());
+    assert_eq!(right.w, 5, "the reserved side keeps its width");
+    assert_eq!(left.w, 24, "the left side spends what is left");
+    assert!(left.x < right.x, "placement is still declaration order");
+}
+
+/// The default costs nothing: with no priority set anywhere, layout is
+/// byte-identical to what it was before the concept existed.
+#[test]
+fn equal_priorities_keep_declaration_order() {
+    let mut ui = ui();
+    ui.frame(
+        row().children([
+            text("aaaa").w(Sizing::Cells(4)).priority(3),
+            text("bbbb").w(Sizing::Cells(4)).priority(3),
+            text("cccc").w(Sizing::Cells(4)).priority(3),
+        ]),
+        Size::new(9, 1),
+    );
+    assert_eq!(ui.rect(ui.at(&[0]).unwrap()).w, 4);
+    assert_eq!(ui.rect(ui.at(&[1]).unwrap()).w, 4);
+    assert_eq!(ui.rect(ui.at(&[2]).unwrap()).w, 1, "the last one yields");
+}
+
+// -- Elide -------------------------------------------------------------------
+
+/// **A run that is given less than it measured at says so.**
+///
+/// Non-wrapping text is clipped by the enclosing box, which loses the fact that
+/// anything was cut. That was survivable while a host truncated its own strings
+/// first — but `priority` moved the decision into layout, so by the time the
+/// width is known the host is no longer in the loop. The mark has to come from
+/// the run.
+#[test]
+fn an_elided_run_marks_the_end_it_cut() {
+    use fresh_ui::Elide;
+    let painted = |e: Elide| {
+        let mut ui: Ui<()> = Ui::new();
+        let spec = ui
+            .frame(
+                row()
+                    .w(Sizing::Cells(6))
+                    .child(text("abcdefghij").elide(e).key(Key::from(1u64))),
+                Size::new(6, 1),
+            )
+            .clone();
+        spec.items
+            .iter()
+            .find(|i| i.key.as_ref() == Some(&Key::from(1u64)))
+            .and_then(|i| match &i.draw {
+                Draw::Lines(l) => l.first().map(|s| s.to_string()),
+                _ => None,
+            })
+            .expect("the run painted")
+    };
+    // The head survives, and the cut is visible at the end.
+    assert_eq!(painted(Elide::Tail), "abcde…");
+    // The tail survives — a path keeps its filename.
+    assert_eq!(painted(Elide::Head), "…fghij");
+    // Unasked for, nothing changes: the box clips, exactly as before.
+    assert_eq!(painted(Elide::None), "abcdefghij");
+}
+
+/// **Cells, not characters.** Counting `char`s puts the mark in the wrong place
+/// for a wide glyph and can cut one in half. Four double-width glyphs in five
+/// cells is two glyphs and the mark.
+#[test]
+fn eliding_counts_cells_and_never_splits_a_glyph() {
+    use fresh_ui::Elide;
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui
+        .frame(
+            row()
+                .w(Sizing::Cells(5))
+                .child(text("漢字漢字").elide(Elide::Tail).key(Key::from(1u64))),
+            Size::new(5, 1),
+        )
+        .clone();
+    let painted = spec
+        .items
+        .iter()
+        .find(|i| i.key.as_ref() == Some(&Key::from(1u64)))
+        .and_then(|i| match &i.draw {
+            Draw::Lines(l) => l.first().map(|s| s.to_string()),
+            _ => None,
+        })
+        .expect("the run painted");
+    assert_eq!(painted, "漢字…");
+}
+
+/// **A layer can be as wide as what it hangs off.**
+///
+/// A dropdown matches its button; a command palette matches the row it sits
+/// above. Neither is expressible any other way: a layer measures against the
+/// whole frame, so `flex` inside it reaches the frame's edge, and a cell count
+/// is the caller measuring the anchor by hand — which is the arithmetic
+/// anchoring exists to remove.
+#[test]
+fn a_stretched_layer_takes_its_anchor_width() {
+    use fresh_ui::{layer, Anchor, Place};
+    let build = |stretch: bool| {
+        let mut ui: Ui<()> = Ui::new();
+        let l = layer()
+            .key(Key::from(9u64))
+            .anchor(Anchor::Node(Key::from(1u64)))
+            .place(Place::Above)
+            .child(col().theme("x").child(text("hi")));
+        let l = if stretch { l.stretch_to_anchor() } else { l };
+        let spec = ui
+            .frame(
+                col().children([
+                    row().h(Sizing::Cells(4)),
+                    row()
+                        .key(Key::from(1u64))
+                        .w(Sizing::Cells(30))
+                        .h(Sizing::Cells(1))
+                        .theme("row")
+                        .child(l),
+                ]),
+                Size::new(60, 10),
+            )
+            .clone();
+        let r = spec
+            .index
+            .iter()
+            .find(|(k, _)| *k == Key::from(9u64))
+            .unwrap()
+            .1
+            .clone();
+        spec.items[r.start].rect
+    };
+    // Left to itself, the layer is the width of its content.
+    assert_eq!(build(false).w, 2, "\"hi\" is two cells");
+    // Stretched, it is the width of the row it is placed above — and still
+    // only as tall as it needs.
+    let s = build(true);
+    assert_eq!((s.w, s.h), (30, 1), "the anchor's width, its own height");
+}
+
+/// **A caret is a cell; a click position is a point.**
+///
+/// `Place::Below` an `Anchor::Point` lands on the point's own row, because a
+/// point resolves to a zero-size rect and below a zero-height thing is itself.
+/// That is right for what a point names — the context menu opens `Over` a click
+/// position and wants exactly that. A caret occupies a cell, and a completion
+/// popup placed below one must clear the character it is completing.
+#[test]
+fn below_a_cell_is_the_row_after_it_and_below_a_point_is_its_own() {
+    use fresh_ui::{layer, Anchor, Place};
+    let at = |a: Anchor| {
+        let mut ui: Ui<()> = Ui::new();
+        let spec = ui
+            .frame(
+                col().child(
+                    layer()
+                        .key(Key::from(3u64))
+                        .anchor(a)
+                        .place(Place::Below)
+                        .child(col().theme("x").child(text("hi"))),
+                ),
+                Size::new(40, 12),
+            )
+            .clone();
+        spec.index
+            .iter()
+            .find(|(k, _)| *k == Key::from(3u64))
+            .and_then(|(_, r)| spec.items.get(r.start))
+            .map(|i| i.rect.y)
+            .expect("placed")
+    };
+    assert_eq!(
+        at(Anchor::Point(5, 4)),
+        4,
+        "below a point is the point's row"
+    );
+    assert_eq!(
+        at(Anchor::Cell(5, 4)),
+        5,
+        "below a cell is the row after it"
+    );
+}
+
+/// **A layer can align within its anchor, not only match it.**
+///
+/// A notification hangs off the right edge of the row above it; a dropdown
+/// matches its button's width. Both are relationships to the anchor, and
+/// `stretch_to_anchor` was only the `Stretch` one — with no way to say the
+/// others, a caller is back to measuring the anchor and subtracting.
+#[test]
+fn a_layer_aligns_on_the_axis_its_placement_leaves_free() {
+    use fresh_ui::{layer, Align, Anchor, Place};
+    let at = |align: Option<Align>| {
+        let l = layer()
+            .key(Key::from(4u64))
+            .anchor(Anchor::Node(Key::from(1u64)))
+            .place(Place::Above)
+            .child(col().theme("x").child(text("hi")));
+        let l = match align {
+            Some(a) => l.align_to_anchor(a),
+            None => l,
+        };
+        let mut ui: Ui<()> = Ui::new();
+        let spec = ui
+            .frame(
+                col().children([
+                    row().h(Sizing::Cells(4)),
+                    row()
+                        .key(Key::from(1u64))
+                        .w(Sizing::Cells(30))
+                        .h(Sizing::Cells(1))
+                        .theme("row")
+                        .child(l),
+                ]),
+                Size::new(60, 10),
+            )
+            .clone();
+        let i = spec
+            .index
+            .iter()
+            .find(|(k, _)| *k == Key::from(4u64))
+            .and_then(|(_, r)| spec.items.get(r.start))
+            .expect("placed");
+        (i.rect.x, i.rect.w)
+    };
+    // Unaligned: the placement's own origin, the anchor's left edge.
+    assert_eq!(at(None), (0, 2));
+    assert_eq!(at(Some(Align::Start)), (0, 2));
+    // "hi" is two cells; the anchor is thirty.
+    assert_eq!(at(Some(Align::Center)), (14, 2));
+    assert_eq!(
+        at(Some(Align::End)),
+        (28, 2),
+        "flush with the anchor's right"
+    );
+    // Stretch is the case `stretch_to_anchor` already spelled, unchanged.
+    assert_eq!(at(Some(Align::Stretch)), (0, 30));
 }

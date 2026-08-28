@@ -30,6 +30,7 @@ pub(crate) struct Carry {
     h: Sizing,
     min_w: u16,
     min_h: u16,
+    priority: u8,
     pointer: Option<crate::desc::PointerMode>,
     theme: Option<Rc<str>>,
     key: Option<crate::key::Key>,
@@ -65,6 +66,10 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
     fn floor(&self, child: RenderId) -> (u16, u16) {
         let n = &self.ui.render[child];
         (n.min_w, n.min_h)
+    }
+
+    fn priority(&self, child: RenderId) -> u8 {
+        self.ui.render[child].priority
     }
 
     fn measure(&mut self, child: RenderId, c: Constraints) -> Size {
@@ -309,6 +314,7 @@ impl<M: 'static> Ui<M> {
         // the wrapper it handed over.
         let min_w = carry.min_w.max(el.desc.min_w);
         let min_h = carry.min_h.max(el.desc.min_h);
+        let priority = carry.priority.max(el.desc.priority);
         let pointer = carry.pointer.or(el.desc.pointer);
         let theme = el
             .desc
@@ -343,6 +349,7 @@ impl<M: 'static> Ui<M> {
                     n.h = h;
                     n.min_w = min_w;
                     n.min_h = min_h;
+                    n.priority = priority;
                     n.pointer = pointer;
                     n.theme = theme;
                     n.key = key;
@@ -390,6 +397,7 @@ impl<M: 'static> Ui<M> {
                             h,
                             min_w,
                             min_h,
+                            priority,
                             pointer,
                             theme: theme.clone(),
                             key: key.clone(),
@@ -516,7 +524,15 @@ impl<M: 'static> Ui<M> {
         let root_c = self.root_constraints(root, frame);
         let full = self.frame_size != frame || self.render[root].data.cached.is_none();
         if full {
-            self.layout_dirty.clear();
+            // The dirty list is deliberately *not* cleared here. A root
+            // measure is not a whole-tree measure: path-marking stops at the
+            // nearest relayout boundary, so the root walk short-circuits above
+            // every boundary that was marked from below and leaves it holding
+            // last frame's measurement — which for text is the shaped rows
+            // paint reads. Dropping the list here painted a stale status bar
+            // for the whole frame in which a layer was open, because the layer
+            // dirtied the root. Re-entering the root from the drain afterwards
+            // is a cache hit.
             self.measure(root, root_c);
         }
 
@@ -642,8 +658,16 @@ impl<M: 'static> Ui<M> {
                     continue;
                 }
                 let Some((c, _)) = self.render[b].data.cached else {
+                    // No cache means no constraints to re-enter this boundary
+                    // on, so the pass starts again from the root. That does
+                    // *not* stand in for the rest of the list: path-marking
+                    // stops at a boundary, so the root walk short-circuits
+                    // above every other dirty boundary and leaves it stale.
+                    // Each one is still visited — by then the root pass has
+                    // usually refilled its cache, and if it has not, this
+                    // measure is a cache hit that costs nothing.
                     self.measure(root, root_c);
-                    break;
+                    continue;
                 };
                 self.measure(b, c);
             }
@@ -771,16 +795,38 @@ impl<M: 'static> Ui<M> {
                     .map(|r| self.render[r].data.rect)
                     .unwrap_or(self.render[parent].data.rect),
                 Anchor::Point(x, y) => Rect::new(*x as i32, *y as i32, 0, 0),
+                // One cell, which is the whole difference: `Place::Below` a
+                // cell is the row after it, while below a point is the point's
+                // own row.
+                Anchor::Cell(x, y) => Rect::new(*x as i32, *y as i32, 1, 1),
                 Anchor::Screen(_) => Rect::from_size(frame),
             };
             let c = if props.place == Place::Fill {
                 Constraints::tight(anchor.size())
+            } else if props.align == Some(Align::Stretch) {
+                // Free axis pinned to the anchor, the other still free. What
+                // makes a dropdown the width of its button without the caller
+                // measuring the button.
+                let a = anchor.size();
+                match props.place {
+                    Place::Above | Place::Below => Constraints::new(a.w, a.w, 0, frame.h),
+                    Place::LeftOf | Place::RightOf => Constraints::new(0, frame.w, a.h, a.h),
+                    Place::Over | Place::Fill => Constraints::loose(frame),
+                }
             } else {
                 Constraints::loose(frame)
             };
             self.render.get_mut(lr).expect("live").data.needs_layout = true;
             let size = self.measure(lr, c);
-            let origin = place(&props.anchor, props.place, props.fit, anchor, size, frame);
+            let origin = place(
+                &props.anchor,
+                props.place,
+                props.fit,
+                props.align,
+                anchor,
+                size,
+                frame,
+            );
             self.arrange(lr, origin, Rect::from_size(frame));
         }
     }
@@ -806,7 +852,16 @@ impl<M: 'static> Ui<M> {
     }
 }
 
-fn place(anchor_kind: &Anchor, p: Place, fit: Fit, anchor: Rect, size: Size, frame: Size) -> Point {
+#[allow(clippy::too_many_arguments)]
+fn place(
+    anchor_kind: &Anchor,
+    p: Place,
+    fit: Fit,
+    align: Option<Align>,
+    anchor: Rect,
+    size: Size,
+    frame: Size,
+) -> Point {
     let fw = frame.w as i32;
     let fh = frame.h as i32;
     let sw = size.w as i32;
@@ -833,6 +888,27 @@ fn place(anchor_kind: &Anchor, p: Place, fit: Fit, anchor: Rect, size: Size, fra
         Place::LeftOf => (anchor.x - sw, anchor.y),
         Place::Over | Place::Fill => (anchor.x, anchor.y),
     };
+
+    // Where the layer sits against the anchor on the axis the placement did
+    // not use. `Stretch` was already applied as a constraint and needs no
+    // origin of its own; the rest slide within the anchor's extent.
+    match (align, p) {
+        (Some(a), Place::Above | Place::Below) => {
+            x = match a {
+                Align::Stretch | Align::Start => anchor.x,
+                Align::Center => anchor.x + (anchor.w as i32 - sw) / 2,
+                Align::End => anchor.right() - sw,
+            }
+        }
+        (Some(a), Place::LeftOf | Place::RightOf) => {
+            y = match a {
+                Align::Stretch | Align::Start => anchor.y,
+                Align::Center => anchor.y + (anchor.h as i32 - sh) / 2,
+                Align::End => anchor.bottom() - sh,
+            }
+        }
+        _ => {}
+    }
 
     if fit.flip {
         match p {
