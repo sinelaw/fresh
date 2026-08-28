@@ -838,6 +838,11 @@ impl<M: 'static> Ui<M> {
         (dismissed, spent)
     }
 
+    /// Reports whether any dismissed layer *spent* the key on its dismissal —
+    /// see [`crate::desc::Dismiss::pass_through`], which reads the same here as
+    /// it does for the pointer. Escape closing a menu is the menu's reply and
+    /// belongs to nothing else; a key that hides a tooltip should still be
+    /// typed, or the tooltip has charged the user a keystroke to get rid of it.
     pub(crate) fn dismiss_for_key(&mut self, k: KeyPress, out: &mut Vec<M>) -> bool {
         use crate::event::KeyCode;
         let layers: Vec<ElementId> = self
@@ -845,7 +850,7 @@ impl<M: 'static> Ui<M> {
             .iter()
             .filter_map(|(l, _)| self.element_of(*l))
             .collect();
-        let mut any = false;
+        let mut spent = false;
         for lid in layers {
             let Some(geom) = self.render_for(lid).and_then(|r| self.layer_geom(r)) else {
                 continue;
@@ -877,10 +882,13 @@ impl<M: 'static> Ui<M> {
                 if let Some(m) = h(&ev) {
                     out.push(m);
                 }
-                any = true;
             }
+            // Dismissed whether or not it also had something to say about it,
+            // and one layer that spends the key is enough to spend it — both
+            // the same rules `dismiss_for_pointer` states.
+            spent |= !geom.dismiss.pass_through;
         }
-        any
+        spent
     }
 }
 

@@ -866,3 +866,44 @@ fn a_pass_through_dismissal_leaves_the_press_for_what_it_was_aimed_at() {
     assert!(!press(&mut ui), "the press is still going somewhere");
     assert_eq!(*log.borrow(), vec!["dismissed", "document"]);
 }
+
+/// **And the same rule for the key that dismissed it.**
+///
+/// `pass_through` said "the input that dismissed this layer goes on to whatever
+/// it was aimed at", and the pointer honoured it while the keyboard did not:
+/// any dismissal at all reported the key as claimed. So a tooltip that hides on
+/// the next keystroke ate that keystroke — the tooltip charging the user a key
+/// to get rid of it, which is exactly the case the flag exists for.
+#[test]
+fn a_pass_through_dismissal_leaves_the_key_for_what_it_was_aimed_at() {
+    let build = |pass: bool| -> Node<()> {
+        let d = match pass {
+            true => fresh_ui::Dismiss::ANY_KEY.passing_through(),
+            false => fresh_ui::Dismiss::ANY_KEY,
+        };
+        stack().children([
+            col().theme("doc"),
+            fresh_ui::layer()
+                .anchor(fresh_ui::Anchor::Point(0, 0))
+                .place(fresh_ui::Place::Over)
+                .dismiss(d)
+                .on_dismiss_handler(Rc::new(|_: &Event| None))
+                .child(col().w(Sizing::Cells(4)).h(Sizing::Cells(2)).theme("pop")),
+        ])
+    };
+    let typed = |ui: &mut Ui<()>| {
+        ui.dispatch(Input::Key(fresh_ui::KeyPress::with(
+            fresh_ui::KeyCode::Char('j'),
+            Mods::NONE,
+        )))
+        .claimed
+    };
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(false), FRAME);
+    assert!(typed(&mut ui), "closing the layer was the whole keystroke");
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(true), FRAME);
+    assert!(!typed(&mut ui), "the key is still going somewhere");
+}
