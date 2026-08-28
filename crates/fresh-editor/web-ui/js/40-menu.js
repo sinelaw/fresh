@@ -21,7 +21,7 @@ function menuBarEl(reg){
       el.style.padding="0"; el.style.justifyContent="center"; }
     // forward to the real editor at the menu label's center cell -> it opens/toggles.
     const col=(m.x??rect.x)+Math.floor((m.w||1)/2);
-    el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col,row:barRow}); };
+    el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col,row:barRow}); };
     // Hover switches menus only while one is open (mirrors the TUI). Uses the
     // menu's editor cell, and `mousemove` so a stationary cursor never fights
     // keyboard navigation.
@@ -136,7 +136,7 @@ function itemRow(item, rect, hi, comp, depth){
   row.onmousemove=()=>hoverMove(cell.col,cell.row,"item:"+cell.col+","+cell.row);
   row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation();
     if(item.enabled===false) return;
-    sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); };
+    sendClick({button:"left",col:cell.col,row:cell.row}); };
   return row;
 }
 

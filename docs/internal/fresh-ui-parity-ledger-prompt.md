@@ -28,7 +28,8 @@ in consumer code by reflex.
 | # | Rule the old code enforces | Concept that states it | What gets deleted |
 |---|---|---|---|
 | 1 | The list shows at most `MAX_VISIBLE_SUGGESTIONS` rows, windowed around the selection | `list().windowed(..)` | the manual `start_idx` / `visible_count` window |
-| 2 | Hovering a row reports its index; clicking selects; double-clicking confirms | `list().on_select(..).on_activate(..)` | `hover()`, `handle_click_suggestions`, `handle_click_suggestions_confirm` |
+| 2 | Hovering a row reports its index; clicking selects | `list().on_select(..)` | `hover()`, `handle_click_suggestions` |
+| 2b | Double-clicking always confirms | **none — see finding B** | (not yet carried) |
 | 3 | The selected row is highlighted | `list().selected(i)` | the style ladder in the painter |
 | 4 | A scrollbar appears when the list overflows; pressing the gutter jumps, dragging follows | `list().scrollbar()` — `hit.rs` owns press-to-jump and drag | `handle_click_prompt_scrollbar`, `prompt_scrollbar_offset_for_row`, `chrome:prompt_scrollbar` |
 | 5 | The list is placed under the input row, or centered as a floating overlay | `layer().anchor(..).place(..).fit(..)` | `suggestions_outer_area` / `prompt_results_area` placement arithmetic |
@@ -47,7 +48,7 @@ its place on this surface: ten hand-rolled mechanisms, ten existing concepts.
 These are the findings. Each is a place where porting line-by-line would move
 layout logic into consumer code and quietly invert the "principled" claim.
 
-One of the three (C) was withdrawn on a second reading — it is recorded rather
+One of them (D) was withdrawn on a second reading — it is recorded rather
 than deleted, because "this looks like a missing concept and is not" is the more
 useful half of the exercise.
 
@@ -82,7 +83,45 @@ Two occurrences was a coincidence; three is a missing concept. The options:
 first time the migration would pay to extend the library rather than route
 around it, and it is exactly the check that keeps the thesis honest.
 
-### B. Position-blind wheel capture
+### B. `List` cannot tell a single click from a double — *closed, `List::activate_on`*
+
+The widget wires rows to `GestureKind::Click` and lets `on_activate` win over
+`on_select` on that same single click:
+
+> A click both moves the selection and activates the row … activation wins when
+> both are present.
+
+The prompt needs the two separated. A single click selects, and confirms only
+when `prompt_type.click_confirms()` says a click commits; a double click always
+confirms, which is the mouse-only commit path for the prompts that merely
+preview on a single click (issue #1660). Setting both handlers would confirm
+every click; setting only `on_activate` would lose the preview prompts.
+
+Wiring `on_select` alone gets single-click exactly right, because
+`select_suggestion` already carries the `click_confirms` decision. The
+double-click rule has **no expression** and is not yet carried.
+
+`Event::clicks` already exists and the framework already counts runs — the
+editor's own multi-click detector hands it in on every press. So the gap is in
+`List`'s handler signature (`Fn(usize) -> M`), not in the model underneath.
+
+**Closed by `List::activate_on(Activate::Click | Activate::DoubleClick)`.** Not
+a click-count on the handler, in the end: which click commits is not a property
+of one activation, it is what kind of list this is. A palette row commits on the
+first click because selecting it *is* choosing it; a file list selects on the
+first and opens on the second because the user may want to look at what they
+picked. Stated once, on the list, it also says what the *first* click of a
+double-click list does — which a per-call count would have left to each handler
+to work out.
+
+`Activate::Click` is the default, so every existing caller and every test on
+them is unchanged. The prompt now sets both handlers: `on_select` carries the
+`click_confirms` decision it already carried, and `on_activate` is the
+unconditional commit. `handle_click_suggestions` and
+`handle_click_suggestions_confirm` — the two coordinate hit-tests that recovered
+an index the row already knew — have nothing left to do once the rail moves.
+
+### C. Position-blind wheel capture
 
 `chrome:prompt_suggestions` is a **full-frame** box at z155 whose only job is:
 while a prompt with suggestions is open, the wheel scrolls that list *wherever
@@ -94,7 +133,7 @@ pointer is usually elsewhere), so it cannot simply be dropped. No concept states
 it. Smallest honest options: a `wheel_capture` flag on `Layer`, or keep one
 editor-side arm and record it as residue with a test.
 
-### C. Per-gesture modality — *withdrawn; it was the wrong reading*
+### D. Per-gesture modality — *withdrawn; it was the wrong reading*
 
 Recorded first as a gap, then found not to be one. Kept here because the
 correction is the point: the shape of the old encoding suggested a library
@@ -123,6 +162,66 @@ The z-band encoding is what made it look otherwise: "the body ignores the
 pointer" had to be written as "cover everything below z15", and once it is a
 covering box it acquires a z, and once it has a z the other two gestures need
 their own. `Modality` stays all-or-nothing.
+
+### E. `List` stamps its own theme vocabulary — *closed, `List::row_theme`*
+
+`List` set each row's theme to `list.row`, `list.row.selected`,
+`list.row.selected.blur` or `list.row.hover`, **overwriting** whatever the row
+builder had named. That is a good default and a bad only option: this editor's
+theme has no entry for any of those four names, and `shell_theme::resolve`
+falls back to the plain editor ground for a name it cannot resolve *silently*.
+The first `List` in the editor would have drawn every row — selection included
+— in the buffer's own colours, with nothing failing anywhere.
+
+Not derivable. A host cannot compute the name itself, because two of the four
+states are the widget's private business: `hovered` and `focused` live in
+`ListState`, mirrored from Enter/Leave and focus transitions. Nor can it paint
+underneath: the stamped fill is emitted before the row's content, so a host
+covering it is paying for a fill it does not want and losing hover with it.
+
+`List::row_theme(|index, RowState| -> String)` is the split the rest of the
+library already draws: **the widget owns the state machine, the host owns the
+palette.** `RowState::theme()` is still the default when no host names one, so
+the existing vocabulary and every test on it stand. Caller and test land with
+it: `view::shell::prompt::theme` is the whole of `row_base_style`,
+`keybinding_style` and `source_style`, and it made the painter's hover arm
+reachable — which the wrapper approach would have thrown away.
+
+The guard for the other half of this is host-side:
+`every_theme_name_is_a_real_key` walks every name `prompt.rs` can emit and
+asserts both halves resolve. An earlier draft of that module used five keys
+that exist nowhere; nothing failed, every row simply painted grey.
+
+### F. No ellipsis, and no truncation direction — *closed, `Node::elide`*
+
+`priority` decides a column's width during layout, which is the point — but it
+means the host can no longer truncate its own text, because it does not know
+the width until layout is over. The library clips instead, so
+`truncate_tail_ellipsis`'s `…` is lost, and so is the file finder's rule that a
+*path* truncates at the head so its filename survives while a *command name*
+truncates at the tail.
+
+The two are one concept: a run says how it gives up cells, and which end
+survives is part of what it says. `text(..).elide(Elide::Tail | Elide::Head)`,
+resolved at **paint** rather than at measure — that is the crux. Measurement
+reports the natural width; it is layout that decides the run gets less, so the
+number to cut to does not exist until the rectangle does.
+
+Both directions have a live caller in the same change: the prompt's name column
+takes `Elide::Head` when the list is a file finder, so a path keeps its
+filename, and `Elide::Tail` otherwise, because "Toggle Compose/Preview (All
+Files)" contains a slash and is still a command name. Description and source
+take the tail form. The status bar's segments want it too, and the explorer's
+truncated filenames after that.
+
+Cells rather than characters, which is not pedantry: `ColumnLayout` carries a
+regression test for a panic from truncating a description at a multi-byte
+boundary, and counting `char`s would also put the mark one cell early for every
+CJK glyph.
+
+One cosmetic difference, deliberate: the painter wrote `...` for a description
+and `…` for a name. The library writes `…` for both, so the mark costs one cell
+everywhere and the arithmetic is `width - 1` rather than a second measurement.
 
 ## How each rule is tested
 

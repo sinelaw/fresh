@@ -19,12 +19,12 @@ function trustDialogEls(t){
     tx.innerHTML='<div class="td-olabel">'+esc(o.label)+'</div><div class="td-odesc">'+esc(o.description)+'</div>';
     row.appendChild(tx);
     const c=rectCell(o.rect);
-    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:c.col,row:c.row}); };
+    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); };
     el.appendChild(row);
   }
   const btns=div("td-buttons");
   const mk=(label,rect,primary)=>{ const b=div("td-btn"+(primary?" primary":"")); b.textContent=label; const c=rectCell(rect);
-    b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:c.col,row:c.row}); }; return b; };
+    b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); }; return b; };
   btns.appendChild(mk(t.okLabel, t.ok, true));
   btns.appendChild(mk(t.quitLabel, t.quit, false));
   el.appendChild(btns);
@@ -58,7 +58,7 @@ function fileExplorerEl(fe){
     row.appendChild(name);
     const cell={col:fe.rect.x+1,row:fe.rect.y+1+j};   // +1 for the title row
     // Forward the real button so a right-click opens the explorer context menu.
-    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:btn(e),col:cell.col,row:cell.row}); };
+    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:btn(e),col:cell.col,row:cell.row}); };
     list.appendChild(row);
   }
   el.appendChild(list);
