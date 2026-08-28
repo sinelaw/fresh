@@ -7,7 +7,9 @@
 
 use std::rc::Rc;
 
-use crate::desc::{Align, BoxProps, Dir, LayerProps, Sizing, TextProps, ViewportProps};
+use crate::desc::{
+    Align, BoxProps, Dir, LayerProps, Sizing, TextProps, ViewportProps, Wrap, HANGING_MIN_TEXT,
+};
 use crate::render::geom::{distribute, Constraints, Point, Rect, Size};
 use crate::render::object::{FocusReg, Geom, LayerGeom, LayoutCx, LayoutInfo, RenderObject};
 use crate::render::spec::{Draw, DrawList};
@@ -92,42 +94,141 @@ fn align_offset(align: Align, extent: u16, size: u16) -> i32 {
     }
 }
 
+/// One wrapped row: what it shows, and how it lines up with the source.
+///
+/// Wrapping is not a pure slicing of the input — it drops the space it broke
+/// at and, for [`Wrap::Hanging`], puts spaces of its own at the front. A
+/// caller that has to map rows back onto the pieces they came from needs both
+/// of those numbers, so the row carries them rather than leaving the caller to
+/// guess (it used to guess: "step past one space if there is one", which is
+/// right only when exactly one was dropped).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub text: String,
+    /// Leading chars of `text` that wrapping *added*, with no source behind them.
+    pub indent: usize,
+    /// Source chars dropped before this row's first character — the whitespace
+    /// the break consumed.
+    pub skipped: usize,
+}
+
+/// The chunks a line breaks into: each carries the spaces that precede it, so
+/// a run of spaces inside the line survives a wrap and the line's own leading
+/// indent belongs to its first chunk.
+///
+/// `split(' ')` loses both. It yields an empty piece per space, and a wrapper
+/// that skips empties has silently normalised `"    sep  a string"` to
+/// `"sep a string"` — which is how the migrated popups lost the indent on
+/// their *first* row as well as their continuations.
+fn chunks(para: &str) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut start = 0usize;
+    let mut seen_word = false;
+    for (i, c) in para.char_indices() {
+        if c == ' ' {
+            if seen_word {
+                out.push(&para[start..i]);
+                start = i;
+                seen_word = false;
+            }
+        } else {
+            seen_word = true;
+        }
+    }
+    if start < para.len() || out.is_empty() {
+        out.push(&para[start..]);
+    }
+    out
+}
+
 /// Greedy word wrap, breaking a word too long for a line of its own.
 ///
 /// Measure and paint call this same function, so the height layout reserves is
 /// exactly the number of rows paint emits.
-pub fn wrap_text(text: &str, width: u16) -> Vec<String> {
+pub fn wrap_text(text: &str, width: u16, mode: Wrap) -> Vec<String> {
+    wrap_rows(text, width, mode)
+        .into_iter()
+        .map(|r| r.text)
+        .collect()
+}
+
+/// [`wrap_text`], keeping each row's alignment with the source.
+pub fn wrap_rows(text: &str, width: u16, mode: Wrap) -> Vec<Row> {
     use unicode_width::UnicodeWidthStr;
     if width == 0 {
         return Vec::new();
     }
+    let w = |s: &str| UnicodeWidthStr::width(s);
     let width = width as usize;
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<Row> = Vec::new();
     for para in text.split('\n') {
-        let mut line = String::new();
-        for word in para.split(' ') {
-            if line.is_empty() {
-                line.push_str(word);
-            } else if UnicodeWidthStr::width(line.as_str()) + 1 + UnicodeWidthStr::width(word)
-                <= width
-            {
-                line.push(' ');
-                line.push_str(word);
-            } else {
-                out.push(std::mem::take(&mut line));
-                line.push_str(word);
+        // What every row after the first starts with. Dropped when it would
+        // leave the text almost nothing — a deeply indented line in a narrow
+        // box is better flush left than one word per row.
+        let indent = match mode {
+            Wrap::Hanging => {
+                let n = para.chars().take_while(|c| *c == ' ').count();
+                match n + HANGING_MIN_TEXT <= width {
+                    true => n,
+                    false => 0,
+                }
             }
-            while UnicodeWidthStr::width(line.as_str()) > width {
-                let head: String = line.chars().take(width).collect();
-                let tail: String = line.chars().skip(width).collect();
-                out.push(head);
-                line = tail;
+            _ => 0,
+        };
+        let pad = " ".repeat(indent);
+        let mut row = Row {
+            text: String::new(),
+            indent: 0,
+            skipped: 0,
+        };
+        let mut first = true;
+        for chunk in chunks(para) {
+            // The line's own leading whitespace is source text and stays.
+            if first {
+                row.text.push_str(chunk);
+                first = false;
+            } else if w(&row.text) + w(chunk) <= width {
+                row.text.push_str(chunk);
+            } else {
+                // The break eats the spaces before the chunk, and the next row
+                // opens with the hanging indent instead.
+                let body = chunk.trim_start_matches(' ');
+                let eaten = chunk.chars().count() - body.chars().count();
+                out.push(std::mem::replace(
+                    &mut row,
+                    Row {
+                        text: pad.clone(),
+                        indent,
+                        skipped: eaten,
+                    },
+                ));
+                row.text.push_str(body);
+            }
+            // A chunk too long for a row of its own is cut, and the remainder
+            // opens the next row — still behind the indent.
+            while w(&row.text) > width {
+                let head: String = row.text.chars().take(width).collect();
+                let tail: String = row.text.chars().skip(width).collect();
+                out.push(Row {
+                    text: head,
+                    indent: row.indent,
+                    skipped: row.skipped,
+                });
+                row = Row {
+                    text: format!("{pad}{tail}"),
+                    indent,
+                    skipped: 0,
+                };
             }
         }
-        out.push(line);
+        out.push(row);
     }
     if out.is_empty() {
-        out.push(String::new());
+        out.push(Row {
+            text: String::new(),
+            indent: 0,
+            skipped: 0,
+        });
     }
     out
 }
@@ -147,27 +248,67 @@ pub struct Frag {
 /// is then cut back into fragments along the original piece boundaries. A wrap
 /// point inside a piece splits it; a row crossing three pieces is three
 /// fragments.
-pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: bool) -> Vec<Vec<Frag>> {
-    use unicode_width::UnicodeWidthStr;
-
+pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: Wrap) -> Vec<Vec<Frag>> {
     let whole: String = runs.iter().map(|r| &*r.text).collect();
-    let rows: Vec<String> = if wrap {
-        wrap_text(&whole, width)
-    } else {
-        whole.split('\n').map(|s| s.to_string()).collect()
+    let rows: Vec<Row> = match wrap {
+        Wrap::None => whole
+            .split('\n')
+            .map(|s| Row {
+                text: s.to_string(),
+                indent: 0,
+                skipped: 0,
+            })
+            .collect(),
+        mode => wrap_rows(&whole, width, mode),
     };
 
-    // Walk the pieces alongside the rows. Wrapping can drop a separator at a
-    // break, so rows are matched by content length rather than by byte offset
-    // into the original.
+    // Walk the pieces alongside the rows. A row is not a slice of the source —
+    // the break ate whitespace, and a hanging indent added some — so each row
+    // says how much of each, and this steps by those numbers rather than
+    // guessing at them.
     let mut piece = 0usize;
     let mut used = 0usize; // chars of the current piece already emitted
     let mut out: Vec<Vec<Frag>> = Vec::with_capacity(rows.len());
 
+    // Step over source characters the wrap consumed and nothing shows.
+    let skip = |n: usize, piece: &mut usize, used: &mut usize| {
+        let mut left = n;
+        while left > 0 && *piece < runs.len() {
+            let chars = runs[*piece].text.chars().count();
+            let here = chars.saturating_sub(*used).min(left);
+            *used += here;
+            left -= here;
+            if *used >= chars {
+                *piece += 1;
+                *used = 0;
+            }
+        }
+    };
+
     for row in &rows {
+        skip(row.skipped, &mut piece, &mut used);
         let mut frags: Vec<Frag> = Vec::new();
-        let mut want: usize = row.chars().count();
-        let mut at = 0usize; // chars of this row already taken
+        let mut at = row.indent; // chars of this row already taken
+        let mut want: usize = row.text.chars().count().saturating_sub(row.indent);
+
+        // The indent has no source behind it, so it takes the theme of the
+        // text it is indenting — the row it belongs to, not the one before.
+        if row.indent > 0 {
+            let mut theme = None;
+            let mut p = piece;
+            while p < runs.len() {
+                if runs[p].text.chars().count() > used || p > piece {
+                    theme = runs[p].theme.clone();
+                    break;
+                }
+                p += 1;
+            }
+            let pad: String = row.text.chars().take(row.indent).collect();
+            frags.push(Frag {
+                text: Rc::from(pad.as_str()),
+                theme,
+            });
+        }
 
         while want > 0 && piece < runs.len() {
             let piece_chars: Vec<char> = runs[piece].text.chars().collect();
@@ -180,7 +321,7 @@ pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: bool) -> Vec<Vec<F
             let take = left.min(want);
             // Take the text from the *row*, not the piece: the row is what
             // wrapping produced, and it is what must appear on screen.
-            let seg: String = row.chars().skip(at).take(take).collect();
+            let seg: String = row.text.chars().skip(at).take(take).collect();
             if !seg.is_empty() {
                 frags.push(Frag {
                     text: Rc::from(seg.as_str()),
@@ -196,22 +337,6 @@ pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: bool) -> Vec<Vec<F
             }
         }
 
-        // A separator consumed by the wrap: step past it so the next row starts
-        // at the right place in the piece list.
-        if want == 0 && piece < runs.len() {
-            let piece_chars = runs[piece].text.chars().count();
-            if used < piece_chars {
-                let next: Option<char> = runs[piece].text.chars().nth(used);
-                if next == Some(' ') {
-                    used += 1;
-                    if used >= piece_chars {
-                        piece += 1;
-                        used = 0;
-                    }
-                }
-            }
-        }
-
         if frags.is_empty() {
             frags.push(Frag {
                 text: Rc::from(""),
@@ -221,7 +346,6 @@ pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: bool) -> Vec<Vec<F
         out.push(frags);
     }
 
-    let _ = UnicodeWidthStr::width("");
     if out.is_empty() {
         out.push(vec![Frag {
             text: Rc::from(""),
@@ -609,16 +733,16 @@ impl RenderObject for TextRender {
         // logical run, so styling never changes where the text breaks.
         let whole = self.props.plain();
         let natural = UnicodeWidthStr::width(whole.as_str()) as u16;
-        if self.props.wrap {
+        if self.props.wrap != Wrap::None {
             let w = if c.min_w > 0 {
                 c.max_w
             } else {
                 c.max_w.min(natural.max(1))
             };
-            self.rows = wrap_runs(&self.props.runs, w, true);
+            self.rows = wrap_runs(&self.props.runs, w, self.props.wrap);
             c.constrain(Size::new(w, self.rows.len().min(u16::MAX as usize) as u16))
         } else {
-            self.rows = wrap_runs(&self.props.runs, 0, false);
+            self.rows = wrap_runs(&self.props.runs, 0, Wrap::None);
             c.constrain(Size::new(natural, self.rows.len().max(1) as u16))
         }
     }
@@ -628,17 +752,17 @@ impl RenderObject for TextRender {
         // mark, and `Elide::None` is the whole of today's behaviour, so both
         // pass straight through.
         let elided: Vec<Vec<Frag>>;
-        let rows: &[Vec<Frag>] = if self.props.wrap || self.props.elide == crate::desc::Elide::None
-        {
-            &self.rows
-        } else {
-            elided = self
-                .rows
-                .iter()
-                .map(|r| elide_row(r, g.rect.w, self.props.elide))
-                .collect();
-            &elided
-        };
+        let rows: &[Vec<Frag>] =
+            if self.props.wrap != Wrap::None || self.props.elide == crate::desc::Elide::None {
+                &self.rows
+            } else {
+                elided = self
+                    .rows
+                    .iter()
+                    .map(|r| elide_row(r, g.rect.w, self.props.elide))
+                    .collect();
+                &elided
+            };
 
         // An unstyled run is one item, exactly as before. A styled one emits an
         // item per fragment, each carrying its own theme — so the display list

@@ -220,6 +220,34 @@ pub enum Elide {
     Head,
 }
 
+/// How a run breaks lines too long for the width it is given.
+///
+/// **Hanging is a text-layout rule, not a caller's post-process.** Only the
+/// thing that wraps knows where it broke, so only it can say what the next row
+/// starts with — a caller that wanted this had to wrap the text itself, which
+/// means deciding the width, which is the layout's answer and not the
+/// caller's. (The editor's popups did exactly that, and lost the indent the
+/// moment their content became nodes.)
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Wrap {
+    /// Lines break only where the text says `\n`.
+    #[default]
+    None,
+    /// Greedy word wrap; a word too long for a line of its own is broken.
+    Word,
+    /// Word wrap, with each continuation row starting at the line's own
+    /// leading whitespace — so a wrapped list item or parameter description
+    /// stays visually inside its own entry instead of merging into the next.
+    ///
+    /// The indent is dropped when it would leave the text almost no room:
+    /// below [`HANGING_MIN_TEXT`] columns for the text itself, a continuation
+    /// row starts at the left edge instead.
+    Hanging,
+}
+
+/// The columns a hanging indent must leave for the text, or it is not applied.
+pub const HANGING_MIN_TEXT: usize = 10;
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct TextProps {
     /// The run's content, in pieces. One piece for ordinary text; several when
@@ -230,9 +258,9 @@ pub struct TextProps {
     /// the difference between this and laying separate `TextRun`s side by side,
     /// which wrap and truncate independently.
     pub runs: Rc<[Run]>,
-    pub wrap: bool,
+    pub wrap: Wrap,
     /// Which end survives when the run is given less than it measured at.
-    /// Ignored when `wrap` is set: wrapped text has no overflow to mark.
+    /// Ignored when the run wraps: wrapped text has no overflow to mark.
     pub elide: Elide,
     /// Where the text cursor sits within this run, in columns. Set by whatever
     /// is being edited; the library places it and the backend shows it.
@@ -876,7 +904,7 @@ pub fn stack<M>() -> Node<M> {
 pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
     Node::new(Desc::TextRun(TextProps {
         runs: Rc::from(vec![Run::plain(s)]),
-        wrap: false,
+        wrap: Wrap::None,
         elide: Elide::None,
         cursor: None,
     }))
@@ -896,7 +924,7 @@ pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
 pub fn text_runs<M>(runs: impl IntoIterator<Item = Run>) -> Node<M> {
     Node::new(Desc::TextRun(TextProps {
         runs: Rc::from(runs.into_iter().collect::<Vec<_>>()),
-        wrap: false,
+        wrap: Wrap::None,
         elide: Elide::None,
         cursor: None,
     }))
@@ -1210,9 +1238,20 @@ impl<M> Node<M> {
         self
     }
 
-    pub fn wrap(mut self) -> Self {
+    /// Break lines too long for the width, at word boundaries.
+    pub fn wrap(self) -> Self {
+        self.wrapping(Wrap::Word)
+    }
+
+    /// Wrap, and start every continuation row at the line's own leading
+    /// indent — see [`Wrap::Hanging`].
+    pub fn wrap_hanging(self) -> Self {
+        self.wrapping(Wrap::Hanging)
+    }
+
+    pub fn wrapping(mut self, w: Wrap) -> Self {
         match &mut self.desc {
-            Desc::TextRun(p) => p.wrap = true,
+            Desc::TextRun(p) => p.wrap = w,
             _ => panic!("wrap() applies to TextRun nodes only"),
         }
         self
