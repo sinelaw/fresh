@@ -258,18 +258,27 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // over them — the order `layer_rank::MENU` below `layer_rank::CONTEXT_MENU`
     // states in the precedence table, expressed here as the order they are
     // declared in.
+    // The overlay prompt's card, over everything the frame holds and under the
+    // menus — a context menu opened from inside it still paints on top, the
+    // same declaration-order rule the dropdowns follow.
+    //
+    // **Before the suggestion list, because the list can be anchored to one of
+    // its bands.** A layer is placed against a rectangle the layout has
+    // already produced, and the overlay form of the list names the card's
+    // results band as that rectangle (`prompt::Place::InCard`). Declared the
+    // other way round the anchor names a node that has not been laid out yet,
+    // and the list lands nowhere — with the card's own paint on top of it,
+    // which is how it went unnoticed. Paint order agrees: the list belongs
+    // over the card it sits in.
+    let frame = match &f.card {
+        Some(c) => frame.child(super::overlay_prompt::card(c)),
+        None => frame,
+    };
     // The suggestion list, above the prompt row it belongs to. Declared before
     // the menus so a context menu opened over it still paints on top — the
     // same "order of declaration is paint order" rule the dropdowns follow.
     let frame = match &f.suggestions {
         Some(s) => frame.child(super::prompt::suggestions_layer(s)),
-        None => frame,
-    };
-    // The overlay prompt's card, over everything the frame holds and under the
-    // menus — a context menu opened from inside it still paints on top, the
-    // same declaration-order rule the dropdowns follow.
-    let frame = match &f.card {
-        Some(c) => frame.child(super::overlay_prompt::card(c)),
         None => frame,
     };
     let frame = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {

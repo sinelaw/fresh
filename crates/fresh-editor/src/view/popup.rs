@@ -148,8 +148,6 @@ pub enum PopupContent {
         items: Vec<PopupListItem>,
         selected: usize,
     },
-    /// Custom rendered content (just store strings for now)
-    Custom(Vec<String>),
 }
 
 /// Text selection within a popup (line, column positions)
@@ -627,7 +625,6 @@ impl Popup {
             PopupContent::Text(lines) => lines.len(),
             PopupContent::Markdown(lines) => lines.len(),
             PopupContent::List { items, .. } => items.len(),
-            PopupContent::Custom(lines) => lines.len(),
         }
     }
 
@@ -654,7 +651,6 @@ impl Popup {
             }
             // Lists and custom content don't wrap
             PopupContent::List { items, .. } => items.len(),
-            PopupContent::Custom(lines) => lines.len(),
         }
     }
 
@@ -743,7 +739,6 @@ impl Popup {
                 }
             }
             PopupContent::List { items, .. } => items.iter().map(|i| i.text.clone()).collect(),
-            PopupContent::Custom(lines) => lines.clone(),
         }
     }
 
@@ -881,7 +876,6 @@ impl Popup {
                 wrap_styled_lines(styled_lines, content_width).len() as u16
             }
             PopupContent::List { items, .. } => items.len() as u16,
-            PopupContent::Custom(lines) => lines.len() as u16,
         };
 
         // Add border lines if bordered
@@ -1195,13 +1189,6 @@ impl Popup {
                     count > visible_lines_count && inner_area.width > scrollbar_reserved_width,
                 )
             }
-            PopupContent::Custom(lines) => {
-                let count = lines.len();
-                (
-                    count,
-                    count > visible_lines_count && inner_area.width > scrollbar_reserved_width,
-                )
-            }
         };
 
         // Adjust content area to leave room for scrollbar if needed
@@ -1438,17 +1425,6 @@ impl Popup {
 
                 let list = List::new(list_items);
                 frame.render_widget(list, content_area);
-            }
-            PopupContent::Custom(lines) => {
-                let visible_lines: Vec<Line> = lines
-                    .iter()
-                    .skip(self.scroll_offset)
-                    .take(content_area.height as usize)
-                    .map(|line| Line::from(line.as_str()))
-                    .collect();
-
-                let paragraph = Paragraph::new(visible_lines);
-                frame.render_widget(paragraph, content_area);
             }
         }
 

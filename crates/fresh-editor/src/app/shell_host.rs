@@ -219,58 +219,336 @@ impl crate::view::shell::fold::Palette for ShellPalette {
 /// It also converges with the theme inspector, which has always recorded
 /// provenance as exactly this pair (`ThemeRun { fg_key, bg_key }`). The display
 /// list and the inspector now say the same thing in the same words.
+///
+/// **[`Ink`] is the value; the written name is how it travels.** The grammar
+/// above is a serialisation, because `fresh-ui` carries one opaque
+/// `ThemeKey` per item and never interprets it — so the shell builds an `Ink`,
+/// writes it into that slot, and reads it back with [`Ink::parse`]. There is
+/// one parser and one writer, and neither is reachable from a description:
+/// "the same background, a different foreground" is a field assignment, and an
+/// attribute is one of five constants rather than a word that might be
+/// misspelled. Three call sites used to do that layering by splitting the
+/// sentence apart and reassembling it, and they did not agree with each other.
 pub mod shell_theme {
+    use std::borrow::Cow;
+    use std::fmt;
+
     use ratatui::style::{Color, Modifier, Style};
 
     use crate::view::theme::Theme;
 
+    /// One half of an [`Ink`]: where a colour comes from.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum Paint {
+        /// A theme entry, resolved through the editor's own table.
+        Key(Cow<'static, str>),
+        /// A colour with no name behind it.
+        ///
+        /// **The one thing here that is not traceable to a theme entry, and it
+        /// is honest about that.** A plugin can hand the editor an
+        /// `OverlayColorSpec::Rgb`, and the markdown renderer chooses its own
+        /// span colours — arbitrary runtime values no theme ever declared, so
+        /// there is no key to name them with. [`Ink::names`] reports `None` for
+        /// such a half, which is the true answer for a colour nobody named.
+        ///
+        /// What replaces it: plugins **register** their colours as named keys
+        /// (`plugin.git.status_added_fg`) and `resolve_theme_key` gains a
+        /// dynamic tier for them, at which point a plugin colour becomes an
+        /// ordinary, inspectable, user-overridable name and this variant can
+        /// go. See §6.2 of the migration doc.
+        Lit(Color),
+    }
+
+    impl Paint {
+        /// A theme key. A `&'static str` — which nearly every call site has —
+        /// borrows rather than allocating.
+        pub fn key(k: impl Into<Cow<'static, str>>) -> Paint {
+            Paint::Key(k.into())
+        }
+
+        /// The key behind this half, when there is one.
+        pub fn name(&self) -> Option<&str> {
+            match self {
+                Paint::Key(k) => Some(k),
+                Paint::Lit(_) => None,
+            }
+        }
+
+        fn color(&self, theme: &Theme) -> Option<Color> {
+            match self {
+                Paint::Key(k) => theme.resolve_theme_key(k),
+                Paint::Lit(c) => Some(*c),
+            }
+        }
+
+        /// Read one half of the written form back.
+        ///
+        /// `#7ee787` is a 24-bit literal, `#i42` a palette index, `#Yellow`
+        /// one of the sixteen names; anything else is a theme key.
+        fn parse(half: &str) -> Option<Paint> {
+            let Some(rest) = half.strip_prefix('#') else {
+                return (!half.is_empty()).then(|| Paint::Key(Cow::Owned(half.to_string())));
+            };
+            let c = match rest.as_bytes() {
+                _ if rest.len() == 6 && rest.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                    let byte = |i: usize| u8::from_str_radix(&rest[i..i + 2], 16).ok();
+                    Color::Rgb(byte(0)?, byte(2)?, byte(4)?)
+                }
+                [b'i', ..] => Color::Indexed(rest[1..].parse().ok()?),
+                _ => crate::view::theme::named_color_from_str(rest)?,
+            };
+            Some(Paint::Lit(c))
+        }
+    }
+
+    impl fmt::Display for Paint {
+        /// **Every colour round-trips.** An earlier spelling wrote only
+        /// `Color::Rgb` as a triple and answered `editor.fg` for everything
+        /// else — and theme colours are frequently one of the sixteen names
+        /// (`file_status_modified_fg` is `Yellow` in the built-in dark theme),
+        /// so every plugin-decorated row in the file explorer silently painted
+        /// in the panel's ordinary ink. Nothing failed; it just looked
+        /// undecorated.
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Paint::Key(k) => f.write_str(k),
+                Paint::Lit(Color::Rgb(r, g, b)) => write!(f, "#{r:02x}{g:02x}{b:02x}"),
+                Paint::Lit(Color::Indexed(i)) => write!(f, "#i{i}"),
+                Paint::Lit(other) => write!(
+                    f,
+                    "#{}",
+                    crate::view::theme::token_color_named_from_ratatui(*other)
+                ),
+            }
+        }
+    }
+
+    /// The text attributes the grammar can spell.
+    ///
+    /// Reserved for attributes that are *structural* rather than themed: a
+    /// mnemonic is underlined because it is a mnemonic. They compose with any
+    /// pair and with each other, which is why they are grammar rather than
+    /// more names.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct Attrs(u8);
+
+    impl Attrs {
+        pub const NONE: Attrs = Attrs(0);
+        pub const BOLD: Attrs = Attrs(1 << 0);
+        pub const UNDERLINE: Attrs = Attrs(1 << 1);
+        pub const ITALIC: Attrs = Attrs(1 << 2);
+        pub const STRIKETHROUGH: Attrs = Attrs(1 << 3);
+        /// How the editor spells "present but receding" — a disabled command,
+        /// a suggestion's source label. The painters that owned those surfaces
+        /// reached for `Modifier::DIM` directly, which no theme can override
+        /// and no name could carry until this grammar existed.
+        pub const DIM: Attrs = Attrs(1 << 4);
+
+        /// The written spelling of each, and the only place the two forms are
+        /// paired: [`Attrs::named`] and [`fmt::Display`] both read this.
+        const SPELLINGS: [(Attrs, &'static str, Modifier); 5] = [
+            (Attrs::BOLD, "bold", Modifier::BOLD),
+            (Attrs::UNDERLINE, "underline", Modifier::UNDERLINED),
+            (Attrs::ITALIC, "italic", Modifier::ITALIC),
+            (Attrs::STRIKETHROUGH, "strikethrough", Modifier::CROSSED_OUT),
+            (Attrs::DIM, "dim", Modifier::DIM),
+        ];
+
+        /// One attribute by its written name.
+        pub fn named(word: &str) -> Option<Attrs> {
+            Self::SPELLINGS
+                .iter()
+                .find(|(_, n, _)| *n == word)
+                .map(|(a, _, _)| *a)
+        }
+
+        /// Several at once, by name. Words the grammar does not know are
+        /// dropped — see [`Ink::parse`] on why reading stays forgiving while
+        /// writing cannot go wrong.
+        pub fn all_named<'a>(words: impl IntoIterator<Item = &'a str>) -> Attrs {
+            words
+                .into_iter()
+                .filter_map(Attrs::named)
+                .fold(Attrs::NONE, |a, b| a | b)
+        }
+
+        pub fn contains(self, other: Attrs) -> bool {
+            self.0 & other.0 == other.0
+        }
+
+        /// What ratatui paints for these.
+        pub fn modifier(self) -> Modifier {
+            Self::SPELLINGS
+                .iter()
+                .filter(|(a, _, _)| self.contains(*a))
+                .fold(Modifier::empty(), |m, (_, _, r)| m | *r)
+        }
+
+        /// The attributes a ratatui `Style` already carries, for content that
+        /// arrives styled rather than named — a markdown span, a plugin's run.
+        /// Modifiers the grammar cannot spell are dropped, which is the same
+        /// answer as writing a name it cannot read back.
+        pub fn from_modifier(m: Modifier) -> Attrs {
+            Self::SPELLINGS
+                .iter()
+                .filter(|(_, _, r)| m.contains(*r))
+                .fold(Attrs::NONE, |acc, (a, _, _)| acc | *a)
+        }
+    }
+
+    impl std::ops::BitOr for Attrs {
+        type Output = Attrs;
+        fn bitor(self, rhs: Attrs) -> Attrs {
+            Attrs(self.0 | rhs.0)
+        }
+    }
+
+    impl fmt::Display for Attrs {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            for (a, name, _) in Attrs::SPELLINGS {
+                if self.contains(a) {
+                    write!(f, "+{name}")?;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// A cell's appearance, as the shell states it: two paints and the
+    /// attributes on top.
+    ///
+    /// **This is the value; the string is how it travels.** `fresh-ui` carries
+    /// one opaque [`fresh_ui::ThemeKey`] per item and never interprets it, so
+    /// an `Ink` is written into that slot by [`fmt::Display`] and read back by
+    /// [`Ink::parse`]. Building one cannot produce a name the grammar cannot
+    /// read: a half is a key or a colour, an attribute is one of five, and
+    /// "the same background, a different foreground" is a field assignment
+    /// rather than surgery on a sentence.
+    ///
+    /// That surgery is what this replaced. Three call sites split a name on
+    /// `/`, split the tail on `+`, and reassembled it — and they did not agree:
+    /// swapping a background kept the attributes while setting attributes
+    /// dropped them, in the same function.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Ink {
+        pub fg: Paint,
+        pub bg: Paint,
+        pub attrs: Attrs,
+    }
+
+    impl Ink {
+        pub fn new(fg: Paint, bg: Paint) -> Ink {
+            Ink {
+                fg,
+                bg,
+                attrs: Attrs::NONE,
+            }
+        }
+
+        /// The common case: both halves are theme keys.
+        pub fn keys(fg: impl Into<Cow<'static, str>>, bg: impl Into<Cow<'static, str>>) -> Ink {
+            Ink::new(Paint::key(fg), Paint::key(bg))
+        }
+
+        /// The same background, a different foreground.
+        ///
+        /// A ratatui `Style` with only `fg` set leaves the cell's background
+        /// alone. That is how the explorer's caret sits *on* the selection
+        /// highlight rather than punching a hole in it. An `Item` carries one
+        /// theme name and the fold always writes both halves, so "keep the
+        /// background" cannot be left unsaid: it is this.
+        pub fn with_fg(mut self, fg: Paint) -> Ink {
+            self.fg = fg;
+            self
+        }
+
+        /// The companion: the same foreground, a different background.
+        pub fn with_bg(mut self, bg: Paint) -> Ink {
+            self.bg = bg;
+            self
+        }
+
+        /// Add attributes to whatever this already carries.
+        pub fn plus(mut self, attrs: Attrs) -> Ink {
+            self.attrs = self.attrs | attrs;
+            self
+        }
+
+        /// Replace the attributes outright.
+        pub fn with_attrs(mut self, attrs: Attrs) -> Ink {
+            self.attrs = attrs;
+            self
+        }
+
+        /// The two halves as *names*. A half that is a literal has no name by
+        /// construction — that is what a literal is — and reports `None`.
+        ///
+        /// This is the theme inspector's provenance, read out of the value
+        /// rather than carried beside it.
+        pub fn names(&self) -> (Option<&str>, Option<&str>) {
+            (self.fg.name(), self.bg.name())
+        }
+
+        /// What ratatui paints for this.
+        ///
+        /// The attribute the theme declares for the foreground key composes
+        /// with the structural ones the ink asked for.
+        pub fn style(&self, theme: &Theme) -> Option<Style> {
+            let (fg, bg) = (self.fg.color(theme)?, self.bg.color(theme)?);
+            let declared = match &self.fg {
+                Paint::Key(k) => theme.resolve_modifier_key(k),
+                Paint::Lit(_) => Modifier::empty(),
+            };
+            Some(
+                Style::default()
+                    .fg(fg)
+                    .bg(bg)
+                    .add_modifier(self.attrs.modifier() | declared),
+            )
+        }
+
+        /// Read the written form back.
+        ///
+        /// **Forgiving where writing is not.** A word after `+` that the
+        /// grammar does not know is dropped rather than failing the whole name,
+        /// because the alternative — falling back to the editor's plain ground
+        /// — turns a typo in one attribute into a surface painted in the wrong
+        /// colours entirely. Nothing can *write* such a word: [`Attrs`] has
+        /// five constants and no other constructor.
+        pub fn parse(name: &str) -> Option<Ink> {
+            let mut words = name.split('+');
+            let pair = words.next()?;
+            let (fg, bg) = pair.split_once('/')?;
+            Some(Ink {
+                fg: Paint::parse(fg)?,
+                bg: Paint::parse(bg)?,
+                attrs: Attrs::all_named(words),
+            })
+        }
+    }
+
+    impl fmt::Display for Ink {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}/{}{}", self.fg, self.bg, self.attrs)
+        }
+    }
+
     /// Build a name from two theme keys.
+    ///
+    /// The string form of [`Ink::keys`], for a caller that has a borrowed key
+    /// rather than a `'static` one.
     pub fn pair(fg: &str, bg: &str) -> String {
         format!("{fg}/{bg}")
     }
 
-    /// The same background, a different foreground.
-    ///
-    /// A ratatui `Style` with only `fg` set leaves the cell's background
-    /// alone. That is how the explorer's caret used to sit *on* the selection
-    /// highlight — `Paragraph::new("▌").style(Style::default().fg(cursor))` —
-    /// rather than punching a hole in it. An `Item` carries one `ThemeKey` and
-    /// the fold always writes both halves, so "keep the background" cannot be
-    /// left unsaid here: it is spelled by taking the pair the row already has
-    /// and swapping only the foreground.
-    pub fn with_fg(name: &str, fg: &str) -> String {
-        match name.split_once('/') {
-            Some((_, rest)) => format!("{fg}/{rest}"),
-            None => name.to_string(),
-        }
-    }
-
-    /// The same foreground, a different background.
-    ///
-    /// The companion of [`with_fg`], for a plugin's span that names a
-    /// background and leaves the foreground to the row it sits on.
-    pub fn with_bg(name: &str, bg: &str) -> String {
-        match name.split_once('/') {
-            Some((fg, rest)) => match rest.split_once('+') {
-                Some((_, attrs)) => format!("{fg}/{bg}+{attrs}"),
-                None => format!("{fg}/{bg}"),
-            },
-            None => name.to_string(),
-        }
-    }
-
     /// The same, with text attributes the theme does not carry.
-    ///
-    /// Reserved for attributes that are *structural* rather than themed: a
-    /// mnemonic is underlined because it is a mnemonic. They compose with any
-    /// pair and with each other, so this is grammar rather than more names.
     pub fn attrs(fg: &str, bg: &str, attrs: &[&str]) -> String {
-        let mut out = pair(fg, bg);
-        for a in attrs {
-            out.push('+');
-            out.push_str(a);
+        Ink {
+            fg: Paint::Key(Cow::Owned(fg.to_string())),
+            bg: Paint::Key(Cow::Owned(bg.to_string())),
+            attrs: Attrs::all_named(attrs.iter().copied()),
         }
-        out
+        .to_string()
     }
 
     /// Resolve a shell name to a concrete style.
@@ -279,106 +557,24 @@ pub mod shell_theme {
     /// rather than failing, so a surface that has not been themed yet renders
     /// plainly instead of not at all.
     pub fn resolve(name: &str, theme: &Theme) -> Style {
-        let mut parts = name.split('+');
-        let pair = parts.next().unwrap_or(name);
-        let mut modifier = Modifier::empty();
-        for a in parts {
-            modifier |= match a {
-                "bold" => Modifier::BOLD,
-                "underline" => Modifier::UNDERLINED,
-                "italic" => Modifier::ITALIC,
-                "strikethrough" => Modifier::CROSSED_OUT,
-                // Not decoration for its own sake: it is how the editor spells
-                // "present but receding" — a disabled command, a suggestion's
-                // source label — and the painters that owned those surfaces
-                // reached for `Modifier::DIM` directly, which no theme can
-                // override and no name could carry until now.
-                "dim" => Modifier::DIM,
-                _ => Modifier::empty(),
-            };
-        }
-        let Some((fg_key, bg_key)) = pair.split_once('/') else {
-            return base(theme);
-        };
-        let (Some(fg), Some(bg)) = (resolve_half(fg_key, theme), resolve_half(bg_key, theme))
-        else {
-            return base(theme);
-        };
-        // The attribute the theme declares for the foreground key, plus the
-        // structural one the name asked for.
-        let modifier = modifier | theme.resolve_modifier_key(fg_key);
-        Style::default().fg(fg).bg(bg).add_modifier(modifier)
+        Ink::parse(name)
+            .and_then(|ink| ink.style(theme))
+            .unwrap_or_else(|| base(theme))
     }
 
-    /// One half of a pair: a theme key, or the `#rrggbb` literal escape.
-    ///
-    /// **The literal is an interim, and it is the only thing here that is not
-    /// traceable to a theme entry.** It exists because a plugin can hand the
-    /// editor an `OverlayColorSpec::Rgb` — an arbitrary runtime value that no
-    /// theme ever declared, so there is no key to name it with. Today those
-    /// colours are already untraceable: `resolve_overlay_color` turns them
-    /// straight into `Color::Rgb`, which the theme inspector cannot explain and
-    /// a user cannot override. Writing them as `#rrggbb` here loses nothing
-    /// that exists and unblocks the surfaces that carry them.
-    ///
-    /// What replaces it: plugins **register** their colours as named keys
-    /// (`plugin.git.status_added_fg`) and `resolve_theme_key` gains a dynamic
-    /// tier for them, at which point a plugin colour becomes an ordinary,
-    /// inspectable, user-overridable name and this arm can go. See §6.2 of the
-    /// migration doc. Nothing in this repository emits a literal: every
-    /// in-tree slot provider already sends a `ThemeKey`.
-    fn resolve_half(key: &str, theme: &Theme) -> Option<Color> {
-        if let Some(rest) = key.strip_prefix('#') {
-            return match rest.as_bytes() {
-                // `#7ee787` — a 24-bit literal.
-                _ if rest.len() == 6 && rest.bytes().all(|b| b.is_ascii_hexdigit()) => {
-                    let byte = |i: usize| u8::from_str_radix(&rest[i..i + 2], 16).ok();
-                    Some(Color::Rgb(byte(0)?, byte(2)?, byte(4)?))
-                }
-                // `#i42` — a palette index.
-                [b'i', ..] => rest[1..].parse().ok().map(Color::Indexed),
-                // `#Yellow` — one of the sixteen names.
-                _ => crate::view::theme::named_color_from_str(rest),
-            };
-        }
-        theme.resolve_theme_key(key)
-    }
-
-    /// The two halves of a pair, where each is a *name* rather than a literal.
-    ///
-    /// A cell's theme-key provenance, read back out of the grammar instead of
-    /// carried beside it. A half that is a literal (`#7ee787`) has no name by
-    /// construction — that is what a literal *is* — and reports `None`, which
-    /// is the honest answer for a colour a plugin supplied.
-    pub fn names<'a>(theme: &'a str) -> (Option<&'a str>, Option<&'a str>) {
-        let body = theme.split('+').next().unwrap_or(theme);
-        let (fg, bg) = match body.split_once('/') {
-            Some(p) => p,
-            None => (body, ""),
+    /// The two halves of a written name, where each is a *name* rather than a
+    /// literal. [`Ink::names`] on a parsed name.
+    pub fn names(theme: &str) -> (Option<String>, Option<String>) {
+        let Some(ink) = Ink::parse(theme) else {
+            return (None, None);
         };
-        let named =
-            |h: &'a str| -> Option<&'a str> { (!h.is_empty() && !h.starts_with('#')).then_some(h) };
-        (named(fg), named(bg))
+        let (fg, bg) = ink.names();
+        (fg.map(str::to_string), bg.map(str::to_string))
     }
 
-    /// A concrete colour as a name, for the interim case above.
-    ///
-    /// **Total, on purpose.** An earlier version answered `editor.fg` for
-    /// anything that was not `Color::Rgb`, on the assumption that a resolved
-    /// colour would be a triple. Theme colours are frequently one of the
-    /// sixteen names instead — `file_status_modified_fg` is `Yellow` in the
-    /// built-in dark theme — so that fallback silently repainted every
-    /// plugin-decorated row in the panel's ordinary ink. Every `Color` variant
-    /// round-trips now, and [`resolve`] reads all three forms back.
+    /// A concrete colour as a name, for the literal case above.
     pub fn literal(c: Color) -> String {
-        match c {
-            Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
-            Color::Indexed(i) => format!("#i{i}"),
-            other => format!(
-                "#{}",
-                crate::view::theme::token_color_named_from_ratatui(other)
-            ),
-        }
+        Paint::Lit(c).to_string()
     }
 
     fn base(theme: &Theme) -> Style {
@@ -388,8 +584,84 @@ pub mod shell_theme {
 
 #[cfg(test)]
 mod shell_theme_tests {
-    use super::shell_theme::{literal, pair, resolve};
+    use super::shell_theme::{literal, names, pair, resolve, Attrs, Ink, Paint};
     use ratatui::style::Color;
+
+    fn theme() -> crate::view::theme::Theme {
+        crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults")
+    }
+
+    /// **What is written is what is read.** The name is a serialisation, so
+    /// the only thing that makes it safe to keep passing strings through
+    /// `fresh-ui` is that the round trip is lossless — including for the parts
+    /// the string form used to lose.
+    #[test]
+    fn an_ink_survives_the_written_form() {
+        for ink in [
+            Ink::keys("editor.fg", "editor.bg"),
+            Ink::keys("editor.fg", "editor.bg").plus(Attrs::BOLD | Attrs::DIM),
+            Ink::new(
+                Paint::Lit(Color::Rgb(126, 231, 135)),
+                Paint::key("editor.bg"),
+            ),
+            Ink::new(Paint::key("editor.fg"), Paint::Lit(Color::Indexed(42)))
+                .plus(Attrs::UNDERLINE),
+            Ink::new(Paint::Lit(Color::Yellow), Paint::Lit(Color::Black))
+                .plus(Attrs::ITALIC | Attrs::STRIKETHROUGH),
+        ] {
+            let written = ink.to_string();
+            assert_eq!(
+                Ink::parse(&written),
+                Some(ink.clone()),
+                "{written:?} did not read back"
+            );
+        }
+    }
+
+    /// **Swapping one half leaves the other alone — attributes included.**
+    ///
+    /// This is the divergence the type exists to remove. The string form had
+    /// two spellings of "layer something over this name" and they disagreed:
+    /// swapping a background re-spliced the `+attrs` tail back on while setting
+    /// attributes dropped it, so a plugin span that named both a background and
+    /// an attribute silently un-dimmed a disabled suggestion row.
+    #[test]
+    fn layering_over_an_ink_keeps_what_it_does_not_mention() {
+        let row = Ink::keys("ui.suggestion_fg", "ui.suggestion_bg").plus(Attrs::DIM);
+        let both = row
+            .clone()
+            .with_bg(Paint::key("ui.menu_hover_bg"))
+            .plus(Attrs::BOLD);
+        assert_eq!(both.fg, row.fg, "the foreground was not mentioned");
+        assert!(both.attrs.contains(Attrs::DIM), "the row's dim survived");
+        assert!(both.attrs.contains(Attrs::BOLD), "the span's bold applied");
+    }
+
+    /// A word the grammar does not know is dropped rather than failing the
+    /// whole name: the alternative turns one typo into a surface painted in
+    /// the editor's plain ground. Nothing can *write* such a word — [`Attrs`]
+    /// has five constants and no other constructor — so this is the reading
+    /// half being forgiving, not the writing half being loose.
+    #[test]
+    fn an_unknown_attribute_is_dropped_not_fatal() {
+        let ink = Ink::parse("editor.fg/editor.bg+bold+wobble").expect("the pair is readable");
+        assert_eq!(ink.attrs, Attrs::BOLD);
+        assert_eq!(
+            resolve("editor.fg/editor.bg+wobble", &theme()).fg,
+            Some(theme().editor_fg)
+        );
+    }
+
+    /// A literal has no name by construction, and the inspector should say so
+    /// rather than attributing a plugin's colour to a theme entry.
+    #[test]
+    fn a_literal_half_reports_no_name() {
+        let ink = Ink::new(Paint::Lit(Color::Rgb(1, 2, 3)), Paint::key("editor.bg"));
+        assert_eq!(ink.names(), (None, Some("editor.bg")));
+        let (fg, bg) = names(&ink.to_string());
+        assert_eq!((fg, bg), (None, Some("editor.bg".to_string())));
+    }
 
     /// **Every colour round-trips.** The literal form exists because a plugin's
     /// colour arrives already resolved, with no key to name it; it is only
@@ -619,6 +891,7 @@ impl Editor {
             // the half of `handle_file_explorer_click` that ran before it
             // resolved a row.
             UiFact::ExplorerBodyPress => self.take_focus_for_file_explorer(),
+            UiFact::PopupSelect(i) => self.select_popup_item(i),
             // The list row knew its own index; both of these used to be a
             // coordinate hit-test that resolved one.
             UiFact::SuggestionSelect(i) => {

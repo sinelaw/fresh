@@ -133,6 +133,10 @@ pub enum UiFact {
     /// only way a test (or a user) can click back into a panel whose files do
     /// not fill it.
     ExplorerBodyPress,
+    /// A popup list row was chosen. By index, because the row knows which one
+    /// it is — the coordinate hit-test in `chrome::Popups` recovered an index
+    /// the row already had.
+    PopupSelect(usize),
     /// A pointer moved the suggestion selection to this row.
     SuggestionSelect(usize),
     /// A double-click confirmed this suggestion — the same path Enter takes.

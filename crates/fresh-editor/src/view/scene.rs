@@ -624,7 +624,7 @@ fn project_popup(
                 .collect(),
             selected: *selected,
         },
-        PopupContent::Text(lines) | PopupContent::Custom(lines) => PopupContentView::Lines {
+        PopupContent::Text(lines) => PopupContentView::Lines {
             lines: lines.clone(),
         },
         PopupContent::Markdown(styled) => PopupContentView::Lines {

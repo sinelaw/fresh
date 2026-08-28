@@ -294,13 +294,7 @@ pub fn provenance_runs(
         // a colour nobody named.
         let theme = it.runs.first().map(|(_, t)| t.as_str()).unwrap_or("");
         let (fg, bg) = crate::app::shell_host::shell_theme::names(theme);
-        out.push((
-            r.x,
-            r.y,
-            r.width,
-            fg.map(str::to_string),
-            bg.map(str::to_string),
-        ));
+        out.push((r.x, r.y, r.width, fg, bg));
     }
     out
 }

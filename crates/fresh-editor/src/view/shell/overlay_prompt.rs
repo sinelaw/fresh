@@ -26,9 +26,7 @@
 //! percentage does not express; it is a rule with one home, which is not what
 //! the migration is here to remove.
 
-use fresh_ui::{col, host, row, text, Node, Rect, Sizing};
-
-use crate::app::shell_host::shell_theme::pair;
+use fresh_ui::{col, host, row, Node, Rect, Sizing};
 
 use super::msg::UiMsg;
 
@@ -107,6 +105,18 @@ fn region(r: CardRegion) -> Node<UiMsg> {
 /// Anchored at the corner `centered_overlay_rect` chose and sized to it — the
 /// same shape [`super::prompt::Place::Inside`] uses, and for the same reason:
 /// the rectangle is somebody else's answer and this only occupies it.
+///
+/// **The card states where its bands are; it does not paint them.** Every band
+/// but the results list is still `render_overlay_prompt`'s — the frame, the
+/// ground inside it, the input row, the toolbar, the separator and the footer
+/// are all drawn by that painter, which runs *between* the two fold bands. A
+/// layer is in the overlay band, so anything this drew would land on top of
+/// the painter's work and erase it: a ring over its ring, a ground over its
+/// content. So the ring here is a one-cell inset rather than a border, and no
+/// node in the card names a theme. The one thing that does paint from the tree
+/// is the suggestion list, which is a layer of its own anchored to the results
+/// band — and it paints there precisely because it is the band that *has*
+/// moved.
 pub fn card(c: &Card) -> Node<UiMsg> {
     use fresh_ui::{layer, Anchor, Place};
     layer()
@@ -117,22 +127,21 @@ pub fn card(c: &Card) -> Node<UiMsg> {
             body(c)
                 .w(Sizing::Cells(c.at.w))
                 .h(Sizing::Cells(c.at.h))
-                .border()
-                .theme(pair("ui.popup_border_fg", "ui.suggestion_bg")),
+                // What `border()` would inset by, without the ring it would
+                // also draw — the painter's `Block` is still the ring, and the
+                // bands have to land inside it.
+                .pad(1, 1)
+                .clip(true),
         )
 }
 
 /// The card's bands, top to bottom.
 fn body(c: &Card) -> Node<UiMsg> {
-    // The separator closing the header band. Native already: it is a row of
-    // one glyph in one style, and `Sizing::Auto` on a text run would measure
-    // the string, so it is the fill of a themed row that draws it edge to
-    // edge — the same way the painter's `"─".repeat(inner.width)` did, without
-    // needing to know the width.
-    let separator = row()
-        .h(Sizing::Cells(1))
-        .theme(pair("ui.popup_border_fg", "ui.suggestion_bg"))
-        .child(text("").flex(1));
+    // The separator closing the header band: a row of the card's height
+    // budget, and nothing more. `render_overlay_prompt` still writes the
+    // `"─".repeat(inner.width)` into it; what the description owes is the row
+    // it occupies, because the bands below start after it.
+    let separator = row().h(Sizing::Cells(1));
     let middle = match c.preview() {
         // Half and half — but *which* half gets the odd column is not a
         // detail. `body.width / 2` truncates, so the painter's results pane
