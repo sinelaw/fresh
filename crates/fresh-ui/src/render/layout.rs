@@ -516,7 +516,15 @@ impl<M: 'static> Ui<M> {
         let root_c = self.root_constraints(root, frame);
         let full = self.frame_size != frame || self.render[root].data.cached.is_none();
         if full {
-            self.layout_dirty.clear();
+            // The dirty list is deliberately *not* cleared here. A root
+            // measure is not a whole-tree measure: path-marking stops at the
+            // nearest relayout boundary, so the root walk short-circuits above
+            // every boundary that was marked from below and leaves it holding
+            // last frame's measurement — which for text is the shaped rows
+            // paint reads. Dropping the list here painted a stale status bar
+            // for the whole frame in which a layer was open, because the layer
+            // dirtied the root. Re-entering the root from the drain afterwards
+            // is a cache hit.
             self.measure(root, root_c);
         }
 
@@ -642,8 +650,16 @@ impl<M: 'static> Ui<M> {
                     continue;
                 }
                 let Some((c, _)) = self.render[b].data.cached else {
+                    // No cache means no constraints to re-enter this boundary
+                    // on, so the pass starts again from the root. That does
+                    // *not* stand in for the rest of the list: path-marking
+                    // stops at a boundary, so the root walk short-circuits
+                    // above every other dirty boundary and leaves it stale.
+                    // Each one is still visited — by then the root pass has
+                    // usually refilled its cache, and if it has not, this
+                    // measure is a cache hit that costs nothing.
                     self.measure(root, root_c);
-                    break;
+                    continue;
                 };
                 self.measure(b, c);
             }

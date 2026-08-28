@@ -492,3 +492,64 @@ fn a_floor_holds_inside_a_viewport() {
         ui.rect(gap).w
     );
 }
+
+/// A second frame re-measures every dirty boundary, not just the root.
+///
+/// The mark that a node needs layout stops at the nearest relayout boundary —
+/// that is the point of boundaries. So re-measuring the *root* does not stand
+/// in for the rest of the dirty list: the root walk hits each boundary's cache
+/// and short-circuits above it, leaving it holding the previous frame's
+/// measurement. `TextRender` shapes its rows during measure and paints from
+/// them, so a boundary that was skipped paints last frame's text.
+///
+/// A layer is what made this reachable in practice: it dirties the root, the
+/// root has no cached constraints to re-enter on, and the pass used to drop
+/// the rest of the list on that account. The editor's status bar then painted
+/// a stale row for every frame in which a menu was open.
+#[test]
+fn a_stale_boundary_is_re_measured_even_when_the_root_is_too() {
+    let tree = |msg: &str, overlay: bool| {
+        // `h(Cells(1))` hands the row tight constraints, which makes it a
+        // relayout boundary — the marker from the text below stops there.
+        // The inner `col` matters: it sits between the root and the boundary
+        // and is itself clean, so a walk from the root stops there. Without
+        // something in between, the root's own re-measure would reach the
+        // boundary by accident and the bug would not show.
+        let base = col().children([col().flex(1).children([
+            row().h(Sizing::Cells(1)).children([text(msg.to_string())]),
+            text("body").flex(1),
+        ])]);
+        if overlay {
+            base.child(
+                fresh_ui::layer()
+                    .anchor(fresh_ui::Anchor::Screen(Align::Center))
+                    .child(text("overlay")),
+            )
+        } else {
+            base
+        }
+    };
+    let lines = |ui: &Ui<()>| -> Vec<String> {
+        ui.spec()
+            .items
+            .iter()
+            .filter_map(|i| match &i.draw {
+                fresh_ui::Draw::Lines(l) => l.first().map(|s| s.to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // One `Ui` across both frames: the second frame is a reconcile, which is
+    // how a host drives it.
+    let mut ui = ui();
+    ui.frame(tree("before", true), FRAME);
+    assert!(lines(&ui).contains(&"before".to_string()));
+
+    ui.frame(tree("after", false), FRAME);
+    assert!(
+        lines(&ui).contains(&"after".to_string()),
+        "the boundary painted a stale row: {:?}",
+        lines(&ui)
+    );
+}
