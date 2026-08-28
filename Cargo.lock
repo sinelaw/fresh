@@ -1523,6 +1523,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fresh-i18n"
+version = "0.4.10"
+dependencies = [
+ "once_cell",
+ "serde_json",
+]
+
+[[package]]
 name = "fresh-input-parser"
 version = "0.4.10"
 dependencies = [

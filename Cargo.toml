@@ -12,6 +12,7 @@ members = [
     "crates/fresh-winterm",
     "crates/fresh-input-parser",
     "crates/fresh-update",
+    "crates/fresh-i18n",
 ]
 default-members = [
     "crates/fresh-editor",
@@ -24,6 +25,7 @@ default-members = [
     "crates/fresh-winterm",
     "crates/fresh-input-parser",
     "crates/fresh-update",
+    "crates/fresh-i18n",
 ]
 
 [workspace.package]
@@ -47,6 +49,7 @@ fresh-winterm = { version = "0.4.10", path = "crates/fresh-winterm" }
 fresh-input-parser = { version = "0.4.10", path = "crates/fresh-input-parser" }
 fresh-update = { version = "0.4.10", path = "crates/fresh-update" }
 fresh-ui = { version = "0.4.10", path = "crates/fresh-ui" }
+fresh-i18n = { version = "0.4.10", path = "crates/fresh-i18n" }
 
 # External crates
 serde = { version = "1.0", features = ["derive", "rc"] }
