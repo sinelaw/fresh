@@ -64,15 +64,6 @@ pub struct MouseState {
     pub drag_selection_word_end: Option<usize>,
     /// Tab drag state (for drag-to-split functionality)
     pub dragging_tab: Option<TabDragState>,
-    /// Whether we're currently dragging a popup scrollbar (popup index)
-    pub dragging_popup_scrollbar: Option<usize>,
-    /// Whether we're currently dragging the prompt's suggestion-list
-    /// scrollbar (Live Grep floating overlay, issue #1796). The
-    /// rect is held in `ChromeLayout::suggestions_scrollbar_rect`
-    /// and the math is shared with the buffer-popup scrollbar via
-    /// `view::ui::scrollbar::ScrollbarState::click_to_offset`.
-    /// Whether we're currently selecting text in a popup (popup index)
-    pub selecting_in_popup: Option<usize>,
     /// Initial composite scroll_row when starting to drag the scrollbar thumb
     /// Used for composite buffer scrollbar drag
     pub drag_start_composite_scroll_row: Option<usize>,

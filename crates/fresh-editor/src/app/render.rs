@@ -98,21 +98,20 @@ impl Editor {
     /// click region in `global_popup_areas`. Shared by the generic
     /// global-popup slot and the workspace-trust modal band so the area math
     /// lives in exactly one place.
-    fn render_top_global_popup(
-        &mut self,
-        frame: &mut Frame,
-        size: ratatui::layout::Rect,
-        theme: &crate::view::theme::Theme,
-        hover_target: Option<&crate::app::HoverTarget>,
-        // When false, compute + cache the popup area but draw no cells (the web
-        // renders popups natively from `popups_view`). TUI passes `true`.
-        draw: bool,
-    ) {
-        let Some(popup) = self.global_popups.top() else {
+    fn cache_top_global_popup_area(&mut self) {
+        if self.global_popups.top().is_none() {
             return;
-        };
+        }
         let top_idx = self.global_popups.all().len() - 1;
-        let popup_area = popup.calculate_area(size, None);
+        // The tree's answer. The global top is the last entry the description
+        // carries — the buffer's stack, then this over it.
+        let (buffer_n, _) = self.popup_counts();
+        let popup_area = self
+            .popup_rects()
+            .get(buffer_n)
+            .copied()
+            .unwrap_or_default();
+        let popup = self.global_popups.top().expect("checked just above");
         let desc_height = popup.description_height();
         let inner_area = if popup.bordered {
             ratatui::layout::Rect {
@@ -134,9 +133,6 @@ impl Editor {
             _ => 0,
         };
         let scroll_offset = popup.scroll_offset;
-        if draw {
-            popup.render_with_hover(frame, popup_area, theme, hover_target);
-        }
         self.active_chrome_mut().global_popup_areas.push((
             top_idx,
             popup_area,
@@ -1079,6 +1075,18 @@ impl Editor {
         self.active_layout_mut().maximize_split_areas = maximize_split_areas;
         self.active_layout_mut().view_line_mappings = view_line_mappings;
 
+        // **The buffer answers where its caret is, and the layers hanging off
+        // it are placed.** This is the seam the popup wave needed: the chrome's
+        // geometry has to exist before the splits can be laid out, the splits
+        // before the caret's screen position is known, and the caret before a
+        // popup anchored to it can go anywhere. Below the `split_areas`
+        // assignment for exactly the reason the block above it is.
+        //
+        // When S5 puts the split grid in the tree the buffer's leaf has a
+        // rectangle at layout time, the caret becomes an ordinary keyed
+        // element, and this call site goes with it.
+        self.publish_popup_carets(size);
+
         // A split that changed size takes any widget panel mounted in it
         // with it: an auto-sized (`visible_rows: None`) list or tree was
         // windowed to the old row budget, and the rects published just
@@ -1168,11 +1176,10 @@ impl Editor {
         // Render popups from the active buffer state
         // Clone theme to avoid borrow checker issues with active_state_mut()
         let theme_clone = self.theme.read().unwrap().clone();
-        let hover_target = self.active_window_mut().mouse_state.hover_target.clone();
 
         // Cursor-anchored buffer popups (completion, hover, signature help):
         // recompute their areas for hit-testing and paint them.
-        self.render_buffer_popups(frame, chrome_area, &theme_clone, &hover_target);
+        self.cache_buffer_popup_areas();
 
         // Render editor-level popups (e.g. plugin action popups) on top of any
         // buffer content so they stay visible across buffer switches and over
@@ -1191,16 +1198,7 @@ impl Editor {
         // Everything else on the global stack renders here, above buffer content.
         let top_is_trust_modal = self.workspace_trust_on_top();
         if !top_is_trust_modal {
-            // Global popups render within the chrome area (right of a
-            // left dock) so corner/centred popups don't overrun it.
-            let draw_global_popup = !self.suppress_chrome_cells;
-            self.render_top_global_popup(
-                frame,
-                chrome_area,
-                &theme_clone,
-                hover_target.as_ref(),
-                draw_global_popup,
-            );
+            self.cache_top_global_popup_area();
         }
 
         // The full-screen modals (settings, calibration wizard, keybinding
@@ -1570,188 +1568,187 @@ impl Editor {
     /// popups (completion / hover / signature help), cache them for mouse
     /// hit-testing, and paint them. `theme_clone` and `hover_target` are
     /// passed in because `render` reuses them for the global-popup pass.
-    fn render_buffer_popups(
-        &mut self,
-        frame: &mut Frame,
-        chrome_area: ratatui::layout::Rect,
-        theme_clone: &crate::view::theme::Theme,
-        hover_target: &Option<HoverTarget>,
-    ) {
-        // Clear popup areas and recalculate
-        self.active_chrome_mut().popup_areas.clear();
-
-        // Collect popup information without holding a mutable borrow
-        let popup_info: Vec<_> = {
-            // Get viewport from active split's SplitViewState
-            let active_split = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
-            let viewport = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&active_split)
-                .map(|vs| vs.viewport.clone());
-
-            // Get the content_rect for the active split from the cached layout.
-            // This is the absolute screen rect (already accounts for file explorer,
-            // tab bar, scrollbars, etc.). The gutter is rendered inside this rect,
-            // so we add gutter_width to get the text content origin.
-            let content_rect = self
-                .active_layout()
-                .split_areas
-                .iter()
-                .find(|(split_id, _, _, _, _, _)| *split_id == active_split)
-                .map(|(_, _, rect, _, _, _)| *rect);
-
-            let primary_cursor = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&active_split)
-                .map(|vs| *vs.cursors.primary());
-            let state = self.active_state_mut();
-            if state.popups.is_visible() {
-                // Get the primary cursor position for popup positioning
-                let primary_cursor =
-                    primary_cursor.unwrap_or_else(|| crate::model::cursor::Cursor::new(0));
-
-                // Compute gutter width so we know where text content starts
-                let gutter_width = viewport
-                    .as_ref()
-                    .map(|vp| vp.gutter_width(&state.buffer) as u16)
-                    .unwrap_or(0);
-
-                let cursor_screen_pos = viewport
-                    .as_ref()
-                    .map(|vp| vp.cursor_screen_position(&mut state.buffer, &primary_cursor))
-                    .unwrap_or((0, 0));
-
-                // For completion popups, compute the word-start screen position so
-                // the popup aligns with the beginning of the word being completed,
-                // not the current cursor position.
-                let word_start_screen_pos = {
-                    use crate::primitives::word_navigation::find_completion_word_start;
-                    let word_start =
-                        find_completion_word_start(&state.buffer, primary_cursor.position);
-                    let word_start_cursor = crate::model::cursor::Cursor::new(word_start);
-                    viewport
-                        .as_ref()
-                        .map(|vp| vp.cursor_screen_position(&mut state.buffer, &word_start_cursor))
-                        .unwrap_or((0, 0))
-                };
-
-                // Use content_rect as the single source of truth for the text
-                // content area origin. content_rect.x is the split's left edge
-                // (already past the file explorer), content_rect.y is below the
-                // tab bar. Adding gutter_width gives us the text content start.
-                let (base_x, base_y) = content_rect
-                    .map(|r| (r.x + gutter_width, r.y))
-                    .unwrap_or((gutter_width, 1));
-
-                let cursor_screen_pos =
-                    (cursor_screen_pos.0 + base_x, cursor_screen_pos.1 + base_y);
-                let word_start_screen_pos = (
-                    word_start_screen_pos.0 + base_x,
-                    word_start_screen_pos.1 + base_y,
-                );
-
-                // Collect popup data
-                state
-                    .popups
-                    .all()
-                    .iter()
-                    .enumerate()
-                    .map(|(popup_idx, popup)| {
-                        // Use word-start x for completion popups, cursor x for others
-                        let popup_pos = if popup.kind == crate::view::popup::PopupKind::Completion {
-                            (word_start_screen_pos.0, cursor_screen_pos.1)
-                        } else {
-                            cursor_screen_pos
-                        };
-                        // Clamp within the chrome area (right of a left
-                        // dock) so a cursor-anchored popup near the left
-                        // edge can't extend into the dock column.
-                        let popup_area = popup.calculate_area(chrome_area, Some(popup_pos));
-
-                        // Track popup area for mouse hit testing
-                        // Account for description height when calculating the list item area
-                        let desc_height = popup.description_height();
-                        let inner_area = if popup.bordered {
-                            ratatui::layout::Rect {
-                                x: popup_area.x + 1,
-                                y: popup_area.y + 1 + desc_height,
-                                width: popup_area.width.saturating_sub(2),
-                                height: popup_area.height.saturating_sub(2 + desc_height),
-                            }
-                        } else {
-                            ratatui::layout::Rect {
-                                x: popup_area.x,
-                                y: popup_area.y + desc_height,
-                                width: popup_area.width,
-                                height: popup_area.height.saturating_sub(desc_height),
-                            }
-                        };
-
-                        let num_items = match &popup.content {
-                            crate::view::popup::PopupContent::List { items, .. } => items.len(),
-                            _ => 0,
-                        };
-
-                        // Calculate total content lines and scrollbar rect
-                        let total_lines = popup.item_count();
-                        let visible_lines = inner_area.height as usize;
-                        let scrollbar_rect = if total_lines > visible_lines && inner_area.width > 2
-                        {
-                            Some(ratatui::layout::Rect {
-                                x: inner_area.x + inner_area.width - 1,
-                                y: inner_area.y,
-                                width: 1,
-                                height: inner_area.height,
-                            })
-                        } else {
-                            None
-                        };
-
-                        (
-                            popup_idx,
-                            popup_area,
-                            inner_area,
-                            popup.scroll_offset,
-                            num_items,
-                            scrollbar_rect,
-                            total_lines,
-                        )
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            }
+    /// Tell the tree where the buffer's caret is, and place the layers that
+    /// hang off it.
+    ///
+    /// A popup anchored to the caret names a point *inside* the buffer's host
+    /// leaf: the tree hands that leaf a rectangle and knows nothing about its
+    /// interior, so the buffer is the only thing that can answer. Two points,
+    /// because a completion list lines up with the start of the word being
+    /// completed while everything else uses the caret — `render_buffer_popups`
+    /// chose between them with an `if` on the popup's kind and then passed a
+    /// pair of numbers into `calculate_area`.
+    ///
+    /// Nothing is published when no popup is up, and `Ui::frame` clears the
+    /// previous frame's anchors, so a stale caret can never place anything.
+    fn publish_popup_carets(&mut self, size: ratatui::layout::Rect) {
+        use crate::view::shell::popup::CaretAnchor;
+        if self.popup_descriptions(size).is_empty() {
+            return;
+        }
+        let cells = self.popup_caret_cells();
+        let Some(mut ui) = self.shell_ui.take() else {
+            return;
         };
+        // The area a popup may occupy when it must not paint over the split's
+        // vertical scrollbar, which lives in the frame's last column and is
+        // not in the tree until S5.
+        ui.set_host_anchor(
+            crate::view::shell::popup::clear_of_scrollbar_key(),
+            fresh_ui::Rect::new(0, 0, size.width.saturating_sub(1), size.height),
+        );
+        if let Some((caret, word_start)) = cells {
+            let cell = |(x, y): (u16, u16)| fresh_ui::Rect::new(x as i32, y as i32, 1, 1);
+            ui.set_host_anchor(CaretAnchor::Caret.key(), cell(caret));
+            ui.set_host_anchor(CaretAnchor::CompletionWord.key(), cell(word_start));
+        }
+        ui.place_layers(fresh_ui::Size::new(size.width, size.height));
+        self.shell_ui = Some(ui);
+    }
+
+    /// The caret's screen position, and the completion word start's.
+    ///
+    /// Both are absolute: the split's content rect gives the origin (already
+    /// past the dock, the explorer and the tab bar), the gutter gives where
+    /// text begins inside it, and the viewport turns a buffer position into a
+    /// row and column within that.
+    fn popup_caret_cells(&mut self) -> Option<((u16, u16), (u16, u16))> {
+        let splits = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())?;
+        let active_split = splits.0.active_split();
+        let viewport = splits.1.get(&active_split).map(|vs| vs.viewport.clone())?;
+        let primary_cursor = splits
+            .1
+            .get(&active_split)
+            .map(|vs| *vs.cursors.primary())?;
+        let content_rect = self
+            .active_layout()
+            .split_areas
+            .iter()
+            .find(|(split_id, _, _, _, _, _)| *split_id == active_split)
+            .map(|(_, _, rect, _, _, _)| *rect);
+
+        let state = self.active_state_mut();
+        let gutter_width = viewport.gutter_width(&state.buffer) as u16;
+        let caret = viewport.cursor_screen_position(&mut state.buffer, &primary_cursor);
+        let word_start = {
+            use crate::primitives::word_navigation::find_completion_word_start;
+            let at = find_completion_word_start(&state.buffer, primary_cursor.position);
+            let c = crate::model::cursor::Cursor::new(at);
+            viewport.cursor_screen_position(&mut state.buffer, &c)
+        };
+        // `content_rect.x` is the split's left edge, past everything to its
+        // left; `+ gutter_width` is where the text starts. `content_rect.y` is
+        // below the tab bar.
+        let (base_x, base_y) = content_rect
+            .map(|r| (r.x + gutter_width, r.y))
+            .unwrap_or((gutter_width, 1));
+        Some((
+            (caret.0 + base_x, caret.1 + base_y),
+            // The word start's column, on the caret's row — which is what the
+            // painter's `(word_start.0, cursor.1)` said.
+            (word_start.0 + base_x, caret.1 + base_y),
+        ))
+    }
+
+    /// How many popups the description carries, and how many of those are the
+    /// buffer's.
+    ///
+    /// The same rule `popup_descriptions` builds by, stated once so the two
+    /// painters index the tree's answer the way the description filled it: the
+    /// buffer's stack first, the top of the global one after.
+    fn popup_counts(&self) -> (usize, usize) {
+        let buffer = match self.active_state().popups.is_visible() {
+            true => self.active_state().popups.all().len(),
+            false => 0,
+        };
+        let global =
+            (!self.workspace_trust_on_top() && self.global_popups.top().is_some()) as usize;
+        (buffer, buffer + global)
+    }
+
+    /// Where the tree put the popups.
+    fn popup_rects(&self) -> Vec<ratatui::layout::Rect> {
+        let (_, total) = self.popup_counts();
+        match self.shell_ui.as_ref() {
+            Some(ui) => crate::view::shell::popup::rects_of(ui, total),
+            None => vec![ratatui::layout::Rect::default(); total],
+        }
+    }
+
+    fn cache_buffer_popup_areas(&mut self) {
+        self.active_chrome_mut().popup_areas.clear();
+        if !self.active_state().popups.is_visible() {
+            return;
+        }
+        // Where each one landed, read off the tree. This was the caret's
+        // screen position computed here and handed to `calculate_area`, which
+        // then said "clamp to the area's edges" six times; the caret is
+        // published to the tree now (`publish_popup_carets`) and the layer
+        // that names it has already been placed.
+        let rects = self.popup_rects();
+        let popup_info: Vec<_> = self
+            .active_state()
+            .popups
+            .all()
+            .iter()
+            .enumerate()
+            .map(|(popup_idx, popup)| {
+                let popup_area = rects.get(popup_idx).copied().unwrap_or_default();
+                // The rows a painter still owns, inside the frame the tree
+                // placed: the description occupies the top of them.
+                let desc_height = popup.description_height();
+                let inner_area = if popup.bordered {
+                    ratatui::layout::Rect {
+                        x: popup_area.x + 1,
+                        y: popup_area.y + 1 + desc_height,
+                        width: popup_area.width.saturating_sub(2),
+                        height: popup_area.height.saturating_sub(2 + desc_height),
+                    }
+                } else {
+                    ratatui::layout::Rect {
+                        x: popup_area.x,
+                        y: popup_area.y + desc_height,
+                        width: popup_area.width,
+                        height: popup_area.height.saturating_sub(desc_height),
+                    }
+                };
+                let num_items = match &popup.content {
+                    crate::view::popup::PopupContent::List { items, .. } => items.len(),
+                    _ => 0,
+                };
+                let total_lines = popup.item_count();
+                let visible_lines = inner_area.height as usize;
+                let scrollbar_rect = if total_lines > visible_lines && inner_area.width > 2 {
+                    Some(ratatui::layout::Rect {
+                        x: inner_area.x + inner_area.width - 1,
+                        y: inner_area.y,
+                        width: 1,
+                        height: inner_area.height,
+                    })
+                } else {
+                    None
+                };
+                (
+                    popup_idx,
+                    popup_area,
+                    inner_area,
+                    popup.scroll_offset,
+                    num_items,
+                    scrollbar_rect,
+                    total_lines,
+                )
+            })
+            .collect();
 
         // Store popup areas for mouse hit testing
         self.active_chrome_mut().popup_areas = popup_info.clone();
 
-        // Now render popups (cells only when this frontend draws chrome itself;
-        // the web renders them natively from `popups_view`, but the area cache
-        // above is always populated for hit-routing).
-        let draw_popups = !self.suppress_chrome_cells;
-        let state = self.active_state_mut();
-        if draw_popups && state.popups.is_visible() {
-            for (popup_idx, popup) in state.popups.all().iter().enumerate() {
-                if let Some((_, popup_area, _, _, _, _, _)) = popup_info.get(popup_idx) {
-                    popup.render_with_hover(frame, *popup_area, theme_clone, hover_target.as_ref());
-                }
-            }
-        }
+        // Nothing is painted here any more: a popup is a layer in the shell's
+        // tree, and the overlay band draws it. What survives is the area cache
+        // above, which the not-yet-migrated hit-testing still reads.
     }
 
     /// Draw the software mouse cursor (GPM, which can't paint its own caret on
@@ -2719,6 +2716,7 @@ impl Editor {
         let suggestions = self.suggestions_description();
         self.shell_owns_suggestions = suggestions.is_some();
         let card = self.overlay_card_description(chrome_area);
+        let popups = self.popup_descriptions(chrome_area);
         crate::view::shell::frame::Frame {
             menu_bar: menu_bar_visible,
             status_bar: status_row,
@@ -2738,8 +2736,56 @@ impl Editor {
             // uses cannot disagree — they are one computation.
             dropdowns: menu_layout.map(|l| l.shell_dropdowns).unwrap_or_default(),
             suggestions,
+            popups,
             card,
         }
+    }
+
+    /// Every popup on screen, as the shell describes it.
+    ///
+    /// Size and strategy — never a rectangle. Where each one lands is the
+    /// tree's answer, read back with `popup::rects_of`; `calculate_area`'s six
+    /// strategies said it six times, each ending in its own clamp.
+    ///
+    /// The order is the order they paint in, which is the order the two
+    /// painters already ran in: the buffer's whole stack, then the top of the
+    /// global one over it. Only the top global popup is ever drawn — deeper
+    /// ones surface as it resolves — and the workspace-trust prompt is not
+    /// here at all, because it renders later in the modal band on its own
+    /// dimmed backdrop.
+    fn popup_descriptions(
+        &self,
+        chrome: ratatui::layout::Rect,
+    ) -> Vec<crate::view::shell::popup::Placed> {
+        use crate::view::shell::popup::{Body, CaretAnchor, Placed};
+        let describe = |p: &crate::view::popup::Popup| Placed {
+            position: p.position,
+            at: CaretAnchor::for_kind(p.kind),
+            size: p.asked_size(chrome),
+            body: Body {
+                title: p.render_title(),
+                description: p.description.clone(),
+                content: p.content.clone(),
+                bordered: p.bordered,
+                // The workspace-trust prompt is a forced choice, so it has no
+                // close button — the painter's `dismissible`.
+                dismissible: !matches!(
+                    p.resolver,
+                    crate::view::popup::PopupResolver::WorkspaceTrust
+                ),
+                selected_hint: p.accept_key_hint.clone(),
+            },
+            transient: p.transient,
+        };
+        let mut out: Vec<Placed> = Vec::new();
+        let state = self.active_state();
+        if state.popups.is_visible() {
+            out.extend(state.popups.all().iter().map(describe));
+        }
+        if !self.workspace_trust_on_top() {
+            out.extend(self.global_popups.top().map(describe));
+        }
+        out
     }
 
     /// The floating-overlay prompt's card, as the shell describes it.

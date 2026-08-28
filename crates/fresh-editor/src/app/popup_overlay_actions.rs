@@ -173,23 +173,6 @@ impl Editor {
         }
     }
 
-    /// Scroll any popup content by delta lines
-    /// Positive delta scrolls down, negative scrolls up
-    pub(super) fn scroll_popup(&mut self, delta: i32) {
-        if let Some(popup) = self.global_popups.top_mut() {
-            popup.scroll_by(delta);
-            return;
-        }
-        if let Some(popup) = self.active_state_mut().popups.top_mut() {
-            popup.scroll_by(delta);
-            tracing::debug!(
-                "Scrolled popup by {}, new offset: {}",
-                delta,
-                popup.scroll_offset
-            );
-        }
-    }
-
     /// Clear all popups
     pub fn clear_popups(&mut self) {
         let event = Event::ClearPopups;
