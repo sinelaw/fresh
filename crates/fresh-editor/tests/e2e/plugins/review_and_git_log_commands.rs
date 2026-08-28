@@ -383,7 +383,12 @@ fn open_branch_log(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
-/// `Git Log: Close PR Branch` closes the branch log panel.
+/// `Git Log: Close PR Branch` closes the branch log panel, and says so.
+///
+/// The report is part of the behaviour: `editor.t()` answers a missing string
+/// with the key itself, so the plugin's `editor.t(key) || fallback` idiom never
+/// reached its fallback and closing the panel used to print a literal
+/// `status.closed` where the message belongs.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn git_log_close_pr_branch_command_closes_the_branch_log() {
@@ -400,6 +405,87 @@ fn git_log_close_pr_branch_command_closes_the_branch_log() {
     harness
         .wait_until(|h| !h.screen_to_string().contains("Commits (master..HEAD)"))
         .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Branch log closed"),
+        "closing should report what it did. Screen:\n{screen}"
+    );
+    assert_no_raw_i18n_key(&screen);
+}
+
+/// `Git Log: PR Branch` on an open branch log says it is already open rather
+/// than prompting for a base ref a second time.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn git_log_pr_branch_command_declines_to_open_twice() {
+    init_tracing_from_env();
+    let repo = repo_with_a_feature_branch();
+    let mut harness = harness_for(&repo);
+
+    open_branch_log(&mut harness);
+
+    harness.run_palette_command("Git Log: PR Branch").unwrap();
+
+    // The palette closes either way; reading the status only once it has is
+    // what makes a regression fail here instead of waiting forever.
+    harness
+        .wait_until(|h| !h.screen_to_string().contains(">command"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Branch log already open"),
+        "the second invocation should say the log is already open. Screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("Base ref"),
+        "the second invocation should not re-prompt. Screen:\n{screen}"
+    );
+    assert_no_raw_i18n_key(&screen);
+}
+
+/// Escaping the base-ref prompt leaves no branch log open, and reports the
+/// cancellation.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn git_log_pr_branch_command_cancels_at_the_base_ref_prompt() {
+    init_tracing_from_env();
+    let repo = repo_with_a_feature_branch();
+    let mut harness = harness_for(&repo);
+
+    harness.run_palette_command("Git Log: PR Branch").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Base ref"))
+        .unwrap();
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    // The prompt goes away either way; assert on what it left behind.
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("Base ref"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Cancelled"),
+        "escaping the prompt should report the cancellation. Screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("BRANCH_COMMIT_SUBJECT"),
+        "cancelling should not open the branch log. Screen:\n{screen}"
+    );
+    assert_no_raw_i18n_key(&screen);
+}
+
+/// The status line should carry a message, never the i18n key that names one.
+fn assert_no_raw_i18n_key(screen: &str) {
+    for key in ["status.", "panel.", "prompt.", "cmd."] {
+        assert!(
+            !screen.contains(key),
+            "a raw `{key}` i18n key reached the screen. Screen:\n{screen}"
+        );
+    }
 }
 
 /// `Git Log: Refresh PR Branch` re-fetches the commit list: a commit made on
