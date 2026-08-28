@@ -111,6 +111,22 @@ document.addEventListener("copy",e=>{
 const cellAt = e => ({ col: Math.max(0, Math.floor((e.clientX-APPX)/CW)), row: Math.max(0, Math.floor((e.clientY-APPY)/CH)) });
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
 function sendMouse(o){ wsSend({type:"mouse",...o}); }
+// A chrome control's click, *completed*.
+//
+// `fresh-ui` derives a click from a press AND a release, and every widget it
+// ships — list rows, tree rows, buttons, text fields — is wired that way. The
+// document-level `mouseup` below deliberately skips chrome (`onChrome`), so a
+// chrome surface that sent only the press left every one of those widgets
+// inert here while behaving perfectly in a terminal, which sends both.
+//
+// That mismatch is why nine migrated surfaces had to be walked back from
+// `Click` to `Press` one at a time. Completing the gesture at the source fixes
+// the class instead of the instances, and costs nothing for a handler that
+// acts on the press: it has already run by the time the release arrives.
+function sendClick(o){
+  sendMouse({...o, kind:"down"});
+  sendMouse({kind:"up", button:o.button||"left", col:o.col, row:o.row});
+}
 function sendWidget(o){ wsSend({type:"widget",...o}); }
 function sendSettings(o){ wsSend({type:"settings",...o}); }
 function sendKbedit(o){ wsSend({type:"kbedit",...o}); }

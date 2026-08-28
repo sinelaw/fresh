@@ -20,7 +20,7 @@ function popupEl(p){
       const tx=document.createElement("span"); tx.className="ptext2"; tx.textContent=it.text; row.appendChild(tx);
       if(it.detail){ const dt=document.createElement("span"); dt.className="pdetail"; dt.textContent=it.detail; row.appendChild(dt); }
       const cell={col:cr.x+1,row:cr.y+j};
-      row.onmousedown=e=>{ if(it.disabled) return; e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); };
+      row.onmousedown=e=>{ if(it.disabled) return; e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:cell.col,row:cell.row}); };
       body.appendChild(row);
     }
   } else {

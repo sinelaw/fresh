@@ -18,7 +18,7 @@ function paletteListEl(p, list){
     const ds=document.createElement("span"); ds.className="pdesc"; ds.textContent=s.description||""; row.appendChild(ds);
     if(s.keybinding){ const k=document.createElement("span"); k.className="pkey"; k.textContent=s.keybinding; row.appendChild(k); }
     if(list){ const cell={col:list.x+1,row:list.y+j};
-      row.onmousedown=e=>{ if(s.disabled) return; e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); }; }
+      row.onmousedown=e=>{ if(s.disabled) return; e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:cell.col,row:cell.row}); }; }
     listBox.appendChild(row);
   }
   if(list){ listBox.addEventListener("wheel",e=>{ e.stopPropagation();
@@ -43,7 +43,7 @@ function searchOptionsEl(p){
     const lb=document.createElement("span"); lb.textContent=o.label; chip.appendChild(lb);
     if(o.shortcut){ const k=document.createElement("span"); k.className="pskey"; k.textContent=o.shortcut; chip.appendChild(k); }
     const col=o.x+Math.floor(o.w/2), row=so.row;
-    chip.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col,row}); };
+    chip.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col,row}); };
     bar.appendChild(chip);
   }
   return bar;
@@ -62,7 +62,7 @@ function searchOptionsEl(p){
 // would desync every click from `click_to_index`.
 function fbClick(col,row,dbl){
   return e=>{ e.preventDefault(); e.stopPropagation();
-    sendMouse({kind:"down",button:"left",col,row,count:dbl?e.detail:1}); };
+    sendClick({button:"left",col,row,count:dbl?e.detail:1}); };
 }
 // Click target for a recorded span: its middle cell, so a padded native
 // control can never round outside the span the editor hit-tests.

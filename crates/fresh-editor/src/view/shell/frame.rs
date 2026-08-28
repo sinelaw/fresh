@@ -102,6 +102,10 @@ pub struct Frame {
     /// whether the row exists at all, and an existing row with no labels is a
     /// blank row of the bar's own colour.
     pub menu_bar_items: super::menu::MenuBar,
+    /// The prompt's suggestion list, or `None` when no prompt is offering one.
+    /// Content rather than a flag, like the other migrated surfaces: the rows
+    /// are what the tree measures, and the layer's presence is `is_some`.
+    pub suggestions: Option<super::prompt::Suggestions>,
 }
 
 impl Default for Frame {
@@ -118,6 +122,7 @@ impl Default for Frame {
             dropdowns: Vec::new(),
             menu_keys: Vec::new(),
             menu_bar_items: super::menu::MenuBar::default(),
+            suggestions: None,
         }
     }
 }
@@ -246,6 +251,13 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // over them — the order `layer_rank::MENU` below `layer_rank::CONTEXT_MENU`
     // states in the precedence table, expressed here as the order they are
     // declared in.
+    // The suggestion list, above the prompt row it belongs to. Declared before
+    // the menus so a context menu opened over it still paints on top — the
+    // same "order of declaration is paint order" rule the dropdowns follow.
+    let frame = match &f.suggestions {
+        Some(s) => frame.child(super::prompt::suggestions_layer(s)),
+        None => frame,
+    };
     let frame = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {
         Some(chain) => frame.child(chain),
         None => frame,

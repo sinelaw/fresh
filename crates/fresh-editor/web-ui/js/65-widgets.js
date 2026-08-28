@@ -816,7 +816,7 @@ function contextMenuEl(cm){
     const row=div("ctxitem"+(i===cm.highlighted?" sel":""));
     row.textContent=label;
     const cell={col:cm.x+1,row:cm.y+1+i};
-    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); };
+    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:cell.col,row:cell.row}); };
     row.onmouseenter=()=>sendMouse({kind:"moved",col:cell.col,row:cell.row});
     el.appendChild(row);
   });
@@ -933,7 +933,7 @@ function widgetSurfaceEls(s){
     if(s.closable && s.closeRect){
       const x=div("w-modal-close"); x.textContent="×"; x.title="Close";
       const cc=rectCell(s.closeRect);
-      x.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cc.col,row:cc.row}); };
+      x.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:cc.col,row:cc.row}); };
       bar.appendChild(x);
     }
     el.appendChild(bar);

@@ -245,6 +245,20 @@ pub mod shell_theme {
         }
     }
 
+    /// The same foreground, a different background.
+    ///
+    /// The companion of [`with_fg`], for a plugin's span that names a
+    /// background and leaves the foreground to the row it sits on.
+    pub fn with_bg(name: &str, bg: &str) -> String {
+        match name.split_once('/') {
+            Some((fg, rest)) => match rest.split_once('+') {
+                Some((_, attrs)) => format!("{fg}/{bg}+{attrs}"),
+                None => format!("{fg}/{bg}"),
+            },
+            None => name.to_string(),
+        }
+    }
+
     /// The same, with text attributes the theme does not carry.
     ///
     /// Reserved for attributes that are *structural* rather than themed: a
@@ -272,6 +286,14 @@ pub mod shell_theme {
             modifier |= match a {
                 "bold" => Modifier::BOLD,
                 "underline" => Modifier::UNDERLINED,
+                "italic" => Modifier::ITALIC,
+                "strikethrough" => Modifier::CROSSED_OUT,
+                // Not decoration for its own sake: it is how the editor spells
+                // "present but receding" — a disabled command, a suggestion's
+                // source label — and the painters that owned those surfaces
+                // reached for `Modifier::DIM` directly, which no theme can
+                // override and no name could carry until now.
+                "dim" => Modifier::DIM,
                 _ => Modifier::empty(),
             };
         }
@@ -597,6 +619,18 @@ impl Editor {
             // the half of `handle_file_explorer_click` that ran before it
             // resolved a row.
             UiFact::ExplorerBodyPress => self.take_focus_for_file_explorer(),
+            // The list row knew its own index; both of these used to be a
+            // coordinate hit-test that resolved one.
+            UiFact::SuggestionSelect(i) => {
+                if let Some(Err(e)) = self.select_suggestion(i) {
+                    tracing::warn!("suggestion select failed: {e}");
+                }
+            }
+            UiFact::SuggestionConfirm(i) => {
+                if let Some(Err(e)) = self.confirm_suggestion(i) {
+                    tracing::warn!("suggestion confirm failed: {e}");
+                }
+            }
             UiFact::ExplorerClose => self.toggle_file_explorer(),
             UiFact::ExplorerResizeBegin { x, y } => {
                 let w = self.active_window().file_explorer_width;

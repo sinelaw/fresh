@@ -186,6 +186,10 @@ fn combos() -> Vec<Frame> {
                             // visibility combinations.
                             status_bar_items: None,
                             menu_keys: Vec::new(),
+                            // The list is a layer, out of flow: it moves no
+                            // rectangle in the frame, which is the same reason
+                            // `menu` is None above.
+                            suggestions: None,
                         });
                     }
                 }
@@ -280,6 +284,7 @@ fn squeeze_band_starves_a_different_row_than_ratatui() {
         // on it, which is the whole claim this test exists to check.
         status_bar_items: None,
         menu_keys: Vec::new(),
+        suggestions: None,
     };
     let size = Rect {
         x: 0,

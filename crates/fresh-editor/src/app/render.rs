@@ -2734,6 +2734,114 @@ impl Editor {
             // description and the rectangles the not-yet-migrated hit-testing
             // uses cannot disagree — they are one computation.
             dropdowns: menu_layout.map(|l| l.shell_dropdowns).unwrap_or_default(),
+            // Held back, deliberately: see `suggestions_description`. Building
+            // it here and letting the overlay band paint it would put the new
+            // list on top of the painter's, which still draws.
+            suggestions: None,
+        }
+    }
+
+    /// The prompt's suggestion list as the shell describes it.
+    ///
+    /// Content only — no window and no rectangle. The painter kept a
+    /// `scroll_offset` to say which slice was visible and recorded the box it
+    /// drew; `list().windowed(..)` asks for the rows it can show and
+    /// `Anchor::Node` + `Place::Above` place the layer, so neither is stored
+    /// on this side any more.
+    ///
+    /// **Not yet handed to the frame.** `SuggestionsRenderer::render_with_hover`
+    /// still draws this list, and only one of the two may draw it: the layer
+    /// paints in the overlay band and would land on top of the painter's cells.
+    /// Every rule is now expressed and covered: the rows, the four-column yield
+    /// order with its ellipsis and its truncation direction, the selection, a
+    /// plugin's styled description spans, the scrollbar, single- and
+    /// double-click, the window (`prompt::suggestions_window` reads it back off
+    /// the tree, so `Prompt::scroll_offset` stops being one number that five
+    /// places write to), and the placement above the prompt row.
+    ///
+    /// The popup's own chrome is here too — its ring, its two-cell gutter, and
+    /// the ground under the rows the list does not fill. What is left is one
+    /// swap rather than a concept: moving the click rail off the recorded
+    /// rectangles in `ChromeLayout` and onto the layer. Both prompts have to
+    /// move together, because the overlay one shares
+    /// `suggestions_scrollbar_rect` and the scroll offset with this one.
+    #[allow(dead_code)]
+    fn suggestions_description(&self) -> Option<crate::view::shell::prompt::Suggestions> {
+        use crate::view::shell::prompt::{SuggestionRow, Suggestions};
+        let prompt = self.active_window().prompt.as_ref()?;
+        if prompt.suggestions.is_empty() {
+            return None;
+        }
+        Some(Suggestions {
+            rows: prompt
+                .suggestions
+                .iter()
+                .map(|s| SuggestionRow {
+                    name: s.text.clone(),
+                    keybinding: s.keybinding.clone(),
+                    description: s.description.clone(),
+                    description_spans: s
+                        .description_spans
+                        .as_ref()
+                        .map(|v| v.iter().map(Self::description_span).collect()),
+                    // Character for character what `push_source_column`
+                    // wrote: the plugin's own name, or the word for a
+                    // built-in.
+                    source: s.source.as_ref().map(|src| match src {
+                        crate::input::commands::CommandSource::Builtin => "builtin".to_string(),
+                        crate::input::commands::CommandSource::Plugin(name) => name.clone(),
+                    }),
+                    disabled: s.disabled,
+                })
+                .collect(),
+            selected: prompt.selected_suggestion,
+            place: crate::view::shell::prompt::Place::default(),
+            // The row the painter drew under the popup, now stacked in the
+            // layer with it. `render_quick_open_hints` is what this replaces.
+            hints: (prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen)
+                .then(|| rust_i18n::t!("quick_open.mode_hints").to_string()),
+        })
+    }
+
+    /// A plugin's styled description span, as a name rather than a colour.
+    ///
+    /// `styled_span_style` resolved an `OverlayColorSpec` against the theme
+    /// here and handed the painter a concrete `Color`, which the theme
+    /// inspector could not explain afterwards and a user could not override. A
+    /// `ThemeKey` spec passes through as the key it is; an `Rgb` one becomes
+    /// the `#rrggbb` literal `shell_theme` reads — untraceable either way,
+    /// because a plugin's arbitrary colour has no name, but now it is only the
+    /// literals that are.
+    fn description_span(
+        st: &fresh_core::api::StyledText,
+    ) -> crate::view::shell::prompt::DescriptionSpan {
+        use crate::view::shell::prompt::DescriptionSpan;
+        let name = |c: &fresh_core::api::OverlayColorSpec| match c.as_rgb() {
+            Some((r, g, b)) => format!("#{r:02x}{g:02x}{b:02x}"),
+            None => c.as_theme_key().unwrap_or_default().to_string(),
+        };
+        let Some(opts) = st.style.as_ref() else {
+            return DescriptionSpan {
+                text: st.text.clone(),
+                ..DescriptionSpan::default()
+            };
+        };
+        let mut attrs: Vec<&'static str> = Vec::new();
+        for (on, a) in [
+            (opts.bold, "bold"),
+            (opts.italic, "italic"),
+            (opts.underline, "underline"),
+            (opts.strikethrough, "strikethrough"),
+        ] {
+            if on {
+                attrs.push(a);
+            }
+        }
+        DescriptionSpan {
+            text: st.text.clone(),
+            fg: opts.fg.as_ref().map(&name),
+            bg: opts.bg.as_ref().map(&name),
+            attrs,
         }
     }
 

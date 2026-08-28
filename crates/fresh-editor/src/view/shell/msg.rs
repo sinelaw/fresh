@@ -133,6 +133,10 @@ pub enum UiFact {
     /// only way a test (or a user) can click back into a panel whose files do
     /// not fill it.
     ExplorerBodyPress,
+    /// A pointer moved the suggestion selection to this row.
+    SuggestionSelect(usize),
+    /// A double-click confirmed this suggestion — the same path Enter takes.
+    SuggestionConfirm(usize),
     /// The `×` on the panel's title line.
     ExplorerClose,
     /// A press on the panel's right-edge grip: start a width drag from here.

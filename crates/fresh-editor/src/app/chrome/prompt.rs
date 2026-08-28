@@ -502,6 +502,16 @@ impl Editor {
         row: u16,
     ) -> Option<AnyhowResult<()>> {
         let item_idx = self.suggestion_at(col, row)?;
+        self.select_suggestion(item_idx)
+    }
+
+    /// The same, for a row that already knows which one it is.
+    ///
+    /// Split out of the coordinate form the way `activate_menu_item` was: a
+    /// list row that answers its own click has an index, and asking it to
+    /// report a screen position so the editor can hit-test its way back to
+    /// that index is the round trip the migration removes.
+    pub(crate) fn select_suggestion(&mut self, item_idx: usize) -> Option<AnyhowResult<()>> {
         let prompt = self.active_window_mut().prompt.as_mut()?;
         prompt.selected_suggestion = Some(item_idx);
         let confirms = prompt.prompt_type.click_confirms();
@@ -528,6 +538,13 @@ impl Editor {
         row: u16,
     ) -> Option<AnyhowResult<()>> {
         let item_idx = self.suggestion_at(col, row)?;
+        self.confirm_suggestion(item_idx)
+    }
+
+    /// The same, by index. `click_confirms` is not consulted: a double-click
+    /// is the mouse-only commit path for the prompts that preview on a single
+    /// click, which is the whole reason this variant exists.
+    pub(crate) fn confirm_suggestion(&mut self, item_idx: usize) -> Option<AnyhowResult<()>> {
         let prompt = self.active_window_mut().prompt.as_mut()?;
         prompt.selected_suggestion = Some(item_idx);
         if let Some(suggestion) = prompt.suggestions.get(item_idx) {
