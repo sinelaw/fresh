@@ -904,3 +904,66 @@ fn an_element_outranks_a_published_anchor_for_the_same_key() {
         "the real node still answers for its own key"
     );
 }
+
+/// **A layer can be confined to a region rather than to the frame.**
+///
+/// A surface that floats over everything belongs to the frame. Some do not: a
+/// popup hanging off a status bar must not put its right border on the
+/// editor's scrollbar, and clamping to the frame lands it exactly there.
+/// Shrinking the layer is not the same statement — that changes how big the
+/// box is, when what is wanted is where it may go.
+#[test]
+fn a_layer_confined_to_a_region_clamps_to_that_region() {
+    let area = Key::Str("area".into());
+    let popup = Key::Str("popup".into());
+    // The layer wants to sit at x=70 and is 20 wide, so it overhangs both the
+    // frame (80) and the region (79) and has to be pulled back.
+    let tree = |within: Option<Key>| -> Node<()> {
+        let mut l = fresh_ui::layer()
+            .key(popup.clone())
+            .anchor(fresh_ui::Anchor::Point(70, 5))
+            .place(fresh_ui::Place::Over)
+            .fit(fresh_ui::Fit::CLAMP);
+        if let Some(k) = within {
+            l = l.within(k);
+        }
+        col().child(l.child(col().w(Sizing::Cells(20)).h(Sizing::Cells(2)).theme("p")))
+    };
+    let x_of = |ui: &Ui<()>| ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap().x;
+
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(tree(None), FRAME);
+    assert_eq!(x_of(&ui), 60, "clamped to the frame's right edge");
+
+    // The same layer, told it may only occupy the frame less its last column.
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(tree(Some(area.clone())), FRAME);
+    ui.set_host_anchor(area.clone(), Rect::new(0, 0, FRAME.w - 1, FRAME.h));
+    ui.place_layers(FRAME);
+    assert_eq!(x_of(&ui), 59, "the reserved column is left alone");
+}
+
+/// A region also moves where a screen-anchored layer centres, and where it can
+/// start: the bounds are the whole coordinate space the placement works in, not
+/// just a right-hand limit.
+#[test]
+fn a_region_moves_the_origin_as_well_as_the_limit() {
+    let area = Key::Str("area".into());
+    let popup = Key::Str("popup".into());
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().child(
+            fresh_ui::layer()
+                .key(popup.clone())
+                .anchor(fresh_ui::Anchor::Screen(Align::Center))
+                .within(area.clone())
+                .child(col().w(Sizing::Cells(10)).h(Sizing::Cells(2)).theme("p")),
+        ),
+        FRAME,
+    );
+    // A region 40 wide starting at x=20: the centre is 20 + (40-10)/2 = 35.
+    ui.set_host_anchor(area.clone(), Rect::new(20, 4, 40, 10));
+    ui.place_layers(FRAME);
+    let r = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+    assert_eq!((r.x, r.y), (35, 4 + (10 - 2) / 2));
+}

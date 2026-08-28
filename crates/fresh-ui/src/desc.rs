@@ -531,6 +531,24 @@ pub struct LayerProps<M> {
     /// Fired when a declared dismissal condition is met. The layer is described
     /// by the application, so closing it is the application's move.
     pub on_dismiss: Option<Handler<M>>,
+    /// The region this layer is placed *inside*. `None` is the frame, which is
+    /// where every layer went before this existed.
+    ///
+    /// A layer is measured, aligned and fitted against the whole frame, and for
+    /// a surface that floats over everything that is right. Some do not: a
+    /// popup that hangs off the status bar must not put its right border on the
+    /// editor's scrollbar, so the region it may occupy is the frame *less that
+    /// column*. Clamping to the frame lands it exactly there.
+    ///
+    /// It is not something the caller can correct afterwards — the tree places
+    /// the layer, and by the time the host can read the rectangle back the
+    /// placement has happened. Nor is shrinking the layer the same thing: that
+    /// changes how big the box is, when what is wanted is where it may go.
+    ///
+    /// Names a key, and resolves the way [`Anchor::Node`] does — an element
+    /// carrying it, else a rectangle the host published for it, else the frame.
+    /// So a region the tree does not contain yet can still be named.
+    pub within: Option<crate::key::Key>,
 }
 
 impl<M> Default for LayerProps<M> {
@@ -540,6 +558,7 @@ impl<M> Default for LayerProps<M> {
             place: Place::default(),
             fit: Fit::default(),
             align: None,
+            within: None,
             modality: Modality::default(),
             scrim: None,
             dismiss: Dismiss::default(),
@@ -559,6 +578,7 @@ impl<M> Clone for LayerProps<M> {
             scrim: self.scrim,
             dismiss: self.dismiss,
             on_dismiss: self.on_dismiss.clone(),
+            within: self.within.clone(),
         }
     }
 }
@@ -571,6 +591,7 @@ impl<M> LayerProps<M> {
             && self.place == o.place
             && self.fit == o.fit
             && self.align == o.align
+            && self.within == o.within
     }
 }
 
@@ -1344,6 +1365,13 @@ impl<M> Node<M> {
 
     pub fn fit(mut self, f: Fit) -> Self {
         self.layer_props().fit = f;
+        self
+    }
+
+    /// Confine this layer to the region carrying `key`, rather than the frame.
+    /// See [`LayerProps::within`].
+    pub fn within(mut self, key: crate::key::Key) -> Self {
+        self.layer_props().within = Some(key);
         self
     }
 

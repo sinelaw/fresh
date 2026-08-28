@@ -797,6 +797,19 @@ impl<M: 'static> Ui<M> {
             let Some(props) = self.layer_geom(lr) else {
                 continue;
             };
+            // Where this layer may go. The frame unless it named a region —
+            // resolved the same way an `Anchor::Node` is, so a region the tree
+            // does not contain yet can still be named.
+            let bounds = props
+                .within
+                .as_ref()
+                .and_then(|k| {
+                    self.find_by_key(k)
+                        .and_then(|e| self.render_for(e))
+                        .map(|r| self.render[r].data.rect)
+                        .or_else(|| self.host_anchors.get(k).copied())
+                })
+                .unwrap_or(Rect::from_size(frame));
             let anchor = match &props.anchor {
                 Anchor::Parent => self.render[parent].data.rect,
                 // An element carrying the key first; then a rectangle the
@@ -814,7 +827,7 @@ impl<M: 'static> Ui<M> {
                 // cell is the row after it, while below a point is the point's
                 // own row.
                 Anchor::Cell(x, y) => Rect::new(*x as i32, *y as i32, 1, 1),
-                Anchor::Screen(_) => Rect::from_size(frame),
+                Anchor::Screen(_) => bounds,
             };
             let c = if props.place == Place::Fill {
                 Constraints::tight(anchor.size())
@@ -824,12 +837,12 @@ impl<M: 'static> Ui<M> {
                 // measuring the button.
                 let a = anchor.size();
                 match props.place {
-                    Place::Above | Place::Below => Constraints::new(a.w, a.w, 0, frame.h),
-                    Place::LeftOf | Place::RightOf => Constraints::new(0, frame.w, a.h, a.h),
-                    Place::Over | Place::Fill => Constraints::loose(frame),
+                    Place::Above | Place::Below => Constraints::new(a.w, a.w, 0, bounds.h),
+                    Place::LeftOf | Place::RightOf => Constraints::new(0, bounds.w, a.h, a.h),
+                    Place::Over | Place::Fill => Constraints::loose(bounds.size()),
                 }
             } else {
-                Constraints::loose(frame)
+                Constraints::loose(bounds.size())
             };
             self.render.get_mut(lr).expect("live").data.needs_layout = true;
             let size = self.measure(lr, c);
@@ -840,7 +853,7 @@ impl<M: 'static> Ui<M> {
                 props.align,
                 anchor,
                 size,
-                frame,
+                bounds,
             );
             self.arrange(lr, origin, Rect::from_size(frame));
         }
@@ -875,25 +888,28 @@ fn place(
     align: Option<Align>,
     anchor: Rect,
     size: Size,
-    frame: Size,
+    // Where the layer may go: the frame, or the region it named. Every edge
+    // below is this rectangle's, not the screen's.
+    bounds: Rect,
 ) -> Point {
-    let fw = frame.w as i32;
-    let fh = frame.h as i32;
+    let (left, top) = (bounds.x, bounds.y);
+    let right = bounds.right();
+    let bottom = bounds.bottom();
     let sw = size.w as i32;
     let sh = size.h as i32;
 
     if let Anchor::Screen(a) = anchor_kind {
         let x = match a {
-            Align::Stretch | Align::Start => 0,
-            Align::Center => (fw - sw) / 2,
-            Align::End => fw - sw,
+            Align::Stretch | Align::Start => left,
+            Align::Center => left + (bounds.w as i32 - sw) / 2,
+            Align::End => right - sw,
         };
         let y = match a {
-            Align::Stretch | Align::Start => 0,
-            Align::Center => (fh - sh) / 2,
-            Align::End => fh - sh,
+            Align::Stretch | Align::Start => top,
+            Align::Center => top + (bounds.h as i32 - sh) / 2,
+            Align::End => bottom - sh,
         };
-        return Point::new(x.max(0), y.max(0));
+        return Point::new(x.max(left), y.max(top));
     }
 
     let (mut x, mut y) = match p {
@@ -927,18 +943,18 @@ fn place(
 
     if fit.flip {
         match p {
-            Place::Below if y + sh > fh && anchor.y - sh >= 0 => y = anchor.y - sh,
-            Place::Above if y < 0 && anchor.bottom() + sh <= fh => y = anchor.bottom(),
-            Place::RightOf if x + sw > fw && anchor.x - sw >= 0 => x = anchor.x - sw,
-            Place::LeftOf if x < 0 && anchor.right() + sw <= fw => x = anchor.right(),
+            Place::Below if y + sh > bottom && anchor.y - sh >= top => y = anchor.y - sh,
+            Place::Above if y < top && anchor.bottom() + sh <= bottom => y = anchor.bottom(),
+            Place::RightOf if x + sw > right && anchor.x - sw >= left => x = anchor.x - sw,
+            Place::LeftOf if x < left && anchor.right() + sw <= right => x = anchor.right(),
             _ => {}
         }
     }
     if fit.shift || fit.clamp {
-        x = x.min(fw - sw).max(0);
+        x = x.min(right - sw).max(left);
     }
     if fit.clamp {
-        y = y.min(fh - sh).max(0);
+        y = y.min(bottom - sh).max(top);
     }
     Point::new(x, y)
 }

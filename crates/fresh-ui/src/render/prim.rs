@@ -974,6 +974,7 @@ impl LayerRender {
                 modality: p.modality,
                 scrim: p.scrim,
                 dismiss: p.dismiss,
+                within: p.within.clone(),
             },
         }
     }

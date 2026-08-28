@@ -150,6 +150,8 @@ pub struct LayerGeom {
     pub modality: Modality,
     pub scrim: Option<Scrim>,
     pub dismiss: Dismiss,
+    /// See [`crate::desc::LayerProps::within`].
+    pub within: Option<crate::key::Key>,
 }
 
 /// A node's focus registration, as the focus tree needs it.
