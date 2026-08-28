@@ -10,12 +10,12 @@ use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
 use crate::view::prompt::Prompt;
 use chrono::Timelike;
+use fresh_i18n::t;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use rust_i18n::t;
 
 /// Text that both marks a buffer as "edited over a disconnected SSH session"
 /// and styles the prefix in the status bar. Kept as constants so `render_element`

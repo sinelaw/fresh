@@ -6,6 +6,7 @@ use crate::app::calibration_wizard::{
     CalibrationStep, CalibrationWizard, KeyStatus, PendingConfirmation,
 };
 use crate::view::theme::Theme;
+use fresh_i18n::t;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
@@ -13,7 +14,6 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
-use rust_i18n::t;
 
 /// Width of the wizard dialog in characters
 const DIALOG_WIDTH: u16 = 60;

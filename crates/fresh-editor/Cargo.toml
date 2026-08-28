@@ -191,7 +191,7 @@ uuid = { version = "1", features = ["v4"] }
 # Comment- and trailing-comma-tolerant JSON parsing for config files (JSONC).
 jsonc-parser.workspace = true
 schemars.workspace = true
-rust-i18n.workspace = true
+fresh-i18n.workspace = true
 once_cell.workspace = true
 # Cross-platform PATH / binary resolution.  Handles Windows PATHEXT
 # (.CMD/.BAT/.PS1 wrappers that npm -g creates for Node-based LSPs),

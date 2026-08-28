@@ -8,7 +8,7 @@
 //! contain only the central key/action dispatch.
 
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::input::keybindings::Action;
 use crate::model::event::{BufferId, Event};

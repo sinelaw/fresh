@@ -11,6 +11,7 @@ use crate::view::dimming::apply_dimming;
 use crate::view::theme::Theme;
 use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use fresh_i18n::t;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
@@ -18,7 +19,6 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
-use rust_i18n::t;
 
 /// Compute the centred modal rectangle for the keybinding editor within
 /// `area`.

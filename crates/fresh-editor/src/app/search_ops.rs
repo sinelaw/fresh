@@ -12,7 +12,7 @@
 //! future phases may convert to free functions taking borrowed slices.
 
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::Event;
 use crate::view::prompt::{Prompt, PromptType};

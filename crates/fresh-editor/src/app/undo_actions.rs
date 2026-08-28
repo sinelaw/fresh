@@ -1,7 +1,7 @@
 //! Undo and redo action handlers.
 
 use super::Editor;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Handle Undo action - revert the last edit operation.

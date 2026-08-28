@@ -662,7 +662,7 @@ impl EditorTestHarness {
 
         // From here to `Editor::for_test` below we write the two
         // *process-global* registries the editor derives from config — the
-        // i18n locale (`rust_i18n::set_locale`) and the user indentation
+        // i18n locale (`fresh_i18n::set_locale`) and the user indentation
         // rules (`config::reload_indent_overrides`, which clears
         // `indent_rules::USER_RULES` before re-registering its own). Cargo
         // runs the test functions of one binary in parallel threads, so

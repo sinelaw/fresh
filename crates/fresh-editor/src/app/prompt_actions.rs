@@ -2,7 +2,7 @@
 //!
 //! This module contains handlers for different prompt types when the user confirms input.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use super::normalize_path;
 use super::BufferId;

@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 

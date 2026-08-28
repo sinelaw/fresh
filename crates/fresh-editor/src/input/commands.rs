@@ -44,7 +44,7 @@
 
 use crate::input::keybindings::{Action, KeyContext};
 use crate::types::context_keys;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 /// Source of a command (builtin or from a plugin)
 #[derive(Debug, Clone, PartialEq)]

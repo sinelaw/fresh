@@ -1578,7 +1578,7 @@ impl Editor {
             let path = self.working_dir().display().to_string();
             let triggers = self.workspace_trust_markers.join(", ");
             let secondary_label = if self.workspace_trust_prompt_cancellable {
-                rust_i18n::t!("trust.dialog.btn_cancel").into_owned()
+                fresh_i18n::t!("trust.dialog.btn_cancel").into_owned()
             } else {
                 let quit_hint = self.keybindings.read().ok().and_then(|kb| {
                     kb.get_keybinding_for_action(
@@ -1587,8 +1587,8 @@ impl Editor {
                     )
                 });
                 match quit_hint {
-                    Some(k) => rust_i18n::t!("trust.dialog.btn_quit_key", key = k).into_owned(),
-                    None => rust_i18n::t!("trust.dialog.btn_quit").into_owned(),
+                    Some(k) => fresh_i18n::t!("trust.dialog.btn_quit_key", key = k).into_owned(),
+                    None => fresh_i18n::t!("trust.dialog.btn_quit").into_owned(),
                 }
             };
             Some(
@@ -2988,10 +2988,10 @@ impl Editor {
         area: ratatui::layout::Rect,
         theme: &crate::view::theme::Theme,
     ) {
+        use fresh_i18n::t;
         use ratatui::style::{Modifier, Style};
         use ratatui::text::{Line, Span};
         use ratatui::widgets::Paragraph;
-        use rust_i18n::t;
 
         let hints_style = Style::default()
             .fg(theme.line_number_fg)

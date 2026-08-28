@@ -40,7 +40,7 @@ pub fn run_gui(
     log_file: Option<&PathBuf>,
 ) -> AnyhowResult<()> {
     if let Some(loc) = locale {
-        rust_i18n::set_locale(loc);
+        crate::i18n::set_locale(loc);
     }
 
     // Set up tracing subscriber (same as terminal path)

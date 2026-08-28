@@ -11,7 +11,7 @@ use super::{
 };
 use crate::input::commands::Suggestion;
 use crate::input::fuzzy::FuzzyMatcher;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 // ============================================================================
 // Command Provider (prefix: ">")

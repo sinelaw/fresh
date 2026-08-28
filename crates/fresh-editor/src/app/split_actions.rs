@@ -7,7 +7,7 @@
 //! - Managing per-split view states (cursors, viewport)
 //! - Split size adjustment and maximize
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection, SplitId};
 use crate::view::folding::CollapsedFoldLineRange;

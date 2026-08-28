@@ -9,7 +9,7 @@ use super::Editor;
 use crate::input::keybindings::Action;
 use crate::primitives::path_utils::expand_tilde;
 use crate::view::prompt::PromptType;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Check if the file open dialog is active (for OpenFile, SwitchProject, or SaveFileAs)

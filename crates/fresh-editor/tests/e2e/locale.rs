@@ -1,6 +1,6 @@
 // E2E tests for the locale/i18n system
 //
-// These tests mutate global locale state (rust_i18n::set_locale) and MUST run
+// These tests mutate global locale state (fresh_i18n::set_locale) and MUST run
 // sequentially. The pin lives in `common::global_state` so non-locale tests
 // that pin a non-English locale (`tests/e2e/lsp_completion_french_locale.rs`,
 // devcontainer fixture tests that call `fresh::i18n::set_locale`) can share

@@ -107,7 +107,7 @@ pub mod window_resources;
 pub mod workspace;
 
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 /// Shared per-tick housekeeping: process async messages, check timers, auto-save, etc.
 /// Returns true if a render is needed. The `clear_terminal` callback handles full-redraw

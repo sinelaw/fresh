@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::input::command_registry::CommandRegistry;
 use crate::input::commands::Suggestion;

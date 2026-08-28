@@ -6,7 +6,7 @@
 //! `match` is a thin dispatch table: every arm forwards to a `handle_*`
 //! method on `Editor` that owns the actual logic for that variant.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::services::async_bridge::AsyncMessage;
 use crate::view::prompt::PromptType;

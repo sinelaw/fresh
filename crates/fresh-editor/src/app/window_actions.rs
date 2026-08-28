@@ -1003,7 +1003,7 @@ impl crate::app::Editor {
     /// The live `EditorState` moves — unsaved modifications and undo history
     /// travel with the tab rather than being re-read from disk.
     pub fn extract_tab_to_new_workspace(&mut self, buffer_id: fresh_core::BufferId) {
-        use rust_i18n::t;
+        use fresh_i18n::t;
 
         if self.active_window().is_terminal_buffer(buffer_id) {
             self.extract_terminal_tab_to_new_workspace(buffer_id);
@@ -1062,7 +1062,7 @@ impl crate::app::Editor {
     /// shell's own cwd is irrelevant to the workspace root now — the co-tenant
     /// is rooted at the source project, same as the file path.
     fn extract_terminal_tab_to_new_workspace(&mut self, buffer_id: fresh_core::BufferId) {
-        use rust_i18n::t;
+        use fresh_i18n::t;
 
         let win = self.active_window();
         let Some(terminal_id) = win

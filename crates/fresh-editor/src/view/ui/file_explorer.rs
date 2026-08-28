@@ -162,7 +162,7 @@ impl FileExplorerRenderer {
             .title_style(title_style)
             .border_style(border_style)
             .style(Style::default().bg(theme.editor_bg));
-        let placeholder = Paragraph::new(rust_i18n::t!("explorer.loading").to_string())
+        let placeholder = Paragraph::new(fresh_i18n::t!("explorer.loading").to_string())
             .style(Style::default().fg(theme.line_number_fg))
             .alignment(Alignment::Center)
             .block(block);

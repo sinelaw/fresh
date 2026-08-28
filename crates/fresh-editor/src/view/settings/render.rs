@@ -2,7 +2,7 @@
 //!
 //! Renders the settings modal with category navigation and setting controls.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::primitives::display_width::{char_width, str_width};
 

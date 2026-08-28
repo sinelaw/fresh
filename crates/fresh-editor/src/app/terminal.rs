@@ -30,7 +30,7 @@ use crate::services::authority::TerminalWrapper;
 use crate::services::terminal::TerminalId;
 use crate::state::EditorState;
 use crate::view::split::SplitViewState;
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

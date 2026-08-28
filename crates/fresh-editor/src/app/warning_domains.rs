@@ -3,7 +3,7 @@
 //! This module provides a generic architecture for different subsystems (LSP, plugins, etc.)
 //! to report warnings with custom status bar indicators and popup content.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::path::PathBuf;
 
 /// Warning severity level

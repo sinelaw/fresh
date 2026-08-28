@@ -8,7 +8,7 @@
 //! - Navigate back/forward in position history
 //! - Buffer state persistence
 
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
