@@ -145,8 +145,8 @@ pub struct LayerGeom {
     pub anchor: Anchor,
     pub place: Place,
     pub fit: Fit,
-    /// See [`crate::desc::LayerProps::stretch`].
-    pub stretch: bool,
+    /// See [`crate::desc::LayerProps::align`].
+    pub align: Option<crate::desc::Align>,
     pub modality: Modality,
     pub scrim: Option<Scrim>,
     pub dismiss: Dismiss,

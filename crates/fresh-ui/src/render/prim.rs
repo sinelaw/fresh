@@ -963,7 +963,7 @@ impl LayerRender {
                 anchor: p.anchor.clone(),
                 place: p.place,
                 fit: p.fit,
-                stretch: p.stretch,
+                align: p.align,
                 modality: p.modality,
                 scrim: p.scrim,
                 dismiss: p.dismiss,

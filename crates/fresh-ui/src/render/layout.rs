@@ -795,11 +795,15 @@ impl<M: 'static> Ui<M> {
                     .map(|r| self.render[r].data.rect)
                     .unwrap_or(self.render[parent].data.rect),
                 Anchor::Point(x, y) => Rect::new(*x as i32, *y as i32, 0, 0),
+                // One cell, which is the whole difference: `Place::Below` a
+                // cell is the row after it, while below a point is the point's
+                // own row.
+                Anchor::Cell(x, y) => Rect::new(*x as i32, *y as i32, 1, 1),
                 Anchor::Screen(_) => Rect::from_size(frame),
             };
             let c = if props.place == Place::Fill {
                 Constraints::tight(anchor.size())
-            } else if props.stretch {
+            } else if props.align == Some(Align::Stretch) {
                 // Free axis pinned to the anchor, the other still free. What
                 // makes a dropdown the width of its button without the caller
                 // measuring the button.
@@ -814,7 +818,15 @@ impl<M: 'static> Ui<M> {
             };
             self.render.get_mut(lr).expect("live").data.needs_layout = true;
             let size = self.measure(lr, c);
-            let origin = place(&props.anchor, props.place, props.fit, anchor, size, frame);
+            let origin = place(
+                &props.anchor,
+                props.place,
+                props.fit,
+                props.align,
+                anchor,
+                size,
+                frame,
+            );
             self.arrange(lr, origin, Rect::from_size(frame));
         }
     }
@@ -840,7 +852,16 @@ impl<M: 'static> Ui<M> {
     }
 }
 
-fn place(anchor_kind: &Anchor, p: Place, fit: Fit, anchor: Rect, size: Size, frame: Size) -> Point {
+#[allow(clippy::too_many_arguments)]
+fn place(
+    anchor_kind: &Anchor,
+    p: Place,
+    fit: Fit,
+    align: Option<Align>,
+    anchor: Rect,
+    size: Size,
+    frame: Size,
+) -> Point {
     let fw = frame.w as i32;
     let fh = frame.h as i32;
     let sw = size.w as i32;
@@ -867,6 +888,27 @@ fn place(anchor_kind: &Anchor, p: Place, fit: Fit, anchor: Rect, size: Size, fra
         Place::LeftOf => (anchor.x - sw, anchor.y),
         Place::Over | Place::Fill => (anchor.x, anchor.y),
     };
+
+    // Where the layer sits against the anchor on the axis the placement did
+    // not use. `Stretch` was already applied as a constraint and needs no
+    // origin of its own; the rest slide within the anchor's extent.
+    match (align, p) {
+        (Some(a), Place::Above | Place::Below) => {
+            x = match a {
+                Align::Stretch | Align::Start => anchor.x,
+                Align::Center => anchor.x + (anchor.w as i32 - sw) / 2,
+                Align::End => anchor.right() - sw,
+            }
+        }
+        (Some(a), Place::LeftOf | Place::RightOf) => {
+            y = match a {
+                Align::Stretch | Align::Start => anchor.y,
+                Align::Center => anchor.y + (anchor.h as i32 - sh) / 2,
+                Align::End => anchor.bottom() - sh,
+            }
+        }
+        _ => {}
+    }
 
     if fit.flip {
         match p {

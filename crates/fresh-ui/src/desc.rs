@@ -372,7 +372,19 @@ pub enum Anchor {
     #[default]
     Parent,
     Node(Key),
+    /// A position with no extent. A click happened *at* a coordinate, and a
+    /// menu placed `Over` it starts there.
     Point(u16, u16),
+    /// A single cell, which is what a caret or a hovered cell is.
+    ///
+    /// The distinction from [`Anchor::Point`] is the whole of it: a point
+    /// resolves to a zero-size rect, so `Place::Below` a point is the point's
+    /// own row. Below a *cell* is the row after it, and a flip clears the cell
+    /// rather than landing on it. Both are correct for what they name — a
+    /// click position has no extent, a caret occupies one — and a completion
+    /// popup that opens on top of the character it is completing is the bug
+    /// that comes of having only the first.
+    Cell(u16, u16),
     Screen(Align),
 }
 
@@ -488,19 +500,27 @@ pub struct LayerProps<M> {
     pub anchor: Anchor,
     pub place: Place,
     pub fit: Fit,
-    /// Take the anchor's extent on the axis the placement does not use.
+    /// How this layer sits against its anchor on the axis the placement does
+    /// not use.
     ///
-    /// A dropdown is as wide as the button it hangs off; a command palette is
-    /// as wide as the row it sits above. Both are a relationship to the anchor
-    /// rather than a number, and neither is expressible otherwise: a layer
-    /// measures against the whole frame, so `flex` or `Sizing::Grow` inside it
-    /// reach the frame's edge and a cell count is the caller measuring the
-    /// anchor itself — which is the arithmetic anchoring exists to remove.
+    /// A dropdown is as wide as the button it hangs off; a notification hangs
+    /// off the *right* edge of the row above it. Both are a relationship to
+    /// the anchor rather than a number, and neither is expressible otherwise:
+    /// a layer measures against the whole frame, so `flex` or `Sizing::Grow`
+    /// inside it reach the frame's edge, and a cell count is the caller
+    /// measuring the anchor itself — the arithmetic anchoring exists to
+    /// remove.
     ///
-    /// `Place::Fill` is the all-axes form of this and ignores it. `Above` and
-    /// `Below` take the anchor's width; `LeftOf` and `RightOf` its height;
-    /// `Over` has no free axis and is unaffected.
-    pub stretch: bool,
+    /// `Align::Stretch` takes the anchor's whole extent, which is what
+    /// [`Node::stretch_to_anchor`] spells; the others place a
+    /// naturally-sized layer within it. `None` leaves the layer where the
+    /// placement put it, which is the default and what every layer did before
+    /// this existed.
+    ///
+    /// `Place::Fill` is the all-axes form and ignores this. `Above` and
+    /// `Below` free the width; `LeftOf` and `RightOf` the height; `Over` has
+    /// no free axis and is unaffected.
+    pub align: Option<Align>,
     pub modality: Modality,
     pub scrim: Option<Scrim>,
     pub dismiss: Dismiss,
@@ -515,7 +535,7 @@ impl<M> Default for LayerProps<M> {
             anchor: Anchor::default(),
             place: Place::default(),
             fit: Fit::default(),
-            stretch: false,
+            align: None,
             modality: Modality::default(),
             scrim: None,
             dismiss: Dismiss::default(),
@@ -530,7 +550,7 @@ impl<M> Clone for LayerProps<M> {
             anchor: self.anchor.clone(),
             place: self.place,
             fit: self.fit,
-            stretch: self.stretch,
+            align: self.align,
             modality: self.modality,
             scrim: self.scrim,
             dismiss: self.dismiss,
@@ -546,7 +566,7 @@ impl<M> LayerProps<M> {
         self.anchor == o.anchor
             && self.place == o.place
             && self.fit == o.fit
-            && self.stretch == o.stretch
+            && self.align == o.align
     }
 }
 
@@ -1253,10 +1273,19 @@ impl<M> Node<M> {
         }
     }
 
-    /// Match the anchor on the axis the placement leaves free. See
-    /// [`LayerProps::stretch`].
-    pub fn stretch_to_anchor(mut self) -> Self {
-        self.layer_props().stretch = true;
+    /// Match the anchor on the axis the placement leaves free.
+    ///
+    /// The `Align::Stretch` spelling of [`Node::align_to_anchor`], kept
+    /// because "as wide as the thing it hangs off" reads better at the call
+    /// site than an alignment does.
+    pub fn stretch_to_anchor(self) -> Self {
+        self.align_to_anchor(Align::Stretch)
+    }
+
+    /// How this layer sits against its anchor on the free axis. See
+    /// [`LayerProps::align`].
+    pub fn align_to_anchor(mut self, a: Align) -> Self {
+        self.layer_props().align = Some(a);
         self
     }
 

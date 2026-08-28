@@ -729,3 +729,102 @@ fn a_stretched_layer_takes_its_anchor_width() {
     let s = build(true);
     assert_eq!((s.w, s.h), (30, 1), "the anchor's width, its own height");
 }
+
+/// **A caret is a cell; a click position is a point.**
+///
+/// `Place::Below` an `Anchor::Point` lands on the point's own row, because a
+/// point resolves to a zero-size rect and below a zero-height thing is itself.
+/// That is right for what a point names — the context menu opens `Over` a click
+/// position and wants exactly that. A caret occupies a cell, and a completion
+/// popup placed below one must clear the character it is completing.
+#[test]
+fn below_a_cell_is_the_row_after_it_and_below_a_point_is_its_own() {
+    use fresh_ui::{layer, Anchor, Place};
+    let at = |a: Anchor| {
+        let mut ui: Ui<()> = Ui::new();
+        let spec = ui
+            .frame(
+                col().child(
+                    layer()
+                        .key(Key::from(3u64))
+                        .anchor(a)
+                        .place(Place::Below)
+                        .child(col().theme("x").child(text("hi"))),
+                ),
+                Size::new(40, 12),
+            )
+            .clone();
+        spec.index
+            .iter()
+            .find(|(k, _)| *k == Key::from(3u64))
+            .and_then(|(_, r)| spec.items.get(r.start))
+            .map(|i| i.rect.y)
+            .expect("placed")
+    };
+    assert_eq!(
+        at(Anchor::Point(5, 4)),
+        4,
+        "below a point is the point's row"
+    );
+    assert_eq!(
+        at(Anchor::Cell(5, 4)),
+        5,
+        "below a cell is the row after it"
+    );
+}
+
+/// **A layer can align within its anchor, not only match it.**
+///
+/// A notification hangs off the right edge of the row above it; a dropdown
+/// matches its button's width. Both are relationships to the anchor, and
+/// `stretch_to_anchor` was only the `Stretch` one — with no way to say the
+/// others, a caller is back to measuring the anchor and subtracting.
+#[test]
+fn a_layer_aligns_on_the_axis_its_placement_leaves_free() {
+    use fresh_ui::{layer, Align, Anchor, Place};
+    let at = |align: Option<Align>| {
+        let l = layer()
+            .key(Key::from(4u64))
+            .anchor(Anchor::Node(Key::from(1u64)))
+            .place(Place::Above)
+            .child(col().theme("x").child(text("hi")));
+        let l = match align {
+            Some(a) => l.align_to_anchor(a),
+            None => l,
+        };
+        let mut ui: Ui<()> = Ui::new();
+        let spec = ui
+            .frame(
+                col().children([
+                    row().h(Sizing::Cells(4)),
+                    row()
+                        .key(Key::from(1u64))
+                        .w(Sizing::Cells(30))
+                        .h(Sizing::Cells(1))
+                        .theme("row")
+                        .child(l),
+                ]),
+                Size::new(60, 10),
+            )
+            .clone();
+        let i = spec
+            .index
+            .iter()
+            .find(|(k, _)| *k == Key::from(4u64))
+            .and_then(|(_, r)| spec.items.get(r.start))
+            .expect("placed");
+        (i.rect.x, i.rect.w)
+    };
+    // Unaligned: the placement's own origin, the anchor's left edge.
+    assert_eq!(at(None), (0, 2));
+    assert_eq!(at(Some(Align::Start)), (0, 2));
+    // "hi" is two cells; the anchor is thirty.
+    assert_eq!(at(Some(Align::Center)), (14, 2));
+    assert_eq!(
+        at(Some(Align::End)),
+        (28, 2),
+        "flush with the anchor's right"
+    );
+    // Stretch is the case `stretch_to_anchor` already spelled, unchanged.
+    assert_eq!(at(Some(Align::Stretch)), (0, 30));
+}
