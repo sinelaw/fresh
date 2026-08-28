@@ -1088,6 +1088,7 @@ impl Editor {
 
             let __active_id = self.active_window;
 
+            let mut opened: Vec<u64> = Vec::new();
             if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                 for sh in lsp.get_handles_mut(&language) {
                     if opened_with.contains(&sh.handle.id()) {
@@ -1108,16 +1109,19 @@ impl Editor {
                             lsp_uri.as_str(),
                             sh.name
                         );
+                        opened.push(sh.handle.id());
                     }
                 }
             }
 
-            // Mark all handles as opened
+            // Only handles that accepted the didOpen; a dropped one must stay
+            // unmarked so the open is retried rather than the document being
+            // left invisible to that server for good.
             let active_id = self.active_window;
             if let Some(__win) = self.windows.get_mut(&active_id) {
                 if let Some(metadata) = __win.buffer_metadata.get_mut(&buffer_id) {
-                    for sh in __win.lsp.get_handles(&language) {
-                        metadata.lsp_opened_with.insert(sh.handle.id());
+                    for handle_id in &opened {
+                        metadata.lsp_opened_with.insert(*handle_id);
                     }
                 }
             }

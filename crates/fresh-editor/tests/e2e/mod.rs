@@ -156,6 +156,7 @@ pub mod lsp_config;
 pub mod lsp_crash_loop;
 pub mod lsp_cross_language_diagnostic_pull;
 pub mod lsp_diagnostic_flow;
+pub mod lsp_dropped_change_desync;
 pub mod lsp_env;
 pub mod lsp_global_disable;
 pub mod lsp_goto_definition_readonly;

@@ -187,6 +187,31 @@ impl Editor {
                 );
                 return;
             }
+
+            // Drop diagnostics from a server whose copy of the document we know
+            // has diverged from the buffer: it computed them from text the user
+            // never wrote, and the version they carry cannot expose that,
+            // because the server is answering for every change it did receive.
+            // A full-text resync is already pending, so a correct set follows
+            // shortly (#3038).
+            let desynced = uri
+                .parse::<lsp_types::Uri>()
+                .ok()
+                .map(|u| PathBuf::from(u.path().as_str()))
+                .is_some_and(|path| {
+                    lsp.all_handles()
+                        .iter()
+                        .any(|sh| sh.name == server_name && sh.handle.needs_full_resync(&path))
+                });
+            if desynced {
+                tracing::debug!(
+                    "Dropping diagnostics from '{}' for {}: its copy of the \
+                     document is stale, awaiting resync",
+                    server_name,
+                    uri
+                );
+                return;
+            }
         }
 
         tracing::debug!(

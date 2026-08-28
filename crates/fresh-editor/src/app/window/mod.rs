@@ -3852,10 +3852,22 @@ impl Window {
         buffer_id: BufferId,
         changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
     ) {
+        let _sent = self.send_lsp_changes_inner(buffer_id, changes, false);
+    }
+
+    /// `resync_only` restricts the send to servers whose copy of the document
+    /// is known to have diverged, so a repair pass cannot disturb servers that
+    /// are still in sync (#3038).
+    fn send_lsp_changes_inner(
+        &mut self,
+        buffer_id: BufferId,
+        changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
+        resync_only: bool,
+    ) -> bool {
         const INLAY_HINTS_DEBOUNCE_MS: u64 = 500;
 
         if changes.is_empty() {
-            return;
+            return false;
         }
 
         let metadata = match self.buffer_metadata.get(&buffer_id) {
@@ -3865,13 +3877,13 @@ impl Window {
                     "send_lsp_changes_for_buffer: no metadata for buffer {:?}",
                     buffer_id
                 );
-                return;
+                return false;
             }
         };
 
         if !metadata.lsp_enabled {
             tracing::debug!("send_lsp_changes_for_buffer: LSP disabled for this buffer");
-            return;
+            return false;
         }
 
         let uri = match metadata.file_uri() {
@@ -3880,10 +3892,13 @@ impl Window {
                 tracing::debug!(
                     "send_lsp_changes_for_buffer: no URI for buffer (not a file or URI creation failed)"
                 );
-                return;
+                return false;
             }
         };
         let file_path = metadata.file_path().cloned();
+        // Keyed the way the LSP handle keys its own document tables, so the
+        // desync lookup below matches regardless of how the buffer was opened.
+        let path_for_resync = std::path::PathBuf::from(uri.as_uri().path().as_str());
 
         let language = match self.buffers.get(&buffer_id).map(|s| s.language.clone()) {
             Some(l) => l,
@@ -3892,7 +3907,7 @@ impl Window {
                     "send_lsp_changes_for_buffer: no buffer state for {:?}",
                     buffer_id
                 );
-                return;
+                return false;
             }
         };
 
@@ -3910,12 +3925,12 @@ impl Window {
                 "send_lsp_changes_for_buffer: LSP not running for {} (auto_start disabled)",
                 language
             );
-            return;
+            return false;
         }
 
         let handles_needing_open: Vec<_> = {
             let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
-                return;
+                return false;
             };
             lsp.get_handles(&language)
                 .into_iter()
@@ -3935,11 +3950,12 @@ impl Window {
                     tracing::debug!(
                         "send_lsp_changes_for_buffer: buffer text not available for didOpen"
                     );
-                    return;
+                    return false;
                 }
             };
 
             let lsp = &mut self.lsp;
+            let mut opened: Vec<u64> = Vec::new();
             for sh in lsp.get_handles_mut(&language) {
                 if handles_needing_open
                     .iter()
@@ -3960,12 +3976,17 @@ impl Window {
                             uri.as_str(),
                             sh.name
                         );
+                        opened.push(sh.handle.id());
                     }
                 }
             }
 
+            // Only a didOpen that was actually queued may be recorded as sent.
+            // Marking a dropped one would leave the buffer permanently invisible
+            // to that server: the task discards every later didChange for a
+            // document it never opened, and nothing would ever retry the open.
             if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                for (_, handle_id) in &handles_needing_open {
+                for handle_id in &opened {
                     metadata.lsp_opened_with.insert(*handle_id);
                 }
             }
@@ -3973,13 +3994,54 @@ impl Window {
             // didOpen already contains the full current buffer content, so we must
             // NOT also send didChange (which carries pre-edit incremental changes).
             // Sending both would corrupt the server's view of the document.
-            return;
+            return false;
         }
+
+        // A server that fell behind far enough for a `didChange` to be dropped
+        // holds a document that no longer matches this buffer. What each server
+        // should be sent is decided by `sync_policy`; assembling the whole
+        // buffer is only worth it if some server is actually going to be sent
+        // it (#3038).
+        use crate::services::lsp::sync_policy::{decide_change_to_send, ChangeToSend, SyncState};
+        let sync_state =
+            |sh: &crate::services::lsp::manager::ServerHandle, text_available| SyncState {
+                desynced: sh.handle.needs_full_resync(&path_for_resync),
+                has_capacity: sh.handle.has_command_capacity(),
+                text_available,
+                resync_only,
+            };
+        let resync_text = self
+            .lsp
+            .get_handles(&language)
+            .iter()
+            .any(|sh| decide_change_to_send(sync_state(sh, true)) == ChangeToSend::FullText)
+            .then(|| {
+                self.buffers
+                    .get(&buffer_id)
+                    .and_then(|s| s.buffer.to_string())
+            })
+            .flatten();
 
         let lsp = &mut self.lsp;
         let mut any_sent = false;
         for sh in lsp.get_handles_mut(&language) {
-            if let Err(e) = sh.handle.did_change(uri.as_uri().clone(), changes.clone()) {
+            let outgoing = match decide_change_to_send(sync_state(sh, resync_text.is_some())) {
+                ChangeToSend::FullText => {
+                    tracing::info!(
+                        "Resending full text of {} to '{}' after a dropped notification",
+                        uri.as_str(),
+                        sh.name
+                    );
+                    vec![lsp_types::TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: resync_text.clone().unwrap_or_default(),
+                    }]
+                }
+                ChangeToSend::Incremental => changes.clone(),
+                ChangeToSend::Skip => continue,
+            };
+            if let Err(e) = sh.handle.did_change(uri.as_uri().clone(), outgoing) {
                 tracing::warn!("Failed to send didChange to '{}': {}", sh.name, e);
             } else {
                 any_sent = true;
@@ -4020,6 +4082,152 @@ impl Window {
                 ));
             }
         }
+
+        any_sent
+    }
+
+    /// Tell every server that had this buffer open that the document is gone.
+    ///
+    /// Without this the server keeps serving a document the editor has thrown
+    /// away — including any unsaved edits the user discarded by closing it —
+    /// and the task's version record keeps the path, so reopening the file
+    /// sends a `didOpen` the task discards as a duplicate and the stale copy
+    /// survives the reopen. `didClose` is what makes the task forget the
+    /// version, so the next open is accepted (#3038).
+    pub(crate) fn notify_lsp_buffer_closed(&mut self, buffer_id: BufferId) {
+        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            return;
+        };
+        if metadata.lsp_opened_with.is_empty() {
+            return;
+        }
+        let Some(uri) = metadata.file_uri().cloned() else {
+            return;
+        };
+        let opened_with: Vec<u64> = metadata.lsp_opened_with.iter().copied().collect();
+
+        for sh in self.lsp.all_handles_mut() {
+            if !opened_with.contains(&sh.handle.id()) {
+                continue;
+            }
+            if let Err(e) = sh.handle.did_close(uri.as_uri().clone()) {
+                // The handle records the document for a retry from the repair
+                // pass, so a refused close is not the end of it.
+                tracing::warn!("Failed to send didClose to '{}': {}", sh.name, e);
+            }
+        }
+    }
+
+    /// Re-send the full text of any document whose `didChange` stream was
+    /// broken by a dropped notification, once the server's command queue has
+    /// room again.
+    ///
+    /// [`Window::send_lsp_changes_for_buffer`] already promotes the next edit
+    /// to a full-text replacement, but a user who stops typing after the burst
+    /// would otherwise leave the server stuck on a document it can never be
+    /// corrected on. Returns whether anything was resent (#3038).
+    ///
+    /// Cheap on the healthy path: no server has desynced documents, so this is
+    /// one lock and an `is_empty` check per handle.
+    pub(crate) fn resync_desynced_lsp_documents(&mut self) -> bool {
+        // A save the server never saw leaves it having skipped whatever it
+        // only runs on save. The handle kept the text as it was at save time,
+        // so this needs nothing from the buffer.
+        let mut acted = self
+            .lsp
+            .all_handles()
+            .iter()
+            .fold(false, |acted, sh| acted | sh.handle.retry_pending_saves());
+
+        // Only servers with room for the notification are worth doing work
+        // for; the rest are still backed up and would reject it, so they are
+        // left for a later tick rather than rebuilding the payload every frame.
+        let stale: Vec<(u64, std::path::PathBuf)> = self
+            .lsp
+            .all_handles()
+            .iter()
+            .filter(|sh| sh.handle.has_command_capacity())
+            .flat_map(|sh| {
+                let id = sh.handle.id();
+                sh.handle
+                    .desynced_documents()
+                    .into_iter()
+                    .map(move |path| (id, path))
+            })
+            .collect();
+        if stale.is_empty() {
+            return acted;
+        }
+
+        let buffer_for_path = |path: &std::path::Path| {
+            self.buffer_metadata.iter().find_map(|(id, meta)| {
+                meta.file_uri()
+                    .filter(|u| std::path::Path::new(u.as_uri().path().as_str()) == path)
+                    .map(|_| *id)
+            })
+        };
+
+        // A diverged document with no buffer left open cannot be repaired —
+        // there is no text to rebuild it from, and it would otherwise be
+        // retried on every tick for the life of the process. Closing it is the
+        // repair: the server drops its stale copy, and because the task also
+        // forgets the document's version, a later reopen is accepted as a
+        // fresh didOpen carrying the full text.
+        let orphaned: Vec<(u64, std::path::PathBuf)> = stale
+            .iter()
+            .filter(|(_, path)| buffer_for_path(path).is_none())
+            .cloned()
+            .collect();
+        for (handle_id, path) in orphaned {
+            let Some(uri) = crate::services::lsp::manager::path_to_uri(&path) else {
+                continue;
+            };
+            if let Some(sh) = self
+                .lsp
+                .all_handles_mut()
+                .into_iter()
+                .find(|sh| sh.handle.id() == handle_id)
+            {
+                match sh.handle.did_close(uri) {
+                    Ok(()) => {
+                        tracing::info!(
+                            "Closing {} on '{}': its copy diverged and the buffer is gone",
+                            path.display(),
+                            sh.name
+                        );
+                        acted = true;
+                    }
+                    Err(e) => tracing::warn!("Failed to send didClose to '{}': {}", sh.name, e),
+                }
+            }
+        }
+
+        // The send needs a non-empty change list to do anything; the payload
+        // is discarded in favour of the full text as soon as the policy sees
+        // the handle is desynced, so its contents don't matter beyond being a
+        // well-formed no-op edit at the buffer start.
+        let mut buffers: Vec<BufferId> = Vec::new();
+        for (_, path) in &stale {
+            if let Some(id) = buffer_for_path(path) {
+                if !buffers.contains(&id) {
+                    buffers.push(id);
+                }
+            }
+        }
+
+        for buffer_id in buffers {
+            let start = lsp_types::Position::new(0, 0);
+            acted |= self.send_lsp_changes_inner(
+                buffer_id,
+                vec![lsp_types::TextDocumentContentChangeEvent {
+                    range: Some(lsp_types::Range::new(start, start)),
+                    range_length: None,
+                    text: String::new(),
+                }],
+                true,
+            );
+        }
+        acted
     }
 
     /// The open buffer showing `uri`, if any. Diagnostics are keyed by URI but
