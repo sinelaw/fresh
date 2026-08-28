@@ -457,13 +457,26 @@ pub enum Scrim {
     Opaque,
 }
 
-/// What dismisses a layer.
+/// What dismisses a layer, and whether closing it is the whole gesture.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Dismiss {
     pub outside_pointer: bool,
     pub escape: bool,
     pub any_key: bool,
     pub any_input: bool,
+    /// Whether the input that dismissed this layer goes on to whatever it was
+    /// aimed at. `false` — the default, and what every layer did before this
+    /// existed — spends it on the dismissal.
+    ///
+    /// A click outside a menu is spent closing the menu: that *is* the
+    /// gesture, and the menu was in the way of it. A tooltip is not in the
+    /// way of anything — clicking into the document while one is showing
+    /// should hide it *and* put the caret where the user clicked, or the
+    /// tooltip has charged them a click to get rid of it.
+    ///
+    /// The same rule the wheel follows: act, and claim only when the act was
+    /// the whole of it.
+    pub pass_through: bool,
 }
 
 impl Dismiss {
@@ -472,6 +485,7 @@ impl Dismiss {
         escape: false,
         any_key: false,
         any_input: false,
+        pass_through: false,
     };
     pub const OUTSIDE_POINTER: Dismiss = Dismiss {
         outside_pointer: true,
@@ -496,6 +510,16 @@ impl Dismiss {
             escape: self.escape | o.escape,
             any_key: self.any_key | o.any_key,
             any_input: self.any_input | o.any_input,
+            pass_through: self.pass_through | o.pass_through,
+        }
+    }
+
+    /// Let the input that dismissed this layer go on to what it was aimed at.
+    /// See [`Dismiss::pass_through`].
+    pub const fn passing_through(self) -> Dismiss {
+        Dismiss {
+            pass_through: true,
+            ..self
         }
     }
 }

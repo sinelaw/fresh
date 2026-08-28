@@ -138,8 +138,11 @@ impl<M: 'static> Ui<M> {
                 // that same press, so consuming it would cost the user a
                 // click. Same rule a viewport applies to the wheel: act, and
                 // claim only when the act was the whole of it.
-                let dismissed = self.dismiss_for_pointer(pos, out);
-                let dismiss_claims = dismissed && button == MouseButton::Left;
+                // Whether anything was dismissed, and whether any of it was
+                // spent on the dismissal.
+                let (dismissed, spent) = self.dismiss_for_pointer(pos, out);
+                let _ = dismissed;
+                let dismiss_claims = spent && button == MouseButton::Left;
                 let paths = self.route(pos);
                 // Every stacked path's target, so a click is derived per path:
                 // a transparent overlay and what is behind it were both
@@ -776,10 +779,12 @@ impl<M: 'static> Ui<M> {
         }
     }
 
-    /// Reports whether any layer was dismissed.
-    fn dismiss_for_pointer(&mut self, pos: Point, out: &mut Vec<M>) -> bool {
+    /// Reports whether any layer was dismissed, and whether any of those spent
+    /// the press on it — see [`crate::desc::Dismiss::pass_through`].
+    fn dismiss_for_pointer(&mut self, pos: Point, out: &mut Vec<M>) -> (bool, bool) {
         let mut dismissed = false;
-        let path = self.hit_test(pos);
+        let mut spent = false;
+        let paths = self.hit_paths(pos);
         let layers: Vec<ElementId> = self
             .pending_layers
             .iter()
@@ -793,8 +798,11 @@ impl<M: 'static> Ui<M> {
                 continue;
             }
             // An ancestor test over the existing tree: inside the layer's
-            // subtree, or not.
-            if path.contains(&lid) {
+            // subtree, or not. Every stacked path, because a layer whose own
+            // chrome is transparent — a strip carrying its title — puts the
+            // press on a path that reaches *behind* it as well, and only one
+            // of the two says the press was inside.
+            if paths.iter().any(|p| p.contains(&lid)) {
                 continue;
             }
             if let Some(h) = self.dismiss_handler(lid) {
@@ -822,8 +830,12 @@ impl<M: 'static> Ui<M> {
             // A layer that declared the dismissal was dismissed, whether or
             // not it also had something to say about it.
             dismissed = true;
+            // One layer that spends the press is enough to spend it: a menu
+            // and a tooltip open at once, and the click closing the menu was
+            // aimed at the menu.
+            spent |= !geom.dismiss.pass_through;
         }
-        dismissed
+        (dismissed, spent)
     }
 
     pub(crate) fn dismiss_for_key(&mut self, k: KeyPress, out: &mut Vec<M>) -> bool {

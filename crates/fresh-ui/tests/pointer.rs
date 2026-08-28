@@ -808,3 +808,61 @@ fn pressing_a_track_row_puts_the_thumb_on_that_row() {
         );
     }
 }
+
+/// **Closing a layer is not always the whole gesture.**
+///
+/// A click outside a menu is spent closing it — the menu was in the way. A
+/// tooltip is in the way of nothing: clicking into the document while one is
+/// showing should hide it *and* put the caret where the click landed, or the
+/// tooltip has charged the user a click to get rid of it.
+#[test]
+fn a_pass_through_dismissal_leaves_the_press_for_what_it_was_aimed_at() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let build = |pass: bool, log: &Log| -> Node<()> {
+        let l = log.clone();
+        let d = match pass {
+            true => fresh_ui::Dismiss::OUTSIDE_POINTER.passing_through(),
+            false => fresh_ui::Dismiss::OUTSIDE_POINTER,
+        };
+        let ll = log.clone();
+        stack().children([
+            // What the press was aimed at, behind the layer.
+            gesture(col().theme("doc")).on(
+                GestureKind::Press,
+                Rc::new(move |_: &Event| note(&ll, "document".into())),
+            ),
+            fresh_ui::layer()
+                .anchor(fresh_ui::Anchor::Point(0, 0))
+                .place(fresh_ui::Place::Over)
+                .dismiss(d)
+                .on_dismiss_handler(Rc::new(move |_: &Event| note(&l, "dismissed".into())))
+                .child(col().w(Sizing::Cells(4)).h(Sizing::Cells(2)).theme("pop")),
+        ])
+    };
+
+    // The claim is what the *host* is told — a host with its own pipeline
+    // behind this tree reads it to decide whether the press is still going.
+    // The tree's own handlers run either way, which is why the document's
+    // press is logged in both.
+    let press = |ui: &mut Ui<()>| {
+        ui.dispatch(Input::press(
+            Point::new(10, 6),
+            MouseButton::Left,
+            Mods::NONE,
+        ))
+        .claimed
+    };
+
+    // Spending the press: the host is told it is gone.
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(false, &log), FRAME);
+    assert!(press(&mut ui), "closing the layer was the whole gesture");
+    assert_eq!(*log.borrow(), vec!["dismissed", "document"]);
+
+    // Passing it through: dismissed, and the host still has the press.
+    log.borrow_mut().clear();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(true, &log), FRAME);
+    assert!(!press(&mut ui), "the press is still going somewhere");
+    assert_eq!(*log.borrow(), vec!["dismissed", "document"]);
+}
