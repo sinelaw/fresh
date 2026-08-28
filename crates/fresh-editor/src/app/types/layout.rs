@@ -127,7 +127,6 @@ pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>
 ///   - `prompt_toolbar_boxes` (overlay toolbar box tree, in the
 ///     toolbar band's own coordinates — the tree gesture reports the
 ///     press in that space, so no origin travels with it)
-///   - `workspace_trust_dialog` (trust dialog layout)
 ///   - `Window::file_browser_layout` (the file-open dialog)
 ///
 /// This list is the ONE enumeration of the parallel geometry path
@@ -172,8 +171,6 @@ pub(crate) struct ChromeLayout {
     pub prompt_preview_area: Option<Rect>,
     /// Settings modal layout for hit testing
     pub settings_layout: Option<crate::view::settings::SettingsLayout>,
-    /// Workspace-trust dialog click layout (radios + OK/Quit) for hit testing.
-    pub workspace_trust_dialog: Option<crate::view::workspace_trust_dialog::TrustDialogLayout>,
     /// Dimensions of the last rendered frame. See [`FrameDimensions`].
     pub last_frame: FrameDimensions,
     /// Per-cell theme key provenance recorded during rendering.

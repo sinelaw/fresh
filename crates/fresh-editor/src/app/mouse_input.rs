@@ -10,7 +10,6 @@
 use super::chrome::in_rect;
 use super::*;
 use crate::services::plugins::hooks::HookArgs;
-use crate::view::popup_mouse::{popup_areas_to_layout_info, PopupHitTester};
 use crate::view::prompt::PromptType;
 use anyhow::Result as AnyhowResult;
 use std::time::{Duration, Instant};
@@ -122,35 +121,18 @@ impl Editor {
 
         let (is_double_click, is_triple_click) = self.detect_multi_click(&mouse_event, col, row);
 
-        // Modal mouse-capture, offered in RANK order over the derived
-        // overlay stack: the first component whose modal surface is up
-        // claims the whole mouse channel. Every capturing component
-        // declares a layer from the same activity predicate its
-        // capture gates on, so walking the owner-stamped stack visits
-        // exactly the capturing candidates — and deletes the old
-        // registry-order duplicate of the precedence (two hand-synced
-        // encodings, comment-only sync). Rank IS the one source now,
-        // for the keyboard walk and the capture band alike.
-        {
-            let stack = self.overlay_stack();
-            let mut seen = std::collections::HashSet::new();
-            for entry in &stack {
-                // The hardcoded event-debug head has no owner; a
-                // component contributing several layers is offered
-                // the capture once, at its highest rank.
-                let Some(owner) = entry.owner else { continue };
-                if !seen.insert(owner) {
-                    continue;
-                }
-                if let Some(result) = super::chrome::components()[owner].capture_mouse(
-                    self,
-                    mouse_event,
-                    is_double_click,
-                ) {
-                    return result;
-                }
-            }
-        }
+        // The modal mouse-capture band is gone. It walked the overlay stack
+        // in rank order and gave the whole mouse channel to the first modal
+        // that was up — a second routing engine, ahead of the shell's, and
+        // the reason `placed_surface_outranks_shell` had to exist. A modal is
+        // a `Modality::Exclusive` layer in the tree now, so the tree answers
+        // the same question in the same walk as everything else.
+        //
+        // The event it routes stays here rather than travelling as a fact: a
+        // full-screen modal's interior hit-tests rectangles its own painter
+        // recorded and tells a drag from a move, which a tree `Event`
+        // deliberately cannot. See `view::shell::modal`.
+        self.shell_pointer_event = Some((mouse_event, is_double_click));
 
         // Cancel the LSP-rename prompt on ANY mouse interaction that
         // reaches normal routing. RULING — a pre-WALK observer of the
@@ -215,15 +197,19 @@ impl Editor {
         // precedence is tree position rather than a band — this fork only
         // keeps the PTY from swallowing the events before either sees them.
         let context_menu_open = self.active_window().context_menu_core().is_some();
-        // DERIVED suppression for everything with opaque geometry: a
-        // pointer-opaque chrome box over the cell (an info popup, the
-        // suggestions dropdown, the theme-info popup) must take the
-        // event in the walk — forwarding it would inject mouse codes
-        // into the PTY *through* the popup. This replaces growing the
-        // hand list one surface at a time; the context-menu check above
-        // stays NAMED by ruling because the menu contributes no chrome
-        // boxes at all any more — it is a `Layer` in the shell's tree,
-        // whose modality is not visible to this walk's opacity test.
+        // The opacity suppression is gone with the surfaces it derived from.
+        // It said: a pointer-opaque chrome box over the cell — an info popup,
+        // the suggestions dropdown, the theme-info popup — must take the event
+        // in the walk, because forwarding it would inject mouse codes into the
+        // PTY *through* the popup. Every one of those is a node now, and the
+        // shell is offered the pointer above, before this gate: a surface that
+        // claims stops the event there. No chrome box sets `pointer_opaque`
+        // any more, so the test could only ever answer false.
+        //
+        // The context-menu check stays NAMED by ruling, for the reason it
+        // always was: the menu is `Modality::Inert`, so it does not claim a
+        // press aimed past it, and this fork is what keeps the PTY from
+        // swallowing one before the menu's own dismissal sees it.
         // ONE tree per event, built AFTER the pre-band observers above
         // (the LSP-rename cancel can close a prompt, which changes the
         // geometry) and shared by the forward gate and every dispatch
@@ -231,25 +217,18 @@ impl Editor {
         // event, same state), and a mouse-move stream no longer pays
         // two collects + two hit_stack sorts per event.
         let tree = super::chrome::chrome_tree(self);
-        let opaque_chrome_over_point =
-            crate::widgets::layout_box::hit_stack(&tree, row as u32, col as u32)
-                .into_iter()
-                .any(|i| tree[i].lb.pointer_opaque);
 
-        // Then the migration shell — stage two of three, and deliberately
-        // *after* the capture band above. A full-screen modal (Settings, the
-        // keybinding editor, workspace trust) must outrank anything in the
-        // tree; running the shell first would invert that, letting a layer
-        // answer a pointer the modal had already claimed. The legacy walk
-        // below stays the floor.
+        // Then the migration shell. It used to run *after* a capture band,
+        // because a full-screen modal had to outrank anything in the tree and
+        // running the shell first would have inverted that — and it consulted
+        // `placed_surface_outranks_shell` for the same reason at the level of
+        // individual surfaces, restating the `z` a migrated box used to carry
+        // so a modal drawn over the file explorer still owned its own cells.
         //
-        // It also runs after the tree is built, and consults it. The tree has
-        // no rank in this walk, so `placed_surface_outranks_shell` is where the
-        // ranks its surfaces used to have are said: the explorer's box was
-        // `z = 100` and the file-open browser's is 130, and losing that
-        // inversion let the explorer answer clicks landing inside a modal
-        // drawn over it — the browser's rows and its checkboxes are in the
-        // left 36 columns, which is exactly where the dock sits.
+        // Both are gone. The modals are `Modality::Exclusive` layers, and no
+        // placed box above the shell's band is left — the split grid's sit at
+        // 70 and 80, below it. So there is one walk, and it is this one; the
+        // legacy walk below stays the floor.
         //
         // Whether the tree took the event is reported by `dispatch`, not
         // inferred from whether it had anything to say: a hover moves a
@@ -266,27 +245,19 @@ impl Editor {
         } else {
             1
         };
-        if !super::chrome::placed_surface_outranks_shell(
-            &tree,
-            self.active_chrome().last_frame.width,
-            self.active_chrome().last_frame.height,
-            col,
-            row,
-        ) {
-            // A notch is worth `mouse_wheel_scroll_lines` on the vertical axis and
-            // `WHEEL_COLUMNS` sideways — the same rule `begin_wheel_scroll` states
-            // for the walk below, because a surface that moved into the tree must
-            // not scroll at a different speed from the one beside it.
-            let wheel_lines = self.config.editor.mouse_wheel_scroll_lines.max(1) as i32;
-            if let Some(input) =
-                crate::view::shell::input::mouse(mouse_event, clicks, wheel_lines, WHEEL_COLUMNS)
-            {
-                if self.shell_dispatch(input) {
-                    return Ok(true);
-                }
+        // A notch is worth `mouse_wheel_scroll_lines` on the vertical axis and
+        // `WHEEL_COLUMNS` sideways — the same rule `begin_wheel_scroll` states
+        // for the walk below, because a surface that moved into the tree must
+        // not scroll at a different speed from the one beside it.
+        let wheel_lines = self.config.editor.mouse_wheel_scroll_lines.max(1) as i32;
+        if let Some(input) =
+            crate::view::shell::input::mouse(mouse_event, clicks, wheel_lines, WHEEL_COLUMNS)
+        {
+            if self.shell_dispatch(input) {
+                return Ok(true);
             }
         }
-        if !chrome_drag_active && !context_menu_open && !opaque_chrome_over_point {
+        if !chrome_drag_active && !context_menu_open {
             let forwarding = self.config.terminal.mouse_forwarding;
             if let Some(result) = self.active_window_mut().try_forward_mouse_to_terminal(
                 col,
@@ -974,11 +945,25 @@ impl Editor {
         self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
     }
 
-    /// Check if mouse position is over a transient popup (hover, signature help)
+    /// Is the pointer over a transient popup (hover, signature help)?
+    ///
+    /// The LSP hover keep-alive's one question, asked directly. It used to go
+    /// through `view::popup_mouse` — a `PopupHitTester` over a
+    /// `Vec<PopupLayoutInfo>` built by converting the cached tuples into a
+    /// struct with seven fields, of which this reads one. That module's other
+    /// half (click, hover, drag dispatch) was replaced by the popups
+    /// component and then by the tree; what was left was scaffolding around a
+    /// rectangle test, with a doc comment naming a second caller that no
+    /// longer exists.
     fn is_mouse_over_transient_popup(&self, col: u16, row: u16) -> bool {
-        let layouts = popup_areas_to_layout_info(&self.active_chrome().popup_areas);
-        let hit_tester = PopupHitTester::new(&layouts, &self.active_state().popups);
-        hit_tester.is_over_transient_popup(col, row)
+        let popups = &self.active_state().popups;
+        if !popups.is_visible() || !popups.top().is_some_and(|p| p.transient) {
+            return false;
+        }
+        self.active_chrome()
+            .popup_areas
+            .iter()
+            .any(|(_, outer, ..)| in_rect(col, row, *outer))
     }
 
     // `split_at_position` lives on `impl Window` — call it via

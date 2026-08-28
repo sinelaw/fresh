@@ -6,38 +6,18 @@ use super::{in_rect, ChromeComponent, ChromeTreeBuilder, Editor};
 
 pub(crate) struct FloatingModal;
 
-/// ONE activity predicate, consulted by BOTH `capture_mouse` and
-/// `layers()` — see `modals.rs` for why the pairing must be a single
-/// fn (the rank-ordered capture band only offers capture to components
-/// with a live layer).
+/// ONE activity predicate, consulted by both `layers()` here and
+/// `Editor::modal_slot`, which decides whose layer claims the pointer — see
+/// `modals.rs` for why the pairing must be a single fn.
 fn panel_up(ed: &Editor) -> bool {
     ed.floating_widget_panel.is_some()
 }
 
 impl ChromeComponent for FloatingModal {
-    /// The centered widget modal captures the whole mouse channel
-    /// while mounted (see `handle_floating_modal_mouse`: clicks
-    /// hit-test the panel, wheel scrolls it, drags drive only its
-    /// scrollbar, everything else — and every press outside the box —
-    /// is swallowed so nothing reaches the buffer, terminal, or dock
-    /// beneath).
-    fn capture_mouse(
-        &self,
-        ed: &mut Editor,
-        ev: crossterm::event::MouseEvent,
-        _is_double_click: bool,
-    ) -> Option<anyhow::Result<bool>> {
-        if panel_up(ed) {
-            return Some(ed.handle_floating_modal_mouse(ev));
-        }
-        None
-    }
-
-    // No boxes, no wheel arm: while the modal is up, `capture_mouse`
-    // claims EVERY mouse event before any walk runs, so a collected
-    // box (and any handler on it) would be dead in every reachable
-    // state — the modal band's no-dead-geometry ruling (`modals.rs`).
-    // The wheel is handled inside `handle_floating_modal_mouse`.
+    // No boxes, no wheel arm: the panel's layer is `Modality::Exclusive`, so
+    // every mouse event is claimed in the tree's own walk and a box here
+    // would be dead in every reachable state. The wheel is handled inside
+    // `handle_floating_modal_mouse`, which the layer's claim routes to.
     fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
 
     fn on_layer_key(
@@ -103,7 +83,7 @@ impl Editor {
     /// that lands outside the panel box — is swallowed, so nothing reaches
     /// the buffer, terminal, or dock beneath. Always returns
     /// `Ok(true)` (a render is cheap and the modal just consumed an event).
-    pub(super) fn handle_floating_modal_mouse(
+    pub(crate) fn handle_floating_modal_mouse(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
     ) -> AnyhowResult<bool> {

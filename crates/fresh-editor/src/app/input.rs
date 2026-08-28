@@ -163,7 +163,7 @@ impl Editor {
         // plus the active window's key context for *every* key, before any
         // routing. If a repro shows `dock_focused=true` for keys the user aimed
         // at the buffer, the dock is swallowing them (`chrome/dock.rs`'s
-        // `on_key`) — a
+        // `on_layer_key`) — a
         // host-focus / plugin-`dockBlurred` desync; if `dock_focused=false`,
         // the keys reached the window and the issue is in key-context routing.
         if let Some(focused) = self.dock.as_ref().map(|d| d.focused) {
@@ -223,23 +223,18 @@ impl Editor {
             view_state.viewport.clear_skip_ensure_visible();
         }
 
-        // Chrome keyboard grabs — the pre-band's LAST stage, now a
-        // single component: the theme inspector's dismiss-and-continue
-        // observer (a keyboard PassAfter, not a claim). The context
-        // menus' navigation grab used to sit here too; its keyboard
-        // half is a `Layer` in the shell tree now, answered by the
-        // stage below. Grabs as a CLASS outrank every layer rank by
-        // pipeline position — that is exactly why membership is
-        // restricted to whole-pipeline observers and custom-dispatch
-        // modals: any surface whose precedence is expressible as a
-        // rank rides the walk below instead (the dock and the
-        // floating modal moved there when their grabs were found
-        // inverting the ranks against an open prompt).
-        for c in super::chrome::components() {
-            if let Some(result) = c.on_key(self, code, modifiers) {
-                return result;
-            }
-        }
+        // The pre-band's chrome keyboard grabs are gone. The stage existed
+        // for two shapes a `layer_rank` cannot express, and it outranked
+        // every rank by pipeline position — which is why membership was
+        // restricted by ruling rather than left open. Both members have since
+        // been said as something else: the context menus' navigation grab
+        // became a `Layer` answered by the walk below, and the theme
+        // inspector's dismiss-and-continue observer became
+        // `Dismiss { any_key }.passing_through()` on its own layer, which is
+        // what "a keyboard `PassAfter`" was a description of.
+        //
+        // A grab band with no members is a rank inversion waiting for the next
+        // surface that finds it convenient, so it goes with them.
 
         // Transient popups (Hover, Signature Help) are dismissed on any
         // key press — for both focused and unfocused popups: an unfocused

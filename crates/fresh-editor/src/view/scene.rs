@@ -987,11 +987,22 @@ pub struct TrustDialogView {
 
 impl Editor {
     /// Semantic workspace-trust dialog (the blocking "trust this folder?" modal).
-    /// `None` unless it's showing. Geometry comes from the pipeline's
-    /// `TrustDialogLayout`; clicks on the options / OK / Quit route back through
-    /// `handle_mouse` at those rects (the existing `handle_workspace_trust_mouse`).
+    /// `None` unless it's showing.
+    ///
+    /// Geometry comes off the shell's tree, which is what placed the controls.
+    /// It used to come from `TrustDialogLayout`, a set of rectangles the
+    /// painter recorded for a hit test the TUI no longer performs — the nodes
+    /// answer their own presses, and this projection is the last caller that
+    /// wanted the rectangles at all.
     pub fn trust_dialog_view(&self) -> Option<TrustDialogView> {
-        let layout = self.active_chrome().workspace_trust_dialog.clone()?;
+        let frame = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: frame.width,
+            height: frame.height,
+        };
+        let layout = crate::view::shell::trust::rects(self.shell_ui.as_ref()?, size)?;
         let selected = self.current_workspace_trust_selection();
         let data = ["trusted", "restricted", "blocked"];
         let options = crate::view::workspace_trust_dialog::options()
@@ -1019,7 +1030,7 @@ impl Editor {
             options,
             ok: RectView::from(layout.ok),
             ok_label: fresh_i18n::t!("trust.dialog.btn_ok").into_owned(),
-            quit: RectView::from(layout.quit),
+            quit: RectView::from(layout.secondary),
             quit_label,
         })
     }

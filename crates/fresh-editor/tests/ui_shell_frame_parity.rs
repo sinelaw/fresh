@@ -156,16 +156,22 @@ fn combos() -> Vec<Frame> {
             for &(search, prompt) in &[(false, false), (true, false), (false, true), (true, true)] {
                 for &dock in &[None, Some(24u16)] {
                     for explorer in [None, Some((20u16, true)), Some((20u16, false))] {
+                        // **Only the fields that can move a rectangle are
+                        // named.** Everything else is content or a layer: a
+                        // menu, a popup, the theme inspector, the file-open
+                        // dialog, the suggestion list and the overlay card are
+                        // all out of flow, and the bars occupy their one cell
+                        // whatever is written on them. Spelling each of those
+                        // out as `None` made this literal break on every new
+                        // surface and taught nothing when it did — a field
+                        // that *does* move a region belongs in the loops
+                        // above, and one that does not belongs to the default.
                         v.push(Frame {
                             menu_bar: menu,
                             status_bar: status,
-                            // Content, not geometry, like the bar's labels:
-                            // the row occupies its one cell whatever it says.
                             search_options: search.then(Default::default),
                             prompt_line: prompt,
                             dock,
-                            // Content, not geometry: the panel occupies its
-                            // column whatever it holds.
                             explorer: explorer.map(|(cols, on_left)| {
                                 fresh::view::shell::file_explorer::Explorer {
                                     cols,
@@ -173,29 +179,7 @@ fn combos() -> Vec<Frame> {
                                     ..Default::default()
                                 }
                             }),
-                            // The frame layout is the same with or without an
-                            // overlay: a menu is a layer, out of flow.
-                            menu: None,
-                            dropdowns: Vec::new(),
-                            // Content, not geometry: an empty bar row occupies
-                            // the same cells a full one does.
-                            menu_bar_items: Default::default(),
-                            // Likewise the status bar: whether it has elements
-                            // on it does not move a single rectangle, which is
-                            // exactly what this test asserts across all 192
-                            // visibility combinations.
-                            status_bar_items: None,
-                            menu_keys: Vec::new(),
-                            // Layers, out of flow: a popup does not move a
-                            // region, and neither does the theme inspector.
-                            popups: Vec::new(),
-                            theme_info: None,
-                            browser: None,
-                            // The list is a layer, out of flow: it moves no
-                            // rectangle in the frame, which is the same reason
-                            // `menu` is None above.
-                            suggestions: None,
-                            card: None,
+                            ..Frame::default()
                         });
                     }
                 }
@@ -281,20 +265,7 @@ fn squeeze_band_starves_a_different_row_than_ratatui() {
         status_bar: true,
         search_options: Some(Default::default()),
         prompt_line: true,
-        dock: None,
-        explorer: None,
-        menu: None,
-        dropdowns: Vec::new(),
-        menu_bar_items: Default::default(),
-        // Content, not geometry — the row occupies its one cell whatever is
-        // on it, which is the whole claim this test exists to check.
-        status_bar_items: None,
-        menu_keys: Vec::new(),
-        popups: Vec::new(),
-        theme_info: None,
-        browser: None,
-        suggestions: None,
-        card: None,
+        ..Frame::default()
     };
     let size = Rect {
         x: 0,

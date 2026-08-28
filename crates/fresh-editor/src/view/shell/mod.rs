@@ -22,6 +22,7 @@ pub mod fold;
 pub mod frame;
 pub mod input;
 pub mod menu;
+pub mod modal;
 pub mod msg;
 pub mod overlay_prompt;
 pub mod popup;
@@ -29,6 +30,7 @@ pub mod prompt;
 pub mod search_options;
 pub mod status_bar;
 pub mod theme_info;
+pub mod trust;
 
 // ── layout read-back ────────────────────────────────────────────────────────
 
