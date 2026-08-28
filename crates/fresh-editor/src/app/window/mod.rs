@@ -3955,6 +3955,7 @@ impl Window {
             };
 
             let lsp = &mut self.lsp;
+            let mut opened: Vec<u64> = Vec::new();
             for sh in lsp.get_handles_mut(&language) {
                 if handles_needing_open
                     .iter()
@@ -3975,12 +3976,17 @@ impl Window {
                             uri.as_str(),
                             sh.name
                         );
+                        opened.push(sh.handle.id());
                     }
                 }
             }
 
+            // Only a didOpen that was actually queued may be recorded as sent.
+            // Marking a dropped one would leave the buffer permanently invisible
+            // to that server: the task discards every later didChange for a
+            // document it never opened, and nothing would ever retry the open.
             if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                for (_, handle_id) in &handles_needing_open {
+                for handle_id in &opened {
                     metadata.lsp_opened_with.insert(*handle_id);
                 }
             }
@@ -4019,8 +4025,8 @@ impl Window {
             if resync_only && !needs_resync(sh) {
                 continue;
             }
-            let outgoing = match resync_text {
-                Some(ref text) if needs_resync(sh) => {
+            let outgoing = match (needs_resync(sh), &resync_text) {
+                (true, Some(text)) => {
                     tracing::info!(
                         "Resending full text of {} to '{}' after a dropped didChange",
                         uri.as_str(),
@@ -4032,7 +4038,14 @@ impl Window {
                         text: text.clone(),
                     }]
                 }
-                _ => changes.clone(),
+                // The buffer's text is unavailable (lazily unloaded), so there
+                // is nothing to repair the server's copy with. Sending the
+                // incremental changes instead would extend the broken edit
+                // stream, and in the repair pass they are a synthetic no-op
+                // that would keep the document flagged and re-fire every tick.
+                // Leave it flagged and retry when the text can be read.
+                (true, None) => continue,
+                (false, _) => changes.clone(),
             };
             if let Err(e) = sh.handle.did_change(uri.as_uri().clone(), outgoing) {
                 tracing::warn!("Failed to send didChange to '{}': {}", sh.name, e);

@@ -4820,19 +4820,19 @@ impl LspHandle {
             ));
         }
 
-        // didOpen carries the full text, so a queued open leaves the server
-        // holding exactly the buffer — any earlier divergence is resolved.
-        let path = PathBuf::from(uri.path().as_str());
-
+        // Note this deliberately does not clear a pending resync. didOpen
+        // carries the full text, but the task discards it when the server
+        // already has the document open (`should_skip_did_open`), so a
+        // successful enqueue is not evidence the server's copy was replaced.
+        // Leaving the flag set costs one redundant full-text change; clearing
+        // it wrongly leaves the server stale for good.
+        //
         // Send command to LspTask which will queue it if not initialized yet
         self.command_tx
             .try_send(LspCommand::DidOpen {
                 uri,
                 text,
                 language_id,
-            })
-            .map(|()| {
-                self.desynced.lock().unwrap().remove(&path);
             })
             .map_err(|_| "Failed to send did_open command".to_string())
     }
@@ -4870,12 +4870,18 @@ impl LspHandle {
                 Ok(())
             }
             Err(_) => {
-                // Only documents the server actually has open can desync; for
-                // anything else the task drops the change anyway and the
-                // eventual didOpen carries the full text.
-                let mut versions = self.document_versions.lock().unwrap();
-                if let Some(version) = versions.get_mut(&path) {
-                    *version += 1;
+                // Only documents the server actually has open can desync;
+                // a change for anything else is dropped by the task too, and
+                // the document is opened from its full text when it arrives.
+                //
+                // Note the version counter is deliberately left alone. It is a
+                // shared allocator: the task stamps each change as it dequeues
+                // it, so burning a number here does not create a gap the
+                // server's publishes fall behind — it only pushes
+                // `document_version` ahead of what the server has actually
+                // seen, which `apply_text_document_edit` compares for equality
+                // when deciding whether a versioned workspace edit is stale.
+                if self.document_versions.lock().unwrap().contains_key(&path) {
                     self.desynced.lock().unwrap().insert(path);
                 }
                 Err("Failed to send did_change command".to_string())
@@ -4905,14 +4911,15 @@ impl LspHandle {
 
     /// Send didClose notification
     pub fn did_close(&self, uri: Uri) -> Result<(), String> {
-        // Nothing left to resync once the document is closed; a later didOpen
-        // re-establishes the server's copy from the full text.
-        self.desynced
-            .lock()
-            .unwrap()
-            .remove(&PathBuf::from(uri.path().as_str()));
+        let path = PathBuf::from(uri.path().as_str());
         self.command_tx
             .try_send(LspCommand::DidClose { uri })
+            .map(|()| {
+                // Only once the close is actually queued is there nothing left
+                // to repair; a dropped didClose leaves the server holding the
+                // stale document, so the flag has to survive it.
+                self.desynced.lock().unwrap().remove(&path);
+            })
             .map_err(|_| "Failed to send did_close command".to_string())
     }
 
@@ -6223,9 +6230,8 @@ mod tests {
     }
 
     /// A `didChange` that cannot be queued must not be lost silently: the
-    /// document is flagged for a full resend and its version is advanced so
-    /// the stale-diagnostics guard rejects whatever the server derives from
-    /// the copy it is now stuck on (#3038).
+    /// document is flagged so the next notification replaces the server's
+    /// whole copy (#3038).
     #[tokio::test]
     async fn test_dropped_did_change_marks_document_desynced() {
         let (handle, _command_rx, path) = handle_with_undrained_queue(2);
@@ -6252,10 +6258,68 @@ mod tests {
             "a dropped range edit leaves the server's copy diverged, so the \
              document must be flagged for a full-text resend"
         );
+        assert_eq!(
+            handle.document_version(&path).unwrap(),
+            version_before,
+            "the version counter allocates numbers for changes the task \
+             actually sends; burning one here would push `document_version` \
+             ahead of what the server has seen, which `apply_text_document_edit` \
+             compares for equality when rejecting stale workspace edits"
+        );
+    }
+
+    /// A dropped `didClose` leaves the server holding the document, so the
+    /// pending repair has to survive it.
+    #[tokio::test]
+    async fn test_dropped_did_close_keeps_document_flagged() {
+        let (handle, mut command_rx, path) = handle_with_undrained_queue(1);
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("a"))
+            .is_ok());
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("b"))
+            .is_err());
+        assert!(handle.needs_full_resync(&path));
+
+        assert!(handle.did_close(uri.clone()).is_err());
         assert!(
-            handle.document_version(&path).unwrap() > version_before,
-            "the version must advance past the server's copy so diagnostics \
-             computed from it are treated as stale"
+            handle.needs_full_resync(&path),
+            "the close never reached the server, so its stale copy is still open"
+        );
+
+        let _ = command_rx.recv().await;
+        assert!(handle.did_close(uri).is_ok());
+        assert!(
+            !handle.needs_full_resync(&path),
+            "once the close is queued there is nothing left to repair"
+        );
+    }
+
+    /// `didOpen` is discarded by the task when the server already has the
+    /// document open, so enqueuing one is not evidence that the server's copy
+    /// was replaced and must not clear a pending repair.
+    #[tokio::test]
+    async fn test_did_open_does_not_clear_pending_resync() {
+        let (handle, mut command_rx, path) = handle_with_undrained_queue(1);
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("a"))
+            .is_ok());
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("b"))
+            .is_err());
+        assert!(handle.needs_full_resync(&path));
+
+        let _ = command_rx.recv().await;
+        assert!(handle
+            .did_open(uri, "whole buffer".to_string(), "test".to_string())
+            .is_ok());
+        assert!(
+            handle.needs_full_resync(&path),
+            "a queued didOpen the task may skip cannot be taken as a resync"
         );
     }
 

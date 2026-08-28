@@ -310,5 +310,19 @@ fn dropped_did_change_recovers_once_server_drains() -> anyhow::Result<()> {
          Screen:\n{screen}\nLog:\n{log}"
     );
 
+    // The screen clearing is the symptom; the invariant is that the server
+    // ends up holding the buffer's text. Assert that directly, so this cannot
+    // pass on a mechanism that merely hides the server's diagnostics.
+    let last_publish = log
+        .lines()
+        .rfind(|line| line.starts_with("PUBLISH"))
+        .unwrap_or("<none>");
+    assert_eq!(
+        last_publish,
+        format!("PUBLISH errors=0 len={}", CLEAN_TEXT.len()),
+        "the server's copy of the document must converge on the buffer.\n\
+         Log:\n{log}"
+    );
+
     Ok(())
 }
