@@ -2334,15 +2334,20 @@ fn test_stash_review_ignores_external_diff_and_format_settings() {
 
     harness.run_palette_command("Review Diff: Stash").unwrap();
     // The ref prompt opens prefilled with `stash@{0}`, which is the entry we
-    // just pushed, so confirm it as-is.
-    harness.wait_for_prompt().unwrap();
+    // just pushed, so confirm it as-is. Waiting for *a* prompt would not gate
+    // on it: the palette this command was picked from is itself a prompt and
+    // is still up when the Enter above is dispatched, so `wait_for_prompt`
+    // resolves on the palette and the Enter below can land on it instead of
+    // the ref picker (CONTRIBUTING.md Code §16). The picker's own label
+    // (`prompt.review_stash`) can only be on screen once it is open.
+    harness
+        .wait_for_screen_contains("Review stash (e.g. stash@{0})")
+        .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("next hunk"))
-        .unwrap();
+    wait_for_review_ready(&mut harness);
 
     let screen = harness.screen_to_string();
     assert!(

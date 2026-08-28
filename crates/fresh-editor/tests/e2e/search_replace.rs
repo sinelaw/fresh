@@ -79,13 +79,56 @@ fn enter_search_and_replace(harness: &mut EditorTestHarness, search: &str, repla
     harness.render().unwrap();
 }
 
+/// Wait until the panel's streaming search has *finished*, not merely
+/// produced its first results.
+///
+/// The match count is not that gate. `buildMatchStatsEntries` prints
+/// "(N matches / M files)" from `panel.searchResults` as the pump appends to
+/// it, while `panel.busy` is still true — and `doReplaceAll` refuses to run
+/// while it is: it sets "Search still running — please wait, then try again."
+/// and *drops* the keystroke rather than queueing it. So a Replace All fired
+/// on the count alone can be swallowed, and the wait for the confirmation
+/// prompt that follows then never resolves — a 180s nextest timeout with no
+/// failed assertion to point at, which is how
+/// `test_search_replace_current_file_unnamed_buffer` failed on CI.
+///
+/// The end of the search is visible on the status line: `performSearch` sets
+/// "Found N matches" (or "No matches found for …") as its last act, and the
+/// caller flips `busy` in the same JS turn, before the host renders either.
+fn wait_for_search_finished(harness: &mut EditorTestHarness) {
+    harness
+        .wait_until(|h| {
+            h.screen_to_string().lines().any(|line| {
+                (line.contains("Found ") && line.contains(" matches"))
+                    || line.contains("No matches found for")
+            })
+        })
+        .unwrap();
+}
+
 /// Trigger Replace All (Alt+Enter), accept the confirmation prompt, and wait
 /// for the "Replaced" status. Used by every test that exercises a successful
 /// replacement — the confirmation prompt was added to guard against the
 /// accidental-replace-you-can't-undo case described in bug #1.
 fn confirm_replace_all(harness: &mut EditorTestHarness) {
+    // Alt+Enter is dropped outright while the search is still streaming, so
+    // the replace has to wait for the search to land (see
+    // `wait_for_search_finished`).
+    wait_for_search_finished(harness);
     harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
-    harness.wait_for_prompt().unwrap();
+    // If the replace was refused after all, say so here instead of waiting
+    // out the external timeout on a prompt that will never open.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            if screen.contains("Search still running") {
+                panic!(
+                    "Replace All was dropped: the search was still streaming. Screen:\n{screen}"
+                );
+            }
+            h.editor().is_prompting()
+        })
+        .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -554,12 +597,19 @@ fn test_search_replace_current_file_unnamed_buffer() {
     enter_search_and_replace(&mut harness, "hello", "goodbye");
 
     // The three in-buffer matches must be found (this is the regression:
-    // it used to read "No matches found").
-    harness
-        .wait_until(|h| h.screen_to_string().contains("3 matches"))
-        .unwrap();
+    // it used to read "No matches found"). Gate on the search *finishing*
+    // rather than on the count appearing: a wait for "3 matches" can only
+    // ever resolve when the test passes, so the regression it guards would
+    // show up as an unexplained 180s timeout instead of this assertion.
+    wait_for_search_finished(&mut harness);
 
     let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("3 matches"),
+        "The unnamed buffer holds three \"hello\"s, so the finished search \
+         must report three matches. Got:\n{}",
+        screen
+    );
     assert!(
         !screen.contains("No matches"),
         "Unnamed-buffer search must find the in-memory matches, not report \

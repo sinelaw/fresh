@@ -62,7 +62,12 @@ fn open_review_diff(harness: &mut EditorTestHarness) {
             if s.contains("TypeError") || s.contains("Error:") {
                 panic!("Error loading review diff. Screen:\n{}", s);
             }
-            s.contains("next hunk")
+            // The toolbar is painted near the start of `openReviewPanels`,
+            // before the stream body is written and before the "Generating
+            // Review Diff Stream..." status is replaced. Waiting for it alone
+            // resolves on a frame whose diff area is still blank — and every
+            // line-staging assertion below reads that area.
+            s.contains("next hunk") && !s.contains("Generating Review")
         })
         .unwrap();
 }
