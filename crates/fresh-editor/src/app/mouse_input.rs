@@ -298,7 +298,14 @@ impl Editor {
             col,
             row,
         ) {
-            if let Some(input) = crate::view::shell::input::mouse(mouse_event, clicks) {
+            // A notch is worth `mouse_wheel_scroll_lines` on the vertical axis and
+            // `WHEEL_COLUMNS` sideways — the same rule `begin_wheel_scroll` states
+            // for the walk below, because a surface that moved into the tree must
+            // not scroll at a different speed from the one beside it.
+            let wheel_lines = self.config.editor.mouse_wheel_scroll_lines.max(1) as i32;
+            if let Some(input) =
+                crate::view::shell::input::mouse(mouse_event, clicks, wheel_lines, WHEEL_COLUMNS)
+            {
                 if self.shell_dispatch(input) {
                     return Ok(true);
                 }

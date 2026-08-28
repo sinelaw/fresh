@@ -424,21 +424,24 @@ impl Editor {
     /// segment *text* is lifted from the rendered `buf` for now. Single
     /// derivation shared by both frontends.
     pub fn status_view(&self) -> Option<StatusView> {
-        let chrome = self.active_chrome();
-        let (sy, sx, sw) = chrome.status_bar.area?;
+        // Both halves come off the retained tree: the row's rectangle from the
+        // frame's regions, the segments from the keyed elements inside it.
+        // `status_bar_area_now` is also what says the bar is *there* — it
+        // returns `None` when the user hid it or a suggestions / file-browser
+        // popup took the row, so there is no capture to clear by hand and no
+        // way for the web to keep drawing a bar the TUI does not have.
+        let area = self.status_bar_area_now()?;
 
-        // Read the status bar's semantic model captured by the renderer — no
-        // cell scraping. Each rendered element (indicators + text) is a segment,
-        // and `side` is the renderer's actual left/right tiling (carried on the
-        // segment), not a midpoint guess from `x`.
-        let segments: Vec<StatusSegment> = chrome
-            .status_bar
-            .segments
-            .iter()
+        // Each keyed element (indicators + text) is a segment, and `side` is
+        // the description's own left/right tiling carried on the segment, not
+        // a midpoint guess from `x`. No cell scraping either way.
+        let segments: Vec<StatusSegment> = self
+            .shell_status_segments()
+            .into_iter()
             .filter(|s| !s.text.trim().is_empty())
             .map(|s| StatusSegment {
                 name: s.name,
-                key: s.key.clone(),
+                key: s.key,
                 text: s.text.trim().to_string(),
                 x: s.x,
                 w: s.w,
@@ -448,9 +451,9 @@ impl Editor {
 
         Some(StatusView {
             rect: RectView {
-                x: sx,
-                y: sy,
-                w: sw,
+                x: area.x,
+                y: area.y,
+                w: area.width,
                 h: 1,
             },
             segments,

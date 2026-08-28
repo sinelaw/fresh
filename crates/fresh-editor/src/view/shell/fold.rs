@@ -595,7 +595,7 @@ mod tests {
 mod band_tests {
     use super::*;
     use crate::view::shell::context_menu::Menu;
-    use crate::view::shell::frame::{frame_tree, Frame, HostRegion};
+    use crate::view::shell::frame::{frame_tree, Frame};
     use crate::view::shell::menu::{DropdownLevel, DropdownRow};
     use crate::view::shell::msg::UiMsg;
     use fresh_ui::{Size, Ui};

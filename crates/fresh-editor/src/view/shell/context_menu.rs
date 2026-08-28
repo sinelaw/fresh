@@ -137,9 +137,19 @@ pub fn context_menu(menu: &Menu) -> Node<UiMsg> {
                 // put rather than being re-opened or re-targeted. Stopping is the
                 // whole of it — the dispatcher reports the claim, so there is
                 // nothing to say.
+                //
+                // On the **press**, which is where the arm this replaced sat
+                // (`(PointerPress::Right, "chrome:context_menu") => Consumed`).
+                // `SecondaryClick` is derived from a press *and* a release, so
+                // the press itself went unclaimed, travelled on to the legacy
+                // walk, and closed the menu there — the release then swallowed
+                // an event with nothing left to protect.
                 .on(
-                    fresh_ui::GestureKind::SecondaryClick,
+                    fresh_ui::GestureKind::Press,
                     std::rc::Rc::new(|e: &fresh_ui::Event| {
+                        if e.button != fresh_ui::MouseButton::Right {
+                            return None;
+                        }
                         e.stop();
                         None
                     }),
@@ -545,6 +555,14 @@ mod input_tests {
 
     /// A right-click inside is swallowed so the menu stays put rather than
     /// being re-opened or re-targeted.
+    ///
+    /// **On the press.** This asserted the *release* while the handler was a
+    /// `SecondaryClick`, which the library derives from a press and a release
+    /// together. The press itself therefore went unclaimed and travelled on to
+    /// the legacy walk, which closed the menu there — so the menu was gone
+    /// before the release arrived to swallow anything, and
+    /// `test_second_right_click_replaces_menu` failed while this passed.
+    /// Claiming the press is what actually protects the menu.
     #[test]
     fn a_right_click_inside_is_swallowed() {
         let mut ui = open(20, 8);
@@ -554,8 +572,9 @@ mod input_tests {
         let press = ui.dispatch(Input::press(pos, MouseButton::Right, Mods::NONE));
         let release = ui.dispatch(Input::release(pos, MouseButton::Right, Mods::NONE));
         assert!(
-            release.claimed,
-            "the menu must swallow a right-click inside it"
+            press.claimed,
+            "the menu must swallow a right-press inside it, before anything \
+             below can act on it"
         );
         let mut msgs = press.msgs;
         msgs.extend(release.msgs);

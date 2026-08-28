@@ -123,6 +123,16 @@ pub enum UiFact {
     /// rectangle, as the component resolved `relative_row`, because the
     /// description cannot read geometry.
     ExplorerBodyContext { x: u16, y: u16 },
+    /// A left-press on the panel that did not land on a row.
+    ///
+    /// The same union-box rule as `ExplorerBodyContext`, for the other button:
+    /// `handle_file_explorer_click` called `take_focus_for_file_explorer()`
+    /// for *any* left click inside the panel and only then looked for a row,
+    /// so clicking the empty space below the tree focused the explorer.
+    /// Binding the left press to rows alone dropped that — and with it the
+    /// only way a test (or a user) can click back into a panel whose files do
+    /// not fill it.
+    ExplorerBodyPress,
     /// The `×` on the panel's title line.
     ExplorerClose,
     /// A press on the panel's right-edge grip: start a width drag from here.

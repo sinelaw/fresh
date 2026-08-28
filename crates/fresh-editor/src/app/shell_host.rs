@@ -229,6 +229,22 @@ pub mod shell_theme {
         format!("{fg}/{bg}")
     }
 
+    /// The same background, a different foreground.
+    ///
+    /// A ratatui `Style` with only `fg` set leaves the cell's background
+    /// alone. That is how the explorer's caret used to sit *on* the selection
+    /// highlight — `Paragraph::new("▌").style(Style::default().fg(cursor))` —
+    /// rather than punching a hole in it. An `Item` carries one `ThemeKey` and
+    /// the fold always writes both halves, so "keep the background" cannot be
+    /// left unsaid here: it is spelled by taking the pair the row already has
+    /// and swapping only the foreground.
+    pub fn with_fg(name: &str, fg: &str) -> String {
+        match name.split_once('/') {
+            Some((_, rest)) => format!("{fg}/{rest}"),
+            None => name.to_string(),
+        }
+    }
+
     /// The same, with text attributes the theme does not carry.
     ///
     /// Reserved for attributes that are *structural* rather than themed: a
@@ -576,6 +592,11 @@ impl Editor {
             UiFact::ExplorerRowPress { index, clicks } => self.explorer_row_pressed(index, clicks),
             UiFact::ExplorerRowContext { index, x, y } => self.explorer_row_context(index, x, y),
             UiFact::ExplorerBodyContext { x, y } => self.explorer_body_context(x, y),
+            // Focus, and nothing else: a press that reached the panel's own
+            // box hit no row, so there is nothing to select or open. This is
+            // the half of `handle_file_explorer_click` that ran before it
+            // resolved a row.
+            UiFact::ExplorerBodyPress => self.take_focus_for_file_explorer(),
             UiFact::ExplorerClose => self.toggle_file_explorer(),
             UiFact::ExplorerResizeBegin { x, y } => {
                 let w = self.active_window().file_explorer_width;
