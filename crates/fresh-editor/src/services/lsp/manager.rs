@@ -986,6 +986,11 @@ impl LspManager {
             .collect()
     }
 
+    /// Every running server handle, regardless of the language it serves.
+    pub fn all_handles(&self) -> &[ServerHandle] {
+        &self.handles
+    }
+
     /// Get all mutable handles that accept a language (both language-specific and universal).
     pub fn get_handles_mut(&mut self, language: &str) -> Vec<&mut ServerHandle> {
         self.handles

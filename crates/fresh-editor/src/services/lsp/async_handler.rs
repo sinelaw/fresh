@@ -4539,6 +4539,20 @@ pub struct LspHandle {
     /// Document version tracking (shared with the async LSP task).
     /// Used to check document versions in workspace/applyEdit.
     document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
+
+    /// Documents whose incremental `didChange` stream has a hole in it.
+    ///
+    /// `command_tx` is bounded, so a server that stops draining its stdin
+    /// (a stalled `gopls`, a long reindex) eventually backs the queue up to
+    /// the point where `did_change` cannot enqueue. The change carries a
+    /// *range*, so silently losing it desynchronises the server's copy of the
+    /// document from the buffer for as long as the server lives — every later
+    /// diagnostic is then derived from text the user never wrote (#3038).
+    ///
+    /// A document listed here is repaired by replacing the server's whole
+    /// copy: the next notification fresh sends for it is a full-text
+    /// `didChange` rather than a range edit.
+    desynced: Arc<std::sync::Mutex<std::collections::HashSet<PathBuf>>>,
 }
 
 // Channel sends and state transitions in LspHandle are best-effort: async_tx.send()
@@ -4679,6 +4693,7 @@ impl LspHandle {
             state,
             runtime: runtime.clone(),
             document_versions,
+            desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         })
     }
 
@@ -4805,6 +4820,10 @@ impl LspHandle {
             ));
         }
 
+        // didOpen carries the full text, so a queued open leaves the server
+        // holding exactly the buffer — any earlier divergence is resolved.
+        let path = PathBuf::from(uri.path().as_str());
+
         // Send command to LspTask which will queue it if not initialized yet
         self.command_tx
             .try_send(LspCommand::DidOpen {
@@ -4812,26 +4831,86 @@ impl LspHandle {
                 text,
                 language_id,
             })
+            .map(|()| {
+                self.desynced.lock().unwrap().remove(&path);
+            })
             .map_err(|_| "Failed to send did_open command".to_string())
     }
 
-    /// Notify document changed
+    /// Notify document changed.
+    ///
+    /// The command queue is bounded, so this can fail while the server is not
+    /// draining its stdin. A lost *range* edit desynchronises the server's copy
+    /// of the document permanently, so a failure is recorded rather than merely
+    /// reported: the document is marked desynced (see [`Self::needs_full_resync`])
+    /// and its version is advanced so that the reader task's stale-diagnostics
+    /// guard discards everything the server derives from its stale copy until
+    /// the resync lands (#3038).
     pub fn did_change(
         &self,
         uri: Uri,
         content_changes: Vec<TextDocumentContentChangeEvent>,
     ) -> Result<(), String> {
+        let path = PathBuf::from(uri.path().as_str());
+        // A single change with no range replaces the whole document, so a
+        // successful send re-synchronises the server no matter what it held
+        // before.
+        let replaces_whole_document =
+            content_changes.len() == 1 && content_changes[0].range.is_none();
+
         // Send command to LspTask which will queue it if not initialized yet
-        self.command_tx
-            .try_send(LspCommand::DidChange {
-                uri,
-                content_changes,
-            })
-            .map_err(|_| "Failed to send did_change command".to_string())
+        match self.command_tx.try_send(LspCommand::DidChange {
+            uri,
+            content_changes,
+        }) {
+            Ok(()) => {
+                if replaces_whole_document {
+                    self.desynced.lock().unwrap().remove(&path);
+                }
+                Ok(())
+            }
+            Err(_) => {
+                // Only documents the server actually has open can desync; for
+                // anything else the task drops the change anyway and the
+                // eventual didOpen carries the full text.
+                let mut versions = self.document_versions.lock().unwrap();
+                if let Some(version) = versions.get_mut(&path) {
+                    *version += 1;
+                    self.desynced.lock().unwrap().insert(path);
+                }
+                Err("Failed to send did_change command".to_string())
+            }
+        }
+    }
+
+    /// Whether the server's copy of `path` is known to have diverged from the
+    /// buffer, so the next notification for it must replace the whole text.
+    pub fn needs_full_resync(&self, path: &std::path::Path) -> bool {
+        self.desynced.lock().unwrap().contains(path)
+    }
+
+    /// Paths whose server-side copy is known to be stale and still needs a
+    /// full-text resend. Empty on the healthy path, which is the common case.
+    pub fn desynced_documents(&self) -> Vec<PathBuf> {
+        self.desynced.lock().unwrap().iter().cloned().collect()
+    }
+
+    /// Whether the command queue can accept a notification right now.
+    ///
+    /// Lets a caller skip assembling an expensive payload (a whole-buffer
+    /// resync) that `try_send` would only reject.
+    pub fn has_command_capacity(&self) -> bool {
+        self.command_tx.capacity() > 0
     }
 
     /// Send didClose notification
     pub fn did_close(&self, uri: Uri) -> Result<(), String> {
+        // Nothing left to resync once the document is closed; a later didOpen
+        // re-establishes the server's copy from the full text.
+        self.desynced
+            .lock()
+            .unwrap()
+            .remove(&PathBuf::from(uri.path().as_str()));
         self.command_tx
             .try_send(LspCommand::DidClose { uri })
             .map_err(|_| "Failed to send did_close command".to_string())
@@ -6107,6 +6186,141 @@ mod tests {
 
         // Should succeed (command is queued)
         assert!(result.is_ok());
+    }
+
+    /// A handle whose commands go nowhere, so the bounded queue can be filled
+    /// deterministically without depending on how fast a server drains it.
+    fn handle_with_undrained_queue(
+        capacity: usize,
+    ) -> (LspHandle, mpsc::Receiver<LspCommand>, PathBuf) {
+        let (command_tx, command_rx) = mpsc::channel(capacity);
+        let path = PathBuf::from("/test.rs");
+        let handle = LspHandle {
+            id: 1,
+            scope: LanguageScope::single("test"),
+            command_tx,
+            state: Arc::new(Mutex::new(LspClientState::Starting)),
+            runtime: tokio::runtime::Handle::current(),
+            // Seeded as already open: only documents the server holds can desync.
+            document_versions: Arc::new(std::sync::Mutex::new(HashMap::from([(
+                path.clone(),
+                1i64,
+            )]))),
+            desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        };
+        (handle, command_rx, path)
+    }
+
+    fn insert_at_origin(text: &str) -> Vec<TextDocumentContentChangeEvent> {
+        vec![TextDocumentContentChangeEvent {
+            range: Some(lsp_types::Range::new(
+                lsp_types::Position::new(0, 0),
+                lsp_types::Position::new(0, 0),
+            )),
+            range_length: None,
+            text: text.to_string(),
+        }]
+    }
+
+    /// A `didChange` that cannot be queued must not be lost silently: the
+    /// document is flagged for a full resend and its version is advanced so
+    /// the stale-diagnostics guard rejects whatever the server derives from
+    /// the copy it is now stuck on (#3038).
+    #[tokio::test]
+    async fn test_dropped_did_change_marks_document_desynced() {
+        let (handle, _command_rx, path) = handle_with_undrained_queue(2);
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        // Fill the queue; nothing is draining it.
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("a"))
+            .is_ok());
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("b"))
+            .is_ok());
+        assert!(
+            !handle.needs_full_resync(&path),
+            "changes that were queued keep the server in sync"
+        );
+        let version_before = handle.document_version(&path).unwrap();
+
+        // This one has nowhere to go.
+        assert!(handle.did_change(uri, insert_at_origin("c")).is_err());
+
+        assert!(
+            handle.needs_full_resync(&path),
+            "a dropped range edit leaves the server's copy diverged, so the \
+             document must be flagged for a full-text resend"
+        );
+        assert!(
+            handle.document_version(&path).unwrap() > version_before,
+            "the version must advance past the server's copy so diagnostics \
+             computed from it are treated as stale"
+        );
+    }
+
+    /// Sending the whole document is what repairs the divergence, so a
+    /// successful full-text change — and only a full-text change — clears the
+    /// flag.
+    #[tokio::test]
+    async fn test_full_text_change_clears_desync() {
+        let (handle, mut command_rx, path) = handle_with_undrained_queue(1);
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("a"))
+            .is_ok());
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("b"))
+            .is_err());
+        assert!(handle.needs_full_resync(&path));
+
+        // Make room, then send another range edit: the server is still missing
+        // the dropped one, so this must not clear the flag.
+        let _ = command_rx.recv().await;
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("c"))
+            .is_ok());
+        assert!(
+            handle.needs_full_resync(&path),
+            "another incremental edit extends the broken stream, it does not \
+             repair it"
+        );
+
+        let _ = command_rx.recv().await;
+        assert!(handle
+            .did_change(
+                uri,
+                vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: "whole buffer".to_string(),
+                }],
+            )
+            .is_ok());
+        assert!(
+            !handle.needs_full_resync(&path),
+            "replacing the whole document restores the server's copy"
+        );
+    }
+
+    /// Documents the server never opened cannot desync — the eventual
+    /// `didOpen` carries the full text — so a dropped change for one must not
+    /// leave a resync pending forever.
+    #[tokio::test]
+    async fn test_dropped_change_for_unopened_document_is_not_flagged() {
+        let (handle, _command_rx, _path) = handle_with_undrained_queue(1);
+        let other: Uri = "file:///never-opened.rs".parse().unwrap();
+
+        assert!(handle
+            .did_change(other.clone(), insert_at_origin("a"))
+            .is_ok());
+        assert!(handle.did_change(other, insert_at_origin("b")).is_err());
+
+        assert!(
+            handle.desynced_documents().is_empty(),
+            "an unopened document has no server-side copy to repair"
+        );
     }
 
     #[tokio::test]

@@ -157,6 +157,14 @@ pub fn editor_tick(
     if editor.process_line_scan() {
         needs_render = true;
     }
+    // Repair any LSP document whose change stream was broken while its server
+    // was not draining commands, so diagnostics recover without needing the
+    // user to type again (#3038).
+    for window in editor.windows.values_mut() {
+        if window.resync_desynced_lsp_documents() {
+            needs_render = true;
+        }
+    }
     let search_scan = {
         let _s = tracing::info_span!("process_search_scan").entered();
         editor.process_search_scan()
