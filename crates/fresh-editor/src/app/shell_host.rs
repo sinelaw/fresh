@@ -1040,6 +1040,49 @@ impl Editor {
                     self.blur_floating_panel(crate::app::PanelSlot::Dock);
                 }
             }
+            // A full-screen modal has the pointer. Which one is the tree's
+            // answer — `Modality::Exclusive`, where a capture band offered
+            // itself in rank order and stopped at the first taker — and what
+            // the event means is the modal's, because its controls are
+            // rectangles its own painter recorded.
+            UiFact::ModalPointer(slot) => {
+                use crate::view::shell::modal::Slot;
+                let Some((ev, double)) = self.shell_pointer_event else {
+                    return;
+                };
+                let r = match slot {
+                    Slot::Settings => self.handle_settings_mouse(ev, double),
+                    Slot::KeybindingEditor => self.handle_keybinding_editor_mouse(ev),
+                    // Keyboard-driven: it owns the band and ignores the
+                    // pointer, which the layer's claim already arranges.
+                    Slot::Calibration => Ok(false),
+                    Slot::FloatingPanel => self.handle_floating_modal_mouse(ev),
+                };
+                if let Err(e) = r {
+                    tracing::warn!("modal mouse failed: {e}");
+                }
+            }
+            // The workspace-trust prompt. Each body is an arm of
+            // `handle_workspace_trust_mouse`, which the capture band reached
+            // with a raw `MouseEvent` and a hand-written hit test over four
+            // recorded rectangles.
+            //
+            // **Selecting is not consenting.** A click moves the selection and
+            // leaves the prompt up; `[ OK ]` commits. Accepting on click made
+            // "Trust folder & Allow Tooling" a one-click grant of execution
+            // rights on a security prompt, with no chance to read the option
+            // before committing to it.
+            UiFact::TrustSelect(i) => self.set_workspace_trust_selection(i),
+            UiFact::TrustConfirm => {
+                let idx = self.current_workspace_trust_selection();
+                self.confirm_workspace_trust(idx);
+            }
+            UiFact::TrustSecondary => {
+                self.hide_popup();
+                if !self.workspace_trust_prompt_cancellable {
+                    self.should_quit = true;
+                }
+            }
             // The inspector. Dismissing it is the same statement three
             // places used to make: an outside-press guard returning
             // `PassAfter`, an `on_key` that cleared the field and returned

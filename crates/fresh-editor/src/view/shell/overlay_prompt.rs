@@ -1,10 +1,11 @@
 //! The floating-overlay prompt's card, as a description.
 //!
-//! The card is where the *other* suggestion list lives — the one
-//! `SuggestionsRenderer` still draws — and the reason it still draws it is that
-//! the list's rectangle is computed by this card's painter, halfway through the
-//! frame, long after the shell tree has been laid out. So the card's rows have
-//! to move before its list can.
+//! The card is where the *other* suggestion list lives. It used to be drawn by
+//! `SuggestionsRenderer`, and the reason it could not move was that its
+//! rectangle was computed by this card's painter halfway through the frame,
+//! long after the shell tree had been laid out. The card carves its bands here
+//! now, so the list anchors to the results band by name (`Place::InCard`) and
+//! both lists are the tree's.
 //!
 //! What moves here is the arithmetic *inside* the card, which is what was
 //! duplicated:

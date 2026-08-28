@@ -1328,7 +1328,7 @@ display-list-is-not-a-diff rule, pinned at the cell.
 |---|---|---|
 | **S1** | Frame skeleton: every region a `Host` leaf, painted by today's painters. Input fully delegated. | **Landed, including the body.** The frame's geometry is the shell's, the retained tree persists across frames, native items paint through the fold, and input is offered to the shell ahead of the legacy walk. The split grid is now painted *by* the fold, through `HostPainter::paint_host`, with the rectangle layout gave the body — `render`'s own hundred-line assembly of `render_content`'s 28 arguments is deleted and `shell_host::paint_body` is the only copy. It had to be: two assemblies of one call drift, and the unreached one had, dropping five of the seven results and passing `BodyState::default()`. What made the second copy necessary was `suppress_chrome_cells` skipping the fold outright — which skipped the body with it — so the fold grew `Paints::HostsOnly`: a frontend that draws the tree's surfaces itself still needs its host regions painted, because the panes are cells even on the web. What remains for the body is S5's decomposition (§6.2 item 7), which subdivides the leaf rather than removing it. |
 | **S2** | The live-derived regions — status bar, search-options row — become native descriptions. | **Done.** Both surfaces describe what is on them and layout decides every column. The **search-options row** was the first surface to meet the third acceptance criterion. The **status bar** was the one that paid for it twice: `render_status` placed every element *and* emitted a `StatusBarLayout`, then `compute_status_layout` re-ran the whole walk at event time over state that may have moved. `clickable_rects`, `plugin_token_areas`, `segments` and `provenance_runs` all read the laid-out tree now; plugin tokens became first-class (they were a second loop the click rail reached only after missing every built-in). What stayed app-side is *which* right-hand elements appear when the bar is too narrow — a content decision from measured text, not geometry. |
-| **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. **Context menus: done** (below) — paint, pointer, dismissal, keyboard and geometry, with only the `blocks_terminal_input` rank entry left behind. **Menu bar: paint and pointer migrated** — the bar row is a native background region, the dropdown chain is a stack of layers, and the close guard is a dismissal property.
+| **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. **Context menus: done** (below) — paint, pointer, dismissal, keyboard and geometry, with only the `blocks_terminal_input` rank entry left behind. **Menu bar: paint and pointer migrated** — the bar row is a native background region, the dropdown chain is a stack of layers, and the close guard is a dismissal property. **Popups: done** — placement, paint, wheel, scrollbar, rows, close button, dismissal, links and text selection are all in the tree, and `view/popup.rs`'s painter and all four of its chrome boxes are deleted. **Prompt / palette: done** — both suggestion lists are the tree's (the overlay's anchors to the card's results band by name), the card is mouse-modal, and `shell_owns_suggestions`, which existed to tell the two apart, is gone with them. **Theme inspector and file-open dialog: done.** **The modals: done, on the pointer side.** Settings, the keybinding editor, the calibration wizard, the workspace-trust prompt and the floating panel each owned the whole mouse channel through `ChromeComponent::capture_mouse` — a band ahead of every walk including the shell's, and the reason `placed_surface_outranks_shell` existed. Capture is what a modal *is*, and `Modality::Exclusive` says it, so **the band and the precedence constant are both gone and there is one pointer walk.** The workspace-trust prompt migrated outright — layer, `Scrim::Dim`, rows, radios and buttons — retiring `TrustDialogLayout` (a paint-recorded roster entry), its painter, its `Vec<Seg>` row plan, its own word-wrap, its scroll clamp and `handle_workspace_trust_mouse`. The other four keep their interiors, which hit-test rectangles their own painters recorded and tell a drag from a move — something a tree `Event` deliberately cannot, since the library routes drags by pointer capture. So the tree answers *which* surface an event belongs to and the event stays on the editor: routed, not transported (`Editor::shell_pointer_event`), and that channel retires with the interiors. What is left of S3 is the keyboard, which is one wave rather than per-surface.
 
 **The two remainders are both blocked, and neither is a loose end.**
 
@@ -1336,7 +1336,7 @@ display-list-is-not-a-diff rule, pinned at the cell.
 
 *The rank entries* cannot go until the rest of S3 does. `blocks_terminal_input` is contributed by six components — popups, dock, floating modal, base, menu, context menu — and `presents_blocking_overlay` is the single source of truth for "is anything modal up?". Removing the two migrated entries would mean an open context menu or menu stops blocking PTY routing. They retire with the last unmigrated overlay, not before. |
 | **S4** | Dock column, file explorer, plugin panels. | **File explorer: done** — the panel is a native region, rows and slots are measured by the tree, `trailing_slot_screen_bounds` and the old renderer's paint half are deleted, and the grip paints its own hover column via `layout_reader`. **Dock column: done** — its press, right-press, wheel and width grip are nodes, and the blur observer moved to a capture-phase listener on the frame, which fixed it: as the surfaces beside the dock became nodes, each one that claimed a press stopped blurring a focused dock, because the shell runs ahead of the walk the full-frame guard box lived in. The column's *content* is still a `Host` leaf. **Plugin panels remain**, and they are the M6 wave rather than a remainder: `WidgetSpec` → `Node` translation, element state replacing `WidgetInstanceState`, and a plugin API change. It no longer waits on anything: S3's ordering went with the two-pass fold, and §6.2's "colour that is not a theme name" is decided and shipped — `Paint::Lit` carries a plugin's `OverlayColorSpec::Rgb` as a `#rrggbb` literal the grammar reads back. The plugin API change (keyed `List`/`Tree` items) is deprecated ahead of it, so its release cycle runs in parallel rather than in series. |
-| **S5** | Splits, tabs, scrollbars decompose; the buffer becomes the only `Host` leaf. | Requires the per-leaf `render_content` decision (§6.2); last because it is the only stage that touches the KEEP side. |
+| **S5** | Splits, tabs, scrollbars decompose; the buffer becomes the only `Host` leaf. | The per-leaf decision is settled (§6.2 item 7): split the orchestration, with the leaf `Host` at the *content* rect and `split_grid` mutually recursive with the pane. Still last, because it is the only stage that touches the KEEP side — and now the only stage with any pointer surfaces left in `chrome/`: `splits.rs` and the `base.rs` floor beneath it are the whole of what remains there. |
 
 ### 5.1 M0 — the seam (a genuine prototype, not just plumbing)
 
@@ -1674,13 +1674,70 @@ list.
    that measures, wraps and truncates as a unit. Mnemonics, match highlights
    and the explorer's git colouring all use it. Checked against the library
    rather than the note, while surveying for the second base PR.
-7. **Per-leaf decomposition of `render_content`** (blocks M9). Its unit today
-   is the whole split tree; the target grid wants per-leaf `Host` nodes with
-   `fresh-ui` tabs and dividers. Either the whole grid stays one `Host` leaf
-   (and M9's headline deletions shrink), or the orchestration layer is split
-   per leaf — a refactor on the KEEP side (`render_phantom_leaf` shows a
-   per-leaf path exists, minus the cross-tree logic). A scoping decision, not
-   a detail.
+7. **Per-leaf decomposition of `render_content`** (blocks S5). *Decided: split
+   the orchestration per leaf. The grid's structure is layout, and layout is
+   the tree's.*
+
+   The alternative — keep the whole grid as one `Host` leaf — was never really
+   open. It would leave the frame's **dominant** region as the one place the
+   shell does not own the geometry, and the argument for the shell owning the
+   rest applies here with more force, not less: `SplitNode::get_leaves_with_rects`
+   is a second layout engine, recursing over ratios and reserving a cell per
+   separator, and everything downstream (separator drags, per-leaf scrollbars,
+   tab strips, click-to-byte) is keyed on rectangles it alone produces.
+
+   **The rule is expressible today, exactly.** `split_rect_ext` reserves one
+   cell for the separator, converts the ratio to cells, and clamps the first
+   child to a minimum so the sibling keeps `MIN_PANE_{WIDTH,HEIGHT}`. That is
+   `row([first.w(Cells(n)), divider.w(Cells(1)), second.flex(1)])`, with `n`
+   from the same helper — a ratio pinned to a minimum is **app logic keyed on
+   the available extent**, the same shape as the dock's bail-out, and
+   `Frame::resolve_dock` is the pattern for computing it before `build()`
+   rather than inside it. So there is no new library capability here and no
+   pixel change to negotiate: the tree can be asserted equal to
+   `get_leaves_with_rects` over a sweep of shapes and sizes, the way
+   `ui_shell_frame_parity` does for the frame.
+
+   What the decision costs is the **orchestration split**, and that is the real
+   work rather than the description. `render_content` mixes three things: a
+   cross-leaf preamble (`expand_visible_buffers`, the active split, "are there
+   several"), a per-leaf paint, and seven accumulated output vectors. Per-leaf
+   means the preamble is computed once into state the callback reads, the paint
+   becomes `paint_leaf(id, rect, …)`, and the accumulation happens across calls
+   instead of inside one. `render_phantom_leaf` shows the per-leaf path exists.
+
+   **Two things the tree has to express that `get_leaves_with_rects` does not**,
+   found while settling this and worth having before the estimate:
+
+   - `split_layout` reserves a leaf's tab-bar row and its vertical and
+     horizontal scrollbar columns, per leaf, from flags that differ per leaf (a
+     live-PTY terminal suppresses its scrollbar; a non-scrollable panel has
+     none; a buffer-group panel suppresses its tab bar). So the leaf's `Host`
+     is the **content** rect, and the pane is
+     `col([tab_strip?, row([Host::leaf(id), vscrollbar?]), hscrollbar?])` —
+     which is the target shape anyway, arrived at by necessity rather than by
+     ambition.
+   - `expand_visible_buffers` recurses: a leaf whose active tab is a
+     `Grouped` node lays that subtree out *inside its own content rect*, and
+     the inner leaves are panes in their own right. So `split_grid` is
+     mutually recursive with the pane, not a flat walk over leaves.
+
+   Neither needs anything the library lacks — both are ordinary nested layout.
+   They do mean the wave is "the grid **and** the pane", not "the grid, then
+   the pane later".
+
+   **The order, therefore:**
+   1. A leaf host id space (`HostRegion` is a small fixed enum; a leaf's id is
+      its `LeafId`, tagged) and a `HostTarget::{Region, Leaf}` for the fold's
+      dispatch, so its "a host id with no region" assertion still holds.
+   2. `split_grid(node) -> Node`, with a parity test against
+      `get_leaves_with_rects` and `get_separators_with_ids`.
+   3. The orchestration split, and the swap — both in one change, because a
+      description of the grid that nothing paints from is exactly the second
+      derivation this migration exists to remove.
+   4. Only then the dividers become gestures with pointer capture (retiring
+      `PointerGrab::SplitSeparator`), and the tab strips and scrollbars come
+      out of the leaf one at a time — the latter gated on item 8.
 8. **Scrollbar markers** (blocks M9). `Draw::Scrollbar` carries only
    `{offset, content, window}`; the plugin overview-ruler marker API has no
    expression. Extend the library's scrollbar, keep scrollbars behind the

@@ -1108,10 +1108,6 @@ impl Editor {
         // so they overlay on top of both (fixes bottom border being overwritten by status bar)
         self.render_prompt_popups(frame, chrome_area);
 
-        // Render popups from the active buffer state
-        // Clone theme to avoid borrow checker issues with active_state_mut()
-        let theme_clone = self.theme.read().unwrap().clone();
-
         // Cursor-anchored buffer popups (completion, hover, signature help):
         // recompute their areas for hit-testing and paint them.
         self.cache_buffer_popup_areas();
@@ -1278,14 +1274,7 @@ impl Editor {
         // Dock, full-screen modals, floating panel, theme-info popup, and the
         // workspace-trust modal — the topmost layers, drawn above
         // prompts/popups/animations.
-        self.render_panels_and_modals(
-            frame,
-            size,
-            chrome_area,
-            dock_area,
-            top_is_trust_modal,
-            &theme_clone,
-        );
+        self.render_panels_and_modals(frame, size, chrome_area, dock_area);
 
         // Convert all colors for terminal capability (256/16 color fallback).
         // Dead last, so the layers painted above — dock, full-screen modals,
@@ -1739,17 +1728,17 @@ impl Editor {
     }
 
     /// Render the topmost layers: the dock and floating widget panel (each in
-    /// its own slot), the full-screen modals (settings, keybinding editor,
-    /// …), the theme-info popup, and the blocking workspace-trust modal.
-    /// Drawn after every other layer so they sit on top.
+    /// its own slot) and the full-screen modals (settings, keybinding editor,
+    /// …). Drawn after every other layer so they sit on top.
+    ///
+    /// The theme-info popup and the workspace-trust prompt used to be here;
+    /// both are layers in the shell's tree now.
     fn render_panels_and_modals(
         &mut self,
         frame: &mut Frame,
         size: ratatui::layout::Rect,
         chrome_area: ratatui::layout::Rect,
         dock_area: Option<ratatui::layout::Rect>,
-        top_is_trust_modal: bool,
-        theme_clone: &crate::view::theme::Theme,
     ) {
         // Panels are drawn last so they sit above every other layer
         // (prompts, popups, animations). The two slots are independent:
@@ -1823,58 +1812,93 @@ impl Editor {
             self.render_floating_widget_panel(frame, modal_area, super::PanelSlot::Floating);
         }
 
-        // Workspace-trust prompt — a blocking, top-most security modal. Drawn
-        // dead last (after the dock and any floating panel) so it dims the
-        // *entire* frame, centres in the full window (dock area included), and
-        // renders on top of the dock rather than being overpainted by it.
-        let trust_layout = if top_is_trust_modal {
-            let draw_trust = !self.suppress_chrome_cells;
-            if draw_trust {
-                crate::view::dimming::apply_dimming(frame, size);
-            }
-            let selected = self
-                .global_popups
-                .top()
-                .and_then(|p| match &p.content {
-                    crate::view::popup::PopupContent::List { selected, .. } => Some(*selected),
-                    _ => None,
-                })
-                .unwrap_or(1);
-            let path = self.working_dir().display().to_string();
-            let triggers = self.workspace_trust_markers.join(", ");
-            let secondary_label = if self.workspace_trust_prompt_cancellable {
-                fresh_i18n::t!("trust.dialog.btn_cancel").into_owned()
-            } else {
-                let quit_hint = self.keybindings.read().ok().and_then(|kb| {
-                    kb.get_keybinding_for_action(
-                        &crate::input::keybindings::Action::Quit,
-                        crate::input::keybindings::KeyContext::Normal,
-                    )
-                });
-                match quit_hint {
-                    Some(k) => fresh_i18n::t!("trust.dialog.btn_quit_key", key = k).into_owned(),
-                    None => fresh_i18n::t!("trust.dialog.btn_quit").into_owned(),
-                }
-            };
-            Some(
-                crate::view::workspace_trust_dialog::render_workspace_trust_dialog(
-                    frame,
-                    crate::view::workspace_trust_dialog::TrustDialogParams {
-                        area: size,
-                        selected,
-                        path: &path,
-                        triggers: &triggers,
-                        secondary_label: &secondary_label,
-                        scroll: self.workspace_trust_scroll,
-                        theme: theme_clone,
-                        draw: draw_trust,
-                    },
-                ),
-            )
+        // The workspace-trust prompt is a layer in the shell's tree; see
+        // `Editor::trust_description` and `view::shell::trust`.
+    }
+
+    /// Which full-screen modal has the pointer, if any.
+    ///
+    /// **Rank order, and the first taker wins** — the rule the capture band
+    /// walked the overlay stack to apply, stated once here because only one
+    /// layer can be exclusive at a time. The predicates are the components'
+    /// own, which is what kept their capture gate and their layer gate from
+    /// drifting apart.
+    pub(crate) fn modal_slot(&self) -> Option<crate::view::shell::modal::Slot> {
+        use crate::view::shell::modal::Slot;
+        if self.settings_state.as_ref().is_some_and(|s| s.visible) {
+            return Some(Slot::Settings);
+        }
+        if self.keybinding_editor.is_some() {
+            return Some(Slot::KeybindingEditor);
+        }
+        if self.calibration_wizard.is_some() {
+            return Some(Slot::Calibration);
+        }
+        if self.floating_widget_panel.is_some() {
+            return Some(Slot::FloatingPanel);
+        }
+        None
+    }
+
+    /// The workspace-trust prompt, as the shell describes it.
+    ///
+    /// **Every string resolved, no rectangle.** The painter built a
+    /// `Vec<Seg>`, counted it to size the dialog "so there is no fixed height
+    /// to drift out of sync", then walked it a second time against a scroll
+    /// offset it also had to clamp — and recorded four rectangles for a hit
+    /// test to compare against. A column of rows in a viewport is all of that:
+    /// its height is the count, the window is the viewport's, and each control
+    /// answers its own press.
+    pub(crate) fn trust_description(
+        &self,
+        size: ratatui::layout::Rect,
+    ) -> Option<crate::view::shell::trust::Trust> {
+        use crate::view::shell::trust::{Opt, Trust, DIALOG_WIDTH};
+        if !self.workspace_trust_on_top() {
+            return None;
+        }
+        // The dialog's extent is app logic keyed on the frame — the same shape
+        // as the dock's bail-out, resolved before the description is built.
+        let width = DIALOG_WIDTH.min(size.width.saturating_sub(4));
+        let secondary_label = if self.workspace_trust_prompt_cancellable {
+            fresh_i18n::t!("trust.dialog.btn_cancel").into_owned()
         } else {
-            None
+            let quit_hint = self.keybindings.read().ok().and_then(|kb| {
+                kb.get_keybinding_for_action(
+                    &crate::input::keybindings::Action::Quit,
+                    crate::input::keybindings::KeyContext::Normal,
+                )
+            });
+            match quit_hint {
+                Some(k) => fresh_i18n::t!("trust.dialog.btn_quit_key", key = k).into_owned(),
+                None => fresh_i18n::t!("trust.dialog.btn_quit").into_owned(),
+            }
         };
-        self.active_chrome_mut().workspace_trust_dialog = trust_layout;
+        let triggers = self.workspace_trust_markers.join(", ");
+        Some(Trust {
+            selected: self.current_workspace_trust_selection(),
+            title: fresh_i18n::t!("trust.dialog.security_warning").into_owned(),
+            can_execute: fresh_i18n::t!("trust.dialog.can_execute").into_owned(),
+            path_label: fresh_i18n::t!("trust.dialog.path_label").into_owned(),
+            // Elided by the tree, at the width the dialog turned out to be —
+            // the painter truncated it in the middle against a width it had to
+            // compute first.
+            path: self.working_dir().display().to_string(),
+            detected: (!triggers.is_empty())
+                .then(|| fresh_i18n::t!("trust.dialog.detected", triggers = triggers).into_owned()),
+            how_proceed: fresh_i18n::t!("trust.dialog.how_proceed").into_owned(),
+            options: crate::view::workspace_trust_dialog::options()
+                .into_iter()
+                .map(|o| Opt {
+                    label: o.label,
+                    description: o.description,
+                })
+                .collect(),
+            ok_label: fresh_i18n::t!("trust.dialog.btn_ok").into_owned(),
+            secondary_label,
+            width,
+            max_height: size.height.saturating_sub(2),
+        })
     }
 
     /// Whether a file-explorer sidebar is showing, and if so how many columns
@@ -2008,7 +2032,7 @@ impl Editor {
             view.set_viewport_height(viewport_rows);
         }
         if self.file_explorer().is_none() {
-            return fe::Body::Loading(rust_i18n::t!("explorer.loading").to_string());
+            return fe::Body::Loading(fresh_i18n::t!("explorer.loading").to_string());
         }
         let unsaved = self.explorer_unsaved_paths();
         let cut: Vec<std::path::PathBuf> = self
@@ -2647,13 +2671,21 @@ impl Editor {
         self.shell_frame_status_bar = status_bar_items.clone();
         let menu_keys = self.menu_shortcuts();
         let suggestions = self.suggestions_description();
-        self.shell_owns_suggestions = suggestions.is_some();
         let card = self.overlay_card_description(chrome_area);
         let popups = self.popup_descriptions(chrome_area);
         let theme_info = self.theme_info_description();
+        let modal = self.modal_slot();
+        let trust = self.trust_description(ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: self.active_chrome().last_frame.width,
+            height: self.active_chrome().last_frame.height,
+        });
         crate::view::shell::frame::Frame {
             theme_info,
             browser,
+            trust,
+            modal,
             menu_bar: menu_bar_visible,
             status_bar: status_row,
             search_options,
@@ -2840,7 +2872,7 @@ impl Editor {
             // layer with it. `render_quick_open_hints` is what this replaces.
             hints: (!prompt.overlay
                 && prompt.prompt_type == crate::view::prompt::PromptType::QuickOpen)
-                .then(|| rust_i18n::t!("quick_open.mode_hints").to_string()),
+                .then(|| fresh_i18n::t!("quick_open.mode_hints").to_string()),
         })
     }
 

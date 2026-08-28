@@ -118,8 +118,8 @@ impl ChromeComponent for Dock {
 /// width-resize grab; the press half arms it in `on_pointer`, and the
 /// release finalizer in `handle_mouse`'s Up arm persists the width.
 impl Editor {
-    /// Dock resize drag (`PointerGrab::DockResize`, armed by the press
-    /// on `chrome:dock_border`): track the pointer column as the new
+    /// Dock resize drag (`PointerGrab::DockResize`, armed by the grip's own
+    /// press — see `view::shell::dock`): track the pointer column as the new
     /// dock width (the right border follows the cursor), clamped so it
     /// can't swallow the chrome.
     pub(crate) fn handle_dock_resize_drag(&mut self, col: u16) {

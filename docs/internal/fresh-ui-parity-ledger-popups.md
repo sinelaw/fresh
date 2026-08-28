@@ -268,6 +268,40 @@ only one of the two says the press was inside; this now asks every path. It was
 recorded as unreachable when the guards still stood, and became reachable the
 moment the layer started declaring its own dismissal.
 
+### J. Wrapping had no hanging indent, and no whitespace either — *closed, `Wrap::Hanging`*
+
+Found by CI, not by this ledger: `migrated_popup_wrap_indent` had been red
+since the wave that moved the content into the tree, in a test binary
+(`semantic_tests`) the wave never ran.
+
+The painter wrapped with `markdown::wrap_text_line`, whose doc says
+"continuation lines are indented to match the original line's leading
+whitespace" — so a wrapped signature-help parameter stays visually inside its
+own entry instead of merging into the next. `fresh-ui`'s `.wrap()` has no such
+rule, and nothing in the display list could put it back: **only the thing that
+wraps knows where it broke.** A caller wanting the indent would have to wrap the
+text itself, which means deciding the width, which is layout's answer and not
+the caller's — the loop this migration exists to remove. So it is a library
+capability, and it lands as `Wrap::{None, Word, Hanging}` with `wrap_hanging()`,
+carrying the editor's own guard: the indent is dropped when it would leave the
+text under ten columns.
+
+**A second bug fell out of writing the test.** The library wrapped by
+`para.split(' ')` and skipped the empty pieces a run of spaces produces, so
+`"    sep  a string"` came out as `"sep a string"` — the popup had lost the
+indent on its *first* row too, and the double space that separates a parameter
+name from its description. The test that caught the hanging indent could not
+catch this: it locates its anchor row by substring. Wrapping now breaks the
+line into chunks that carry the spaces before them, so the only whitespace lost
+is the one the break consumed.
+
+That last part is why `wrap_text` grew a sibling. `wrap_runs` maps rows back
+onto the styled pieces they came from, and it did that by assuming a row is a
+slice of the source — "step past one space if there is one", right only when
+exactly one was dropped, and wrong outright once the indent adds characters
+with no source at all. `wrap_rows` reports each row's injected indent and the
+source it skipped, and the mapping steps by those numbers instead of guessing.
+
 ## What this retires
 
 Written before the wave; what follows each item is what actually happened.

@@ -364,32 +364,6 @@ pub(crate) trait ChromeComponent: Sync {
         Ok(Disposition::Pass)
     }
 
-    /// Whole-channel mouse capture for modal surfaces. A component
-    /// whose modal is up claims the ENTIRE mouse event stream — every
-    /// event kind (press, drag, release, wheel, move) — before any
-    /// gesture walk runs, exactly the contract the deleted
-    /// `dispatch_modal_mouse` ladder enforced: nothing may leak to a
-    /// terminal, buffer, or surface beneath a modal. `None` = not
-    /// capturing. Offered in RANK order over the owner-stamped
-    /// `overlay_stack()` (every capturing component declares a layer
-    /// from the same activity predicate its capture gates on), so the
-    /// `layer_rank` consts are the ONE precedence source for capture
-    /// and keyboard alike — registry order no longer encodes it.
-    ///
-    /// Whole-event capture (rather than per-gesture boxes) is the
-    /// honest intermediate: the modal handlers own presses, drags,
-    /// releases, and hover as one unit; decomposing them onto the
-    /// gesture walks needs the pointer-grab slot and the scan's
-    /// opacity gate, recorded as the residue of this slice.
-    fn capture_mouse(
-        &self,
-        _ed: &mut Editor,
-        _ev: crossterm::event::MouseEvent,
-        _is_double_click: bool,
-    ) -> Option<AnyhowResult<bool>> {
-        None
-    }
-
     /// This component's overlay-layer contributions, from live state:
     /// `(rank, Layer)` pairs pushed into `out` (see [`layer_rank`]).
     /// `Editor::overlay_layers()` concatenates every component's
@@ -399,39 +373,9 @@ pub(crate) trait ChromeComponent: Sync {
     /// component instead of a central conditional ladder.
     fn layers(&self, _ed: &Editor, _out: &mut Vec<(u16, crate::app::overlay::Layer)>) {}
 
-    /// PRE-BAND keyboard grab. `Some` = the key is consumed with the
-    /// handler's result; `None` = not grabbing, dispatch continues.
-    /// Offered by `handle_key` BEFORE the `on_layer_key` walk, first
-    /// grabbing component in registry order wins — which means grabs
-    /// as a CLASS outrank every `layer_rank`, regardless of any layer
-    /// the component declares. Membership is therefore restricted, by
-    /// ruling, to the two shapes a rank cannot express:
-    ///
-    ///   - a whole-pipeline OBSERVER (ThemeInfo: dismiss-and-continue
-    ///     side effects then `None` — the keyboard PassAfter), which
-    ///     must see the key even when a higher surface consumes it;
-    ///   - a custom-dispatcher modal transparent to `KeyContext`
-    ///     resolution (ContextMenu: its layer exposes
-    ///     `key_context: None` and its rank is deliberately NOT its
-    ///     keyboard precedence — ruling at its site, #2587).
-    ///
-    /// Any surface whose precedence IS expressible as a rank belongs
-    /// on `on_layer_key` instead: the dock and the floating modal
-    /// started here and were moved when their grabs proved to invert
-    /// the declared ranks (a focused dock eating Esc ahead of an open
-    /// prompt while `get_key_context` said `Prompt`).
-    fn on_key(
-        &self,
-        _ed: &mut Editor,
-        _code: crossterm::event::KeyCode,
-        _modifiers: crossterm::event::KeyModifiers,
-    ) -> Option<AnyhowResult<()>> {
-        None
-    }
-
     /// Layer-targeted keyboard dispatch — THE key walk. After the
-    /// pre-band (event-debug, terminal input, getNextKey capture,
-    /// `on_key` grabs), `Editor::dispatch_layer_keyboard` walks the
+    /// pre-band (event-debug, terminal input, getNextKey capture),
+    /// `Editor::dispatch_layer_keyboard` walks the
     /// owner-stamped `overlay_stack()` top-down, offering the key to
     /// each layer's declaring component through this method — the
     /// keyboard analogue of `dispatch_pointer` walking `hit_stack`
@@ -562,43 +506,6 @@ pub(crate) fn chrome_tree(ed: &Editor) -> Vec<ChromeBox> {
     fresh
 }
 
-/// The rank the shell's background surfaces used to hold in this walk.
-///
-/// The file explorer's box was `z = 100` and the status bar's `z = 40`. Both
-/// are gone: those surfaces are nodes in the shell's tree now and answer their
-/// own pointer. But the tree is offered the pointer *before* this walk and
-/// carries no rank of its own, so a legacy surface that used to outrank them —
-/// the file-open browser at 130, a suggestions popup at 170 — silently stopped
-/// doing so. This constant is where that precedence is said again.
-pub(crate) const SHELL_BACKGROUND_Z: u8 = 100;
-
-/// Does a legacy surface own this cell outright, ahead of the shell's tree?
-///
-/// Only a **placed** box counts. The bands above this rank that cover the
-/// whole frame — `chrome:popup_guard`, `chrome:overlay_prompt_modal`,
-/// `chrome:prompt_suggestions`, the right-click and dismissal guards — are
-/// per-gesture arms that decline for almost everything and are collected on
-/// every frame; treating them as owners would suppress the tree everywhere.
-/// A box that names a rectangle is a surface that is actually *there*.
-pub(crate) fn placed_surface_outranks_shell(
-    tree: &[ChromeBox],
-    frame_w: u16,
-    frame_h: u16,
-    col: u16,
-    row: u16,
-) -> bool {
-    crate::widgets::layout_box::hit_stack(tree, row as u32, col as u32)
-        .into_iter()
-        .any(|i| {
-            let lb = &tree[i].lb;
-            let full_frame = lb.col == 0
-                && lb.row == 0
-                && lb.width >= frame_w as u32
-                && lb.height >= frame_h as u32;
-            lb.z > SHELL_BACKGROUND_Z && !full_frame
-        })
-}
-
 fn chrome_tree_uncached(ed: &Editor) -> Vec<ChromeBox> {
     let frame = ed.active_chrome().last_frame;
     let mut t = ChromeTreeBuilder::new(frame.width as u32, frame.height as u32);
@@ -613,51 +520,8 @@ fn chrome_tree_uncached(ed: &Editor) -> Vec<ChromeBox> {
 mod tests {
     use super::layer_rank::*;
 
-    /// **A modal drawn over a native surface owns its own cells.**
-    ///
-    /// The rule this pins was learnt from the file-open browser: a centered
-    /// dialog whose box sat at `z = 130` over a file explorer whose box was
-    /// `z = 100`, so the walk gave the dialog the cells where they overlap.
-    /// The explorer became a node, the tree runs before this walk with no rank
-    /// of its own, and clicks aimed at the dialog's rows and checkboxes — both
-    /// in its left columns — were answered by the panel underneath instead.
-    ///
-    /// The dialog is a node too now, and with it the last placed box above
-    /// `SHELL_BACKGROUND_Z` is gone: the surfaces still in this walk are the
-    /// split grid's, which sit at 70 and 80, below the band. So the rule has
-    /// no live subject at the moment and is pinned on synthetic boxes — it is
-    /// the precedence any surface that stays behind acquires, and the split
-    /// grid is the one still to come.
-    #[test]
-    fn a_placed_surface_above_the_shells_band_owns_its_cells() {
-        use super::{placed_surface_outranks_shell, ChromeBox};
-        use crate::widgets::LayoutBox;
-        let boxed = |kind, z, col, row, w, h| {
-            let mut lb = LayoutBox::plain(kind, row, col, w, h);
-            lb.z = z;
-            ChromeBox { lb, owner: 0 }
-        };
-        // The dialog as the walk sees it, plus the full-frame per-gesture
-        // bands that ride above it on every single frame.
-        let tree = vec![
-            boxed("a placed dialog", 130, 10, 15, 100, 20),
-            boxed("chrome:overlay_prompt_modal", 160, 0, 0, 120, 40),
-            boxed("chrome:popup_guard", 140, 0, 0, 120, 40),
-        ];
-        assert!(
-            placed_surface_outranks_shell(&tree, 120, 40, 12, 20),
-            "inside the dialog, the dialog owns the cell"
-        );
-        assert!(
-            !placed_surface_outranks_shell(&tree, 120, 40, 2, 5),
-            "outside it, the full-frame bands must not stand in for a surface \
-             — they are collected every frame and would silence the tree \
-             everywhere"
-        );
-    }
-
     /// The rank block is the ONE precedence source for the keyboard
-    /// walk, the mouse capture band, the PTY gate, `get_key_context`,
+    /// walk, the PTY gate, `get_key_context`,
     /// and `popup_blocked_by_higher_modal` — a one-character edit here
     /// changes behavior in five places, so the deliberate relations
     /// are pinned. Each assert names the behavior that regresses if it

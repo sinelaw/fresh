@@ -622,7 +622,6 @@ pub struct Editor {
 
     /// Scroll offset (in rows) for the workspace-trust dialog when it's too
     /// tall for the terminal. Driven by the mouse wheel; clamped in render.
-    workspace_trust_scroll: u16,
 
     /// Should the client detach (keep server running)?
     should_detach: bool,
@@ -1169,15 +1168,6 @@ pub struct Editor {
     /// anchors, the click rail and the web projection — all of which used to
     /// re-run the placement walk instead.
     pub(crate) shell_frame_status_bar: Option<crate::view::shell::status_bar::StatusBar>,
-    /// Whether the shell tree drew the suggestion list this frame.
-    ///
-    /// Only the bottom-anchored prompt's list has moved; the overlay's is
-    /// still `SuggestionsRenderer`'s. The rails that are shared between the
-    /// two ask this to know which of them they are looking at, and it is
-    /// deliberately a fact about *this frame's description* rather than a
-    /// guess reconstructed from prompt state — the description is what
-    /// actually decided.
-    pub(crate) shell_owns_suggestions: bool,
     /// What the pointer is over *in the shell's tree*, as the tree itself
     /// reported it.
     ///
@@ -1219,6 +1209,17 @@ pub struct Editor {
     /// which is the same disjointness the library's own tutorial gets by
     /// keeping `app` and `ui` side by side in `main`.
     pub(crate) shell_ui: Option<fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
+
+    /// The mouse event currently being routed, and whether it was a double.
+    ///
+    /// Set immediately before the tree is offered the pointer, and read only
+    /// by `UiFact::ModalPointer`. A full-screen modal's interior is a painter
+    /// that hit-tests its own recorded rectangles and distinguishes a drag
+    /// from a move — which a tree `Event` deliberately cannot, since the
+    /// library routes drags by pointer capture instead. So the tree decides
+    /// *which surface* the event belongs to and the event itself stays here:
+    /// it is routed, not transported. Retires with those interiors.
+    pub(crate) shell_pointer_event: Option<(crossterm::event::MouseEvent, bool)>,
 
     /// What the split grid needs to know about this frame, and what it
     /// produced. Both travel here rather than through the call because the

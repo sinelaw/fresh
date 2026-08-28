@@ -16,8 +16,9 @@ impl ChromeComponent for ContextMenu {
         // dismissal closes it. The shell is offered the pointer before this
         // walk runs, so neither box has anything left to do.
         //
-        // The keyboard grab (`on_key`) and the layer entry below have not
-        // migrated yet.
+        // The keyboard grab that sat beside them is gone too — the pre-band
+        // stage it belonged to has no members left. The layer entry below is
+        // what answers keys now.
     }
 
     /// The last thing this component does.

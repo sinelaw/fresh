@@ -214,12 +214,13 @@ pub fn popup_key(i: usize) -> Key {
     Key::Pair("popup".into(), i as u64)
 }
 
-/// Each popup as a layer that occupies its rectangle and paints nothing.
+/// Each popup as a layer holding its body.
 ///
-/// The overlay prompt's card taught this the hard way: a layer is in the
-/// overlay band, so anything it draws lands *on top of* the painter that still
-/// owns the surface and erases it. Until the content moves, the layer's whole
-/// job is to have a rectangle the painter can be told about.
+/// The doc here used to say the layer "occupies its rectangle and paints
+/// nothing", which was true for one commit: a layer is in the overlay band, so
+/// while the painter still owned the surface anything the layer drew landed on
+/// top of it and erased it. The painter is gone and the body is the layer's
+/// child, so the layer paints the popup outright.
 pub fn placed_layers(ps: &[Placed]) -> Vec<Node<UiMsg>> {
     ps.iter()
         .enumerate()
@@ -400,7 +401,7 @@ fn description(text: &str) -> Node<UiMsg> {
         // room for by hand; `pad` states it and the wrap follows the width it
         // is given.
         fresh_ui::text(text.to_string())
-            .wrap()
+            .wrap_hanging()
             .theme(pair("ui.help_separator_fg", "ui.popup_bg")),
         row().h(Sizing::Cells(1)),
     ])
@@ -485,7 +486,7 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
         PopupContent::Text(lines) => {
             fresh_ui::viewport(selectable(col().children(lines.iter().map(|l| {
                 fresh_ui::text(l.clone())
-                    .wrap()
+                    .wrap_hanging()
                     .theme(pair("ui.popup_text_fg", "ui.popup_bg"))
             }))))
             .scrollbar()
@@ -494,7 +495,7 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
             col().children(
                 lines
                     .iter()
-                    .map(|l| fresh_ui::text_runs(styled_runs(l)).wrap()),
+                    .map(|l| fresh_ui::text_runs(styled_runs(l)).wrap_hanging()),
             ),
         ))
         .scrollbar(),
