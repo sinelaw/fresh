@@ -78,6 +78,15 @@ pub trait LayoutCx {
         let _ = child;
         (0, 0)
     }
+    /// Who keeps its size when the container runs out of room: higher yields
+    /// last. A container that resolves children against remaining space sizes
+    /// them in descending priority, so "reserve this before spending that" is
+    /// a property of the child rather than arithmetic the caller does first.
+    /// `0` is no preference, and equal priorities keep declaration order.
+    fn priority(&self, child: RenderId) -> u8 {
+        let _ = child;
+        0
+    }
     /// Measure a child. Returns its size, honouring the layout cache.
     fn measure(&mut self, child: RenderId, c: Constraints) -> Size;
     /// Position a child relative to this node's content origin.
@@ -136,6 +145,8 @@ pub struct LayerGeom {
     pub anchor: Anchor,
     pub place: Place,
     pub fit: Fit,
+    /// See [`crate::desc::LayerProps::stretch`].
+    pub stretch: bool,
     pub modality: Modality,
     pub scrim: Option<Scrim>,
     pub dismiss: Dismiss,
@@ -267,6 +278,9 @@ pub(crate) struct RenderNode {
     /// Floors on the resolved extent, from the same chain. `0` is no floor.
     pub min_w: u16,
     pub min_h: u16,
+    /// Who keeps its size when there is not enough room; higher yields last.
+    /// See `Node::priority`.
+    pub priority: u8,
     /// Whether pointer hits stop here, when the description says so. `None`
     /// leaves it to the render object.
     pub pointer: Option<crate::desc::PointerMode>,

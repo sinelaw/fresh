@@ -3,7 +3,7 @@
 
 use fresh_ui::{
     col, distribute, layout_reader, row, text, viewport, Align, BuildCx, Component, ComponentExt,
-    Constraints, Node, Rect, Size, Sizing, Ui,
+    Constraints, Draw, Key, Node, Rect, Size, Sizing, Ui,
 };
 
 const FRAME: Size = Size { w: 80, h: 24 };
@@ -552,4 +552,180 @@ fn a_stale_boundary_is_re_measured_even_when_the_root_is_too() {
         "the boundary painted a stale row: {:?}",
         lines(&ui)
     );
+}
+
+/// **Priority decides who yields, declaration order decides who is placed
+/// where.** The two were the same thing before: a row sizes its children
+/// against the space that is left, in the order they were declared, so the
+/// first-declared won every contest.
+///
+/// The status bar is the case this exists for. Its rule is "reserve the right
+/// side, then spend what is left on the left side" — a precedence, which flex
+/// cannot say, so the editor computed the answer outside layout and passed in
+/// widths (`left_budget`). Here the same rule is two `priority` calls.
+#[test]
+fn a_higher_priority_child_is_sized_before_a_lower_one() {
+    let row_of = |left_priority: u8, right_priority: u8| {
+        row().children([
+            text("a-very-long-left-hand-label")
+                .w(Sizing::Cells(26))
+                .priority(left_priority),
+            text("RIGHT").w(Sizing::Cells(5)).priority(right_priority),
+        ])
+    };
+
+    // Declaration order alone: the left child takes what it asked for and the
+    // right one gets the remainder — three cells of a five-cell ask.
+    let mut plain = ui();
+    plain.frame(row_of(0, 0), Size::new(29, 1));
+    assert_eq!(plain.rect(plain.at(&[0]).unwrap()).w, 26);
+    assert_eq!(
+        plain.rect(plain.at(&[1]).unwrap()).w,
+        3,
+        "the right side yielded"
+    );
+
+    // The same tree, with the right side reserved first. It keeps all five
+    // cells and the left side truncates instead — and it is still drawn on
+    // the right, because placement did not change.
+    let mut reserved = ui();
+    reserved.frame(row_of(0, 1), Size::new(29, 1));
+    let left = reserved.rect(reserved.at(&[0]).unwrap());
+    let right = reserved.rect(reserved.at(&[1]).unwrap());
+    assert_eq!(right.w, 5, "the reserved side keeps its width");
+    assert_eq!(left.w, 24, "the left side spends what is left");
+    assert!(left.x < right.x, "placement is still declaration order");
+}
+
+/// The default costs nothing: with no priority set anywhere, layout is
+/// byte-identical to what it was before the concept existed.
+#[test]
+fn equal_priorities_keep_declaration_order() {
+    let mut ui = ui();
+    ui.frame(
+        row().children([
+            text("aaaa").w(Sizing::Cells(4)).priority(3),
+            text("bbbb").w(Sizing::Cells(4)).priority(3),
+            text("cccc").w(Sizing::Cells(4)).priority(3),
+        ]),
+        Size::new(9, 1),
+    );
+    assert_eq!(ui.rect(ui.at(&[0]).unwrap()).w, 4);
+    assert_eq!(ui.rect(ui.at(&[1]).unwrap()).w, 4);
+    assert_eq!(ui.rect(ui.at(&[2]).unwrap()).w, 1, "the last one yields");
+}
+
+// -- Elide -------------------------------------------------------------------
+
+/// **A run that is given less than it measured at says so.**
+///
+/// Non-wrapping text is clipped by the enclosing box, which loses the fact that
+/// anything was cut. That was survivable while a host truncated its own strings
+/// first — but `priority` moved the decision into layout, so by the time the
+/// width is known the host is no longer in the loop. The mark has to come from
+/// the run.
+#[test]
+fn an_elided_run_marks_the_end_it_cut() {
+    use fresh_ui::Elide;
+    let painted = |e: Elide| {
+        let mut ui: Ui<()> = Ui::new();
+        let spec = ui
+            .frame(
+                row()
+                    .w(Sizing::Cells(6))
+                    .child(text("abcdefghij").elide(e).key(Key::from(1u64))),
+                Size::new(6, 1),
+            )
+            .clone();
+        spec.items
+            .iter()
+            .find(|i| i.key.as_ref() == Some(&Key::from(1u64)))
+            .and_then(|i| match &i.draw {
+                Draw::Lines(l) => l.first().map(|s| s.to_string()),
+                _ => None,
+            })
+            .expect("the run painted")
+    };
+    // The head survives, and the cut is visible at the end.
+    assert_eq!(painted(Elide::Tail), "abcde…");
+    // The tail survives — a path keeps its filename.
+    assert_eq!(painted(Elide::Head), "…fghij");
+    // Unasked for, nothing changes: the box clips, exactly as before.
+    assert_eq!(painted(Elide::None), "abcdefghij");
+}
+
+/// **Cells, not characters.** Counting `char`s puts the mark in the wrong place
+/// for a wide glyph and can cut one in half. Four double-width glyphs in five
+/// cells is two glyphs and the mark.
+#[test]
+fn eliding_counts_cells_and_never_splits_a_glyph() {
+    use fresh_ui::Elide;
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui
+        .frame(
+            row()
+                .w(Sizing::Cells(5))
+                .child(text("漢字漢字").elide(Elide::Tail).key(Key::from(1u64))),
+            Size::new(5, 1),
+        )
+        .clone();
+    let painted = spec
+        .items
+        .iter()
+        .find(|i| i.key.as_ref() == Some(&Key::from(1u64)))
+        .and_then(|i| match &i.draw {
+            Draw::Lines(l) => l.first().map(|s| s.to_string()),
+            _ => None,
+        })
+        .expect("the run painted");
+    assert_eq!(painted, "漢字…");
+}
+
+/// **A layer can be as wide as what it hangs off.**
+///
+/// A dropdown matches its button; a command palette matches the row it sits
+/// above. Neither is expressible any other way: a layer measures against the
+/// whole frame, so `flex` inside it reaches the frame's edge, and a cell count
+/// is the caller measuring the anchor by hand — which is the arithmetic
+/// anchoring exists to remove.
+#[test]
+fn a_stretched_layer_takes_its_anchor_width() {
+    use fresh_ui::{layer, Anchor, Place};
+    let build = |stretch: bool| {
+        let mut ui: Ui<()> = Ui::new();
+        let l = layer()
+            .key(Key::from(9u64))
+            .anchor(Anchor::Node(Key::from(1u64)))
+            .place(Place::Above)
+            .child(col().theme("x").child(text("hi")));
+        let l = if stretch { l.stretch_to_anchor() } else { l };
+        let spec = ui
+            .frame(
+                col().children([
+                    row().h(Sizing::Cells(4)),
+                    row()
+                        .key(Key::from(1u64))
+                        .w(Sizing::Cells(30))
+                        .h(Sizing::Cells(1))
+                        .theme("row")
+                        .child(l),
+                ]),
+                Size::new(60, 10),
+            )
+            .clone();
+        let r = spec
+            .index
+            .iter()
+            .find(|(k, _)| *k == Key::from(9u64))
+            .unwrap()
+            .1
+            .clone();
+        spec.items[r.start].rect
+    };
+    // Left to itself, the layer is the width of its content.
+    assert_eq!(build(false).w, 2, "\"hi\" is two cells");
+    // Stretched, it is the width of the row it is placed above — and still
+    // only as tall as it needs.
+    let s = build(true);
+    assert_eq!((s.w, s.h), (30, 1), "the anchor's width, its own height");
 }

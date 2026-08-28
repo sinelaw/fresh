@@ -322,8 +322,23 @@ impl RenderObject for BoxRender {
         // child is sized and again when it is placed.
         let floors: Vec<u16> = (0..n).map(|i| main_floor(dir, cx.floor(kids[i]))).collect();
 
+        // **Who yields when the room runs out.** Children resolve against the
+        // space that is left, so the order they are *sized* in is the order
+        // they get their ask honoured — which is not the order they are
+        // *placed* in. Descending `priority` separates the two: a status bar
+        // reserves its right-hand side by giving it a higher priority than the
+        // left, and the row still paints left to right.
+        //
+        // Equal priorities keep declaration order (the sort is stable), so a
+        // tree that never sets one lays out exactly as it did before.
+        let order: Vec<usize> = {
+            let mut o: Vec<usize> = (0..n).collect();
+            o.sort_by_key(|&i| std::cmp::Reverse(cx.priority(kids[i])));
+            o
+        };
+
         // Everything that is not flex resolves first; flex divides what is left.
-        for i in 0..n {
+        for i in order {
             let (sw, sh) = cx.sizing(kids[i]);
             let (s_main, s_cross) = match dir {
                 Dir::Row => (sw, sh),
@@ -474,6 +489,103 @@ impl RenderObject for BoxRender {
 
 // -- TextRun -----------------------------------------------------------------
 
+/// The ellipsis. One cell, so the arithmetic below is `width - 1` and not a
+/// second measurement.
+const ELLIPSIS: &str = "…";
+
+/// Cut a row of fragments down to `w` cells, marking the cut.
+///
+/// Done at paint, not at measure, and that is the whole reason this exists:
+/// layout is what decides how many cells a run gets — `priority` and `flex`
+/// both hand a run less than it measured at — so nothing before paint knows
+/// what to cut to.
+///
+/// Widths, not chars: a CJK glyph is two cells and a combining mark is zero, so
+/// counting characters puts the ellipsis in the wrong place and, worse, can cut
+/// a fragment mid-glyph. Fragments are walked whole and only the one straddling
+/// the boundary is split, so a styled run keeps its pieces' colours.
+fn elide_row(row: &[Frag], w: u16, mode: crate::desc::Elide) -> Vec<Frag> {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    let total: usize = row.iter().map(|f| UnicodeWidthStr::width(&*f.text)).sum();
+    if mode == crate::desc::Elide::None || total <= w as usize {
+        return row.to_vec();
+    }
+    if w == 0 {
+        return Vec::new();
+    }
+    // One cell for the mark. At a width of exactly one that is all there is
+    // room for, which is the honest answer: something was here.
+    let budget = w as usize - 1;
+    let mark = |f: Option<&Frag>| Frag {
+        text: Rc::from(ELLIPSIS),
+        theme: f.and_then(|f| f.theme.clone()),
+    };
+
+    // `take` walks a fragment in one direction and returns the piece that fits
+    // in `left` cells, along with what it consumed.
+    let take = |f: &Frag, left: usize, from_end: bool| -> (String, usize) {
+        let mut chars: Vec<char> = f.text.chars().collect();
+        if from_end {
+            chars.reverse();
+        }
+        let (mut used, mut out) = (0usize, String::new());
+        for c in chars {
+            let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+            if used + cw > left {
+                break;
+            }
+            used += cw;
+            out.push(c);
+        }
+        if from_end {
+            out = out.chars().rev().collect();
+        }
+        (out, used)
+    };
+
+    let mut kept: Vec<Frag> = Vec::new();
+    let mut left = budget;
+    match mode {
+        crate::desc::Elide::Tail => {
+            for f in row {
+                if left == 0 {
+                    break;
+                }
+                let (seg, used) = take(f, left, false);
+                left -= used;
+                if !seg.is_empty() {
+                    kept.push(Frag {
+                        text: Rc::from(seg.as_str()),
+                        theme: f.theme.clone(),
+                    });
+                }
+            }
+            let last = kept.last().cloned();
+            kept.push(mark(last.as_ref()));
+        }
+        crate::desc::Elide::Head => {
+            for f in row.iter().rev() {
+                if left == 0 {
+                    break;
+                }
+                let (seg, used) = take(f, left, true);
+                left -= used;
+                if !seg.is_empty() {
+                    kept.push(Frag {
+                        text: Rc::from(seg.as_str()),
+                        theme: f.theme.clone(),
+                    });
+                }
+            }
+            kept.reverse();
+            let first = kept.first().cloned();
+            kept.insert(0, mark(first.as_ref()));
+        }
+        crate::desc::Elide::None => unreachable!(),
+    }
+    kept
+}
+
 pub struct TextRender {
     pub props: TextProps,
     /// The wrapped rows, computed at measure time and reused by paint so the
@@ -512,29 +624,45 @@ impl RenderObject for TextRender {
     }
 
     fn paint(&self, g: Geom, out: &mut DrawList) {
+        // What was actually given, cut to fit. Wrapped text has no overflow to
+        // mark, and `Elide::None` is the whole of today's behaviour, so both
+        // pass straight through.
+        let elided: Vec<Vec<Frag>>;
+        let rows: &[Vec<Frag>] = if self.props.wrap || self.props.elide == crate::desc::Elide::None
+        {
+            &self.rows
+        } else {
+            elided = self
+                .rows
+                .iter()
+                .map(|r| elide_row(r, g.rect.w, self.props.elide))
+                .collect();
+            &elided
+        };
+
         // An unstyled run is one item, exactly as before. A styled one emits an
         // item per fragment, each carrying its own theme — so the display list
         // keeps its one-theme-per-item contract and no backend has to learn
         // about spans. `LayoutSpec::index` already maps a key to a *range* of
         // items, so several items for one node is the existing model.
-        if self
-            .rows
-            .iter()
-            .all(|r| r.iter().all(|f| f.theme.is_none()))
-        {
-            let lines: Vec<Rc<str>> = self
-                .rows
+        if rows.iter().all(|r| r.iter().all(|f| f.theme.is_none())) {
+            let lines: Vec<Rc<str>> = rows
                 .iter()
                 .map(|r| {
-                    r.first()
-                        .map(|f| f.text.clone())
-                        .unwrap_or_else(|| Rc::from(""))
+                    // An elided row is more than one fragment even unstyled —
+                    // the content and the mark — so this joins rather than
+                    // taking the first.
+                    match r.len() {
+                        0 => Rc::from(""),
+                        1 => r[0].text.clone(),
+                        _ => Rc::from(r.iter().map(|f| &*f.text).collect::<String>().as_str()),
+                    }
                 })
                 .collect();
             out.push(Draw::Lines(lines), g);
         } else {
             use unicode_width::UnicodeWidthStr;
-            for (i, row) in self.rows.iter().enumerate() {
+            for (i, row) in rows.iter().enumerate() {
                 let mut x = g.rect.x;
                 for frag in row {
                     let w = UnicodeWidthStr::width(&*frag.text) as u16;
@@ -835,6 +963,7 @@ impl LayerRender {
                 anchor: p.anchor.clone(),
                 place: p.place,
                 fit: p.fit,
+                stretch: p.stretch,
                 modality: p.modality,
                 scrim: p.scrim,
                 dismiss: p.dismiss,

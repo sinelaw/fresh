@@ -30,6 +30,7 @@ pub(crate) struct Carry {
     h: Sizing,
     min_w: u16,
     min_h: u16,
+    priority: u8,
     pointer: Option<crate::desc::PointerMode>,
     theme: Option<Rc<str>>,
     key: Option<crate::key::Key>,
@@ -65,6 +66,10 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
     fn floor(&self, child: RenderId) -> (u16, u16) {
         let n = &self.ui.render[child];
         (n.min_w, n.min_h)
+    }
+
+    fn priority(&self, child: RenderId) -> u8 {
+        self.ui.render[child].priority
     }
 
     fn measure(&mut self, child: RenderId, c: Constraints) -> Size {
@@ -309,6 +314,7 @@ impl<M: 'static> Ui<M> {
         // the wrapper it handed over.
         let min_w = carry.min_w.max(el.desc.min_w);
         let min_h = carry.min_h.max(el.desc.min_h);
+        let priority = carry.priority.max(el.desc.priority);
         let pointer = carry.pointer.or(el.desc.pointer);
         let theme = el
             .desc
@@ -343,6 +349,7 @@ impl<M: 'static> Ui<M> {
                     n.h = h;
                     n.min_w = min_w;
                     n.min_h = min_h;
+                    n.priority = priority;
                     n.pointer = pointer;
                     n.theme = theme;
                     n.key = key;
@@ -390,6 +397,7 @@ impl<M: 'static> Ui<M> {
                             h,
                             min_w,
                             min_h,
+                            priority,
                             pointer,
                             theme: theme.clone(),
                             key: key.clone(),
@@ -791,6 +799,16 @@ impl<M: 'static> Ui<M> {
             };
             let c = if props.place == Place::Fill {
                 Constraints::tight(anchor.size())
+            } else if props.stretch {
+                // Free axis pinned to the anchor, the other still free. What
+                // makes a dropdown the width of its button without the caller
+                // measuring the button.
+                let a = anchor.size();
+                match props.place {
+                    Place::Above | Place::Below => Constraints::new(a.w, a.w, 0, frame.h),
+                    Place::LeftOf | Place::RightOf => Constraints::new(0, frame.w, a.h, a.h),
+                    Place::Over | Place::Fill => Constraints::loose(frame),
+                }
             } else {
                 Constraints::loose(frame)
             };

@@ -65,6 +65,9 @@ pub struct Node<M> {
     /// usually means "take what is left, but never less than this".
     pub min_w: u16,
     pub min_h: u16,
+    /// Who keeps its size when there is not enough room; higher yields last.
+    /// See [`Node::priority`]. `0` for everything that does not say.
+    pub priority: u8,
     /// Whether pointer hits stop at this node. `None` leaves it to the render
     /// object, which is [`PointerMode::Opaque`] for everything that has one.
     ///
@@ -195,6 +198,28 @@ pub struct BoxProps {
     pub clip: bool,
 }
 
+/// How a run gives up cells it was not given.
+///
+/// Non-wrapping text measures at its natural width and is clipped to whatever
+/// the parent allowed, which loses the fact that anything was cut. That was
+/// tolerable while a host truncated its own strings first — but a host cannot,
+/// once [`Node::priority`] lets layout decide a column's width: the width is
+/// not known until measurement is over. So the run says how it yields, and the
+/// end that survives is part of what it says.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Elide {
+    /// Clip, silently. The default, and right for text whose overflow the
+    /// enclosing box already explains.
+    #[default]
+    None,
+    /// Keep the head, mark the cut at the end: a command name, a label, a
+    /// message.
+    Tail,
+    /// Keep the tail, mark the cut at the start: a file path, whose filename
+    /// is the part worth seeing.
+    Head,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct TextProps {
     /// The run's content, in pieces. One piece for ordinary text; several when
@@ -206,6 +231,9 @@ pub struct TextProps {
     /// which wrap and truncate independently.
     pub runs: Rc<[Run]>,
     pub wrap: bool,
+    /// Which end survives when the run is given less than it measured at.
+    /// Ignored when `wrap` is set: wrapped text has no overflow to mark.
+    pub elide: Elide,
     /// Where the text cursor sits within this run, in columns. Set by whatever
     /// is being edited; the library places it and the backend shows it.
     pub cursor: Option<u16>,
@@ -460,6 +488,19 @@ pub struct LayerProps<M> {
     pub anchor: Anchor,
     pub place: Place,
     pub fit: Fit,
+    /// Take the anchor's extent on the axis the placement does not use.
+    ///
+    /// A dropdown is as wide as the button it hangs off; a command palette is
+    /// as wide as the row it sits above. Both are a relationship to the anchor
+    /// rather than a number, and neither is expressible otherwise: a layer
+    /// measures against the whole frame, so `flex` or `Sizing::Grow` inside it
+    /// reach the frame's edge and a cell count is the caller measuring the
+    /// anchor itself — which is the arithmetic anchoring exists to remove.
+    ///
+    /// `Place::Fill` is the all-axes form of this and ignores it. `Above` and
+    /// `Below` take the anchor's width; `LeftOf` and `RightOf` its height;
+    /// `Over` has no free axis and is unaffected.
+    pub stretch: bool,
     pub modality: Modality,
     pub scrim: Option<Scrim>,
     pub dismiss: Dismiss,
@@ -474,6 +515,7 @@ impl<M> Default for LayerProps<M> {
             anchor: Anchor::default(),
             place: Place::default(),
             fit: Fit::default(),
+            stretch: false,
             modality: Modality::default(),
             scrim: None,
             dismiss: Dismiss::default(),
@@ -488,6 +530,7 @@ impl<M> Clone for LayerProps<M> {
             anchor: self.anchor.clone(),
             place: self.place,
             fit: self.fit,
+            stretch: self.stretch,
             modality: self.modality,
             scrim: self.scrim,
             dismiss: self.dismiss,
@@ -500,7 +543,10 @@ impl<M> LayerProps<M> {
     /// Whether two layer descriptions place their content differently. Only
     /// these fields matter to layout; the handler does not.
     pub fn geom_eq(&self, o: &Self) -> bool {
-        self.anchor == o.anchor && self.place == o.place && self.fit == o.fit
+        self.anchor == o.anchor
+            && self.place == o.place
+            && self.fit == o.fit
+            && self.stretch == o.stretch
     }
 }
 
@@ -584,6 +630,7 @@ impl<M> Clone for Node<M> {
             h: self.h,
             min_w: self.min_w,
             min_h: self.min_h,
+            priority: self.priority,
             pointer: self.pointer,
             theme: self.theme.clone(),
             anchor: self.anchor.clone(),
@@ -688,6 +735,7 @@ impl<M> Node<M> {
             w: Sizing::Auto,
             h: Sizing::Auto,
             min_w: 0,
+            priority: 0,
             min_h: 0,
             pointer: None,
             theme: None,
@@ -704,6 +752,7 @@ impl<M> Node<M> {
             w: Sizing::Cells(0),
             h: Sizing::Cells(0),
             min_w: 0,
+            priority: 0,
             min_h: 0,
             pointer: None,
             theme: None,
@@ -759,6 +808,7 @@ pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
     Node::new(Desc::TextRun(TextProps {
         runs: Rc::from(vec![Run::plain(s)]),
         wrap: false,
+        elide: Elide::None,
         cursor: None,
     }))
 }
@@ -778,6 +828,7 @@ pub fn text_runs<M>(runs: impl IntoIterator<Item = Run>) -> Node<M> {
     Node::new(Desc::TextRun(TextProps {
         runs: Rc::from(runs.into_iter().collect::<Vec<_>>()),
         wrap: false,
+        elide: Elide::None,
         cursor: None,
     }))
 }
@@ -957,6 +1008,27 @@ impl<M> Node<M> {
         self
     }
 
+    /// Who keeps its size when there is not enough room: **higher yields last.**
+    ///
+    /// A row resolves its non-flex children against the space that is left, in
+    /// declaration order, so the first-declared child gets its full ask and the
+    /// last one gets the remainder. That is *placement*, and placement is not
+    /// precedence — there was no way to say "size the right-hand side first,
+    /// and let the left take what remains" without doing the arithmetic outside
+    /// layout and passing in the answer.
+    ///
+    /// Two surfaces had already done exactly that (the status bar's reserved
+    /// right side, the suggestion row's four columns, where the name is sized
+    /// before the description absorbs the squeeze), which is what says this is
+    /// a missing concept rather than two special cases.
+    ///
+    /// Default `0`. Equal priorities keep declaration order, so a tree that
+    /// never sets this lays out exactly as before.
+    pub fn priority(mut self, p: u8) -> Self {
+        self.priority = p;
+        self
+    }
+
     /// Never shorter than this.
     pub fn min_h(mut self, cells: u16) -> Self {
         self.min_h = cells;
@@ -1016,6 +1088,16 @@ impl<M> Node<M> {
         match &mut self.desc {
             Desc::TextRun(p) => p.cursor = Some(col),
             _ => panic!("cursor_at() applies to TextRun nodes only"),
+        }
+        self
+    }
+
+    /// Which end of this run survives a width it did not ask for.
+    ///
+    /// See [`Elide`]. A no-op on anything but a text run, and on a wrapped one.
+    pub fn elide(mut self, e: Elide) -> Self {
+        if let Desc::TextRun(t) = &mut self.desc {
+            t.elide = e;
         }
         self
     }
@@ -1169,6 +1251,13 @@ impl<M> Node<M> {
             Desc::Layer(p) => p,
             _ => panic!("layer properties apply to Layer nodes only"),
         }
+    }
+
+    /// Match the anchor on the axis the placement leaves free. See
+    /// [`LayerProps::stretch`].
+    pub fn stretch_to_anchor(mut self) -> Self {
+        self.layer_props().stretch = true;
+        self
     }
 
     pub fn anchor(mut self, a: Anchor) -> Self {
