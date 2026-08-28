@@ -750,3 +750,61 @@ fn a_bound_keeps_a_press_from_reaching_what_was_clipped_away() {
         "the name's cells are not the slot's"
     );
 }
+
+/// **The thumb's top lands on the row pressed.**
+///
+/// Its travel is the part of the track it can reach — `track - len`, not the
+/// whole track — and dividing by the track instead leaves the thumb short of
+/// the row by up to `len` cells and the last row of the track unable to reach
+/// the end of the content. A one-cell thumb hides the bug (`track - 1` and
+/// `track - len` agree there), so this uses a window big enough for a thumb
+/// several rows tall.
+#[test]
+fn pressing_a_track_row_puts_the_thumb_on_that_row() {
+    let mut ui: Ui<()> = Ui::new();
+    // Twice the window's height of content: the thumb is half the track.
+    let rows: Vec<Node<()>> = (0..(FRAME.h as usize * 2))
+        .map(|i| text(format!("row {i}")))
+        .collect();
+    ui.frame(viewport(col().children(rows)).scrollbar(), FRAME);
+
+    let thumb = |ui: &Ui<()>| -> (u16, u16) {
+        let bar = ui
+            .spec()
+            .items
+            .iter()
+            .find_map(|i| match i.draw {
+                fresh_ui::Draw::Scrollbar {
+                    offset, content, ..
+                } => Some((offset, content, i.rect.h)),
+                _ => None,
+            })
+            .expect("an overflowing viewport shows a bar");
+        fresh_ui::Draw::scrollbar_thumb(bar.0, bar.1, bar.2)
+    };
+
+    let (_, len) = thumb(&ui);
+    assert!(
+        len > 1,
+        "the thumb must be taller than one cell to be a test"
+    );
+    let gutter = FRAME.w as i32 - 1;
+    for target in 0..=(FRAME.h - len) {
+        ui.dispatch(Input::press(
+            Point::new(gutter, target as i32),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        ui.dispatch(Input::release(
+            Point::new(gutter, target as i32),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        ui.tick();
+        assert_eq!(
+            thumb(&ui).0,
+            target,
+            "pressing track row {target} must put the thumb there"
+        );
+    }
+}

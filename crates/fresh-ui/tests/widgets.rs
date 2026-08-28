@@ -640,3 +640,125 @@ fn a_run_longer_than_its_item_is_clipped_to_it() {
         "four columns were given, four were painted"
     );
 }
+
+/// **A stable gutter is there whether the bar is or not.**
+///
+/// Without it the column appears with the bar and goes with it, so a list that
+/// grows past its window reflows its content by a cell — and a window whose
+/// gutter is part of the frame around it gets the bar drawn *beside* that
+/// frame instead of on it, because the column the bar wants is one the frame
+/// already owns.
+#[test]
+fn a_stable_gutter_reserves_its_column_with_no_bar_to_put_in_it() {
+    let list = |n: usize| -> Node<Msg> {
+        List::windowed(n, fresh_ui::Key::from, |i| {
+            fresh_ui::col()
+                .theme("list.row")
+                .child(fresh_ui::text(format!("row {i}")))
+        })
+        .scrollbar_gutter()
+        .node()
+    };
+    let frame = Size::new(20, 5);
+
+    // Short enough to fit: no bar is drawn.
+    let mut short: Ui<Msg> = Ui::new();
+    short.frame(list(3), frame);
+    assert!(
+        !short
+            .spec()
+            .items
+            .iter()
+            .any(|i| matches!(i.draw, Draw::Scrollbar { .. })),
+        "a list that fits draws no bar"
+    );
+
+    // Long enough to overflow: a bar appears in the last column.
+    let mut long: Ui<Msg> = Ui::new();
+    long.frame(list(500), frame);
+    let bar = long
+        .spec()
+        .items
+        .iter()
+        .find(|i| matches!(i.draw, Draw::Scrollbar { .. }))
+        .expect("an overflowing list shows a bar");
+    assert_eq!(bar.rect.x, frame.w as i32 - 1);
+
+    // And the rows are the same width either way: the gutter did not move.
+    let row_width = |ui: &Ui<Msg>| {
+        ui.spec()
+            .items
+            .iter()
+            .filter(|i| matches!(i.draw, Draw::Fill))
+            .map(|i| i.rect.w)
+            .max()
+            .expect("rows paint their ground")
+    };
+    assert_eq!(
+        row_width(&short),
+        row_width(&long),
+        "content must not reflow when the bar appears"
+    );
+    assert_eq!(row_width(&short), frame.w - 1, "the gutter is not content");
+}
+
+/// **The bar's appearance is named apart from the window's.**
+///
+/// `theme` tags a node *and its descendants*, and a region that names its
+/// appearance is a region that paints — so a window that named its bar that
+/// way would also fill itself in the bar's colours behind every row.
+#[test]
+fn a_bar_carries_its_own_theme_and_the_rows_keep_theirs() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(500, fresh_ui::Key::from, |i| {
+            fresh_ui::col()
+                .theme("list.row")
+                .child(fresh_ui::text(format!("row {i}")))
+        })
+        .scrollbar()
+        .scrollbar_theme("bar.thumb/bar.track")
+        .node(),
+        Size::new(20, 5),
+    );
+    let bar = ui
+        .spec()
+        .items
+        .iter()
+        .find(|i| matches!(i.draw, Draw::Scrollbar { .. }))
+        .expect("an overflowing list shows a bar");
+    assert_eq!(bar.theme.as_str(), "bar.thumb/bar.track");
+    assert!(
+        ui.spec()
+            .items
+            .iter()
+            .filter(|i| !matches!(i.draw, Draw::Scrollbar { .. }))
+            .all(|i| !i.theme.as_str().starts_with("bar.")),
+        "the bar's name reaches nothing but the bar"
+    );
+}
+
+/// **Declining the focus ring is about the keyboard, not about being inert.**
+///
+/// A list driven from outside — its selection set by the caller each frame —
+/// should not be a stop on the way round, or Tab lands on a widget that has
+/// nothing to do with the key. Its rows still answer the mouse.
+#[test]
+fn a_list_that_declines_focus_still_answers_a_click() {
+    let mut ui: Ui<Msg> = Ui::new();
+    ui.frame(
+        List::windowed(10, fresh_ui::Key::from, |i| {
+            fresh_ui::col().child(fresh_ui::text(format!("row {i}")))
+        })
+        .focusable(false)
+        .on_select(Msg::Selected)
+        .node(),
+        FRAME,
+    );
+    assert_eq!(click(&mut ui, 2, 3), vec![Msg::Selected(3)]);
+
+    // Tab does not stop here: with nothing focusable in the frame, the key is
+    // left for whoever else is listening.
+    let tab = ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    assert!(tab.claimed == false && tab.msgs.is_empty());
+}

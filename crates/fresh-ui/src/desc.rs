@@ -301,6 +301,10 @@ pub struct ViewportProps {
     pub max_h: Option<u16>,
     /// Emit a scrollbar item when the content exceeds the window.
     pub scrollbar: bool,
+    /// Keep the bar's gutter reserved even when no bar is drawn.
+    pub stable_gutter: bool,
+    /// Appearance of the bar itself, named apart from the window's.
+    pub bar_theme: Option<Rc<str>>,
     pub mode: ScrollMode,
 }
 
@@ -957,6 +961,45 @@ impl<M> Node<M> {
         match &mut self.desc {
             Desc::Viewport(p) => p.scrollbar = true,
             _ => panic!("scrollbar() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Keep the bar's column whether or not the bar is there.
+    ///
+    /// By default the gutter appears with the bar and goes with it, so a list
+    /// that grows past its window reflows its content by a cell. Two things
+    /// want the column reserved regardless: content that must not move when a
+    /// row is added, and a window whose gutter is part of the frame around it
+    /// — there the frame keeps drawing in the column when the bar does not,
+    /// and a gutter that came and went would leave the bar beside the frame
+    /// rather than on it. CSS spells the same thing `scrollbar-gutter:
+    /// stable`.
+    ///
+    /// Implies [`scrollbar`](Node::scrollbar): a gutter is the bar's column,
+    /// so asking for one asks for the bar.
+    pub fn scrollbar_gutter(mut self) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => {
+                p.scrollbar = true;
+                p.stable_gutter = true;
+            }
+            _ => panic!("scrollbar_gutter() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Name the bar's appearance, apart from the window's.
+    ///
+    /// [`theme`](Node::theme) tags a node *and its descendants*, so a window
+    /// that named its bar that way would name its content too — and, because a
+    /// region that names its appearance is a region that paints, would fill
+    /// itself in the bar's colours behind everything in it. The bar is one
+    /// item among the window's; this names that item and nothing else.
+    pub fn scrollbar_theme(mut self, name: impl AsRef<str>) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.bar_theme = Some(Rc::from(name.as_ref())),
+            _ => panic!("scrollbar_theme() applies to Viewport nodes only"),
         }
         self
     }

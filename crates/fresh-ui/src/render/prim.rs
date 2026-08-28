@@ -782,8 +782,13 @@ impl RenderObject for ViewportRender {
                 own = c.constrain(Size::new(content.w.max(c.min_w), content.h));
                 // A vertical scrollbar takes a one-column gutter when the
                 // content is taller than the window; re-measure the content in
-                // the narrower area so it is not painted over the bar.
-                let gutter = u16::from(self.props.scrollbar && content.h > own.h);
+                // the narrower area so it is not painted over the bar. A
+                // stable gutter keeps the column whether the bar is drawn or
+                // not, so the content does not reflow when the list crosses
+                // the length that makes it overflow.
+                let gutter = u16::from(
+                    self.props.scrollbar && (self.props.stable_gutter || content.h > own.h),
+                );
                 if gutter > 0 {
                     let inner_w = own.w.saturating_sub(gutter);
                     let narrow = if c.min_w == c.max_w {
@@ -833,8 +838,9 @@ impl RenderObject for ViewportRender {
                 // When the content overflows and a scrollbar is asked for, the
                 // last column is a gutter the scrollbar owns: content laid out
                 // over it would paint the bar away, since a node's own paint is
-                // under its children.
-                let gutter = u16::from(self.props.scrollbar && n > rows);
+                // under its children. A stable gutter reserves it either way.
+                let gutter =
+                    u16::from(self.props.scrollbar && (self.props.stable_gutter || n > rows));
                 let inner_w = own.w.saturating_sub(gutter);
                 self.window = Rect::new(0, scroll.y, inner_w, own.h);
                 cx.set_scroll(ScrollInfo {
@@ -869,15 +875,16 @@ impl RenderObject for ViewportRender {
         if content <= g.rect.h as u32 {
             return;
         }
-        out.push_at(
-            Draw::Scrollbar {
-                offset,
-                content,
-                window: g.rect.h,
-            },
-            Rect::new(g.rect.right() - 1, g.rect.y, 1, g.rect.h),
-            g.clip,
-        );
+        let bar = Draw::Scrollbar {
+            offset,
+            content,
+            window: g.rect.h,
+        };
+        let rect = Rect::new(g.rect.right() - 1, g.rect.y, 1, g.rect.h);
+        match &self.props.bar_theme {
+            Some(t) => out.push_themed(bar, rect, g.clip, crate::ThemeKey(Some(t.clone()))),
+            None => out.push_at(bar, rect, g.clip),
+        }
     }
 
     fn relayout_boundary(&self) -> bool {

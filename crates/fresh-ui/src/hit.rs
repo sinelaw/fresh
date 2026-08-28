@@ -624,15 +624,43 @@ impl<M: 'static> Ui<M> {
     }
 
     /// Map a pointer row on the scrollbar track to a scroll offset and apply it.
-    /// The top of the window follows the pointer across the track's travel.
+    ///
+    /// **The thumb's top lands on the row pointed at.** Its travel is the part
+    /// of the track it can reach — `track - len`, not the whole track — and
+    /// dividing by the track instead leaves the thumb short of the row by
+    /// `len` cells at the bottom and the last row of the track unable to reach
+    /// the end of the content. So the same `len` [`Draw::scrollbar_thumb`]
+    /// paints with is what this divides by; press and drag both come here, so
+    /// they agree by construction.
     fn scroll_to_pointer(&mut self, r: RenderId, y: i32) {
         let (rect, max) = {
             let Some(n) = self.render.get(r) else { return };
             (n.data.rect, n.data.scroll_max.y)
         };
-        let travel = (rect.h.max(1) as i32 - 1).max(1);
-        let rel = (y - rect.y).clamp(0, travel);
-        let off = (rel * max) / travel;
+        use crate::render::spec::Draw;
+        let track = rect.h.max(1);
+        let content = max.max(0) as u32 + track as u32;
+        let top_of = |off: i32| Draw::scrollbar_thumb(off.max(0) as u32, content, track).0 as i32;
+        let (_, len) = Draw::scrollbar_thumb(0, content, track);
+        let travel = (track as i32 - len as i32).max(0);
+        let off = if travel == 0 || max <= 0 {
+            0
+        } else {
+            let rel = (y - rect.y).clamp(0, travel);
+            // `scrollbar_thumb` *floors* offset -> row, so dividing back the
+            // same way lands the thumb a row above the one pointed at whenever
+            // the quotient has a fraction. Take the smallest offset that
+            // reaches the row instead, and keep the one below it as a
+            // candidate: with fewer scroll positions than track rows not every
+            // row is reachable, and there the nearer of the two wins.
+            let hi = ((rel * max + travel - 1) / travel).min(max);
+            let lo = (hi - 1).max(0);
+            if (top_of(lo) - rel).abs() < (top_of(hi) - rel).abs() {
+                lo
+            } else {
+                hi
+            }
+        };
         if let Some(n) = self.render.get_mut(r) {
             n.data.scroll.y = off.clamp(0, max);
         }
