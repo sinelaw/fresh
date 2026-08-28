@@ -182,9 +182,6 @@ pub(crate) struct ChromeLayout {
     pub settings_layout: Option<crate::view::settings::SettingsLayout>,
     /// Workspace-trust dialog click layout (radios + OK/Quit) for hit testing.
     pub workspace_trust_dialog: Option<crate::view::workspace_trust_dialog::TrustDialogLayout>,
-    /// Status-bar hit-test layout (area, clickable segments, plugin token
-    /// areas, semantic segment model). See [`StatusBarChrome`].
-    pub status_bar: StatusBarChrome,
     /// Dimensions of the last rendered frame. See [`FrameDimensions`].
     pub last_frame: FrameDimensions,
     /// Per-cell theme key provenance recorded during rendering.
@@ -200,22 +197,6 @@ pub(crate) struct ChromeLayout {
 pub(crate) struct FrameDimensions {
     pub width: u16,
     pub height: u16,
-}
-
-/// The status bar's semantic PAINT capture — what the renderer drew last
-/// frame, kept for `status_view` so the web mirrors the painted frame
-/// natively instead of scraping cells. This is paint OUTPUT, not event
-/// geometry: hit-testing, hover, and popup anchoring derive the segment
-/// rects from live state via `Editor::status_bar_layout_now` (the
-/// formerly-cached `clickable` / `plugin_token_areas` fields are retired).
-#[derive(Debug, Clone, Default)]
-pub(crate) struct StatusBarChrome {
-    /// Status bar area (row, x, width) as painted.
-    pub area: Option<(u16, u16, u16)>,
-    /// Semantic status-bar model (rendered elements + text + positions), captured
-    /// by the renderer so `status_view` derives the web status bar directly
-    /// instead of scraping the drawn cells.
-    pub segments: Vec<crate::view::ui::status_bar::StatusSegmentInfo>,
 }
 
 impl ChromeLayout {

@@ -806,16 +806,6 @@ await page.screenshot({ path: `${SHOTS}/33-openfile-prompt.png` });
 for (let i = 0; i < 4; i++) { await page.keyboard.press('Backspace'); }
 await page.waitForTimeout(300);
 const b1 = await fb();
-// Geometry the click arithmetic depends on, printed so a failure below can be
-// read without a second run: the browser's own list rect and the spans the
-// editor reported, next to the explorer rect the shell's tree now hit-tests
-// first. A shell surface that overlaps a modal is the shape to look for.
-console.log('  [dbg] listRect=' + JSON.stringify(b1.listRect) +
-  ' rows0..2=' + JSON.stringify(b1.rows.slice(0, 3).map(r => ({ n: r.name, row: r.row, i: r.index }))) +
-  ' toggles=' + JSON.stringify(b1.toggles.map(t => ({ n: t.name, x: t.x, y: t.y, w: t.w }))) +
-  ' columns=' + JSON.stringify(b1.columns.map(c => ({ n: c.name, x: c.x, y: c.y, w: c.w }))) +
-  ' selected=' + b1.selected +
-  ' explorer=' + JSON.stringify(((await scene(page)).regions.fileExplorer || {}).rect || null));
 const dirIdx = b1.rows.findIndex(r => r.isDir && r.name !== '..');
 if (dirIdx >= 0) {
   const clickCell = { col: b1.listRect.x + 1, row: b1.rows[dirIdx].row };

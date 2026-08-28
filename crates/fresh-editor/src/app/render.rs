@@ -276,7 +276,7 @@ impl Editor {
         // the standing proof, and it keeps both derivations honest now that
         // only one of them runs here.
         // See docs/internal/fresh-editor-ui-migration.md (S1).
-        let shell = self.shell_frame(size, (dock_area, chrome_area));
+        let shell = self.shell_frame((dock_area, chrome_area));
         // The shell's tree is retained across frames — element state, focus and
         // the dirty set live on it — so it is moved out for the duration of the
         // frame rather than borrowed from `self`. See `Editor::shell_ui`.
@@ -2316,14 +2316,17 @@ impl Editor {
     /// bar's inputs are gathered by [`Self::with_status_bar_ctx`], shared
     /// with the event-time layout derivation
     /// ([`Self::status_bar_layout_now`]).
-    /// Publish what the status bar painted — its region, its semantic
-    /// segments, and its theme-key provenance — all read off the laid-out
-    /// tree.
+    /// Record the status bar's theme-key provenance for the inspector.
     ///
-    /// It no longer paints. `StatusBarRenderer::render_status_bar` placed and
-    /// drew every element and recorded provenance in one walk; the tree does
-    /// the placing and the fold does the drawing, so what is left is telling
-    /// the rest of the editor where things ended up.
+    /// `StatusBarRenderer::render_status_bar` placed every element, drew it,
+    /// and recorded provenance in one walk. The tree places, the fold draws,
+    /// and this is the only part left — the same shape as
+    /// [`Self::apply_menu_theme_runs`].
+    ///
+    /// It used to publish a `StatusBarChrome` capture beside the runs, so the
+    /// web `Scene` could read the segments back. The `Scene` asks the tree
+    /// directly now ([`Self::shell_status_segments`]), which is why the
+    /// early-return below no longer has a capture to clear.
     fn publish_status_bar(
         &mut self,
         area: ratatui::layout::Rect,
@@ -2332,11 +2335,7 @@ impl Editor {
     ) {
         if !(self.active_window().status_bar_visible && !has_suggestions && !has_file_browser) {
             // No bar this frame — the user hid it, or a suggestions / file-
-            // browser popup took the row. Drop last frame's capture instead of
-            // leaving it to go stale: `status_view` would keep projecting a
-            // status bar the web then draws under its prompt row (the TUI's
-            // ghost-text bug).
-            self.active_chrome_mut().status_bar = Default::default();
+            // browser popup took the row. Nothing to record.
             return;
         }
         // The retained tree and a fresh one must still lay the frame out
@@ -2358,12 +2357,11 @@ impl Editor {
             let f = self.active_chrome().last_frame;
             ratatui::layout::Rect::new(0, 0, f.width, f.height)
         };
-        let (segments, runs) = {
+        let runs = {
             let Some(ui) = self.shell_ui.as_ref() else {
                 return;
             };
-            let segments = crate::view::shell::status_bar::segments(ui, &bar, frame_rect);
-            let runs = crate::view::shell::status_bar::provenance_runs(ui, &bar, frame_rect, area)
+            crate::view::shell::status_bar::provenance_runs(ui, &bar, frame_rect, area)
                 .into_iter()
                 .map(|(x, y, w, fg, bg)| crate::app::types::ThemeRun {
                     x,
@@ -2380,13 +2378,9 @@ impl Editor {
                         .and_then(crate::view::theme::Theme::static_theme_key),
                     region: "Status Bar",
                 })
-                .collect::<Vec<_>>();
-            (segments, runs)
+                .collect::<Vec<_>>()
         };
         self.active_chrome_mut().apply_theme_runs(&runs);
-        let status_bar = &mut self.active_chrome_mut().status_bar;
-        status_bar.area = Some((area.y, area.x, area.width));
-        status_bar.segments = segments;
     }
 
     /// Gather every status-bar input from live editor state and run `f`
@@ -2654,13 +2648,17 @@ impl Editor {
     /// condition this migration exists to remove.
     /// `split` is the frame's dock/chrome division, computed once by the
     /// caller. It is passed rather than recomputed because `render` has
-    /// already run `compute_dock_split` for this same `size` — and because a
-    /// frame whose geometry came from one split while the paint used another
-    /// is the class of bug this migration exists to remove, even when the
-    /// function is pure and the two agree today.
+    /// already run `compute_dock_split` for this frame — and because a frame
+    /// whose geometry came from one split while the paint used another is the
+    /// class of bug this migration exists to remove, even when the function is
+    /// pure and the two agree today.
+    ///
+    /// The frame size itself is not a parameter: `split` already carries every
+    /// rectangle this reads, so taking the size as well would be a second way
+    /// to say the same thing — and the two could then disagree, which is the
+    /// bug above wearing a different hat.
     pub(crate) fn shell_frame(
         &mut self,
-        size: ratatui::layout::Rect,
         split: (Option<ratatui::layout::Rect>, ratatui::layout::Rect),
     ) -> crate::view::shell::frame::Frame {
         let BottomRowFlags {
@@ -2795,6 +2793,28 @@ impl Editor {
         crate::view::shell::context_menu::menu_rect(self.shell_ui.as_ref()?.spec())
     }
 
+    /// The status bar's segments, read off the retained tree.
+    ///
+    /// The third of the same family as [`Self::shell_region_now`] and
+    /// [`Self::shell_menu_rect`]: layout placed these, and this reads the
+    /// answer back. It replaced a `StatusBarChrome` capture that `render`
+    /// filled from this very walk and the web `Scene` read back a moment
+    /// later — a second copy of an answer the tree already held, which had to
+    /// be cleared by hand on the frames where the bar is hidden (a suggestions
+    /// or file-browser popup owns the row) or the web kept drawing a bar the
+    /// TUI no longer had.
+    pub(crate) fn shell_status_segments(
+        &self,
+    ) -> Vec<crate::view::ui::status_bar::StatusSegmentInfo> {
+        let (Some(ui), Some(bar)) = (self.shell_ui.as_ref(), self.shell_frame_status_bar.as_ref())
+        else {
+            return Vec::new();
+        };
+        let f = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect::new(0, 0, f.width, f.height);
+        crate::view::shell::status_bar::segments(ui, bar, size)
+    }
+
     /// The status bar's screen area THIS instant, derived from live state:
     /// the same visibility conditions and vertical frame split `render`
     /// uses ([`Self::shell_frame`]; asserted against the paint pass in
@@ -2813,16 +2833,6 @@ impl Editor {
             return None;
         }
         Some(self.shell_region_now(crate::view::shell::frame::HostRegion::StatusBar))
-    }
-
-    /// The menu bar's screen area THIS instant (row 0 of the chrome
-    /// column). `None` when the menu bar is hidden. Same
-    /// conditions-not-height gating as [`Self::status_bar_area_now`].
-    pub(crate) fn menu_bar_area_now(&self) -> Option<ratatui::layout::Rect> {
-        if !self.active_window().menu_bar_visible {
-            return None;
-        }
-        Some(self.shell_region_now(crate::view::shell::frame::HostRegion::MenuBar))
     }
 
     /// The menu's layout THIS instant — bar label spans, open dropdown /
@@ -2877,13 +2887,11 @@ impl Editor {
     }
 
     /// The status bar's layout THIS instant — area plus the content-derived
-    /// segment geometry (clickable spans, plugin token areas) computed by
-    /// the same element/width/placement walk the painter runs
-    /// ([`StatusBarRenderer::compute_status_layout`], asserted against the
-    /// paint walk in debug builds). This replaced the paint-recorded
-    /// `clickable` / `plugin_token_areas` cache on `StatusBarChrome` —
-    /// geometry produced by layout, not recorded by paint. `None` when the
-    /// bar is hidden.
+    /// segment geometry (clickable spans, plugin token areas), from the same
+    /// element/width/placement walk the description is built by. Geometry
+    /// produced by layout, not recorded by paint: every cache this once had
+    /// on the side — `clickable`, `plugin_token_areas`, and finally the whole
+    /// `StatusBarChrome` capture — is retired. `None` when the bar is hidden.
     /// Render the modal overlays that dim everything behind them: settings,
     /// calibration wizard, keybinding editor, and event-debug dialog. Each is
     /// drawn only for the TUI (`!suppress_chrome_cells`); the web projects

@@ -3,9 +3,7 @@
 use crate::app::types::CellThemeRecorder;
 use crate::config::{generate_dynamic_items, Menu, MenuItem, MenuItemExt};
 use crate::primitives::display_width::str_width;
-use crate::view::theme::Theme;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 
 // Re-export context_keys from the shared types module
 pub use crate::types::context_keys;
@@ -113,19 +111,6 @@ impl BarLabelStyle {
         }
     }
 
-    pub(crate) fn style(self, theme: &Theme) -> Style {
-        match self {
-            BarLabelStyle::Normal => Style::default().fg(theme.menu_fg).bg(theme.menu_bg),
-            BarLabelStyle::Active => Style::default()
-                .fg(theme.menu_active_fg)
-                .bg(theme.menu_active_bg)
-                .add_modifier(Modifier::BOLD),
-            BarLabelStyle::Hovered => Style::default()
-                .fg(theme.menu_hover_fg)
-                .bg(theme.menu_hover_bg),
-        }
-    }
-
     /// The `(fg, bg)` theme keys this label reads.
     ///
     /// One pair, for every consumer: the inspector's provenance, the ratatui
@@ -195,19 +180,6 @@ impl MenuRowStyle {
             _ if is_hovered => MenuRowStyle::Hovered,
             _ => MenuRowStyle::Normal,
         }
-    }
-
-    /// Concrete colours from the active theme.
-    pub(crate) fn style(self, theme: &Theme) -> Style {
-        let (fg, bg) = match self {
-            MenuRowStyle::Normal => (theme.menu_dropdown_fg, theme.menu_dropdown_bg),
-            MenuRowStyle::Highlighted => (theme.menu_highlight_fg, theme.menu_highlight_bg),
-            MenuRowStyle::Hovered => (theme.menu_hover_fg, theme.menu_hover_bg),
-            MenuRowStyle::Disabled => (theme.menu_disabled_fg, theme.menu_disabled_bg),
-            MenuRowStyle::Info => (theme.menu_disabled_fg, theme.menu_dropdown_bg),
-            MenuRowStyle::Separator => (theme.menu_separator_fg, theme.menu_dropdown_bg),
-        };
-        Style::default().fg(fg).bg(bg)
     }
 
     /// The `(fg, bg)` provenance keys the theme inspector reports.

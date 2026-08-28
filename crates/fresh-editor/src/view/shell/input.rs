@@ -104,7 +104,22 @@ fn button(b: CtButton) -> MouseButton {
 /// the party that owns the input device owns it. So it is *reported* here, and
 /// a handler reads it off `Event::clicks` rather than the applier consulting a
 /// field snapshotted beside the dispatch.
-pub fn mouse(m: crossterm::event::MouseEvent, clicks: u8) -> Option<Input> {
+/// `lines` and `columns` are what one notch is worth on each axis — the
+/// caller's, because they are configuration (`mouse_wheel_scroll_lines`) and
+/// this mapping has no editor to ask.
+///
+/// **A notch is not one line.** The walk this runs ahead of hands surfaces
+/// `direction * mouse_wheel_scroll_lines` (and `direction * WHEEL_COLUMNS`
+/// sideways); a tree that claimed the wheel with a delta of 1 scrolled a
+/// migrated surface at a third of the speed of every surface below it, which
+/// the file explorer's sticky parent row hid completely — offset 0 and offset
+/// 1 render the same first filename.
+pub fn mouse(
+    m: crossterm::event::MouseEvent,
+    clicks: u8,
+    lines: i32,
+    columns: i32,
+) -> Option<Input> {
     let pos = Point::new(m.column as i32, m.row as i32);
     let mods = mods(m.modifiers);
     Some(match m.kind {
@@ -113,25 +128,25 @@ pub fn mouse(m: crossterm::event::MouseEvent, clicks: u8) -> Option<Input> {
         MouseEventKind::Moved | MouseEventKind::Drag(_) => Input::Move { pos, mods },
         MouseEventKind::ScrollDown => Input::Wheel {
             pos,
-            delta: 1,
+            delta: lines,
             axis: Axis::Vertical,
             mods,
         },
         MouseEventKind::ScrollUp => Input::Wheel {
             pos,
-            delta: -1,
+            delta: -lines,
             axis: Axis::Vertical,
             mods,
         },
         MouseEventKind::ScrollRight => Input::Wheel {
             pos,
-            delta: 1,
+            delta: columns,
             axis: Axis::Horizontal,
             mods,
         },
         MouseEventKind::ScrollLeft => Input::Wheel {
             pos,
-            delta: -1,
+            delta: -columns,
             axis: Axis::Horizontal,
             mods,
         },
@@ -144,7 +159,7 @@ mod tests {
 
     /// A single press, for the tests that do not care about runs.
     fn mouse_1(m: MouseEvent) -> Option<Input> {
-        mouse(m, 1)
+        mouse(m, 1, 1, 1)
     }
     use crossterm::event::{KeyEvent, MouseEvent};
 

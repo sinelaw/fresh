@@ -52,11 +52,11 @@ pub enum HoverTarget {
     FileExplorerStatusIndicator(std::path::PathBuf),
     /// Hovering over a clickable status-bar segment (LSP / encoding / line
     /// ending / language / warnings / messages / remote / trust / read-only).
-    /// One generic variant carrying the segment's identity — the renderer
-    /// styles it and `handle_click_status_bar` dispatches it via a single
-    /// hit-test over the live-derived `status_bar_clickable_area_now`
-    /// segments (the paint-recorded `StatusBarChrome::clickable` cache
-    /// it used to name was retired in slice 7b).
+    /// One generic variant carrying the segment's identity. The element that
+    /// carries it is a keyed node in the shell's tree and answers its own
+    /// press, so there is no hit-test here and no cache behind it: both the
+    /// paint-recorded `clickable` list and the `StatusBarChrome` capture that
+    /// replaced it are gone.
     StatusBarClickable(crate::view::ui::status_bar::StatusBarClickable),
     /// Hovering over the search options "Case Sensitive" checkbox
     SearchOptionCaseSensitive,

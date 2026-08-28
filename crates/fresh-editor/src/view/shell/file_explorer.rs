@@ -279,19 +279,35 @@ fn panel(e: &Explorer) -> Node<UiMsg> {
     // Rows `stop()` their own right-press, so this fires only where no row
     // did. The title row is excluded app-side against the panel's rectangle,
     // exactly as the component excluded it with `ev.row <= explorer_area.y`.
-    gesture(b).on(
-        GestureKind::Press,
-        Rc::new(|ev: &Event| {
-            if ev.button != fresh_ui::MouseButton::Right || ev.mods.ctrl {
-                return None;
-            }
-            ev.stop();
-            Some(UiMsg::Ui(UiFact::ExplorerBodyContext {
-                x: ev.pos.x.max(0) as u16,
-                y: ev.pos.y.max(0) as u16,
-            }))
-        }),
-    )
+    gesture(b)
+        .on(
+            GestureKind::Press,
+            Rc::new(|ev: &Event| {
+                if ev.button != fresh_ui::MouseButton::Right || ev.mods.ctrl {
+                    return None;
+                }
+                ev.stop();
+                Some(UiMsg::Ui(UiFact::ExplorerBodyContext {
+                    x: ev.pos.x.max(0) as u16,
+                    y: ev.pos.y.max(0) as u16,
+                }))
+            }),
+        )
+        // And the same for the left button, which the component also bound to
+        // the whole panel: `handle_file_explorer_click` took focus for any
+        // click inside the rectangle before it looked for a row, so clicking
+        // the empty space below the tree focused the explorer. Rows `stop()`
+        // their own left press, so this fires only where no row did.
+        .on(
+            GestureKind::Press,
+            Rc::new(|ev: &Event| {
+                if ev.button != fresh_ui::MouseButton::Left {
+                    return None;
+                }
+                ev.stop();
+                Some(UiMsg::Ui(UiFact::ExplorerBodyPress))
+            }),
+        )
 }
 
 fn node_row(e: &Explorer, r: &Row) -> Node<UiMsg> {
@@ -338,7 +354,15 @@ fn node_row(e: &Explorer, r: &Row) -> Node<UiMsg> {
         stack().h(Sizing::Cells(1)).children([
             body,
             row().h(Sizing::Cells(1)).children([text("▌")
-                .theme(pair("editor.cursor", "editor.bg"))
+                // The row's own background, only the glyph recoloured: the
+                // caret marks the selected row, it does not cut a hole in the
+                // highlight. `pair("editor.cursor", "editor.bg")` did cut one,
+                // and on a focused panel that made the selected row's first
+                // cell indistinguishable from every unselected row's.
+                .theme(crate::app::shell_host::shell_theme::with_fg(
+                    &r.theme,
+                    "editor.cursor",
+                ))
                 .w(Sizing::Cells(1))]),
         ])
     } else {
@@ -771,6 +795,13 @@ mod tests {
     /// first row, because `row - (area.y + 1)` clamps to zero there, while the
     /// right-click and double-click paths guarded it out explicitly. Now it is
     /// decoration and all three agree.
+    ///
+    /// It is still *the panel*, though, and this asserted it was not a target
+    /// at all — which was stricter than the component ever was.
+    /// `handle_file_explorer_click` took focus for any left click inside the
+    /// rectangle, title line included, before it looked for a row. Selecting
+    /// nothing is the rule; answering nothing was an accident of binding the
+    /// press to rows alone.
     #[test]
     fn the_title_line_selects_nothing() {
         let mut ui = laid_out(panel_of(vec![row_of(0, "a", None)], 20), 20, 5);
@@ -779,8 +810,11 @@ mod tests {
             MouseButton::Left,
             Mods::default(),
         ));
-        assert!(!got.claimed, "the title is not a target");
-        assert!(got.msgs.is_empty(), "got {:?}", got.msgs);
+        assert!(
+            matches!(got.msgs.as_slice(), [UiMsg::Ui(UiFact::ExplorerBodyPress)]),
+            "the title line focuses the panel and selects nothing, got {:?}",
+            got.msgs
+        );
     }
 
     /// The close button absorbs its own three cells, and the grip absorbs the
