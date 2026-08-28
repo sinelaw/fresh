@@ -11,39 +11,39 @@ Filter      │new task…                              Add
             │»[ ] task 7                             #8│
             │»[ ] task 8                             #9│
             │»[x] task 9                            #10│
- alpha · visit 1
+            │»[ ] task 10                           #11│
 1000000 tasks · light · synced 0 · ready
 
 === three notches down
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
-( ) Open    │»[ ] task 1                             #2│
-( ) Done    │»[ ] task 2                             #3│
-┌──────────┐│»[x] task 3                             #4│
-│clip-test ││»[ ] task 4                             #5│
-└──────────┘│»[ ] task 5                             #6│
-            │»[x] task 6                             #7│
-            │»[ ] task 7                             #8│
-            │»[ ] task 8                             #9│
+( ) Open    │»[ ] task 4                             #5│
+( ) Done    │»[ ] task 5                             #6│
+┌──────────┐│»[x] task 6                             #7│
+│clip-test ││»[ ] task 7                             #8│
+└──────────┘│»[ ] task 8                             #9│
             │»[x] task 9                            #10│
- alpha · visit 1
+            │»[ ] task 10                           #11│
+            │»[ ] task 11                           #12│
+            │»[x] task 12                           #13│
+            │»[ ] task 13                           #14│
 1000000 tasks · light · synced 0 · ready
 
 === half a million rows down
  File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Filter      │new task…                              Add
 (o) All░░░░░│ ribbon: click the text, it falls through ·
-( ) Open    │»[ ] task 1                             #2│
-( ) Done    │»[ ] task 2                             #3│
-┌──────────┐│»[x] task 3                             #4│
-│clip-test ││»[ ] task 4                             #5│
-└──────────┘│»[ ] task 5                             #6│
-            │»[x] task 6                             #7│
-            │»[ ] task 7                             #8│
-            │»[ ] task 8                             #9│
-            │»[x] task 9                            #10│
- alpha · visit 1
+( ) Open    │»[ ] task 499004                   #499005│
+( ) Done    │»[x] task 499005                   #499006│
+┌──────────┐│»[ ] task 499006                   #499007│
+│clip-test ││»[ ] task 499007                   #499008█
+└──────────┘│»[x] task 499008                   #499009│
+            │»[ ] task 499009                   #499010│
+            │»[ ] task 499010                   #499011│
+            │»[x] task 499011                   #499012│
+            │»[ ] task 499012                   #499013│
+            │»[ ] task 499013                   #499014│
 1000000 tasks · light · synced 0 · ready
 
 === and back to the top
@@ -59,6 +59,6 @@ Filter      │new task…                              Add
             │»[ ] task 7                             #8│
             │»[ ] task 8                             #9│
             │»[x] task 9                            #10│
- alpha · visit 1
+            │»[ ] task 10                           #11│
 1000000 tasks · light · synced 0 · ready
 

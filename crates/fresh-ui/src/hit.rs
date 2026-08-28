@@ -68,6 +68,17 @@ impl<M: std::fmt::Debug> std::fmt::Debug for Dispatch<M> {
     }
 }
 
+/// What one stacked path did with a wheel notch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Chain {
+    /// A window moved.
+    Scrolled,
+    /// A floating surface stopped the search before anything moved.
+    Contained,
+    /// Nothing along this path could take it.
+    Nothing,
+}
+
 impl<M: 'static> Ui<M> {
     /// Route one host input into the tree, reporting the messages handlers
     /// produced and whether the event was claimed. Handlers run during this
@@ -215,11 +226,38 @@ impl<M: 'static> Ui<M> {
                 if !claimed && !prevented {
                     // Scroll chaining: the first viewport along the path whose
                     // offset can actually move takes it. One at its bound does
-                    // not claim, so the wheel continues outward.
-                    if let Some(p) = paths.first() {
+                    // not claim, so the wheel continues outward — and a wheel
+                    // that moved a window *is* claimed, or a host with its own
+                    // pipeline behind this tree scrolls something a second time
+                    // for the same notch. The editor found this the expensive
+                    // way: a wheel over a hover popup scrolled the popup here
+                    // and then scrolled the buffer underneath, which also
+                    // dismissed the popup it had just scrolled.
+                    // Every stacked path, in the order the routing produced
+                    // them — the same order `propagate_all` uses, and for the
+                    // same reason: a transparent region is *why* there is more
+                    // than one path, so a decorative strip lying over a
+                    // scrollable window must not be where the search stops.
+                    // Every stacked path, in the order the routing produced
+                    // them — the same order `propagate_all` uses, and for the
+                    // same reason: a transparent region is *why* there is more
+                    // than one path, so a decorative strip lying over a
+                    // scrollable window must not be where the search stops.
+                    //
+                    // Containment is decided after all of them, never during:
+                    // a strip's own path reaches the layer immediately, and
+                    // absorbing there would leave the window behind it — the
+                    // one the wheel was aimed at — never asked.
+                    let mut contained = false;
+                    for p in paths.iter() {
                         let p = p.clone();
-                        self.scroll_chain(&p, wheel);
+                        match self.scroll_chain(&p, wheel) {
+                            Chain::Scrolled => return true,
+                            Chain::Contained => contained = true,
+                            Chain::Nothing => {}
+                        }
                     }
+                    return contained;
                 }
                 claimed
             }
@@ -604,23 +642,34 @@ impl<M: 'static> Ui<M> {
     /// The viewport whose scrollbar gutter is under a point, if any. The gutter
     /// is the node's last column, which its content does not cover, so a hit
     /// there is unambiguous.
+    /// The scrollable window whose gutter is under this point, if any.
+    ///
+    /// Every stacked path, not just the topmost: a transparent region lying
+    /// over a window — a strip carrying a popup's title — is exactly the case
+    /// that produces a second path, and the gutter is on the second one. The
+    /// deepest match within a path wins, which is the innermost window.
     fn scrollbar_hit(&self, pos: Point) -> Option<RenderId> {
-        let mut found = None;
-        for e in self.hit_test(pos) {
-            let Some(r) = self.arena.get(e).and_then(|el| el.render) else {
-                continue;
-            };
-            let Some(n) = self.render.get(r) else {
-                continue;
-            };
-            if n.scrollbar && n.clips && n.data.scroll_max.y > 0 {
-                let rect = n.data.rect;
-                if pos.x == rect.right() - 1 && rect.y <= pos.y && pos.y < rect.bottom() {
-                    found = Some(r);
+        for path in self.hit_paths(pos) {
+            let mut found = None;
+            for e in path {
+                let Some(r) = self.arena.get(e).and_then(|el| el.render) else {
+                    continue;
+                };
+                let Some(n) = self.render.get(r) else {
+                    continue;
+                };
+                if n.scrollbar && n.clips && n.data.scroll_max.y > 0 {
+                    let rect = n.data.rect;
+                    if pos.x == rect.right() - 1 && rect.y <= pos.y && pos.y < rect.bottom() {
+                        found = Some(r);
+                    }
                 }
             }
+            if found.is_some() {
+                return found;
+            }
         }
-        found
+        None
     }
 
     /// Map a pointer row on the scrollbar track to a scroll offset and apply it.
@@ -667,17 +716,35 @@ impl<M: 'static> Ui<M> {
         self.mark_render_dirty(r);
     }
 
-    fn scroll_chain(&mut self, path: &[ElementId], wheel: Wheel) {
+    /// What one path did with the wheel.
+    ///
+    /// **The chain stops at a layer.** Walking outward past a floating surface
+    /// would hand the wheel to whatever it is floating over — so a popup
+    /// scrolled to its last line would start scrolling the document behind it,
+    /// which is not what the wheel was aimed at and, in an editor, dismisses
+    /// the popup that was being read. Every platform contains overscroll at an
+    /// overlay's edge; the web spells it `overscroll-behavior: contain`. A
+    /// layer that scrolled nothing still absorbs the notch — but only once
+    /// every path has been asked, which is the caller's job.
+    fn scroll_chain(&mut self, path: &[ElementId], wheel: Wheel) -> Chain {
         for &n in path.iter().rev() {
             let Some(r) = self.render_for(n) else {
                 continue;
             };
-            let (scroll, max, clips) = {
+            let (scroll, max, clips, floating) = {
                 let Some(node) = self.render.get(r) else {
                     continue;
                 };
-                (node.data.scroll, node.data.scroll_max, node.clips)
+                (
+                    node.data.scroll,
+                    node.data.scroll_max,
+                    node.clips,
+                    node.out_of_flow,
+                )
             };
+            if floating {
+                return Chain::Contained;
+            }
             if !clips {
                 continue;
             }
@@ -694,9 +761,10 @@ impl<M: 'static> Ui<M> {
                     }
                 }
                 self.mark_render_dirty(r);
-                return;
+                return Chain::Scrolled;
             }
         }
+        Chain::Nothing
     }
 
     /// The one part of a layer that cannot live on the render object: a
