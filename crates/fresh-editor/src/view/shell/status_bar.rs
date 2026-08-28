@@ -225,10 +225,25 @@ pub fn status_bar(bar: &StatusBar) -> Node<UiMsg> {
         }
         kids.push(element(bar, it, item_key(Side::Right, i)));
     }
-    row()
-        .theme(bar.base_theme.clone())
-        .h(Sizing::Cells(1))
-        .children(kids)
+    // **The row claims its own gaps.** Every element answers its own press,
+    // and between them is the flexible gap and the padding either side of a
+    // separator — a press there means nothing, and letting it through put the
+    // caret in the buffer below. `chrome:status_bar` was a rectangle whose
+    // only job was to be in the way; a gesture on the row is the same rule
+    // where the row is.
+    fresh_ui::gesture(
+        row()
+            .theme(bar.base_theme.clone())
+            .h(Sizing::Cells(1))
+            .children(kids),
+    )
+    .on(
+        fresh_ui::GestureKind::Press,
+        std::rc::Rc::new(|e: &fresh_ui::Event| {
+            e.stop();
+            None
+        }),
+    )
 }
 
 // ── reading the laid-out bar back ──────────────────────────────────────────

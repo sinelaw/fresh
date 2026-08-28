@@ -122,10 +122,11 @@ pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>
 ///
 ///   - `popup_areas` / `global_popup_areas` (info/message popups)
 ///   - `suggestions_area` / `suggestions_outer_area` /
-///     `suggestions_scrollbar_rect` / `prompt_preview_area` (the
-///     prompt's suggestion list, both forms, and the overlay preview)
-///   - `prompt_toolbar_boxes` + `prompt_toolbar_origin` (overlay
-///     toolbar box tree, panel-local coordinates)
+///     `prompt_preview_area` (the prompt's suggestion list, both
+///     forms, and the overlay preview)
+///   - `prompt_toolbar_boxes` (overlay toolbar box tree, in the
+///     toolbar band's own coordinates — the tree gesture reports the
+///     press in that space, so no origin travels with it)
 ///   - `workspace_trust_dialog` (trust dialog layout)
 ///   - `Window::file_browser_layout` (the file-open dialog)
 ///
@@ -152,11 +153,6 @@ pub(crate) struct ChromeLayout {
     /// Used to absorb clicks on the popup chrome so they don't reach the
     /// buffer below while the prompt is open.
     pub suggestions_outer_area: Option<Rect>,
-    /// Hit-test rect for the floating-overlay prompt's scrollbar
-    /// (issue #1796). `None` when no overlay is open or the result
-    /// list fits in the visible window. Click/drag handlers in
-    /// `mouse_input.rs` read this to update `prompt.scroll_offset`.
-    pub suggestions_scrollbar_rect: Option<Rect>,
     /// The toolbar's layout-box tree from its most recent render, plus
     /// the screen position of the toolbar band's top-left cell. The
     /// overlay focus ring derives from the tree (document order of
@@ -164,10 +160,6 @@ pub(crate) struct ChromeLayout {
     /// toolbar joins the ring) and clicks hit-test it, the same way
     /// panel rings and clicks work — no paint-recorded rect list.
     pub prompt_toolbar_boxes: Vec<crate::widgets::LayoutBox>,
-    /// `(x, y)` of the toolbar band's origin on screen, translating
-    /// clicks into the box tree's (row, col) space. `None` when no
-    /// toolbar is showing.
-    pub prompt_toolbar_origin: Option<(u16, u16)>,
     /// Screen rect of the floating-overlay prompt's results list (issue
     /// #2119). `None` when no overlay is open. The mouse-wheel handler reads
     /// this to scroll the result list (without moving the selection) when the

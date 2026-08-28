@@ -186,6 +186,11 @@ fn combos() -> Vec<Frame> {
                             // visibility combinations.
                             status_bar_items: None,
                             menu_keys: Vec::new(),
+                            // Layers, out of flow: a popup does not move a
+                            // region, and neither does the theme inspector.
+                            popups: Vec::new(),
+                            theme_info: None,
+                            browser: None,
                             // The list is a layer, out of flow: it moves no
                             // rectangle in the frame, which is the same reason
                             // `menu` is None above.
@@ -285,6 +290,9 @@ fn squeeze_band_starves_a_different_row_than_ratatui() {
         // on it, which is the whole claim this test exists to check.
         status_bar_items: None,
         menu_keys: Vec::new(),
+        popups: Vec::new(),
+        theme_info: None,
+        browser: None,
         suggestions: None,
         card: None,
     };

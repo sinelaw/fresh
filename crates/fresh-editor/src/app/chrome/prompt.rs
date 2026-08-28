@@ -1,199 +1,35 @@
-//! The prompt: suggestion list (bottom dropdown and floating-overlay
-//! forms), its scrollbar, the overlay preview pane, the wheel's
-//! position-blind suggestion capture, and the overlay-prompt modal
-//! scrim.
+//! The prompt: **the keyboard, and the handlers the tree's messages land in.**
+//!
+//! Everything positional has gone into the shell tree — the suggestion list in
+//! both its forms, its scrollbar, the overlay card's modal scrim, its preview
+//! pane and its toolbar. What is left is `dispatch_prompt_key`, the layer rank
+//! that says who owns the keyboard while a prompt is up, and the few `Editor`
+//! methods a `UiFact` calls into.
 
 use crate::input::keybindings::Action;
-use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 
-use super::{
-    in_rect, ChromeComponent, ChromePointer, ChromeTreeBuilder, Disposition, Editor, PointerPress,
-};
+use super::{ChromeComponent, ChromeTreeBuilder, Editor};
 
 pub(crate) struct Prompt;
 
 impl ChromeComponent for Prompt {
-    fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
-        // No box for the suggestion list. Both prompt forms grow it from the
-        // shell tree now: the rows claim their own click and their own
-        // double-click, `hit.rs` owns the scrollbar's jump and its drag, the
-        // viewport takes the wheel, and the popup absorbs a press on its own
-        // chrome. What is left here is the overlay *card* — its preview pane,
-        // and the guards that stop a gesture reaching the buffer while it is
-        // up.
-        if ed.overlay_prompt_active() {
-            if let Some(r) = ed.active_chrome().prompt_preview_area {
-                t.rect("chrome:prompt_preview", 170, r);
-            }
-            // Mouse-modal overlay swallows EVERY right-click — plain
-            // and Ctrl+ alike — so neither the tab context menu nor
-            // the theme inspector (trigger at z190) fires, and the
-            // buffer below is untouched. Right-click-only band; other
-            // gestures have no arm here and fall through.
-            t.full("chrome:overlay_rclick_guard", 195);
-        }
-        // The floating-overlay prompt as a mouse-modal surface for the
-        // wheel and double-click (its own result rows resolved above
-        // via the suggestions box). Sits ABOVE the suggestion capture:
-        // while the overlay is up, its own scroll model wins.
-        t.full("chrome:overlay_prompt_modal", 160);
-        // The overlay prompt's CLICK scrim rides low — just above the
-        // editor content band — so chrome controls that peek out from
-        // under the overlay (tabs, scrollbars, status bar) still take
-        // their clicks; anything that reaches the scrim is swallowed
-        // so it can't move the buffer cursor. The wheel/double-click
-        // modal above and this click scrim are the same surface's two
-        // per-gesture bands, encoded as two thin boxes instead of two
-        // hand-ordered arrays.
-        t.full("chrome:overlay_prompt_scrim", 15);
+    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {
+        // Nothing. Both prompt forms are the shell tree's: the rows claim
+        // their own click and double-click, `hit.rs` owns the scrollbar's jump
+        // and drag, the viewport takes the wheel, and the overlay card absorbs
+        // every press and every notch that no band of it claimed — which is
+        // what `chrome:overlay_prompt_scrim`, `chrome:overlay_prompt_modal`
+        // and `chrome:overlay_rclick_guard` were, three boxes saying one rule
+        // split by gesture because a box can only say one thing at a time.
+        // The preview pane and the toolbar report their own events, so
+        // `chrome:prompt_preview` has nothing left to be either.
     }
 
-    fn on_pointer(
-        &self,
-        ed: &mut Editor,
-        bx: &LayoutBox,
-        ev: &ChromePointer,
-    ) -> AnyhowResult<Disposition> {
-        if ev.press == PointerPress::Left {
-            return match bx.kind {
-                // A floating-overlay prompt is mouse-modal. Its result list
-                // takes its own clicks in the tree, before any of this runs.
-                // A click on a toolbar control toggles it through the
-                // host (which emits a widget_event); anything else —
-                // the input row, separator, preview pane, empty space,
-                // or a click outside the frame — is swallowed here so
-                // it never reaches the buffer and moves its cursor.
-                "chrome:overlay_prompt_scrim" => {
-                    if !ed.overlay_prompt_active() {
-                        return Ok(Disposition::Pass);
-                    }
-                    // Hit-test the toolbar's box tree (screen click →
-                    // toolbar-local row/col), innermost box first — the
-                    // same walk panel clicks use. The deepest keyed
-                    // focusable box under the pointer is the control.
-                    let hit = ed
-                        .active_chrome()
-                        .prompt_toolbar_origin
-                        .and_then(|(ox, oy)| {
-                            let (lrow, lcol) = (ev.row.checked_sub(oy)?, ev.col.checked_sub(ox)?);
-                            let boxes = &ed.active_chrome().prompt_toolbar_boxes;
-                            crate::widgets::layout_box::hit_path(boxes, lrow as u32, lcol as u32)
-                                .into_iter()
-                                .rev()
-                                .filter(|&i| boxes[i].focusable)
-                                .find_map(|i| boxes[i].key.clone())
-                        });
-                    if let Some(widget_key) = hit {
-                        // Move keyboard focus to the clicked control so
-                        // Tab continues from here, then flip it through
-                        // the host (which emits a widget_event).
-                        if let Some(p) = ed.active_window_mut().prompt.as_mut() {
-                            p.toolbar_focus = Some(widget_key.clone());
-                        }
-                        ed.toggle_overlay_toolbar_widget(&widget_key);
-                    }
-                    Ok(Disposition::Consumed)
-                }
-                _ => Ok(Disposition::Pass),
-            };
-        }
-        if ev.press == PointerPress::Right {
-            // Mouse-modal overlay: swallow every right-click flavor
-            // (plain AND Ctrl+) so neither the tab context menu nor
-            // the theme inspector fires while the overlay is up.
-            if bx.kind == "chrome:overlay_rclick_guard" && ed.overlay_prompt_active() {
-                return Ok(Disposition::Consumed);
-            }
-            return Ok(Disposition::Pass);
-        }
-        if !matches!(ev.press, PointerPress::Double | PointerPress::Triple) {
-            return Ok(Disposition::Pass);
-        }
-        if ev.press == PointerPress::Triple {
-            // Mouse-modal overlay: a triple-click must never
-            // line-select in the buffer below (no triple semantics of
-            // its own — plain swallow).
-            if bx.kind == "chrome:overlay_prompt_modal" && ed.overlay_prompt_active() {
-                return Ok(Disposition::Consumed);
-            }
-            return Ok(Disposition::Pass);
-        }
-        match bx.kind {
-            // Mouse-modal: swallow anything that wasn't a result row so
-            // it can't word-select in the buffer below.
-            "chrome:overlay_prompt_modal" => {
-                if ed.overlay_prompt_active() {
-                    return Ok(Disposition::Consumed);
-                }
-                Ok(Disposition::Pass)
-            }
-            _ => Ok(Disposition::Pass),
-        }
-    }
-
-    fn on_wheel(
-        &self,
-        ed: &mut Editor,
-        bx: &LayoutBox,
-        col: u16,
-        row: u16,
-        delta: i32,
-    ) -> AnyhowResult<Disposition> {
-        match bx.kind {
-            "chrome:prompt_preview" | "chrome:overlay_prompt_modal" => {
-                if !ed.overlay_prompt_active() {
-                    return Ok(Disposition::Pass);
-                }
-                if ed.handle_overlay_prompt_scroll(col, row, delta) {
-                    Ok(Disposition::Consumed)
-                } else {
-                    Ok(Disposition::Pass)
-                }
-            }
-            _ => Ok(Disposition::Pass),
-        }
-    }
-
-    fn on_hwheel(
-        &self,
-        ed: &mut Editor,
-        bx: &LayoutBox,
-        _col: u16,
-        _row: u16,
-        _delta: i32,
-    ) -> AnyhowResult<Disposition> {
-        // The horizontal axis mirrors the vertical MODAL claims: none
-        // of these surfaces has horizontal content, so wherever the
-        // vertical wheel would be consumed, the horizontal delta is
-        // ABSORBED — Shift+wheel over the overlay prompt or the
-        // suggestions dropdown must not pan the buffer hidden beneath
-        // (the wheel walk deliberately skips the opacity gate for
-        // scroll chaining, so without these arms the delta fell all
-        // the way to the split's h-scroll).
-        match bx.kind {
-            "chrome:prompt_preview" | "chrome:overlay_prompt_modal" => {
-                if ed.overlay_prompt_active() {
-                    Ok(Disposition::Consumed)
-                } else {
-                    Ok(Disposition::Pass)
-                }
-            }
-            "chrome:prompt_suggestions" | "chrome:suggestions" | "chrome:prompt_scrollbar" => {
-                let suggestions_visible = ed
-                    .active_window()
-                    .prompt
-                    .as_ref()
-                    .is_some_and(|p| !p.suggestions.is_empty());
-                if suggestions_visible {
-                    Ok(Disposition::Consumed)
-                } else {
-                    Ok(Disposition::Pass)
-                }
-            }
-            _ => Ok(Disposition::Pass),
-        }
-    }
+    // No pointer or wheel arms. Every box they matched on is gone: the card
+    // absorbs what its bands do not claim, the toolbar and the preview report
+    // their own events, and the suggestion list has been the tree's since the
+    // click rail came out. What is left below is the keyboard.
 
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {
         use crate::app::overlay::{Layer, LayerKind};
@@ -427,39 +263,5 @@ impl Editor {
             prompt.set_input_plain(suggestion.get_value().to_string());
         }
         Some(self.handle_action(Action::PromptConfirm))
-    }
-
-    /// Route a wheel event inside the floating-overlay prompt (Live Grep).
-    ///
-    /// The overlay is mouse-modal, so it always consumes the wheel (returns
-    /// true) when active — the event must never leak to the buffer below.
-    /// * Over the preview pane → scroll the preview.
-    /// * Anywhere else (result list, input, toolbar, frame) → scroll the
-    ///   result list *without* moving the selection.
-    ///
-    /// Bottom-anchored prompts have no arm here at all: their list is a
-    /// `fresh-ui` viewport and takes the wheel itself when the pointer is
-    /// over it.
-    pub(super) fn handle_overlay_prompt_scroll(&mut self, col: u16, row: u16, delta: i32) -> bool {
-        if !self.overlay_prompt_active() {
-            return false;
-        }
-        let preview_area = self.active_chrome().prompt_preview_area;
-        let results_visible = self
-            .active_chrome()
-            .prompt_results_area
-            .map(|r| r.height as usize)
-            .unwrap_or(0);
-        if let Some(preview) = preview_area {
-            if in_rect(col, row, preview) {
-                self.active_window_mut()
-                    .scroll_overlay_preview_by_lines(delta);
-                return true;
-            }
-        }
-        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-            prompt.scroll_results(delta, results_visible);
-        }
-        true
     }
 }

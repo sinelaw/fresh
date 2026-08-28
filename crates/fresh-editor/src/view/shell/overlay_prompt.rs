@@ -26,9 +26,11 @@
 //! percentage does not express; it is a rule with one home, which is not what
 //! the migration is here to remove.
 
-use fresh_ui::{col, host, row, Node, Rect, Sizing};
+use std::rc::Rc;
 
-use super::msg::UiMsg;
+use fresh_ui::{col, host, row, Event, Node, Rect, Sizing};
+
+use super::msg::{UiFact, UiMsg};
 
 /// A band of the card that a painter still owns.
 ///
@@ -124,14 +126,18 @@ pub fn card(c: &Card) -> Node<UiMsg> {
         .anchor(Anchor::Point(c.at.x.max(0) as u16, c.at.y.max(0) as u16))
         .place(Place::Over)
         .child(
-            body(c)
-                .w(Sizing::Cells(c.at.w))
-                .h(Sizing::Cells(c.at.h))
-                // What `border()` would inset by, without the ring it would
-                // also draw — the painter's `Block` is still the ring, and the
-                // bands have to land inside it.
-                .pad(1, 1)
-                .clip(true),
+            // Absorbing outside the sizing, because a gesture is not a box and
+            // the inset belongs to the box.
+            absorb(
+                body(c)
+                    .w(Sizing::Cells(c.at.w))
+                    .h(Sizing::Cells(c.at.h))
+                    // What `border()` would inset by, without the ring it
+                    // would also draw — the painter's `Block` is still the
+                    // ring, and the bands have to land inside it.
+                    .pad(1, 1)
+                    .clip(true),
+            ),
         )
 }
 
@@ -152,23 +158,92 @@ fn body(c: &Card) -> Node<UiMsg> {
         // is left.
         true => row().flex(1).children([
             region(CardRegion::Results).w(Sizing::Pct(50)),
-            region(CardRegion::Preview).flex(1),
+            preview(region(CardRegion::Preview).flex(1)),
         ]),
         // The preview is still in the tree taking nothing, so it has a
         // rectangle to report and the results' own is unaffected — the rule
         // `frame_tree` states for a hidden region.
         false => row().flex(1).children([
             region(CardRegion::Results).flex(1),
-            region(CardRegion::Preview).w(Sizing::Cells(0)),
+            preview(region(CardRegion::Preview).w(Sizing::Cells(0))),
         ]),
     };
     col().children([
         region(CardRegion::Input).h(Sizing::Cells(1)),
-        region(CardRegion::Toolbar).h(Sizing::Cells(c.toolbar_rows)),
+        toolbar(region(CardRegion::Toolbar).h(Sizing::Cells(c.toolbar_rows))),
         separator,
         middle,
         region(CardRegion::Footer).h(Sizing::Cells(c.footer as u16)),
     ])
+}
+
+/// A press anywhere on the card that no band claimed dies here, and so does a
+/// wheel that found no window.
+///
+/// This is `chrome:overlay_prompt_scrim`, `chrome:overlay_prompt_modal` and
+/// `chrome:overlay_rclick_guard` — three boxes for one rule, split by gesture
+/// because a box could only say one thing at a time. The rule is that the
+/// overlay is mouse-modal: while it is up, nothing under it hears the pointer,
+/// whichever button and however many clicks.
+///
+/// The wheel is the same rule with one exception, which is why it is here and
+/// not left to fall through: the preview pane is still a painter's, so it has
+/// no window the wheel could chain into, and the pane has to be told.
+fn absorb(n: Node<UiMsg>) -> Node<UiMsg> {
+    fresh_ui::gesture(n)
+        .on(
+            fresh_ui::GestureKind::Press,
+            Rc::new(|e: &Event| {
+                e.stop();
+                None
+            }),
+        )
+        .on(
+            fresh_ui::GestureKind::Wheel,
+            Rc::new(|e: &Event| {
+                e.stop();
+                None
+            }),
+        )
+}
+
+/// The preview pane takes the wheel and hands it to the painter that owns it.
+///
+/// A viewport would chain the wheel itself, and this band will be one when its
+/// content moves. Until then the pane has no window in the tree, so the notch
+/// has to be delivered rather than chained — which is exactly what
+/// `chrome:prompt_preview` was: a rectangle whose only job was to know which
+/// pane the pointer was over.
+fn preview(n: Node<UiMsg>) -> Node<UiMsg> {
+    fresh_ui::gesture(n).on(
+        fresh_ui::GestureKind::Wheel,
+        Rc::new(|e: &Event| {
+            e.stop();
+            Some(UiMsg::Ui(UiFact::CardPreviewScroll(e.delta)))
+        }),
+    )
+}
+
+/// The toolbar band reports where it was pressed.
+///
+/// Its controls are a plugin's `WidgetSpec`, laid out by the widget runtime and
+/// hit-tested against its own box tree — `chrome:overlay_prompt_scrim` did that
+/// hit-test after subtracting a stored origin. `Event::local` is that
+/// subtraction, done by the thing that knows the origin.
+fn toolbar(n: Node<UiMsg>) -> Node<UiMsg> {
+    fresh_ui::gesture(n).on(
+        fresh_ui::GestureKind::Press,
+        Rc::new(|e: &Event| {
+            if e.button != fresh_ui::MouseButton::Left {
+                return None;
+            }
+            e.stop();
+            Some(UiMsg::Ui(UiFact::CardToolbarPress {
+                x: e.local.x.max(0) as u16,
+                y: e.local.y.max(0) as u16,
+            }))
+        }),
+    )
 }
 
 thread_local! {

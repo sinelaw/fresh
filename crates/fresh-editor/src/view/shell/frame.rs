@@ -118,6 +118,13 @@ pub struct Frame {
     /// what the tree owns here is the arithmetic that placed them, which is
     /// what two copies of it disagreed about.
     pub card: Option<super::overlay_prompt::Card>,
+    /// The theme inspector's popup, when Ctrl+Right-Click has opened one. Over
+    /// everything: it inspects the cell under *any* chrome, so it has to be
+    /// visible over that chrome too.
+    pub theme_info: Option<super::theme_info::ThemeInfo>,
+    /// The file-open dialog, when one is open. Its interior is still a
+    /// painter's; what the tree owns is where it goes and what it absorbs.
+    pub browser: Option<super::file_browser::Browser>,
 }
 
 impl Default for Frame {
@@ -137,6 +144,8 @@ impl Default for Frame {
             suggestions: None,
             popups: Vec::new(),
             card: None,
+            theme_info: None,
+            browser: None,
         }
     }
 }
@@ -257,8 +266,15 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         .h(cells(f.search_options.is_some())),
         region(HostRegion::PromptLine).h(cells(f.prompt_line)),
     ]);
+    // Native around a `Host` content leaf: the column answers its own pointer
+    // and carries its width grip, while the panel's widgets stay the widget
+    // runtime's until `WidgetSpec` becomes a `Node`. A hidden dock is still in
+    // the tree at zero width, like every other region.
     let frame = row().children([
-        region(HostRegion::Dock).w(Sizing::Cells(f.dock.unwrap_or(0))),
+        match f.dock {
+            Some(w) => named(HostRegion::Dock, super::dock::dock()).w(Sizing::Cells(w)),
+            None => region(HostRegion::Dock).w(Sizing::Cells(0)),
+        },
         chrome,
     ]);
     // Overlays, in paint order. Menu-bar dropdowns first, then a context menu
@@ -296,8 +312,32 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         Some(chain) => frame.child(chain),
         None => frame,
     };
-    match &f.menu {
+    let frame = match &f.menu {
         Some(menu) => frame.child(super::context_menu::context_menu(menu)),
+        None => frame,
+    };
+    // The file-open dialog, over the frame and under the inspector — the
+    // order `chrome:file_browser`'s `z = 130` and `chrome:theme_inspect`'s
+    // 190 had.
+    let frame = match &f.browser {
+        Some(b) => frame.child(super::file_browser::layer(b)),
+        None => frame,
+    };
+    // The inspector, over everything — the trigger that opens it fires under
+    // any chrome, so the answer has to be visible over that chrome. This is
+    // what `chrome:theme_inspect`'s `z = 190` said.
+    let frame = match &f.theme_info {
+        Some(t) => frame.child(super::theme_info::layer(t)),
+        None => frame,
+    };
+    // Two capture-phase observers, outermost and last: each sees the press
+    // before anything below it. The inspector's trigger is inside the dock's
+    // blur observer, which is the order their `z` values had (190 under 195),
+    // and it is the one that stops the flow — Ctrl+Right-Click *is* the
+    // gesture, where the blur is a side effect of one aimed elsewhere.
+    let frame = super::theme_info::inspect_trigger(frame);
+    match f.dock {
+        Some(w) => super::dock::blur_observer(w, frame),
         None => frame,
     }
 }

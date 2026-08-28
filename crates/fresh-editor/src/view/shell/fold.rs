@@ -110,7 +110,7 @@ pub fn fold_native(
     impl HostPainter for Skip {
         fn paint_host(&mut self, _: HostRegion, _: Rect, _: &mut Buffer, _: &mut Caret) {}
     }
-    fold_band(spec, buf, palette, &mut Skip, band)
+    fold_band(spec, buf, palette, &mut Skip, band, Paints::All)
 }
 
 /// Fold a display list into `buf`, returning the caret position for the frame.
@@ -127,9 +127,26 @@ pub fn fold(
     palette: &dyn Palette,
     host: &mut dyn HostPainter,
 ) -> Caret {
-    let a = fold_band(spec, buf, palette, host, Band::Background);
-    let b = fold_band(spec, buf, palette, host, Band::Overlay);
+    let a = fold_band(spec, buf, palette, host, Band::Background, Paints::All);
+    let b = fold_band(spec, buf, palette, host, Band::Overlay, Paints::All);
     b.or(a)
+}
+
+/// Which of the display list's items a pass writes.
+///
+/// A frontend that draws the tree's own surfaces itself — the web projects the
+/// menu bar, the status bar and the explorer as DOM — still needs the host
+/// regions painted into cells, because the panes *are* cells there. That is
+/// one distinction, and it is this one: `HostsOnly` runs every `Draw::Host`
+/// callback and writes nothing else.
+///
+/// It replaces skipping the fold outright, which skipped the body with it —
+/// so the pass that fed the web its pane cells had to be a second, separate
+/// call to the split renderer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Paints {
+    All,
+    HostsOnly,
 }
 
 /// [`fold`], restricted to one band. See [`Band`].
@@ -139,6 +156,7 @@ pub fn fold_band(
     palette: &dyn Palette,
     host: &mut dyn HostPainter,
     band: Band,
+    paints: Paints,
 ) -> Caret {
     let frame = buf.area;
     let mut host_caret: Caret = None;
@@ -153,6 +171,9 @@ pub fn fold_band(
         Band::Overlay => spec.layers(),
     };
     for item in items {
+        if paints == Paints::HostsOnly && !matches!(item.draw, Draw::Host(_)) {
+            continue;
+        }
         // From a reset, not a patch. An item's theme says what its cells look
         // like *outright* — a display list is not a diff over whatever was
         // there before. `Cell::set_style` patches, so without the reset an

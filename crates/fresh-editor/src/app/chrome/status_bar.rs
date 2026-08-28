@@ -1,7 +1,6 @@
 //! The status bar row.
 
 use crate::input::keybindings::Action;
-use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 
 use super::{ChromeComponent, ChromeTreeBuilder, Editor};
@@ -11,22 +10,9 @@ pub(crate) struct StatusBar;
 impl ChromeComponent for StatusBar {
     /// **Nothing of the bar's input.** Every element is a keyed node in the
     /// shell's tree and answers its own press and hover — built-in indicators
-    /// and plugin tokens alike. What is left is the box that claims the row,
-    /// so a press on a *gap* between elements still lands on the bar rather
-    /// than falling through to whatever is beneath it.
-    fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
-        if let Some(area) = ed.status_bar_area_now() {
-            let mut b = LayoutBox::plain(
-                "chrome:status_bar",
-                area.y as u32,
-                area.x as u32,
-                area.width as u32,
-                area.height as u32,
-            );
-            b.z = 40;
-            t.push(b);
-        }
-    }
+    /// and plugin tokens alike — and the row itself claims the gaps between
+    /// them, which is what the box that used to be here was for.
+    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
 }
 
 /// Behavior owned by this component (moved from mouse_input.rs —
