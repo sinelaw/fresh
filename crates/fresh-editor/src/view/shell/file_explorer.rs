@@ -310,6 +310,21 @@ fn panel(e: &Explorer) -> Node<UiMsg> {
         )
 }
 
+/// The caret glyph's ink: the row's own, with only the foreground moved.
+///
+/// The caret marks the selected row; it does not cut a hole in the highlight.
+/// `pair("editor.cursor", "editor.bg")` did cut one, and on a focused panel
+/// that made the selected row's first cell indistinguishable from every
+/// unselected row's. A row whose ink is unreadable keeps its name rather than
+/// gaining a caret in nobody's colours.
+fn caret_ink(row: &str) -> String {
+    use crate::app::shell_host::shell_theme::{Ink, Paint};
+    match Ink::parse(row) {
+        Some(ink) => ink.with_fg(Paint::key("editor.cursor")).to_string(),
+        None => row.to_string(),
+    }
+}
+
 fn node_row(e: &Explorer, r: &Row) -> Node<UiMsg> {
     let mut children: Vec<Node<UiMsg>> = vec![
         text_runs(runs_of(&r.left)),
@@ -353,17 +368,9 @@ fn node_row(e: &Explorer, r: &Row) -> Node<UiMsg> {
     let body = if caret {
         stack().h(Sizing::Cells(1)).children([
             body,
-            row().h(Sizing::Cells(1)).children([text("▌")
-                // The row's own background, only the glyph recoloured: the
-                // caret marks the selected row, it does not cut a hole in the
-                // highlight. `pair("editor.cursor", "editor.bg")` did cut one,
-                // and on a focused panel that made the selected row's first
-                // cell indistinguishable from every unselected row's.
-                .theme(crate::app::shell_host::shell_theme::with_fg(
-                    &r.theme,
-                    "editor.cursor",
-                ))
-                .w(Sizing::Cells(1))]),
+            row()
+                .h(Sizing::Cells(1))
+                .children([text("▌").theme(caret_ink(&r.theme)).w(Sizing::Cells(1))]),
         ])
     } else {
         body

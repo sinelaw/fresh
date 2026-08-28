@@ -191,6 +191,15 @@ pub fn fold_band(
                     }
                 }
             }
+            // **A bar is two background colours, not two glyphs.** The
+            // editor's own scrollbar (`view::ui::scrollbar::render_scrollbar`)
+            // fills each track cell with a space and a background, because
+            // box-drawing glyphs leave gaps between rows in some terminals —
+            // and every test that finds a scrollbar on screen finds it by that
+            // background. So the pair the item names reads the way it does
+            // everywhere else, with the thumb in front of the track it sits
+            // on: the foreground is the thumb, the background is the track,
+            // and both are written as the cell's background.
             Draw::Scrollbar {
                 offset,
                 content,
@@ -199,12 +208,16 @@ pub fn fold_band(
                 let track = rect.height.max(1);
                 let (top, len) = Draw::scrollbar_thumb(*offset, *content, track);
                 for i in 0..track {
-                    let ch = if i >= top && i < top + len {
-                        '█'
+                    let colour = if i >= top && i < top + len {
+                        style.fg
                     } else {
-                        '│'
+                        style.bg
                     };
-                    put(buf, rect.x, rect.y.saturating_add(i), ch, style, clip);
+                    let mut cell = Style::default();
+                    if let Some(c) = colour {
+                        cell = cell.bg(c);
+                    }
+                    put(buf, rect.x, rect.y.saturating_add(i), ' ', cell, clip);
                 }
             }
             // A hint about where selecting text is meaningful; nothing to draw.

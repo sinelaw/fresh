@@ -2846,6 +2846,13 @@ impl Editor {
                 })
                 .collect(),
             selected: prompt.selected_suggestion,
+            // Last frame's window, for the column widths only — see
+            // `Suggestions::window`. `suggestions_area` is where
+            // `record_suggestions_geometry` put it.
+            window: self
+                .active_chrome()
+                .suggestions_area
+                .map(|(_, first, visible, _)| (first, visible)),
             place,
             // The row the painter drew under the popup, now stacked in the
             // layer with it. `render_quick_open_hints` is what this replaces.

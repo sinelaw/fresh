@@ -26,9 +26,9 @@
 use std::rc::Rc;
 
 use fresh_ui::widgets::RowState;
-use fresh_ui::{col, row, text, text_runs, Elide, Key, Node, Run, Sizing};
+use fresh_ui::{col, row, stack, text, text_runs, Elide, Key, Node, Run, Sizing};
 
-use crate::app::shell_host::shell_theme::{attrs, pair, with_bg, with_fg};
+use crate::app::shell_host::shell_theme::{attrs, pair, Attrs, Ink, Paint};
 
 use super::msg::{UiFact, UiMsg};
 
@@ -132,6 +132,16 @@ impl Place {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Suggestions {
     pub rows: Vec<SuggestionRow>,
+    /// Which rows the list is showing, as `(first, count)`.
+    ///
+    /// Only the column widths use it, and only because they are measured from
+    /// the rows on screen — `ColumnLayout::compute` took
+    /// `visible_suggestions`, so one very long name at the far end of a
+    /// thousand-row list does not squeeze every description above it. The
+    /// window itself belongs to the viewport; this is last frame's, read back
+    /// through `suggestions_window`, which is exact except on the frame a
+    /// scroll lands.
+    pub window: Option<(usize, usize)>,
     /// Which row is selected, if any. Controlled: the editor holds it.
     pub selected: Option<usize>,
     pub place: Place,
@@ -274,31 +284,106 @@ fn every_theme_name() -> Vec<String> {
     out
 }
 
-/// A plugin's span as a run, layered over the row's own name.
+/// A plugin's span as a run, layered over the row's own ink.
 ///
 /// Half-named on purpose: `styled_span_style` started from the row's style and
 /// set only what the span mentioned, so a span that names a foreground keeps
-/// the selection's background under it. `with_fg` and `with_bg` are that, in
-/// the grammar.
+/// the selection's background under it.
+///
+/// The string form of this did the layering by hand, and the two halves did
+/// not agree: swapping a background re-spliced the attribute tail while setting
+/// attributes dropped it, so a span that named both lost the row's `+dim`. As
+/// fields there is nothing to disagree about. A row whose ink is unreadable
+/// keeps its name, because a span is a decoration and losing it is better than
+/// losing the row.
 fn span_run(sp: &DescriptionSpan, row: &str) -> Run {
-    let mut name = row.to_string();
+    let Some(mut ink) = Ink::parse(row) else {
+        return Run::themed(sp.text.clone(), row.to_string());
+    };
     if let Some(fg) = &sp.fg {
-        name = with_fg(&name, fg);
+        ink = ink.with_fg(Paint::key(fg.clone()));
     }
     if let Some(bg) = &sp.bg {
-        name = with_bg(&name, bg);
+        ink = ink.with_bg(Paint::key(bg.clone()));
     }
-    if !sp.attrs.is_empty() {
-        let (fg, bg) = name.split_once('/').unwrap_or((name.as_str(), ""));
-        let bg = bg.split('+').next().unwrap_or(bg);
-        name = attrs(fg, bg, &sp.attrs);
+    ink = ink.plus(Attrs::all_named(sp.attrs.iter().map(|a| a.as_ref())));
+    Run::themed(sp.text.clone(), ink.to_string())
+}
+
+/// `ColumnLayout`'s widths, ported rather than reconstructed.
+///
+/// An earlier draft of this measured every column from its content, which is
+/// what the columns *look* like they are. They are not: the keybinding and
+/// source columns are fixed cell counts, present whenever any row in the list
+/// has one, and the name column has a floor of thirty. Getting that wrong made
+/// the descriptions ragged, and none of the width tests here noticed — they
+/// each asked about one column. `the_row_matches_the_painters_columns` is the
+/// guard now, and it is a sweep against a port of `ColumnLayout::compute`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Columns {
+    name: u16,
+    keybinding: u16,
+    source: u16,
+}
+
+/// The widths `ColumnLayout` used, with the names it used.
+const BASE_NAME_W: u16 = 30;
+const KEYBINDING_W: u16 = 12;
+const SOURCE_W: u16 = 15;
+
+impl Columns {
+    /// Measured over the rows on screen, which is what `ColumnLayout::compute`
+    /// did.
+    ///
+    /// Measuring the whole list instead is tempting — the columns would hold
+    /// still while scrolling — and it is wrong: one fifty-cell command name
+    /// anywhere in a thousand-row palette would take the name column to fifty
+    /// cells on every row, and every description would elide to nothing. The
+    /// visual snapshot is what showed that; it is a column of `…` where the
+    /// help text used to be.
+    fn of(rows: &[SuggestionRow], window: Option<(usize, usize)>) -> Columns {
+        use crate::primitives::display_width::str_width;
+        let (first, count) = window.unwrap_or((0, MAX_VISIBLE_SUGGESTIONS));
+        let rows: &[SuggestionRow] = rows
+            .get(first..(first + count).min(rows.len()))
+            .unwrap_or(rows);
+        let longest = rows
+            .iter()
+            .map(|r| str_width(&r.name) as u16)
+            .max()
+            .unwrap_or(0);
+        Columns {
+            // "Size the column to the longest name so names are never
+            // truncated while room remains" — with a floor, so a list of short
+            // names still has a column rather than a ragged edge. The cap
+            // against the available width is `priority`'s job.
+            name: longest.max(BASE_NAME_W),
+            // Fixed, and present whenever *any* row has one: a row without a
+            // keybinding still leaves the space, or the descriptions stop
+            // lining up.
+            keybinding: rows
+                .iter()
+                .any(|r| r.keybinding.is_some())
+                .then_some(KEYBINDING_W)
+                .unwrap_or(0),
+            source: rows
+                .iter()
+                .any(|r| r.source.is_some())
+                .then_some(SOURCE_W)
+                .unwrap_or(0),
+        }
     }
-    Run::themed(sp.text.clone(), name)
 }
 
 /// One row's four columns, in paint order, each carrying the priority that says
 /// when it yields.
-fn node_row(index: usize, r: &SuggestionRow, st: RowState, name_elide: Elide) -> Node<UiMsg> {
+fn node_row(
+    index: usize,
+    r: &SuggestionRow,
+    st: RowState,
+    name_elide: Elide,
+    cols: Columns,
+) -> Node<UiMsg> {
     let t = theme(r.disabled, st);
     // `ColumnLayout::left_margin`, as a cell rather than as two leading spaces
     // in a span. It carries the row's own fill because the row container
@@ -310,52 +395,73 @@ fn node_row(index: usize, r: &SuggestionRow, st: RowState, name_elide: Elide) ->
             .theme(t.clone())
             .key(name_key(index))
             .elide(name_elide)
+            .w(Sizing::Cells(cols.name))
             .priority(yields_last::NAME),
     );
 
-    // A flexible gap rather than padding: it is what puts the trailing columns
-    // at the right edge, and it is also `ColumnLayout::column_spacing` — the
-    // painter's fixed two cells between columns, here as whatever is left over,
-    // with `min_w` keeping the painter's floor when the row is tight.
-    cells.push(row().flex(1).min_w(COLUMN_SPACING));
-
-    // The description carries no colour of its own: the painter draws it in
-    // `base_style`, so it is the row. A plugin's styled description is the
-    // same run with its pieces named — one node either way, because the pieces
-    // are one logical string and must wrap and elide as one.
+    // `ColumnLayout`'s order, which is not the order the fields happen to be
+    // declared in: name, keybinding, description, source. An earlier draft
+    // emitted the description second and put one flexible gap after the name,
+    // which jammed every trailing column against its neighbour —
+    // `...action)welcome` — and swapped two of them. The visual snapshot is
+    // what caught it; the width tests here could not, because each was about
+    // one column at a time.
+    let gap = || row().w(Sizing::Cells(COLUMN_SPACING));
+    // The gap and the column are pushed whether or not *this* row has a
+    // keybinding: the column exists because some row in the list does, and a
+    // row that omits it still has to leave the space or the descriptions stop
+    // lining up. `ColumnLayout` said the same with `has_keybinding`.
+    if cols.keybinding > 0 {
+        cells.push(gap());
+        cells.push(
+            text(r.keybinding.clone().unwrap_or_default())
+                .theme(keybinding_theme(r.disabled, st))
+                .w(Sizing::Cells(cols.keybinding))
+                .priority(yields_last::KEYBINDING),
+        );
+    }
+    cells.push(gap());
+    // The description is the column that *fills*: it takes what the fixed ones
+    // leave, which is what puts the source at the right edge, and it is first
+    // to yield when there is nothing left to take. The painter said the same
+    // thing as `available - fixed - source_reserved`.
     match (&r.description_spans, &r.description) {
         (Some(spans), _) => cells.push(
             text_runs(spans.iter().map(|sp| span_run(sp, &t)))
                 .theme(t.clone())
                 .elide(Elide::Tail)
+                .flex(1)
                 .priority(yields_last::DESCRIPTION),
         ),
         (None, Some(d)) => cells.push(
             text(d.clone())
                 .theme(t.clone())
                 .elide(Elide::Tail)
+                .flex(1)
                 .priority(yields_last::DESCRIPTION),
         ),
-        (None, None) => {}
+        (None, None) => cells.push(row().flex(1)),
     }
-    if let Some(k) = &r.keybinding {
+    if cols.source > 0 {
+        cells.push(gap());
+        // Right-aligned within its column, which is what `push_source_column`
+        // did by emitting `width - display_width` spaces before the text. A
+        // flexible spacer is that, and it is a *box* — `align` is a box
+        // property and calling it on a text run panics, which is how this was
+        // found: the palette has sources and the width tests here did not.
         cells.push(
-            text(k.clone())
-                .theme(keybinding_theme(r.disabled, st))
-                .priority(yields_last::KEYBINDING),
-        );
-    }
-    if let Some(sc) = &r.source {
-        cells.push(
-            text(sc.clone())
-                .theme(source_theme(r.disabled, st))
-                .elide(Elide::Tail)
-                .priority(yields_last::SOURCE),
+            row()
+                .w(Sizing::Cells(cols.source))
+                .priority(yields_last::SOURCE)
+                .children([
+                    row().flex(1),
+                    text(r.source.clone().unwrap_or_default())
+                        .theme(source_theme(r.disabled, st))
+                        .elide(Elide::Tail),
+                ]),
         );
     }
 
-    // No theme on the row itself: `row_theme` names it, and a name here would
-    // be overwritten anyway.
     row().h(Sizing::Cells(1)).children(cells)
 }
 
@@ -398,6 +504,7 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
     let rows_for_key = rows_for_row.clone();
     let rows_for_theme = rows_for_row.clone();
     let name_elide = s.name_elide();
+    let cols = Columns::of(&s.rows, s.window);
 
     // `List` reports the state it holds; the names are this module's. Both the
     // row builder and `row_theme` need the state, and only the latter is given
@@ -425,6 +532,7 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
                     RowState::Normal
                 },
                 name_elide,
+                cols,
             ),
             None => row().h(Sizing::Cells(1)),
         },
@@ -433,7 +541,18 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
         let st = hover_state(i, st);
         theme(rows_for_theme.get(i).is_some_and(|r| r.disabled), st)
     })
-    .scrollbar()
+    // **The bar rides the popup's right border, and the column is always
+    // reserved for it.** Both halves of that are what the painter did:
+    // `render` drew the shared scrollbar widget over `outer.right() - 1`, the
+    // ring's own column, and laid the rows out in the inner rect either way —
+    // so a list that grew past ten entries did not reflow its columns by a
+    // cell. A gutter that came and went would leave the bar *beside* the ring
+    // rather than on it, which is the one thing the ring column cannot say.
+    .scrollbar_gutter()
+    // Named apart from the rows, because the bar is not part of the list's
+    // ground: it is the editor's one scrollbar, in the editor's one pair of
+    // scrollbar colours, wherever it appears.
+    .scrollbar_theme(pair("ui.scrollbar_thumb_fg", "ui.scrollbar_track_fg"))
     // A click reports the row; what that *means* is the prompt type's
     // business — `select_suggestion` confirms when `click_confirms()` says a
     // click commits, and otherwise syncs the input. That decision was already
@@ -446,6 +565,13 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
     // activates — before it, the widget fired activation on the first and let
     // it win, so setting both confirmed every click.
     .activate_on(fresh_ui::widgets::Activate::DoubleClick)
+    // **The keyboard belongs to the prompt's input line, which is not in this
+    // tree.** The editor sets the selection every frame and handles every key
+    // the prompt answers — Up, Down, Enter, Tab-completion — so a list that
+    // joined the focus ring would only be somewhere for Tab to land, and Tab
+    // in a command palette completes the query. The mouse is unaffected: a
+    // list that declines focus still answers clicks and the wheel.
+    .focusable(false)
     .on_select(|i| UiMsg::Ui(UiFact::SuggestionSelect(i)))
     .on_activate(|i| UiMsg::Ui(UiFact::SuggestionConfirm(i)));
     if let Some(i) = selected {
@@ -466,14 +592,28 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
 /// .style(bg(suggestion_bg))`, and the `Paragraph` that padded the unused rows
 /// with the same background. `border()` is the ring, and a themed box already
 /// fills before its content, so the padding rows are what the fill does anyway.
+///
+/// **The ring and the rows are stacked, not nested, because the bar rides the
+/// ring.** A bordered box holds its children inside the ring by construction —
+/// that is what a border *is* — so a list nested in one can never reach the
+/// column the bar wants, and reserving a second column beside it draws two
+/// vertical lines where the painter drew one. Stacked, the rows are inset from
+/// the ring on the three sides that have no bar and run flush to it on the
+/// fourth, where the list's own gutter lands on the ring's column and the bar
+/// paints over it. Where there is no bar the gutter stays empty and the ring
+/// shows through, which is why the gutter has to be stable: the layout, not
+/// the description, is what knows whether this list overflows.
 fn popup(s: &Suggestions) -> Node<UiMsg> {
-    let body = col()
-        .key(POPUP_KEY.with(|k| k.clone()))
-        .theme(pair("ui.popup_border_fg", "ui.suggestion_bg"))
-        .child(suggestions(s));
+    let ground = pair("ui.popup_border_fg", "ui.suggestion_bg");
     if !s.place.bordered() {
-        // Inside a card, the card decides how tall this is.
-        return absorb(body);
+        // Inside a card, the card decides how tall this is — and draws
+        // whatever frame there is.
+        return absorb(
+            col()
+                .key(POPUP_KEY.with(|k| k.clone()))
+                .theme(ground)
+                .child(suggestions(s)),
+        );
     }
     // How tall the box is, in the terms the painter used: as many rows as it
     // has, up to the cap, plus the ring. A content rule rather than a
@@ -481,7 +621,25 @@ fn popup(s: &Suggestions) -> Node<UiMsg> {
     // sentence in `render`, and it belongs with the list it describes because
     // nothing outside knows the cap.
     let visible = s.rows.len().min(MAX_VISIBLE_SUGGESTIONS) as u16;
-    absorb(body.border().h(Sizing::Cells(visible + 2)))
+    absorb(
+        stack()
+            .key(POPUP_KEY.with(|k| k.clone()))
+            // Named once, on the node the whole popup is: the ring inherits
+            // the pair and draws in its foreground, and the fill under
+            // everything is the popup's ground.
+            .theme(ground)
+            .h(Sizing::Cells(visible + 2))
+            .children([
+                col().border(),
+                col().children([
+                    row().h(Sizing::Cells(1)),
+                    row()
+                        .flex(1)
+                        .children([row().w(Sizing::Cells(1)), suggestions(s).flex(1)]),
+                    row().h(Sizing::Cells(1)),
+                ]),
+            ]),
+    )
 }
 
 /// The list as an overlay above the prompt row.
@@ -663,7 +821,7 @@ mod tests {
             for half in [fg, bg] {
                 let half = half.unwrap_or_else(|| panic!("{name:?} has an unnamed half"));
                 assert!(
-                    theme.resolve_theme_key(half).is_some(),
+                    theme.resolve_theme_key(&half).is_some(),
                     "{half:?} (in {name:?}) is not a theme key"
                 );
             }
@@ -686,6 +844,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                window: None,
             },
             40,
             8,
@@ -719,6 +878,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                window: None,
             },
             40,
             8,
@@ -766,6 +926,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                window: None,
             })
         };
         ui.frame(tree(), Size::new(40, 8));
@@ -801,6 +962,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                window: None,
             },
             40,
             MAX_VISIBLE_SUGGESTIONS as u16,
@@ -831,6 +993,7 @@ mod tests {
             selected: Some(0),
             place: Place::AbovePrompt,
             hints: None,
+            window: None,
         };
         let spec = ui.frame(popup(&s), Size::new(40, 6)).clone();
         assert!(
@@ -870,6 +1033,7 @@ mod tests {
                         selected: Some(0),
                         place: Place::AbovePrompt,
                         hints: None,
+                        window: None,
                     }),
                     ..Frame::default()
                 }),
@@ -900,6 +1064,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                window: None,
             };
             let ui = laid_out(s, 16, 4);
             let spec = ui.spec();
@@ -965,8 +1130,11 @@ mod tests {
             selected: Some(0),
             place: Place::AbovePrompt,
             hints: None,
+            window: None,
         };
-        let ui = laid_out(s, 40, 4);
+        // Wide enough that the description is not elided: the name column has
+        // a thirty-cell floor, and this test is about the span's ink.
+        let ui = laid_out(s, 70, 4);
         let themes: Vec<(String, String)> = ui
             .spec()
             .items
@@ -1027,6 +1195,7 @@ mod tests {
                         selected: Some(0),
                         place: Place::InCard,
                         hints: None,
+                        window: None,
                     }),
                     ..Frame::default()
                 }),
@@ -1075,6 +1244,7 @@ mod tests {
                         selected: Some(0),
                         place: Place::AbovePrompt,
                         hints: None,
+                        window: None,
                     }),
                     ..Frame::default()
                 }),
@@ -1100,6 +1270,7 @@ mod tests {
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
+                    window: None,
                 })),
                 Size::new(60, 40),
             );
@@ -1141,6 +1312,7 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                window: None,
             })),
             Size::new(60, 20),
         );
@@ -1179,6 +1351,7 @@ mod tests {
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
+                    window: None,
                 }),
                 Size::new(40, 6),
             );
@@ -1188,6 +1361,55 @@ mod tests {
         let over = bar(60).expect("sixty rows in six: a bar");
         assert_eq!(over.w, 1, "one column of track");
         assert_eq!(over.x, 39, "at the list's right edge");
+    }
+
+    /// **The prompt owns the keyboard; the list is driven, not driving.**
+    ///
+    /// The regression this exists for: with the list in the frame,
+    /// `e2e::prompt_editing::test_typing_deletes_selection` lost exactly one
+    /// `Right`. `>replace me` with Home, Right, then seven Shift+Rights
+    /// selected `>replac` instead of `replace`, so typing over it ate the `>`
+    /// prefix and left `fixede me`.
+    ///
+    /// Every key in a prompt belongs to the prompt's own input handling. The
+    /// list has no keyboard of its own — the editor moves
+    /// `selected_suggestion` and hands the new value down each frame — so
+    /// nothing the tree contains may claim one.
+    #[test]
+    fn the_suggestion_layer_claims_no_keys() {
+        use crate::view::shell::frame::{frame_tree, Frame};
+        use fresh_ui::{Input, KeyCode, KeyPress, Mods};
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                prompt_line: true,
+                suggestions: Some(Suggestions {
+                    rows: rows(5),
+                    selected: Some(0),
+                    place: Place::AbovePrompt,
+                    hints: None,
+                    window: None,
+                }),
+                ..Frame::default()
+            }),
+            Size::new(80, 24),
+        );
+        for code in [
+            KeyCode::Right,
+            KeyCode::Left,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Enter,
+        ] {
+            let got = ui.dispatch(Input::Key(KeyPress::with(code, Mods::NONE)));
+            assert!(
+                !got.claimed,
+                "{code:?} must reach the prompt, not the list — got {:?}",
+                got.msgs
+            );
+        }
     }
 
     /// **Ledger finding A: the column yield order.** The name is sized before
@@ -1207,17 +1429,19 @@ mod tests {
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
+                window: None,
             };
             let ui = laid_out(s, w, 4);
             ui.rect_of(ui.find_by_key(&name_key(0)).expect("the name column"))
                 .w
         };
-        // Wide enough for both: the name is whole.
-        assert_eq!(one(60), 19, "the name fits at its natural width");
-        // Too narrow for both: the name is still whole — the description gave
-        // up its cells first. 28 rather than 24 because the row now carries
-        // the painter's own gutters: two cells of `left_margin` and two of
-        // `column_spacing` are not the name's to give.
-        assert_eq!(one(28), 19, "the name kept its width; the description paid");
+        // The name column is `max(longest name, 30)` — `ColumnLayout`'s
+        // `actual_max_name_width.max(base_name_width)`, where the floor keeps
+        // a list of short names from having a ragged right edge. The name here
+        // is nineteen cells, so the column is the floor.
+        assert_eq!(one(60), BASE_NAME_W, "the column is its floor");
+        // Squeezed: the name column holds and the description pays, which is
+        // the whole point of `priority`.
+        assert_eq!(one(40), BASE_NAME_W, "the name kept its column");
     }
 }

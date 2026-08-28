@@ -345,6 +345,35 @@ impl Editor {
         Some(Ok(()))
     }
 
+    /// Choose a row of the topmost popup, then confirm it.
+    ///
+    /// The tail of `handle_click_global_popups` and `handle_click_buffer_popups`
+    /// with the hit-test taken off the front — a list row that answers its own
+    /// click has an index, and asking it to report a screen position so the
+    /// editor can hit-test its way back to that index is the round trip the
+    /// migration removes.
+    ///
+    /// "Topmost" is `handle_popup_confirm`'s own rule, restated so the row that
+    /// is *selected* and the popup that is *confirmed* cannot be different
+    /// ones: global popups win over a buffer's while any is visible.
+    pub(crate) fn select_popup_item(&mut self, index: usize) {
+        let set = |p: &mut crate::view::popup::Popup| {
+            if let crate::view::popup::PopupContent::List { selected, .. } = &mut p.content {
+                *selected = index;
+            }
+        };
+        if self.global_popups.is_visible() {
+            if let Some(p) = self.global_popups.top_mut() {
+                set(p);
+            }
+        } else if let Some(p) = self.active_state_mut().popups.top_mut() {
+            set(p);
+        }
+        if let Err(e) = self.handle_action(Action::PopupConfirm) {
+            tracing::warn!("popup confirm failed: {e}");
+        }
+    }
+
     pub(super) fn handle_click_global_popups(
         &mut self,
         col: u16,

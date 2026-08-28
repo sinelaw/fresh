@@ -19,16 +19,16 @@ expression: "&screen_text"
 ~                                                                                                                       
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│  Plugin Demo: Open Help                        Open the editor help page (uses built-in action)               welcome 
-│  Show Signature Help                           Show function parameter hints                                  builtin 
-│  Shell Command (Replace)         Alt+Shift+|   Run shell command on buffer/selection, replace con...          builtin 
-│  Search and Replace in Project   Alt+A         Search and replace text across all git-tracked files    search_replace 
-│  Show Manual                     F1            Open the help manual                                           builtin 
-│  Git Log: Close                                Close the git log panel                                        git_log 
-│  Toggle Inlay Hints                            Show or hide LSP inlay hints (type hints, paramete...          builtin 
-│  Start/Restart LSP Server                      Start or restart the LSP server for the current la...          builtin 
-│  Copy File Path                                Copy the absolute path of the current buffer's fil...          builtin 
-│  Git Blame: Close                              Close the git blame panel                                    git_blame 
+│  Plugin Demo: Open Help                        Open the editor help page (uses built-in action)              welcome█│
+│  Show Signature Help                           Show function parameter hints                                 builtin█│
+│  Shell Command (Replace)         Alt+Shift+|   Run shell command on buffer/selection, replace cont…          builtin││
+│  Search and Replace in Project   Alt+A         Search and replace text across all git-tracked files   search_replace││
+│  Show Manual                     F1            Open the help manual                                          builtin││
+│  Git Log: Close                                Close the git log panel                                       git_log││
+│  Toggle Inlay Hints                            Show or hide LSP inlay hints (type hints, parameter…          builtin││
+│  Start/Restart LSP Server                      Start or restart the LSP server for the current lan…          builtin││
+│  Copy File Path                                Copy the absolute path of the current buffer's file…          builtin││
+│  Git Blame: Close                              Close the git blame panel                                   git_blame││
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   file  |  >command  |  :line  |  #buffer                                                                               
 >help
