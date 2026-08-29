@@ -178,6 +178,23 @@ pub struct Frame {
     /// The full-screen modal that has the pointer, if any. At most one: the
     /// capture band this replaces stopped at the first taker in rank order.
     pub modal: Option<super::modal::Slot>,
+    /// **Which window the window-owned half of this frame belongs to.**
+    ///
+    /// The editor is N independent workspaces and there is one retained tree,
+    /// reconciled each frame against whichever is active. Nothing in the
+    /// description named a window, so two workspaces' subtrees matched each
+    /// other: reconciliation is by `(type, key)` at a position, and
+    /// `SplitManager::next_split_id` starts at 1 in every window — window A's
+    /// first pane and window B's first pane carry the *same* key.
+    ///
+    /// This is the key that bounds identity and the persistence scope that
+    /// lets a window's incidental view state survive being switched away
+    /// from. `fresh_ui::scope` is one node for both, because declaring only
+    /// one of them is silently wrong in either direction.
+    ///
+    /// `None` is "one unnamed window", which is what every test that does not
+    /// care about workspaces gets from `Frame::default`.
+    pub window: Option<u64>,
 }
 
 impl Default for Frame {
@@ -202,6 +219,7 @@ impl Default for Frame {
             trust: None,
             modal: None,
             splits: None,
+            window: None,
         }
     }
 }
@@ -262,6 +280,17 @@ impl Frame {
             self.prompt_line,
         )
     }
+}
+
+/// The name of a window's identity key and persistence scope.
+///
+/// One function because two callers have to agree and neither can check the
+/// other: `frame_tree` writes the scope into the tree, and
+/// `Editor::forget_window_ui_state` drops it when the window closes. Spelled
+/// apart, a rename in one place leaks every closed window's values forever and
+/// nothing fails.
+pub fn window_scope(id: u64) -> String {
+    format!("window:{id}")
 }
 
 /// The frame description: one `Host` per region.
@@ -337,17 +366,6 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         .h(cells(f.search_options.is_some())),
         region(HostRegion::PromptLine).h(cells(f.prompt_line)),
     ]);
-    // Native around a `Host` content leaf: the column answers its own pointer
-    // and carries its width grip, while the panel's widgets stay the widget
-    // runtime's until `WidgetSpec` becomes a `Node`. A hidden dock is still in
-    // the tree at zero width, like every other region.
-    let frame = row().children([
-        match f.dock {
-            Some(w) => named(HostRegion::Dock, super::dock::dock()).w(Sizing::Cells(w)),
-            None => region(HostRegion::Dock).w(Sizing::Cells(0)),
-        },
-        chrome,
-    ]);
     // Overlays, in paint order. Menu-bar dropdowns first, then a context menu
     // over them — the order `layer_rank::MENU` below `layer_rank::CONTEXT_MENU`
     // states in the precedence table, expressed here as the order they are
@@ -364,36 +382,74 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // and the list lands nowhere — with the card's own paint on top of it,
     // which is how it went unnoticed. Paint order agrees: the list belongs
     // over the card it sits in.
-    let frame = match &f.card {
-        Some(c) => frame.child(super::overlay_prompt::card(c)),
-        None => frame,
+    let chrome = match &f.card {
+        Some(c) => chrome.child(super::overlay_prompt::card(c)),
+        None => chrome,
     };
     // The suggestion list, above the prompt row it belongs to. Declared before
     // the menus so a context menu opened over it still paints on top — the
     // same "order of declaration is paint order" rule the dropdowns follow.
-    let frame = match &f.suggestions {
-        Some(s) => frame.child(super::prompt::suggestions_layer(s)),
-        None => frame,
+    let chrome = match &f.suggestions {
+        Some(s) => chrome.child(super::prompt::suggestions_layer(s)),
+        None => chrome,
     };
     // Popups sit over the frame and over the prompt's list, and under the
     // menus — a context menu opened from a popup row still paints on top, the
     // same declaration-order rule everything else here follows.
-    let frame = frame.children(super::popup::placed_layers(&f.popups));
-    let frame = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {
-        Some(chain) => frame.child(chain),
-        None => frame,
+    let chrome = chrome.children(super::popup::placed_layers(&f.popups));
+    let chrome = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {
+        Some(chain) => chrome.child(chain),
+        None => chrome,
     };
-    let frame = match &f.menu {
-        Some(menu) => frame.child(super::context_menu::context_menu(menu)),
-        None => frame,
+    let chrome = match &f.menu {
+        Some(menu) => chrome.child(super::context_menu::context_menu(menu)),
+        None => chrome,
     };
     // The file-open dialog, over the frame and under the inspector — the
     // order `chrome:file_browser`'s `z = 130` and `chrome:theme_inspect`'s
     // 190 had.
-    let frame = match &f.browser {
-        Some(b) => frame.child(super::file_browser::layer(b)),
-        None => frame,
+    let chrome = match &f.browser {
+        Some(b) => chrome.child(super::file_browser::layer(b)),
+        None => chrome,
     };
+    // **The window's half of the frame, under one key and one persistence
+    // scope.** Everything above belongs to the active workspace: its chrome
+    // column, its splits, its explorer, and the overlays that hang off them.
+    // A layer is out of flow, so carrying them on the column rather than on
+    // the row moves no rectangle — what it moves is which scope they are in
+    // and which key bounds their identity.
+    //
+    // Without this the tree names no window at all, and two workspaces'
+    // subtrees match each other: `SplitManager::next_split_id` starts at 1 in
+    // every window, so window A's first pane and window B's first pane carry
+    // the same `(type, key)` at the same position. `fresh_ui::scope` is one
+    // node for the key and the `PersistenceScope`, because a subtree that
+    // declares only one of them is silently wrong in either direction.
+    let window_area = match f.window {
+        Some(id) => fresh_ui::scope(window_scope(id), chrome),
+        None => chrome,
+    };
+    // Native around a `Host` content leaf: the column answers its own pointer
+    // and carries its width grip, while the panel's widgets stay the widget
+    // runtime's until `WidgetSpec` becomes a `Node`. A hidden dock is still in
+    // the tree at zero width, like every other region.
+    //
+    // **Outside the window scope, deliberately.** The dock is editor-global —
+    // its state is `Editor.dock`, it lists and switches between *all* windows,
+    // and it is meant to survive a workspace switch. Inside the window key its
+    // element state would follow whichever window is active, and its sessions
+    // list would lose its scroll on every switch.
+    let frame = row().children([
+        match f.dock {
+            Some(w) => named(HostRegion::Dock, super::dock::dock()).w(Sizing::Cells(w)),
+            None => region(HostRegion::Dock).w(Sizing::Cells(0)),
+        },
+        window_area,
+    ]);
+    // From here down: editor-scoped, like the dock. Each covers or dims the
+    // *whole* frame, each is state on the `Editor` rather than on a `Window`,
+    // and none of them should be discarded because the active workspace
+    // changed.
     // The inspector, over everything — the trigger that opens it fires under
     // any chrome, so the answer has to be visible over that chrome. This is
     // what `chrome:theme_inspect`'s `z = 190` said.
@@ -490,4 +546,95 @@ pub fn region_rects(
     let mut ui: Ui<UiMsg> = Ui::new();
     ui.frame(frame_tree(f), Size::new(size.width, size.height));
     regions_of(&ui, size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::event::BufferId;
+    use crate::view::shell::splits::{leaf_key, PaneControls, Splits};
+    use crate::view::split::SplitNode;
+    use fresh_core::SplitId;
+    use fresh_ui::{Size, Ui};
+
+    /// One pane, so the two windows collide at the *first* split id — which is
+    /// the case that matters: `SplitManager::next_split_id` starts at 1 in
+    /// every window, so this is the default layout of two workspaces rather
+    /// than a contrived one.
+    fn one_pane_in(window: Option<u64>) -> Frame {
+        Frame {
+            window,
+            splits: Some(Splits {
+                root: SplitNode::leaf(BufferId(1), SplitId(1)),
+                maximized: None,
+                chrome: Default::default(),
+                controls: PaneControls {
+                    maximize: false,
+                    close: false,
+                },
+                groups: Default::default(),
+            }),
+            ..Frame::default()
+        }
+    }
+
+    /// The element the first pane is reconciled onto, across two frames.
+    fn pane_across(
+        a: Frame,
+        b: Frame,
+    ) -> (Option<fresh_ui::ElementId>, Option<fresh_ui::ElementId>) {
+        let key = leaf_key(crate::model::event::LeafId(SplitId(1)));
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(frame_tree(a), Size::new(80, 24));
+        let first = ui.find_by_key(&key);
+        ui.frame(frame_tree(b), Size::new(80, 24));
+        (first, ui.find_by_key(&key))
+    }
+
+    /// **The bug the window scope exists to prevent.** Reconciliation is by
+    /// `(type, key)` at a position; two windows' first panes carry the same
+    /// key at the same position, so without something naming the window the
+    /// tree matches them and window B's pane inherits window A's element —
+    /// and, once panes own state, its scroll offset.
+    #[test]
+    fn two_windows_first_panes_are_not_one_element() {
+        let (a, b) = pane_across(one_pane_in(Some(1)), one_pane_in(Some(2)));
+        assert!(a.is_some() && b.is_some(), "both frames describe a pane");
+        assert_ne!(
+            a, b,
+            "window 2's pane must not be reconciled onto window 1's element"
+        );
+    }
+
+    /// The control, and the reason the assertion above is not vacuous: with no
+    /// window named, the two frames *do* land on one element. This is what the
+    /// tree did before the scope, spelled out so a future change that quietly
+    /// stops keying the window fails the test above instead of passing it for
+    /// the wrong reason.
+    #[test]
+    fn with_no_window_named_the_two_frames_share_the_element() {
+        let (a, b) = pane_across(one_pane_in(None), one_pane_in(None));
+        assert!(a.is_some());
+        assert_eq!(a, b, "nothing distinguishes the two frames");
+    }
+
+    /// Rebuilding the *same* window is not a switch: the pane keeps its
+    /// element, so nothing a component owns is thrown away on an ordinary
+    /// frame. A scope that discarded every frame would be worse than none.
+    #[test]
+    fn the_same_window_keeps_its_pane_across_frames() {
+        let (a, b) = pane_across(one_pane_in(Some(1)), one_pane_in(Some(1)));
+        assert!(a.is_some());
+        assert_eq!(a, b, "same window, same element");
+    }
+
+    /// The tree's scope name and the editor's `forget_window_ui_state` have to
+    /// agree, and neither can check the other — so the shared spelling is
+    /// pinned here. If this changes, every closed window's values leak and
+    /// nothing else fails.
+    #[test]
+    fn a_windows_scope_is_named_after_its_id() {
+        assert_eq!(window_scope(7), "window:7");
+        assert_ne!(window_scope(1), window_scope(10));
+    }
 }

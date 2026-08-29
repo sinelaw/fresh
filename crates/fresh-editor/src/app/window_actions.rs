@@ -395,6 +395,9 @@ impl crate::app::Editor {
         // breath, so `active_window` is never left pointing at nothing.
         let adopted = adopt_id.and_then(|id| {
             self.preparing_windows.remove(&id);
+            // The placeholder's id stops existing here — the real window takes
+            // a new one — so the placeholder's scope is dead, not dormant.
+            self.forget_window_ui_state(id);
             self.windows.remove(&id).map(|w| (id, w))
         });
         if let Some((_, placeholder)) = &adopted {
@@ -487,6 +490,9 @@ impl crate::app::Editor {
                 // message — rather than vanishing out from under the user
                 // who is sitting in it.
                 self.windows.remove(&id);
+                // The half-built window's id is dead too — nothing will ever
+                // be described under it again.
+                self.forget_window_ui_state(id);
                 if let Some((placeholder_id, placeholder)) = adopted {
                     self.windows.insert(placeholder_id, placeholder);
                     self.preparing_windows.insert(
@@ -1371,6 +1377,25 @@ impl crate::app::Editor {
         }
     }
 
+    /// Drop the shell tree's `Persisted` values for a window that is gone.
+    ///
+    /// The tree cannot make this call. What it sees when a window is switched
+    /// away from and when a window is closed is the same thing — a subtree it
+    /// is no longer describing — and in the first case the values must be
+    /// kept, which is the entire point of scoping them. Only the host knows
+    /// which of the two happened, so the host says.
+    ///
+    /// Two consequences if this is not called: the map grows for the life of
+    /// the process, and a later window that reuses a freed id inherits the
+    /// dead one's scroll offsets and expansions.
+    ///
+    /// The scope name is `frame_tree`'s, and the two must agree — the pairing
+    /// is pinned by `a_closed_windows_scope_is_forgotten`.
+    pub(crate) fn forget_window_ui_state(&self, id: WindowId) {
+        self.shell_store
+            .forget_scope(&crate::view::shell::frame::window_scope(id.0));
+    }
+
     /// Close a session and drop its `Session` entry. Refuses to
     /// close the currently active session — the caller must switch
     /// to a different session first. Refuses to close the *last*
@@ -1413,6 +1438,8 @@ impl crate::app::Editor {
             tracing::warn!("close_window: unknown session id {id}");
             return false;
         }
+        // The window is gone, so its half of the shell tree is gone with it.
+        self.forget_window_ui_state(id);
         // Closing a dormant session's disconnected shell drops the whole
         // session: the descriptor must leave the dock with the window.
         self.dormant_remote.remove(&id);

@@ -79,6 +79,29 @@ pub(crate) use crate::view::ui::split_rendering::PaneAreas as BodyOutput;
 /// dismissal closes a menu while leaving the right-click available to open
 /// the next one. **Changed** is whether anything moved as a result, which is
 /// what asks for the repaint — and the two differ exactly where hover lives.
+/// What the *event* knows, for the handlers that need more than the message.
+///
+/// Two facts that only exist while one pointer event is being dispatched, and
+/// that a `UiMsg` deliberately does not carry: a message says what happened,
+/// not where the pointer was or what the frame looked like a moment before it.
+/// They were fields on the `Editor` — written at the top of `shell_dispatch`
+/// and read inside a handler reached from its own message loop — which is a
+/// local threaded through a `&mut self` boundary, and reads at any other time
+/// as durable editor state that anyone may consult.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct EventFacts {
+    /// What the menu bar was showing when this event *arrived*, before any
+    /// message — including the layer's own dismissal — was applied. A toggle
+    /// needs it: by the time a press is handled the menu is already shut, so
+    /// asking then always answers "not open" and reopens what the press was
+    /// meant to close.
+    pub menu_open_before: Option<usize>,
+    /// Where the pointer was. A `UiFact::Hover` carries *what* is under the
+    /// pointer and not where, and the hover reactions anchor tooltips to the
+    /// cell.
+    pub at: (u16, u16),
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Dispatched {
     /// The tree took the event: nothing behind it should act on it.
@@ -128,10 +151,11 @@ pub struct BodyPainter<'a> {
 }
 
 impl<'a> BodyPainter<'a> {
-    pub fn new(editor: &'a mut Editor, state: BodyState) -> Self {
-        // Cloned rather than taken: a frame may fold more than once, and the
-        // second pass must not paint panes with no chrome at all.
-        let pane_chrome = editor.pending_pane_chrome.clone();
+    pub fn new(
+        editor: &'a mut Editor,
+        state: BodyState,
+        pane_chrome: std::collections::HashMap<LeafId, PaneChrome>,
+    ) -> Self {
         let scrollback = editor
             .windows
             .get(&editor.active_window)
@@ -934,17 +958,14 @@ impl Editor {
         let Some(mut ui) = self.shell_ui.take() else {
             return Dispatched::default();
         };
-        // What the menu was showing when this event arrived. Snapshotted
-        // before a single message is applied, because the first of them may be
-        // the layer's own dismissal — and a toggle has to know what it is
-        // toggling. See `UiFact::MenuBarPress`.
-        self.shell_menu_open_before = self.menu_state.active_menu;
-        // Where the pointer is, for the hover reactions a resulting
-        // `UiFact::Hover` will run — they anchor tooltips to it, and the fact
-        // itself carries only *what* is under the pointer.
-        if let Some(p) = input.position() {
-            self.shell_hover_at = (p.x.max(0) as u16, p.y.max(0) as u16);
-        }
+        // Snapshotted before a single message is applied. See [`EventFacts`].
+        let facts = EventFacts {
+            menu_open_before: self.menu_state.active_menu,
+            at: input
+                .position()
+                .map(|p| (p.x.max(0) as u16, p.y.max(0) as u16))
+                .unwrap_or_default(),
+        };
         let result = ui.dispatch(input);
         self.shell_ui = Some(ui);
         // Claimed is reported, not inferred. Producing a message and taking
@@ -975,7 +996,7 @@ impl Editor {
                         tracing::warn!("shell action {action:?} failed: {e}");
                     }
                 }
-                crate::view::shell::msg::UiMsg::Ui(fact) => self.apply_ui_fact(fact),
+                crate::view::shell::msg::UiMsg::Ui(fact) => self.apply_ui_fact(fact, facts),
             }
         }
         Dispatched { claimed, changed }
@@ -1003,7 +1024,7 @@ impl Editor {
 
     /// Apply a positional fact — the half of a message that never becomes a
     /// keybinding.
-    fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact) {
+    fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact, ev: EventFacts) {
         use crate::view::shell::msg::UiFact;
         match fact {
             UiFact::StatusBarClicked(id) => {
@@ -1098,7 +1119,7 @@ impl Editor {
                     .scroll_split_surface(pane, buffer_id, delta);
             }
             UiFact::PanePan { pane, delta } => {
-                let (x, y) = self.shell_hover_at;
+                let (x, y) = ev.at;
                 if self.pane_content_took_wheel(x, y) {
                     return;
                 }
@@ -1183,9 +1204,8 @@ impl Editor {
                 //
                 // The pointer cell the reactions want is the one the fact
                 // arrived at; a hover fact is always produced by a pointer
-                // event, and `shell_hover_at` is where that event's position
-                // is kept for exactly this.
-                let (col, row) = self.shell_hover_at;
+                // event, and the event's own facts are where that position is.
+                let (col, row) = ev.at;
                 for c in crate::app::chrome::components() {
                     c.on_hover_change(self, old.as_ref(), target.as_ref(), col, row);
                 }
@@ -1196,7 +1216,7 @@ impl Editor {
                 // toggle needs that: by the time any message is applied the
                 // menu is already shut, so asking now would always answer "not
                 // open" and reopen what the press was meant to close.
-                if self.shell_menu_open_before == Some(index) {
+                if ev.menu_open_before == Some(index) {
                     self.close_menu_with_auto_hide();
                 } else {
                     self.active_window_mut().on_editor_focus_lost();
