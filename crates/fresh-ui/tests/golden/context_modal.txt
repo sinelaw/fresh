@@ -11,7 +11,7 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === moved to Delete
@@ -27,7 +27,7 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === the confirmation modal, with a scrim
@@ -75,6 +75,6 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 

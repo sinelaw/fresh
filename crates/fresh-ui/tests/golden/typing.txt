@@ -11,7 +11,7 @@ Filter      │new task…▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === typed
@@ -27,7 +27,7 @@ Filter      │ship it▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪�
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === submitted
@@ -43,7 +43,7 @@ Filter      │new task…▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
             │
             │
             │
-            │
+ alpha · visit 1
 6 tasks · light · synced 0 · added #6
 
 === the field is empty, so backspace does nothing
@@ -59,6 +59,6 @@ Filter      │new task…▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
             │
             │
             │
-            │
+ alpha · visit 1
 6 tasks · light · synced 0 · added #6
 

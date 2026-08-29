@@ -11,7 +11,7 @@
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === a click outside dismisses it
@@ -27,6 +27,6 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 

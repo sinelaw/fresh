@@ -549,10 +549,18 @@ impl<M: 'static> Ui<M> {
         };
         let value = p.value.clone();
         let key = p.key;
+        let p_same = p.same.clone();
         let Some(node) = self.arena[id].provides.clone() else {
             return;
         };
-        if Rc::ptr_eq(&node.value.borrow(), &value) {
+        let unchanged = {
+            let held = node.value.borrow();
+            Rc::ptr_eq(&held, &value)
+                || p_same
+                    .as_ref()
+                    .is_some_and(|same| same(held.as_ref(), value.as_ref()))
+        };
+        if unchanged {
             return;
         }
         *node.value.borrow_mut() = value;

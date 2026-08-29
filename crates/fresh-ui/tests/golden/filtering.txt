@@ -11,7 +11,7 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === clicked Done
@@ -27,7 +27,7 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === back to All
@@ -43,6 +43,6 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 

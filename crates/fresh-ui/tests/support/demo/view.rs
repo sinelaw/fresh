@@ -19,7 +19,7 @@ use fresh_ui::schedule::BuildCx;
 use fresh_ui::widgets::{divider, Button, Dropdown, List, RadioGroup, TextField};
 use fresh_ui::{Component, ComponentExt};
 
-use super::model::{App, Filter, Menu, Msg, Task, Theme, COMMANDS};
+use super::model::{App, Filter, Menu, Msg, Task, Theme, COMMANDS, PROJECTS};
 
 /// The theme reaches the status bar and the rows without appearing in a single
 /// intermediate signature.
@@ -37,6 +37,63 @@ pub fn view(app: &App) -> Node<Msg> {
         // wherever focus happens to be — that is what makes them global.
         .action(Intent::Custom("menu.file"), |_| Msg::Menu(Some(Menu::File)))
         .action(Intent::Custom("menu.go"), |_| Msg::Menu(Some(Menu::Go)))
+        .action(Intent::Custom("project.next"), |_| Msg::NextProject)
+}
+
+/// A scratch note, per project, owned by the element and not by the model.
+///
+/// **The point of the whole arrangement.** Its value is `Persisted` under the
+/// enclosing scope, so switching projects discards this element — the subtree
+/// above it is keyed by project — and switching back restores what this
+/// project had. Nothing in `App` knows the note exists.
+///
+/// A per-project visit counter, and the reason it counts rather than saying
+/// something fixed.
+///
+/// A note seeded per project reads the same whether it was *restored* or
+/// merely re-seeded, so it proves nothing. A count cannot be faked: this
+/// element is constructed once per visit — the subtree above it is keyed by
+/// project, so switching away destroys it — and the number it shows is
+/// therefore the number of times this project has been visited, which is only
+/// possible if the previous visit's value came back.
+///
+/// Alt-P a few times and watch the two counts advance independently. Without
+/// the scope, or without a `Store` installed on the `Ui`, both would sit at 1
+/// forever.
+struct Scratch;
+
+#[derive(Default)]
+struct ScratchState {
+    visits: Option<Rc<fresh_ui::behavior::Persisted<u32>>>,
+    scope: String,
+}
+
+impl Component<Msg> for Scratch {
+    type State = ScratchState;
+
+    fn init(&self, cx: &mut fresh_ui::InitCx<'_, Msg>) -> ScratchState {
+        // Read in `init`, which is where `Persisted` needs it — and is safe
+        // precisely because `scope()` keys the subtree, so this element never
+        // outlives the scope it read.
+        let scope = cx
+            .read(&fresh_ui::behavior::PERSISTENCE_SCOPE)
+            .map(|s| (*s).clone())
+            .unwrap_or_else(|| "<unscoped>".into());
+        let visits = cx.register(fresh_ui::behavior::Persisted::new(&scope, "visits", 0u32));
+        // One construction is one visit. `set` writes through, so the store is
+        // current immediately rather than at teardown — which matters because
+        // disposal is deferred past the *next* document's construction.
+        visits.set(visits.get() + 1);
+        ScratchState {
+            visits: Some(visits),
+            scope,
+        }
+    }
+
+    fn build(&self, s: &ScratchState, _cx: &mut BuildCx<'_, Msg>) -> Node<Msg> {
+        let n = s.visits.as_ref().map(|v| v.get()).unwrap_or(0);
+        text(format!(" {} · visit {n}", s.scope)).theme("statusbar")
+    }
 }
 
 fn app_body(app: &App) -> Node<Msg> {
@@ -47,12 +104,27 @@ fn app_body(app: &App) -> Node<Msg> {
             .theme("app")
             .children([
                 menu_bar(app),
-                row().flex(1).children([
-                    sidebar(app).w(Sizing::Cells(app.sidebar)),
-                    grip(),
-                    body(app).flex(1),
-                    preview(app),
-                ]),
+                // **The document boundary.** `scope` keys this subtree by the
+                // project *and* provides the persistence scope, which have to
+                // travel together: a scope that changed value under a
+                // surviving element would be an ambient change, and
+                // `Persisted` reads its scope in `init()`. Switching projects
+                // therefore replaces everything below — and the scratch note
+                // comes back, because its value is anchored to the scope
+                // rather than to a position in the tree.
+                fresh_ui::ambient::scope(
+                    PROJECTS[app.project],
+                    col().flex(1).children([
+                        row().flex(1).children([
+                            sidebar(app).w(Sizing::Cells(app.sidebar)),
+                            grip(),
+                            body(app).flex(1),
+                            preview(app),
+                        ]),
+                        Scratch.node().h(Sizing::Cells(1)),
+                    ]),
+                )
+                .flex(1),
                 StatusBar {
                     count: app.tasks.len(),
                     status: app.status.clone(),
@@ -476,6 +548,12 @@ pub fn shortcuts() -> Vec<fresh_ui::focus::Shortcut> {
     s.push(fresh_ui::focus::Shortcut::new(
         KeyPress::with(KeyCode::Char('g'), Mods::ALT),
         Intent::Custom("menu.go"),
+    ));
+    // Alt-P switches documents. Everything below the scope is replaced, and
+    // the scratch note comes back with the project it belongs to.
+    s.push(fresh_ui::focus::Shortcut::new(
+        KeyPress::with(KeyCode::Char('p'), Mods::ALT),
+        Intent::Custom("project.next"),
     ));
     s
 }

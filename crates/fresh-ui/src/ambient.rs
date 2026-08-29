@@ -99,6 +99,19 @@ impl AmbientNode {
 pub struct ProvideProps {
     pub key: AmbientKey,
     pub value: Rc<dyn Any>,
+    /// Whether a newly-built value is the *same* value as the one already
+    /// provided. `None` means pointer identity, which is the only test
+    /// available for a `T` with no equality.
+    ///
+    /// **Why this exists.** A host that rebuilds its description every frame —
+    /// which the cost model invites, since a rebuild costs one allocation per
+    /// node — hands `provide` a *fresh* `Rc` each time. Under pointer identity
+    /// alone that is a change: every dependent is marked dirty every frame,
+    /// and any `Persisted` beneath it trips the "ambient read in `init()`
+    /// changed" assertion on the second frame, having never actually changed.
+    /// [`provide_eq`] supplies the comparison and both go away.
+    #[allow(clippy::type_complexity)]
+    pub same: Option<Rc<dyn Fn(&dyn Any, &dyn Any) -> bool>>,
 }
 
 impl fmt::Debug for ProvideProps {
@@ -112,7 +125,60 @@ pub fn provide<M, T: 'static>(ambient: &Ambient<T>, value: Rc<T>, child: Node<M>
     let mut n = Node::new(Desc::Provide(ProvideProps {
         key: ambient.key(),
         value: value as Rc<dyn Any>,
+        same: None,
     }));
     n.children.push(child);
     n
+}
+
+/// [`provide`], for a value that knows when it has actually changed.
+///
+/// Prefer this wherever `T: PartialEq`. Without it the provider compares by
+/// pointer, so a host that rebuilds its description each frame re-provides an
+/// equal-but-fresh `Rc` and every consumer below is marked dirty for a change
+/// that did not happen.
+pub fn provide_eq<M, T: PartialEq + 'static>(
+    ambient: &Ambient<T>,
+    value: Rc<T>,
+    child: Node<M>,
+) -> Node<M> {
+    let mut n = Node::new(Desc::Provide(ProvideProps {
+        key: ambient.key(),
+        value: value as Rc<dyn Any>,
+        same: Some(Rc::new(|a: &dyn Any, b: &dyn Any| {
+            match (a.downcast_ref::<T>(), b.downcast_ref::<T>()) {
+                (Some(a), Some(b)) => a == b,
+                // A type mismatch is not "unchanged"; let the caller through
+                // rather than silently swallowing it.
+                _ => false,
+            }
+        })),
+    }));
+    n.children.push(child);
+    n
+}
+
+/// A document boundary: one node that both **provides**
+/// [`PERSISTENCE_SCOPE`](crate::behavior::PERSISTENCE_SCOPE) and **keys** the
+/// subtree by the same id.
+///
+/// The two have to travel together, and not as a convention. A scope that
+/// changes value under a *surviving* provider element is an ambient change,
+/// and [`Persisted`](crate::behavior::Persisted) reads its scope in `init()`,
+/// which the library forbids changing for a live element — so keying only
+/// *inside* the provider trips that assertion rather than switching documents.
+/// Keying the provider makes a switch a replacement, and the scope is never
+/// observed to change.
+///
+/// Providing without keying is the other half of the same mistake: two
+/// documents then share one element, and the value that was supposed to be
+/// scoped is simply the same value.
+///
+/// ```ignore
+/// scope("doc-2", col().children(document_body(doc)))
+/// ```
+pub fn scope<M: 'static>(id: impl Into<String>, child: Node<M>) -> Node<M> {
+    let id = id.into();
+    let key = crate::key::Key::Str(id.clone().into());
+    provide_eq(&crate::behavior::PERSISTENCE_SCOPE, Rc::new(id), child).key(key)
 }

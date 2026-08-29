@@ -11,7 +11,7 @@ Filter      │new task…                              Add
             │   │Sync                  │
             │   └──────────────────────┘
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === filtered to matches containing p
@@ -27,7 +27,7 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === filtered to matches containing t
@@ -43,7 +43,7 @@ Filter      │new task…                              Add
             │   └──────────────────────┘
             │
             │
-            │
+ alpha · visit 1
 5 tasks · light · synced 0 · ready
 
 === ran Toggle theme: the accent and the status change
@@ -59,6 +59,6 @@ Filter      │new task…                              Add
             │
             │
             │
-            │
+ alpha · visit 1
 5 tasks · dark · synced 0 · theme dark
 
