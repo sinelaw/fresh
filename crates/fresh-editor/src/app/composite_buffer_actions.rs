@@ -472,20 +472,18 @@ impl Editor {
     pub fn flush_layout(&mut self) {
         use crate::view::composite_view::CompositeViewState;
 
+        // Which leaves, not where. This asked `get_visible_buffers` for
+        // rectangles in a box it made up — the whole terminal, which is not
+        // the box the grid is laid out in — and then dropped them.
         let visible = self
             .windows
             .get(&self.active_window)
             .and_then(|w| w.buffers.splits())
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
-            .get_visible_buffers(ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width: self.terminal_width,
-                height: self.terminal_height,
-            });
+            .visible_leaves();
 
-        for (split_id, buffer_id, _area) in &visible {
+        for (split_id, buffer_id) in &visible {
             // Only process composite buffers
             if let Some(composite) = self.active_window().composite_buffers.get(buffer_id) {
                 let pane_count = composite.pane_count();

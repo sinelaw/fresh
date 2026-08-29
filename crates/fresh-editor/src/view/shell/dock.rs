@@ -196,10 +196,13 @@ mod tests {
     #[test]
     fn a_right_press_in_the_column_reports_where() {
         let mut ui = laid_out(Some(24), 100, 30);
-        assert_eq!(
-            press(&mut ui, 5, 7, MouseButton::Right),
-            vec![UiFact::DockContext { x: 5, y: 7 }],
-        );
+        // The frame-wide right-click observer fires wherever the click lands
+        // (`shell::splits::tab_menu_guard`); what the column says is the rest.
+        let said: Vec<_> = press(&mut ui, 5, 7, MouseButton::Right)
+            .into_iter()
+            .filter(|f| *f != UiFact::ClearTabMenus)
+            .collect();
+        assert_eq!(said, vec![UiFact::DockContext { x: 5, y: 7 }]);
     }
 
     /// **A press the tree claims still blurs the dock.**

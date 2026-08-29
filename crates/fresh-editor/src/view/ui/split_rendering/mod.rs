@@ -17,7 +17,7 @@ mod char_style;
 mod folding;
 pub(crate) use folding::fold_skip_set;
 mod gutter;
-mod layout;
+pub(crate) mod layout;
 mod orchestration;
 
 pub(crate) use orchestration::render_buffer::wrap_index_geometry_for;
@@ -162,6 +162,7 @@ impl SplitRenderer {
         tab_bar_visible: bool,
         session_mode: bool,
         scrollback_view_splits: &std::collections::HashSet<LeafId>,
+        pane_chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
         screen_width: u16,
         pending_hardware_cursor: &mut Option<(u16, u16)>,
@@ -205,6 +206,7 @@ impl SplitRenderer {
             tab_bar_visible,
             session_mode,
             scrollback_view_splits,
+            pane_chrome,
             cell_theme_map,
             screen_width,
             pending_hardware_cursor,
@@ -226,9 +228,7 @@ impl SplitRenderer {
         use_terminal_bg: bool,
         session_mode: bool,
         software_cursor_only: bool,
-        tab_bar_visible: bool,
-        show_vertical_scrollbar: bool,
-        show_horizontal_scrollbar: bool,
+        pane_chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
         diagnostics_inline_text: bool,
         show_tilde: bool,
         bracket_highlight: BracketHighlightSettings,
@@ -246,9 +246,7 @@ impl SplitRenderer {
             use_terminal_bg,
             session_mode,
             software_cursor_only,
-            tab_bar_visible,
-            show_vertical_scrollbar,
-            show_horizontal_scrollbar,
+            pane_chrome,
             diagnostics_inline_text,
             show_tilde,
             bracket_highlight,

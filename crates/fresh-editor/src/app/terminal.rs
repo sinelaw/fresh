@@ -2229,16 +2229,32 @@ impl Window {
     /// geometry derived from this lines up with the cells actually drawn.
     ///
     /// The vertical bands come from the same toggles the renderer lays out
-    /// against. Hard-coding "menu bar + status bar" instead over-reported the
-    /// height by a row whenever the prompt line was shown — panes are one row
-    /// shorter than that, so a panel that sizes itself to the pane it is told
-    /// it has (the code tour's dock panel) emitted one row too many and its
-    /// hint bar fell off the bottom of the dock — and under-reported it with
-    /// the menu or status bar hidden.
+    /// against — through [`frame::fixed_rows`], which is *the* copy of that
+    /// sum. Adding them up here instead is a mistake this function has now
+    /// made twice: hard-coding "menu bar + status bar" over-reported the
+    /// height by a row whenever the prompt line was shown, so a panel that
+    /// sizes itself to the pane it is told it has (the code tour's dock panel)
+    /// emitted one row too many and its hint bar fell off the bottom of the
+    /// dock; and the fix for that missed the **search-options row**, which is
+    /// one cell tall whenever a search prompt is up, so every pane was a row
+    /// too tall again with the search bar showing.
+    ///
+    /// It cannot be a read of `WindowLayoutCache::editor_content_area`, which
+    /// is the same rectangle recorded from the tree: `apply_layout` calls this
+    /// *after* setting a new size and *before* the frame that would record it,
+    /// and getting the previous frame's answer there is the bug this whole
+    /// migration is about. So it stays a function of state — of the same state,
+    /// through the same rule.
     pub(crate) fn editor_content_area(&self) -> ratatui::layout::Rect {
+        let vertical_rows = crate::view::shell::frame::fixed_rows(
+            self.menu_bar_visible,
+            self.status_bar_visible,
+            self.prompt
+                .as_ref()
+                .is_some_and(|p| p.prompt_type.has_search_options()),
+            self.prompt_line_visible,
+        );
         let menu_rows = u16::from(self.menu_bar_visible);
-        let status_rows = u16::from(self.status_bar_visible);
-        let prompt_rows = u16::from(self.prompt_line_visible);
         let chrome_width = self.terminal_width.saturating_sub(self.dock_cols);
         let file_explorer_width = if self.file_explorer_visible {
             self.file_explorer_width.to_cols(chrome_width)
@@ -2256,8 +2272,7 @@ impl Window {
             editor_x,
             menu_rows,
             editor_width,
-            self.terminal_height
-                .saturating_sub(menu_rows + status_rows + prompt_rows),
+            self.terminal_height.saturating_sub(vertical_rows),
         )
     }
 

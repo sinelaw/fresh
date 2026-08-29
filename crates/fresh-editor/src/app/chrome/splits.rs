@@ -22,13 +22,23 @@ impl ChromeComponent for Splits {
                 t.rect("chrome:split_widget_panel", 120, *content_rect);
             }
         }
-        for (_, direction, sep_x, sep_y, sep_len) in &ed.active_layout().separator_areas {
+        // The main tree's dividers are nodes in the shell's tree, and answer
+        // their own presses and hovers — see `view::shell::splits`. A box for
+        // them would be a rectangle recorded from the last paint, hit-tested
+        // to recover an identity the node simply has.
+        //
+        // A **grouped subtree** is different, and this is the boundary the
+        // migration keeps hitting: it is laid out inside a pane's *interior*,
+        // past the tab bar and the scrollbars the painter reserves, and that
+        // interior is still the painter's. So its dividers are still recorded
+        // rectangles, and they become nodes when the pane does.
+        for (_, direction, sep_x, sep_y, sep_len) in &ed.active_layout().grouped_separator_areas {
             let (w, h) = match direction {
                 SplitDirection::Horizontal => (*sep_len as u32, 1),
                 SplitDirection::Vertical => (1, *sep_len as u32),
             };
             let mut b = LayoutBox::plain(
-                "chrome:split_separators",
+                "chrome:group_separators",
                 *sep_y as u32,
                 *sep_x as u32,
                 w,
@@ -71,21 +81,15 @@ impl ChromeComponent for Splits {
         for (_, _, content_rect, ..) in &ed.active_layout().split_areas {
             t.rect("chrome:editor", 10, *content_rect);
         }
-        // Right-click-only act-then-continue guard at the very top
-        // band: a right-click ANYWHERE clears the "+" new-tab menu and
-        // the close-split confirmation before routing — even when a
-        // higher surface then consumes the click (the old pre-walk
-        // clear's semantics, kept exactly).
-        t.full("chrome:tab_menu_clear_guard", 200);
     }
 
     fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
         match bx.kind {
-            "chrome:split_separators" => {
+            "chrome:group_separators" => {
                 for (split_id, direction, sep_x, sep_y, sep_length) in
-                    &ed.active_layout().separator_areas
+                    &ed.active_layout().grouped_separator_areas
                 {
-                    let is_on_separator = match direction {
+                    let on_it = match direction {
                         SplitDirection::Horizontal => {
                             row == *sep_y && col >= *sep_x && col < sep_x + sep_length
                         }
@@ -93,7 +97,7 @@ impl ChromeComponent for Splits {
                             col == *sep_x && row >= *sep_y && row < sep_y + sep_length
                         }
                     };
-                    if is_on_separator {
+                    if on_it {
                         return Some(HoverTarget::SplitSeparator(*split_id, *direction));
                     }
                 }
@@ -166,18 +170,13 @@ impl ChromeComponent for Splits {
         use super::{Disposition, PointerPress};
         match ev.press {
             PointerPress::Left => {}
-            // A right-click anywhere dismisses the left-click-only
-            // popups (the "+" new-tab menu and the close-split
-            // confirmation) and keeps routing — the pre-walk clear
-            // expressed as a top-band act-then-continue guard.
-            PointerPress::Right => {
-                if bx.kind == "chrome:tab_menu_clear_guard" {
-                    ed.active_window_mut().new_tab_menu = None;
-                    ed.active_window_mut().close_split_menu = None;
-                    return Ok(Disposition::PassAfter);
-                }
-                return Ok(Disposition::Pass);
-            }
+            // The right-click clear is a capture-phase observer on the
+            // shell's frame now (`shell::splits::tab_menu_guard`), which
+            // is where "anywhere, then continue" can actually mean it:
+            // this walk runs only when the tree declines the event, so a
+            // box could not fire for a right-click a migrated surface
+            // took. Nothing here answers a right-click.
+            PointerPress::Right => return Ok(Disposition::Pass),
             // Double = word select, triple = line select, on the split
             // under the pointer (moved from the old post-walk scan /
             // hand-ordered ladder — a popup's opaque box above this
@@ -237,7 +236,7 @@ impl ChromeComponent for Splits {
         let consumed = match bx.kind {
             "chrome:scrollbars" => ed.handle_click_scrollbar(ev.col, ev.row),
             "chrome:h_scrollbar" => ed.handle_click_horizontal_scrollbar(ev.col, ev.row),
-            "chrome:split_separators" => ed.handle_click_split_separator(ev.col, ev.row),
+            "chrome:group_separators" => ed.handle_click_group_separator(ev.col, ev.row),
             "chrome:split_buttons" => ed.handle_click_split_controls(ev.col, ev.row),
             "chrome:tabs" => ed.handle_click_tab_bar(ev.col, ev.row),
             "chrome:editor" => {
@@ -802,14 +801,20 @@ impl Editor {
         Some(Ok(()))
     }
 
-    pub(super) fn handle_click_split_separator(
+    /// A press on a **grouped subtree's** divider.
+    ///
+    /// The main tree's dividers are nodes and carry their own identity; a
+    /// grouped subtree is laid out inside a pane's interior, which is still a
+    /// painter's, so this is the hit test that remains — over the rectangles
+    /// that painter recorded.
+    pub(super) fn handle_click_group_separator(
         &mut self,
         col: u16,
         row: u16,
     ) -> Option<AnyhowResult<()>> {
-        let separator_areas = self.active_layout().separator_areas.clone();
-        for (split_id, direction, sep_x, sep_y, sep_length) in &separator_areas {
-            let is_on_separator = match direction {
+        let areas = self.active_layout().grouped_separator_areas.clone();
+        for (split_id, direction, sep_x, sep_y, sep_length) in &areas {
+            let on_it = match direction {
                 SplitDirection::Horizontal => {
                     row == *sep_y && col >= *sep_x && col < sep_x + sep_length
                 }
@@ -817,14 +822,14 @@ impl Editor {
                     col == *sep_x && row >= *sep_y && row < sep_y + sep_length
                 }
             };
-            if is_on_separator {
-                self.active_window_mut().mouse_state.dragging_separator =
-                    Some((*split_id, *direction));
-                self.active_window_mut().mouse_state.drag_start_position = Some((col, row));
+            if on_it {
                 let ratio = self
                     .split_manager_mut()
                     .get_ratio((*split_id).into())
                     .or_else(|| self.grouped_split_ratio(*split_id));
+                let st = &mut self.active_window_mut().mouse_state;
+                st.dragging_separator = Some((*split_id, *direction));
+                st.drag_start_position = Some((col, row));
                 if let Some(ratio) = ratio {
                     self.active_window_mut().mouse_state.drag_start_ratio = Some(ratio);
                 }

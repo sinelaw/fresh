@@ -578,7 +578,13 @@ mod input_tests {
         );
         let mut msgs = press.msgs;
         msgs.extend(release.msgs);
-        let got = facts(msgs);
+        // Minus the frame-wide right-click observer, which clears the two
+        // left-click-only tab menus wherever the click lands and is nothing
+        // to do with this menu. See `shell::splits::tab_menu_guard`.
+        let got: Vec<_> = facts(msgs)
+            .into_iter()
+            .filter(|f| *f != UiFact::ClearTabMenus)
+            .collect();
         assert!(
             got.is_empty(),
             "swallowing needs no message now that claim is reported, got {got:?}"

@@ -128,6 +128,10 @@ pub struct Frame {
     /// The workspace-trust prompt. A blocking modal: it dims the whole frame
     /// and nothing outside it is interactive.
     pub trust: Option<super::trust::Trust>,
+    /// The split grid, when there is one. Its *content* is the body's `Host`
+    /// leaf still; what the tree carries is the panes' geometry and the
+    /// dividers, which answer their own presses.
+    pub splits: Option<super::splits::Splits>,
     /// The full-screen modal that has the pointer, if any. At most one: the
     /// capture band this replaces stopped at the first taker in rank order.
     pub modal: Option<super::modal::Slot>,
@@ -154,6 +158,7 @@ impl Default for Frame {
             browser: None,
             trust: None,
             modal: None,
+            splits: None,
         }
     }
 }
@@ -231,17 +236,32 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     let sidebar = |e: &super::file_explorer::Explorer| {
         named(HostRegion::Explorer, super::file_explorer::explorer(e)).w(Sizing::Cells(e.cols))
     };
+    // The body: the painter's `Host` leaf, with the grid's geometry over it.
+    // The grid paints nothing — the split renderer still draws the panes and
+    // their separators — so what the layer contributes is the dividers'
+    // gestures and a rectangle per pane that is *the* answer rather than a
+    // second one: `get_leaves_with_rects` reads this same description.
+    let body_region = |f: &Frame| -> Node<UiMsg> {
+        match &f.splits {
+            Some(s) => named(
+                HostRegion::Body,
+                fresh_ui::stack()
+                    .children([host(HostRegion::Body.id()), super::splits::overlay(s)]),
+            ),
+            None => region(HostRegion::Body),
+        }
+    };
     let body: Node<UiMsg> = match &f.explorer {
         Some(e) if e.on_left => row()
             .flex(1)
-            .children([sidebar(e), region(HostRegion::Body).flex(1)]),
+            .children([sidebar(e), body_region(&f).flex(1)]),
         Some(e) => row()
             .flex(1)
-            .children([region(HostRegion::Body).flex(1), sidebar(e)]),
+            .children([body_region(&f).flex(1), sidebar(e)]),
         // No sidebar: the explorer is still in the tree taking nothing, so it
         // has a rectangle to report and the body's own is unaffected.
         None => row().flex(1).children([
-            region(HostRegion::Body).flex(1),
+            body_region(&f).flex(1),
             region(HostRegion::Explorer).w(Sizing::Cells(0)),
         ]),
     };
@@ -357,6 +377,10 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // and it is the one that stops the flow — Ctrl+Right-Click *is* the
     // gesture, where the blur is a side effect of one aimed elsewhere.
     let frame = super::theme_info::inspect_trigger(frame);
+    // Outermost observer of the right-click channel: it clears the two
+    // left-click-only menus and lets the click continue, so it must see the
+    // click before the surface it is aimed at claims it.
+    let frame = super::splits::tab_menu_guard(frame);
     match f.dock {
         Some(w) => super::dock::blur_observer(w, frame),
         None => frame,

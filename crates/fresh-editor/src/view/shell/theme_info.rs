@@ -338,7 +338,13 @@ mod tests {
             Mods::CTRL,
         ));
         assert!(got.claimed);
-        assert_eq!(facts(got), vec![UiFact::ThemeInspect { x: 7, y: 9 }]);
+        // Minus the frame-wide right-click observer, which fires ahead of the
+        // inspector's `stop()`. See `shell::splits::tab_menu_guard`.
+        let said: Vec<_> = facts(got)
+            .into_iter()
+            .filter(|f| *f != UiFact::ClearTabMenus)
+            .collect();
+        assert_eq!(said, vec![UiFact::ThemeInspect { x: 7, y: 9 }]);
     }
 
     /// A plain right-click is not the trigger, and passes.
@@ -358,7 +364,13 @@ mod tests {
             MouseButton::Right,
             Mods::NONE,
         ));
-        assert!(facts(got).is_empty());
+        // Minus the frame-wide right-click observer, which is not the
+        // inspector's trigger either. See `shell::splits::tab_menu_guard`.
+        let got: Vec<_> = facts(got)
+            .into_iter()
+            .filter(|f| *f != UiFact::ClearTabMenus)
+            .collect();
+        assert!(got.is_empty());
     }
 
     /// The title sits on the top border where `Block::title` put it.

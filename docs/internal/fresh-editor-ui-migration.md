@@ -1726,6 +1726,74 @@ list.
    They do mean the wave is "the grid **and** the pane", not "the grid, then
    the pane later".
 
+   **And the real blocker is the model's query, not the description.** A tree
+   that recursed over `SplitNode` calling `split_rect_ext` would agree with
+   `get_leaves_with_rects` by construction — one rule, two walks — but it would
+   still be two walks, and the goal is not to add one. The end state is that
+   the tree *is* the layout and `get_leaves_with_rects` becomes a read of it;
+   `WindowLayoutCache::split_areas` already holds exactly that answer.
+
+   What stops the swap is `SplitManager::get_visible_buffers`, which has
+   around eight callers outside the render path — `plugin_dispatch`, `window`,
+   `composite_buffer_actions`, `lifecycle`, `terminal`. An earlier draft of
+   this paragraph said they ask two different questions, a read and a
+   hypothetical. **They do not**, and the correction matters: the one caller
+   that looked hypothetical (`composite_buffer_actions::flush_layout`) passed a
+   rectangle it invented — the whole terminal, which is not the box the grid is
+   laid out in — and then dropped every rect it got back. It wanted the leaf
+   *set*, which does not depend on the box at all. It asks `visible_leaves()`
+   now, and the invented rectangle is gone.
+
+   So there is one question: **where are the leaves in the box the editor
+   currently has**. What makes it awkward is *when* it is asked. `apply_layout`
+   calls it after setting a new size and before the frame that would lay
+   anything out, so it cannot be a read of the last laid-out tree — it needs
+   the answer for a size no tree has seen yet.
+
+   `fresh-ui` can give that answer: `Ui::frame(node, size)` lays a description
+   out at any size, not only the current one. So the end state is one
+   implementation — the grid description — asked live by the render path and
+   speculatively by `apply_layout`.
+
+   **And it is affordable.** That was the last open question and it is now
+   measured (item 10): a *whole frame* — menu bar, status bar, prompt row,
+   dock, explorer and body — lays out in **122µs retained and 163µs cold**, in
+   a debug build on a loaded container. `apply_layout` runs on resize, a
+   handful of times a second at worst. `split_tabs_width` is the per-frame
+   caller and the grid subtree is a fraction of what that figure covers. The
+   pure function can become a layout without a budget argument.
+
+   **Landed.** `SplitNode::get_leaves_with_rects` is a read of
+   `shell::splits::grid`, laid out at whatever box the caller has. The rule
+   inside it — `split_rect_ext`, the ratio pinned to `MIN_PANE_*` — is
+   unchanged and still the model's; what moved is the recursion around it. The
+   original walk stays as `reference_leaves_with_rects`, compiled only under
+   `cfg(test)`, because a replacement is only as trustworthy as what it was
+   checked against: seven shapes across five sizes, plus the dividers against
+   `get_separators_with_ids` and the maximized case.
+
+   A three-pane grid costs ~38µs cold in a debug build, against callers that
+   run once a frame or on resize.
+
+   What this buys is the next step, and the first of it has landed: **the
+   dividers are gestures.** A divider node knows which container it is, so
+   `handle_click_split_separator` — which walked a recorded list of separator
+   rectangles comparing a click against each in turn to recover that identity
+   — is gone, along with the `chrome:split_separators` box and its hover rail.
+   The drag it arms is still `PointerGrab::SplitSeparator`, which retires with
+   the pointer-capture wave.
+
+   **And the pane boundary showed itself exactly where this entry predicted.**
+   A `Grouped` subtree is laid out inside a pane's *interior* — past the tab
+   bar and the scrollbars the painter reserves — so its dividers are not in
+   the main tree's description at all, and moving the main ones broke the
+   grouped drag until they were separated. They stay recorded rectangles, now
+   under their own `chrome:group_separators` box and
+   `WindowLayoutCache::grouped_separator_areas`, and they become nodes when
+   the pane's interior does. That is the "grid **and** the pane" this entry
+   warns about, met in practice: the grid alone is landable, and it stops at
+   the pane's edge.
+
    **The order, therefore:**
    1. A leaf host id space (`HostRegion` is a small fixed enum; a leaf's id is
       its `LeafId`, tagged) and a `HostTarget::{Region, Leaf}` for the fold's
@@ -1745,12 +1813,21 @@ list.
 9. ~~**The message-type split**~~ — **decided and shipped** as
    `UiMsg::{Action, Ui(UiFact)}` (`view/shell/msg.rs`). Anything bindable stays
    an `Action`; positional facts are `UiFact` and are never serialized.
-10. **Frame scheduling and rebuild cost** — still open, and no longer gating.
-   It was written as an M0 exit criterion; S1, the context-menu wave and the
-   frame swap all shipped without it, so calling it a gate was wrong. The
-   measurement is still worth taking (a full chrome rebuild per frame, plus a
-   `Vec<String>` of labels per open menu), but it is a performance question to
-   answer with a profile, not a precondition.
+10. ~~**Frame scheduling and rebuild cost**~~ — **measured.** It was written
+   as an M0 exit criterion; S1, the context-menu wave and the frame swap all
+   shipped without it, so calling it a gate was wrong. It became load-bearing
+   for a different reason — item 7 needs to know whether a layout can be asked
+   for on demand — so it is taken now, by
+   `a_frame_layout_is_cheap_enough_to_ask_for_on_demand`.
+
+   A whole frame, with the menu bar, status bar, prompt row, dock, explorer
+   and body: **122µs retained, 163µs cold**, in a debug build on a loaded
+   container. Retained is the reconcile a per-frame caller pays; cold is what
+   a caller with no `Ui` of its own pays, which is the shape `apply_layout`
+   would use. Both are far below anything that would make "lay it out and ask"
+   the wrong answer, which is what item 7 needed to know. The test reports the
+   figure and asserts only a bound three orders of magnitude clear of it — a
+   wall-clock threshold is a flake waiting for a loaded runner.
 11. **Row visibility under squeeze** — still open; S1 shipped without deciding
    it, and the divergence is *recorded* by
    `squeeze_band_starves_a_different_row_than_ratatui`, not resolved by it. When the visible fixed rows

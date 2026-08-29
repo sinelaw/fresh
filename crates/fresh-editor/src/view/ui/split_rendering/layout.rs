@@ -8,6 +8,7 @@ use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursors;
 use crate::model::event::{BufferId, LeafId, SplitDirection};
 use crate::state::{EditorState, ViewMode};
+use crate::view::shell::splits::PaneChrome;
 use crate::view::split::{SplitViewState, TabTarget};
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::ViewLine;
@@ -33,7 +34,7 @@ pub(super) struct ComposeLayout {
 
 /// Rectangle partitioning for one split: tabs, content, vertical scrollbar,
 /// horizontal scrollbar.
-pub(super) struct SplitLayout {
+pub(crate) struct SplitLayout {
     pub tabs_rect: Rect,
     pub content_rect: Rect,
     pub scrollbar_rect: Rect,
@@ -54,7 +55,47 @@ pub(super) struct ViewPreferences {
 }
 
 /// Partition a split area into tabs / content / scrollbar rectangles.
-pub(super) fn split_layout(
+///
+/// **A read of the layout.** This was the arithmetic below — four rectangles
+/// derived by hand from three bools, with the horizontal bar's width the one
+/// part a reader would get wrong from the picture (it stops short of the
+/// vertical bar's column rather than running under it). It is
+/// `shell::splits::pane_interior` now, laid out at the pane's own size, so
+/// there is one statement of how a pane divides itself and the chrome that
+/// hangs off these rectangles can become nodes against the same description.
+pub(crate) fn split_layout(id: LeafId, split_area: Rect, chrome: PaneChrome) -> SplitLayout {
+    use crate::view::shell::splits::{
+        content_key, hscroll_key, pane_interior, tabs_key, vscroll_key,
+    };
+    let mut ui: fresh_ui::Ui<()> = fresh_ui::Ui::new();
+    ui.frame(
+        pane_interior::<()>(id, chrome),
+        fresh_ui::Size::new(split_area.width, split_area.height),
+    );
+    let at = |k: fresh_ui::Key| -> Rect {
+        let r = ui
+            .find_by_key(&k)
+            .map(|e| ui.rect_of(e))
+            .unwrap_or_default();
+        Rect::new(
+            split_area.x.saturating_add(r.x.max(0) as u16),
+            split_area.y.saturating_add(r.y.max(0) as u16),
+            r.w,
+            r.h,
+        )
+    };
+    SplitLayout {
+        tabs_rect: at(tabs_key(id)),
+        content_rect: at(content_key(id)),
+        scrollbar_rect: at(vscroll_key(id)),
+        horizontal_scrollbar_rect: at(hscroll_key(id)),
+    }
+}
+
+/// **The arithmetic the description replaced**, kept as what the swap is
+/// pinned against — see `shell::splits`'s parity tests.
+#[cfg(test)]
+pub(crate) fn reference_split_layout(
     split_area: Rect,
     tab_bar_visible: bool,
     show_vertical_scrollbar: bool,

@@ -488,7 +488,14 @@ mod tests {
             Mods::default(),
         ));
         assert!(!got.claimed, "a right press must reach the legacy pre-band");
-        assert!(got.msgs.is_empty(), "got {:?}", got.msgs);
+        // The frame-wide right-click observer fires wherever the click lands
+        // (`shell::splits::tab_menu_guard`); the row itself says nothing.
+        let said: Vec<_> = got
+            .msgs
+            .into_iter()
+            .filter(|m| !matches!(m, UiMsg::Ui(UiFact::ClearTabMenus)))
+            .collect();
+        assert!(said.is_empty(), "got {said:?}");
     }
 
     /// Moving onto a toggle reports where the pointer is; the restyle is the
