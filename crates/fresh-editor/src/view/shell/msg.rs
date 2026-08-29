@@ -56,6 +56,12 @@ pub enum UiFact {
     /// at a time — the tree's answer, kept apart from the legacy walk's in
     /// `Editor::shell_hover`.
     Hover(Option<crate::app::types::HoverTarget>),
+    /// A right-click landed somewhere — anywhere — so the two left-click-only
+    /// menus (the "+" new-tab menu, the close-split confirmation) close.
+    ///
+    /// An observation, not a claim: the click goes on to whatever it was aimed
+    /// at. See `shell::splits::tab_menu_guard`.
+    ClearTabMenus,
     /// A click on a status-bar element that answers one.
     ///
     /// The id, not an `Action`: the dispatch behind it is not a pure mapping —
@@ -215,6 +221,26 @@ pub enum UiFact {
     /// The secondary button — Cancel when the prompt was opened voluntarily,
     /// Quit for the mandatory gate at startup.
     TrustSecondary,
+    /// A press on a split divider: start the width drag on *this* container.
+    ///
+    /// The node knows which container it is, so nothing hit-tests a recorded
+    /// list of separator rectangles to find out — which is what
+    /// `handle_click_split_separator` did, comparing the click against each in
+    /// turn. The drag itself is still the legacy grab.
+    SeparatorPress {
+        container: crate::model::event::ContainerId,
+        direction: crate::model::event::SplitDirection,
+        x: u16,
+        y: u16,
+    },
+    /// The pointer entered or left a divider. Drives the hover highlight the
+    /// split renderer paints.
+    SeparatorHover(
+        Option<(
+            crate::model::event::ContainerId,
+            crate::model::event::SplitDirection,
+        )>,
+    ),
     /// A pointer event belongs to this full-screen modal, whose interior is
     /// still a painter's and hit-tests rectangles that painter recorded. The
     /// event itself never left the host — see `shell::modal`.

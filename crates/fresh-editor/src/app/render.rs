@@ -1059,8 +1059,9 @@ impl Editor {
         // their inner separators are not visited by `get_separators_with_ids`
         // above. The renderer collected them (using the same content rect it
         // drew them at) — merge so clicks on those rendered columns register.
-        separator_areas.extend(grouped_separator_areas);
+        separator_areas.extend(grouped_separator_areas.iter().copied());
         self.active_layout_mut().separator_areas = separator_areas;
+        self.active_layout_mut().grouped_separator_areas = grouped_separator_areas;
         self.active_layout_mut().editor_content_area = Some(editor_content_area);
 
         // Render hover highlights for separators and scrollbars
@@ -2675,6 +2676,20 @@ impl Editor {
         let popups = self.popup_descriptions(chrome_area);
         let theme_info = self.theme_info_description();
         let modal = self.modal_slot();
+        // The grid's shape, for the tree to lay out. Cloned rather than
+        // borrowed: a description is a value, and this one is a handful of
+        // nodes.
+        let pane_chrome = self.pane_chrome();
+        let splits = self.active_window().buffers.splits().map(|(mgr, _)| {
+            crate::view::shell::splits::Splits {
+                root: mgr.root().clone(),
+                maximized: mgr.maximized_split().map(crate::model::event::LeafId),
+                chrome: pane_chrome.clone(),
+            }
+        });
+        // The same map the painter will read for the same panes — filed here,
+        // where it is resolved, rather than resolved again down there.
+        self.pending_pane_chrome = pane_chrome;
         let trust = self.trust_description(ratatui::layout::Rect {
             x: 0,
             y: 0,
@@ -2686,6 +2701,7 @@ impl Editor {
             browser,
             trust,
             modal,
+            splits,
             menu_bar: menu_bar_visible,
             status_bar: status_row,
             search_options,
@@ -2707,6 +2723,23 @@ impl Editor {
             popups,
             card,
         }
+    }
+
+    /// Which chrome each visible pane has, by leaf, for the active window.
+    ///
+    /// The frame-wide offer, handed to the one gathering (`Window::pane_chrome`).
+    fn pane_chrome(
+        &self,
+    ) -> std::collections::HashMap<
+        crate::model::event::LeafId,
+        crate::view::shell::splits::PaneChrome,
+    > {
+        self.active_window()
+            .pane_chrome(crate::view::shell::splits::PaneChrome {
+                tabs: self.active_window().tab_bar_visible,
+                vscroll: self.config.editor.show_vertical_scrollbar,
+                hscroll: self.config.editor.show_horizontal_scrollbar,
+            })
     }
 
     /// Every popup on screen, as the shell describes it.
@@ -3849,6 +3882,15 @@ impl Editor {
                         .collect()
                 })
                 .unwrap_or_default();
+        // The preview's panes, through the same rule against a narrowed offer:
+        // `preview_cfg` turns both scrollbars off because they are noisy in a
+        // small embed and the active session's chrome is the authoritative one.
+        let __preview_pane_chrome =
+            __win_for_preview.pane_chrome(crate::view::shell::splits::PaneChrome {
+                tabs: __win_for_preview.tab_bar_visible,
+                vscroll: false,
+                hscroll: false,
+            });
         let __preview_metadata = &__win_for_preview.buffer_metadata;
         let __preview_buffer_id = __win_for_preview.preview.map(|(_, b)| b);
         let __preview_event_logs = &mut __win_for_preview.event_logs;
@@ -3904,6 +3946,10 @@ impl Editor {
                     preview_tab_bar_visible,
                     self.session_mode || !self.software_cursor_only,
                     &__preview_scrollback_splits,
+                    // The preview embed suppresses both bars, so its panes'
+                    // chrome is the same rule resolved against a narrowed
+                    // offer — not a second rule.
+                    &__preview_pane_chrome,
                     &mut scratch_cell_theme_map,
                     inner.width,
                     &mut scratch_pending_cursor,
@@ -5180,11 +5226,12 @@ impl Editor {
         // (&SplitManager, &mut HashMap<...>) so both arguments come from the
         // same `&mut self.windows` borrow.
         let active_window_id = self.active_window;
+        // The same resolution the frame's description and the paint both use.
+        let pane_chrome = self.pane_chrome();
         let __win_l = self
             .windows
             .get_mut(&active_window_id)
             .expect("active window must exist");
-        let tab_bar_visible = __win_l.tab_bar_visible;
         let theme = self.theme.read().unwrap().clone();
         let view_line_mappings = __win_l
             .buffers
@@ -5202,9 +5249,7 @@ impl Editor {
                     self.config.editor.use_terminal_bg,
                     self.session_mode || !self.software_cursor_only,
                     self.software_cursor_only,
-                    tab_bar_visible,
-                    self.config.editor.show_vertical_scrollbar,
-                    self.config.editor.show_horizontal_scrollbar,
+                    &pane_chrome,
                     self.config.editor.diagnostics_inline_text,
                     self.config.editor.show_tilde,
                     crate::view::bracket_highlight_overlay::BracketHighlightSettings::from_config(

@@ -2870,6 +2870,44 @@ impl Window {
         crate::app::terminal::combine_terminal_title(pty.as_deref(), osc.as_deref())
     }
 
+    /// Which chrome each of this window's visible panes has, by leaf.
+    ///
+    /// **The one gathering.** `PaneChrome::resolve` is the rule; this is the
+    /// only place the per-pane half of it is read out of the window, so the
+    /// description of the grid and the painter that fills it cannot disagree
+    /// about whether a pane has a strip. `window` is the frame-wide offer —
+    /// the tab bar's visibility and the two scrollbar config flags — which the
+    /// preview embed narrows before calling (it suppresses both bars).
+    ///
+    /// A buffer group's *panel* is not here: it is not one of the split
+    /// manager's leaves, and it resolves where the render loop expands it.
+    pub fn pane_chrome(
+        &self,
+        window: crate::view::shell::splits::PaneChrome,
+    ) -> HashMap<LeafId, crate::view::shell::splits::PaneChrome> {
+        use crate::view::shell::splits::{PaneChrome, PaneKind};
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
+            return HashMap::new();
+        };
+        mgr.visible_leaves()
+            .into_iter()
+            .map(|(leaf, buffer)| {
+                let terminal = self
+                    .buffer_metadata
+                    .get(&buffer)
+                    .and_then(|m| m.virtual_mode())
+                    .is_some_and(|m| m == "terminal");
+                let kind = PaneKind {
+                    inner_group_leaf: false,
+                    suppress_chrome: vs_map.get(&leaf).is_some_and(|vs| vs.suppress_chrome),
+                    scrollable: self.buffers.get(&buffer).is_none_or(|s| s.scrollable),
+                    terminal_live_grid: terminal && !self.split_terminal_scrollback(leaf, buffer),
+                };
+                (leaf, PaneChrome::resolve(window, kind))
+            })
+            .collect()
+    }
+
     /// Whether `split` is viewing terminal `buffer_id` in read-only scrollback.
     /// `false` for a live terminal split, and for any non-terminal buffer.
     /// The single read of the per-split live↔scrollback source of truth.

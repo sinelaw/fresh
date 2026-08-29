@@ -1193,6 +1193,16 @@ pub struct Editor {
     /// Recorded when the event is offered to the tree, which is the one moment
     /// both facts are in hand.
     pub(crate) shell_hover_at: (u16, u16),
+    /// Which chrome each visible pane has, for the frame being built.
+    ///
+    /// Resolved by `pane_chrome` when the description is assembled, and read
+    /// by the body's painter when the fold reaches its `Host` leaf — the same
+    /// hand-off `pending_body_state` makes, for the one fact both halves of a
+    /// pane's geometry depend on.
+    pub(crate) pending_pane_chrome: std::collections::HashMap<
+        crate::model::event::LeafId,
+        crate::view::shell::splits::PaneChrome,
+    >,
     /// `(plugin, widget)` pairs already warned about for missing per-item
     /// keys, so the deprecation notice fires once rather than on every panel
     /// update. See `crate::widgets::keying`.

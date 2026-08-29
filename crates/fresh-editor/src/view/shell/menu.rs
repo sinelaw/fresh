@@ -915,7 +915,13 @@ mod input_tests {
             MouseButton::Right,
             Mods::NONE,
         ));
-        assert!(got.msgs.is_empty(), "got {:?}", got.msgs);
+        // Bar-ground facts only: the frame-wide right-click observer
+        // (`shell::splits::tab_menu_guard`) fires wherever the click lands.
+        let said: Vec<_> = facts(got.msgs)
+            .into_iter()
+            .filter(|f| *f != UiFact::ClearTabMenus)
+            .collect();
+        assert!(said.is_empty(), "got {said:?}");
         assert!(!got.claimed, "a right press must reach the legacy pre-band");
     }
 

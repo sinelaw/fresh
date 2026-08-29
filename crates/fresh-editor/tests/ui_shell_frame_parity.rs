@@ -27,7 +27,8 @@
 //! that width from state before building. Both sides here are handed the
 //! already-resolved width, isolating the layout question.
 
-use fresh::view::shell::frame::{region_rects, Frame, HostRegion};
+use fresh::view::shell::frame::{frame_tree, region_rects, Frame, HostRegion};
+use fresh_ui::{Size, Ui};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 fn id(r: HostRegion) -> u64 {
@@ -299,5 +300,63 @@ fn squeeze_band_starves_a_different_row_than_ratatui() {
             h(&want, id(HostRegion::PromptLine))
         ),
         (1, 0, 1)
+    );
+}
+
+/// **What a frame layout costs**, measured — §6.2 item 10 of the migration
+/// plan has carried "frame scheduling and rebuild cost" as unmeasured since it
+/// was written.
+///
+/// It stopped being academic with S5. The split grid's geometry has callers
+/// that run per-frame (`split_tabs_width`) and one that needs the answer for a
+/// size no tree has been laid out at yet (`apply_layout`, which sets a new size
+/// and asks before the frame that would record one). Both are served by laying
+/// a description out on demand — *if* that is cheap, and this is the number
+/// that says whether it is.
+///
+/// Reported rather than bounded tightly: a wall-clock threshold is a flake
+/// waiting for a loaded runner, so the assertion is three orders of magnitude
+/// clear and only fires if the cost changes character. Run with `--nocapture`
+/// to read the figure.
+#[test]
+fn a_frame_layout_is_cheap_enough_to_ask_for_on_demand() {
+    use std::time::Instant;
+    let f = || Frame {
+        menu_bar: true,
+        status_bar: true,
+        prompt_line: true,
+        dock: Some(28),
+        explorer: Some(fresh::view::shell::file_explorer::Explorer {
+            cols: 30,
+            on_left: true,
+            ..Default::default()
+        }),
+        ..Frame::default()
+    };
+    let size = Size::new(200, 60);
+
+    // Retained: the first frame builds the element tree, later ones reconcile
+    // — the cost a per-frame caller actually pays.
+    let mut ui: Ui<fresh::view::shell::msg::UiMsg> = Ui::new();
+    ui.frame(frame_tree(f()), size);
+    const N: u32 = 500;
+    let t = Instant::now();
+    for _ in 0..N {
+        ui.frame(frame_tree(f()), size);
+    }
+    let retained = t.elapsed() / N;
+
+    // Cold: what a caller with no `Ui` of its own pays. `apply_layout` is one.
+    let t = Instant::now();
+    for _ in 0..N {
+        let mut cold: Ui<fresh::view::shell::msg::UiMsg> = Ui::new();
+        cold.frame(frame_tree(f()), size);
+    }
+    let cold = t.elapsed() / N;
+
+    println!("frame layout: {retained:?} retained, {cold:?} cold");
+    assert!(
+        cold.as_millis() < 50,
+        "a frame layout from cold took {cold:?} — the cost has changed character"
     );
 }

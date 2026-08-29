@@ -231,6 +231,15 @@ pub(crate) struct WindowLayoutCache {
     /// Split separator positions for drag resize
     /// (container_id, direction, x, y, length)
     pub separator_areas: Vec<(ContainerId, SplitDirection, u16, u16, u16)>,
+    /// The subset of `separator_areas` that belongs to a **grouped subtree**.
+    ///
+    /// Kept apart because they are answered differently. The main tree's
+    /// dividers are nodes in the shell's tree, which know which container they
+    /// are; a grouped subtree is laid out inside a pane's *interior* — after
+    /// the tab bar and scrollbars the painter reserves — and that interior is
+    /// still the painter's, so its dividers are still recorded rectangles
+    /// hit-tested by the chrome walk. They become nodes when the pane does.
+    pub grouped_separator_areas: Vec<(ContainerId, SplitDirection, u16, u16, u16)>,
     /// Tab layouts per split for mouse interaction
     pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
     /// Close split button hit areas

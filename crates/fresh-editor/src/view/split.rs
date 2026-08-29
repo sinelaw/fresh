@@ -900,7 +900,14 @@ impl SplitNode {
     /// Grouped nodes always recurse into their inner layout — the layout's
     /// leaves get the full rect that would have been given to the Grouped
     /// node. Visibility (which group is "active") is applied elsewhere.
-    pub fn get_leaves_with_rects(&self, rect: Rect) -> Vec<(LeafId, BufferId, Rect)> {
+    /// **The engine the description replaced**, kept as the thing the swap is
+    /// pinned against.
+    ///
+    /// `view::shell::splits::grid` is the layout now; a replacement is only
+    /// as trustworthy as what it was checked against, so the original walk
+    /// stays here for the parity test and nothing else compiles it.
+    #[cfg(test)]
+    pub fn reference_leaves_with_rects(&self, rect: Rect) -> Vec<(LeafId, BufferId, Rect)> {
         match self {
             Self::Leaf {
                 buffer_id,
@@ -920,11 +927,73 @@ impl SplitNode {
             } => {
                 let (first_rect, second_rect) =
                     split_rect_ext(rect, *direction, *ratio, *fixed_first, *fixed_second);
-                let mut leaves = first.get_leaves_with_rects(first_rect);
-                leaves.extend(second.get_leaves_with_rects(second_rect));
+                let mut leaves = first.reference_leaves_with_rects(first_rect);
+                leaves.extend(second.reference_leaves_with_rects(second_rect));
                 leaves
             }
-            Self::Grouped { layout, .. } => layout.get_leaves_with_rects(rect),
+            Self::Grouped { layout, .. } => layout.reference_leaves_with_rects(rect),
+        }
+    }
+
+    /// Where each visible leaf sits inside `rect`.
+    ///
+    /// **A read of the layout, not a second one.** This walked the tree over
+    /// ratios and reserved a cell per separator, and every rectangle the
+    /// editor's chrome hung off — separator drags, per-pane scrollbars, tab
+    /// strips, click-to-byte — came from it. That engine is
+    /// `view::shell::splits::grid` now, laid out at whatever box the caller
+    /// has; the rule inside it (`split_rect_ext`) is unchanged and still the
+    /// model's own.
+    ///
+    /// Laying out a fresh tree per call is what makes this affordable: a
+    /// three-pane grid costs ~38µs cold in a debug build (measured in
+    /// `shell::splits`), against callers that run once a frame or on resize.
+    pub fn get_leaves_with_rects(&self, rect: Rect) -> Vec<(LeafId, BufferId, Rect)> {
+        use crate::view::shell::splits::{grid, leaf_key};
+        let mut ui: fresh_ui::Ui<()> = fresh_ui::Ui::new();
+        ui.frame(
+            grid::<()>(self, None),
+            fresh_ui::Size::new(rect.width, rect.height),
+        );
+        self.visible_leaves()
+            .into_iter()
+            .map(|(leaf, buffer)| {
+                let r = ui
+                    .find_by_key(&leaf_key(leaf))
+                    .map(|e| ui.rect_of(e))
+                    .unwrap_or_default();
+                (
+                    leaf,
+                    buffer,
+                    Rect::new(
+                        rect.x.saturating_add(r.x.max(0) as u16),
+                        rect.y.saturating_add(r.y.max(0) as u16),
+                        r.w,
+                        r.h,
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    /// The leaves this subtree shows, without their rectangles.
+    ///
+    /// The same walk as [`Self::get_leaves_with_rects`] with the geometry
+    /// dropped — which is all of it, since the partition never changes which
+    /// leaves there are.
+    pub fn visible_leaves(&self) -> Vec<(LeafId, BufferId)> {
+        match self {
+            Self::Leaf {
+                buffer_id,
+                split_id,
+                ..
+            } => vec![(*split_id, *buffer_id)],
+            Self::Split { first, second, .. } => {
+                let mut out = first.visible_leaves();
+                out.extend(second.visible_leaves());
+                out
+            }
+            Self::Grouped { layout, .. } => layout.visible_leaves(),
         }
     }
 
@@ -1156,7 +1225,7 @@ fn split_rect(rect: Rect, direction: SplitDirection, ratio: f32) -> (Rect, Rect)
     split_rect_ext(rect, direction, ratio, None, None)
 }
 
-fn split_rect_ext(
+pub(crate) fn split_rect_ext(
     rect: Rect,
     direction: SplitDirection,
     ratio: f32,
@@ -1661,6 +1730,29 @@ impl SplitManager {
             // Maximized split no longer exists, clear it and fall through
         }
         self.root.get_leaves_with_rects(viewport_rect)
+    }
+
+    /// Which leaves are visible, without asking where they are.
+    ///
+    /// **The set does not depend on the box.** `get_leaves_with_rects`
+    /// partitions whatever rectangle it is given, so which leaves come back is
+    /// a fact about the tree and the maximized split alone — a caller that
+    /// wants only the set had to invent a rectangle to get it, and
+    /// `flush_layout` invented the whole terminal, which is not the box the
+    /// grid is laid out in at all. An invented input whose value cannot matter
+    /// is a claim that it might.
+    pub fn visible_leaves(&self) -> Vec<(LeafId, BufferId)> {
+        if let Some(maximized_id) = self.maximized_split {
+            if let Some(SplitNode::Leaf {
+                buffer_id,
+                split_id,
+                ..
+            }) = self.root.find(maximized_id)
+            {
+                return vec![(*split_id, *buffer_id)];
+            }
+        }
+        self.root.visible_leaves()
     }
 
     /// Get all split separator positions for rendering borders

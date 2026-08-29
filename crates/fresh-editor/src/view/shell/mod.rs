@@ -28,6 +28,7 @@ pub mod overlay_prompt;
 pub mod popup;
 pub mod prompt;
 pub mod search_options;
+pub mod splits;
 pub mod status_bar;
 pub mod theme_info;
 pub mod trust;

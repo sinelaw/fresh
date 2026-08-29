@@ -203,7 +203,13 @@ mod tests {
             Mods::NONE,
         ));
         assert!(got.claimed, "the dialog takes it");
-        assert!(facts(got).is_empty(), "and does nothing with it");
+        // The frame-wide right-click observer fires wherever the click lands
+        // (`shell::splits::tab_menu_guard`); the dialog itself says nothing.
+        let got: Vec<_> = facts(got)
+            .into_iter()
+            .filter(|f| *f != UiFact::ClearTabMenus)
+            .collect();
+        assert!(got.is_empty(), "and does nothing with it");
     }
 
     /// The wheel scrolls the list, and a sideways wheel is absorbed rather

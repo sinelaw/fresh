@@ -2039,10 +2039,10 @@ impl crate::app::window::Window {
                 .map(|(mgr, _)| mgr)
                 .expect("window must have a populated split layout")
                 .root()
-                .get_leaves_with_rects(ratatui::layout::Rect::default())
+                .visible_leaves()
                 .into_iter()
-                .find(|(sid, _, _)| *sid == *leaf_id)
-                .map(|(_, buffer_id, _)| buffer_id);
+                .find(|(sid, _)| *sid == *leaf_id)
+                .map(|(_, buffer_id)| buffer_id);
 
             if let Some(buffer_id) = active_buffer {
                 self.save_buffer_file_state(buffer_id, view_state);
@@ -2736,12 +2736,8 @@ impl crate::app::window::Window {
             mgr.labels(),
         );
 
-        let active_buffers: HashMap<LeafId, BufferId> = mgr
-            .root()
-            .get_leaves_with_rects(ratatui::layout::Rect::default())
-            .into_iter()
-            .map(|(leaf_id, buffer_id, _)| (leaf_id, buffer_id))
-            .collect();
+        let active_buffers: HashMap<LeafId, BufferId> =
+            mgr.root().visible_leaves().into_iter().collect();
 
         let mut split_states = HashMap::new();
         for (leaf_id, view_state) in view_states {

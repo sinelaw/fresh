@@ -37,6 +37,7 @@ use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
 use crate::state::EditorState;
 use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::folding::FoldManager;
+use crate::view::shell::splits::{PaneChrome, PaneKind};
 use crate::view::split::SplitManager;
 use crate::view::ui::tabs::TabsRenderer;
 use ratatui::layout::Rect;
@@ -110,6 +111,10 @@ pub(crate) fn render_content(
     // column; a scrollback split keeps its scrollbar. Per-split (not a single
     // window flag) so two splits on the same terminal can differ (fresh#2595).
     scrollback_view_splits: &std::collections::HashSet<LeafId>,
+    // What chrome each of the split manager's panes has, resolved once with
+    // the shell's description of the same grid — see `Window::pane_chrome`.
+    // A buffer group's panel is not one of those panes, and resolves below.
+    pane_chrome: &HashMap<LeafId, PaneChrome>,
     cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
@@ -150,6 +155,15 @@ pub(crate) fn render_content(
         ..
     } = cfg;
 
+    // The window's half of the pane-chrome rule: what the frame offers every
+    // pane, before each narrows it by what it is. Bound once so the loop below
+    // and the three other layouts in this module read the same offer.
+    let window_chrome = PaneChrome {
+        tabs: tab_bar_visible,
+        vscroll: show_vertical_scrollbar,
+        hscroll: show_horizontal_scrollbar,
+    };
+
     let base_visible = split_manager.get_visible_buffers(area);
     let active_split_id = split_manager.active_split();
     let has_multiple_splits = base_visible.len() > 1;
@@ -159,9 +173,7 @@ pub(crate) fn render_content(
         &base_visible,
         split_view_states.as_deref_mut(),
         grouped_subtrees,
-        tab_bar_visible,
-        show_vertical_scrollbar,
-        show_horizontal_scrollbar,
+        pane_chrome,
     );
 
     // Collect areas for mouse handling
@@ -194,13 +206,6 @@ pub(crate) fn render_content(
         };
         let _ = main_split_id; // no longer needed below, kept for clarity
 
-        // Suppress chrome (tab bar) for splits in buffer groups
-        let split_tab_bar_visible = !is_inner_group_leaf
-            && tab_bar_visible
-            && !split_view_states
-                .as_deref()
-                .and_then(|svs| svs.get(&split_id))
-                .is_some_and(|vs| vs.suppress_chrome);
         // Hide tildes per-split (e.g., for buffer group panels). Also
         // hide them when the split's active buffer is a terminal in
         // scrollback view — the PTY drew blank rows, so empty rows
@@ -220,51 +225,39 @@ pub(crate) fn render_content(
                 .is_some_and(|vs| vs.hide_tilde)
             && !active_buf_is_terminal;
 
-        // Non-scrollable panels (Fixed toolbars/headers/footers by default,
-        // or any panel created with `scrollable: false`) don't get a
-        // scrollbar — their content is pinned to the panel size.
-        let is_non_scrollable = buffers.get(&buffer_id).is_some_and(|s| !s.scrollable);
-
-        // A terminal showing its live PTY grid suppresses the scrollbar so the
-        // grid uses the full split width. The live grid is shown for every split
-        // whose active buffer is a terminal EXCEPT one in read-only scrollback
-        // (that one keeps its scrollbar to scroll the synced buffer view).
-        // Mirrors the split-keyed gate in `render_terminal_splits`, so a
-        // terminal held in two splits can stream the live grid in one while the
-        // other reads scrollback (fresh#2595).
-        let terminal_showing_live_grid =
-            active_buf_is_terminal && !scrollback_view_splits.contains(&split_id);
-        let panel_show_vscroll =
-            show_vertical_scrollbar && !is_non_scrollable && !terminal_showing_live_grid;
-
-        let layout = if is_inner_group_leaf {
-            // Inner leaf: split_area IS the content rect already.
-            SplitLayout {
-                tabs_rect: Rect::new(split_area.x, split_area.y, 0, 0),
-                content_rect: Rect::new(
-                    split_area.x,
-                    split_area.y,
-                    split_area
-                        .width
-                        .saturating_sub(if panel_show_vscroll { 1 } else { 0 }),
-                    split_area.height,
-                ),
-                scrollbar_rect: Rect::new(
-                    split_area.x + split_area.width.saturating_sub(1),
-                    split_area.y,
-                    if panel_show_vscroll { 1 } else { 0 },
-                    split_area.height,
-                ),
-                horizontal_scrollbar_rect: Rect::new(0, 0, 0, 0),
-            }
-        } else {
-            split_layout(
-                split_area,
-                split_tab_bar_visible,
-                panel_show_vscroll,
-                show_horizontal_scrollbar && !is_non_scrollable,
+        // What this pane is, in the parts that decide its chrome — the
+        // scrollbars a `Fixed` panel never had, and the column a terminal
+        // gives up while it streams its live PTY grid (per split, so one
+        // terminal in two panes can differ — fresh#2595). The rule that
+        // narrows the window's offer by these is `PaneChrome::resolve`, and
+        // the shell's description resolves the same one for the same pane.
+        let chrome = if is_inner_group_leaf {
+            PaneChrome::resolve(
+                window_chrome,
+                PaneKind {
+                    inner_group_leaf: true,
+                    suppress_chrome: split_view_states
+                        .as_deref()
+                        .and_then(|svs| svs.get(&split_id))
+                        .is_some_and(|vs| vs.suppress_chrome),
+                    scrollable: buffers.get(&buffer_id).is_none_or(|s| s.scrollable),
+                    terminal_live_grid: active_buf_is_terminal
+                        && !scrollback_view_splits.contains(&split_id),
+                },
             )
+        } else {
+            pane_chrome.get(&split_id).copied().unwrap_or_default()
         };
+        let split_tab_bar_visible = chrome.tabs;
+        // A pane whose content is pinned to its size: it earns no scrollbar,
+        // and its viewport does not scroll to follow the cursor either — the
+        // second is why this outlives the `PaneChrome` that swallowed the first.
+        let is_non_scrollable = !buffers.get(&buffer_id).is_none_or(|s| s.scrollable);
+        // An inner leaf has no strip and no bottom bar, so its whole area is
+        // content but for the scrollbar column — which is what a
+        // `pane_interior` with those two flags off lays out. It used to be
+        // four rectangles written by hand right here.
+        let layout = split_layout(split_id, split_area, chrome);
         let (split_buffers, tab_scroll_offset) = if is_inner_group_leaf {
             (Vec::new(), 0)
         } else {
@@ -351,10 +344,8 @@ pub(crate) fn render_content(
                 panel_focused,
                 use_terminal_bg,
                 split_show_tilde,
-                show_vertical_scrollbar,
-                is_non_scrollable,
+                chrome,
                 is_active,
-                show_horizontal_scrollbar,
                 &mut split_areas,
                 &mut horizontal_scrollbar_areas,
             );
@@ -558,7 +549,7 @@ pub(crate) fn render_content(
             };
 
             // Render vertical scrollbar for this split and get thumb position
-            let (thumb_start, thumb_end) = if panel_show_vscroll {
+            let (thumb_start, thumb_end) = if chrome.vscroll {
                 let marker_cells = {
                     let _span = tracing::trace_span!("scrollbar_markers").entered();
                     project_scrollbar_markers(
@@ -598,7 +589,7 @@ pub(crate) fn render_content(
             };
 
             // Render horizontal scrollbar for this split
-            let (hthumb_start, hthumb_end) = if show_horizontal_scrollbar {
+            let (hthumb_start, hthumb_end) = if chrome.hscroll {
                 render_horizontal_scrollbar(
                     buf,
                     &viewport,
@@ -636,7 +627,7 @@ pub(crate) fn render_content(
                 thumb_start,
                 thumb_end,
             ));
-            if show_horizontal_scrollbar {
+            if chrome.hscroll {
                 horizontal_scrollbar_areas.push((
                     split_id,
                     buffer_id,
@@ -664,9 +655,7 @@ pub(crate) fn render_content(
         split_view_states.as_deref(),
         grouped_subtrees,
         theme,
-        tab_bar_visible,
-        show_vertical_scrollbar,
-        show_horizontal_scrollbar,
+        pane_chrome,
     );
 
     // Record vertical-scrollbar theme keys for the inspector, from the
@@ -693,9 +682,7 @@ fn expand_visible_buffers(
     base_visible: &[(LeafId, BufferId, Rect)],
     mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
-    tab_bar_visible: bool,
-    show_vertical_scrollbar: bool,
-    show_horizontal_scrollbar: bool,
+    pane_chrome: &HashMap<LeafId, PaneChrome>,
 ) -> Vec<VisibleBuffer> {
     let mut visible_buffers: Vec<VisibleBuffer> = Vec::new();
     for (main_split_id, main_buffer_id, split_area) in base_visible {
@@ -718,16 +705,10 @@ fn expand_visible_buffers(
 
         // Compute the content rect for this main split (after its tab bar),
         // then lay the group's leaves out within it.
-        let split_tab_bar_visible = tab_bar_visible
-            && !split_view_states
-                .as_deref()
-                .and_then(|svs| svs.get(main_split_id))
-                .is_some_and(|vs| vs.suppress_chrome);
         let main_layout = split_layout(
+            *main_split_id,
             *split_area,
-            split_tab_bar_visible,
-            show_vertical_scrollbar,
-            show_horizontal_scrollbar,
+            pane_chrome.get(main_split_id).copied().unwrap_or_default(),
         );
         let inner_leaves = grouped.get_leaves_with_rects(main_layout.content_rect);
         visible_buffers.push((
@@ -949,10 +930,8 @@ fn render_composite_split(
     panel_focused: bool,
     use_terminal_bg: bool,
     split_show_tilde: bool,
-    show_vertical_scrollbar: bool,
-    is_non_scrollable: bool,
+    chrome: PaneChrome,
     is_active: bool,
-    show_horizontal_scrollbar: bool,
     split_areas: &mut Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
     horizontal_scrollbar_areas: &mut Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
 ) {
@@ -1022,7 +1001,7 @@ fn render_composite_split(
 
     let total_rows = composite.row_count();
     let content_height = layout.content_rect.height.saturating_sub(1) as usize; // -1 for header
-    let (thumb_start, thumb_end) = if show_vertical_scrollbar && !is_non_scrollable {
+    let (thumb_start, thumb_end) = if chrome.vscroll {
         render_composite_scrollbar(
             buf,
             layout.scrollbar_rect,
@@ -1044,7 +1023,7 @@ fn render_composite_split(
         thumb_start,
         thumb_end,
     ));
-    if show_horizontal_scrollbar {
+    if chrome.hscroll {
         horizontal_scrollbar_areas.push((
             split_id,
             buffer_id,
@@ -1068,9 +1047,7 @@ fn render_grouped_separators(
     split_view_states: Option<&HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
     theme: &crate::view::theme::Theme,
-    tab_bar_visible: bool,
-    show_vertical_scrollbar: bool,
-    show_horizontal_scrollbar: bool,
+    pane_chrome: &HashMap<LeafId, PaneChrome>,
 ) -> Vec<(
     crate::model::event::ContainerId,
     SplitDirection,
@@ -1086,15 +1063,10 @@ fn render_grouped_separators(
         let Some(grouped) = active_group.and_then(|leaf| grouped_subtrees.get(&leaf)) else {
             continue;
         };
-        let split_tab_bar_visible = tab_bar_visible
-            && !split_view_states
-                .and_then(|svs| svs.get(main_split_id))
-                .is_some_and(|vs| vs.suppress_chrome);
         let main_layout = split_layout(
+            *main_split_id,
             *split_area,
-            split_tab_bar_visible,
-            show_vertical_scrollbar,
-            show_horizontal_scrollbar,
+            pane_chrome.get(main_split_id).copied().unwrap_or_default(),
         );
         if let crate::view::split::SplitNode::Grouped { layout, .. } = grouped {
             for (id, direction, x, y, length) in
@@ -1157,9 +1129,7 @@ pub(crate) fn compute_content_layout(
     use_terminal_bg: bool,
     session_mode: bool,
     software_cursor_only: bool,
-    tab_bar_visible: bool,
-    show_vertical_scrollbar: bool,
-    show_horizontal_scrollbar: bool,
+    pane_chrome: &HashMap<LeafId, PaneChrome>,
     diagnostics_inline_text: bool,
     show_tilde: bool,
     bracket_highlight: BracketHighlightSettings,
@@ -1171,17 +1141,10 @@ pub(crate) fn compute_content_layout(
     for (split_id, buffer_id, split_area) in visible_buffers {
         let is_active = split_id == active_split_id;
 
-        // Suppress chrome (tab bar) for splits in buffer groups
-        let split_tab_bar_visible = tab_bar_visible
-            && !split_view_states
-                .get(&split_id)
-                .is_some_and(|vs| vs.suppress_chrome);
-
         let layout = split_layout(
+            split_id,
             split_area,
-            split_tab_bar_visible,
-            show_vertical_scrollbar,
-            show_horizontal_scrollbar,
+            pane_chrome.get(&split_id).copied().unwrap_or_default(),
         );
 
         let state = match buffers.get_mut(&buffer_id) {
