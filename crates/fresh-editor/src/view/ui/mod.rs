@@ -40,7 +40,6 @@ pub mod split_rendering;
 #[cfg(feature = "runtime")]
 pub mod status_bar;
 #[cfg(feature = "runtime")]
-#[cfg(feature = "runtime")]
 pub mod tabs;
 
 // Re-export main types for convenience
@@ -52,7 +51,7 @@ pub use file_browser::{
     FileBrowserLayout, FileBrowserRenderer, FileBrowserToggle, FileBrowserToggleSpan,
 };
 #[cfg(feature = "runtime")]
-pub use file_explorer::{ExplorerDecorations, FileExplorerRenderer};
+pub use file_explorer::FileExplorerRenderer;
 pub use focus::FocusManager;
 pub use layout::point_in_rect;
 pub(crate) use menu::MenuRowStyle;
@@ -68,6 +67,5 @@ pub use scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 pub use split_rendering::{EditorRenderConfig, RenderStyle, SplitRenderer};
 #[cfg(feature = "runtime")]
 pub use status_bar::{truncate_path, StatusBarRenderer, TruncatedPath};
-#[cfg(feature = "runtime")]
 #[cfg(feature = "runtime")]
 pub use tabs::{TabHit, TabHitArea, TabLayout, TabsRenderer};

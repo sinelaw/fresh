@@ -1360,7 +1360,7 @@ fn render_control_via_widget(
         let dst = row - skip_rows;
         if dst < area.height {
             crate::app::render::paint_text_property_entry(
-                frame,
+                frame.buffer_mut(),
                 entry,
                 area.x,
                 area.y + dst,
@@ -1588,7 +1588,7 @@ fn render_control(
                         break;
                     }
                     crate::app::render::paint_text_property_entry(
-                        frame,
+                        frame.buffer_mut(),
                         entry,
                         area.x,
                         area.y + dst,
@@ -2495,7 +2495,13 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         .unwrap_or(0) as u16;
     if let Some(entry) = out.entries.first() {
         crate::app::render::paint_text_property_entry(
-            frame, entry, area.x, area.y, area.width, theme, None,
+            frame.buffer_mut(),
+            entry,
+            area.x,
+            area.y,
+            area.width,
+            theme,
+            None,
         );
     }
 
@@ -2607,7 +2613,12 @@ fn render_search_results(
         );
 
         let colors = ScrollbarColors::from_theme(theme);
-        render_scrollbar(frame, scrollbar_area, &scrollbar_state, &colors);
+        render_scrollbar(
+            frame.buffer_mut(),
+            scrollbar_area,
+            &scrollbar_state,
+            &colors,
+        );
 
         // Track scrollbar area in layout for click/drag support
         layout.search_scrollbar_area = Some(scrollbar_area);
@@ -3460,7 +3471,12 @@ fn render_entry_items(
         let scrollbar_state =
             ScrollbarState::new(total_content_height, viewport_height, scroll_offset);
         let scrollbar_colors = ScrollbarColors::from_theme(theme);
-        render_scrollbar(frame, scrollbar_area, &scrollbar_state, &scrollbar_colors);
+        render_scrollbar(
+            frame.buffer_mut(),
+            scrollbar_area,
+            &scrollbar_state,
+            &scrollbar_colors,
+        );
     }
 }
 

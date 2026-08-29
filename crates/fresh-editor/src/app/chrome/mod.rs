@@ -153,11 +153,15 @@ pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
 /// their real target, exactly as the central match arms did.
 /// Whether a cell is inside a rectangle.
 ///
-/// A plain geometry helper. It outlived the box walk it was written for: the
-/// surfaces that hit-test rectangles their own painters recorded — a modal's
-/// interior, a plugin panel's widgets — still ask it.
+/// A plain geometry helper, in the argument order the pointer handlers here
+/// read in — cell first, rectangle second. The predicate itself is
+/// [`crate::view::ui::layout::point_in_rect`]; this was a third copy of it.
+///
+/// It outlived the box walk it was written for: the surfaces that hit-test
+/// rectangles their own painters recorded — a modal's interior, a plugin
+/// panel's widgets — still ask it.
 pub(crate) fn in_rect(col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
-    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+    crate::view::ui::layout::point_in_rect(rect, col, row)
 }
 
 pub(crate) trait ChromeComponent: Sync {
@@ -252,7 +256,6 @@ pub(crate) fn components() -> &'static [&'static dyn ChromeComponent] {
         &dock::Dock,
         &menu::Menu,
         &file_explorer::FileExplorer,
-        &status_bar::StatusBar,
         &base::Base,
     ]
 }

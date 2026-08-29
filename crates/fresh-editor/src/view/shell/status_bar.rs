@@ -266,21 +266,6 @@ pub fn clickable_rects(
         .collect()
 }
 
-/// Plugin token areas as `(row, start_col, end_col)`, keyed by registry key.
-pub fn plugin_token_areas(
-    ui: &fresh_ui::Ui<UiMsg>,
-    bar: &StatusBar,
-    size: ratatui::layout::Rect,
-) -> std::collections::HashMap<String, (u16, u16, u16)> {
-    sides(bar)
-        .filter_map(|(side, i, it)| {
-            let key = it.token_key.clone()?;
-            let r = rect_of(ui, &item_key(side, i), size)?;
-            Some((key, (r.y, r.x, r.x.saturating_add(r.width))))
-        })
-        .collect()
-}
-
 /// The theme-key provenance of every painted cell on the bar, in paint order:
 /// the bar's own ground first, then each element and separator over it.
 ///

@@ -13,8 +13,6 @@ pub struct MouseState {
     pub drag_start_hcol: Option<u16>,
     /// Initial left_column when starting horizontal scrollbar drag
     pub drag_start_left_column: Option<usize>,
-    /// Last mouse position
-    pub last_position: Option<(u16, u16)>,
     /// Mouse hover for LSP: byte position being hovered, timer start, screen
     /// position, and the buffer the mouse is over.
     /// Format: (byte_position, hover_start_instant, screen_x, screen_y, buffer_id)

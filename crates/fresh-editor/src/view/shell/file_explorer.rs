@@ -555,15 +555,6 @@ pub fn neutral_key(is_hidden: bool, is_symlink: bool, is_dir: bool) -> &'static 
 
 // -- reading the layout back -------------------------------------------------
 
-/// Where layout put a row.
-pub fn row_rect(
-    ui: &fresh_ui::Ui<UiMsg>,
-    index: usize,
-    size: ratatui::layout::Rect,
-) -> Option<ratatui::layout::Rect> {
-    rect_of(ui, &row_key(index), size)
-}
-
 /// Where layout put a row's trailing status slot.
 ///
 /// This is the whole of what `trailing_slot_screen_bounds` computed, and the

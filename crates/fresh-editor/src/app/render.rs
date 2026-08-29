@@ -1009,7 +1009,7 @@ impl Editor {
         // Render terminal content on top of split content for terminal buffers.
         // Active-window path: cursor blinks normally when terminal_mode is on.
         self.active_window()
-            .render_terminal_splits(frame, &split_areas, true);
+            .render_terminal_splits(frame.buffer_mut(), &split_areas, true);
 
         self.active_layout_mut().split_areas = split_areas;
         self.active_layout_mut().horizontal_scrollbar_areas = horizontal_scrollbar_areas;
@@ -1068,8 +1068,7 @@ impl Editor {
         // drew them at) — merge so clicks on those rendered columns register.
         separator_areas.extend(grouped_separator_areas.iter().copied());
         self.active_layout_mut().separator_areas = separator_areas;
-        self.active_layout_mut().grouped_separator_areas = grouped_separator_areas;
-        self.active_layout_mut().editor_content_area = Some(editor_content_area);
+        self.active_layout_mut().last_editor_content_area = Some(editor_content_area);
 
         // Render hover highlights for separators and scrollbars
         self.render_hover_highlights(frame);
@@ -3559,7 +3558,7 @@ impl Editor {
         }
     }
 
-    /// Returns true if `(x, y)` falls inside any popup-style overlay that    /// Returns true if `(x, y)` falls inside any popup-style overlay that
+    /// Returns true if `(x, y)` falls inside any popup-style overlay that
     /// was rendered this frame. Used to decide whether the hardware cursor
     /// should be shown or hidden so it does not bleed through a popup.
     fn cursor_obscured_by_overlay(&self, x: u16, y: u16) -> bool {
@@ -3788,7 +3787,7 @@ impl Editor {
     /// area's hit-testing isn't clobbered by the preview pass.
     fn render_session_preview_into_rect(
         &mut self,
-        frame: &mut ratatui::Frame,
+        buf: &mut ratatui::buffer::Buffer,
         inner: ratatui::layout::Rect,
         theme: &crate::view::theme::Theme,
     ) {
@@ -3927,7 +3926,7 @@ impl Editor {
             .buffers
             .with_all_mut(|preview_buffers, mgr, view_states| {
                 let result = crate::view::ui::SplitRenderer::render_content(
-                    frame.buffer_mut(),
+                    buf,
                     inner,
                     &*mgr,
                     preview_buffers,
@@ -3990,7 +3989,7 @@ impl Editor {
         // preview read-only: no blinking cursor over a session
         // the user isn't currently driving.
         if let Some(win) = self.windows.get(&sid) {
-            win.render_terminal_splits(frame, &preview_split_areas, false);
+            win.render_terminal_splits(buf, &preview_split_areas, false);
         }
     }
 
@@ -4735,7 +4734,15 @@ impl Editor {
                     if y >= inner.y + inner.height {
                         break;
                     }
-                    paint_text_property_entry(frame, entry, inner.x, y, inner.width, &theme, None);
+                    paint_text_property_entry(
+                        frame.buffer_mut(),
+                        entry,
+                        inner.x,
+                        y,
+                        inner.width,
+                        &theme,
+                        None,
+                    );
                 }
             }
         } else if draw && !prompt.title.is_empty() && inner.height >= 2 {
@@ -4851,7 +4858,7 @@ impl Editor {
                     .preview_window_id
                     .is_some_and(|sid| sid != self.active_window && self.windows.contains_key(&sid))
             {
-                self.render_session_preview_into_rect(frame, inner, &theme);
+                self.render_session_preview_into_rect(frame.buffer_mut(), inner, &theme);
             } else if inner.height > 0 && inner.width > 0 {
                 // Snapshot the per-split scalars and group the appearance
                 // inputs into one `RenderStyle`, all before the `&mut
@@ -5528,7 +5535,7 @@ impl Editor {
             ScrollbarColors::from_theme(&theme)
         };
         for (rect, state) in jobs {
-            render_scrollbar(frame, rect, &state, &colors);
+            render_scrollbar(frame.buffer_mut(), rect, &state, &colors);
         }
     }
 
@@ -5762,7 +5769,7 @@ impl Editor {
                 )
             });
             paint_text_property_entry(
-                frame,
+                frame.buffer_mut(),
                 entry,
                 inner.x,
                 inner.y + i as u16,
@@ -5802,7 +5809,7 @@ impl Editor {
                 height: h,
             };
             self.preview_window_id = Some(fresh_core::WindowId(emb.window_id as u64));
-            self.render_session_preview_into_rect(frame, rect, &theme);
+            self.render_session_preview_into_rect(frame.buffer_mut(), rect, &theme);
         }
         self.preview_window_id = saved_preview;
 
@@ -5816,7 +5823,7 @@ impl Editor {
         // No-op for non-dock panels and for an empty dock.
         if is_dock {
             paint_dock_seamless_active_tab(
-                frame,
+                frame.buffer_mut(),
                 overlay_rect,
                 inner,
                 &entries,
@@ -5916,7 +5923,7 @@ impl Editor {
                     continue;
                 }
                 let state = ScrollbarState::new(sc.total, sc.visible, sc.offset);
-                render_scrollbar(frame, sb_rect, &state, &colors);
+                render_scrollbar(frame.buffer_mut(), sb_rect, &state, &colors);
                 scrollbar_tracks.push(super::WidgetScrollbarTrack {
                     list_key: b.key.clone().unwrap_or_default(),
                     rect: sb_rect,
@@ -5965,7 +5972,7 @@ impl Editor {
                 )
             });
             paint_text_property_entry(
-                frame,
+                frame.buffer_mut(),
                 &o.entry,
                 inner.x,
                 row_y,
@@ -6038,7 +6045,7 @@ impl Editor {
                         break;
                     }
                     paint_text_property_entry(
-                        frame,
+                        frame.buffer_mut(),
                         entry,
                         popup_inner.x,
                         ry,
@@ -6171,7 +6178,7 @@ impl Editor {
 /// and last such rows bound the band. No-ops when no card is selected
 /// (e.g. an empty dock) so the plain wall stands.
 fn paint_dock_seamless_active_tab(
-    frame: &mut ratatui::Frame,
+    buf: &mut ratatui::buffer::Buffer,
     overlay_rect: ratatui::layout::Rect,
     inner: ratatui::layout::Rect,
     entries: &[fresh_core::text_property::TextPropertyEntry],
@@ -6186,14 +6193,14 @@ fn paint_dock_seamless_active_tab(
         s.chars().any(|c| matches!(c, '┏' | '┓' | '┗' | '┛' | '┃'))
     }
     fn set_cell(
-        frame: &mut ratatui::Frame,
+        buf: &mut ratatui::buffer::Buffer,
         x: u16,
         y: u16,
         sym: &str,
         fg: ratatui::style::Color,
         bg: ratatui::style::Color,
     ) {
-        if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+        if let Some(cell) = buf.cell_mut((x, y)) {
             cell.set_symbol(sym);
             cell.set_fg(fg);
             cell.set_bg(bg);
@@ -6239,27 +6246,27 @@ fn paint_dock_seamless_active_tab(
     let bot_y = inner.y + bot as u16;
 
     // Top edge of the tab: ╭───…───╯  (╯ scoops up into the wall above).
-    set_cell(frame, left_x, top_y, "╭", border_fg, bg);
+    set_cell(buf, left_x, top_y, "╭", border_fg, bg);
     for x in (left_x + 1)..wall_x {
-        set_cell(frame, x, top_y, "─", border_fg, bg);
+        set_cell(buf, x, top_y, "─", border_fg, bg);
     }
-    set_cell(frame, wall_x, top_y, "╯", border_fg, bg);
+    set_cell(buf, wall_x, top_y, "╯", border_fg, bg);
 
     // Bottom edge: ╰───…───╮  (╮ scoops down into the wall below).
-    set_cell(frame, left_x, bot_y, "╰", border_fg, bg);
+    set_cell(buf, left_x, bot_y, "╰", border_fg, bg);
     for x in (left_x + 1)..wall_x {
-        set_cell(frame, x, bot_y, "─", border_fg, bg);
+        set_cell(buf, x, bot_y, "─", border_fg, bg);
     }
-    set_cell(frame, wall_x, bot_y, "╮", border_fg, bg);
+    set_cell(buf, wall_x, bot_y, "╮", border_fg, bg);
 
     // Content rows: keep the left border, open the right — erase the card's
     // own right border, the gutter, and the wall — so the row flows into the
     // editor with no divider.
     for r in (top + 1)..bot {
         let y = inner.y + r as u16;
-        set_cell(frame, left_x, y, "│", border_fg, bg);
+        set_cell(buf, left_x, y, "│", border_fg, bg);
         for x in wall_x.saturating_sub(2)..=wall_x {
-            set_cell(frame, x, y, " ", border_fg, bg);
+            set_cell(buf, x, y, " ", border_fg, bg);
         }
     }
 }
@@ -6270,7 +6277,7 @@ fn paint_dock_seamless_active_tab(
 /// are filled with spaces in the panel's bg so the row reads as one
 /// solid line.
 pub(crate) fn paint_text_property_entry(
-    frame: &mut ratatui::Frame,
+    buf: &mut ratatui::buffer::Buffer,
     entry: &fresh_core::text_property::TextPropertyEntry,
     x: u16,
     y: u16,
@@ -6499,7 +6506,7 @@ pub(crate) fn paint_text_property_entry(
         width,
         height: 1,
     };
-    frame.render_widget(Paragraph::new(line).style(fill_style), rect);
+    ratatui::widgets::Widget::render(Paragraph::new(line).style(fill_style), rect, buf);
 }
 
 /// Record `[start_col, start_col+span_w)` of screen row `row` into the

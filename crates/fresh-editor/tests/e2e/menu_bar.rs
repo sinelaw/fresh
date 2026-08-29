@@ -1025,3 +1025,48 @@ fn test_edit_menu_query_replace_invokes_query_replace() {
     harness.render().unwrap();
     harness.assert_screen_contains("Query replace 'hello' with:");
 }
+
+/// **A hover the tree owns asks for the frame it changed.**
+///
+/// `handle_mouse` returns "a re-render is needed", and the pointer walk used
+/// to answer it for hover: `update_hover_target` reported that the target had
+/// moved. Deleting the walk left the tree naming the new target — which it
+/// does, correctly, and every migrated surface styles itself from it — with
+/// nothing left to ask for the repaint. So the highlight landed a frame late,
+/// on whatever redrew next, and on an idle editor it never landed at all.
+///
+/// The answer is `Dispatched::changed`: the tree reports *claimed* and
+/// *changed* separately, because a hover is exactly the case where they
+/// differ. It does not claim — the move goes on to the plugin `mouse_move`
+/// hook, the terminal-link tracker and the LSP hover probe — and it still
+/// changed the frame.
+#[test]
+fn hovering_a_menu_label_asks_for_the_frame_it_changed() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    let moved = |column| MouseEvent {
+        kind: MouseEventKind::Moved,
+        column,
+        row: 0,
+        modifiers: KeyModifiers::empty(),
+    };
+
+    // Onto the first label. Nothing else on this path reacts to a bare move
+    // over the menu bar — no dock, no terminal, no panel — so a `true` here
+    // is the hover's own.
+    assert!(
+        harness.editor_mut().handle_mouse(moved(2)).unwrap(),
+        "moving onto a menu label must ask for the repaint that restyles it"
+    );
+
+    // And staying on it crosses no element boundary, so there is no message
+    // and no frame. This half is what keeps an idle motion from redrawing the
+    // editor on every pixel of travel.
+    assert!(
+        !harness.editor_mut().handle_mouse(moved(3)).unwrap(),
+        "a move within the same label changed nothing"
+    );
+}

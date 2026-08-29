@@ -71,6 +71,22 @@ pub struct BodyState {
 /// rectangles.
 pub(crate) use crate::view::ui::split_rendering::PaneAreas as BodyOutput;
 
+/// What one dispatch into the shell's tree did.
+///
+/// Two answers, because the walk behind this one needs both. **Claimed** is
+/// whether the tree took the event, and it is reported by the library rather
+/// than inferred: a modal swallows a key without producing a message, and a
+/// dismissal closes a menu while leaving the right-click available to open
+/// the next one. **Changed** is whether anything moved as a result, which is
+/// what asks for the repaint — and the two differ exactly where hover lives.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Dispatched {
+    /// The tree took the event: nothing behind it should act on it.
+    pub claimed: bool,
+    /// The tree changed something, so the frame is stale.
+    pub changed: bool,
+}
+
 /// The split grid's painter, for the length of one fold.
 ///
 /// **Frame-scoped, and that is the point.** `paint_host` carries a target and
@@ -98,16 +114,47 @@ pub struct BodyPainter<'a> {
     out: BodyOutput,
     /// The frame's width, for the theme runs recorded in [`Self::finish`].
     screen_width: u16,
+    /// What the shell's description of this same grid says each pane has.
+    ///
+    /// Resolved when the frame was built — this painter is the other half of
+    /// that frame, not a second opinion about it. Held here rather than
+    /// cloned inside [`with_grid`], because the fold calls that once *per
+    /// pane*: a clone in there is a copy of the whole map for every pane on
+    /// screen, every frame.
+    pane_chrome: std::collections::HashMap<LeafId, PaneChrome>,
+    /// The splits whose active buffer is a terminal shown in read-only
+    /// scrollback. Gathered once per frame, for the same reason.
+    scrollback: HashSet<LeafId>,
 }
 
 impl<'a> BodyPainter<'a> {
     pub fn new(editor: &'a mut Editor, state: BodyState) -> Self {
+        // Cloned rather than taken: a frame may fold more than once, and the
+        // second pass must not paint panes with no chrome at all.
+        let pane_chrome = editor.pending_pane_chrome.clone();
+        let scrollback = editor
+            .windows
+            .get(&editor.active_window)
+            .and_then(|win| {
+                win.buffers.splits().map(|(_, vs_map)| {
+                    vs_map
+                        .iter()
+                        .filter(|(leaf, svs)| {
+                            win.split_terminal_scrollback(**leaf, svs.active_buffer)
+                        })
+                        .map(|(leaf, _)| *leaf)
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
         Self {
             editor,
             state,
             pass: None,
             out: BodyOutput::default(),
             screen_width: 0,
+            pane_chrome,
+            scrollback,
         }
     }
 
@@ -149,6 +196,8 @@ impl<'a> BodyPainter<'a> {
             self.editor,
             state,
             buf.area.width,
+            &self.pane_chrome,
+            &self.scrollback,
             |facts, stores, mgr, window_chrome| {
                 let base_visible = mgr.get_visible_buffers(area);
                 let pass = prepare_content(
@@ -192,6 +241,8 @@ impl<'a> BodyPainter<'a> {
             self.editor,
             state,
             buf.area.width,
+            &self.pane_chrome,
+            &self.scrollback,
             |facts, stores, _mgr, _window_chrome| {
                 paint_leaf(buf, pane, facts, pass, stores, out, caret);
             },
@@ -212,6 +263,8 @@ fn with_grid<R>(
     editor: &mut Editor,
     state: BodyState,
     screen_width: u16,
+    pane_chrome: &std::collections::HashMap<LeafId, PaneChrome>,
+    scrollback_view_splits: &HashSet<LeafId>,
     f: impl FnOnce(&FrameFacts<'_>, &mut Stores<'_>, &crate::view::split::SplitManager, PaneChrome) -> R,
 ) -> Option<R> {
     // Built before the `&mut editor.windows` borrow below; it only borrows
@@ -223,14 +276,6 @@ fn with_grid<R>(
     );
     let session_mode = editor.session_mode || !editor.software_cursor_only;
     let active_window_id = editor.active_window;
-
-    // What the shell's description of this same grid says each pane has. It
-    // was resolved when the frame was built — this painter is the other half
-    // of that frame, not a second opinion about it. Taken before the window
-    // borrow below, like every other fact this assembly needs off the editor.
-    // Cloned rather than taken: a frame may fold more than once, and the
-    // second pass must not paint panes with no chrome at all.
-    let pane_chrome = editor.pending_pane_chrome.clone();
 
     let win = editor.windows.get_mut(&active_window_id)?;
 
@@ -248,17 +293,6 @@ fn with_grid<R>(
     };
     let metadata_ref = &win.buffer_metadata;
     let preview_buffer = win.preview.map(|(_, b)| b);
-    let scrollback_view_splits: HashSet<LeafId> = win
-        .buffers
-        .splits()
-        .map(|(_, vs_map)| {
-            vs_map
-                .iter()
-                .filter(|(leaf, svs)| win.split_terminal_scrollback(**leaf, svs.active_buffer))
-                .map(|(leaf, _)| *leaf)
-                .collect()
-        })
-        .unwrap_or_default();
     let event_logs_mut = &mut win.event_logs;
     let grouped_ref = &win.grouped_subtrees;
     let composite_buffers_mut = &mut win.composite_buffers;
@@ -277,8 +311,8 @@ fn with_grid<R>(
             buffer_metadata: metadata_ref,
             preview_buffer,
             grouped_subtrees: grouped_ref,
-            pane_chrome: &pane_chrome,
-            scrollback_view_splits: &scrollback_view_splits,
+            pane_chrome,
+            scrollback_view_splits,
             lsp_waiting: state.lsp_waiting,
             hide_cursor: state.hide_cursor,
             hovered_tab: state.hovered_tab,
@@ -893,9 +927,9 @@ impl Editor {
     /// leaf standing in for a painter that has not moved — so anything the
     /// tree declines reaches the legacy path exactly as before. A surface
     /// starts taking its own input the moment it stops being a `Host`.
-    pub(crate) fn shell_dispatch(&mut self, input: fresh_ui::Input) -> bool {
+    pub(crate) fn shell_dispatch(&mut self, input: fresh_ui::Input) -> Dispatched {
         let Some(mut ui) = self.shell_ui.take() else {
-            return false;
+            return Dispatched::default();
         };
         // What the menu was showing when this event arrived. Snapshotted
         // before a single message is applied, because the first of them may be
@@ -915,6 +949,20 @@ impl Editor {
         // claiming the pointer, and a dismissal closes a menu while leaving a
         // right-click to go on and open the next one.
         let claimed = result.claimed;
+        // **Claiming and changing are different things**, and both answers are
+        // needed. A hover moves a highlight without claiming — the event goes
+        // on to the plugin `mouse_move` hook, the terminal-link tracker and
+        // the LSP hover probe — and the frame it changed still has to be
+        // drawn. That second half went missing with the pointer walk:
+        // `update_hover_target` used to return "the target moved, redraw" and
+        // nothing replaced it, so every hover the tree owns — the menu bar's
+        // labels, the explorer's rows, the status bar's segments, a
+        // separator, a tab — restyled a frame nobody asked for.
+        //
+        // A message *is* the change: a `UiFact` exists to be reacted to, and
+        // a pointer that crosses no element boundary produces none, which is
+        // what keeps an idle motion from drawing a frame.
+        let changed = !result.msgs.is_empty();
         for msg in result.msgs {
             match msg {
                 crate::view::shell::msg::UiMsg::Action(action) => {
@@ -927,7 +975,7 @@ impl Editor {
                 crate::view::shell::msg::UiMsg::Ui(fact) => self.apply_ui_fact(fact),
             }
         }
-        claimed
+        Dispatched { claimed, changed }
     }
 
     /// Whether a wheel notch over a pane's content was taken by a live
@@ -968,22 +1016,18 @@ impl Editor {
             // is the tab renderer's layout, hit-tested against what it
             // recorded — so these arms are the box handlers, minus the box.
             UiFact::PaneTabsPress { pane, x, y } => {
-                let _ = pane;
                 // Split controls first: they are drawn on top of the tab row,
                 // which two `LayoutBox`es said by sitting at z 70 and 60.
                 let r = self
-                    .handle_click_split_controls(x, y)
-                    .or_else(|| self.handle_click_tab_bar(x, y));
+                    .handle_click_split_controls(pane, x, y)
+                    .or_else(|| self.handle_click_tab_bar(pane, x, y));
                 if let Some(Err(e)) = r {
                     tracing::warn!("tab strip click failed: {e}");
                 }
             }
-            UiFact::PaneTabsSecondary { pane, x, y } => {
-                let _ = pane;
-                self.open_tab_context_menu(x, y);
-            }
+            UiFact::PaneTabsSecondary { pane, x, y } => self.open_tab_context_menu(pane, x, y),
             UiFact::PaneTabsHover(at) => {
-                self.shell_hover = at.and_then(|(_, x, y)| self.tab_strip_hover(x, y));
+                self.shell_hover = at.and_then(|(pane, x, y)| self.tab_strip_hover(pane, x, y));
             }
             UiFact::PaneTabsWheel { pane, x, y, delta } => {
                 self.dismiss_transient_popups();

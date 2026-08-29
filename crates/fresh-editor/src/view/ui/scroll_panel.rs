@@ -392,7 +392,12 @@ impl ScrollablePanel {
             let sb_area = Rect::new(area.x + content_area.width, area.y, 1, area.height);
             let scrollbar_state = self.scroll.to_scrollbar_state();
             let scrollbar_colors = ScrollbarColors::from_theme(theme);
-            render_scrollbar(frame, sb_area, &scrollbar_state, &scrollbar_colors);
+            render_scrollbar(
+                frame.buffer_mut(),
+                sb_area,
+                &scrollbar_state,
+                &scrollbar_colors,
+            );
             Some(sb_area)
         } else {
             None
@@ -403,62 +408,6 @@ impl ScrollablePanel {
             scrollbar_area,
             item_layouts: layouts,
         }
-    }
-
-    /// Render without scrollbar (for when scrollbar is managed externally)
-    pub fn render_content_only<I, F, L>(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        items: &[I],
-        render_item: F,
-    ) -> Vec<ItemLayoutInfo<L>>
-    where
-        I: ScrollItem,
-        F: Fn(&mut Frame, RenderInfo, &I) -> L,
-    {
-        let mut layouts = Vec::new();
-        let mut content_y = 0u16;
-        let mut render_y = area.y;
-        let item_width = area.width;
-
-        for (idx, item) in items.iter().enumerate() {
-            let item_h = item.height(item_width);
-
-            if content_y + item_h <= self.scroll.offset {
-                content_y += item_h;
-                continue;
-            }
-
-            if render_y >= area.y + area.height {
-                break;
-            }
-
-            let skip_top = self.scroll.offset.saturating_sub(content_y);
-            let available_h = (area.y + area.height).saturating_sub(render_y);
-            let visible_h = (item_h - skip_top).min(available_h);
-
-            if visible_h > 0 {
-                let item_area = Rect::new(area.x, render_y, area.width, visible_h);
-                let info = RenderInfo {
-                    area: item_area,
-                    skip_top,
-                    index: idx,
-                };
-                let layout = render_item(frame, info, item);
-                layouts.push(ItemLayoutInfo {
-                    index: idx,
-                    content_y,
-                    area: item_area,
-                    layout,
-                });
-            }
-
-            render_y += visible_h;
-            content_y += item_h;
-        }
-
-        layouts
     }
 
     // Scroll operations

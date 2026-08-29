@@ -22,6 +22,10 @@ impl Window {
         &mut self,
         col: u16,
         row: u16,
+        // The terminal under the pointer and the rectangle its grid occupies,
+        // resolved by `Editor::terminal_pane_at`. Asked there because it is a
+        // question about the shell's tree, which this side cannot see.
+        at: (BufferId, Rect),
         mouse_event: MouseEvent,
         forwarding: crate::config::TerminalMouseForwarding,
     ) -> Option<AnyhowResult<bool>> {
@@ -53,8 +57,7 @@ impl Window {
             return None;
         }
 
-        // Find terminal buffer at this position.
-        let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
+        let (buffer_id, content_rect) = at;
 
         // `send_terminal_mouse` writes to the *focused* terminal and makes the
         // coordinates relative to `content_rect`, so both must describe the
@@ -161,6 +164,8 @@ impl Window {
         &self,
         col: u16,
         row: u16,
+        // See `try_forward_mouse_to_terminal`.
+        at: (BufferId, Rect),
     ) -> Option<(
         BufferId,
         u16,
@@ -170,7 +175,7 @@ impl Window {
         if !self.focused_terminal_live() {
             return None;
         }
-        let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
+        let (buffer_id, content_rect) = at;
         // Detection runs even for alternate-screen / mouse-reporting programs:
         // this is only reached for Ctrl-held gestures (see the callers in
         // `terminal_link.rs`, both Ctrl-gated), which `try_forward_mouse_to_terminal`
@@ -280,27 +285,6 @@ impl Window {
             });
 
         Some((active, link, cwd))
-    }
-
-    /// Get the terminal buffer and its content area if the mouse position is over a terminal buffer.
-    /// Returns the buffer ID and content rect if found.
-    fn get_terminal_content_area_at_position(
-        &self,
-        col: u16,
-        row: u16,
-    ) -> Option<(BufferId, Rect)> {
-        for (_, buffer_id, content_rect, _, _, _) in &self.layout_cache.split_areas {
-            // Check if position is within content area.
-            if col >= content_rect.x
-                && col < content_rect.x + content_rect.width
-                && row >= content_rect.y
-                && row < content_rect.y + content_rect.height
-                && self.is_terminal_buffer(*buffer_id)
-            {
-                return Some((*buffer_id, *content_rect));
-            }
-        }
-        None
     }
 
     /// Forward a mouse event to the terminal PTY.

@@ -14,6 +14,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use super::FocusState;
+use crate::view::ui::layout::point_in_rect;
 
 /// Which column is currently active
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -319,10 +320,6 @@ impl DualListLayout {
 
         None
     }
-}
-
-fn point_in_rect(rect: Rect, x: u16, y: u16) -> bool {
-    x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
 }
 
 #[cfg(test)]

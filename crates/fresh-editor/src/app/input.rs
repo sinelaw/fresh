@@ -280,7 +280,7 @@ impl Editor {
         if let Some(input) =
             crate::view::shell::input::key(&fresh_input_parser::KeyPress::new(key_event))
         {
-            if self.shell_dispatch(input) {
+            if self.shell_dispatch(input).claimed {
                 return Ok(());
             }
         }

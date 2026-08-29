@@ -2386,18 +2386,19 @@ impl Editor {
         row: u16,
         delta: i32,
     ) -> bool {
-        let Some((split_id, buffer_id)) = self.active_window().split_at_position(col, row) else {
+        // The pane the pointer is over, counting its scrollbar column — the
+        // wheel scrolls a panel whose bar the pointer is on. `split_at_position`
+        // answered this by scanning the two rectangles it recorded per pane.
+        let Some(split_id) = self.pane_at(col, row) else {
+            return false;
+        };
+        let Some(buffer_id) = self.active_window().pane_buffer(split_id) else {
             return false;
         };
         if self.widget_registry.panels_for_buffer(buffer_id).is_empty() {
             return false;
         }
-        let content_rect = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(sid, ..)| *sid == split_id)
-            .map(|(_, _, rect, ..)| *rect);
+        let content_rect = self.pane_content_rect(split_id);
         let pos = content_rect.and_then(|rect| {
             if !in_rect(col, row, rect) {
                 return None;

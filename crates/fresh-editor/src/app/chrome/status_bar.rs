@@ -3,11 +3,7 @@
 use crate::input::keybindings::Action;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, Editor};
-
-pub(crate) struct StatusBar;
-
-impl ChromeComponent for StatusBar {}
+use super::Editor;
 
 /// Behavior owned by this component (moved from mouse_input.rs —
 /// the handlers its arms dispatch to).

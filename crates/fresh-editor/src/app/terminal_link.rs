@@ -40,8 +40,8 @@ impl Editor {
         // Try the live grid first, then the scrollback buffer view (only one
         // of the two is showing for any given terminal).
         let (link, term_cwd) = self
-            .active_window()
-            .detect_terminal_link_at(col, row)
+            .terminal_pane_at(col, row)
+            .and_then(|at| self.active_window().detect_terminal_link_at(col, row, at))
             .map(|(_, _, link, cwd)| (link, cwd))
             .or_else(|| {
                 self.active_window()
@@ -90,8 +90,9 @@ impl Editor {
         col: u16,
         row: u16,
     ) -> Option<crate::app::window::TerminalLinkHover> {
+        let at = self.terminal_pane_at(col, row)?;
         let (buffer_id, term_row, link, term_cwd) =
-            self.active_window().detect_terminal_link_at(col, row)?;
+            self.active_window().detect_terminal_link_at(col, row, at)?;
         // Only highlight paths that actually resolve — otherwise the underline
         // would promise a link that clicking can't honor.
         self.resolve_terminal_path(&link.path, term_cwd.as_deref())?;
