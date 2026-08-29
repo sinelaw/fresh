@@ -180,8 +180,6 @@ impl SplitRenderer {
     ) -> (
         Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
         HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
-        Vec<(LeafId, u16, u16, u16)>,
-        Vec<(LeafId, u16, u16, u16)>,
         HashMap<LeafId, Vec<ViewLineMapping>>,
         Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
         Vec<(

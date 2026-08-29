@@ -356,10 +356,13 @@ impl crate::view::shell::fold::HostPainter for BodyPainter<'_> {
             // `Draw::Host`. Listed so that un-migrating one is a compile
             // error rather than a blank row.
             HostRegion::MenuBar | HostRegion::SearchOptions | HostRegion::Explorer => {}
+            // The prompt's input row: cells the fold writes, at the rectangle
+            // layout gave the region.
+            HostRegion::PromptLine => self.editor.render_prompt_line(buf, rect, caret),
             // The dock's column is native around a `Host` content leaf that
-            // the panel painter still owns, and the two one-row regions are
-            // the prompt's. All three are painted by `Editor::render`.
-            HostRegion::Dock | HostRegion::StatusBar | HostRegion::PromptLine => {}
+            // the panel painter still owns, and the status bar's prompt states
+            // are the one row `Editor::render` still paints outside the fold.
+            HostRegion::Dock | HostRegion::StatusBar => {}
         }
     }
 }
@@ -1016,16 +1019,20 @@ impl Editor {
             // is the tab renderer's layout, hit-tested against what it
             // recorded — so these arms are the box handlers, minus the box.
             UiFact::PaneTabsPress { pane, x, y } => {
-                // Split controls first: they are drawn on top of the tab row,
-                // which two `LayoutBox`es said by sitting at z 70 and 60.
-                let r = self
-                    .handle_click_split_controls(pane, x, y)
-                    .or_else(|| self.handle_click_tab_bar(pane, x, y));
-                if let Some(Err(e)) = r {
+                // Only the tabs are left here. The two buttons drawn over the
+                // right end of this row are nodes of their own, and a node
+                // deeper on the hit path answers first — which is what the two
+                // `LayoutBox`es at z 70 over z 60 were saying.
+                if let Some(Err(e)) = self.handle_click_tab_bar(pane, x, y) {
                     tracing::warn!("tab strip click failed: {e}");
                 }
             }
             UiFact::PaneTabsSecondary { pane, x, y } => self.open_tab_context_menu(pane, x, y),
+            // The two strip buttons. They carry no coordinates: each is a node
+            // that knows its pane, so what used to be a scan of two recorded
+            // rect lists is the dispatch itself.
+            UiFact::PaneMaximize(pane) => self.maximize_split_button(pane),
+            UiFact::PaneClose(pane) => self.close_split_button(pane),
             UiFact::PaneTabsHover(at) => {
                 self.shell_hover = at.and_then(|(pane, x, y)| self.tab_strip_hover(pane, x, y));
             }

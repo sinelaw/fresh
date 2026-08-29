@@ -318,7 +318,6 @@ impl Editor {
 
         use crate::view::shell::frame::HostRegion;
         let status_bar_area = region(HostRegion::StatusBar);
-        let prompt_line_area = region(HostRegion::PromptLine);
         let editor_content_area = region(HostRegion::Body);
         // Presence is app state, not geometry: a hidden sidebar still has a
         // (zero-width) rectangle, and callers distinguish the two by `Option`.
@@ -796,8 +795,6 @@ impl Editor {
         let crate::app::shell_host::BodyOutput {
             split_areas,
             tab_layouts,
-            close_split_areas,
-            maximize_split_areas,
             view_line_mappings,
             horizontal_scrollbar_areas,
             grouped_separator_areas,
@@ -1014,8 +1011,6 @@ impl Editor {
         self.active_layout_mut().split_areas = split_areas;
         self.active_layout_mut().horizontal_scrollbar_areas = horizontal_scrollbar_areas;
         self.active_layout_mut().tab_layouts = tab_layouts;
-        self.active_layout_mut().close_split_areas = close_split_areas;
-        self.active_layout_mut().maximize_split_areas = maximize_split_areas;
         self.active_layout_mut().view_line_mappings = view_line_mappings;
 
         // **The buffer answers where its caret is, and the layers hanging off
@@ -1093,15 +1088,9 @@ impl Editor {
         // with OSC sequences every frame.
         self.update_terminal_title(&display_name);
 
-        let prompt = self.active_window().prompt.clone();
-        let theme = self.theme.read().unwrap().clone();
-
         // Status bar (hidden when toggled off, or when a suggestions/file-
         // browser popup covers the bottom row).
         self.publish_status_bar(status_bar_area, has_suggestions, has_file_browser);
-
-        // Prompt input line (non-overlay prompts only).
-        self.render_prompt_line(frame, prompt_line_area, &prompt, &theme);
 
         // Float-overlay preview: load the selected match's file (if
         // the file changed) and seed the phantom leaf's cursor before
@@ -1224,9 +1213,15 @@ impl Editor {
         // to hide it is to leave `Frame::cursor_position` as `None`, which
         // triggers `Terminal::hide_cursor` at the end of the draw.
         //
-        // When a prompt is active the prompt renderer already placed the
-        // caret on the prompt line via `frame.set_cursor_position`; don't
-        // override it with the (now-irrelevant) buffer cursor.
+        // A non-overlay prompt owns the caret: it is the row being typed
+        // into. It used to place it *itself*, with its own
+        // `frame.set_cursor_position`, and this commit skipped whenever any
+        // prompt was up so the buffer's caret could not override it. The
+        // prompt row is painted by the fold now, so its caret arrives on the
+        // same channel as everything else's and wins by writing last — the
+        // display list puts that row after the body. What is left of the old
+        // guard is which of the two the check below applies to: the buffer's,
+        // never the prompt's.
         //
         // The focused file explorer's caret rides the same path: the sidebar
         // paints at the top of the draw, so it can only defer the decision to
@@ -1258,9 +1253,14 @@ impl Editor {
             Some((cx, cy)) => frame.set_cursor_position((cx, cy)),
             None => {
                 if let Some((cx, cy)) = legacy_cursor {
-                    if self.active_window().prompt.is_none()
-                        && !self.cursor_obscured_by_overlay(cx, cy)
-                    {
+                    let prompt = self.active_window().prompt.as_ref();
+                    // The prompt row's own caret, which the fold just placed.
+                    if prompt.is_some_and(|p| !p.overlay) {
+                        frame.set_cursor_position((cx, cy));
+                    } else if prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
+                        // The buffer's, as before: an overlay prompt draws its
+                        // own input row inside its card and places its caret
+                        // there, so the buffer's is not wanted either way.
                         frame.set_cursor_position((cx, cy));
                     }
                 }
@@ -1452,39 +1452,44 @@ impl Editor {
             .map(|(_, r)| (r.y, r.x, r.x.saturating_add(r.width)))
     }
 
-    /// Render the bottom prompt input line into `area`. Overlay prompts (e.g.
-    /// Live Grep) paint their own input row inside their centred frame and so
-    /// skip this; file/folder open prompts use a path-colorising renderer.
-    fn render_prompt_line(
+    /// Paint the bottom prompt input line into `area`.
+    ///
+    /// **Reached from the fold**, through `HostRegion::PromptLine`. It used to
+    /// be called straight from `render` with the rectangle `region(PromptLine)`
+    /// gave it — the tree owning the geometry and the cells bypassing the
+    /// display list, which is a third arrangement beside "native" and "`Host`"
+    /// and the one that made paint order stop being the list's.
+    ///
+    /// Overlay prompts (e.g. Live Grep) paint their own input row inside their
+    /// centred frame and so skip this; file/folder open prompts use a
+    /// path-colorising renderer.
+    pub(crate) fn render_prompt_line(
         &mut self,
-        frame: &mut Frame,
+        buf: &mut ratatui::buffer::Buffer,
         area: ratatui::layout::Rect,
-        prompt: &Option<crate::view::prompt::Prompt>,
-        theme: &crate::view::theme::Theme,
+        caret: &mut Option<(u16, u16)>,
     ) {
-        if let Some(prompt) = prompt {
-            if !prompt.overlay {
-                // Use specialized renderer for file/folder open prompt to show colorized path
-                if matches!(
-                    prompt.prompt_type,
-                    crate::view::prompt::PromptType::OpenFile
-                        | crate::view::prompt::PromptType::SwitchProject
-                ) {
-                    if let Some(file_open_state) = &self.active_window().file_open_state {
-                        StatusBarRenderer::render_file_open_prompt(
-                            frame,
-                            area,
-                            prompt,
-                            file_open_state,
-                            theme,
-                        );
-                    } else {
-                        StatusBarRenderer::render_prompt(frame, area, prompt, theme);
-                    }
-                } else {
-                    StatusBarRenderer::render_prompt(frame, area, prompt, theme);
-                }
-            }
+        let theme = self.theme.read().unwrap().clone();
+        let Some(prompt) = self.active_window().prompt.clone() else {
+            return;
+        };
+        // An overlay prompt is a card of its own, not this row.
+        if prompt.overlay {
+            return;
+        }
+        // The file/folder open prompt colourises the path it is completing.
+        let file_open = matches!(
+            prompt.prompt_type,
+            crate::view::prompt::PromptType::OpenFile
+                | crate::view::prompt::PromptType::SwitchProject
+        )
+        .then(|| self.active_window().file_open_state.clone())
+        .flatten();
+        match file_open {
+            Some(state) => StatusBarRenderer::render_file_open_prompt(
+                buf, area, &prompt, &state, &theme, caret,
+            ),
+            None => StatusBarRenderer::render_prompt(buf, area, &prompt, &theme, caret),
         }
     }
 
@@ -2681,10 +2686,19 @@ impl Editor {
         let pane_chrome = self.pane_chrome();
         let groups = self.active_window().pane_groups();
         let splits = self.active_window().buffers.splits().map(|(mgr, _)| {
+            // Which buttons the strips carry, by the painter's own rule. Both
+            // are frame-wide: they read "is there more than one pane" and "is
+            // one maximized", neither of which names a pane.
+            let is_maximized = mgr.is_maximized();
+            let several = mgr.visible_leaves().len() > 1;
             crate::view::shell::splits::Splits {
                 root: mgr.root().clone(),
                 maximized: mgr.maximized_split().map(crate::model::event::LeafId),
                 chrome: pane_chrome.clone(),
+                controls: crate::view::shell::splits::PaneControls {
+                    maximize: several || is_maximized,
+                    close: several && !is_maximized,
+                },
                 groups,
             }
         });

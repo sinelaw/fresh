@@ -153,8 +153,6 @@ pub(crate) struct Stores<'a> {
 pub(crate) struct PaneAreas {
     pub split_areas: Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
     pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
-    pub close_split_areas: Vec<(LeafId, u16, u16, u16)>,
-    pub maximize_split_areas: Vec<(LeafId, u16, u16, u16)>,
     pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
     /// Rect plus `max_content_width`, `thumb_start`, `thumb_end`.
     pub horizontal_scrollbar_areas: Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
@@ -215,8 +213,6 @@ pub(crate) fn render_content(
 ) -> (
     Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
     HashMap<LeafId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
-    Vec<(LeafId, u16, u16, u16)>,                      // close split button areas
-    Vec<(LeafId, u16, u16, u16)>,                      // maximize split button areas
     HashMap<LeafId, Vec<ViewLineMapping>>,             // view line mappings for mouse clicks
     Vec<(LeafId, BufferId, Rect, usize, usize, usize)>, // horizontal scrollbar areas (rect + max_content_width + thumb_start + thumb_end)
     Vec<(
@@ -302,8 +298,6 @@ pub(crate) fn render_content(
     let PaneAreas {
         split_areas,
         tab_layouts,
-        close_split_areas,
-        maximize_split_areas,
         view_line_mappings,
         horizontal_scrollbar_areas,
         grouped_separator_areas,
@@ -311,8 +305,6 @@ pub(crate) fn render_content(
     (
         split_areas,
         tab_layouts,
-        close_split_areas,
-        maximize_split_areas,
         view_line_mappings,
         horizontal_scrollbar_areas,
         grouped_separator_areas,
@@ -440,8 +432,6 @@ pub(crate) fn paint_leaf(
     let PaneAreas {
         split_areas,
         tab_layouts,
-        close_split_areas,
-        maximize_split_areas,
         view_line_mappings,
         horizontal_scrollbar_areas,
         ..
@@ -559,8 +549,6 @@ pub(crate) fn paint_leaf(
             cell_theme_map,
             screen_width,
             tab_layouts,
-            close_split_areas,
-            maximize_split_areas,
         );
     }
 
@@ -989,8 +977,6 @@ fn render_split_tab_bar(
     cell_theme_map: &mut [crate::app::types::CellThemeInfo],
     screen_width: u16,
     tab_layouts: &mut HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
-    close_split_areas: &mut Vec<(LeafId, u16, u16, u16)>,
-    maximize_split_areas: &mut Vec<(LeafId, u16, u16, u16)>,
 ) {
     // Determine the active target for this split's tab bar: the marked group
     // tab if any, otherwise the currently displayed buffer.
@@ -1077,9 +1063,9 @@ fn render_split_tab_bar(
     // when the tabs overflow (its column is reserved either way). The `+`
     // new-buffer button is *not* part of this cluster — the tab renderer already
     // drew it inline right after the last tab and set `new_tab_area`. Hit areas
-    // are stored so a click on each glyph routes to its action: `>` →
-    // `right_scroll_area`, `□` → `maximize_split_areas`, `×` → `close_split_areas`
-    // (which pops a confirm menu rather than closing immediately).
+    // The `>` records `right_scroll_area`; the two buttons are nodes in the
+    // shell's description of this same strip (`splits::controls`), so a press
+    // on either reaches its action without a recorded rectangle.
     let overflow = tab_layout.right_overflow;
     let cluster_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(reserve);
     // Paint the whole cluster background first (separator surface) so the gap /
@@ -1116,7 +1102,6 @@ fn render_split_tab_bar(
         Paragraph::new(icon)
             .style(Style::default().fg(max_fg).bg(theme.tab_separator_bg))
             .render(Rect::new(cx, tab_row, 1, 1), buf);
-        maximize_split_areas.push((split_id, tab_row, cx, cx + 1));
         cx += 1;
     }
     if show_close_btn {
@@ -1129,7 +1114,6 @@ fn render_split_tab_bar(
         Paragraph::new("×")
             .style(Style::default().fg(close_fg).bg(theme.tab_separator_bg))
             .render(Rect::new(cx, tab_row, 1, 1), buf);
-        close_split_areas.push((split_id, tab_row, cx, cx + 1));
     }
 
     tab_layouts.insert(split_id, tab_layout);

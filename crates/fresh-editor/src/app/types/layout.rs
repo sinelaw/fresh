@@ -240,12 +240,6 @@ pub(crate) struct WindowLayoutCache {
     pub separator_areas: Vec<(ContainerId, SplitDirection, u16, u16, u16)>,
     /// Tab layouts per split for mouse interaction
     pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
-    /// Close split button hit areas
-    /// (split_id, row, start_col, end_col)
-    pub close_split_areas: Vec<(LeafId, u16, u16, u16)>,
-    /// Maximize split button hit areas
-    /// (split_id, row, start_col, end_col)
-    pub maximize_split_areas: Vec<(LeafId, u16, u16, u16)>,
     /// View line mappings for accurate mouse click positioning per split
     /// Maps visual row index to character position mappings
     /// Used to translate screen coordinates to buffer byte positions

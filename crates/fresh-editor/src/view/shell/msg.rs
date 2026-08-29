@@ -71,6 +71,11 @@ pub enum UiFact {
     /// under the pointer. Dismissing it from elsewhere is still the base
     /// surface's, which this claim simply keeps out of the way of.
     PaneTabsSecondary { pane: LeafId, x: u16, y: u16 },
+    /// The `□` / `⧉` button on a pane's strip. No coordinates: the button is
+    /// a node and it knows its pane.
+    PaneMaximize(LeafId),
+    /// The `×` beside it. Pops a confirmation rather than closing outright.
+    PaneClose(LeafId),
     /// The pointer is on a pane's tab strip at a cell, or has left one.
     ///
     /// Which tab, which close button, which split control is the tab
