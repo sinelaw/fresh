@@ -1130,11 +1130,6 @@ pub struct Editor {
     /// hide. The TUI/GUI leave it `false` and draw chrome to cells as before.
     /// See docs/internal/web-ui.md.
     pub(crate) suppress_chrome_cells: bool,
-    /// Which menu was open when the pointer event now being dispatched
-    /// arrived — before any of its messages were applied, and in particular
-    /// before a layer's dismissal closed one. The menu bar's toggle reads it.
-    /// See `UiFact::MenuBarPress`.
-    pub(crate) shell_menu_open_before: Option<usize>,
     /// THE menu walk for the frame being rendered: rectangles, the shell's
     /// description, and the theme-key provenance, all from one pass.
     ///
@@ -1170,24 +1165,6 @@ pub struct Editor {
     /// Separate ownership was the answer, and then the walk went, and with it
     /// the field it wrote.
     pub(crate) shell_hover: Option<crate::app::types::HoverTarget>,
-    /// The cell the pointer was on when the shell last reported a hover.
-    ///
-    /// The hover reactions take a position — a tooltip anchors to it — and a
-    /// `UiFact::Hover` carries only *what* is under the pointer, not where.
-    /// Recorded when the event is offered to the tree, which is the one moment
-    /// both facts are in hand.
-    pub(crate) shell_hover_at: (u16, u16),
-    /// Which chrome each visible pane has, for the frame being built.
-    ///
-    /// Resolved by `pane_chrome` when the description is assembled, and read
-    /// by the body's painter when the fold reaches its `Host` leaf — the same
-    /// hand-off `pending_body_state` makes, for the one fact both halves of a
-    /// pane's geometry depend on.
-    pub(crate) pending_pane_chrome: std::collections::HashMap<
-        crate::model::event::LeafId,
-        crate::view::shell::splits::PaneChrome,
-    >,
-
     /// The migration shell's retained tree: elements, focus, and the dirty
     /// set, surviving across frames.
     ///
@@ -1199,6 +1176,18 @@ pub struct Editor {
     /// which is the same disjointness the library's own tutorial gets by
     /// keeping `app` and `ui` side by side in `main`.
     pub(crate) shell_ui: Option<fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
+
+    /// Where the shell tree's `Persisted` values live, and the handle that can
+    /// drop a window's.
+    ///
+    /// The `Ui` holds this too — that is how `Persisted` reaches it — but the
+    /// tree can only ever say "this subtree is not currently shown", which is
+    /// exactly the case where a window's values must be *kept*. Deciding that
+    /// a scope is dead is the host's call and nobody else's, so the editor
+    /// keeps its own handle and calls `forget_scope` when a window closes.
+    /// Without that the map grows for the life of the process, and a later
+    /// window reusing a freed id would inherit the dead one's view state.
+    pub(crate) shell_store: std::rc::Rc<fresh_ui::behavior::MemStore>,
 
     /// The mouse event currently being routed, and whether it was a double.
     ///

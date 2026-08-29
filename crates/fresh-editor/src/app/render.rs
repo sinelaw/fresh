@@ -783,7 +783,16 @@ impl Editor {
         // The painter lives exactly as long as this fold. What a pane needs
         // beyond a rectangle — the frame's hover state, the pass its panes
         // share, the sink they append to — is its, not the editor's.
-        let mut body = crate::app::shell_host::BodyPainter::new(self, body_state);
+        // The chrome each pane has, handed over rather than left on the
+        // editor for the painter to find. One producer, one consumer, one
+        // frame — a field for that is a value that could not be threaded, and
+        // it is the same map the description above already carries.
+        let pane_chrome = shell
+            .splits
+            .as_ref()
+            .map(|s| s.chrome.clone())
+            .unwrap_or_default();
+        let mut body = crate::app::shell_host::BodyPainter::new(self, body_state, pane_chrome);
         let pending_hardware_cursor = crate::view::shell::fold::fold_band(
             ui.spec(),
             frame.buffer_mut(),
@@ -2702,9 +2711,6 @@ impl Editor {
                 groups,
             }
         });
-        // The same map the painter will read for the same panes — filed here,
-        // where it is resolved, rather than resolved again down there.
-        self.pending_pane_chrome = pane_chrome;
         let trust = self.trust_description(ratatui::layout::Rect {
             x: 0,
             y: 0,
@@ -2712,6 +2718,11 @@ impl Editor {
             height: self.active_chrome().last_frame.height,
         });
         crate::view::shell::frame::Frame {
+            // Which workspace the window-owned half of the frame belongs to.
+            // One retained tree, N windows: without this the two match each
+            // other and window B's first pane inherits window A's element
+            // state. See `Frame::window`.
+            window: Some(self.active_window.0),
             theme_info,
             browser,
             trust,

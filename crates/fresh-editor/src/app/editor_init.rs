@@ -562,6 +562,10 @@ impl Editor {
     /// than capturing a new clock — so two editors built from the
     /// same parts agree on "now".
     pub(super) fn from_parts(parts: EditorParts) -> Self {
+        // Held twice on purpose: the `Ui` reads and writes through it, and the
+        // editor keeps a handle so it can forget a closed window's scope. See
+        // `Editor::shell_store`.
+        let shell_store = std::rc::Rc::new(fresh_ui::behavior::MemStore::new());
         let editor = Editor {
             perf_counters: Default::default(),
             // From parts (non-trivial):
@@ -665,13 +669,18 @@ impl Editor {
             async_message_backlog: std::collections::VecDeque::new(),
             full_redraw_requested: false,
             suppress_chrome_cells: false,
-            shell_menu_open_before: None,
             menu_layout_frame: None,
             shell_frame_status_bar: None,
-            shell_hover_at: (0, 0),
             shell_hover: None,
-            pending_pane_chrome: Default::default(),
-            shell_ui: Some(fresh_ui::Ui::new()),
+            shell_store: shell_store.clone(),
+            shell_ui: Some({
+                let mut ui = fresh_ui::Ui::new();
+                // The host's half of `Persisted`. Without a store the values
+                // are per-element defaults and a window switch loses them,
+                // which is the whole reason the window subtree is a scope.
+                ui.set_store(shell_store);
+                ui
+            }),
             shell_pointer_event: None,
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,

@@ -52,11 +52,20 @@ itemised as the remaining work:
 
 - **The keyboard (A below) is hard because there is no focus tree.** Keys
   cannot route by focus when two nodes in the whole shell are focusable.
-- **The `shell_*` / `pending_*` fields on `Editor` exist because there are no
-  ambients.** `pending_pane_chrome`, `shell_hover`, `shell_hover_at`,
-  `shell_menu_open_before`, `shell_frame_status_bar`, `shell_pointer_event` are
-  six values threaded around the tree because nothing can be threaded *through*
-  it.
+- **~~The `shell_*` / `pending_*` fields exist because there are no
+  ambients.~~ Half right, and the wrong half was the prescription.** They do
+  exist because a value had to cross a `&mut self` boundary. But an ambient
+  carries a value *down the description to nodes that read it*, and **not one
+  of these six is read by a node** — they are read by host painters and by the
+  dispatch code wrapped around the tree. Three were per-frame or per-event
+  locals wearing a field's clothes, and are now locals (`pending_pane_chrome`
+  as a `BodyPainter` parameter; `shell_menu_open_before` and `shell_hover_at`
+  as `EventFacts`). `shell_hover` is genuinely editor state on a different
+  lifetime — written at dispatch, read at paint. `shell_frame_status_bar` is a
+  frame cache the tree could answer instead. `shell_pointer_event` is B.4.
+  **Kept as a finding**: "there is no ambient" was a real gap and also the
+  wrong tool for this, and the plan reached for it because the gap was
+  recently named rather than because these values wanted to flow down.
 - **`WidgetInstanceState` cannot become element state until elements own
   state**, which means components — so C below is gated on the same gap.
 
@@ -76,10 +85,10 @@ pass review, ship, and reproduce the thing the migration is removing.
 | # | What | How | Avoid |
 |---|---|---|---|
 | 0.1 | The whole description is rebuilt from `Editor` every frame. | Hoist the invariant subtrees into `.shared()` and hold the `Rc` — the menu bar's labels, the explorer's rows, a pane's interior — so the identity short-circuit fires. | Rebuilding "because it is cheap". It is cheap *per node*; the cost is re-reconciling every element on every terminal tick. |
-| 0.2 | Six `shell_*` / `pending_*` fields carry values around the tree. | `provide` them as `Ambient`s: the theme, the pane-chrome map, the hover target. Dependents are dirtied, not the root. | Adding a seventh. Each one is a value the tree could have carried, parked on the editor because carrying it needed a primitive we had not adopted. |
+| 0.2 | ~~Six~~ **three** `shell_*` / `pending_*` fields carry values around the tree. **Half done.** | Ask what reads it. A value read *by a node* is an `Ambient`; a value read by a painter or by the dispatch around the tree is a **parameter**, and three of the six were that (done: `pending_pane_chrome`, `shell_menu_open_before`, `shell_hover_at`). Left: `shell_frame_status_bar` (a frame cache the tree can answer), `shell_hover` (real editor state, different lifetime), `shell_pointer_event` (B.4). | Reaching for an ambient because it is the primitive we just noticed. It carries values *down to nodes*; none of these six was read by a node, and three were locals. A field is not evidence of a missing ambient — it is evidence of a value with no home, and "local" is a home. |
 | 0.3 | No surface owns its own state. | Surfaces whose state is *theirs* — a list's scroll, a tree's expansion, a field's cursor — become `Component`s that own it. | Moving editor-model state into components. The rule is §4.3's: state the editor acts on stays on the editor; state that exists only because something is on screen belongs to the element. |
-| 0.4 | §4.7's practice rules were never written. | Write them, from the benchmark that already exists (a whole frame: 122µs retained, 163µs cold). | Skipping them again. They are the difference between a retained tree and an immediate-mode one with extra steps. |
-| 0.5 | **One retained tree, N windows, and no window ever named in it.** Turns 0.3 from a refactor into a correctness change; see below. | One tree, two scopes: the window's half under a single `Key::Pair("window", id)`, the editor-global surfaces (dock, modals, trust, inspector) outside it. | A `Ui` per window. It looks like the encapsulated answer and it breaks the dock, which is editor-global by design. |
+| 0.4 | §4.7's practice rules were never written. **Written below.** | See "The practice rules" under §III — five rules, each with the failure it prevents. | Skipping them again. They are the difference between a retained tree and an immediate-mode one with extra steps. |
+| ~~0.5~~ **Done.** | **One retained tree, N windows, and no window ever named in it.** Turned 0.3 from a refactor into a correctness change; see below. | `fresh_ui::scope(window_scope(id))` around the chrome column and the overlays that hang off it; the dock, the modals, the trust prompt and the inspector outside it. A `MemStore` on the editor, and `forget_window_ui_state` at the three places a window id stops existing — because the tree cannot tell "switched away from" (keep) from "closed" (drop), and only the host can. | A `Ui` per window. It looks like the encapsulated answer and it breaks the dock, which is editor-global by design. |
 
 #### 0.5 in full: the tree is shared across windows, and the windows are not
 
@@ -328,6 +337,42 @@ useful as a review checklist rather than a preamble.
    "mount it as a `Host`" shortcut.
 7. **Backend independence.** The display list is the seam. → *Forbids*
    `Paints::HostsOnly` (D.3).
+
+### The practice rules (0.4)
+
+§4.7 committed M0 to writing these *before* M1 and they were never written;
+this is that debt, paid from what nine migrated surfaces actually taught. They
+are stated as rules because the failure each one prevents is silent — the tree
+still renders, and the only symptom is that a retained tree costs what an
+immediate-mode one costs.
+
+1. **A description that a frame did not change should be the same `Rc`.**
+   The reconciler short-circuits on `Rc::ptr_eq`, and today it never fires:
+   `frame_tree(shell.clone())` builds every closure fresh, so every element is
+   re-reconciled on every PTY tick. `.shared()` on a subtree whose inputs did
+   not change is what makes the short-circuit reachable. *Prevents:* paying
+   cold-rebuild cost (163µs) on a frame that changed one cell.
+2. **State that exists only because something is on screen belongs to the
+   element; state the editor acts on stays on the editor.** §4.3's rule, and
+   the only one that reliably sorts a case. A list's scroll offset, a tree's
+   expansion, a field's cursor — element. A buffer's contents, a window's
+   splits, anything a command mutates — editor. *Prevents:* both failure
+   directions — model state trapped in a component where no action can reach
+   it, and view state on the editor that every surface must remember to reset.
+3. **A value read by a node is an ambient; a value read by anything else is a
+   parameter.** The correction 0.2 records. *Prevents:* the reflex that made
+   `provide` look like the answer for six fields none of which a node reads.
+4. **Identity is declared where the thing is, and a scope boundary is one
+   node.** `key()` at the position that owns the identity, and
+   `fresh_ui::scope` where a key and a `PersistenceScope` must travel together
+   — never one without the other. *Prevents:* 0.5's cross-window match, and
+   its mirror image, a scope with no key that silently gives two documents one
+   element.
+5. **Measure against the benchmark before optimising against the model.**
+   A whole frame is 122µs retained and 163µs cold. Anything justified as "too
+   expensive to rebuild" is claiming a number; the number exists. *Prevents:*
+   C.4's mutation fast path being kept on intuition, and its opposite — a
+   `.shared()` cache guarding something cheaper than the guard.
 
 And one rule of this migration's own, learned the expensive way and worth
 keeping at the top: **the tree runs first, so anything that used to sit between
