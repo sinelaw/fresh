@@ -75,9 +75,6 @@ impl Editor {
         use crate::input::keybindings::Action;
 
         // Actions are the funnel for command-driven UI mutation (palette,
-        // menus, plugin commands, macros) — any of them can change what the
-        // overlay stack / chrome tree would derive, so spoil the
-        // per-generation UI memos.
 
         // Record action to macro if recording
         self.record_macro_action(&action);

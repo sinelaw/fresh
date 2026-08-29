@@ -216,13 +216,6 @@ pub fn editor_tick(
         needs_render = true;
     }
 
-    // A tick that did work (timers fired, async results landed, plugin
-    // callbacks ran) may have changed routing-relevant UI state; spoil the
-    // per-generation UI memos. An idle tick keeps the generation — that is
-    // what lets a quiet mouse-motion stream reuse one chrome tree across
-    // events.
-    if needs_render {}
-
     Ok(needs_render)
 }
 
