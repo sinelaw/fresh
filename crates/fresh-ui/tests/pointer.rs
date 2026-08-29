@@ -173,6 +173,48 @@ fn a_transparent_region_runs_its_handlers_then_lets_the_hit_continue() {
     );
 }
 
+/// **An observer above a transparent region hears the event once.**
+///
+/// Stacked paths share their upper reaches. Walking each in full offered the
+/// event to those shared ancestors once per path, so a capture-phase observer
+/// near the root — the way an application watches a channel without claiming
+/// it — fired two, three, however many times the point happened to stack. The
+/// extra paths exist for the elements *behind* the transparent one; the ones
+/// above it are the same elements either way.
+#[test]
+fn an_observer_above_a_transparent_region_hears_one_event_once() {
+    let log: Log = Rc::default();
+    let mut ui: Ui<()> = Ui::new();
+    let l = log.clone();
+    ui.frame(
+        gesture(
+            stack().children([
+                traced("behind", &log, text("xxxxxxxx"))
+                    .w(Sizing::Cells(8))
+                    .h(Sizing::Cells(1)),
+                gesture(Node::nil())
+                    .pointer_mode(PointerMode::Transparent)
+                    .w(Sizing::Cells(8))
+                    .h(Sizing::Cells(1)),
+            ]),
+        )
+        .on_capture(
+            GestureKind::Click,
+            Rc::new(move |_: &Event| note(&l, "observer".into())),
+        ),
+        FRAME,
+    );
+    click(&mut ui, 2, 0);
+    assert_eq!(
+        log.borrow().iter().filter(|s| *s == "observer").count(),
+        1,
+        "one click, one call: {:?}",
+        log.borrow()
+    );
+    // And what the extra path is for still happens.
+    assert!(log.borrow().iter().any(|s| s.starts_with("behind")));
+}
+
 #[test]
 fn capture_survives_the_pointer_leaving_the_rectangle() {
     let moves: Rc<RefCell<Vec<Point>>> = Rc::default();

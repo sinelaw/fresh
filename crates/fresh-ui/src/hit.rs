@@ -11,6 +11,7 @@
 //! bubble : target -> root           // each node may claim
 //! ```
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::desc::{resolve, Desc, ElemType};
@@ -284,9 +285,20 @@ impl<M: 'static> Ui<M> {
         out: &mut Vec<M>,
     ) -> (bool, bool) {
         let mut prevented = false;
+        // **One event, one call per listener.** Stacked paths share their
+        // upper reaches: a transparent region and whatever is behind it hang
+        // off the same ancestors, so walking each path in full would offer the
+        // event to those ancestors once per path. A capture-phase observer
+        // near the root — the kind an application uses to watch a channel
+        // without claiming it — would then fire two or three times for one
+        // click. What the extra paths are for is the elements *behind* the
+        // transparent one, and those are exactly the elements the earlier
+        // paths did not contain.
+        let mut seen: HashSet<(ElementId, bool)> = HashSet::new();
         for path in paths {
-            let (claimed, p) =
-                self.propagate(path, kind, pos, button, mods, wheel, None, clicks, out);
+            let (claimed, p) = self.propagate(
+                path, kind, pos, button, mods, wheel, None, clicks, out, &mut seen,
+            );
             prevented |= p;
             if claimed {
                 return (true, prevented);
@@ -472,6 +484,9 @@ impl<M: 'static> Ui<M> {
         key: Option<KeyPress>,
         clicks: u8,
         out: &mut Vec<M>,
+        // Elements this event has already been offered to, across the stacked
+        // paths of one dispatch. See `propagate_all`.
+        seen: &mut HashSet<(ElementId, bool)>,
     ) -> (bool, bool) {
         let Some(&target) = path.last() else {
             return (false, false);
@@ -487,6 +502,9 @@ impl<M: 'static> Ui<M> {
             for n in order {
                 let handlers = self.listeners(n, kind, capture);
                 if handlers.is_empty() {
+                    continue;
+                }
+                if !seen.insert((n, capture)) {
                     continue;
                 }
                 let rect = self.rect_of(n);
