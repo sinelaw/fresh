@@ -534,7 +534,7 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &mut KeybindingEditor, th
         );
         let sb_state = editor.scroll.to_scrollbar_state();
         let sb_colors = ScrollbarColors::from_theme(theme);
-        render_scrollbar(frame, sb_area, &sb_state, &sb_colors);
+        render_scrollbar(frame.buffer_mut(), sb_area, &sb_state, &sb_colors);
         editor.layout.table_scrollbar = Some(sb_area);
     }
 }

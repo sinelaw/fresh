@@ -1,26 +1,10 @@
 use crate::input::fuzzy::FuzzyMatch;
 use crate::primitives::display_width::str_width;
-use crate::view::file_tree::{
-    ExplorerSlotContext, ExplorerSlotResolver, FileExplorerDecorationCache,
-    FileExplorerSlotOverrideCache, FileTreeView, NodeId,
-};
+use crate::view::file_tree::{ExplorerSlotContext, FileTreeView, NodeId};
 use crate::view::theme::Theme;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-
-/// The plugin-driven decoration inputs for the file explorer: the slot
-/// resolver plus the decoration and slot-override caches. These three always
-/// travel together through the render pipeline, so they're bundled rather
-/// than threaded as three parallel parameters. `Copy` (the resolver is two
-/// `&dyn` pointers, the caches are shared refs), so it passes by value into
-/// the per-row closure without cloning.
-#[derive(Clone, Copy)]
-pub struct ExplorerDecorations<'a> {
-    pub slot_resolver: ExplorerSlotResolver<'a>,
-    pub decorations: &'a FileExplorerDecorationCache,
-    pub slot_overrides: &'a FileExplorerSlotOverrideCache,
-}
 
 /// What is left of the old renderer: one predicate `describe_row` needs.
 ///
@@ -227,7 +211,10 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the tests build rows straight from the caches; `describe_row`
+    // takes them through `ExplorerSlotContext`.
     use crate::model::filesystem::StdFileSystem;
+    use crate::view::file_tree::{FileExplorerDecorationCache, FileExplorerSlotOverrideCache};
     // The module itself no longer paints, so `Style` is a test-only type here:
     // `build_line` resolves theme *names* back to styles so these tests can go
     // on asserting about colours.

@@ -171,7 +171,12 @@ impl FileBrowserRenderer {
             ScrollbarColors::from_theme(theme)
         };
         let (thumb_start, thumb_end) = if draw {
-            render_scrollbar(frame, scrollbar_area, &scrollbar_state, &colors)
+            render_scrollbar(
+                frame.buffer_mut(),
+                scrollbar_area,
+                &scrollbar_state,
+                &colors,
+            )
         } else {
             // Same geometry the painted path would produce — the native
             // frontend draws its own thumb from these numbers.
@@ -931,12 +936,6 @@ impl FileBrowserLayout {
             && x < self.scrollbar_area.x + self.scrollbar_area.width
             && y >= self.scrollbar_area.y
             && y < self.scrollbar_area.y + self.scrollbar_area.height
-    }
-
-    /// Check if a position is in the scrollbar thumb
-    pub fn is_in_thumb(&self, y: u16) -> bool {
-        let rel_y = y.saturating_sub(self.scrollbar_area.y) as usize;
-        rel_y >= self.thumb_start && rel_y < self.thumb_end
     }
 
     /// Which checkbox toggle is at `(x, y)`, from the spans the renderer

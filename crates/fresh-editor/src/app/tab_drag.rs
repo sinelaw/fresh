@@ -42,81 +42,72 @@ impl Editor {
         Ok(())
     }
 
-    /// Compute the drop zone for a tab being dragged
+    /// Where a dragged tab would land: on a strip, or against an edge of a
+    /// pane's content.
+    ///
+    /// **Three questions, each asked of the node that owns it.** Which strip
+    /// the pointer is on is `tabs_key(pane)`; where within it is the tab
+    /// renderer's own layout, which is a genuine record of the last paint
+    /// because the columns come from measuring text. Which content it is over
+    /// is `pane_content_at`.
+    ///
+    /// The middle question used to be answered by
+    /// `content_rect.y.saturating_sub(1)` — "the tab row is *typically* at
+    /// content_rect.y - 1 (assuming 1 row for tabs)". `PaneChrome::resolve`
+    /// made "does this pane have a strip at all" an explicit answer, and the
+    /// guess was wrong for every pane that has none: it named the row above
+    /// the content, which belongs to whatever is above the pane.
     pub(super) fn compute_tab_drop_zone(
         &self,
         col: u16,
         row: u16,
         source_split_id: LeafId,
     ) -> Option<TabDropZone> {
-        // First check if we're over a tab bar (for reordering/moving to another split)
+        // On a tab, in a strip: reorder, or move to that pane.
         for (split_id, tab_layout) in &self.active_layout().tab_layouts {
             if matches!(
                 tab_layout.hit_test(col, row),
                 Some(TabHit::TabName(_) | TabHit::CloseButton(_))
             ) {
-                // Find the index where this tab would be inserted
                 let insert_idx = self.find_tab_insert_index(*split_id, col);
                 return Some(TabDropZone::TabBar(*split_id, insert_idx));
             }
         }
 
-        // Check if we're in the tab row area of any split (for moving to end of tab bar)
-        for (split_id, _buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.active_layout().split_areas
-        {
-            // The tab row is typically at content_rect.y - 1 (assuming 1 row for tabs)
-            let tab_row = content_rect.y.saturating_sub(1);
-            if row == tab_row && col >= content_rect.x && col < content_rect.x + content_rect.width
-            {
-                return Some(TabDropZone::TabBar(*split_id, None));
-            }
+        // On a strip but not on a tab: the end of that pane's bar.
+        if let Some(pane) = self.pane_strip_at(col, row) {
+            return Some(TabDropZone::TabBar(pane, None));
         }
 
-        // Check if we're over a split content area for edge-based splitting
-        for (split_id, _buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.active_layout().split_areas
-        {
-            if col >= content_rect.x
-                && col < content_rect.x + content_rect.width
-                && row >= content_rect.y
-                && row < content_rect.y + content_rect.height
-            {
-                // Calculate the edge zones (each edge takes 25% of the dimension)
-                let width = content_rect.width as f32;
-                let height = content_rect.height as f32;
-                let edge_threshold_x = (width * 0.25).max(3.0) as u16;
-                let edge_threshold_y = (height * 0.25).max(2.0) as u16;
+        // Over a pane's content: which edge, or the centre.
+        let (split_id, content_rect) = self.pane_content_at(col, row)?;
 
-                let rel_x = col - content_rect.x;
-                let rel_y = row - content_rect.y;
+        // Each edge takes 25% of the dimension.
+        let width = content_rect.width as f32;
+        let height = content_rect.height as f32;
+        let edge_threshold_x = (width * 0.25).max(3.0) as u16;
+        let edge_threshold_y = (height * 0.25).max(2.0) as u16;
 
-                // Determine which zone we're in (priority: edges, then center)
-                // Left edge
-                if rel_x < edge_threshold_x {
-                    return Some(TabDropZone::SplitLeft(*split_id));
-                }
-                // Right edge
-                if rel_x >= content_rect.width - edge_threshold_x {
-                    return Some(TabDropZone::SplitRight(*split_id));
-                }
-                // Top edge
-                if rel_y < edge_threshold_y {
-                    return Some(TabDropZone::SplitTop(*split_id));
-                }
-                // Bottom edge
-                if rel_y >= content_rect.height - edge_threshold_y {
-                    return Some(TabDropZone::SplitBottom(*split_id));
-                }
+        let rel_x = col - content_rect.x;
+        let rel_y = row - content_rect.y;
 
-                // Center - only allow if different from source split
-                if *split_id != source_split_id {
-                    return Some(TabDropZone::SplitCenter(*split_id));
-                }
-            }
+        // Edges first, then the centre.
+        if rel_x < edge_threshold_x {
+            return Some(TabDropZone::SplitLeft(split_id));
+        }
+        if rel_x >= content_rect.width - edge_threshold_x {
+            return Some(TabDropZone::SplitRight(split_id));
+        }
+        if rel_y < edge_threshold_y {
+            return Some(TabDropZone::SplitTop(split_id));
+        }
+        if rel_y >= content_rect.height - edge_threshold_y {
+            return Some(TabDropZone::SplitBottom(split_id));
         }
 
-        None
+        // The centre means "move here", which is a no-op for the pane the tab
+        // came from.
+        (split_id != source_split_id).then_some(TabDropZone::SplitCenter(split_id))
     }
 
     /// Find the index where a tab should be inserted based on mouse x position

@@ -199,9 +199,15 @@ impl Editor {
         if let Some(input) =
             crate::view::shell::input::mouse(mouse_event, clicks, wheel_lines, WHEEL_COLUMNS)
         {
-            if self.shell_dispatch(input) {
+            let d = self.shell_dispatch(input);
+            if d.claimed {
                 return Ok(true);
             }
+            // Declined, but not necessarily inert: a hover restyles the
+            // surface under the pointer and lets the event go on to the
+            // trackers below, so the frame is stale even though the walk
+            // continues. See `Dispatched`.
+            needs_render = needs_render || d.changed;
         }
         // A live terminal's own mouse, and the Ctrl+Click that opens a path it
         // printed. Both belong to a pane's *content*, and the pane's content
@@ -278,15 +284,14 @@ impl Editor {
             MouseEventKind::Moved => {
                 // Dispatch MouseMove hook to plugins (fire-and-forget, no blocking check)
                 {
-                    // Find content rect for the split under the mouse
-                    let content_rect = self
-                        .active_layout()
-                        .split_areas
-                        .iter()
-                        .find(|(_, _, content_rect, _, _, _)| in_rect(col, row, *content_rect))
-                        .map(|(_, _, rect, _, _, _)| *rect);
-
-                    let (content_x, content_y) = content_rect.map(|r| (r.x, r.y)).unwrap_or((0, 0));
+                    // Where the pane under the pointer starts, so a plugin can
+                    // turn a screen cell into a content one. `pane_content_at`
+                    // is the one answer to that; this used to scan
+                    // `split_areas` for it.
+                    let (content_x, content_y) = self
+                        .pane_content_at(col, row)
+                        .map(|(_, r)| (r.x, r.y))
+                        .unwrap_or((0, 0));
 
                     self.plugin_manager.read().unwrap().run_hook(
                         "mouse_move",
@@ -335,7 +340,6 @@ impl Editor {
             }
         }
 
-        self.active_window_mut().mouse_state.last_position = Some((col, row));
         Ok(needs_render)
     }
 
@@ -593,15 +597,10 @@ impl Editor {
             return;
         }
 
-        // Find which split the mouse is over
+        // Which split the mouse is over, and the rectangle to project through.
         let split_info = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(_, _, content_rect, _, _, _)| in_rect(col, row, *content_rect))
-            .map(|(split_id, buffer_id, content_rect, _, _, _)| {
-                (*split_id, *buffer_id, *content_rect)
-            });
+            .pane_content_at(col, row)
+            .and_then(|(pane, rect)| Some((pane, self.active_window().pane_buffer(pane)?, rect)));
 
         let Some((split_id, buffer_id, content_rect)) = split_info else {
             // Mouse is not over editor content - clear hover state and dismiss popup
@@ -844,13 +843,18 @@ impl Editor {
         let context_menu_open = self.active_window().context_menu_core().is_some();
         if !chrome_drag_active && !context_menu_open {
             let forwarding = self.config.terminal.mouse_forwarding;
-            if let Some(result) = self.active_window_mut().try_forward_mouse_to_terminal(
-                col,
-                row,
-                mouse_event,
-                forwarding,
-            ) {
-                return Some(result);
+            // Which terminal, and where its grid is: a question about the
+            // shell's tree, so it is asked on this side and handed down.
+            if let Some(at) = self.terminal_pane_at(col, row) {
+                if let Some(result) = self.active_window_mut().try_forward_mouse_to_terminal(
+                    col,
+                    row,
+                    at,
+                    mouse_event,
+                    forwarding,
+                ) {
+                    return Some(result);
+                }
             }
         }
         self.try_open_terminal_link(col, row, mouse_event)

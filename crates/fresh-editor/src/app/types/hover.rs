@@ -16,10 +16,6 @@ pub enum HoverTarget {
     MenuDropdownItem(usize, usize),
     /// Hovering over a submenu item (depth, item_index) - depth 1+ for nested submenus
     SubmenuItem(usize, usize),
-    /// Hovering over a popup list item (popup_index in stack, item_index)
-    PopupListItem(usize, usize),
-    /// Hovering over a suggestion item (item_index)
-    SuggestionItem(usize),
     /// Hovering over the file explorer border (for resize)
     FileExplorerBorder,
     /// Hovering over a file browser navigation shortcut

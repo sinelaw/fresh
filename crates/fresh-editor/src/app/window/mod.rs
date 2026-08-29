@@ -3413,31 +3413,6 @@ impl Window {
         max_byte_pos
     }
 
-    /// Find the split whose content or scrollbar area contains the
-    /// screen cell `(col, row)`. Returns the split id and its buffer
-    /// id, or `None` when the position falls outside every split's
-    /// content rect and outside every scrollbar gutter.
-    pub fn split_at_position(&self, col: u16, row: u16) -> Option<(LeafId, BufferId)> {
-        for &(split_id, buffer_id, content_rect, scrollbar_rect, _, _) in
-            &self.layout_cache.split_areas
-        {
-            let in_content = col >= content_rect.x
-                && col < content_rect.x + content_rect.width
-                && row >= content_rect.y
-                && row < content_rect.y + content_rect.height;
-            let in_scrollbar = scrollbar_rect.width > 0
-                && scrollbar_rect.height > 0
-                && col >= scrollbar_rect.x
-                && col < scrollbar_rect.x + scrollbar_rect.width
-                && row >= scrollbar_rect.y
-                && row < scrollbar_rect.y + scrollbar_rect.height;
-            if in_content || in_scrollbar {
-                return Some((split_id, buffer_id));
-            }
-        }
-        None
-    }
-
     /// If a per-edit diagnostic-pull debounce has fired, send a fresh
     /// `textDocument/diagnostic` request to the language server for the
     /// scheduled buffer. Returns false because the new diagnostics arrive
@@ -3851,11 +3826,6 @@ impl Window {
     }
 
     // ---- File-explorer leaf delegators ----
-
-    /// Whether this window's file-explorer panel is visible.
-    pub fn file_explorer_is_visible(&self) -> bool {
-        self.file_explorer_visible && self.file_explorer.is_some()
-    }
 
     /// Extend the file-explorer selection upward.
     pub fn file_explorer_extend_selection_up(&mut self) {

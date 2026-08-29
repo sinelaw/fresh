@@ -1342,7 +1342,7 @@ Three things had to move *out* of the gap between the two walks on the way, and 
 
 *The keyboard grab* had a precedence decision in front of it, and **that decision is settled and shipped**. The question was: does keymap resolution move ahead of shell dispatch, or does a migrated surface ask the keymap from inside its description? It is the second. `Editor::menu_shortcuts` reads the `menu` keymap section when the description is built and hands the tree `MenuShortcut { key, intent }` values, which `menu_intents` resolves with nothing in front of them. `menu_action_binding` — the consult that sat in the layer walk, *behind* the shell, and was therefore swallowed by any capture-all `on_key` above it — is gone. Every later keyboard-owning surface has the same answer available: bindings flow down as data, and the tree resolves key → intent → action.
 
-What is actually left is the **wave**, and its shape is now clear rather than blocked: `base`, `dock`, `floating_modal`, `menu`, the four `modals` and `popups` still implement `on_layer_key`. Several of those hand the key to an interior that is still the painter's — a modal's `dispatch_input`, the dock's widget command dispatcher — so their keyboard migrates when that interior does, which is M6. The ones whose interiors are already the tree's are the ones to take first.
+What is actually left is the **wave**, and its shape is now clear rather than blocked: `base`, `dock`, `floating_modal`, `menu`, the four `modals` and `popups` still implement `on_layer_key`. Several of those hand the key to an interior that is still the painter's — a modal's `dispatch_input`, the dock's widget command dispatcher — so their keyboard migrates when that interior does. The ones whose interiors are already the tree's are the ones to take first, and there are five of them: `base`, `menu`, `popups`, `prompt`, `context_menu`. That is G1 in §5.1b, which orders this wave and the rest of the remaining gaps ahead of the plugin one.
 
 *The rank entries* cannot go until the rest of S3 does. `blocks_terminal_input` is contributed by six components — popups, dock, floating modal, base, menu, context menu — and `presents_blocking_overlay` is the single source of truth for "is anything modal up?". Removing the two migrated entries would mean an open context menu or menu stops blocking PTY routing. They retire with the last unmigrated overlay, not before. |
 | **S4** | Dock column, file explorer, plugin panels. | **File explorer: done** — the panel is a native region, rows and slots are measured by the tree, `trailing_slot_screen_bounds` and the old renderer's paint half are deleted, and the grip paints its own hover column via `layout_reader`. **Dock column: done** — its press, right-press, wheel and width grip are nodes, and the blur observer moved to a capture-phase listener on the frame, which fixed it: as the surfaces beside the dock became nodes, each one that claimed a press stopped blurring a focused dock, because the shell runs ahead of the walk the full-frame guard box lived in. The column's *content* is still a `Host` leaf. **Plugin panels remain**, and they are the M6 wave rather than a remainder: `WidgetSpec` → `Node` translation and element state replacing `WidgetInstanceState`. It no longer waits on anything: S3's ordering went with the two-pass fold, and §6.2's "colour that is not a theme name" is decided and shipped — `Paint::Lit` carries a plugin's `OverlayColorSpec::Rgb` as a `#rrggbb` literal the grammar reads back.
@@ -1402,6 +1402,56 @@ buffer cells under `Draw::Host`, one caret-anchored popup anchored via
 `compute_content_layout`, one click-to-cursor through a `Gesture` handler —
 plus the §4.7 rebuild benchmark. No wave is scheduled until this exit holds.
 
+### 5.1b The remaining gaps, in order — and all of them before the plugin wave
+
+**This section is read from the code, not from the plan above.** It is the
+list of places where two mechanisms still answer one question, ordered, with
+the plugin wave (M6) placed *after* every one of them. Nothing here waits on a
+plugin decision; M6 does not unblock any of it, and doing M6 first would mean
+adding a `WidgetSpec → Node` translator to a shell that still routes keys
+through a second engine and paints one region outside the display list.
+
+**What is already converged, so it is not on this list.** The pointer: one
+walk, the tree's, with `chrome_tree` / `ChromeBox` / `hit_stack` /
+`dispatch_pointer` / `compute_hover_target` all deleted and every chrome
+surface answering its own presses. Paint for the menu bar, search-options row,
+explorer, popups, modals-as-layers and the status bar's elements. Geometry for
+all of those, plus the split grid.
+
+**And what is not a duplicate, so it is not on this list either.** Three
+things in `WindowLayoutCache` are genuine records of a paint and should stay:
+`view_line_mappings` (click-to-byte projects through the view pipeline),
+`tab_layouts`' per-tab columns (text measured inside the strip), and the
+scrollbar thumb extents (a read of scroll state at paint time). A record of
+something only paint can know is not a second implementation of a layout.
+Likewise `Window::editor_content_area()` versus the cached rectangle: the
+first is a function of state *because* `apply_layout` runs before the frame
+that would record the second, which is the bug this migration is about — that
+pair needs a rename, not a merge.
+
+| # | Gap | Why it is a duplicate | What closing it needs |
+|---|---|---|---|
+| **G1** | **The keyboard is a second routing engine.** `ChromeComponent::{layers, on_layer_key}` over a ranked `overlay_stack()`. | The tree routes the pointer and the walk routes keys, so precedence is stated twice, in two vocabularies, and a surface that migrates its pointer keeps a rank entry. | The library already has all of it — `focusable`, `focus_scope`, `focus_within`, `GestureKind::Key`, `FocusGained`/`FocusLost` — and the shell uses none of it. Take the components whose interiors are already the tree's: `base`, `menu`, `popups`, `prompt`, `context_menu`. `dock` and `floating_modal` hand the key to the widget dispatcher and ride with M6; the four `modals` ride with G7. |
+| **G2** | **The prompt line takes its rectangle from the tree and paints outside the fold.** `region(HostRegion::PromptLine)` gives the rect; `render_prompt_line` writes the cells; `paint_host` no-ops the region. | A third paint arrangement beside "native" and "`Host`". Paint order stops being the display list's, and `Paints::HostsOnly` — the web path — cannot reach those cells at all. | Either paint it from the fold's `Host` arm, like the body, or describe it natively. The same question applies to the status bar's *prompt* states (`StatusBarRenderer::render_prompt`), whose element row is already native. |
+| **G3** | **A pane's split controls are recorded rectangles.** `close_split_areas` and `maximize_split_areas`. | The strip is a node and the tabs are measured inside it, but the two buttons drawn over that row are still a list of rects compared against a cell. | Make them nodes in `pane_interior`, over the strip — the z the two `LayoutBox`es carried. Both lists and `SplitControl` go with them. |
+| **G4** | **Two `impl Window` methods still scan `split_areas` for the pane under a cell.** `split_at_position` (which also takes the scrollbar column) and `get_terminal_content_area_at_position` (which also filters for a terminal). | `Editor::pane_content_at` is the one answer; these are two more, kept because `impl Window` cannot see `shell_ui`. | Move them to `impl Editor` beside `pane_content_at`, adding the scrollbar column via `vscroll_key(pane)`. Their callers are already on the editor. |
+| **G5** | **`tab_drag::compute_tab_drop_zone` guesses where a strip is.** `let tab_row = content_rect.y.saturating_sub(1);` — "assuming 1 row for tabs". | `PaneChrome::resolve` made "does this pane have a strip" explicit; the guess is wrong for a pane that has none, and re-derives a rectangle `tabs_key(pane)` already holds. | Read `tabs_key(pane)` and `pane_content_at`; the function becomes "which strip, else which content, else which edge". |
+| **G6** | **Two different things named `editor_content_area`.** | Not a duplicate — a name collision, documented by a hand-written note explaining the divergence. | Rename the cached one to say it is the last frame's, and delete the note. |
+| **G7** | **The modal interiors hit-test rectangles their own painters recorded.** Settings (~20k lines) and the keybinding editor (~3.7k). | The tree answers *which* surface an event belongs to and the event travels on the editor instead of in the message — "routed, not transported" (`Editor::shell_pointer_event`). Deliberate, documented, and still a second hit-testing mechanism. | The interiors themselves. Retires the side channel, the four `modals` rows of G1, and `ChromeComponent` outright. |
+
+**The order is by what each unblocks, not by size.** G2 through G6 are sweeps:
+mechanical, no design decision left in any of them, and each deletes a
+mechanism rather than adding one. G1 is a wave, and half of it is free today.
+G7 is the largest single body of work in the migration and the last thing
+holding `app/chrome/` open.
+
+**Where the plugin wave goes.** After G1–G6, and interleaved with G7 rather
+than before it: M6 unblocks the `dock` and `floating_modal` halves of G1, and
+G7 unblocks the `modals` half, so the two large remainders finish the keyboard
+between them. M6's own first step is the floating panel's *frame* — scrim,
+border, title, `[×]`, placement — which is a G2-shaped change (a surface whose
+cells bypass the fold) and can land with the sweeps.
+
 ### 5.2 Waves (increasing risk)
 
 | Wave | Surface | New mechanism exercised | Deletes (survey-grounded) |
@@ -1411,7 +1461,7 @@ plus the §4.7 rebuild benchmark. No wave is scheduled until this exit holds.
 | **M3** | Menu bar, dropdowns, submenus | nested layers, hover auto-switch, mnemonics | `chrome/menu.rs`, the `view/ui/menu.rs` dispatch half, the menu close-guard box, the hover auto-switch machine |
 | **M4** | Info/hover/signature popups, theme inspector | transient dismissal via observers, scroll, text selection | `chrome/popups.rs`, `chrome/theme_info.rs`, `view/popup_mouse.rs` remnants, the transient-dismiss pre-band stage (the LSP hover *state machine* stays behind the leaf) |
 | **M5** | File browser, prompt / command palette | `FocusScope`, text input, results list, preview | `chrome/prompt.rs`, `chrome/file_browser.rs`, `view/prompt_input.rs`, the overlay toolbar ring, the click scrim, the position-blind wheel box, the manual-scroll latch |
-| **M6** | Plugin panels: dock + floating | `WidgetSpec` → `Node` translation, element state replacing `WidgetInstanceState`. **No plugin API change** — `WidgetSpec` is frozen, and the wave is entirely a backend swap. | `widgets/kinds/*` dispatch, `widget_runtime.rs`, `WidgetInstanceState`, `WidgetMutation` fast path |
+| **M6** *(after §5.1b's G1–G6)* | Plugin panels: dock + floating | `WidgetSpec` → `Node` translation, element state replacing `WidgetInstanceState`. **No plugin API change** — `WidgetSpec` is frozen, and the wave is entirely a backend swap. | `widgets/kinds/*` dispatch, `widget_runtime.rs`, `WidgetInstanceState`, `WidgetMutation` fast path |
 | **M7** | Modals: workspace trust, keybinding editor, calibration wizard | `Modality::Exclusive` | `chrome/modals.rs`, `capture_mouse`, `blocks_terminal_input`, the cursor/hover suppression lists, the bespoke `handle_*_mouse` |
 | **M8** | Settings (+ keybinding editor form) | the largest interior; rendering already on `WidgetSpec` | `view/settings/*` control layer, `view/controls/*`, `widget_map.rs`, the dual state store, the bespoke settings `input.rs` |
 | **M9** | Frame: splits, tabs, scrollbars, dock column, explorer pane | the frame itself; all else nests inside | `chrome/splits.rs`, `chrome/base.rs`, `chrome/mod.rs` (registry, `layer_rank`, `chrome_tree`), `mouse_input.rs` dispatch engines, `PointerGrab`, the chrome half of `render.rs`, `KeyContext` |

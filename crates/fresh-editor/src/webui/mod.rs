@@ -1902,7 +1902,9 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
 
     // --- per-window geometry from the pipeline's layout cache ---
     let layout = editor.active_layout();
-    let content = layout.editor_content_area.unwrap_or(Rect::new(0, 0, w, h));
+    let content = layout
+        .last_editor_content_area
+        .unwrap_or(Rect::new(0, 0, w, h));
     // The menu bar spans the FULL width at row 0 — exactly as the TUI draws it,
     // *above* any left dock (the dock/file-explorer carve the rows below). Using
     // `content.x` here would shift the whole menu right when a left dock opens.

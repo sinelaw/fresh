@@ -7,7 +7,6 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 /// State needed to render and interact with a scrollbar
 #[derive(Debug, Clone, Copy)]
@@ -282,7 +281,7 @@ impl ScrollbarColors {
 /// Render a vertical scrollbar
 ///
 /// # Arguments
-/// * `frame` - The ratatui frame to render to
+/// * `buf` - The cell buffer to render into
 /// * `area` - A 1-column wide rectangle for the scrollbar
 /// * `state` - The scrollbar state (total items, visible items, offset)
 /// * `colors` - Colors for track and thumb
@@ -290,7 +289,7 @@ impl ScrollbarColors {
 /// # Returns
 /// (thumb_start, thumb_end) in row coordinates relative to the area
 pub fn render_scrollbar(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     area: Rect,
     state: &ScrollbarState,
     colors: &ScrollbarColors,
@@ -314,48 +313,7 @@ pub fn render_scrollbar(
         };
 
         let paragraph = Paragraph::new(" ").style(style);
-        frame.render_widget(paragraph, cell_area);
-    }
-
-    (thumb_start, thumb_end)
-}
-
-/// Render a scrollbar with mouse hover highlight
-///
-/// Same as `render_scrollbar` but highlights the thumb if hovered
-pub fn render_scrollbar_with_hover(
-    frame: &mut Frame,
-    area: Rect,
-    state: &ScrollbarState,
-    colors: &ScrollbarColors,
-    is_thumb_hovered: bool,
-) -> (usize, usize) {
-    let height = area.height as usize;
-    if height == 0 || area.width == 0 {
-        return (0, 0);
-    }
-
-    let (thumb_start, thumb_size) = state.thumb_geometry(height);
-    let thumb_end = thumb_start + thumb_size;
-
-    // Highlight thumb when hovered
-    let thumb_color = if is_thumb_hovered {
-        Color::White
-    } else {
-        colors.thumb
-    };
-
-    for row in 0..height {
-        let cell_area = Rect::new(area.x, area.y + row as u16, 1, 1);
-
-        let style = if row >= thumb_start && row < thumb_end {
-            Style::default().bg(thumb_color)
-        } else {
-            Style::default().bg(colors.track)
-        };
-
-        let paragraph = Paragraph::new(" ").style(style);
-        frame.render_widget(paragraph, cell_area);
+        ratatui::widgets::Widget::render(paragraph, cell_area, buf);
     }
 
     (thumb_start, thumb_end)

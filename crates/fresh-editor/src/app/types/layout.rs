@@ -220,8 +220,15 @@ impl ChromeLayout {
 pub(crate) struct WindowLayoutCache {
     /// File explorer area (if visible)
     pub file_explorer_area: Option<Rect>,
-    /// Editor content area (excluding file explorer)
-    pub editor_content_area: Option<Rect>,
+    /// Where the body was **last painted**, excluding the file explorer.
+    ///
+    /// Distinct from `Window::editor_content_area()`, which computes the same
+    /// rectangle from state. Both are correct and they are not
+    /// interchangeable: `apply_layout` asks *after* setting a new size and
+    /// *before* the frame that would record this, so a caller that needs the
+    /// answer for the size the editor has now must compute it, and a caller
+    /// that needs the cells something was actually drawn into must read this.
+    pub last_editor_content_area: Option<Rect>,
     /// Individual split areas with their scrollbar areas and thumb positions
     /// (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end)
     pub split_areas: Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
@@ -231,15 +238,6 @@ pub(crate) struct WindowLayoutCache {
     /// Split separator positions for drag resize
     /// (container_id, direction, x, y, length)
     pub separator_areas: Vec<(ContainerId, SplitDirection, u16, u16, u16)>,
-    /// The subset of `separator_areas` that belongs to a **grouped subtree**.
-    ///
-    /// Kept apart because they are answered differently. The main tree's
-    /// dividers are nodes in the shell's tree, which know which container they
-    /// are; a grouped subtree is laid out inside a pane's *interior* — after
-    /// the tab bar and scrollbars the painter reserves — and that interior is
-    /// still the painter's, so its dividers are still recorded rectangles
-    /// hit-tested by the chrome walk. They become nodes when the pane does.
-    pub grouped_separator_areas: Vec<(ContainerId, SplitDirection, u16, u16, u16)>,
     /// Tab layouts per split for mouse interaction
     pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
     /// Close split button hit areas
