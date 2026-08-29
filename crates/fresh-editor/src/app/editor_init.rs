@@ -671,7 +671,6 @@ impl Editor {
             shell_hover_at: (0, 0),
             shell_hover: None,
             pending_pane_chrome: Default::default(),
-            unkeyed_widget_warnings: std::collections::HashSet::new(),
             shell_ui: Some(fresh_ui::Ui::new()),
             shell_pointer_event: None,
             pending_body_state: Default::default(),

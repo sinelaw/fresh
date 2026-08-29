@@ -5130,27 +5130,12 @@ impl Editor {
         }
     }
 
-    /// Warn about `List`/`Tree` widgets whose items carry no stable key.
-    ///
-    /// Deliberately ahead of the migration that needs them: identity becomes
-    /// `(type, key)` when panels move onto `fresh-ui`, and the release that
-    /// makes `itemKeys` required should not be the release plugins first hear
-    /// about it. See `crate::widgets::keying`.
-    fn audit_widget_keys(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        spec: &fresh_core::api::WidgetSpec,
-    ) {
-        crate::widgets::keying::warn_unkeyed(&mut self.unkeyed_widget_warnings, panel_key, spec);
-    }
-
     fn handle_mount_widget_panel(
         &mut self,
         panel_key: crate::widgets::PanelKey,
         buffer_id: BufferId,
         spec: fresh_core::api::WidgetSpec,
     ) {
-        self.audit_widget_keys(&panel_key, &spec);
         // Mount = clean slate. Instance state and focus key reset
         // so a plugin that re-mounts (e.g. reopening a panel with
         // a fresh prefill) sees its spec values take effect. To
@@ -5217,7 +5202,6 @@ impl Editor {
         panel_key: &crate::widgets::PanelKey,
         spec: fresh_core::api::WidgetSpec,
     ) {
-        self.audit_widget_keys(panel_key, &spec);
         let prev = match self.widget_registry.instance_states(panel_key) {
             Some(s) => s.clone(),
             None => {
@@ -5593,7 +5577,6 @@ impl Editor {
         // budgeted across frames and the pair may split across ticks.
         start_blurred: bool,
     ) {
-        self.audit_widget_keys(&panel_key, &spec);
         let width_pct = width_pct.clamp(1, 100);
         let height_pct = height_pct.clamp(1, 100);
         // The dock mounts into its own slot so it coexists with a
@@ -5728,7 +5711,6 @@ impl Editor {
         panel_key: &crate::widgets::PanelKey,
         spec: fresh_core::api::WidgetSpec,
     ) {
-        self.audit_widget_keys(panel_key, &spec);
         let Some(slot) = self.slot_of_panel(panel_key) else {
             tracing::debug!(
                 "UpdateFloatingWidget for unknown / mismatched panel {} ignored",

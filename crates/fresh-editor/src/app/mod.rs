@@ -1187,10 +1187,6 @@ pub struct Editor {
         crate::model::event::LeafId,
         crate::view::shell::splits::PaneChrome,
     >,
-    /// `(plugin, widget)` pairs already warned about for missing per-item
-    /// keys, so the deprecation notice fires once rather than on every panel
-    /// update. See `crate::widgets::keying`.
-    pub(crate) unkeyed_widget_warnings: std::collections::HashSet<(String, String)>,
 
     /// The migration shell's retained tree: elements, focus, and the dirty
     /// set, surviving across frames.
