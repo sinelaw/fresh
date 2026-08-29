@@ -1,41 +1,45 @@
-//! The buffer split grid as a host region — the load-bearing `Host` leaf.
+//! The buffer split grid as host regions — the load-bearing `Host` leaves.
 //!
 //! This is the seam the whole migration stands on: the text pipeline keeps its
 //! existing logic and is reached from the fold, given a rectangle and a cell
-//! buffer. `SplitRenderer::render_content` already paints into an arbitrary
-//! `Buffer` at an arbitrary `Rect`, so nothing in it changes.
+//! buffer. The split renderer already paints into an arbitrary `Buffer` at an
+//! arbitrary `Rect`, so nothing in it changes.
 //!
-//! What this file exists to prove is the **borrow**. `render_content` takes
-//! ~28 parameters because it needs `WindowBuffers::with_all_mut`'s disjoint
-//! split — `(&mut buffers, &SplitManager, &mut view_states)` — plus config and
-//! theme off the editor. The open question was whether that can be assembled
-//! *inside a fold callback*, while the display list being folded is borrowed
-//! from the `Ui`. It can, on one condition: the `Ui` must not live on the
-//! `Editor`. See `fold`'s module documentation.
+//! What this file exists to prove is the **borrow**. Painting a pane needs
+//! `WindowBuffers::with_all_mut`'s disjoint split — `(&mut buffers, &mut
+//! SplitManager, &mut view_states)` — plus config and theme off the editor.
+//! The open question was whether that can be assembled *inside a fold
+//! callback*, while the display list being folded is borrowed from the `Ui`.
+//! It can, on one condition: the `Ui` must not live on the `Editor`. See
+//! `fold`'s module documentation. [`with_grid`] is that assembly, and the only
+//! copy of it.
 //!
-//! The assembly below **is** `Editor::render`'s, and is the only copy of it.
-//! It began as a mirror — a second, unreached assembly that proved the borrow
-//! while `render` kept its own — and a second assembly of a 28-parameter call
-//! is a thing that drifts: this one dropped five of the seven results and
-//! passed `BodyState::default()` for the hover state, so it would have painted
-//! a grid with no hovered tab even if anything had reached it. The per-frame
-//! state now arrives as a real [`BodyState`], set by `render` before it folds,
-//! and every result comes back on [`BodyOutput`].
+//! **The body is no longer one leaf.** It was: a single `Host` spanning the
+//! whole grid, which the split renderer filled with every pane at once by
+//! laying them out a second time from `SplitManager`. Each pane is its own
+//! `Host` now, and the fold hands each the rectangle layout gave it — so the
+//! rectangle a pane is painted at and the rectangle it is clicked at are the
+//! same rectangle rather than two that agree. What is left to the body's own
+//! leaf is what belongs to no pane: the pass they share, and the separators
+//! between them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use crate::app::types::ViewLineMapping;
 use crate::app::Editor;
 use crate::model::event::LeafId;
-use crate::view::ui::split_rendering::SplitRenderer;
+use crate::view::shell::splits::PaneChrome;
+use crate::view::ui::split_rendering::{
+    paint_leaf, paint_separators, prepare_content, record_scrollbar_theme_runs, ContentPass,
+    FrameFacts, Stores,
+};
 use crate::view::ui::{EditorRenderConfig, RenderStyle};
 
 use crate::view::shell::fold::Caret;
-use crate::view::shell::frame::HostRegion;
+use crate::view::shell::frame::{HostRegion, HostTarget};
 
 /// Per-frame facts the split renderer needs that are not borrows.
 ///
@@ -57,38 +61,159 @@ pub struct BodyState {
 
 /// What the split grid publishes back across the seam.
 ///
-/// Every rectangle the grid produces, which is what chrome reads *after* paint:
-/// click-to-byte mapping, the scrollbar and separator drags, the tab hit tests.
-/// `render` takes this off the editor once the fold returns and files it in
-/// `WindowLayoutCache`, exactly as it filed the call's return value before.
-#[derive(Default)]
-pub struct BodyOutput {
-    pub split_areas: Vec<(LeafId, crate::app::BufferId, Rect, Rect, usize, usize)>,
-    pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
-    pub close_split_areas: Vec<(LeafId, u16, u16, u16)>,
-    pub maximize_split_areas: Vec<(LeafId, u16, u16, u16)>,
-    pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
-    pub horizontal_scrollbar_areas: Vec<(LeafId, crate::app::BufferId, Rect, usize, usize, usize)>,
-    pub grouped_separator_areas: Vec<(
-        crate::model::event::ContainerId,
-        crate::model::event::SplitDirection,
-        u16,
-        u16,
-        u16,
-    )>,
+/// Every rectangle the grid produces, which is what chrome reads *after*
+/// paint: click-to-byte mapping, the scrollbar and separator drags, the tab
+/// hit tests. `render` takes this off the painter once the fold returns and
+/// files it in `WindowLayoutCache`.
+///
+/// It is the split renderer's own sink: the panes write into it one `Host` at
+/// a time, and a copy of it here would be a second list of the same
+/// rectangles.
+pub(crate) use crate::view::ui::split_rendering::PaneAreas as BodyOutput;
+
+/// The split grid's painter, for the length of one fold.
+///
+/// **Frame-scoped, and that is the point.** `paint_host` carries a target and
+/// a rectangle and nothing else — a display list is geometry, not the
+/// editor's hover state — so whatever a painter needs beyond those two has to
+/// travel some other way. When the `Editor` was the painter that way was
+/// fields on the `Editor`, and the pile was already three deep before the
+/// grid needed two more: the pass every pane shares, and the sink they all
+/// append to.
+///
+/// A painter that lives exactly as long as the fold has somewhere better to
+/// put them. `render` builds one, folds with it, and takes the rectangles off
+/// it — and the two facts that are genuinely per-frame stop being state the
+/// editor carries between frames.
+pub struct BodyPainter<'a> {
+    editor: &'a mut Editor,
+    state: BodyState,
+    /// What every pane in this frame shares, resolved when the fold reaches
+    /// the body and read by each pane's `Host` after it.
+    ///
+    /// The body's `Host` is the panes' ancestor, so the display list puts it
+    /// first; a pane reached without it would be a tree that mounted a pane
+    /// outside the body.
+    pass: Option<ContentPass>,
+    out: BodyOutput,
+    /// The frame's width, for the theme runs recorded in [`Self::finish`].
+    screen_width: u16,
 }
 
-/// Paint the split grid into `area`, writing the caret it wants into `caret`.
+impl<'a> BodyPainter<'a> {
+    pub fn new(editor: &'a mut Editor, state: BodyState) -> Self {
+        Self {
+            editor,
+            state,
+            pass: None,
+            out: BodyOutput::default(),
+            screen_width: 0,
+        }
+    }
+
+    /// The rectangles the grid produced.
+    ///
+    /// The scrollbar theme runs are recorded here rather than in a pane
+    /// because `apply_theme_runs` patches cells the panes are still
+    /// appending: it needs every pane painted, which is what "after the fold"
+    /// means now that a pane is its own `Host`.
+    pub fn finish(self) -> BodyOutput {
+        let BodyPainter {
+            editor,
+            out,
+            screen_width,
+            ..
+        } = self;
+        let active = editor.active_window;
+        if let Some(win) = editor.windows.get_mut(&active) {
+            record_scrollbar_theme_runs(
+                &out.split_areas,
+                &mut win.chrome_layout.cell_theme_map,
+                screen_width,
+            );
+        }
+        out
+    }
+
+    /// The body: resolve what the panes share, and paint what is between
+    /// them.
+    ///
+    /// A separator belongs to no pane — it is the gap between two — so it is
+    /// the body's, and the body's `Host` is the only leaf that still spans the
+    /// whole grid.
+    fn body(&mut self, area: Rect, buf: &mut Buffer) {
+        let state = self.state;
+        self.screen_width = buf.area.width;
+        let out = &mut self.out;
+        self.pass = with_grid(
+            self.editor,
+            state,
+            buf.area.width,
+            |facts, stores, mgr, window_chrome| {
+                let base_visible = mgr.get_visible_buffers(area);
+                let pass = prepare_content(
+                    &base_visible,
+                    mgr,
+                    stores.split_view_states.as_deref_mut(),
+                    facts.grouped_subtrees,
+                    facts.pane_chrome,
+                    window_chrome,
+                );
+                paint_separators(buf, area, mgr, &base_visible, facts, stores, out);
+                pass
+            },
+        );
+    }
+
+    /// One pane, into the rectangle layout gave it.
+    ///
+    /// **The rectangle is the node's, not the split manager's.** They agree —
+    /// the description and the model share `split_rect_ext`, and the parity
+    /// tests in `view::shell::splits` are what says so — and where they agree
+    /// there is no reason to keep two answers. The pointer half already
+    /// routes by this same rectangle, so a pane painted at any other one
+    /// would be a pane you cannot click.
+    fn pane(&mut self, leaf: LeafId, rect: Rect, buf: &mut Buffer, caret: &mut Caret) {
+        // No pass means the fold reached a pane without reaching the body,
+        // which the tree does not describe.
+        let Some(pass) = self.pass.as_ref() else {
+            return;
+        };
+        // A pane the tree mounts and the pass does not list: the window's
+        // splits changed under the description. It paints nothing rather than
+        // painting a stale leaf's buffer.
+        let Some(mut pane) = pass.visible.iter().copied().find(|(_, id, ..)| *id == leaf) else {
+            return;
+        };
+        pane.3 = rect;
+        let state = self.state;
+        let out = &mut self.out;
+        with_grid(
+            self.editor,
+            state,
+            buf.area.width,
+            |facts, stores, _mgr, _window_chrome| {
+                paint_leaf(buf, pane, facts, pass, stores, out, caret);
+            },
+        );
+    }
+}
+
+/// Assemble the grid's borrows off the editor and hand them to `f`.
 ///
-/// The signature is [`super::fold::HostPainter::paint_host`]'s, specialised to
-/// the body: this is what the `Editor`'s implementation of that trait calls.
-pub fn paint_body(
+/// **This is the borrow the whole seam rests on.** `f` runs inside
+/// `WindowBuffers::with_all_mut`'s disjoint split — `(&mut buffers, &mut
+/// SplitManager, &mut view_states)` — with the config and theme taken off the
+/// editor around it, while the display list being folded is borrowed from a
+/// `Ui` that does not live on the editor. It is assembled once per call
+/// rather than once per frame because a `paint_host` call is where the
+/// editor is in hand; there is no place between them to keep it.
+fn with_grid<R>(
     editor: &mut Editor,
-    area: Rect,
-    buf: &mut Buffer,
-    caret: &mut Caret,
     state: BodyState,
-) -> BodyOutput {
+    screen_width: u16,
+    f: impl FnOnce(&FrameFacts<'_>, &mut Stores<'_>, &crate::view::split::SplitManager, PaneChrome) -> R,
+) -> Option<R> {
     // Built before the `&mut editor.windows` borrow below; it only borrows
     // `editor.config`, so the two coexist — as in `Editor::render`.
     let cfg = EditorRenderConfig::new(
@@ -97,7 +222,6 @@ pub fn paint_body(
         editor.software_cursor_only,
     );
     let session_mode = editor.session_mode || !editor.software_cursor_only;
-    let screen_width = buf.area.width;
     let active_window_id = editor.active_window;
 
     // What the shell's description of this same grid says each pane has. It
@@ -108,17 +232,20 @@ pub fn paint_body(
     // second pass must not paint panes with no chrome at all.
     let pane_chrome = editor.pending_pane_chrome.clone();
 
-    let win = match editor.windows.get_mut(&active_window_id) {
-        Some(w) => w,
-        None => return BodyOutput::default(),
-    };
+    let win = editor.windows.get_mut(&active_window_id)?;
 
     let is_maximized = win
         .buffers
         .splits()
         .map(|(mgr, _)| mgr.is_maximized())
         .unwrap_or(false);
-    let tab_bar_visible = win.tab_bar_visible;
+    // The window's half of the pane-chrome rule: what the frame offers every
+    // pane, before each narrows it by what it is.
+    let window_chrome = PaneChrome {
+        tabs: win.tab_bar_visible,
+        vscroll: cfg.show_vertical_scrollbar,
+        hscroll: cfg.show_horizontal_scrollbar,
+    };
     let metadata_ref = &win.buffer_metadata;
     let preview_buffer = win.preview.map(|(_, b)| b);
     let scrollback_view_splits: HashSet<LeafId> = win
@@ -138,86 +265,58 @@ pub fn paint_body(
     let composite_view_states_mut = &mut win.composite_view_states;
     let cell_theme_map_mut = &mut win.chrome_layout.cell_theme_map;
 
-    let rendered = win.buffers.with_all_mut(|buffers_mut, mgr, vs_map| {
-        // The theme read-guard lives only for the render call.
+    win.buffers.with_all_mut(|buffers_mut, mgr, vs_map| {
+        // The theme read-guard lives only for the call.
         let theme_guard = editor.theme.read().unwrap();
-        let style = RenderStyle {
-            theme: &theme_guard,
-            ansi_background: editor.ansi_background.as_ref(),
-            cfg,
-        };
-        SplitRenderer::render_content(
-            buf,
-            area,
-            &*mgr,
-            buffers_mut,
-            metadata_ref,
+        let facts = FrameFacts {
+            style: RenderStyle {
+                theme: &theme_guard,
+                ansi_background: editor.ansi_background.as_ref(),
+                cfg,
+            },
+            buffer_metadata: metadata_ref,
             preview_buffer,
-            event_logs_mut,
-            composite_buffers_mut,
-            composite_view_states_mut,
-            style,
-            state.lsp_waiting,
-            Some(vs_map),
-            grouped_ref,
-            state.hide_cursor,
-            state.hovered_tab,
-            state.hovered_close_split,
-            state.hovered_maximize_split,
+            grouped_subtrees: grouped_ref,
+            pane_chrome: &pane_chrome,
+            scrollback_view_splits: &scrollback_view_splits,
+            lsp_waiting: state.lsp_waiting,
+            hide_cursor: state.hide_cursor,
+            hovered_tab: state.hovered_tab,
+            hovered_close_split: state.hovered_close_split,
+            hovered_maximize_split: state.hovered_maximize_split,
             is_maximized,
-            tab_bar_visible,
             session_mode,
-            &scrollback_view_splits,
-            &pane_chrome,
-            cell_theme_map_mut,
+            draw_tab_bar: state.draw_tab_bar,
             screen_width,
-            caret,
-            state.draw_tab_bar,
-        )
-    });
-
-    match rendered {
-        Some((
-            split_areas,
-            tab_layouts,
-            close_split_areas,
-            maximize_split_areas,
-            view_line_mappings,
-            horizontal_scrollbar_areas,
-            grouped_separator_areas,
-        )) => BodyOutput {
-            split_areas,
-            tab_layouts,
-            close_split_areas,
-            maximize_split_areas,
-            view_line_mappings,
-            horizontal_scrollbar_areas,
-            grouped_separator_areas,
-        },
-        None => BodyOutput::default(),
-    }
+        };
+        let mut stores = Stores {
+            buffers: buffers_mut,
+            event_logs: event_logs_mut,
+            composite_buffers: composite_buffers_mut,
+            composite_view_states: composite_view_states_mut,
+            split_view_states: Some(vs_map),
+            cell_theme_map: cell_theme_map_mut,
+        };
+        f(&facts, &mut stores, &*mgr, window_chrome)
+    })
 }
 
-/// The editor as the fold's host.
+/// The frame's host painter.
 ///
 /// During the migration this is what shrinks: every region still listed here
 /// is one the old painters own, and each stage moves one of them out into a
-/// native `fresh-ui` description until only [`HostRegion::Body`] — the buffer
-/// and terminal grid — is left. That last one never migrates; what remains for
-/// it is S5's decomposition, which subdivides the leaf into one per pane
-/// rather than removing it.
-impl crate::view::shell::fold::HostPainter for Editor {
-    fn paint_host(&mut self, region: HostRegion, rect: Rect, buf: &mut Buffer, caret: &mut Caret) {
+/// native `fresh-ui` description. [`HostRegion::Body`] never migrates — the
+/// buffer and terminal grid stays cells — but it is no longer *one* leaf: the
+/// body's is the separators' and the panes' shared preamble, and each pane
+/// carries its own.
+impl crate::view::shell::fold::HostPainter for BodyPainter<'_> {
+    fn paint_host(&mut self, target: HostTarget, rect: Rect, buf: &mut Buffer, caret: &mut Caret) {
+        let region = match target {
+            HostTarget::Pane(leaf) => return self.pane(leaf, rect, buf, caret),
+            HostTarget::Region(r) => r,
+        };
         match region {
-            HostRegion::Body => {
-                // The state `render` left here, and the rectangles the grid
-                // produces left back for it. A `paint_host` signature carries
-                // geometry and nothing else, which is why both travel on the
-                // editor rather than through the call.
-                let state = self.pending_body_state;
-                let out = paint_body(self, rect, buf, caret, state);
-                self.pending_body_output = Some(out);
-            }
+            HostRegion::Body => self.body(rect, buf),
             // Native already — the tree paints these, and the fold never
             // reaches here for them because a native region emits no
             // `Draw::Host`. Listed so that un-migrating one is a compile

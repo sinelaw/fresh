@@ -21,8 +21,8 @@
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, gesture, layout_reader, row, Axis, Event, GestureKind, Key, LayoutInfo, MouseButton, Node,
-    PointerMode, Sizing,
+    col, gesture, host, layout_reader, row, stack, Axis, Event, GestureKind, Key, LayoutInfo,
+    MouseButton, Node, PointerMode, Sizing,
 };
 
 use crate::model::event::{ContainerId, LeafId, SplitDirection};
@@ -165,6 +165,43 @@ mod tests {
             ));
         }
         out
+    }
+
+    /// Every pane the fold reaches, and the rectangle it is handed — the
+    /// paint half's answer to [`tree_rects`]'s.
+    fn panes_folded(s: &Splits, at: Rect) -> Vec<(LeafId, Rect)> {
+        use crate::view::shell::fold::{fold_band, Band, Caret, HostPainter, Paints};
+        use crate::view::shell::frame::HostTarget;
+
+        #[derive(Default)]
+        struct Panes(Vec<(LeafId, Rect)>);
+        impl HostPainter for Panes {
+            fn paint_host(
+                &mut self,
+                target: HostTarget,
+                rect: Rect,
+                _buf: &mut ratatui::buffer::Buffer,
+                _caret: &mut Caret,
+            ) {
+                if let HostTarget::Pane(leaf) = target {
+                    self.0.push((leaf, rect));
+                }
+            }
+        }
+
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(overlay(s), Size::new(at.width, at.height));
+        let mut buf = ratatui::buffer::Buffer::empty(at);
+        let mut out = Panes::default();
+        fold_band(
+            ui.spec(),
+            &mut buf,
+            &|_: &fresh_ui::ThemeKey| ratatui::style::Style::default(),
+            &mut out,
+            Band::Background,
+            Paints::All,
+        );
+        out.0
     }
 
     /// **The tree lays the grid out exactly as the model always did.**
@@ -353,6 +390,124 @@ mod tests {
                 (r.x, r.y, r.h),
                 (x as i32, y as i32, len),
                 "{id:?} where the painter draws it"
+            );
+        }
+    }
+
+    /// **Every pane paints into the rectangle layout gave it.**
+    ///
+    /// The paint half of the split, and the claim that makes it worth making:
+    /// the body was one `Host` that the split renderer filled with every pane
+    /// at once, laying them out a second time from `SplitManager` — so a pane
+    /// was painted at one engine's rectangle and clicked at another's, and
+    /// the two merely agreed. The fold reaches one pane at a time now, and
+    /// what it hands each is this description's own rectangle.
+    #[test]
+    fn the_fold_reaches_every_pane_at_its_own_rect() {
+        for (i, root) in shapes().iter().enumerate() {
+            for (w, h) in [(80u16, 24u16), (200, 60), (31, 9)] {
+                let at = Rect::new(0, 0, w, h);
+                let s = Splits {
+                    root: root.clone(),
+                    maximized: None,
+                    chrome: Default::default(),
+                    groups: Default::default(),
+                };
+                let want: Vec<(LeafId, Rect)> = root
+                    .reference_leaves_with_rects(at)
+                    .into_iter()
+                    .map(|(id, _, r)| (id, r))
+                    .collect();
+                assert_eq!(panes_folded(&s, at), want, "shape {i} at {w}x{h}");
+            }
+        }
+    }
+
+    /// **A maximized pane is the only one the fold reaches.**
+    ///
+    /// The same two facts `get_visible_buffers` states when a pane is
+    /// maximized: it is the whole box, and it is alone.
+    #[test]
+    fn a_maximized_pane_is_the_only_host_in_the_grid() {
+        let root = split(SplitDirection::Vertical, leaf(0), leaf(1), 0.5, 10);
+        let at = Rect::new(0, 0, 80, 24);
+        let s = Splits {
+            root,
+            maximized: Some(LeafId(SplitId(1))),
+            chrome: Default::default(),
+            groups: Default::default(),
+        };
+        assert_eq!(panes_folded(&s, at), vec![(LeafId(SplitId(1)), at)]);
+    }
+
+    /// **A group's panels are hosts of their own, inside their pane's.**
+    ///
+    /// `expand_visible_buffers` lays a group out in its pane's *content*
+    /// rectangle — past the strip and the scrollbar column — and paints one
+    /// entry per inner leaf. Those entries are these hosts, and the pane's own
+    /// still comes first: it is their ancestor, and it is the one that paints
+    /// the group tab.
+    #[test]
+    fn a_groups_panels_are_hosts_inside_their_panes() {
+        use crate::view::ui::split_rendering::layout::split_layout;
+        let inner = split(SplitDirection::Vertical, leaf(20), leaf(21), 0.5, 30);
+        let group = SplitNode::Grouped {
+            split_id: LeafId(SplitId(50)),
+            name: "g".into(),
+            layout: Box::new(inner.clone()),
+            active_inner_leaf: LeafId(SplitId(20)),
+        };
+        let host_leaf = LeafId(SplitId(0));
+        let chrome = PaneChrome {
+            tabs: true,
+            vscroll: true,
+            hscroll: false,
+        };
+        let at = Rect::new(0, 0, 80, 24);
+        let s = Splits {
+            root: leaf(0),
+            maximized: None,
+            chrome: [(host_leaf, chrome)].into_iter().collect(),
+            groups: [(host_leaf, group)].into_iter().collect(),
+        };
+
+        let content = split_layout(host_leaf, at, chrome).content_rect;
+        let mut want = vec![(host_leaf, at)];
+        want.extend(
+            inner
+                .reference_leaves_with_rects(content)
+                .into_iter()
+                .map(|(id, _, r)| (id, r)),
+        );
+        assert_eq!(panes_folded(&s, at), want);
+    }
+
+    /// **A pane's host id can never be mistaken for a region's.**
+    ///
+    /// Regions are the seven fixed slots, numbered 1..=7; `LeafId`s come from
+    /// a dense counter that starts at the same place, so the two id spaces
+    /// would overlap on the very first pane. The tag is what keeps the fold's
+    /// "this id names nothing" assertion able to mean it.
+    #[test]
+    fn a_panes_host_id_is_never_a_regions() {
+        use crate::view::shell::frame::{pane_host_id, HostRegion, HostTarget};
+        for r in HostRegion::ALL {
+            assert_eq!(
+                HostTarget::from_host_id(r.into()),
+                Some(HostTarget::Region(r)),
+                "{r:?} still resolves to itself"
+            );
+        }
+        for n in [0usize, 1, 4, 7, 63, 4096] {
+            let leaf = LeafId(SplitId(n));
+            assert_eq!(
+                HostTarget::from_host_id(pane_host_id(leaf)),
+                Some(HostTarget::Pane(leaf)),
+                "pane {n} round-trips"
+            );
+            assert!(
+                HostRegion::from_host_id(pane_host_id(leaf)).is_none(),
+                "pane {n} is not a region"
             );
         }
     }
@@ -687,11 +842,7 @@ fn dress(n: Node<UiMsg>, s: &Rc<Splits>) -> Node<UiMsg> {
     let _ = n;
     if let Some(id) = s.maximized {
         if let Some(SplitNode::Leaf { split_id, .. }) = s.root.find(id.into()) {
-            return pane_inert::<UiMsg>().children([live_interior(
-                *split_id,
-                s.chrome.get(split_id).copied().unwrap_or_default(),
-                s,
-            )]);
+            return live_pane(*split_id, s);
         }
         return pane_inert::<UiMsg>();
     }
@@ -699,25 +850,43 @@ fn dress(n: Node<UiMsg>, s: &Rc<Splits>) -> Node<UiMsg> {
 }
 
 /// A pane, as far as the pointer is concerned: `Transparent`, so its interior
-/// is reachable and everything it does not claim carries on to the legacy walk
-/// behind it.
+/// is reachable and everything it does not claim carries on behind it.
 ///
 /// It was `Ignore` — not there at all — while the pane held nothing but the
 /// painter's cells. Now the strip is a node inside it, and `Ignore` would hide
 /// that node along with the pane.
+///
+/// A stack, because a pane is two things over one rectangle: the painter's
+/// cells and the geometry that answers for them.
 fn pane_inert<M: 'static>() -> Node<M> {
-    row().pointer_mode(PointerMode::Transparent)
+    stack().pointer_mode(PointerMode::Transparent)
+}
+
+/// One pane: the painter's `Host` leaf, with the pane's own geometry over it.
+///
+/// **A pane is its own host.** The body used to be a single `Host` that the
+/// split renderer filled with every pane at once, laying them out a second
+/// time from `SplitManager` — so the rectangle a pane was *painted* at and the
+/// rectangle it was *clicked* at came from two engines that merely agreed.
+/// Now the fold reaches one pane at a time and hands each the rectangle layout
+/// gave it, and there is one answer to where a pane is.
+///
+/// The `Host` is under the interior rather than over it because the interior
+/// paints nothing: it is the strip's gestures, the scrollbars' and the
+/// content's, over cells that are still the painter's.
+fn live_pane(id: LeafId, s: &Rc<Splits>) -> Node<UiMsg> {
+    let chrome = s.chrome.get(&id).copied().unwrap_or_default();
+    pane_inert::<UiMsg>().key(leaf_key(id)).children([
+        host(super::frame::pane_host_id(id)),
+        live_interior(id, chrome, s),
+    ])
 }
 
 /// `s` is shared rather than cloned: a `layout_reader` outlives the build, so
 /// every `Split` node needs its own handle on what the panes below it hold.
 fn dressed(n: &SplitNode, s: &Rc<Splits>) -> Node<UiMsg> {
     match n {
-        SplitNode::Leaf { split_id, .. } => pane_inert::<UiMsg>().children([live_interior(
-            *split_id,
-            s.chrome.get(split_id).copied().unwrap_or_default(),
-            s,
-        )]),
+        SplitNode::Leaf { split_id, .. } => live_pane(*split_id, s),
         SplitNode::Grouped { layout, .. } => dressed(layout, s),
         SplitNode::Split {
             direction,

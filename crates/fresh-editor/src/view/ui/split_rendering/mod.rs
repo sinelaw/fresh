@@ -20,7 +20,15 @@ mod gutter;
 pub(crate) mod layout;
 mod orchestration;
 
+// The grid's paint, one phase at a time. `render_content` above runs all
+// three for a caller that hands it a whole rectangle; the shell folds a
+// display list and calls them one `Host` at a time instead, so that a pane's
+// rectangle is the one layout gave it.
 pub(crate) use orchestration::render_buffer::wrap_index_geometry_for;
+pub(crate) use orchestration::{
+    paint_leaf, paint_separators, prepare_content, record_scrollbar_theme_runs, ContentPass,
+    FrameFacts, PaneAreas, Stores,
+};
 mod post_pass;
 pub(crate) mod scrollbar;
 #[cfg(test)]

@@ -27,7 +27,7 @@ use ratatui::style::Style;
 
 use fresh_ui::{Draw, LayoutSpec, Scrim, ThemeKey};
 
-use super::frame::HostRegion;
+use super::frame::HostTarget;
 
 /// Where the terminal caret ends up for a frame.
 pub type Caret = Option<(u16, u16)>;
@@ -40,7 +40,7 @@ pub trait HostPainter {
     /// `caret` is an out-parameter with the same shape as `render_content`'s
     /// `pending_hardware_cursor`: a region that owns the caret writes its
     /// screen position, and [`fold`] resolves the winner (see [`fold`]'s doc).
-    fn paint_host(&mut self, region: HostRegion, rect: Rect, buf: &mut Buffer, caret: &mut Caret);
+    fn paint_host(&mut self, target: HostTarget, rect: Rect, buf: &mut Buffer, caret: &mut Caret);
 }
 
 /// Resolve a theme key to a concrete style. `fresh-ui` says only *where*
@@ -108,7 +108,7 @@ pub fn fold_native(
 ) -> Caret {
     struct Skip;
     impl HostPainter for Skip {
-        fn paint_host(&mut self, _: HostRegion, _: Rect, _: &mut Buffer, _: &mut Caret) {}
+        fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer, _: &mut Caret) {}
     }
     fold_band(spec, buf, palette, &mut Skip, band, Paints::All)
 }
@@ -244,17 +244,17 @@ pub fn fold_band(
             // A hint about where selecting text is meaningful; nothing to draw.
             Draw::Selectable => {}
             Draw::Host(id) => {
-                let region = HostRegion::from_host_id(*id);
+                let target = HostTarget::from_host_id(*id);
                 debug_assert!(
-                    region.is_some(),
-                    "a host id with no region: {id:?} would paint nothing, in \
-                     silence"
+                    target.is_some(),
+                    "a host id that names neither a region nor a pane: {id:?} \
+                     would paint nothing, in silence"
                 );
-                if let Some(region) = region {
+                if let Some(target) = target {
                     // Clipped to the frame, so a host never paints outside it.
                     let area = intersect(rect, clip);
                     if area.width > 0 && area.height > 0 {
-                        host.paint_host(region, area, buf, &mut host_caret);
+                        host.paint_host(target, area, buf, &mut host_caret);
                     }
                 }
             }
@@ -422,7 +422,7 @@ fn border(buf: &mut Buffer, r: Rect, style: Style, clip: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::shell::frame::{frame_tree, Frame};
+    use crate::view::shell::frame::{frame_tree, Frame, HostRegion};
     use fresh_ui::{
         col, host, layer, text, Align, Anchor, ComponentExt, Modality, Node, Size, Sizing, Ui,
     };
@@ -433,16 +433,27 @@ mod tests {
     struct Recorder {
         calls: Vec<(HostRegion, Rect)>,
         caret_at: Option<(HostRegion, u16, u16)>,
+        /// Panes, kept apart from the regions: they are addressed by leaf and
+        /// there is no fixed set of them.
+        panes: Vec<(crate::model::event::LeafId, Rect)>,
     }
 
     impl HostPainter for Recorder {
         fn paint_host(
             &mut self,
-            region: HostRegion,
+            target: HostTarget,
             rect: Rect,
             buf: &mut Buffer,
             caret: &mut Caret,
         ) {
+            let region = match target {
+                HostTarget::Pane(leaf) => {
+                    self.panes.push((leaf, rect));
+                    fill(buf, rect, '#', Style::default(), rect);
+                    return;
+                }
+                HostTarget::Region(r) => r,
+            };
             self.calls.push((region, rect));
             let ch = match region {
                 HostRegion::Body => 'B',
@@ -608,7 +619,7 @@ mod tests {
             painted: u32,
         }
         impl HostPainter for Host {
-            fn paint_host(&mut self, _: HostRegion, _: Rect, _: &mut Buffer, _: &mut Caret) {
+            fn paint_host(&mut self, _: HostTarget, _: Rect, _: &mut Buffer, _: &mut Caret) {
                 self.painted += 1; // real &mut access to host state
             }
         }

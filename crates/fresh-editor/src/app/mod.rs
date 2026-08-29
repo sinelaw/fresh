@@ -1211,15 +1211,6 @@ pub struct Editor {
     /// it is routed, not transported. Retires with those interiors.
     pub(crate) shell_pointer_event: Option<(crossterm::event::MouseEvent, bool)>,
 
-    /// What the split grid needs to know about this frame, and what it
-    /// produced. Both travel here rather than through the call because the
-    /// fold reaches the grid through `HostPainter::paint_host`, whose
-    /// signature is a region and a rectangle — a display list carries
-    /// geometry, not the editor's hover state. `render` sets the state before
-    /// it folds and takes the output after; see `app::shell_host`.
-    pub(crate) pending_body_state: crate::app::shell_host::BodyState,
-    pub(crate) pending_body_output: Option<crate::app::shell_host::BodyOutput>,
-
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
     suspend_requested: bool,

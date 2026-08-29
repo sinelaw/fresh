@@ -673,8 +673,6 @@ impl Editor {
             pending_pane_chrome: Default::default(),
             shell_ui: Some(fresh_ui::Ui::new()),
             shell_pointer_event: None,
-            pending_body_state: Default::default(),
-            pending_body_output: None,
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
             // Boot-loaded state came *from* disk — nothing is dirty yet.

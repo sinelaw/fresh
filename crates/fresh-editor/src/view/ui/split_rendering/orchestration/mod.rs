@@ -40,6 +40,7 @@ use crate::view::folding::FoldManager;
 use crate::view::shell::splits::{PaneChrome, PaneKind};
 use crate::view::split::SplitManager;
 use crate::view::ui::tabs::TabsRenderer;
+use crate::view::ui::RenderStyle;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
@@ -56,7 +57,7 @@ use std::collections::HashMap;
 /// [`expand_visible_buffers`], which expands any active buffer-group tab into
 /// its inner panels.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum RenderKind {
+pub(crate) enum RenderKind {
     /// Regular split: render the tab bar and the buffer content.
     Normal,
     /// Main split whose buffer group is active: render the tab bar (to show
@@ -70,8 +71,113 @@ enum RenderKind {
 
 /// One visible split to render: `(tab_bar_owner_split, effective_leaf_id,
 /// buffer_id, split_area, kind)`.
-type VisibleBuffer = (LeafId, LeafId, BufferId, Rect, RenderKind);
+pub(crate) type VisibleBuffer = (LeafId, LeafId, BufferId, Rect, RenderKind);
 
+/// What every pane in a frame shares, resolved once before any of them paints.
+///
+/// The preamble half of `render_content`. It has to happen before the first
+/// pane and exactly once — `expand_visible_buffers` resizes an inner panel's
+/// viewport as it expands a group — so it cannot live inside a per-pane call.
+pub(crate) struct ContentPass {
+    /// Every pane to paint, in paint order, groups already expanded.
+    pub visible: Vec<VisibleBuffer>,
+    /// What the frame offers every pane before each narrows it.
+    pub window_chrome: PaneChrome,
+    pub active_split_id: LeafId,
+    pub has_multiple_splits: bool,
+}
+
+/// What every pane in a frame reads and none of them writes.
+///
+/// The appearance and the hover state, which are the frame's, not a pane's.
+/// It is `Copy` because `RenderStyle` is: this is a bundle of borrows and
+/// flags, so passing it costs what passing its parts cost.
+#[derive(Clone, Copy)]
+pub(crate) struct FrameFacts<'a> {
+    pub style: RenderStyle<'a>,
+    pub buffer_metadata: &'a HashMap<BufferId, BufferMetadata>,
+    /// Buffer id of the window's single preview tab (`window.preview`), or
+    /// `None`. Drives the italic "(preview)" tab styling.
+    pub preview_buffer: Option<BufferId>,
+    pub grouped_subtrees: &'a HashMap<LeafId, crate::view::split::SplitNode>,
+    /// What chrome each of the split manager's panes has, resolved once with
+    /// the shell's description of the same grid — see `Window::pane_chrome`.
+    /// A buffer group's panel is not one of those panes, and resolves in
+    /// [`paint_leaf`].
+    pub pane_chrome: &'a HashMap<LeafId, PaneChrome>,
+    /// The splits whose active buffer is a terminal being shown in read-only
+    /// scrollback. Any terminal split NOT listed here is showing its live PTY
+    /// grid, so its vertical scrollbar is suppressed and the grid reclaims
+    /// that column; a scrollback split keeps its scrollbar. Per-split (not a
+    /// single window flag) so two splits on the same terminal can differ
+    /// (fresh#2595).
+    pub scrollback_view_splits: &'a std::collections::HashSet<LeafId>,
+    pub lsp_waiting: bool,
+    pub hide_cursor: bool,
+    /// `(target, split_id, is_close_button)`.
+    pub hovered_tab: Option<(crate::view::split::TabTarget, LeafId, bool)>,
+    pub hovered_close_split: Option<LeafId>,
+    pub hovered_maximize_split: Option<LeafId>,
+    pub is_maximized: bool,
+    pub session_mode: bool,
+    /// When false, the tab bar computes its layout but paints no cells (web
+    /// renders tabs natively). Panes always draw. TUI passes `true`.
+    pub draw_tab_bar: bool,
+    pub screen_width: u16,
+}
+
+/// The stores a pane paints out of and writes its viewport back into.
+///
+/// Every one of these is shared by the whole frame; what makes them a
+/// separate carrier from [`FrameFacts`] is that a pane *changes* them, so
+/// they are borrowed mutably and cannot ride along in a `Copy` bundle.
+pub(crate) struct Stores<'a> {
+    pub buffers: &'a mut HashMap<BufferId, EditorState>,
+    pub event_logs: &'a mut HashMap<BufferId, EventLog>,
+    pub composite_buffers:
+        &'a mut HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
+    pub composite_view_states:
+        &'a mut HashMap<(LeafId, BufferId), crate::view::composite_view::CompositeViewState>,
+    pub split_view_states: Option<&'a mut HashMap<LeafId, crate::view::split::SplitViewState>>,
+    pub cell_theme_map: &'a mut Vec<crate::app::types::CellThemeInfo>,
+}
+
+/// Every rectangle the grid produces, which is what chrome reads *after*
+/// paint: click-to-byte mapping, the scrollbar and separator drags, the tab
+/// hit tests.
+///
+/// **A sink, not a return value.** A pane appends to it, and the frame's
+/// panes may be painted one call at a time — one `Host` each — so there is
+/// nothing for a pane to return this in.
+#[derive(Default)]
+pub(crate) struct PaneAreas {
+    pub split_areas: Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
+    pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
+    pub close_split_areas: Vec<(LeafId, u16, u16, u16)>,
+    pub maximize_split_areas: Vec<(LeafId, u16, u16, u16)>,
+    pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
+    /// Rect plus `max_content_width`, `thumb_start`, `thumb_end`.
+    pub horizontal_scrollbar_areas: Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
+    /// Hit areas for the separators inside active `Grouped` subtrees.
+    pub grouped_separator_areas: Vec<(
+        crate::model::event::ContainerId,
+        SplitDirection,
+        u16,
+        u16,
+        u16,
+    )>,
+}
+
+/// Paint every pane in `area`, and every separator between them.
+///
+/// **One frame's grid, in one call.** The shell's own path does not come
+/// through here — it folds a display list and calls the three phases below
+/// one `Host` at a time, so that a pane's rectangle is the one layout gave
+/// it. What still wants a whole grid painted into a rectangle it computed
+/// itself is the session preview, which draws another window's layout
+/// offscreen; this is that caller's entry point, and it is the same three
+/// phases in the same order.
+///
 /// # Returns
 /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) for mouse handling
 #[allow(clippy::too_many_arguments)]
@@ -82,8 +188,6 @@ pub(crate) fn render_content(
     split_manager: &SplitManager,
     buffers: &mut HashMap<BufferId, EditorState>,
     buffer_metadata: &HashMap<BufferId, BufferMetadata>,
-    // Buffer id of the window's single preview tab (`window.preview`), or
-    // `None`. Drives the italic "(preview)" tab styling.
     preview_buffer: Option<BufferId>,
     event_logs: &mut HashMap<BufferId, EventLog>,
     composite_buffers: &mut HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
@@ -91,35 +195,22 @@ pub(crate) fn render_content(
         (LeafId, BufferId),
         crate::view::composite_view::CompositeViewState,
     >,
-    // Appearance/policy group (theme + ANSI backdrop + editor render config),
-    // identical for every split. Unpacked into locals at the top of the body
-    // and threaded as-is into render_buffer_in_split.
     style: crate::view::ui::RenderStyle<'_>,
     lsp_waiting: bool,
-    mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
+    split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
     hide_cursor: bool,
-    hovered_tab: Option<(crate::view::split::TabTarget, LeafId, bool)>, // (target, split_id, is_close_button)
+    hovered_tab: Option<(crate::view::split::TabTarget, LeafId, bool)>,
     hovered_close_split: Option<LeafId>,
     hovered_maximize_split: Option<LeafId>,
     is_maximized: bool,
     tab_bar_visible: bool,
     session_mode: bool,
-    // The splits whose active buffer is a terminal being shown in read-only
-    // scrollback. Any terminal split NOT listed here is showing its live PTY
-    // grid, so its vertical scrollbar is suppressed and the grid reclaims that
-    // column; a scrollback split keeps its scrollbar. Per-split (not a single
-    // window flag) so two splits on the same terminal can differ (fresh#2595).
     scrollback_view_splits: &std::collections::HashSet<LeafId>,
-    // What chrome each of the split manager's panes has, resolved once with
-    // the shell's description of the same grid — see `Window::pane_chrome`.
-    // A buffer group's panel is not one of those panes, and resolves below.
     pane_chrome: &HashMap<LeafId, PaneChrome>,
     cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
-    // When false, the tab bar computes its layout but paints no cells (web
-    // renders tabs natively). Panes always draw. TUI passes `true`.
     draw_tab_bar: bool,
 ) -> (
     Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
@@ -138,530 +229,85 @@ pub(crate) fn render_content(
 ) {
     let _span = tracing::trace_span!("render_content").entered();
 
-    // Unpack the style group. `theme` is forwarded to the sub-painters; the
-    // whole `style` (incl. `ansi_background` + full `cfg`) is threaded as-is
-    // into render_buffer_in_split. Only the `cfg` flags this layer reads itself
-    // (per-split flag math, scrollbars, composite) are bound below; the rest
-    // ride along inside `style.cfg`.
-    let crate::view::ui::RenderStyle { theme, cfg, .. } = style;
-    let EditorRenderConfig {
-        large_file_threshold_bytes,
-        use_terminal_bg,
-        show_vertical_scrollbar,
-        show_horizontal_scrollbar,
-        show_tilde,
-        highlight_current_column,
-        hide_current_line_on_selection,
-        ..
-    } = cfg;
+    let facts = FrameFacts {
+        style,
+        buffer_metadata,
+        preview_buffer,
+        grouped_subtrees,
+        pane_chrome,
+        scrollback_view_splits,
+        lsp_waiting,
+        hide_cursor,
+        hovered_tab,
+        hovered_close_split,
+        hovered_maximize_split,
+        is_maximized,
+        session_mode,
+        draw_tab_bar,
+        screen_width,
+    };
+    let mut stores = Stores {
+        buffers,
+        event_logs,
+        composite_buffers,
+        composite_view_states,
+        split_view_states,
+        cell_theme_map,
+    };
 
     // The window's half of the pane-chrome rule: what the frame offers every
-    // pane, before each narrows it by what it is. Bound once so the loop below
-    // and the three other layouts in this module read the same offer.
+    // pane, before each narrows it by what it is. Bound once so the panes
+    // below and the three other layouts in this module read the same offer.
     let window_chrome = PaneChrome {
         tabs: tab_bar_visible,
-        vscroll: show_vertical_scrollbar,
-        hscroll: show_horizontal_scrollbar,
+        vscroll: style.cfg.show_vertical_scrollbar,
+        hscroll: style.cfg.show_horizontal_scrollbar,
     };
 
     let base_visible = split_manager.get_visible_buffers(area);
-    let active_split_id = split_manager.active_split();
-    let has_multiple_splits = base_visible.len() > 1;
-
-    // Expand any active buffer-group tabs into their inner panels.
-    let visible_buffers = expand_visible_buffers(
+    let pass = prepare_content(
         &base_visible,
-        split_view_states.as_deref_mut(),
+        split_manager,
+        stores.split_view_states.as_deref_mut(),
         grouped_subtrees,
         pane_chrome,
+        window_chrome,
     );
 
-    // Collect areas for mouse handling
-    let mut split_areas = Vec::new();
-    let mut horizontal_scrollbar_areas: Vec<(LeafId, BufferId, Rect, usize, usize, usize)> =
-        Vec::new();
-    let mut tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout> = HashMap::new();
-    let mut close_split_areas = Vec::new();
-    let mut maximize_split_areas = Vec::new();
-    let mut view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>> = HashMap::new();
-
-    // Render each split.
-    for (main_split_id, split_id, buffer_id, split_area, kind) in visible_buffers {
-        let is_active = split_id == active_split_id;
-        let is_inner_group_leaf = kind == RenderKind::InnerLeaf;
-        let skip_content = kind == RenderKind::GroupTabBarOnly;
-        // For a buffer-group panel (inner leaf), `active_split()` returns the
-        // group's *outer* leaf, so `is_active` is never true for the panel
-        // itself. The panel is focused when the active split's
-        // `focused_group_leaf` points at this inner leaf. Used to gate the
-        // composite cursor so it doesn't linger after Tab moves focus away.
-        let panel_focused = if is_inner_group_leaf {
-            split_view_states
-                .as_deref()
-                .and_then(|svs| svs.get(&active_split_id))
-                .and_then(|vs| vs.focused_group_leaf)
-                .is_some_and(|fl| fl == split_id)
-        } else {
-            is_active
-        };
-        let _ = main_split_id; // no longer needed below, kept for clarity
-
-        // Hide tildes per-split (e.g., for buffer group panels). Also
-        // hide them when the split's active buffer is a terminal in
-        // scrollback view — the PTY drew blank rows, so empty rows
-        // past end-of-buffer should look blank rather than tilde-padded.
-        // Without this, viewing a small-PTY terminal in a larger split
-        // (e.g. workspace-restored dock terminal switched via Alt+]
-        // into the main pane) shows tildes where the live PTY drew
-        // blank.
-        let active_buf_is_terminal = buffer_metadata
-            .get(&buffer_id)
-            .and_then(|m| m.virtual_mode())
-            .is_some_and(|m| m == "terminal");
-        let split_show_tilde = show_tilde
-            && !split_view_states
-                .as_deref()
-                .and_then(|svs| svs.get(&split_id))
-                .is_some_and(|vs| vs.hide_tilde)
-            && !active_buf_is_terminal;
-
-        // What this pane is, in the parts that decide its chrome — the
-        // scrollbars a `Fixed` panel never had, and the column a terminal
-        // gives up while it streams its live PTY grid (per split, so one
-        // terminal in two panes can differ — fresh#2595). The rule that
-        // narrows the window's offer by these is `PaneChrome::resolve`, and
-        // the shell's description resolves the same one for the same pane.
-        let chrome = if is_inner_group_leaf {
-            PaneChrome::resolve(
-                window_chrome,
-                PaneKind {
-                    inner_group_leaf: true,
-                    suppress_chrome: split_view_states
-                        .as_deref()
-                        .and_then(|svs| svs.get(&split_id))
-                        .is_some_and(|vs| vs.suppress_chrome),
-                    scrollable: buffers.get(&buffer_id).is_none_or(|s| s.scrollable),
-                    terminal_live_grid: active_buf_is_terminal
-                        && !scrollback_view_splits.contains(&split_id),
-                },
-            )
-        } else {
-            pane_chrome.get(&split_id).copied().unwrap_or_default()
-        };
-        let split_tab_bar_visible = chrome.tabs;
-        // A pane whose content is pinned to its size: it earns no scrollbar,
-        // and its viewport does not scroll to follow the cursor either — the
-        // second is why this outlives the `PaneChrome` that swallowed the first.
-        let is_non_scrollable = !buffers.get(&buffer_id).is_none_or(|s| s.scrollable);
-        // An inner leaf has no strip and no bottom bar, so its whole area is
-        // content but for the scrollbar column — which is what a
-        // `pane_interior` with those two flags off lays out. It used to be
-        // four rectangles written by hand right here.
-        let layout = split_layout(split_id, split_area, chrome);
-        let (split_buffers, tab_scroll_offset) = if is_inner_group_leaf {
-            (Vec::new(), 0)
-        } else {
-            split_buffers_for_tabs(split_view_states.as_deref(), split_id, buffer_id)
-        };
-
-        // Determine hover state for this split's tabs
-        let tab_hover_for_split = hovered_tab.and_then(|(hover_buf, hover_split, is_close)| {
-            if hover_split == split_id {
-                Some((hover_buf, is_close))
-            } else {
-                None
-            }
-        });
-
-        // Only render tabs and split control buttons when tab bar is visible
-        if split_tab_bar_visible {
-            render_split_tab_bar(
-                buf,
-                &layout,
-                split_id,
-                buffer_id,
-                buffers,
-                buffer_metadata,
-                composite_buffers,
-                split_view_states.as_deref(),
-                grouped_subtrees,
-                &split_buffers,
-                theme,
-                is_active,
-                tab_scroll_offset,
-                tab_hover_for_split,
-                preview_buffer,
-                draw_tab_bar,
-                has_multiple_splits,
-                is_maximized,
-                hovered_close_split,
-                hovered_maximize_split,
-                cell_theme_map,
-                screen_width,
-                &mut tab_layouts,
-                &mut close_split_areas,
-                &mut maximize_split_areas,
-            );
-        }
-
-        // For GroupTabBarOnly entries we've already rendered the tab bar;
-        // skip buffer content rendering so the group's inner leaves can
-        // draw into the content rect without being overwritten.
-        if skip_content {
-            view_line_mappings.insert(split_id, Vec::new());
-            continue;
-        }
-
-        // Synthesized placeholder buffer (kept alive when
-        // `auto_create_empty_buffer_on_last_buffer_close` is disabled): paint
-        // the pane blank with a subdued, centered hint so the user sees how
-        // to leave the empty workspace state.
-        let is_synthetic_placeholder = buffer_metadata
-            .get(&buffer_id)
-            .is_some_and(|m| m.synthetic_placeholder);
-        if is_synthetic_placeholder {
-            render_placeholder_hint(buf, layout.content_rect, theme);
-            view_line_mappings.insert(split_id, Vec::new());
-            continue;
-        }
-
-        // Composite buffers (side-by-side diff/compare panes) render through a
-        // separate pipeline; dispatch them to their own helper.
-        if buffers
-            .get(&buffer_id)
-            .is_some_and(|s| s.is_composite_buffer)
-        {
-            render_composite_split(
-                buf,
-                &layout,
-                split_id,
-                buffer_id,
-                buffers,
-                composite_buffers,
-                composite_view_states,
-                split_view_states.as_deref_mut(),
-                theme,
-                panel_focused,
-                use_terminal_bg,
-                split_show_tilde,
-                chrome,
-                is_active,
-                &mut split_areas,
-                &mut horizontal_scrollbar_areas,
-            );
-            view_line_mappings.insert(split_id, Vec::new());
-            continue;
-        }
-
-        // Get references separately to avoid double borrow
-        let state_opt = buffers.get_mut(&buffer_id);
-        let event_log_opt = event_logs.get_mut(&buffer_id);
-
-        if let Some(state) = state_opt {
-            // Get viewport from SplitViewState (authoritative source)
-            // We need to get it mutably for sync operations
-            // Use as_deref() to get Option<&HashMap> for read-only operations
-            let view_state_opt = split_view_states
-                .as_deref()
-                .and_then(|vs| vs.get(&split_id));
-            let viewport_clone =
-                view_state_opt
-                    .map(|vs| vs.viewport.clone())
-                    .unwrap_or_else(|| {
-                        crate::view::viewport::Viewport::new(
-                            layout.content_rect.width,
-                            layout.content_rect.height,
-                        )
-                    });
-            let mut viewport = viewport_clone;
-
-            // Get cursors from the split's view state
-            let split_cursors = split_view_states
-                .as_deref()
-                .and_then(|vs| vs.get(&split_id))
-                .map(|vs| vs.cursors.clone())
-                .unwrap_or_default();
-            // Resolve hidden fold byte ranges so ensure_visible can skip
-            // folded lines when counting distance to the cursor.
-            let hidden_ranges: Vec<(usize, usize)> = split_view_states
-                .as_deref()
-                .and_then(|vs| vs.get(&split_id))
-                .map(|vs| {
-                    vs.folds
-                        .resolved_ranges(&state.buffer, &state.marker_list)
-                        .into_iter()
-                        .map(|r| (r.start_byte, r.end_byte))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            {
-                let _span = tracing::trace_span!("sync_viewport_to_content").entered();
-                let (split_compose_width, split_show_line_numbers) = split_view_states
-                    .as_deref()
-                    .and_then(|vs| vs.get(&split_id))
-                    .map(|vs| (vs.compose_width, vs.show_line_numbers))
-                    .unwrap_or((None, true));
-                sync_viewport_to_content(
-                    &mut viewport,
-                    &mut state.buffer,
-                    &split_cursors,
-                    layout.content_rect,
-                    &hidden_ranges,
-                    split_compose_width,
-                    split_show_line_numbers,
-                    is_non_scrollable,
-                    state.buffer_settings.virtual_space,
-                );
-            }
-            let view_prefs =
-                resolve_view_preferences(state, split_view_states.as_deref(), split_id);
-
-            // When cursors are hidden, also suppress current-line highlighting
-            // and selection rendering so the buffer appears fully non-interactive.
-            let has_selection = hide_current_line_on_selection
-                && split_cursors
-                    .iter()
-                    .any(|(_, c)| c.selection_range().is_some());
-            let effective_highlight_current_line =
-                view_prefs.highlight_current_line && state.show_cursors && !has_selection;
-
-            // Column rulers are a source-code editing aid; virtual buffers
-            // (dashboard, *Diagnostics*, grep results, ...) aren't code, so
-            // the config-driven rulers would just paint stripes over plugin
-            // chrome. Suppress them for any virtual buffer.
-            let is_virtual_buffer = buffer_metadata
-                .get(&buffer_id)
-                .is_some_and(|m| m.is_virtual());
-            let effective_rulers: &[usize] = if is_virtual_buffer {
-                &[]
-            } else {
-                &view_prefs.rulers
-            };
-
-            // Indentation guides are a source-code editing aid, like the column
-            // rulers above. Resolve the effective mode per buffer: the user's
-            // per-buffer toggle wins, then an explicit plugin override
-            // (`setIndentationGuide`); otherwise virtual buffers (grep results,
-            // *Diagnostics*, the Git Log commit list, …) default off because
-            // they aren't code, while ordinary file buffers follow the buffer's
-            // resolved `indentation_guide` gate (plain text defaults off; any
-            // language can opt out — see `BufferSettings::apply_config`) and
-            // then the global setting. A file-backed tool view the virtual
-            // default can't catch — the Git Log commit-detail diff — opts out
-            // via the plugin override. This is independent of the line-number
-            // gutter, so an ordinary buffer keeps its guides with line numbers
-            // turned off.
-            let mut style = style;
-            style.cfg.indentation_guide = crate::config::resolve_indentation_guide_mode(
-                crate::config::IndentationGuideInputs {
-                    global: style.cfg.indentation_guide,
-                    // The user pin is per (split, buffer) on the view state,
-                    // so the same buffer in another split keeps its own guides.
-                    user_override: split_view_states
-                        .as_deref()
-                        .and_then(|vs| vs.get(&split_id))
-                        .and_then(|vs| vs.indentation_guide_user_override),
-                    plugin_override: state.indentation_guide_override,
-                    language_gate: state.buffer_settings.indentation_guide,
-                    is_virtual_buffer,
-                },
-            );
-
-            // Per-(split, buffer) pin, read before the mutable folds borrow.
-            let fold_indicators_visible = split_view_states
-                .as_deref()
-                .and_then(|vs| vs.get(&split_id))
-                .map(|vs| vs.fold_indicators_visible())
-                .unwrap_or(true);
-            let mut empty_folds = FoldManager::new();
-            let folds = split_view_states
-                .as_deref_mut()
-                .and_then(|vs| vs.get_mut(&split_id))
-                .map(|vs| &mut vs.folds)
-                .unwrap_or(&mut empty_folds);
-            // Resolved here, while the split's folds are in hand: the scrollbar
-            // reads the same row space the render does, and that space now
-            // excludes collapsed lines.
-            let scrollbar_fold_ranges = state.fold_ranges(folds);
-
-            let _render_buf_span = tracing::trace_span!("render_buffer_in_split").entered();
-
-            // Use a previously discovered bound so an extra wheel step cannot
-            // paint a blank frame before the post-render scan refreshes it.
-            if show_horizontal_scrollbar
-                && !viewport.line_wrap_enabled
-                && viewport.max_line_length_seen > 0
-            {
-                let visible_width = viewport.width as usize;
-                let max_scroll = viewport
-                    .max_line_length_seen
-                    .max(visible_width)
-                    .saturating_sub(visible_width);
-                viewport.left_column = viewport.left_column.min(max_scroll);
-            }
-
-            let split_view_mappings = render_buffer_in_split(
-                buf,
-                state,
-                &split_cursors,
-                &mut viewport,
-                folds,
-                event_log_opt,
-                layout.content_rect,
-                is_active,
-                style,
-                lsp_waiting,
-                view_prefs.view_mode,
-                view_prefs.compose_width,
-                view_prefs.compose_column_guides,
-                buffer_id,
-                hide_cursor,
-                session_mode,
-                effective_rulers,
-                view_prefs.show_line_numbers,
-                effective_highlight_current_line,
-                fold_indicators_visible,
-                split_show_tilde,
-                highlight_current_column && state.show_cursors,
-                cell_theme_map,
-                screen_width,
-                pending_hardware_cursor,
-            );
-
-            drop(_render_buf_span);
-
-            // Store view line mappings for mouse click handling
-            view_line_mappings.insert(split_id, split_view_mappings);
-
-            // For small files, count actual lines for accurate scrollbar
-            // For large files, we'll use a constant thumb size
-            let buffer_len = state.buffer.len();
-            let (total_lines, top_line, marker_basis) = {
-                let _span = tracing::trace_span!("scrollbar_line_counts").entered();
-                scrollbar_line_counts(
-                    state,
-                    &viewport,
-                    large_file_threshold_bytes,
-                    buffer_len,
-                    scrollbar_fold_ranges,
-                )
-            };
-
-            // Render vertical scrollbar for this split and get thumb position
-            let (thumb_start, thumb_end) = if chrome.vscroll {
-                let marker_cells = {
-                    let _span = tracing::trace_span!("scrollbar_markers").entered();
-                    project_scrollbar_markers(
-                        state,
-                        marker_basis,
-                        layout.scrollbar_rect.height as usize,
-                    )
-                };
-                render_scrollbar(
-                    buf,
-                    state,
-                    &viewport,
-                    layout.scrollbar_rect,
-                    is_active,
-                    theme,
-                    large_file_threshold_bytes,
-                    total_lines,
-                    top_line,
-                    &marker_cells,
-                )
-            } else {
-                (0, 0)
-            };
-
-            // Compute the actual max line length for horizontal scrollbar
-            let max_content_width = if show_horizontal_scrollbar && !viewport.line_wrap_enabled {
-                let mcw = compute_max_line_length(state, &mut viewport);
-                // Clamp left_column so content can't scroll past the end of the longest line
-                let visible_width = viewport.width as usize;
-                let max_scroll = mcw.saturating_sub(visible_width);
-                if viewport.left_column > max_scroll {
-                    viewport.left_column = max_scroll;
-                }
-                mcw
-            } else {
-                0
-            };
-
-            // Render horizontal scrollbar for this split
-            let (hthumb_start, hthumb_end) = if chrome.hscroll {
-                render_horizontal_scrollbar(
-                    buf,
-                    &viewport,
-                    layout.horizontal_scrollbar_rect,
-                    is_active,
-                    theme,
-                    max_content_width,
-                )
-            } else {
-                (0, 0)
-            };
-
-            // Write back updated viewport to SplitViewState
-            // This is crucial for cursor visibility tracking (ensure_visible_in_layout updates)
-            // NOTE: We do NOT clear skip_ensure_visible here - it should persist across
-            // renders until something actually needs cursor visibility check
-            if let Some(view_states) = split_view_states.as_deref_mut() {
-                if let Some(view_state) = view_states.get_mut(&split_id) {
-                    tracing::trace!(
-                        "Writing back viewport: top_byte={}, top_view_line_offset={}, skip_ensure_visible={}",
-                        viewport.top_byte(),
-                        viewport.top_view_line_offset(),
-                        viewport.should_skip_ensure_visible()
-                    );
-                    view_state.viewport = viewport.clone();
-                }
-            }
-
-            // Store the areas for mouse handling
-            split_areas.push((
-                split_id,
-                buffer_id,
-                layout.content_rect,
-                layout.scrollbar_rect,
-                thumb_start,
-                thumb_end,
-            ));
-            if chrome.hscroll {
-                horizontal_scrollbar_areas.push((
-                    split_id,
-                    buffer_id,
-                    layout.horizontal_scrollbar_rect,
-                    max_content_width,
-                    hthumb_start,
-                    hthumb_end,
-                ));
-            }
-        }
+    let mut out = PaneAreas::default();
+    for pane in pass.visible.iter().copied() {
+        paint_leaf(
+            buf,
+            pane,
+            &facts,
+            &pass,
+            &mut stores,
+            &mut out,
+            pending_hardware_cursor,
+        );
     }
-
-    // Render split separators — for both the main tree and any
-    // active Grouped subtrees dispatched at render time.
-    let separators = split_manager.get_separators(area);
-    for (direction, x, y, length) in separators {
-        render_separator(buf, direction, x, y, length, theme);
-    }
-    // Walk the visible splits again to render internal separators of any
-    // active buffer groups (their Split nodes live in the side-map, not the
-    // main split tree, so `split_manager` doesn't know about them).
-    let grouped_separator_areas = render_grouped_separators(
+    paint_separators(
         buf,
+        area,
+        split_manager,
         &base_visible,
-        split_view_states.as_deref(),
-        grouped_subtrees,
-        theme,
-        pane_chrome,
+        &facts,
+        &stores,
+        &mut out,
     );
-
     // Record vertical-scrollbar theme keys for the inspector, from the
-    // thumb/track geometry just computed for each split.
-    record_scrollbar_theme_runs(&split_areas, cell_theme_map, screen_width);
+    // thumb/track geometry the panes just computed.
+    record_scrollbar_theme_runs(&out.split_areas, stores.cell_theme_map, screen_width);
 
+    let PaneAreas {
+        split_areas,
+        tab_layouts,
+        close_split_areas,
+        maximize_split_areas,
+        view_line_mappings,
+        horizontal_scrollbar_areas,
+        grouped_separator_areas,
+    } = out;
     (
         split_areas,
         tab_layouts,
@@ -671,6 +317,584 @@ pub(crate) fn render_content(
         horizontal_scrollbar_areas,
         grouped_separator_areas,
     )
+}
+
+/// Paint every separator in the frame — the main tree's and, inside each pane
+/// showing an active buffer group, that group's own — and record the grouped
+/// ones' hit areas.
+///
+/// **Not a pane's**, which is why it is here rather than in [`paint_leaf`]: a
+/// separator is the gap *between* two panes and belongs to neither. It cannot
+/// overlap one, so it may paint before or after them.
+pub(crate) fn paint_separators(
+    buf: &mut ratatui::buffer::Buffer,
+    area: Rect,
+    split_manager: &SplitManager,
+    base_visible: &[(LeafId, BufferId, Rect)],
+    f: &FrameFacts<'_>,
+    s: &Stores<'_>,
+    out: &mut PaneAreas,
+) {
+    for (direction, x, y, length) in split_manager.get_separators(area) {
+        render_separator(buf, direction, x, y, length, f.style.theme);
+    }
+    // Walk the visible splits again to render internal separators of any
+    // active buffer groups (their Split nodes live in the side-map, not the
+    // main split tree, so `split_manager` doesn't know about them).
+    out.grouped_separator_areas = render_grouped_separators(
+        buf,
+        base_visible,
+        s.split_view_states.as_deref(),
+        f.grouped_subtrees,
+        f.style.theme,
+        f.pane_chrome,
+    );
+}
+
+/// Resolve what every pane in this frame shares. See [`ContentPass`].
+pub(crate) fn prepare_content(
+    base_visible: &[(LeafId, BufferId, Rect)],
+    split_manager: &SplitManager,
+    split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
+    grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
+    pane_chrome: &HashMap<LeafId, PaneChrome>,
+    window_chrome: PaneChrome,
+) -> ContentPass {
+    ContentPass {
+        // Expand any active buffer-group tabs into their inner panels.
+        visible: expand_visible_buffers(
+            base_visible,
+            split_view_states,
+            grouped_subtrees,
+            pane_chrome,
+        ),
+        window_chrome,
+        active_split_id: split_manager.active_split(),
+        has_multiple_splits: base_visible.len() > 1,
+    }
+}
+
+/// Paint one pane: its tab strip, its buffer (or composite, or placeholder),
+/// and its two scrollbars — and record the rectangles chrome reads back.
+///
+/// **The per-pane half of a frame's paint.** The loop this came out of mixed
+/// three things: a preamble computed once for the frame, this, and seven
+/// accumulators. Only this part is a pane's, and separating it is what lets a
+/// pane become its own `Host` in the shell's tree rather than a slice of one
+/// rectangle that paints them all.
+///
+/// `pane` carries the rectangle to paint into. For the shell that rectangle
+/// is the one *layout* gave the pane's `Host`; for a caller that lays the
+/// grid out itself it is [`prepare_content`]'s. They agree — the description
+/// and the model share `split_rect_ext` — and the parity tests in
+/// `view::shell::splits` are what says so.
+pub(crate) fn paint_leaf(
+    buf: &mut ratatui::buffer::Buffer,
+    pane: VisibleBuffer,
+    f: &FrameFacts<'_>,
+    pass: &ContentPass,
+    s: &mut Stores<'_>,
+    out: &mut PaneAreas,
+    pending_hardware_cursor: &mut Option<(u16, u16)>,
+) {
+    // Unpacked into the names the body below uses. The body is the loop's,
+    // moved without an edit inside it; the carriers are what replaced its
+    // forty parameters.
+    let (main_split_id, split_id, buffer_id, split_area, kind) = pane;
+    let FrameFacts {
+        style,
+        buffer_metadata,
+        preview_buffer,
+        grouped_subtrees,
+        pane_chrome,
+        scrollback_view_splits,
+        lsp_waiting,
+        hide_cursor,
+        hovered_tab,
+        hovered_close_split,
+        hovered_maximize_split,
+        is_maximized,
+        session_mode,
+        draw_tab_bar,
+        screen_width,
+    } = *f;
+    let theme = style.theme;
+    let EditorRenderConfig {
+        large_file_threshold_bytes,
+        use_terminal_bg,
+        show_horizontal_scrollbar,
+        show_tilde,
+        highlight_current_column,
+        hide_current_line_on_selection,
+        ..
+    } = style.cfg;
+    let window_chrome = pass.window_chrome;
+    let active_split_id = pass.active_split_id;
+    let has_multiple_splits = pass.has_multiple_splits;
+    let buffers = &mut *s.buffers;
+    let event_logs = &mut *s.event_logs;
+    let composite_buffers = &mut *s.composite_buffers;
+    let composite_view_states = &mut *s.composite_view_states;
+    let mut split_view_states = s.split_view_states.as_deref_mut();
+    let cell_theme_map = &mut *s.cell_theme_map;
+    let PaneAreas {
+        split_areas,
+        tab_layouts,
+        close_split_areas,
+        maximize_split_areas,
+        view_line_mappings,
+        horizontal_scrollbar_areas,
+        ..
+    } = out;
+
+    let is_active = split_id == active_split_id;
+    let is_inner_group_leaf = kind == RenderKind::InnerLeaf;
+    let skip_content = kind == RenderKind::GroupTabBarOnly;
+    // For a buffer-group panel (inner leaf), `active_split()` returns the
+    // group's *outer* leaf, so `is_active` is never true for the panel
+    // itself. The panel is focused when the active split's
+    // `focused_group_leaf` points at this inner leaf. Used to gate the
+    // composite cursor so it doesn't linger after Tab moves focus away.
+    let panel_focused = if is_inner_group_leaf {
+        split_view_states
+            .as_deref()
+            .and_then(|svs| svs.get(&active_split_id))
+            .and_then(|vs| vs.focused_group_leaf)
+            .is_some_and(|fl| fl == split_id)
+    } else {
+        is_active
+    };
+    let _ = main_split_id; // no longer needed below, kept for clarity
+
+    // Hide tildes per-split (e.g., for buffer group panels). Also
+    // hide them when the split's active buffer is a terminal in
+    // scrollback view — the PTY drew blank rows, so empty rows
+    // past end-of-buffer should look blank rather than tilde-padded.
+    // Without this, viewing a small-PTY terminal in a larger split
+    // (e.g. workspace-restored dock terminal switched via Alt+]
+    // into the main pane) shows tildes where the live PTY drew
+    // blank.
+    let active_buf_is_terminal = buffer_metadata
+        .get(&buffer_id)
+        .and_then(|m| m.virtual_mode())
+        .is_some_and(|m| m == "terminal");
+    let split_show_tilde = show_tilde
+        && !split_view_states
+            .as_deref()
+            .and_then(|svs| svs.get(&split_id))
+            .is_some_and(|vs| vs.hide_tilde)
+        && !active_buf_is_terminal;
+
+    // What this pane is, in the parts that decide its chrome — the
+    // scrollbars a `Fixed` panel never had, and the column a terminal
+    // gives up while it streams its live PTY grid (per split, so one
+    // terminal in two panes can differ — fresh#2595). The rule that
+    // narrows the window's offer by these is `PaneChrome::resolve`, and
+    // the shell's description resolves the same one for the same pane.
+    let chrome = if is_inner_group_leaf {
+        PaneChrome::resolve(
+            window_chrome,
+            PaneKind {
+                inner_group_leaf: true,
+                suppress_chrome: split_view_states
+                    .as_deref()
+                    .and_then(|svs| svs.get(&split_id))
+                    .is_some_and(|vs| vs.suppress_chrome),
+                scrollable: buffers.get(&buffer_id).is_none_or(|s| s.scrollable),
+                terminal_live_grid: active_buf_is_terminal
+                    && !scrollback_view_splits.contains(&split_id),
+            },
+        )
+    } else {
+        pane_chrome.get(&split_id).copied().unwrap_or_default()
+    };
+    let split_tab_bar_visible = chrome.tabs;
+    // A pane whose content is pinned to its size: it earns no scrollbar,
+    // and its viewport does not scroll to follow the cursor either — the
+    // second is why this outlives the `PaneChrome` that swallowed the first.
+    let is_non_scrollable = !buffers.get(&buffer_id).is_none_or(|s| s.scrollable);
+    // An inner leaf has no strip and no bottom bar, so its whole area is
+    // content but for the scrollbar column — which is what a
+    // `pane_interior` with those two flags off lays out. It used to be
+    // four rectangles written by hand right here.
+    let layout = split_layout(split_id, split_area, chrome);
+    let (split_buffers, tab_scroll_offset) = if is_inner_group_leaf {
+        (Vec::new(), 0)
+    } else {
+        split_buffers_for_tabs(split_view_states.as_deref(), split_id, buffer_id)
+    };
+
+    // Determine hover state for this split's tabs
+    let tab_hover_for_split = hovered_tab.and_then(|(hover_buf, hover_split, is_close)| {
+        if hover_split == split_id {
+            Some((hover_buf, is_close))
+        } else {
+            None
+        }
+    });
+
+    // Only render tabs and split control buttons when tab bar is visible
+    if split_tab_bar_visible {
+        render_split_tab_bar(
+            buf,
+            &layout,
+            split_id,
+            buffer_id,
+            buffers,
+            buffer_metadata,
+            composite_buffers,
+            split_view_states.as_deref(),
+            grouped_subtrees,
+            &split_buffers,
+            theme,
+            is_active,
+            tab_scroll_offset,
+            tab_hover_for_split,
+            preview_buffer,
+            draw_tab_bar,
+            has_multiple_splits,
+            is_maximized,
+            hovered_close_split,
+            hovered_maximize_split,
+            cell_theme_map,
+            screen_width,
+            tab_layouts,
+            close_split_areas,
+            maximize_split_areas,
+        );
+    }
+
+    // For GroupTabBarOnly entries we've already rendered the tab bar;
+    // skip buffer content rendering so the group's inner leaves can
+    // draw into the content rect without being overwritten.
+    if skip_content {
+        view_line_mappings.insert(split_id, Vec::new());
+        return;
+    }
+
+    // Synthesized placeholder buffer (kept alive when
+    // `auto_create_empty_buffer_on_last_buffer_close` is disabled): paint
+    // the pane blank with a subdued, centered hint so the user sees how
+    // to leave the empty workspace state.
+    let is_synthetic_placeholder = buffer_metadata
+        .get(&buffer_id)
+        .is_some_and(|m| m.synthetic_placeholder);
+    if is_synthetic_placeholder {
+        render_placeholder_hint(buf, layout.content_rect, theme);
+        view_line_mappings.insert(split_id, Vec::new());
+        return;
+    }
+
+    // Composite buffers (side-by-side diff/compare panes) render through a
+    // separate pipeline; dispatch them to their own helper.
+    if buffers
+        .get(&buffer_id)
+        .is_some_and(|s| s.is_composite_buffer)
+    {
+        render_composite_split(
+            buf,
+            &layout,
+            split_id,
+            buffer_id,
+            buffers,
+            composite_buffers,
+            composite_view_states,
+            split_view_states.as_deref_mut(),
+            theme,
+            panel_focused,
+            use_terminal_bg,
+            split_show_tilde,
+            chrome,
+            is_active,
+            split_areas,
+            horizontal_scrollbar_areas,
+        );
+        view_line_mappings.insert(split_id, Vec::new());
+        return;
+    }
+
+    // Get references separately to avoid double borrow
+    let state_opt = buffers.get_mut(&buffer_id);
+    let event_log_opt = event_logs.get_mut(&buffer_id);
+
+    if let Some(state) = state_opt {
+        // Get viewport from SplitViewState (authoritative source)
+        // We need to get it mutably for sync operations
+        // Use as_deref() to get Option<&HashMap> for read-only operations
+        let view_state_opt = split_view_states
+            .as_deref()
+            .and_then(|vs| vs.get(&split_id));
+        let viewport_clone = view_state_opt
+            .map(|vs| vs.viewport.clone())
+            .unwrap_or_else(|| {
+                crate::view::viewport::Viewport::new(
+                    layout.content_rect.width,
+                    layout.content_rect.height,
+                )
+            });
+        let mut viewport = viewport_clone;
+
+        // Get cursors from the split's view state
+        let split_cursors = split_view_states
+            .as_deref()
+            .and_then(|vs| vs.get(&split_id))
+            .map(|vs| vs.cursors.clone())
+            .unwrap_or_default();
+        // Resolve hidden fold byte ranges so ensure_visible can skip
+        // folded lines when counting distance to the cursor.
+        let hidden_ranges: Vec<(usize, usize)> = split_view_states
+            .as_deref()
+            .and_then(|vs| vs.get(&split_id))
+            .map(|vs| {
+                vs.folds
+                    .resolved_ranges(&state.buffer, &state.marker_list)
+                    .into_iter()
+                    .map(|r| (r.start_byte, r.end_byte))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        {
+            let _span = tracing::trace_span!("sync_viewport_to_content").entered();
+            let (split_compose_width, split_show_line_numbers) = split_view_states
+                .as_deref()
+                .and_then(|vs| vs.get(&split_id))
+                .map(|vs| (vs.compose_width, vs.show_line_numbers))
+                .unwrap_or((None, true));
+            sync_viewport_to_content(
+                &mut viewport,
+                &mut state.buffer,
+                &split_cursors,
+                layout.content_rect,
+                &hidden_ranges,
+                split_compose_width,
+                split_show_line_numbers,
+                is_non_scrollable,
+                state.buffer_settings.virtual_space,
+            );
+        }
+        let view_prefs = resolve_view_preferences(state, split_view_states.as_deref(), split_id);
+
+        // When cursors are hidden, also suppress current-line highlighting
+        // and selection rendering so the buffer appears fully non-interactive.
+        let has_selection = hide_current_line_on_selection
+            && split_cursors
+                .iter()
+                .any(|(_, c)| c.selection_range().is_some());
+        let effective_highlight_current_line =
+            view_prefs.highlight_current_line && state.show_cursors && !has_selection;
+
+        // Column rulers are a source-code editing aid; virtual buffers
+        // (dashboard, *Diagnostics*, grep results, ...) aren't code, so
+        // the config-driven rulers would just paint stripes over plugin
+        // chrome. Suppress them for any virtual buffer.
+        let is_virtual_buffer = buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|m| m.is_virtual());
+        let effective_rulers: &[usize] = if is_virtual_buffer {
+            &[]
+        } else {
+            &view_prefs.rulers
+        };
+
+        // Indentation guides are a source-code editing aid, like the column
+        // rulers above. Resolve the effective mode per buffer: the user's
+        // per-buffer toggle wins, then an explicit plugin override
+        // (`setIndentationGuide`); otherwise virtual buffers (grep results,
+        // *Diagnostics*, the Git Log commit list, …) default off because
+        // they aren't code, while ordinary file buffers follow the buffer's
+        // resolved `indentation_guide` gate (plain text defaults off; any
+        // language can opt out — see `BufferSettings::apply_config`) and
+        // then the global setting. A file-backed tool view the virtual
+        // default can't catch — the Git Log commit-detail diff — opts out
+        // via the plugin override. This is independent of the line-number
+        // gutter, so an ordinary buffer keeps its guides with line numbers
+        // turned off.
+        let mut style = style;
+        style.cfg.indentation_guide =
+            crate::config::resolve_indentation_guide_mode(crate::config::IndentationGuideInputs {
+                global: style.cfg.indentation_guide,
+                // The user pin is per (split, buffer) on the view state,
+                // so the same buffer in another split keeps its own guides.
+                user_override: split_view_states
+                    .as_deref()
+                    .and_then(|vs| vs.get(&split_id))
+                    .and_then(|vs| vs.indentation_guide_user_override),
+                plugin_override: state.indentation_guide_override,
+                language_gate: state.buffer_settings.indentation_guide,
+                is_virtual_buffer,
+            });
+
+        // Per-(split, buffer) pin, read before the mutable folds borrow.
+        let fold_indicators_visible = split_view_states
+            .as_deref()
+            .and_then(|vs| vs.get(&split_id))
+            .map(|vs| vs.fold_indicators_visible())
+            .unwrap_or(true);
+        let mut empty_folds = FoldManager::new();
+        let folds = split_view_states
+            .as_deref_mut()
+            .and_then(|vs| vs.get_mut(&split_id))
+            .map(|vs| &mut vs.folds)
+            .unwrap_or(&mut empty_folds);
+        // Resolved here, while the split's folds are in hand: the scrollbar
+        // reads the same row space the render does, and that space now
+        // excludes collapsed lines.
+        let scrollbar_fold_ranges = state.fold_ranges(folds);
+
+        let _render_buf_span = tracing::trace_span!("render_buffer_in_split").entered();
+
+        // Use a previously discovered bound so an extra wheel step cannot
+        // paint a blank frame before the post-render scan refreshes it.
+        if show_horizontal_scrollbar
+            && !viewport.line_wrap_enabled
+            && viewport.max_line_length_seen > 0
+        {
+            let visible_width = viewport.width as usize;
+            let max_scroll = viewport
+                .max_line_length_seen
+                .max(visible_width)
+                .saturating_sub(visible_width);
+            viewport.left_column = viewport.left_column.min(max_scroll);
+        }
+
+        let split_view_mappings = render_buffer_in_split(
+            buf,
+            state,
+            &split_cursors,
+            &mut viewport,
+            folds,
+            event_log_opt,
+            layout.content_rect,
+            is_active,
+            style,
+            lsp_waiting,
+            view_prefs.view_mode,
+            view_prefs.compose_width,
+            view_prefs.compose_column_guides,
+            buffer_id,
+            hide_cursor,
+            session_mode,
+            effective_rulers,
+            view_prefs.show_line_numbers,
+            effective_highlight_current_line,
+            fold_indicators_visible,
+            split_show_tilde,
+            highlight_current_column && state.show_cursors,
+            cell_theme_map,
+            screen_width,
+            pending_hardware_cursor,
+        );
+
+        drop(_render_buf_span);
+
+        // Store view line mappings for mouse click handling
+        view_line_mappings.insert(split_id, split_view_mappings);
+
+        // For small files, count actual lines for accurate scrollbar
+        // For large files, we'll use a constant thumb size
+        let buffer_len = state.buffer.len();
+        let (total_lines, top_line, marker_basis) = {
+            let _span = tracing::trace_span!("scrollbar_line_counts").entered();
+            scrollbar_line_counts(
+                state,
+                &viewport,
+                large_file_threshold_bytes,
+                buffer_len,
+                scrollbar_fold_ranges,
+            )
+        };
+
+        // Render vertical scrollbar for this split and get thumb position
+        let (thumb_start, thumb_end) = if chrome.vscroll {
+            let marker_cells = {
+                let _span = tracing::trace_span!("scrollbar_markers").entered();
+                project_scrollbar_markers(
+                    state,
+                    marker_basis,
+                    layout.scrollbar_rect.height as usize,
+                )
+            };
+            render_scrollbar(
+                buf,
+                state,
+                &viewport,
+                layout.scrollbar_rect,
+                is_active,
+                theme,
+                large_file_threshold_bytes,
+                total_lines,
+                top_line,
+                &marker_cells,
+            )
+        } else {
+            (0, 0)
+        };
+
+        // Compute the actual max line length for horizontal scrollbar
+        let max_content_width = if show_horizontal_scrollbar && !viewport.line_wrap_enabled {
+            let mcw = compute_max_line_length(state, &mut viewport);
+            // Clamp left_column so content can't scroll past the end of the longest line
+            let visible_width = viewport.width as usize;
+            let max_scroll = mcw.saturating_sub(visible_width);
+            if viewport.left_column > max_scroll {
+                viewport.left_column = max_scroll;
+            }
+            mcw
+        } else {
+            0
+        };
+
+        // Render horizontal scrollbar for this split
+        let (hthumb_start, hthumb_end) = if chrome.hscroll {
+            render_horizontal_scrollbar(
+                buf,
+                &viewport,
+                layout.horizontal_scrollbar_rect,
+                is_active,
+                theme,
+                max_content_width,
+            )
+        } else {
+            (0, 0)
+        };
+
+        // Write back updated viewport to SplitViewState
+        // This is crucial for cursor visibility tracking (ensure_visible_in_layout updates)
+        // NOTE: We do NOT clear skip_ensure_visible here - it should persist across
+        // renders until something actually needs cursor visibility check
+        if let Some(view_states) = split_view_states.as_deref_mut() {
+            if let Some(view_state) = view_states.get_mut(&split_id) {
+                tracing::trace!(
+                    "Writing back viewport: top_byte={}, top_view_line_offset={}, skip_ensure_visible={}",
+                    viewport.top_byte(),
+                    viewport.top_view_line_offset(),
+                    viewport.should_skip_ensure_visible()
+                );
+                view_state.viewport = viewport.clone();
+            }
+        }
+
+        // Store the areas for mouse handling
+        split_areas.push((
+            split_id,
+            buffer_id,
+            layout.content_rect,
+            layout.scrollbar_rect,
+            thumb_start,
+            thumb_end,
+        ));
+        if chrome.hscroll {
+            horizontal_scrollbar_areas.push((
+                split_id,
+                buffer_id,
+                layout.horizontal_scrollbar_rect,
+                max_content_width,
+                hthumb_start,
+                hthumb_end,
+            ));
+        }
+    }
 }
 
 /// Build the list of splits to render, expanding any active buffer-group tab
@@ -1082,7 +1306,7 @@ fn render_grouped_separators(
 
 /// Record vertical-scrollbar theme keys (thumb vs. track) for the theme
 /// inspector, from the geometry computed for each split during rendering.
-fn record_scrollbar_theme_runs(
+pub(crate) fn record_scrollbar_theme_runs(
     split_areas: &[(LeafId, BufferId, Rect, Rect, usize, usize)],
     cell_theme_map: &mut [crate::app::types::CellThemeInfo],
     screen_width: u16,

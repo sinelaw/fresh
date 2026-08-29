@@ -655,12 +655,16 @@ wire (design §13). The migration keeps the wire type `WidgetSpec` where it is
 (`fresh-core`, unchanged for compatibility) and adds a **host-side translation**
 `WidgetSpec → Node<Action>` in `fresh-editor` (the M6 wave). The reconciler moves
 host-side, so `WidgetInstanceState` (list scroll, tree expansion, selection)
-becomes element state — a plugin re-sending its spec no longer loses scroll. Two
-externally visible changes, both needing a release cycle:
+becomes element state — a plugin re-sending its spec no longer loses scroll.
 
-- **Keyed builders require a key function.** This breaks `widgets.ts` `List`/
-  `Tree` calls without keys. Ship the new builders one release ahead, deprecate
-  the old ones with a load-time warning.
+**And that is the only externally visible change.** An earlier draft listed a
+second one — *keyed builders require a key function*, breaking every
+`widgets.ts` `List`/`Tree` call without keys, shipped a release ahead behind a
+load-time deprecation warning. That was wrong, and §5's M6 row records why:
+per-row state is held by *index*, not by row key, so unkeyed rows have nothing
+to lose. `WidgetSpec` is frozen. Every plugin that works today goes on working,
+unchanged, and the audit that warned about unkeyed widgets is deleted.
+
 - **State survival changes.** A plugin that compensated for state loss on re-send
   now sees state persist. Changelog item.
 
@@ -807,10 +811,10 @@ establishes:
   on top — the popup-over-a-buffer case. A fold that collected host items and
   painted them in a second pass would invert this; the test
   `chrome_painted_after_a_host_lands_on_top_of_it` pins it.
-- **The borrow works, on one condition.** `paint_body` assembles all ~28 of
-  `render_content`'s parameters — the `WindowBuffers::with_all_mut` disjoint
-  split, the theme read-guard, the config bundle — from `&mut Editor` *inside*
-  the callback, while the display list being folded is borrowed from the `Ui`.
+- **The borrow works, on one condition.** `with_grid` assembles everything a
+  pane's paint needs — the `WindowBuffers::with_all_mut` disjoint split, the
+  theme read-guard, the config bundle — from `&mut Editor` *inside* the
+  callback, while the display list being folded is borrowed from the `Ui`.
   That type-checks only because **the `Ui` does not live on the `Editor`**:
   `ui.spec()` borrows the `Ui`, the callback borrows the editor, and the two
   must be separate objects. This is the arrangement the library's own tutorial
@@ -1326,7 +1330,7 @@ display-list-is-not-a-diff rule, pinned at the cell.
 
 | Stage | What moves | Why here |
 |---|---|---|
-| **S1** | Frame skeleton: every region a `Host` leaf, painted by today's painters. Input fully delegated. | **Landed, including the body.** The frame's geometry is the shell's, the retained tree persists across frames, native items paint through the fold, and input is offered to the shell ahead of the legacy walk. The split grid is now painted *by* the fold, through `HostPainter::paint_host`, with the rectangle layout gave the body — `render`'s own hundred-line assembly of `render_content`'s 28 arguments is deleted and `shell_host::paint_body` is the only copy. It had to be: two assemblies of one call drift, and the unreached one had, dropping five of the seven results and passing `BodyState::default()`. What made the second copy necessary was `suppress_chrome_cells` skipping the fold outright — which skipped the body with it — so the fold grew `Paints::HostsOnly`: a frontend that draws the tree's surfaces itself still needs its host regions painted, because the panes are cells even on the web. What remains for the body is S5's decomposition (§6.2 item 7), which subdivides the leaf rather than removing it. |
+| **S1** | Frame skeleton: every region a `Host` leaf, painted by today's painters. Input fully delegated. | **Landed, including the body.** The frame's geometry is the shell's, the retained tree persists across frames, native items paint through the fold, and input is offered to the shell ahead of the legacy walk. The split grid is now painted *by* the fold, through `HostPainter::paint_host`, with the rectangle layout gave it — `render`'s own hundred-line assembly of `render_content`'s 28 arguments is deleted and `shell_host::with_grid` is the only copy. It had to be: two assemblies of one call drift, and the unreached one had, dropping five of the seven results and passing `BodyState::default()`. What made the second copy necessary was `suppress_chrome_cells` skipping the fold outright — which skipped the body with it — so the fold grew `Paints::HostsOnly`: a frontend that draws the tree's surfaces itself still needs its host regions painted, because the panes are cells even on the web. S5's decomposition (§6.2 item 7) has since subdivided that leaf rather than removing it: a pane is its own `Host`, and the body's is the separators' and the panes' shared preamble. |
 | **S2** | The live-derived regions — status bar, search-options row — become native descriptions. | **Done.** Both surfaces describe what is on them and layout decides every column. The **search-options row** was the first surface to meet the third acceptance criterion. The **status bar** was the one that paid for it twice: `render_status` placed every element *and* emitted a `StatusBarLayout`, then `compute_status_layout` re-ran the whole walk at event time over state that may have moved. `clickable_rects`, `plugin_token_areas`, `segments` and `provenance_runs` all read the laid-out tree now; plugin tokens became first-class (they were a second loop the click rail reached only after missing every built-in). What stayed app-side is *which* right-hand elements appear when the bar is too narrow — a content decision from measured text, not geometry. |
 | **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. **Context menus: done** (below) — paint, pointer, dismissal, keyboard and geometry, with only the `blocks_terminal_input` rank entry left behind. **Menu bar: paint and pointer migrated** — the bar row is a native background region, the dropdown chain is a stack of layers, and the close guard is a dismissal property. **Popups: done** — placement, paint, wheel, scrollbar, rows, close button, dismissal, links and text selection are all in the tree, and `view/popup.rs`'s painter and all four of its chrome boxes are deleted. **Prompt / palette: done** — both suggestion lists are the tree's (the overlay's anchors to the card's results band by name), the card is mouse-modal, and `shell_owns_suggestions`, which existed to tell the two apart, is gone with them. **Theme inspector and file-open dialog: done.** **The modals: done, on the pointer side.** Settings, the keybinding editor, the calibration wizard, the workspace-trust prompt and the floating panel each owned the whole mouse channel through `ChromeComponent::capture_mouse` — a band ahead of every walk including the shell's, and the reason `placed_surface_outranks_shell` existed. Capture is what a modal *is*, and `Modality::Exclusive` says it, so **the band and the precedence constant are both gone and there is one pointer walk.** The workspace-trust prompt migrated outright — layer, `Scrim::Dim`, rows, radios and buttons — retiring `TrustDialogLayout` (a paint-recorded roster entry), its painter, its `Vec<Seg>` row plan, its own word-wrap, its scroll clamp and `handle_workspace_trust_mouse`. The other four keep their interiors, which hit-test rectangles their own painters recorded and tell a drag from a move — something a tree `Event` deliberately cannot, since the library routes drags by pointer capture. So the tree answers *which* surface an event belongs to and the event stays on the editor: routed, not transported (`Editor::shell_pointer_event`), and that channel retires with the interiors. What is left of S3 is the keyboard, which is one wave rather than per-surface.
 
@@ -1354,7 +1358,7 @@ What per-item keys would actually buy is selection and scroll surviving a **reor
 The deprecation audit that warned about this (`widgets::keying`, and `Editor::unkeyed_widget_warnings`) is **deleted**. It was shipped, user-visible, and told plugin authors that `itemKeys` "will become required" — a promise made on the premise above, which does not hold here.
 
 One identity constraint does survive, unchanged: a card list's `item_specs` nest arbitrary widget subtrees, and those widgets' state is keyed by their own `key` in one flat map, so two cards whose nested `Text` widgets share a key collide. That is true today; M6 inherits it rather than creating it. |
-| **S5** | Splits, tabs, scrollbars decompose; the buffer becomes the only `Host` leaf. | **The pointer side is done, and `chrome/splits.rs` no longer has a component in it.** The grid is a description (`view::shell::splits`) that the model itself lays out — `get_leaves_with_rects` and `split_layout` are reads of it — and every surface a pane has is a node keyed by the pane it belongs to: its dividers, its tab strip (which took the split controls with it, since those are drawn *over* the tab row and a box said so with `z`), both scrollbars, and its content. **Which chrome a pane has is one rule** (`PaneChrome::resolve`) resolved once per frame by `Window::pane_chrome`, so the description and the painter cannot disagree about whether a pane has a strip; it had been four copies of the boolean algebra, two of which were quietly wrong about `Fixed` panels and live terminal grids. **A buffer group's panels are panes now too** — that layout lives in a side map and used to be dispatched into a pane's interior only at paint time, which is why its separators stayed recorded rectangles long after the main tree's became nodes; mounted in the pane's content node, which *is* the rectangle the painter uses, they are ordinary dividers. Each handler behind these nodes used to open by asking every recorded rectangle in turn whether it contained the point; they take a pane now. What they still read back is geometry that genuinely records the last paint — a scrollbar thumb's extent, the tab renderer's per-tab columns — and the pane's own content rectangle, read from the node that defines it. What remains of S5 is the **paint**: the leaf becomes a per-pane `Host` and `render_content` paints per leaf. |
+| **S5** | Splits, tabs, scrollbars decompose; the buffer becomes the only `Host` leaf. | **The pointer side is done, and `chrome/splits.rs` no longer has a component in it.** The grid is a description (`view::shell::splits`) that the model itself lays out — `get_leaves_with_rects` and `split_layout` are reads of it — and every surface a pane has is a node keyed by the pane it belongs to: its dividers, its tab strip (which took the split controls with it, since those are drawn *over* the tab row and a box said so with `z`), both scrollbars, and its content. **Which chrome a pane has is one rule** (`PaneChrome::resolve`) resolved once per frame by `Window::pane_chrome`, so the description and the painter cannot disagree about whether a pane has a strip; it had been four copies of the boolean algebra, two of which were quietly wrong about `Fixed` panels and live terminal grids. **A buffer group's panels are panes now too** — that layout lives in a side map and used to be dispatched into a pane's interior only at paint time, which is why its separators stayed recorded rectangles long after the main tree's became nodes; mounted in the pane's content node, which *is* the rectangle the painter uses, they are ordinary dividers. Each handler behind these nodes used to open by asking every recorded rectangle in turn whether it contained the point; they take a pane now. What they still read back is geometry that genuinely records the last paint — a scrollbar thumb's extent, the tab renderer's per-tab columns — and the pane's own content rectangle, read from the node that defines it. **And the paint side is done with it.** A pane is its own `Host`: the fold reaches one at a time and hands each the rectangle layout gave it, so the rectangle a pane is painted at and the rectangle it is clicked at are the same rectangle rather than two that agree. The body's leaf keeps only what belongs to no pane — the pass every pane shares and the separators between them. `render_content` is three named phases over three carriers (`FrameFacts`, `Stores`, `PaneAreas`), which is what let a trait method carrying a target and a rectangle call the middle one; and the painter moved off the `Editor` onto a frame-scoped `BodyPainter`, taking `pending_body_state` and `pending_body_output` with it. S5 is complete. |
 
 ### 5.1 M0 — the seam (a genuine prototype, not just plumbing)
 
@@ -1407,7 +1411,7 @@ plus the §4.7 rebuild benchmark. No wave is scheduled until this exit holds.
 | **M3** | Menu bar, dropdowns, submenus | nested layers, hover auto-switch, mnemonics | `chrome/menu.rs`, the `view/ui/menu.rs` dispatch half, the menu close-guard box, the hover auto-switch machine |
 | **M4** | Info/hover/signature popups, theme inspector | transient dismissal via observers, scroll, text selection | `chrome/popups.rs`, `chrome/theme_info.rs`, `view/popup_mouse.rs` remnants, the transient-dismiss pre-band stage (the LSP hover *state machine* stays behind the leaf) |
 | **M5** | File browser, prompt / command palette | `FocusScope`, text input, results list, preview | `chrome/prompt.rs`, `chrome/file_browser.rs`, `view/prompt_input.rs`, the overlay toolbar ring, the click scrim, the position-blind wheel box, the manual-scroll latch |
-| **M6** | Plugin panels: dock + floating | `WidgetSpec` → `Node` translation, element state replacing `WidgetInstanceState`, **plugin API change** | `widgets/kinds/*` dispatch, `widget_runtime.rs`, `WidgetInstanceState`, `WidgetMutation` fast path |
+| **M6** | Plugin panels: dock + floating | `WidgetSpec` → `Node` translation, element state replacing `WidgetInstanceState`. **No plugin API change** — `WidgetSpec` is frozen, and the wave is entirely a backend swap. | `widgets/kinds/*` dispatch, `widget_runtime.rs`, `WidgetInstanceState`, `WidgetMutation` fast path |
 | **M7** | Modals: workspace trust, keybinding editor, calibration wizard | `Modality::Exclusive` | `chrome/modals.rs`, `capture_mouse`, `blocks_terminal_input`, the cursor/hover suppression lists, the bespoke `handle_*_mouse` |
 | **M8** | Settings (+ keybinding editor form) | the largest interior; rendering already on `WidgetSpec` | `view/settings/*` control layer, `view/controls/*`, `widget_map.rs`, the dual state store, the bespoke settings `input.rs` |
 | **M9** | Frame: splits, tabs, scrollbars, dock column, explorer pane | the frame itself; all else nests inside | `chrome/splits.rs`, `chrome/base.rs`, `chrome/mod.rs` (registry, `layer_rank`, `chrome_tree`), `mouse_input.rs` dispatch engines, `PointerGrab`, the chrome half of `render.rs`, `KeyContext` |
@@ -1485,8 +1489,10 @@ The e2e suite (~315 files) is the primary mechanism, used as-is:
    them rather than discovering them mid-wave.
 2. **Cell-identical output is a hard constraint**, and the biggest single cost
    per wave.
-3. **M6 changes plugin-visible behavior** (state survival) and breaks the API
-   (required keys). It needs a release cycle of its own.
+3. **M6 changes plugin-visible behavior** (state survival) but does *not*
+   break the API. The "required keys" half of this risk was checked and
+   withdrawn — see §4.6 — so `WidgetSpec` is frozen and the wave needs no
+   release cycle of its own.
 4. **M8 (Settings) is optional as a stopping point.** It is the largest interior
    and the least coupled to dispatch; stopping after M7 with Settings still on
    the current (already-half-unified) path is a supported end state.
@@ -1849,18 +1855,47 @@ list.
    by writing the hover target — to the legacy walk's field, which the tree's
    answer now shadows.
 
-   **The order, therefore:**
-   1. A leaf host id space (`HostRegion` is a small fixed enum; a leaf's id is
-      its `LeafId`, tagged) and a `HostTarget::{Region, Leaf}` for the fold's
-      dispatch, so its "a host id with no region" assertion still holds.
-   2. `split_grid(node) -> Node`, with a parity test against
-      `get_leaves_with_rects` and `get_separators_with_ids`.
-   3. The orchestration split, and the swap — both in one change, because a
-      description of the grid that nothing paints from is exactly the second
-      derivation this migration exists to remove.
-   4. Only then the dividers become gestures with pointer capture (retiring
-      `PointerGrab::SplitSeparator`), and the tab strips and scrollbars come
-      out of the leaf one at a time — the latter gated on item 8.
+   **And the paint half has landed, so item 7 is closed.** A pane is its own
+   `Host`. The fold reaches one at a time and hands each the rectangle layout
+   gave it — the same rectangle the pointer half already routes by, which is
+   what makes them one answer rather than two that agree. What is left to the
+   body's own leaf is what belongs to no pane: the pass every pane shares, and
+   the separators between them, which are the gaps.
+
+   The orchestration split this entry called "the real work rather than the
+   description" went in three steps, each landing on its own:
+
+   - **The three phases named.** `prepare_content` returns the `ContentPass`
+     every pane shares (the expanded visible list, the active split, "are there
+     several"), `paint_leaf` is one pane's, and `paint_separators` is what
+     belongs to neither. `render_content` is those three in order.
+   - **Carriers instead of forty parameters.** `paint_leaf` came out of the
+     loop with its locals as its signature, which was deliberate — the body
+     moved without an edit inside it — and unusable from a trait method that
+     carries a target and a rectangle. `FrameFacts` is what every pane reads
+     and none of them writes (`Copy`, because `RenderStyle` is); `Stores` is
+     what a pane writes through; `PaneAreas` is the sink. A **sink** rather
+     than a return value is the shape the flip needs: the panes are painted one
+     call at a time, so there is nothing for one of them to return this in.
+   - **The flip.** `pane_inert` becomes a stack — a pane is two things over one
+     rectangle, the painter's cells and the geometry that answers for them —
+     with `host(pane_host_id(leaf))` under the interior, because the interior
+     paints nothing.
+
+   Two things moved with it. The painter is **frame-scoped now**: `paint_host`
+   carries a target and a rectangle and nothing else, so whatever a painter
+   needs beyond those two travelled as fields on the `Editor`, and the flip
+   needed two more. `BodyPainter` is built by `render`, folded with, and taken
+   from; `pending_body_state` and `pending_body_output` went with it, and
+   `BodyOutput` is the split renderer's own sink rather than a second list of
+   the same rectangles. And `record_scrollbar_theme_runs` runs **after** the
+   fold, because `apply_theme_runs` patches cells the panes are still
+   appending — it needs every pane painted, which is what "after the fold"
+   means now that a pane is its own host.
+
+   What remains of this entry is not the grid: the dividers' drag is still
+   `PointerGrab::SplitSeparator` and retires with the pointer-capture wave, and
+   the scrollbars stay behind a `Host` pending item 8.
 8. **Scrollbar markers** (blocks M9). `Draw::Scrollbar` carries only
    `{offset, content, window}`; the plugin overview-ruler marker API has no
    expression. Extend the library's scrollbar, keep scrollbars behind the
