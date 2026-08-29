@@ -144,9 +144,6 @@ impl Editor {
         // popup, move focus, toggle a mode), so advance the coarse UI
         // generation up front. Bumping on ENTRY (not exit) still lets the
         // chrome-tree reads *within* this keystroke share one rebuild — the
-        // memo caches under the new generation on first use, and a mid-
-        // keystroke surface change is caught by the memo's overlay-stack
-        // equality check, not by this bump.
 
         tracing::trace!(
             "Editor.handle_key: code={:?}, modifiers={:?}",

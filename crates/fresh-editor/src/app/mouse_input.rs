@@ -89,23 +89,11 @@ fn lines_to_deliver(
 impl Editor {
     /// Handle a mouse event.
     /// Returns true if a re-render is needed.
-    ///
-    /// Memo contract: unlike keys, mouse events bump the UI generation on
-    /// EXIT, and only when the event changed something (`needs_render`). A
-    /// quiet mouse-motion stream — the highest-frequency input the editor
-    /// sees — then reuses one chrome tree across MANY events, while any
-    /// event that mutates state (click opens a menu, drag moves a
-    /// separator) invalidates for the next one. This gate is a coarse
-    /// epoch, not the correctness story: `chrome_tree` additionally
-    /// validates each hit against a fresh `overlay_stack` build, and its
-    /// debug oracle cross-checks every hit against a full rebuild.
     pub fn handle_mouse(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
     ) -> AnyhowResult<bool> {
-        let result = self.handle_mouse_impl(mouse_event);
-        if matches!(result, Ok(true)) {}
-        result
+        self.handle_mouse_impl(mouse_event)
     }
 
     fn handle_mouse_impl(

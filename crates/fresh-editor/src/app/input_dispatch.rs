@@ -157,10 +157,6 @@ impl Editor {
 
     /// Process deferred actions collected during input handling.
     pub fn process_deferred_actions(&mut self, ctx: InputContext) {
-        // Deferred actions mutate UI state outside the handle_key/handle_action
-        // funnels (they run from the event loop after a handler returns), so
-        // spoil the per-generation UI memos here too.
-
         // Set status message if provided
         if let Some(msg) = ctx.status_message {
             self.set_status_message(msg);
