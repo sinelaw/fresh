@@ -25,6 +25,7 @@ use fresh_ui::{
     MouseButton, Node, PointerMode, Sizing,
 };
 
+use crate::app::types::HoverTarget;
 use crate::model::event::{ContainerId, LeafId, SplitDirection};
 use crate::view::split::{split_rect_ext, SplitNode};
 
@@ -363,6 +364,7 @@ mod tests {
             root: leaf(0),
             maximized: None,
             chrome: [(host, with_tabs)].into_iter().collect(),
+            controls: Default::default(),
             groups: [(host, group.clone())].into_iter().collect(),
         };
         let (w, h) = (80u16, 24u16);
@@ -411,6 +413,7 @@ mod tests {
                     root: root.clone(),
                     maximized: None,
                     chrome: Default::default(),
+                    controls: Default::default(),
                     groups: Default::default(),
                 };
                 let want: Vec<(LeafId, Rect)> = root
@@ -435,6 +438,7 @@ mod tests {
             root,
             maximized: Some(LeafId(SplitId(1))),
             chrome: Default::default(),
+            controls: Default::default(),
             groups: Default::default(),
         };
         assert_eq!(panes_folded(&s, at), vec![(LeafId(SplitId(1)), at)]);
@@ -468,6 +472,7 @@ mod tests {
             root: leaf(0),
             maximized: None,
             chrome: [(host_leaf, chrome)].into_iter().collect(),
+            controls: Default::default(),
             groups: [(host_leaf, group)].into_iter().collect(),
         };
 
@@ -480,6 +485,72 @@ mod tests {
                 .map(|(id, _, r)| (id, r)),
         );
         assert_eq!(panes_folded(&s, at), want);
+    }
+
+    /// **The two strip buttons are where the painter draws their glyphs.**
+    ///
+    /// The cluster is `[gap] > [□] [×] [trail]` at the right end of the strip,
+    /// and the painter walks it with a running `cx`. The description walks the
+    /// same shape as a row of one-cell nodes, so this is the parity claim that
+    /// replaces `close_split_areas` and `maximize_split_areas`: those were the
+    /// painter's `cx` recorded as rectangles, and a press was a comparison
+    /// against them.
+    #[test]
+    fn the_strip_buttons_land_where_the_painter_draws_them() {
+        use crate::view::ui::split_rendering::layout::split_layout;
+        use crate::view::ui::tabs::split_control_reserve;
+        for (maximize, close) in [(true, true), (true, false), (false, true), (false, false)] {
+            let controls = PaneControls { maximize, close };
+            assert_eq!(
+                controls.reserve(),
+                split_control_reserve(maximize, close),
+                "the description reserves what the painter reserves"
+            );
+            if controls.reserve() == 0 {
+                continue;
+            }
+            let chrome = PaneChrome {
+                tabs: true,
+                vscroll: true,
+                hscroll: false,
+            };
+            let pane = LeafId(SplitId(0));
+            for at in [Rect::new(0, 0, 80, 24), Rect::new(5, 2, 40, 12)] {
+                let s = Splits {
+                    root: leaf(0),
+                    maximized: None,
+                    chrome: [(pane, chrome)].into_iter().collect(),
+                    controls,
+                    groups: Default::default(),
+                };
+                let mut ui: Ui<UiMsg> = Ui::new();
+                ui.frame(overlay(&s), Size::new(at.width, at.height));
+
+                // The painter's own arithmetic, from `render_split_tab_bar`.
+                let strip = split_layout(pane, at, chrome).tabs_rect;
+                let cluster_x = strip.x + strip.width.saturating_sub(controls.reserve());
+                // It skips the gap, then the reserved `>` column.
+                let mut cx = cluster_x + 2;
+                let mut want: Vec<(Key, u16)> = Vec::new();
+                if maximize {
+                    want.push((maximize_key(pane), cx));
+                    cx += 1;
+                }
+                if close {
+                    want.push((close_key(pane), cx));
+                }
+
+                for (key, x) in want {
+                    let e = ui.find_by_key(&key).expect("the button");
+                    let r = ui.rect_of(e);
+                    assert_eq!(
+                        (at.x + r.x.max(0) as u16, at.y + r.y.max(0) as u16, r.w, r.h),
+                        (x, strip.y, 1, 1),
+                        "{key:?} at {at:?}, maximize={maximize} close={close}"
+                    );
+                }
+            }
+        }
     }
 
     /// **A pane's host id can never be mistaken for a region's.**
@@ -537,6 +608,7 @@ mod tests {
             ]
             .into_iter()
             .collect(),
+            controls: Default::default(),
             groups: Default::default(),
         };
         let mut ui: Ui<UiMsg> = Ui::new();
@@ -598,6 +670,7 @@ mod tests {
             chrome: [(LeafId(SplitId(0)), PaneChrome::default())]
                 .into_iter()
                 .collect(),
+            controls: Default::default(),
             groups: Default::default(),
         };
         let mut ui: Ui<UiMsg> = Ui::new();
@@ -797,6 +870,35 @@ mod tests {
     }
 }
 
+/// Which of the two buttons the strips carry, this frame.
+///
+/// **Frame-wide, not per-pane**, because that is how the painter decides them:
+/// `show_maximize = has_multiple_splits || is_maximized` and `show_close =
+/// has_multiple_splits && !is_maximized`, neither of which mentions a
+/// particular pane. Every strip in a frame therefore reserves the same number
+/// of columns for them — which is the property that lets the cluster be a
+/// fixed-width row rather than something measured.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PaneControls {
+    pub maximize: bool,
+    pub close: bool,
+}
+
+impl PaneControls {
+    /// The columns the cluster occupies: `[gap][>][□?][×?][trail]`.
+    ///
+    /// The `>` overflow slot is reserved whether or not the tabs overflow, so
+    /// the cluster never shifts as they scroll — which is why this does not
+    /// depend on anything the tab renderer measures. It is
+    /// `tabs::split_control_reserve`, and the parity test says so.
+    pub fn reserve(self) -> u16 {
+        match self.maximize || self.close {
+            false => 0,
+            true => 1 + 1 + self.maximize as u16 + self.close as u16 + 1,
+        }
+    }
+}
+
 /// What the shell needs to state about the grid.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Splits {
@@ -807,6 +909,8 @@ pub struct Splits {
     /// painter that fills the `Host` leaf under it — so a pane's strip cannot
     /// be a row tall in one and absent in the other.
     pub chrome: std::collections::HashMap<LeafId, PaneChrome>,
+    /// Which buttons this frame's strips carry. See [`PaneControls`].
+    pub controls: PaneControls,
     /// The buffer group each pane is showing, if any, by the pane it is shown
     /// in. A group's layout lives in a side map on the window rather than in
     /// the split tree, and is dispatched at render time into the pane's
@@ -984,10 +1088,53 @@ fn live_interior(id: LeafId, c: PaneChrome, s: &Rc<Splits>) -> Node<UiMsg> {
         c,
         PaneSlots {
             tabs: tab_strip(id),
+            controls: live_controls(id, s.controls),
             content,
             vscroll: scrollbar(id, Axis::Vertical),
             hscroll: scrollbar(id, Axis::Horizontal),
         },
+    )
+}
+
+/// The control cluster with its two buttons answering for themselves.
+///
+/// Each button is a node that knows its pane, so the press carries no
+/// coordinates at all — `handle_click_split_controls` opened by comparing the
+/// cell against every pane's two recorded rectangles to recover exactly this.
+/// The hover is the buttons' own too: `on_enter` / `on_leave` rather than a
+/// third scan of the same lists.
+fn live_controls(id: LeafId, c: PaneControls) -> Node<UiMsg> {
+    let button = |n: Node<UiMsg>, target: HoverTarget, fact: UiFact| {
+        let pressed = fact.clone();
+        gesture(n)
+            .on(
+                GestureKind::Press,
+                Rc::new(move |e: &Event| {
+                    if e.button != MouseButton::Left {
+                        return None;
+                    }
+                    e.stop();
+                    Some(UiMsg::Ui(pressed.clone()))
+                }),
+            )
+            .on_enter(Rc::new(move |_: &Event| {
+                Some(UiMsg::Ui(UiFact::Hover(Some(target.clone()))))
+            }))
+            .on_leave(Rc::new(|_: &Event| Some(UiMsg::Ui(UiFact::Hover(None)))))
+    };
+    controls(
+        id,
+        c,
+        button(
+            row(),
+            HoverTarget::MaximizeSplitButton(id),
+            UiFact::PaneMaximize(id),
+        ),
+        button(
+            row(),
+            HoverTarget::CloseSplitButton(id),
+            UiFact::PaneClose(id),
+        ),
     )
 }
 
@@ -1029,6 +1176,42 @@ fn content_surface(id: LeafId) -> Node<UiMsg> {
                 Some(UiMsg::Ui(pane_wheel(id, x, y, e.delta, e.axis)))
             }),
         )
+}
+
+/// The right-hand control cluster of a pane's strip: `[gap] > [□] [×] [trail]`.
+///
+/// **Message-agnostic, like the rest of the interior.** The cells are the tab
+/// renderer's; what the nodes carry is where each button is and which pane it
+/// belongs to. `close_split_areas` and `maximize_split_areas` were those two
+/// facts recorded as rectangles and compared against a cell.
+/// The two buttons are slots, on the same terms as [`PaneSlots`]: the model
+/// asks for the shape with bare `row()`s to get the rectangles, and the shell
+/// puts gestures in. The keys are applied here either way.
+pub fn controls<M: 'static>(
+    id: LeafId,
+    c: PaneControls,
+    maximize: Node<M>,
+    close: Node<M>,
+) -> Node<M> {
+    if c.reserve() == 0 {
+        return row().w(Sizing::Cells(0));
+    }
+    let one = Sizing::Cells(1);
+    let mut cells: Vec<Node<M>> = vec![
+        // The gap, then the `>` overflow slot — reserved whether or not the
+        // tabs overflow, so the cluster does not shift as they scroll.
+        row().w(one),
+        row().w(one),
+    ];
+    if c.maximize {
+        cells.push(maximize.key(maximize_key(id)).w(one));
+    }
+    if c.close {
+        cells.push(close.key(close_key(id)).w(one));
+    }
+    // The trailing blank the painter leaves.
+    cells.push(row().w(one));
+    row().children(cells)
 }
 
 /// One of a pane's scrollbars.
@@ -1211,6 +1394,14 @@ pub fn tab_menu_guard(frame: Node<UiMsg>) -> Node<UiMsg> {
 pub fn tabs_key(id: LeafId) -> Key {
     Key::Pair("pane_tabs".into(), id.0 .0 as u64)
 }
+/// The `□` / `⧉` button at the right end of a pane's strip.
+pub fn maximize_key(id: LeafId) -> Key {
+    Key::Pair("pane_maximize".into(), id.0 .0 as u64)
+}
+/// The `×` beside it.
+pub fn close_key(id: LeafId) -> Key {
+    Key::Pair("pane_close".into(), id.0 .0 as u64)
+}
 pub fn content_key(id: LeafId) -> Key {
     Key::Pair("pane_content".into(), id.0 .0 as u64)
 }
@@ -1288,7 +1479,17 @@ impl PaneChrome {
 pub fn pane_interior<M: 'static>(id: LeafId, c: PaneChrome, s: PaneSlots<M>) -> Node<M> {
     let cells = |on: bool| Sizing::Cells(on as u16);
     col().children([
-        s.tabs.key(tabs_key(id)).h(cells(c.tabs)),
+        // The strip is the tabs and, at its right end, the control cluster.
+        // The tabs take what is left, which is the `tabs_rect.width - reserve`
+        // the tab renderer is given.
+        // The strip is the tabs and, at its right end, the control cluster.
+        // The key is the row's, because the row is the strip: the tabs take
+        // what the cluster leaves, which is the `tabs_rect.width - reserve`
+        // the tab renderer is given.
+        row()
+            .key(tabs_key(id))
+            .h(cells(c.tabs))
+            .children([s.tabs.flex(1), s.controls]),
         row().flex(1).children([
             s.content.key(content_key(id)).flex(1),
             s.vscroll.key(vscroll_key(id)).w(cells(c.vscroll)),
@@ -1309,6 +1510,9 @@ pub fn pane_interior<M: 'static>(id: LeafId, c: PaneChrome, s: PaneSlots<M>) -> 
 /// either way, so a caller cannot forget one.
 pub struct PaneSlots<M> {
     pub tabs: Node<M>,
+    /// The right-hand control cluster, *inside* the strip. Its children carry
+    /// the widths; this slot is whatever they come to.
+    pub controls: Node<M>,
     pub content: Node<M>,
     pub vscroll: Node<M>,
     pub hscroll: Node<M>,
@@ -1318,6 +1522,7 @@ impl<M: 'static> Default for PaneSlots<M> {
     fn default() -> Self {
         Self {
             tabs: row(),
+            controls: row(),
             content: row(),
             vscroll: row(),
             hscroll: row(),

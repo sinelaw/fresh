@@ -1,19 +1,389 @@
 # Migrating the Fresh editor UI onto `fresh-ui`
 
-> _AI-generated. **Current-state survey is IMPLEMENTED; the design and plan are
-> PLANNED.** This is the editor-side companion to the two library documents:
+> _AI-generated. **This document opens with what is left.** Sections I–IV are
+> the live plan: where the integration actually stands, everything still to do
+> and how each piece lands in the library's idiom, the rules that keep it
+> there, and what is already done. Everything from `## 0. Situation` onward is
+> the **appendix** — the original current-state survey, target design and wave
+> plan, kept for their reasoning and their record, and kept at their original
+> numbering because code comments cite it (`§4.4`, `§4.6`, `§6.2 item 7`,
+> `S1`–`S5`, `M0`–`M9`). The editor-side companion to
 > [`widget-library-design.md`](widget-library-design.md) (the architecture
 > authority for `fresh-ui`) and
-> [`widget-library-implementation-plan.md`](widget-library-implementation-plan.md)
-> (which builds the library in Part 1 and sketches the migration as Part 2,
-> M0–M9). Those docs describe the target and the waves in the abstract. This one
-> grounds them in the editor as it exists today — what each surface actually is,
-> where its state and geometry live, how input reaches it — and turns the
-> abstract waves into concrete, file-level moves. Where this doc and the two
-> library docs disagree about the target, they win; where they disagree about
-> the current editor, the source wins._
+> [`widget-library-implementation-plan.md`](widget-library-implementation-plan.md).
+> Where this doc and those disagree about the target, they win; where they
+> disagree about the current editor, the source wins._
 
 ---
+
+## I. Where the integration actually stands
+
+**We have adopted the library's structural half and almost none of its
+retained half.** That is worth stating plainly, because it is not visible from
+the surface-by-surface progress and it is the reason most of what is left is
+hard.
+
+Counted in `view/shell/` and `app/shell_host.rs`:
+
+| Adopted | Not adopted |
+|---|---|
+| `Modality` (18), `Dismiss` (27), `Scrim` (8) — layers, exclusivity, dismissal | `Component` — **0** surfaces own state |
+| `layout_reader` (13), `resolve` (8) — app logic keyed on extent | `.shared()` / `shared_rc` — **0** hoisted subtrees |
+| `viewport` (3), `widgets::*` (9), `host_leaf` (5) | `provide` / `Ambient` — **0** values flowing down |
+| `on_capture` (3) — capture-phase observers | `Behavior` — **0** (`Tasks`, `Ticker`, `Cache`, `Persisted`) |
+| The display list, `rect_of` read-back, one geometry | `focus_scope` / `focus_within` — **0**; `focusable` twice |
+
+**The shape that follows from that.** `frame_tree(shell.clone())` is called
+once per frame with a `Frame` value computed fresh from `Editor`. The
+description is a pure function of editor state, rebuilt whole, every frame.
+Every closure in it is new, so the reconciler's `Rc::ptr_eq` short-circuit
+never fires; every element is re-reconciled on every PTY tick. §4.7 predicted
+this exactly — "that is the *opposite* of the library's cost model" — and
+committed M0 to writing down the practice rules that would prevent it (which
+subtrees are `Shared`, which state moves into components) **before M1**. Those
+rules were never written. This is the one commitment in the plan that was
+skipped rather than decided.
+
+**It was the right trade to make, and it is the wrong one to keep.** Rebuilding
+from `Editor` is what allowed a surface to migrate in one change without moving
+its state first: the description could be derived from where the state already
+was. That is why nine surfaces landed. But the bill is now due, and it is
+itemised as the remaining work:
+
+- **The keyboard (A below) is hard because there is no focus tree.** Keys
+  cannot route by focus when two nodes in the whole shell are focusable.
+- **The `shell_*` / `pending_*` fields on `Editor` exist because there are no
+  ambients.** `pending_pane_chrome`, `shell_hover`, `shell_hover_at`,
+  `shell_menu_open_before`, `shell_frame_status_bar`, `shell_pointer_event` are
+  six values threaded around the tree because nothing can be threaded *through*
+  it.
+- **`WidgetInstanceState` cannot become element state until elements own
+  state**, which means components — so C below is gated on the same gap.
+
+So there is a **zeroth item**, ahead of the rest: adopt the retained half.
+It is listed first below because two of the four groups after it depend on it.
+
+---
+
+## II. What is left, and how each piece lands
+
+One line for what it is, one for how it lands in the library's idiom, one for
+what to avoid. "Avoid" is not style advice: each one names a shape that would
+pass review, ship, and reproduce the thing the migration is removing.
+
+### 0. Adopt the retained half (gates A and C)
+
+| # | What | How | Avoid |
+|---|---|---|---|
+| 0.1 | The whole description is rebuilt from `Editor` every frame. | Hoist the invariant subtrees into `.shared()` and hold the `Rc` — the menu bar's labels, the explorer's rows, a pane's interior — so the identity short-circuit fires. | Rebuilding "because it is cheap". It is cheap *per node*; the cost is re-reconciling every element on every terminal tick. |
+| 0.2 | Six `shell_*` / `pending_*` fields carry values around the tree. | `provide` them as `Ambient`s: the theme, the pane-chrome map, the hover target. Dependents are dirtied, not the root. | Adding a seventh. Each one is a value the tree could have carried, parked on the editor because carrying it needed a primitive we had not adopted. |
+| 0.3 | No surface owns its own state. | Surfaces whose state is *theirs* — a list's scroll, a tree's expansion, a field's cursor — become `Component`s that own it. | Moving editor-model state into components. The rule is §4.3's: state the editor acts on stays on the editor; state that exists only because something is on screen belongs to the element. |
+| 0.4 | §4.7's practice rules were never written. | Write them, from the benchmark that already exists (a whole frame: 122µs retained, 163µs cold). | Skipping them again. They are the difference between a retained tree and an immediate-mode one with extra steps. |
+| 0.5 | **One retained tree, N windows, and no window ever named in it.** Turns 0.3 from a refactor into a correctness change; see below. | One tree, two scopes: the window's half under a single `Key::Pair("window", id)`, the editor-global surfaces (dock, modals, trust, inspector) outside it. | A `Ui` per window. It looks like the encapsulated answer and it breaks the dock, which is editor-global by design. |
+
+#### 0.5 in full: the tree is shared across windows, and the windows are not
+
+The editor is N independent workspaces — `Editor.windows`, one active — each
+owning its own splits, buffers, explorer, dock, chrome layout and mouse state.
+The retained tree is **not** one of those things it owns: there is a single
+`Ui` on the `Editor`, reconciled each frame against whichever window is
+active, and no key anywhere in `view/shell/` mentions a window.
+
+**It has not bitten because nothing is retained yet.** `Component` count is
+zero, so the tree is geometry and gestures, both re-derived from the active
+window every frame. Switching windows re-derives everything, and there is no
+state to carry.
+
+**It bites the moment 0.3 lands.** A pane is keyed `Key::Pair("pane", id)`, and
+`SplitManager::next_split_id` starts at **1 in every window** — so window A's
+first pane and window B's first pane have the *same key*. Reconciliation is by
+`(type, key)` at a position; it will match them, and window B's list will
+inherit window A's scroll offset. That is not a corner case, it is the default
+layout of two windows.
+
+**And it contradicts a principle this codebase already states.** From
+`Window::authority`'s own doc: *"Owned outright by this window, never shared
+with another: it lives here (not in the `Clone` `WindowResources`) so the type
+system prevents one workspace's authority/trust/env from leaking into another
+(issue #2280)."* The shell tree is precisely the shared mutable state that
+sentence is about — it is simply newer than the sentence.
+
+**The obvious fix is wrong, and the orchestrator dock is what proves it.**
+
+A `Ui` per window (`Window.shell_ui`) looks right — cross-window matching
+becomes impossible rather than avoidable, and each window keeps its element
+state while inactive. It is the wrong shape, because **the frame is not wholly
+per-window.** The dock is carved out of the frame *before* the window's chrome
+column, its state is `Editor.dock` — the field's own doc says "the
+**editor-global** left dock panel" — it lists and switches between *all*
+windows, and it deliberately persists while the active window changes. Give
+each window its own tree and the dock is described into every one of them, its
+element state follows whichever window is active, and the sessions list loses
+its scroll on every workspace switch. That is the same bug this item exists to
+prevent, arrived at from the other side.
+
+So the scoping has to be **inside one tree**, and the frame is two scopes side
+by side:
+
+```text
+row([ dock            // editor-scoped: outside the window key
+    , window_area     // window-scoped: under Key::Pair("window", active)
+    ])
+```
+
+Editor-scoped, with the dock: the four modals, the workspace-trust prompt and
+the theme inspector — everything whose state is on the `Editor` and whose
+lifetime is not a window's.
+
+**And the objection to that shape is already answered by a library primitive
+we have not adopted.** A changed key at the window position *discards* the
+subtree, so switching windows throws away its element state. Two things make
+that fine:
+
+- **Existing serialized view state is model state and stays where it is** —
+  the explorer's state, the split view states, the buffer set all live on the
+  `Window` already. The dock demonstrates the same rule from the other side:
+  its scroll survives switches precisely because the dock is *not* in the
+  window subtree.
+- **New incidental view state uses `Persisted`.** The library has
+  `behavior::Persisted<T>`, a host `Store` installed with `Ui::set_store`, and
+  a `PersistenceScope` ambient; a value is read at construction and written
+  back at teardown, and — in the behavior's own words — *"keys are anchored to
+  the enclosing `PersistenceScope` rather than to tree position, so moving a
+  widget does not lose its value and **two widgets at the same position under
+  different documents do not share one**."* Windows are the documents. That
+  sentence is this problem, written down in the library before we met it.
+
+So the window subtree carries two things at its root: the key that bounds
+identity, and `PersistenceScope(window_id)` that bounds persistence. Editor
+adoption of the second today: `Persisted<…>` **0 uses**, `Ui::set_store`
+**never called**. This is §I again — we were about to invent a workaround for
+a gap the library does not have.
+
+**With one caveat, and it is load-bearing: the primitive is present but
+unproven.** `Persisted`, `Store` and `PERSISTENCE_SCOPE` are declared and
+exported, and the path is complete on paper — `attach` reads from the store,
+`teardown` writes back, `Services.store` carries it, `Ui::set_store` installs
+it. But there is **not one test and not one usage anywhere in the crate**, and
+the demo it would be proven in is single-document: tasks, a filter, a theme, a
+menu, a million-row list, no documents and no switching. What is demonstrated
+today is that the types compile. See F.5 — that gap closes *before* 0.3 and 0.5
+lean on it, not after.
+
+What this costs is discipline in one place instead of everywhere: one key, at
+one node, rather than `WindowId` threaded through every window-owned subtree
+where a single omission is a silent leak between workspaces.
+
+**The six editor-global shell fields sort themselves by the same question.**
+`shell_hover`, `shell_hover_at`, `shell_menu_open_before`,
+`shell_frame_status_bar` and `pending_pane_chrome` are per-window facts parked
+on the `Editor` and move to `Window`; `shell_pointer_event` is frame-scoped and
+dies with B.4. 0.2 turns most of them into ambients, and the scope they are
+provided at is the scope they belong to.
+
+### A. The keyboard engine
+
+| # | What | How | Avoid |
+|---|---|---|---|
+| A.1 | `base`, `menu`, `popups`, `prompt`, `context_menu` implement `on_layer_key`. **Free today.** | The surface declares `focusable()` / `focus_scope()`; its bindings ride down as `Shortcut { key, intent }` data and the library's Shortcuts → Intents → Actions chain resolves them. The menu bar already ships this shape (`MenuShortcut`) — copy it, do not reinvent it. | Resolving key → action *before* dispatch and handing the tree an `Action`. §6.2 decision 1 settled this the other way: bindings flow down as data, the tree resolves. |
+| A.2 | `dock` + `floating_modal` `on_layer_key` hand the key to the widget dispatcher. | Rides with C. | Migrating them early behind a shim that calls the old dispatcher from a `GestureKind::Key` handler. That is the walk with a new caller. |
+| A.3 | The four `modals` `on_layer_key` hand it to painter interiors. | Rides with B. | As A.2. |
+| A.4 | `layer_rank` — a central ordered list of surfaces. | Delete it. Precedence is *derived*: layer order, `Modality::Exclusive`, focus-scope containment — all already in the tree. | A `key_rank` property on layers, or a `Behavior` that walks them in order. Goal 2 forbids the central list by name; a renamed one is the same list. |
+| A.5 | `KeyContext` — the mode enum the walk keyed on, and the largest remnant by reference count. | "Which bindings apply" becomes *where focus is*: a scope provides its shortcut set as an ambient, resolution walks the focus path up. | Keeping `KeyContext` as an ambient. That is the enum with a new home; the point is that containment already answers it. |
+
+### B. The modal interiors
+
+| # | What | How | Avoid |
+|---|---|---|---|
+| B.1 | Settings (~20k lines) hit-tests rectangles its own painter recorded. | Composition: it is a form, and the library ships button, toggle, radio group, number, text field, list, tree and dropdown. Its state becomes component state; its scroll a `viewport`; its double-click `Event::clicks`. | Mounting it as one `Host` and calling the wave done. That keeps every duplicate it owns and adds a leaf that never shrinks. |
+| B.2 | The keybinding editor (~3.7k), with its own scrollbar and double-click semantics. | As B.1; its table is a `List`. | — |
+| B.3 | The calibration wizard. | As B.1, smaller. | — |
+| B.4 | `Editor::shell_pointer_event` — the event travels on the editor, not in the message. | Delete it. It exists because the interiors tell a drag from a move; the library routes drags by **pointer capture**, so they stop asking. | Generalising it into a typed side channel. "Routed, not transported" was a transitional apology, not a design. |
+| B.5 | `cursor_suppressed_by_late_overlay` — a hand-kept list of things that paint after the caret commits. | Delete it. Once the modals are in the display list, "did something cover the caret" is the list's order. | Adding an entry for a newly-migrated surface. Every entry is a surface that is not in the list yet. |
+| B.6 | `ChromeComponent` and `app/chrome/`. | Deleted outright once A.1–A.3 and B.1–B.3 land. | — |
+
+### C. The plugin panels
+
+| # | What | How | Avoid |
+|---|---|---|---|
+| C.1 | `WidgetSpec → Node` for dock / floating / anchored / the prompt's toolbar. | Map the 19 variants onto `widgets::*` — the library's own set. Goal 1: there is no privileged internal surface, so a plugin's `Toggle` is the `Toggle` the settings form uses. | A second widget runtime host-side: translating `WidgetSpec` into bespoke painters. That is `widgets/kinds/*` again with a tree under it. |
+| C.2 | `WidgetInstanceState` — a `HashMap<String, _>` keyed by the widget's key. | Element state. Goal 4 names this failure exactly: identity by tree position and key, "never by hashing an identifier stack into a side table". | Keeping the map "because keys are already unique". The map is the side table. |
+| C.3 | `HitArea` (byte ranges) and `LayoutBox` (a parent-linked, z-ordered arena). | Both deleted. `LayoutBox` is a second layout tree; goal 5 allows one. | Keeping `LayoutBox` as the web bridge's hit list. The web is a consumer of the display list (D.3), which already carries keyed rectangles. |
+| C.4 | `WidgetMutation`'s fast path — a channel that patches retained state in place. | An ordinary rebuild. Goal 3: a rebuild costs one allocation per node, so the incentive the fast path answers does not exist. | Keeping it as an optimisation without measuring it against 0.4's benchmark. |
+| C.5 | Buffer-mounted panels (`mountWidgetPanel`). | A subtree in the pane's content slot; the virtual buffer stays as a text mirror for search, copy and the `lines_changed` hooks. Removes the documented limitation that mounted panels drop overlays and popups. | Deciding it by which is less work. It is the only open *design* question left in the whole migration: it was deferred deliberately, to be taken with C.1's experience in hand, not settled by default. |
+| C.5b | **The dock is editor-global UI built from `Editor.windows`, not from the active window.** Its content is the orchestrator's `WidgetSpec`; its column, grip and blur observer are already nodes. | Its content lands like any other panel (C.1), mounted *outside* the window key per 0.5. Its own two remainders go with it: `chrome::Dock::on_layer_key` (A.2) and the scrollbar-reveal hover, which reads zones the plugin publishes from inside the panel. | Building its description from `active_window()`. `shell_frame` does that for nearly everything else, and the dock is the one surface for which it is wrong. |
+| C.6 | The floating panel's frame — scrim, border, title, `[×]`, placement. | An ordinary bordered node with a `Host` content leaf, like every other migrated frame. **Free today**, ahead of the rest of C. | — |
+
+### D. Paint arrangements still mixed
+
+| # | What | How | Avoid |
+|---|---|---|---|
+| D.1 | The status bar's *prompt* states — the last cells `Editor::render` paints outside the fold. **Free today.** | Into the fold's arm, exactly as the prompt row went (G2). | — |
+| D.2 | `render_panels_and_modals` paints after the caret commits. | Closes with B and C; nothing to design. | Another deferral field. B.5 is what one costs. |
+| D.3 | `suppress_chrome_cells` / `Paints::HostsOnly` — the web's parallel path. | The web is a **consumer of the display list**, not a mode that suppresses half the fold. Goal 7. End state: one list, two backends, and `Paints` is deleted. | A third `Paints` mode. Each one is a place the two frontends can disagree about what exists. |
+
+### E. Residual recorded geometry
+
+| # | What | How | Avoid |
+|---|---|---|---|
+| E.1 | `WindowLayoutCache` is 40 fields. | Apply one rule: **a record is legitimate iff it cannot be derived from layout.** Measured text, scroll state and the view-line mapping stay; rectangles go. | Re-recording a rectangle for speed. 0.4's benchmark is the answer, and every rectangle recorded twice is a chance to disagree. |
+| E.2 | `separator_areas` — derivable from the divider nodes now. | Kept only for the hover-highlight paint and the drag; both go with E.3. | — |
+| E.3 | `PointerGrab` — the drag state machine. | The library's pointer capture, which is already there and is what B.4 also needs. | Porting the state machine. It is the thing capture exists to replace. |
+
+### F. Library-side (both are `fresh-ui` changes, not editor ones)
+
+| # | What | How | Avoid |
+|---|---|---|---|
+| F.1 | `Draw::Scrollbar` carries `{offset, content, window}` and no marker channel, so the plugin overview-ruler API keeps scrollbars behind a `Host`. | **Two options, and the prior art prefers the second.** Extend the library's scrollbar; or keep the library out of it — VS Code's overview ruler is a canvas overlay that services inject zones into (`afterLineNumber` + a semantic colour), mapping line numbers to fractions of the total height with no knowledge of text layout at all. That is an editor-side `OverviewRuler` node over the scroll track, and it keeps line-height and buffer knowledge out of a library whose goal 6 is composition. Settle it before the wave that needs it. | Working around it in the editor *by accident* — which is what happens if nobody chooses, since the `Host` is already there. Appendix risk 1: a wave that needs a library change is a signal to stop and fix the library. |
+| F.2 | `Paint::Lit` — a colour with no theme name, for plugin RGB and markdown spans. | Plugins register named keys; `resolve_theme_key` grows a dynamic tier. Then provenance is total. | Leaving it. It is the one thing in the display list that is not traceable to a theme entry, and it is honest about that only because it is temporary. |
+| F.3 | **A subtree is either mounted — reconciled, laid out, painted, hit-tested — or gone, with its elements disposed and its `Tasks` cancelled.** There is no mounted-but-inactive state. `Sizing::Cells(0)` still reconciles and lays out; `PointerMode::Ignore` removes only hits. | Genuinely absent, and generic. The shape to copy is React 19.2's `<Activity mode="hidden">`, and its precision is the useful part: keep the element tree **and its state**, *unmount the effects* (subscriptions, timers), and defer updates to a low-priority queue. Flutter's `Offstage` is the cautionary version — it drops the child from layout and paint but keeps tickers running unless `TickerMode` is also disabled, which is the manual orchestration a primitive exists to remove. **Not needed for windows** — a switch is a user action, one cold rebuild is ~163µs, and `Persisted` covers the state — so raise it on its merits. | Reaching for it *for* the window case, or emulating it with a zero-sized subtree, which pays reconcile and layout to hide something. |
+| ~~**F.5**~~ **Done** ([#3108](https://github.com/sinelaw/fresh/pull/3108)). | **`Persisted` / `Store` / `PERSISTENCE_SCOPE` had zero tests and zero uses in the library**, and the demo under `tests/support/demo/` is single-document. 0.3 and 0.5 both rest on behaviour nobody has run. | A multi-document scenario in the demo — two documents, a switch, per-document incidental state that survives it — and unit tests for the four things that are currently assumptions: that `teardown` fires when a *key change* discards a subtree (not only on `Ui` drop); that it fires before the replacement's `attach`; that **deferred disposal** does not reorder those two; and that a `Persisted` under the wrong scope is detectable. | Adopting it on the strength of the doc comment. It is a good doc comment. |
+| ~~**F.4**~~ **Done** ([#3108](https://github.com/sinelaw/fresh/pull/3108)). | Nothing tied an **identity boundary** to a **persistence scope**. A subtree can be keyed without providing a `PersistenceScope`, or scoped without a key, and both mistakes are silent. | A single primitive that does both — `scope(id, child)` — so the invariant cannot be half-declared. Goal 2's spirit: derive it from structure rather than ask every author to remember two things that are always used together. | Documenting the pairing instead. 0.5 is the first place it matters and it will not be the last. |
+
+### G. Not a gap
+
+`HostRegion::Body`'s per-pane `Host` leaves. Buffer and terminal cells stay
+cells: that leaf never migrates, and S5 subdivided it rather than removing it.
+Listed so a reader working down this list does not try to close it.
+
+### Prior art, and where it changes the above
+
+A survey of Flutter, React, Compose, SwiftUI, VS Code, Zed, Emacs, IntelliJ,
+Unreal Slate, Unity, Godot and Dear ImGui against these twelve questions. What
+it changed, what it confirmed, and — because a survey that agrees with you is
+worth less than one that does not — what it got wrong about this codebase.
+
+**It changed two entries.**
+
+- **F.3 has a precise shape now**: React 19.2's `<Activity mode="hidden">` —
+  keep the tree *and its state*, **unmount the effects**, defer updates to a
+  low-priority queue. Flutter's `Offstage` is the cautionary version: it drops
+  the child from layout and paint but leaves tickers running unless
+  `TickerMode` is disabled too, which is exactly the manual orchestration a
+  primitive should remove.
+- **F.1 gained a better option.** VS Code's overview ruler is *architecturally
+  decoupled from text layout*: services inject zones (`afterLineNumber` plus a
+  semantic colour) into a canvas over the scroll track, and the ruler maps line
+  numbers to fractions of total height knowing nothing about the text engine.
+  An editor-side `OverviewRuler` node keeps line-height and buffer knowledge
+  out of the library, which is goal 6's argument. Extending `Draw::Scrollbar`
+  is now the *second* option, not the only one.
+
+**It confirmed four, which is worth recording because they were judgement
+calls.** Multi-document scoping as an editor-side convention over a
+lightweight generic scope node (0.5, and `scope()` is that node). Global chrome
+as editor-side, with an explicit warning against building a `Scaffold` or
+`Workspace` primitive — the dock stays ours (C.5b). Settings built from a
+declarative model application-side rather than by framework reflection (B.1).
+A logic-less serialized description for plugin UI, RFW-shaped (C.1).
+
+**And it was wrong about this codebase three times, each in the same
+direction** — recommending as a *new library primitive* something `fresh-ui`
+already has:
+
+- a "context-aware action dispatcher" resolving keys to intents — that is the
+  `focus/` module's Shortcuts → Intents → Actions chain, shipped. A.1 is
+  adoption, not construction.
+- an explicit pointer-capture API — shipped, and E.3 is adoption.
+- a "paint-phase theme context" so a colour change does not relayout —
+  `ThemeKey` is resolved at fold time, so it already cannot.
+
+That pattern is itself the finding, and it is §I restated from outside: the
+gaps a reader sees in this migration are mostly capabilities the library has
+and the editor has not adopted.
+
+**One suggestion worth keeping and not acting on yet.** Several engines make a
+document scope an *event* boundary as well as a state one, so an event in one
+document cannot bubble to the root and back down into another. Ours does not
+need it — only one window is mounted at a time — but if inactive windows ever
+become mounted (F.3), it becomes load-bearing on the same day.
+
+**On the evidence.** The Flutter, React and VS Code claims are checkable
+against primary sources; several game-engine and IntelliJ ones rest on
+secondary write-ups, and a few citations are blog posts. Treat the
+architecture as well-sourced and the performance characterisations as
+indicative.
+
+---
+
+## III. The rules that keep this in the idiom
+
+The library's README states seven goals. Each one forbids something this
+migration has already been tempted by at least once; that is what makes them
+useful as a review checklist rather than a preamble.
+
+1. **One library for everything on screen.** → A plugin's widget is the
+   editor's widget. *Forbids* C.1's second runtime.
+2. **Generic registration and propagation, no hand-specified exceptions.** →
+   Precedence is derived from structure. *Forbids* `layer_rank` (A.4), and any
+   successor to it.
+3. **A rebuild costs one allocation per node.** → There is no reason to mutate
+   retained state. *Forbids* `WidgetMutation`'s fast path (C.4) — and equally
+   forbids treating cheap rebuilds as licence to rebuild the root (0.1).
+4. **Identity is explicit** — tree position and an author-supplied key. →
+   *Forbids* `WidgetInstanceState`'s side table (C.2).
+5. **One source of geometry.** Layout computes; hit-testing, painting and tests
+   read. → *Forbids* `LayoutBox` (C.3) and every recorded rectangle in E.
+6. **Composition is the only extension mechanism.** → *Forbids* B.1's
+   "mount it as a `Host`" shortcut.
+7. **Backend independence.** The display list is the seam. → *Forbids*
+   `Paints::HostsOnly` (D.3).
+
+And one rule of this migration's own, learned the expensive way and worth
+keeping at the top: **the tree runs first, so anything that used to sit between
+it and the legacy walk now sits behind whatever the tree claims.** Three things
+broke on it — the right-click that clears the tab menus, the terminal's own
+mouse, and the smooth-scroll walk — and each was silent, because "it still
+compiles and mostly works" is what a routing change looks like from outside.
+
+**How we will know it is finished.** `app/chrome/` is gone. `KeyContext`,
+`PointerGrab`, `layer_rank`, `Paints` and `shell_pointer_event` are deleted.
+`WindowLayoutCache` holds only what paint alone can know. There is one display
+list with two consumers. No file contains a list whose order is precedence.
+And no UI state is reachable from two windows at once — the rule
+`Window::authority` already states, applied to the tree.
+
+---
+
+## IV. Already done
+
+Nine surfaces, the whole pointer walk, and the six gaps below. The stage and
+wave tables in the appendix (`S1`–`S5`, `M0`–`M9`) carry the detail.
+
+| Gap | What it was |
+|---|---|
+| **G2** | The prompt line took its rectangle from the tree and painted outside the fold — a third arrangement beside "native" and "`Host`". |
+| **G3** | A pane's split controls were two recorded rect lists (the painter's running `cx`). |
+| **G4** | Two `impl Window` methods still scanned `split_areas` for the pane under a cell. |
+| **G5** | `tab_drag` guessed the strip's row as `content_rect.y - 1`, "assuming 1 row for tabs" — wrong for every pane with no strip. |
+| **G6** | Two different things were named `editor_content_area`. |
+| **G1 (part)** | — still open; see A. |
+
+**Three things those closures turned up that no plan predicted**, kept here
+because each is a shape that will recur:
+
+- **A caret can ride a second channel too.** The prompt placed its own with
+  `frame.set_cursor_position`, and the deferred commit skipped whenever any
+  prompt was up so the buffer's could not override it. Two channels, resolved
+  by a guard. One channel resolves it by paint order.
+- **`gesture()` wraps its child.** Appending the control cluster to the tab
+  strip made a sibling of the row, and every child landed at the strip's
+  origin. Structure is not decoration: where a node sits decides what it means.
+- **"Which pane covers this cell" is not "what would a click hit".** The first
+  is containment, the second is `Ui::hit_test`, and they differ exactly where a
+  popup covers the cell. The tempting answer was the wrong one.
+
+---
+
+# Appendix — the original survey, target and wave plan
+
+> _Everything below is the document as it was written before the migration
+> started, plus the record of how each stage actually went. It is kept for its
+> reasoning — the current-state survey in §2 is still the best account of what
+> the editor was, and §4's target design is still the target — and it is kept
+> at its **original numbering**, because code comments cite it (`§4.4`, `§4.6`,
+> `§6.2 item 7`, `S1`–`S5`, `M0`–`M9`). Sections I–IV above supersede its
+> forward-looking parts._
 
 ## 0. Situation
 
@@ -1402,55 +1772,11 @@ buffer cells under `Draw::Host`, one caret-anchored popup anchored via
 `compute_content_layout`, one click-to-cursor through a `Gesture` handler —
 plus the §4.7 rebuild benchmark. No wave is scheduled until this exit holds.
 
-### 5.1b The remaining gaps, in order — and all of them before the plugin wave
+### 5.1b The remaining gaps — moved to the front
 
-**This section is read from the code, not from the plan above.** It is the
-list of places where two mechanisms still answer one question, ordered, with
-the plugin wave (M6) placed *after* every one of them. Nothing here waits on a
-plugin decision; M6 does not unblock any of it, and doing M6 first would mean
-adding a `WidgetSpec → Node` translator to a shell that still routes keys
-through a second engine and paints one region outside the display list.
-
-**What is already converged, so it is not on this list.** The pointer: one
-walk, the tree's, with `chrome_tree` / `ChromeBox` / `hit_stack` /
-`dispatch_pointer` / `compute_hover_target` all deleted and every chrome
-surface answering its own presses. Paint for the menu bar, search-options row,
-explorer, popups, modals-as-layers and the status bar's elements. Geometry for
-all of those, plus the split grid.
-
-**And what is not a duplicate, so it is not on this list either.** Three
-things in `WindowLayoutCache` are genuine records of a paint and should stay:
-`view_line_mappings` (click-to-byte projects through the view pipeline),
-`tab_layouts`' per-tab columns (text measured inside the strip), and the
-scrollbar thumb extents (a read of scroll state at paint time). A record of
-something only paint can know is not a second implementation of a layout.
-Likewise `Window::editor_content_area()` versus the cached rectangle: the
-first is a function of state *because* `apply_layout` runs before the frame
-that would record the second, which is the bug this migration is about — that
-pair needs a rename, not a merge.
-
-| # | Gap | Why it is a duplicate | What closing it needs |
-|---|---|---|---|
-| **G1** | **The keyboard is a second routing engine.** `ChromeComponent::{layers, on_layer_key}` over a ranked `overlay_stack()`. | The tree routes the pointer and the walk routes keys, so precedence is stated twice, in two vocabularies, and a surface that migrates its pointer keeps a rank entry. | The library already has all of it — `focusable`, `focus_scope`, `focus_within`, `GestureKind::Key`, `FocusGained`/`FocusLost` — and the shell uses none of it. Take the components whose interiors are already the tree's: `base`, `menu`, `popups`, `prompt`, `context_menu`. `dock` and `floating_modal` hand the key to the widget dispatcher and ride with M6; the four `modals` ride with G7. |
-| **G2** | **The prompt line takes its rectangle from the tree and paints outside the fold.** `region(HostRegion::PromptLine)` gives the rect; `render_prompt_line` writes the cells; `paint_host` no-ops the region. | A third paint arrangement beside "native" and "`Host`". Paint order stops being the display list's, and `Paints::HostsOnly` — the web path — cannot reach those cells at all. | Either paint it from the fold's `Host` arm, like the body, or describe it natively. The same question applies to the status bar's *prompt* states (`StatusBarRenderer::render_prompt`), whose element row is already native. |
-| **G3** | **A pane's split controls are recorded rectangles.** `close_split_areas` and `maximize_split_areas`. | The strip is a node and the tabs are measured inside it, but the two buttons drawn over that row are still a list of rects compared against a cell. | Make them nodes in `pane_interior`, over the strip — the z the two `LayoutBox`es carried. Both lists and `SplitControl` go with them. |
-| **G4** | **Two `impl Window` methods still scan `split_areas` for the pane under a cell.** `split_at_position` (which also takes the scrollbar column) and `get_terminal_content_area_at_position` (which also filters for a terminal). | `Editor::pane_content_at` is the one answer; these are two more, kept because `impl Window` cannot see `shell_ui`. | Move them to `impl Editor` beside `pane_content_at`, adding the scrollbar column via `vscroll_key(pane)`. Their callers are already on the editor. |
-| **G5** | **`tab_drag::compute_tab_drop_zone` guesses where a strip is.** `let tab_row = content_rect.y.saturating_sub(1);` — "assuming 1 row for tabs". | `PaneChrome::resolve` made "does this pane have a strip" explicit; the guess is wrong for a pane that has none, and re-derives a rectangle `tabs_key(pane)` already holds. | Read `tabs_key(pane)` and `pane_content_at`; the function becomes "which strip, else which content, else which edge". |
-| **G6** | **Two different things named `editor_content_area`.** | Not a duplicate — a name collision, documented by a hand-written note explaining the divergence. | Rename the cached one to say it is the last frame's, and delete the note. |
-| **G7** | **The modal interiors hit-test rectangles their own painters recorded.** Settings (~20k lines) and the keybinding editor (~3.7k). | The tree answers *which* surface an event belongs to and the event travels on the editor instead of in the message — "routed, not transported" (`Editor::shell_pointer_event`). Deliberate, documented, and still a second hit-testing mechanism. | The interiors themselves. Retires the side channel, the four `modals` rows of G1, and `ChromeComponent` outright. |
-
-**The order is by what each unblocks, not by size.** G2 through G6 are sweeps:
-mechanical, no design decision left in any of them, and each deletes a
-mechanism rather than adding one. G1 is a wave, and half of it is free today.
-G7 is the largest single body of work in the migration and the last thing
-holding `app/chrome/` open.
-
-**Where the plugin wave goes.** After G1–G6, and interleaved with G7 rather
-than before it: M6 unblocks the `dock` and `floating_modal` halves of G1, and
-G7 unblocks the `modals` half, so the two large remainders finish the keyboard
-between them. M6's own first step is the floating panel's *frame* — scrim,
-border, title, `[×]`, placement — which is a G2-shaped change (a surface whose
-cells bypass the fold) and can land with the sweeps.
+Section II at the top of this document is the live list, with how each piece
+lands in the library's idiom and what to avoid while landing it. Section IV
+records the six that closed. This heading is kept because commits cite it.
 
 ### 5.2 Waves (increasing risk)
 

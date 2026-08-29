@@ -14,7 +14,6 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 /// Text that both marks a buffer as "edited over a disconnected SSH session"
 /// and styles the prefix in the status bar. Kept as constants so `render_element`
@@ -718,10 +717,14 @@ pub struct StatusBarRenderer;
 impl StatusBarRenderer {
     /// Render the prompt/minibuffer
     pub fn render_prompt(
-        frame: &mut Frame,
+        buf: &mut ratatui::buffer::Buffer,
         area: Rect,
         prompt: &Prompt,
         theme: &crate::view::theme::Theme,
+        // Where the terminal caret wants to sit. An out-parameter because this
+        // is reached from the fold, which resolves the caret across every
+        // region rather than letting each one place it.
+        caret: &mut Option<(u16, u16)>,
     ) {
         let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
 
@@ -760,12 +763,13 @@ impl StatusBarRenderer {
         }
 
         Self::render_prompt_label_and_input(
-            frame,
+            buf,
             area,
             vec![Span::styled(prompt.message.clone(), base_style)],
             spans,
             base_style,
             str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]),
+            caret,
         );
     }
 
@@ -776,12 +780,13 @@ impl StatusBarRenderer {
     ///
     /// `cursor_cells` is the display width of the input up to the cursor.
     fn render_prompt_label_and_input(
-        frame: &mut Frame,
+        buf: &mut ratatui::buffer::Buffer,
         area: Rect,
         label_spans: Vec<Span<'static>>,
         input_spans: Vec<Span<'static>>,
         base_style: Style,
         cursor_cells: usize,
+        caret: &mut Option<(u16, u16)>,
     ) {
         // Label, clipped to the area. Use display width (not byte length)
         // for proper handling of double-width CJK and zero-width
@@ -794,9 +799,10 @@ impl StatusBarRenderer {
             width: label_cols,
             height: area.height,
         };
-        frame.render_widget(
+        ratatui::widgets::Widget::render(
             Paragraph::new(Line::from(label_spans)).style(base_style),
             label_area,
+            buf,
         );
 
         // Input, horizontally scrolled so the cursor never leaves the
@@ -809,16 +815,17 @@ impl StatusBarRenderer {
             height: area.height,
         };
         let scroll = input_hscroll(cursor_cells, input_area.width as usize);
-        frame.render_widget(
+        ratatui::widgets::Widget::render(
             Paragraph::new(Line::from(input_spans))
                 .style(base_style)
                 .scroll((0, scroll as u16)),
             input_area,
+            buf,
         );
 
         if input_area.width > 0 {
             // `input_hscroll` guarantees cursor_cells - scroll < width.
-            frame.set_cursor_position((input_area.x + (cursor_cells - scroll) as u16, area.y));
+            *caret = Some((input_area.x + (cursor_cells - scroll) as u16, area.y));
         }
     }
 
@@ -826,11 +833,12 @@ impl StatusBarRenderer {
     /// Shows: "Open: /path/to/current/dir/filename" where the directory part is dimmed
     /// Long paths are truncated: "/private/[...]/project/" with [...] styled differently
     pub fn render_file_open_prompt(
-        frame: &mut Frame,
+        buf: &mut ratatui::buffer::Buffer,
         area: Rect,
         prompt: &Prompt,
         file_open_state: &crate::app::file_open::FileOpenState,
         theme: &crate::view::theme::Theme,
+        caret: &mut Option<(u16, u16)>,
     ) {
         let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
         let dir_style = Style::default()
@@ -906,12 +914,13 @@ impl StatusBarRenderer {
         // stays visible even when the typed name overflows the line.
         let input_spans = vec![Span::styled(prompt.input_str().to_string(), base_style)];
         Self::render_prompt_label_and_input(
-            frame,
+            buf,
             area,
             spans,
             input_spans,
             base_style,
             str_width(&prompt.input_str()[..prompt.cursor_byte().min(prompt.input_str().len())]),
+            caret,
         );
     }
 
@@ -2373,7 +2382,13 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, width, 1);
-                StatusBarRenderer::render_prompt(frame, area, &prompt, &theme);
+                StatusBarRenderer::render_prompt(
+                    frame.buffer_mut(),
+                    area,
+                    &prompt,
+                    &theme,
+                    &mut None,
+                );
             })
             .unwrap();
 
@@ -2401,7 +2416,13 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, width, 1);
-                StatusBarRenderer::render_prompt(frame, area, &prompt, &theme);
+                StatusBarRenderer::render_prompt(
+                    frame.buffer_mut(),
+                    area,
+                    &prompt,
+                    &theme,
+                    &mut None,
+                );
             })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
@@ -2421,7 +2442,13 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, width, 1);
-                StatusBarRenderer::render_prompt(frame, area, &prompt, &theme);
+                StatusBarRenderer::render_prompt(
+                    frame.buffer_mut(),
+                    area,
+                    &prompt,
+                    &theme,
+                    &mut None,
+                );
             })
             .unwrap();
         let cursor = terminal.backend_mut().get_cursor_position().unwrap();

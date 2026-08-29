@@ -25,20 +25,6 @@ use fresh_i18n::t;
 
 use super::Editor;
 
-/// Behavior owned by this component (moved from mouse_input.rs —
-/// the handlers its arms dispatch to).
-/// Which of a pane's two strip buttons a cell belongs to.
-///
-/// Both are recorded as `(pane, row, start_col, end_col)` by the tab-bar
-/// painter and both are read the same way; naming the answer is what lets the
-/// hover and the click share one lookup instead of writing the comparison out
-/// four times.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SplitControl {
-    Close,
-    Maximize,
-}
-
 impl Editor {
     /// Double-click on a split's content rect: the Splits component's
     /// `chrome:editor` arm (moved from the old post-walk scan).
@@ -680,40 +666,18 @@ impl Editor {
         })
     }
 
-    /// Whether one of a pane's split controls is under `(col, row)`.
-    ///
-    /// The controls are drawn *over* the tab row — two `LayoutBox`es said so
-    /// with z 70 over z 60 — so every reader of the strip asks this first.
-    fn split_control_at(&self, pane: LeafId, col: u16, row: u16) -> Option<SplitControl> {
-        let hit = |areas: &[(LeafId, u16, u16, u16)]| {
-            areas
-                .iter()
-                .any(|(split_id, btn_row, start_col, end_col)| {
-                    *split_id == pane && row == *btn_row && col >= *start_col && col < *end_col
-                })
-                .then_some(())
-        };
-        let layout = self.active_layout();
-        if hit(&layout.close_split_areas).is_some() {
-            return Some(SplitControl::Close);
-        }
-        hit(&layout.maximize_split_areas).map(|()| SplitControl::Maximize)
-    }
-
     /// What the pointer is on within a pane's tab strip.
     ///
-    /// The strip is a node; its interior is the tab renderer's layout, so this
-    /// is the hit test the two boxes ran, in the order their `z` gave them:
-    /// the split controls are drawn over the tab row, so they answer first.
+    /// The strip is a node; its interior is the tab renderer's layout, whose
+    /// per-tab columns come from measuring text and are therefore a genuine
+    /// record of the last paint. The two buttons at the right end used to be
+    /// answered here as well, ahead of the tabs, because they are drawn over
+    /// the same row — they are nodes now, and hover their own way.
+    ///
     /// A cell that is only the strip's ground — the bar behind the tabs, the
     /// scroll arrows, the "+" — names nothing, exactly as `chrome:tabs`
     /// declined those and let the point fall through.
     pub(crate) fn tab_strip_hover(&self, pane: LeafId, col: u16, row: u16) -> Option<HoverTarget> {
-        match self.split_control_at(pane, col, row) {
-            Some(SplitControl::Close) => return Some(HoverTarget::CloseSplitButton(pane)),
-            Some(SplitControl::Maximize) => return Some(HoverTarget::MaximizeSplitButton(pane)),
-            None => {}
-        }
         match self
             .active_layout()
             .tab_layouts
@@ -746,92 +710,94 @@ impl Editor {
             hit.map(|buffer_id| TabContextMenu::new(buffer_id, pane, col, row + 1));
     }
 
-    pub(crate) fn handle_click_split_controls(
-        &mut self,
-        pane: LeafId,
-        col: u16,
-        row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        let close_split_hit = self
-            .active_layout()
-            .close_split_areas
-            .iter()
-            .find(|(split_id, btn_row, start_col, end_col)| {
-                *split_id == pane && row == *btn_row && col >= *start_col && col < *end_col
-            })
-            .map(|(split_id, btn_row, start_col, _)| (*split_id, *btn_row, *start_col));
-        if let Some((split_id, btn_row, start_col)) = close_split_hit {
-            // Closing a split isn't undoable, so don't act on the raw click —
-            // pop a small confirmation just below the `×` button offering
-            // "Close split" / "Cancel". Dismiss any other native menu first so
-            // only one popup is visible.
-            self.active_window_mut().close_context_menus();
-            self.active_window_mut().close_split_menu = Some(
-                crate::app::types::CloseSplitMenu::new(split_id, start_col, btn_row + 1),
-            );
-            return Some(Ok(()));
-        }
+    /// The `×` on a pane's strip.
+    ///
+    /// Closing a split is not undoable, so the press offers "Close split" /
+    /// "Cancel" just below the button rather than acting — which needs the
+    /// button's own cell, and that is now the node's rectangle instead of the
+    /// `(row, start_col)` the painter recorded beside it.
+    pub(crate) fn close_split_button(&mut self, pane: LeafId) {
+        let Some(btn) = self.split_control_rect(&crate::view::shell::splits::close_key(pane))
+        else {
+            return;
+        };
+        // One popup at a time.
+        self.active_window_mut().close_context_menus();
+        self.active_window_mut().close_split_menu = Some(crate::app::types::CloseSplitMenu::new(
+            pane,
+            btn.x,
+            btn.y + 1,
+        ));
+    }
 
-        let maximize_target = self
-            .active_layout()
-            .maximize_split_areas
-            .iter()
-            .find(|(split_id, btn_row, start_col, end_col)| {
-                *split_id == pane && row == *btn_row && col >= *start_col && col < *end_col
-            })
-            .map(|(split_id, _, _, _)| *split_id);
-        if let Some(target) = maximize_target {
-            // Move focus to the clicked split before maximizing. Otherwise
-            // a click on a non-active split's button leaves the active
-            // split (now hidden by the maximize) silently capturing
-            // keystrokes. Skip when already maximized: the unmaximize
-            // click can only land on the maximized split, which is
-            // already the active one.
-            let already_maximized = self
+    /// The `□` / `⧉` beside it: maximize this pane, or restore it.
+    pub(crate) fn maximize_split_button(&mut self, pane: LeafId) {
+        // Move focus to the clicked split before maximizing. Otherwise
+        // a click on a non-active split's button leaves the active
+        // split (now hidden by the maximize) silently capturing
+        // keystrokes. Skip when already maximized: the unmaximize
+        // click can only land on the maximized split, which is
+        // already the active one.
+        let already_maximized = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr.is_maximized())
+            .unwrap_or(false);
+        if !already_maximized {
+            if let Some(buffer_id) = self
                 .windows
                 .get(&self.active_window)
                 .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr.is_maximized())
-                .unwrap_or(false);
-            if !already_maximized {
-                if let Some(buffer_id) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .buffer_for_split(target)
-                {
-                    self.focus_split(target, buffer_id);
-                }
-            }
-            match self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_manager_mut())
+                .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
-                .toggle_maximize_for(target)
+                .buffer_for_split(pane)
             {
-                Ok(maximized) => {
-                    let msg = if maximized {
-                        t!("split.maximized").to_string()
-                    } else {
-                        t!("split.restored").to_string()
-                    };
-                    self.set_status_message(msg);
-                }
-                Err(e) => self.set_status_message(e),
+                self.focus_split(pane, buffer_id);
             }
-            // Maximize/restore changed every pane's geometry: reflow through
-            // the single layout funnel, exactly as the keyboard/command
-            // `toggle_maximize_split` does. Without this the mouse path left
-            // every visible terminal at its pre-toggle PTY size and scroll-back
-            // wrap column.
-            self.relayout();
-            return Some(Ok(()));
         }
+        match self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .toggle_maximize_for(pane)
+        {
+            Ok(maximized) => {
+                let msg = if maximized {
+                    t!("split.maximized").to_string()
+                } else {
+                    t!("split.restored").to_string()
+                };
+                self.set_status_message(msg);
+            }
+            Err(e) => self.set_status_message(e),
+        }
+        // Maximize/restore changed every pane's geometry: reflow through
+        // the single layout funnel, exactly as the keyboard/command
+        // `toggle_maximize_split` does. Without this the mouse path left
+        // every visible terminal at its pre-toggle PTY size and scroll-back
+        // wrap column.
+        // Maximize/restore changed every pane's geometry: reflow through
+        // the single layout funnel, exactly as the keyboard/command
+        // `toggle_maximize_split` does. Without this the mouse path left
+        // every visible terminal at its pre-toggle PTY size and scroll-back
+        // wrap column.
+        self.relayout();
+    }
 
-        None
+    /// Where one of a pane's strip buttons is, read off the laid-out tree.
+    fn split_control_rect(&self, key: &fresh_ui::Key) -> Option<ratatui::layout::Rect> {
+        crate::view::shell::rect_of(
+            self.shell_ui.as_ref()?,
+            key,
+            ratatui::layout::Rect::new(
+                0,
+                0,
+                self.active_chrome().last_frame.width,
+                self.active_chrome().last_frame.height,
+            ),
+        )
     }
 
     pub(crate) fn handle_click_tab_bar(
