@@ -12,12 +12,12 @@ use crate::app::file_open::{
     format_modified, format_size, FileOpenSection, FileOpenState, SortMode,
 };
 use crate::primitives::display_width::str_width;
+use fresh_i18n::t;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
-use rust_i18n::t;
 
 /// Renderer for the file browser popup
 pub struct FileBrowserRenderer;

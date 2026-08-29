@@ -14,8 +14,8 @@ use crate::view::file_tree::FileTreeView;
 use crate::view::prompt::PromptType;
 use std::path::{Path, PathBuf};
 
+use fresh_i18n::t;
 use lsp_types::TextDocumentContentChangeEvent;
-use rust_i18n::t;
 
 use crate::model::event::{BufferId, EventLog};
 use crate::services::lsp::manager::LspSpawnResult;

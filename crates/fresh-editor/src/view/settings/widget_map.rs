@@ -417,7 +417,7 @@ const DIM_HINT: &str = "ui.menu_disabled_fg";
 /// the hint is always rendered once the row is reachable: "press Enter
 /// to start" while merely selected, the full key list while editing.
 fn dual_list_hint(s: &DualListState) -> String {
-    use rust_i18n::t;
+    use fresh_i18n::t;
     if s.editing {
         t!("settings.dual_list_keys_hint").to_string()
     } else if s.focus == FocusState::Focused {

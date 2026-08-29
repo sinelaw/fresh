@@ -8,7 +8,7 @@ use super::items::{
 };
 use super::schema::{SettingSchema, SettingType};
 use crate::view::controls::{FocusState, TextInputState};
-use rust_i18n::t;
+use fresh_i18n::t;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 

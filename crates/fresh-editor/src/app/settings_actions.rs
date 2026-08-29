@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::types::LspServerConfig;
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use super::Editor;
 

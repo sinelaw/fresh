@@ -7,7 +7,7 @@ use crate::app::window::LspCompletionCandidate;
 use crate::model::event::Event;
 use crate::primitives::snippet::{expand_snippet, is_snippet};
 use crate::primitives::word_navigation::find_completion_word_start;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 /// Result of handling a popup confirmation.
 pub enum PopupConfirmResult {

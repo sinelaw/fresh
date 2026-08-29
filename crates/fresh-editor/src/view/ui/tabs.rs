@@ -7,12 +7,12 @@ use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
 use crate::view::split::TabTarget;
 use crate::view::ui::layout::point_in_rect;
+use fresh_i18n::t;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui::widgets::{Block, Paragraph};
-use rust_i18n::t;
 use std::collections::HashMap;
 use std::path::{Component, Path, MAIN_SEPARATOR, MAIN_SEPARATOR_STR};
 

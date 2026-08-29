@@ -8,7 +8,7 @@
 //! and `present_lsp_status_popup` (pin width + show), orchestrated by
 //! `build_and_show_lsp_status_popup`.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::app::warning_domains::WarningDomain;
 

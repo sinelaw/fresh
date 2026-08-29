@@ -11,7 +11,7 @@
 //! sibling impl Editor block. A future phase will collapse the
 //! boilerplate into a single SettingsPromptBuilder<T>.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::view::prompt::PromptType;

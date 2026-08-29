@@ -1,6 +1,6 @@
 use crate::types::{context_keys, LspFeature, LspLanguageConfig, LspServerConfig, ProcessLimits};
 
-use rust_i18n::t;
+use fresh_i18n::t;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;

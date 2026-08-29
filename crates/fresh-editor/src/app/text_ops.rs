@@ -5,7 +5,7 @@
 //! events to the active buffer. Pure decision logic for smart-home lives
 //! in `super::smart_home`; these methods are the cross-cutting drivers.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::{Event, LeafId};
 

@@ -52,7 +52,7 @@
 //! - **Plugin-friendly**: External sources can contribute enum values
 //! - **Type-safe**: Values are validated against their referenced type
 
-use rust_i18n::t;
+use fresh_i18n::t;
 use serde::Deserialize;
 use std::collections::HashMap;
 

@@ -10,7 +10,7 @@ use crate::input::keybindings::{
     format_keybinding, normalize_key, Action, KeyContext, KeybindingResolver,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::collections::{HashMap, HashSet};
 
 /// The main keybinding editor state

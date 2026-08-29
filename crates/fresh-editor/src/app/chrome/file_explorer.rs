@@ -601,7 +601,8 @@ impl Editor {
                         match self.open_file_preview(&path) {
                             Ok(_) => {
                                 self.set_status_message(
-                                    rust_i18n::t!("explorer.opened_file", name = &name).to_string(),
+                                    fresh_i18n::t!("explorer.opened_file", name = &name)
+                                        .to_string(),
                                 );
                             }
                             Err(e) => {
@@ -612,7 +613,7 @@ impl Editor {
                                     self.start_large_file_encoding_confirmation(confirmation);
                                 } else {
                                     self.set_status_message(
-                                        rust_i18n::t!("file.error_opening", error = e.to_string())
+                                        fresh_i18n::t!("file.error_opening", error = e.to_string())
                                             .to_string(),
                                     );
                                 }

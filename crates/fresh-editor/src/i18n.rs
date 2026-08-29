@@ -1,12 +1,14 @@
 //! Internationalization (i18n) support for Fresh Editor
 //!
-//! This module provides locale detection and translation support using rust-i18n.
-//! Translations are embedded at compile time from JSON files in the `locales/` directory.
+//! Fresh's translation catalogs live in `locales/`, are embedded by
+//! [`embedded`], and are looked up by `fresh-i18n`. This module is the thin
+//! layer that knows Fresh's data: which locales exist, what to call them, and
+//! when to register them.
 //!
 //! # Usage
 //!
 //! ```rust
-//! use rust_i18n::t;
+//! use fresh_i18n::t;
 //!
 //! // Simple translation
 //! let msg = t!("search.no_text");
@@ -15,86 +17,17 @@
 //! let msg = t!("file.saved_as", path = "/path/to/file");
 //! ```
 
-use once_cell::sync::Lazy;
-use std::collections::HashMap;
-use std::sync::RwLock;
+pub mod embedded;
 
-pub mod runtime_backend;
+pub use fresh_i18n::{register_plugin_strings, translate_plugin_string, unregister_plugin_strings};
 
-/// Type alias for the nested plugin strings map.
-/// Structure: plugin_name -> locale -> key -> translated_string
-type PluginStringsMap = HashMap<String, HashMap<String, HashMap<String, String>>>;
-
-static PLUGIN_STRINGS: Lazy<RwLock<PluginStringsMap>> = Lazy::new(|| RwLock::new(HashMap::new()));
-
-/// Register strings for a plugin.
-/// format: { "en": { "key": "value" }, "es": { "key": "value" } }
-pub fn register_plugin_strings(
-    plugin_name: &str,
-    strings: HashMap<String, HashMap<String, String>>,
-) {
-    let mut all_strings = PLUGIN_STRINGS.write().unwrap();
-    all_strings.insert(plugin_name.to_string(), strings);
-}
-
-/// Translate a string for a plugin using the current locale.
-pub fn translate_plugin_string(
-    plugin_name: &str,
-    key: &str,
-    args: &HashMap<String, String>,
-) -> String {
-    let locale = current_locale();
-    let all_strings = PLUGIN_STRINGS.read().unwrap();
-
-    let plugin_map: &HashMap<String, HashMap<String, String>> = match all_strings.get(plugin_name) {
-        Some(m) => m,
-        None => {
-            tracing::debug!(
-                "translate_plugin_string: plugin '{}' not found (available: {:?}), returning key '{}'",
-                plugin_name,
-                all_strings.keys().collect::<Vec<_>>(),
-                key
-            );
-            return key.to_string();
-        }
-    };
-
-    // Try current locale, then fallback to English
-    let lang_map: Option<&HashMap<String, String>> =
-        plugin_map.get(&locale).or_else(|| plugin_map.get("en"));
-
-    let template: &String = match lang_map.and_then(|m| m.get(key)) {
-        Some(t) => t,
-        None => {
-            tracing::debug!(
-                "translate_plugin_string: key '{}' not found for plugin '{}' (locale='{}', available keys: {:?})",
-                key,
-                plugin_name,
-                locale,
-                plugin_map.get(&locale).or_else(|| plugin_map.get("en")).map(|m| m.keys().take(5).collect::<Vec<_>>())
-            );
-            return key.to_string();
-        }
-    };
-
-    // Simple interpolation: %{variable}
-    let mut result = template.clone();
-    for (k, v) in args {
-        result = result.replace(&format!("%{{{}}}", k), v);
-    }
-    result
-}
-
-/// Unregister strings for a plugin.
-pub fn unregister_plugin_strings(plugin_name: &str) {
-    let mut all_strings = PLUGIN_STRINGS.write().unwrap();
-    all_strings.remove(plugin_name);
-}
+use embedded::ensure_registered;
 
 /// Initialize i18n with the user's locale preference.
 ///
-/// This should be called early in application startup. It detects the system
-/// locale from environment variables and sets it as the active locale.
+/// This should be called early in application startup. It registers Fresh's
+/// catalogs, detects the system locale from environment variables and sets it
+/// as the active locale.
 ///
 /// # Locale Detection Order
 ///
@@ -103,14 +36,16 @@ pub fn unregister_plugin_strings(plugin_name: &str) {
 /// 3. `LANG` environment variable
 /// 4. Falls back to "en" (English) if none are set
 pub fn init() {
-    let locale = detect_locale().unwrap_or_else(|| "en".to_string());
-    rust_i18n::set_locale(&locale);
+    ensure_registered();
+    let locale = fresh_i18n::detect_locale().unwrap_or_else(|| "en".to_string());
+    fresh_i18n::set_locale(&locale);
 }
 
 /// Initialize i18n with a specific locale from user configuration.
 ///
 /// If `config_locale` is `Some`, use that locale. Otherwise, detect from environment.
 pub fn init_with_config(config_locale: Option<&str>) {
+    ensure_registered();
     let locale = if let Some(req_locale) = config_locale {
         // Try to match the requested locale against available ones
         let supported = available_locales();
@@ -126,53 +61,16 @@ pub fn init_with_config(config_locale: Option<&str>) {
 
         matched.unwrap_or_else(|| req_locale.to_string())
     } else {
-        detect_locale().unwrap_or_else(|| "en".to_string())
+        fresh_i18n::detect_locale().unwrap_or_else(|| "en".to_string())
     };
 
-    rust_i18n::set_locale(&locale);
-}
-
-/// Detect the user's preferred locale from environment variables.
-///
-/// Checks `LC_ALL`, `LC_MESSAGES`, and `LANG` in order, parsing the locale
-/// string to extract the language code (e.g., "en_US.UTF-8" -> "en").
-///
-/// This function also attempts to match region-specific locales supported by Fresh,
-/// such as "pt-BR" and "zh-CN".
-fn detect_locale() -> Option<String> {
-    let env_locale = std::env::var("LC_ALL")
-        .or_else(|_| std::env::var("LC_MESSAGES"))
-        .or_else(|_| std::env::var("LANG"))
-        .ok()?;
-
-    if env_locale.is_empty() || env_locale == "C" || env_locale == "POSIX" {
-        return None;
-    }
-
-    // First, try exact match with supported region-specific locales
-    // e.g. "pt_BR.UTF-8" -> "pt-BR"
-    let normalized = env_locale.replace('_', "-").to_lowercase();
-    let supported = available_locales();
-
-    for &loc in &supported {
-        if normalized.starts_with(&loc.to_lowercase()) {
-            return Some(loc.to_string());
-        }
-    }
-
-    // Fall back to primary language code
-    // e.g. "en_US.UTF-8" -> "en"
-    let lang = env_locale.split(['_', '-', '.']).next()?;
-    if lang.is_empty() || lang == "C" || lang == "POSIX" {
-        None
-    } else {
-        Some(lang.to_lowercase())
-    }
+    fresh_i18n::set_locale(&locale);
 }
 
 /// Get the currently active locale.
 pub fn current_locale() -> String {
-    rust_i18n::locale().to_string()
+    ensure_registered();
+    fresh_i18n::locale()
 }
 
 /// Set the locale explicitly.
@@ -180,14 +78,16 @@ pub fn current_locale() -> String {
 /// This can be used to change the locale at runtime, for example from
 /// a settings menu or command palette action.
 pub fn set_locale(locale: &str) {
-    rust_i18n::set_locale(locale);
+    ensure_registered();
+    fresh_i18n::set_locale(locale);
 }
 
 /// Get a list of all available locales.
 ///
 /// These are the locales that have translation files in the `locales/` directory.
 pub fn available_locales() -> Vec<&'static str> {
-    rust_i18n::available_locales!()
+    ensure_registered();
+    fresh_i18n::available_locales()
 }
 
 /// Get the display name for a locale code.
@@ -216,43 +116,15 @@ pub fn locale_display_name(locale: &str) -> Option<(&'static str, &'static str)>
     }
 }
 
-/// Get the translated message for "switched to project".
+/// Translate `key`, with English fallback.
 ///
-/// This is a helper function for use by the binary crate (main.rs) since
-/// the t!() macro doesn't work across crate boundaries.
-pub fn switched_to_project_message(path: &str) -> String {
-    rust_i18n::t!("file.switched_to_project", path = path).to_string()
-}
-
-/// Status line shown after the editor resumes from SIGTSTP / `fg`.
-pub fn resumed_after_suspend_message() -> String {
-    rust_i18n::t!("status.resumed_after_suspend").to_string()
-}
-
-/// Status line shown when the suspend action is invoked on a platform
-/// without Unix job control (e.g. Windows).
-pub fn suspend_unsupported_message() -> String {
-    rust_i18n::t!("status.suspend_unsupported").to_string()
-}
-
-/// Translate `key` using the runtime backend, with English fallback.
-///
-/// Unlike `rust_i18n::t!` (a macro that takes a literal key inside the
-/// declaring crate), this helper accepts any runtime string and is
-/// usable from `main.rs` and other binary crates.  Missing keys fall
-/// back to English; if the key is missing in English too, the key
-/// itself is returned (matching `rust_i18n`'s behavior).
+/// The `t!` macro covers the same ground and is preferred; this helper exists
+/// for callers that build a key at runtime and would rather not import the
+/// macro.  Missing keys fall back to English; if the key is missing in English
+/// too, the key itself is returned.
 pub fn t(key: &str) -> String {
-    use rust_i18n::Backend;
-    let backend = runtime_backend::RuntimeBackend::new();
-    let locale = current_locale();
-    if let Some(s) = backend.translate(&locale, key) {
-        return s.to_string();
-    }
-    if let Some(s) = backend.translate("en", key) {
-        return s.to_string();
-    }
-    key.to_string()
+    ensure_registered();
+    fresh_i18n::translate(key).into_owned()
 }
 
 #[cfg(test)]
@@ -276,12 +148,9 @@ mod tests {
 
     #[test]
     fn test_locale_changed_interpolation() {
-        use rust_i18n::t;
+        use fresh_i18n::t;
         set_locale("en");
 
-        // Test the locale.changed message interpolation
-        // Note: The placeholder is %{locale_name} not %{locale} because "locale"
-        // is a reserved parameter in rust_i18n that sets the translation locale.
         let locale_name = "es";
         let msg = t!("locale.changed", locale_name = locale_name).to_string();
 

@@ -9,7 +9,7 @@ use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputRes
 use crate::input::keybindings::{Action, KeyContext};
 use anyhow::Result as AnyhowResult;
 use crossterm::event::KeyEvent;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Dispatch input when in terminal mode.

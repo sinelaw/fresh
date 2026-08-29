@@ -13,7 +13,7 @@
 
 use std::ops::Range;
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::Event;
 

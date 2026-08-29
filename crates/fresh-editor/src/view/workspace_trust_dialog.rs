@@ -11,6 +11,7 @@
 
 use crate::primitives::display_width::{str_width, DisplayWidth};
 use crate::view::theme::Theme;
+use fresh_i18n::t;
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
@@ -18,7 +19,6 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
-use rust_i18n::t;
 
 /// One selectable trust option: its radio label and the one-line description
 /// shown beneath it. The mnemonic letter is appended in parentheses (e.g.

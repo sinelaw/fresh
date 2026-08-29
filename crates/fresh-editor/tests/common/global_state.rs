@@ -4,7 +4,7 @@
 //! building an editor, both keyed off the `Config` it was handed:
 //!
 //!   * the i18n locale — `fresh::i18n::init_with_config`, which ends in
-//!     `rust_i18n::set_locale`; and
+//!     `fresh_i18n::set_locale`; and
 //!   * the user indentation rules — `Editor::for_test` calls
 //!     `config::reload_indent_overrides`, which *clears*
 //!     `primitives::indent_rules::USER_RULES` and then re-registers only the

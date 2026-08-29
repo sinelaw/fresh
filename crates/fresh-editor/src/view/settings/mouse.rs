@@ -5,7 +5,7 @@
 
 use crate::app::Editor;
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use super::items::SettingControl;
 use super::render::ControlLayoutInfo;

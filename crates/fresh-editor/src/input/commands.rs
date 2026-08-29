@@ -44,7 +44,7 @@
 
 use crate::input::keybindings::{Action, KeyContext};
 use crate::types::context_keys;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 /// Source of a command (builtin or from a plugin)
 #[derive(Debug, Clone, PartialEq)]
@@ -1667,6 +1667,8 @@ static COMMAND_DEFS: &[CommandDef] = &[
 
 /// Get all available commands for the command palette
 pub fn get_all_commands() -> Vec<Command> {
+    // The palette can be built before `i18n::init`, e.g. from a test.
+    crate::i18n::embedded::ensure_registered();
     COMMAND_DEFS
         .iter()
         .map(|def| Command {

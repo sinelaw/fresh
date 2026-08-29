@@ -9,7 +9,7 @@ use crate::model::event::{CursorId, LeafId, SplitDirection};
 use crate::view::ui::tabs::TabHit;
 use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use super::{in_rect, ChromeComponent, ChromeTreeBuilder, Editor};
 

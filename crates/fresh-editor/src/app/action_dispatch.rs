@@ -11,7 +11,7 @@
 use super::*;
 use anyhow::Result as AnyhowResult;
 use crossterm::event::KeyModifiers as KM;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Change the current workspace's trust level, persist it, and report it.
@@ -2119,7 +2119,7 @@ impl Editor {
             )
             .unwrap_or_else(|| "Ctrl+Space".to_string());
         self.set_status_message(
-            rust_i18n::t!("terminal.opened", id = terminal_id.0, exit_key = exit_key).to_string(),
+            fresh_i18n::t!("terminal.opened", id = terminal_id.0, exit_key = exit_key).to_string(),
         );
         tracing::info!(
             "Opened terminal {:?} into new dock leaf {:?} (buffer {:?})",

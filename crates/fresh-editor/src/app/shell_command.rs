@@ -11,7 +11,7 @@ use super::Editor;
 use crate::model::event::Event;
 use crate::services::process_hidden::HideWindow;
 use crate::view::prompt::PromptType;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Start a shell command prompt.

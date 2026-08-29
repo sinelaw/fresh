@@ -5711,7 +5711,9 @@ fn real_main() -> AnyhowResult<()> {
                 .as_ref()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| ".".to_string());
-            editor.set_status_message(fresh::i18n::switched_to_project_message(&path));
+            editor.set_status_message(
+                fresh_i18n::t!("file.switched_to_project", path = path).to_string(),
+            );
         }
 
         if let Err(e) = editor.start_recovery_session() {
@@ -5887,12 +5889,12 @@ fn handle_suspend_request(
         terminal_modes::suspend_and_resume(terminal_modes, Some(&keyboard_config))
             .context("Failed to suspend process")?;
         editor.request_full_redraw();
-        editor.set_status_message(fresh::i18n::resumed_after_suspend_message());
+        editor.set_status_message(fresh_i18n::t!("status.resumed_after_suspend").to_string());
     }
     #[cfg(not(unix))]
     {
         let _ = terminal_modes;
-        editor.set_status_message(fresh::i18n::suspend_unsupported_message());
+        editor.set_status_message(fresh_i18n::t!("status.suspend_unsupported").to_string());
     }
     Ok(())
 }

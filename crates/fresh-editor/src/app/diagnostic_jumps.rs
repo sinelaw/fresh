@@ -5,7 +5,7 @@
 //! and emit a MoveCursor event. Status messages report the diagnostic at
 //! the new cursor position.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::Event;
 

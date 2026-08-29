@@ -11,7 +11,7 @@ use super::Editor;
 use crate::model::event::{BufferId, LeafId, SplitDirection};
 use crate::view::ui::tabs::TabHit;
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Handle tab drag - update position and compute drop zone

@@ -4,6 +4,7 @@
 
 use crate::app::event_debug::EventDebug;
 use crate::view::theme::Theme;
+use fresh_i18n::t;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
@@ -11,7 +12,6 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
-use rust_i18n::t;
 
 /// Width of the dialog in characters
 const DIALOG_WIDTH: u16 = 70;

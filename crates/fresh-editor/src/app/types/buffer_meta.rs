@@ -1,5 +1,5 @@
 use super::lsp_uri::LspUri;
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -2673,6 +2673,8 @@ impl KeybindingResolver {
 
     /// Format an action as a readable description
     pub fn format_action(action: &Action) -> String {
+        // The keybinding editor can render before `i18n::init`, e.g. from a test.
+        crate::i18n::embedded::ensure_registered();
         match action {
             Action::InsertChar(c) => t!("action.insert_char", char = c),
             Action::InsertNewline => t!("action.insert_newline"),

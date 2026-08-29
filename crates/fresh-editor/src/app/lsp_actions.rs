@@ -7,7 +7,7 @@ use super::Editor;
 use crate::input::commands::Suggestion;
 use crate::model::event::BufferId;
 use crate::view::prompt::{Prompt, PromptType};
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Handle the LspRestart action.

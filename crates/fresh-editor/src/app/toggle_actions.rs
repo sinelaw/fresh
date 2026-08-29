@@ -7,7 +7,7 @@
 //! - Config dump, save, and reload
 
 use crate::types::LspServerConfig;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::config::{Config, FileExplorerSide};
 use crate::config_io::{ConfigLayer, ConfigResolver};

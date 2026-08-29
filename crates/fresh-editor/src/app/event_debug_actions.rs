@@ -7,7 +7,7 @@ use super::event_debug::EventDebug;
 use super::window::Window;
 use crate::input::handler::InputResult;
 use crossterm::event::KeyEvent;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Window {
     /// Open the event debug dialog in this window.

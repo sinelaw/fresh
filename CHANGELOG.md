@@ -75,6 +75,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Internals
 
+* **Twelve fewer crates in the build.** Translations now go through a small in-tree library (`fresh-i18n`) instead of `rust-i18n`, whose glob-scanning and YAML machinery Fresh never used - every string was already loaded by Fresh's own runtime JSON backend. Dropping it drops `serde_yaml`, which its own README declares unmaintained, and `unsafe-libyaml`, a C library machine-translated to Rust, neither of which anything else in the build wanted. Translation behaviour is unchanged.
 * A large rewrite unifies mouse, wheel, and keyboard dispatch across the editor's chrome and panels behind one registration/dispatch model, and lays groundwork with a new backend-independent widget library crate; overlay indexing, plugin-state-snapshot, and Markdown-decoration performance work; flaky-test stabilization across settings, mouse, review-diff, and markdown suites.
 
 ## 0.4.9

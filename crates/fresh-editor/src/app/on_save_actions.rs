@@ -12,7 +12,7 @@ use super::Editor;
 use crate::config::{FormatterConfig, OnSaveAction};
 use crate::model::event::Event;
 use crate::services::process_hidden::HideWindow;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 /// Result of running a formatter or on-save action
 enum ActionResult {

@@ -487,7 +487,7 @@ impl Editor {
         // derivation `StatusBarRenderer::render_search_options` uses.
         let search_options = self.search_options_layout_now().map(|lo| {
             use crate::input::keybindings::{Action, KeyContext};
-            use rust_i18n::t;
+            use fresh_i18n::t;
             let win = self.active_window();
             let kb = self.keybinding_resolver();
             let shortcut = |a: &Action| {
@@ -877,7 +877,7 @@ impl Editor {
     /// second hit-testing implementation anywhere.
     pub fn file_browser_view(&self) -> Option<FileBrowserView> {
         use crate::app::file_open::{format_modified, format_size, FileOpenSection, SortMode};
-        use rust_i18n::t;
+        use fresh_i18n::t;
 
         let win = self.active_window();
         let layout = win.file_browser_layout.as_ref()?;
@@ -1038,19 +1038,19 @@ impl Editor {
             })
             .collect();
         let quit_label = if self.workspace_trust_cancellable() {
-            rust_i18n::t!("trust.dialog.btn_cancel").into_owned()
+            fresh_i18n::t!("trust.dialog.btn_cancel").into_owned()
         } else {
-            rust_i18n::t!("trust.dialog.btn_quit").into_owned()
+            fresh_i18n::t!("trust.dialog.btn_quit").into_owned()
         };
         Some(TrustDialogView {
             dialog: RectView::from(layout.dialog),
-            title: rust_i18n::t!("trust.dialog.security_warning").into_owned(),
+            title: fresh_i18n::t!("trust.dialog.security_warning").into_owned(),
             path: self.working_dir().display().to_string(),
             triggers: self.workspace_trust_markers().join(", "),
             cancellable: self.workspace_trust_cancellable(),
             options,
             ok: RectView::from(layout.ok),
-            ok_label: rust_i18n::t!("trust.dialog.btn_ok").into_owned(),
+            ok_label: fresh_i18n::t!("trust.dialog.btn_ok").into_owned(),
             quit: RectView::from(layout.quit),
             quit_label,
         })
@@ -1374,16 +1374,16 @@ impl Editor {
                 .collect();
             if lines.is_empty() {
                 lines.push(AuxLine {
-                    text: rust_i18n::t!("event_debug.no_events").into_owned(),
+                    text: fresh_i18n::t!("event_debug.no_events").into_owned(),
                     selected: false,
                 });
             }
             return Some(AuxModalView {
                 kind: "eventDebug",
-                title: rust_i18n::t!("event_debug.title").into_owned(),
+                title: fresh_i18n::t!("event_debug.title").into_owned(),
                 rect: None,
                 lines,
-                footer: Some(rust_i18n::t!("event_debug.help_text").into_owned()),
+                footer: Some(fresh_i18n::t!("event_debug.help_text").into_owned()),
             });
         }
         // Theme-info popup (anchored at its click position).

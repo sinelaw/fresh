@@ -1457,7 +1457,7 @@ impl Window {
         } else {
             "toggle.tab_bar_hidden"
         };
-        self.set_status_message(rust_i18n::t!(key).to_string());
+        self.set_status_message(fresh_i18n::t!(key).to_string());
     }
 
     /// Toggle this window's status-bar visibility and post a status message.
@@ -1468,7 +1468,7 @@ impl Window {
         } else {
             "toggle.status_bar_hidden"
         };
-        self.set_status_message(rust_i18n::t!(key).to_string());
+        self.set_status_message(fresh_i18n::t!(key).to_string());
     }
 
     /// Toggle this window's prompt-line visibility and post a status message.
@@ -1479,7 +1479,7 @@ impl Window {
         } else {
             "toggle.prompt_line_hidden"
         };
-        self.set_status_message(rust_i18n::t!(key).to_string());
+        self.set_status_message(fresh_i18n::t!(key).to_string());
     }
 
     /// Toggle this window's same-buffer scroll-sync flag and post a
@@ -1491,7 +1491,7 @@ impl Window {
         } else {
             "toggle.scroll_sync_disabled"
         };
-        self.set_status_message(rust_i18n::t!(key).to_string());
+        self.set_status_message(fresh_i18n::t!(key).to_string());
     }
 
     /// Toggle the active buffer's `debug_highlight_mode` (shows byte
@@ -1506,7 +1506,7 @@ impl Window {
             } else {
                 "toggle.debug_mode_off"
             };
-            self.set_status_message(rust_i18n::t!(key).to_string());
+            self.set_status_message(fresh_i18n::t!(key).to_string());
         }
     }
 
@@ -3548,7 +3548,7 @@ impl Window {
         self.set_active_buffer(buffer_id);
 
         let display_name = path.display().to_string();
-        self.set_status_message(rust_i18n::t!("buffer.opened", name = display_name).to_string());
+        self.set_status_message(fresh_i18n::t!("buffer.opened", name = display_name).to_string());
 
         Ok(buffer_id)
     }

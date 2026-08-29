@@ -8,7 +8,7 @@
 use crate::app::window::Window;
 use crate::model::event::LeafId;
 use crate::state::ViewMode;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Window {
     /// Toggle between Compose and Source view modes for the active split.

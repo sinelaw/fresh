@@ -43,7 +43,7 @@ pub mod warning_domains;
 pub mod workspace;
 
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::path::Component;
 
 /// Shared per-tick housekeeping: process async messages, check timers, auto-save, etc.

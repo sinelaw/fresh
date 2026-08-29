@@ -5,7 +5,7 @@
 //! `list_macros_in_buffer` — for the macro subsystem. Plain data state
 //! lives in `super::macros::MacroState`; these methods drive it.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::input::keybindings::Action;
 use crate::model::event::EventLog;

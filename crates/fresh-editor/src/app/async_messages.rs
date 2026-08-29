@@ -15,12 +15,12 @@ use crate::services::async_bridge::{
 use crate::services::lsp::diagnostics::AnchoredDiagnostic;
 use crate::state::{SemanticTokenSpan, SemanticTokenStore};
 use crate::view::file_tree::{FileTreeView, NodeId};
+use fresh_i18n::t;
 use lsp_types::{
     Diagnostic, FoldingRange, InlayHint, SemanticToken, SemanticTokensEdit,
     SemanticTokensFullDeltaResult, SemanticTokensLegend, SemanticTokensRangeResult,
     SemanticTokensResult,
 };
-use rust_i18n::t;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

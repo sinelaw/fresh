@@ -11,7 +11,7 @@
 //! - Inlay hints
 
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::io;
 use std::time::{Duration, Instant};
 

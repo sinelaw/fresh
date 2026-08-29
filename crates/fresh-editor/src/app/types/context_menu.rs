@@ -1,5 +1,5 @@
 use crate::model::event::{BufferId, LeafId};
-use rust_i18n::t;
+use fresh_i18n::t;
 
 pub const FILE_EXPLORER_CONTEXT_MENU_WIDTH: u16 = 24;
 

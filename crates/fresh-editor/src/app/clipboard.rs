@@ -5,8 +5,8 @@
 //! - Copy with formatting (HTML with syntax highlighting)
 //! - Multi-cursor add above/below/at next match
 
+use fresh_i18n::t;
 use ratatui::style::{Modifier, Style};
-use rust_i18n::t;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 

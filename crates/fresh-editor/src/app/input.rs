@@ -19,7 +19,7 @@
 use super::*;
 use crate::input::router;
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Dispatch a text-input mode's typed character to its plugin

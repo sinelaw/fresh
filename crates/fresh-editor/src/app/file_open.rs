@@ -6,7 +6,7 @@
 
 use crate::input::fuzzy::fuzzy_match;
 use crate::model::filesystem::{DirEntry, EntryType, FileSystem};
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
