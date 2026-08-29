@@ -56,6 +56,49 @@ impl From<HostRegion> for HostId {
     }
 }
 
+/// What a `Draw::Host` in this frame addresses.
+///
+/// A region is one of the seven fixed slots above. A **pane** is not: there is
+/// one per visible leaf, they come and go as the user splits and closes, and
+/// each paints only its own buffer. So the id space is split — regions keep
+/// the small discriminants they always had, and a pane's id is its `LeafId`
+/// tagged into the high half, which cannot collide with them.
+///
+/// This is what lets the fold keep its "a host id with no region" assertion
+/// honest: an id that resolves to neither is still a painter that would draw
+/// nothing, in silence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostTarget {
+    Region(HostRegion),
+    /// One pane's content, by the leaf showing it.
+    Pane(crate::model::event::LeafId),
+}
+
+/// The bit that separates a pane's id from a region's.
+///
+/// Regions are 1..=7 and `LeafId`s are dense small integers from the same
+/// counter, so the two would otherwise overlap immediately.
+const PANE_TAG: u64 = 1 << 32;
+
+/// The `HostId` a pane's content leaf carries.
+pub fn pane_host_id(id: crate::model::event::LeafId) -> HostId {
+    HostId(PANE_TAG | id.0 .0 as u64)
+}
+
+impl HostTarget {
+    /// Which painter owns this id, or `None` when it names neither — which is
+    /// the fold's assertion, not a case to handle.
+    pub fn from_host_id(id: HostId) -> Option<HostTarget> {
+        if id.0 & PANE_TAG != 0 {
+            let leaf = (id.0 & (PANE_TAG - 1)) as usize;
+            return Some(HostTarget::Pane(crate::model::event::LeafId(
+                fresh_core::SplitId(leaf),
+            )));
+        }
+        HostRegion::from_host_id(id).map(HostTarget::Region)
+    }
+}
+
 /// Which regions are visible, and how wide the sized ones are.
 ///
 /// Every field here is *app state*: `build()` cannot read geometry, so
@@ -236,11 +279,11 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     let sidebar = |e: &super::file_explorer::Explorer| {
         named(HostRegion::Explorer, super::file_explorer::explorer(e)).w(Sizing::Cells(e.cols))
     };
-    // The body: the painter's `Host` leaf, with the grid's geometry over it.
-    // The grid paints nothing — the split renderer still draws the panes and
-    // their separators — so what the layer contributes is the dividers'
-    // gestures and a rectangle per pane that is *the* answer rather than a
-    // second one: `get_leaves_with_rects` reads this same description.
+    // The body: the grid, with a `Host` under it for what belongs to no pane.
+    // Each pane carries its own `Host` (see `splits::live_pane`), so the
+    // rectangle a pane is painted at is the rectangle layout gave it. What
+    // this one is left is the panes' shared preamble and the separators
+    // between them — the gaps, which belong to neither side.
     let body_region = |f: &Frame| -> Node<UiMsg> {
         match &f.splits {
             Some(s) => named(

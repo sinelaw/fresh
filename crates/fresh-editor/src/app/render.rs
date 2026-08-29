@@ -741,12 +741,13 @@ impl Editor {
         // passed `BodyState::default()`, so it would have painted a grid with
         // no hovered tab.
         //
-        // There is one assembly now, in `shell_host::paint_body`, and the
-        // display list is what reaches it — with the rectangle *layout* gave
-        // the body rather than one computed beside it. The state it needs and
-        // the rectangles it produces travel on the editor, because
-        // `paint_host` carries a region and a rectangle and nothing else.
-        self.pending_body_state = crate::app::shell_host::BodyState {
+        // There is one assembly now, in `shell_host::with_grid`, and the
+        // display list is what reaches it — one pane at a time, each at the
+        // rectangle *layout* gave it rather than one computed beside it. What
+        // a pane needs beyond that rectangle rides on the painter below,
+        // because `paint_host` carries a target and a rectangle and nothing
+        // else.
+        let body_state = crate::app::shell_host::BodyState {
             lsp_waiting,
             hide_cursor,
             hovered_tab,
@@ -779,15 +780,19 @@ impl Editor {
         // regions painted — the panes are cells even on the web. That used to
         // be "skip the fold and call the split renderer separately", which is
         // where the second assembly came from.
+        //
+        // The painter lives exactly as long as this fold. What a pane needs
+        // beyond a rectangle — the frame's hover state, the pass its panes
+        // share, the sink they append to — is its, not the editor's.
+        let mut body = crate::app::shell_host::BodyPainter::new(self, body_state);
         let pending_hardware_cursor = crate::view::shell::fold::fold_band(
             ui.spec(),
             frame.buffer_mut(),
             &palette,
-            self,
+            &mut body,
             crate::view::shell::fold::Band::Background,
             paints,
         );
-        self.shell_ui = Some(ui);
         let crate::app::shell_host::BodyOutput {
             split_areas,
             tab_layouts,
@@ -796,7 +801,8 @@ impl Editor {
             view_line_mappings,
             horizontal_scrollbar_areas,
             grouped_separator_areas,
-        } = self.pending_body_output.take().unwrap_or_default();
+        } = body.finish();
+        self.shell_ui = Some(ui);
 
         drop(_content_span);
         let _post_content_span = tracing::info_span!("render_post_content").entered();
