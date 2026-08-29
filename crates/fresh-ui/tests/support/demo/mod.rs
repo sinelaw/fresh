@@ -55,7 +55,7 @@ impl Demo {
         // The host's half of `Persisted`: without a store the values are
         // per-element defaults and a document switch loses them, which is
         // exactly the failure the demo is here to not have.
-        ui.set_store(std::rc::Rc::new(MemStore::default()));
+        ui.set_store(std::rc::Rc::new(fresh_ui::behavior::MemStore::new()));
         let mut demo = Demo {
             app,
             ui,
@@ -129,22 +129,5 @@ impl Demo {
             "list.row.hover" | "button.hover" | "toggle.hover" | "number.hover" => None,
             _ => None,
         })
-    }
-}
-
-/// A process-lifetime store, which is all a demo needs. A real host would put
-/// this behind whatever it already persists workspace state with.
-#[derive(Default)]
-pub struct MemStore {
-    values: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<dyn std::any::Any>>>,
-}
-
-impl fresh_ui::behavior::Store for MemStore {
-    fn get(&self, key: &str) -> Option<std::rc::Rc<dyn std::any::Any>> {
-        self.values.borrow().get(key).cloned()
-    }
-
-    fn set(&self, key: &str, value: std::rc::Rc<dyn std::any::Any>) {
-        self.values.borrow_mut().insert(key.into(), value);
     }
 }

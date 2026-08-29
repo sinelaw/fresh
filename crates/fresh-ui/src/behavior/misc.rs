@@ -202,6 +202,63 @@ pub trait Store {
     fn set(&self, key: &str, value: Rc<dyn std::any::Any>);
 }
 
+/// The in-memory [`Store`]: a `HashMap` that lives as long as it is held.
+///
+/// Every host that adopts [`Persisted`] needs one of these before it needs
+/// anything cleverer, and the twelve lines are the same twelve lines each
+/// time — so they are here rather than in each host. A host that wants values
+/// to outlive the process puts its own implementation behind the trait; this
+/// one is the floor, not a placeholder.
+///
+/// [`forget_scope`](MemStore::forget_scope) is the piece a map alone does not
+/// give you. A scope's values are dead the moment the thing the scope names is
+/// gone — a closed document, a closed workspace — and nothing else can know
+/// that: the tree only ever sees a subtree it is not currently showing, which
+/// is precisely the case where the values must be *kept*. So the host says so,
+/// and until it does the map grows for the life of the process.
+#[derive(Default)]
+pub struct MemStore {
+    values: RefCell<std::collections::HashMap<String, Rc<dyn std::any::Any>>>,
+}
+
+impl MemStore {
+    pub fn new() -> Self {
+        MemStore::default()
+    }
+
+    /// Drop every value belonging to `scope`, and nothing else.
+    ///
+    /// A [`Persisted`] key is `"{scope}/{key}"`, so this is the prefix — with
+    /// the separator, which is what keeps `"window:1"` from taking
+    /// `"window:10"` with it.
+    pub fn forget_scope(&self, scope: &str) {
+        let prefix = format!("{scope}/");
+        self.values
+            .borrow_mut()
+            .retain(|k, _| !k.starts_with(&prefix));
+    }
+
+    /// How many values are held. For a host that wants to assert its own
+    /// cleanup ran, and for tests.
+    pub fn len(&self) -> usize {
+        self.values.borrow().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Store for MemStore {
+    fn get(&self, key: &str) -> Option<Rc<dyn std::any::Any>> {
+        self.values.borrow().get(key).cloned()
+    }
+
+    fn set(&self, key: &str, value: Rc<dyn std::any::Any>) {
+        self.values.borrow_mut().insert(key.into(), value);
+    }
+}
+
 /// A value read from the host store at construction and written through on
 /// every change.
 ///

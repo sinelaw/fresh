@@ -323,3 +323,74 @@ fn provide_by_pointer_identity_and_a_constructor_read_do_not_mix() {
     ui.frame(doc("alpha"), Size::new(40, 4));
     ui.frame(doc("alpha"), Size::new(40, 4));
 }
+
+// ---------------------------------------------------------------------------
+// `MemStore`: the floor every host stands on, and the one operation a map lacks
+// ---------------------------------------------------------------------------
+
+/// A host that installs the shipped store gets the round trip, with no store
+/// of its own to write. This is the same switch as
+/// `a_documents_value_survives_being_switched_away_from`, driven through
+/// `MemStore` instead of the spy — because the spy is a test double and the
+/// thing hosts will actually use is this.
+#[test]
+fn the_shipped_store_carries_a_value_across_a_switch() {
+    use fresh_ui::behavior::MemStore;
+    let store = Rc::new(MemStore::new());
+    let mut ui: Ui<()> = Ui::new();
+    ui.set_store(store.clone() as Rc<dyn Store>);
+
+    ui.frame(document("alpha", Some("kept")), Size::new(40, 4));
+    ui.frame(document("beta", None), Size::new(40, 4));
+    assert_eq!(shown(&ui), "", "beta has its own value, not alpha's");
+    ui.frame(document("alpha", None), Size::new(40, 4));
+    assert_eq!(shown(&ui), "kept", "alpha's value came back");
+}
+
+/// **The operation a plain map does not have.** A scope's values are dead when
+/// the thing it names is gone, and the tree cannot know that — an unmounted
+/// subtree is exactly the case where the values must be *kept*. So the host
+/// says so, and `forget_scope` is how.
+///
+/// The separator is the part worth pinning: prefix-matching on the bare scope
+/// name would take `window:10` down with `window:1`.
+#[test]
+fn forgetting_a_scope_takes_that_scope_and_no_neighbour() {
+    use fresh_ui::behavior::MemStore;
+    let store = MemStore::new();
+    store.set("window:1/scroll", Rc::new(7u32));
+    store.set("window:1/filter", Rc::new(String::from("x")));
+    store.set("window:10/scroll", Rc::new(9u32));
+    store.set("window:2/scroll", Rc::new(3u32));
+    assert_eq!(store.len(), 4);
+
+    store.forget_scope("window:1");
+
+    assert_eq!(store.len(), 2, "both of window:1's values went");
+    assert!(store.get("window:1/scroll").is_none());
+    assert!(store.get("window:1/filter").is_none());
+    assert!(
+        store.get("window:10/scroll").is_some(),
+        "window:10 is not inside window:1"
+    );
+    assert!(store.get("window:2/scroll").is_some());
+}
+
+/// A forgotten scope is a *new* document when it comes back: the next mount
+/// reads the default, not the value the last one left. Which is the whole
+/// point — a closed workspace's scroll offset must not be waiting for the next
+/// workspace that happens to reuse its id.
+#[test]
+fn a_forgotten_scope_comes_back_empty() {
+    use fresh_ui::behavior::MemStore;
+    let store = Rc::new(MemStore::new());
+    let mut ui: Ui<()> = Ui::new();
+    ui.set_store(store.clone() as Rc<dyn Store>);
+
+    ui.frame(document("alpha", Some("kept")), Size::new(40, 4));
+    ui.frame(document("beta", None), Size::new(40, 4));
+    store.forget_scope("alpha");
+    ui.frame(document("alpha", None), Size::new(40, 4));
+
+    assert_eq!(shown(&ui), "", "the value was forgotten, not restored");
+}
