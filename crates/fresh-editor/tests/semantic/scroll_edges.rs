@@ -98,54 +98,6 @@ fn harness_scrolled_into_the_middle(lines: usize, config: Config) -> EditorTestH
     harness
 }
 
-/// **A notch slides rather than jumping**, on a pane whose wheel the shell's
-/// tree claims.
-///
-/// The walk that makes a multi-line notch slide ran between the tree's
-/// dispatch and the legacy box walk, so it applied only to the notches the
-/// tree *declined* — which, once a surface's wheel became a node, was none of
-/// that surface's. The pane, the explorer and the dock all claim their own
-/// wheel now, so the split has to happen ahead of dispatch.
-#[test]
-fn a_multi_line_notch_slides_instead_of_jumping() {
-    const LINES: usize = 200;
-    let mut config = edge_config();
-    config.editor.smooth_scroll = true;
-    config.editor.animations = true;
-    config.editor.mouse_wheel_scroll_lines = 5;
-    let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config).unwrap();
-    let path = harness.project_dir().unwrap().join("long.txt");
-    std::fs::write(&path, numbered_lines(LINES)).unwrap();
-    harness.open_file(&path).unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("line 001"))
-        .unwrap();
-
-    let before = top_visible_line(&harness, LINES);
-    harness.mouse_scroll_down(20, 10).unwrap();
-    harness.render().unwrap();
-    let after_one = top_visible_line(&harness, LINES);
-    assert_eq!(
-        after_one - before,
-        1,
-        "the first line of the notch lands at once and the rest are owed"
-    );
-    assert!(
-        harness.editor().has_pending_wheel_scroll(),
-        "the rest of the notch is still owed"
-    );
-
-    harness
-        .wait_until(|h| !h.editor().has_pending_wheel_scroll())
-        .unwrap();
-    harness.render().unwrap();
-    assert_eq!(
-        top_visible_line(&harness, LINES) - before,
-        5,
-        "and all five arrive"
-    );
-}
-
 /// Both edges of the pane are shaded, dimmest hard against the edge and
 /// a step brighter one row in, with the third row already at full
 /// strength.
@@ -386,6 +338,12 @@ fn viewport_edge_fade_disabled_paints_every_row_at_full_strength() {
 /// jumping it. The first line lands on the frame the event produces —
 /// the view answers the wheel immediately — and the rest follow over
 /// the next frames.
+///
+/// **This is what caught the walk falling behind the tree.** The split used
+/// to happen between the shell's dispatch and the legacy box walk, so it saw
+/// only the notches the tree declined — and once a pane's wheel became a node,
+/// that was none of them, and the whole notch jumped (`left: 4, right: 2`
+/// here). The split is ahead of dispatch now; see `Editor::arm_wheel_walk`.
 #[test]
 fn a_multi_line_notch_walks_the_view_a_line_at_a_time() {
     const LINES: usize = 200;
