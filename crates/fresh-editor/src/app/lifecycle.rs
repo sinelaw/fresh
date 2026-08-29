@@ -386,7 +386,6 @@ impl Editor {
     pub fn relayout(&mut self) {
         // Geometry moved: every chrome box the tree would derive may have a
         // different rect now, so spoil the per-generation UI memos.
-        self.bump_ui_gen();
         self.push_layout_geometry();
         self.notify_layout_changed();
     }

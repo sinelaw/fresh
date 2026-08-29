@@ -709,20 +709,21 @@ impl Editor {
             || self.dormant_remote.contains_key(&self.active_window);
 
         // Convert HoverTarget to tab hover info for rendering
-        let hovered_tab = match &self.active_window_mut().mouse_state.hover_target {
+        let hovered = self.hovered();
+        let hovered_tab = match &hovered {
             Some(HoverTarget::TabName(target, split_id)) => Some((*target, *split_id, false)),
             Some(HoverTarget::TabCloseButton(target, split_id)) => Some((*target, *split_id, true)),
             _ => None,
         };
 
         // Get hovered close split button
-        let hovered_close_split = match &self.active_window_mut().mouse_state.hover_target {
+        let hovered_close_split = match &hovered {
             Some(HoverTarget::CloseSplitButton(split_id)) => Some(*split_id),
             _ => None,
         };
 
         // Get hovered maximize split button
-        let hovered_maximize_split = match &self.active_window_mut().mouse_state.hover_target {
+        let hovered_maximize_split = match &hovered {
             Some(HoverTarget::MaximizeSplitButton(split_id)) => Some(*split_id),
             _ => None,
         };
@@ -1291,7 +1292,6 @@ impl Editor {
         // built before this pass may describe stale rects. Bump at the END so
         // the pass's own overlay/chrome queries can still share one rebuild,
         // while post-render events derive fresh.
-        self.bump_ui_gen();
     }
 
     /// The Confirm-each option's live value when it is shown (replace
@@ -2439,7 +2439,7 @@ impl Editor {
 
         // Which clickable status-bar segment (if any) the mouse is over —
         // drives hover styling generically (one variant for the whole bar).
-        let status_bar_hovered = match &self.active_window().mouse_state.hover_target {
+        let status_bar_hovered = match &self.hovered() {
             Some(HoverTarget::StatusBarClickable(id)) => Some(*id),
             _ => None,
         };
@@ -2680,11 +2680,13 @@ impl Editor {
         // borrowed: a description is a value, and this one is a handful of
         // nodes.
         let pane_chrome = self.pane_chrome();
+        let groups = self.active_window().pane_groups();
         let splits = self.active_window().buffers.splits().map(|(mgr, _)| {
             crate::view::shell::splits::Splits {
                 root: mgr.root().clone(),
                 maximized: mgr.maximized_split().map(crate::model::event::LeafId),
                 chrome: pane_chrome.clone(),
+                groups,
             }
         });
         // The same map the painter will read for the same panes — filed here,
@@ -3661,7 +3663,7 @@ impl Editor {
             prompt.prompt_type,
             PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
         ) {
-            let hover_target = self.active_window().mouse_state.hover_target.clone();
+            let hover_target = self.hovered();
             let theme = self.theme.read().unwrap().clone();
             let keybindings = self.keybindings.read().unwrap();
             let kb_clone = keybindings.clone();
@@ -4940,7 +4942,7 @@ impl Editor {
         use ratatui::text::Span;
         use ratatui::widgets::Paragraph;
 
-        match &self.active_window().mouse_state.hover_target {
+        match &self.hovered() {
             Some(HoverTarget::SplitSeparator(split_id, direction)) => {
                 // Highlight the separator with hover color
                 for (sid, dir, x, y, length) in &self.active_layout().separator_areas {

@@ -14,6 +14,7 @@
 //! The library's own demo makes the same split for the same reason.
 
 use crate::input::keybindings::Action;
+use crate::model::event::LeafId;
 
 /// A message from the shell's widget tree.
 #[derive(Clone, Debug)]
@@ -56,11 +57,85 @@ pub enum UiFact {
     /// at a time — the tree's answer, kept apart from the legacy walk's in
     /// `Editor::shell_hover`.
     Hover(Option<crate::app::types::HoverTarget>),
-    /// A right-click landed somewhere — anywhere — so the two left-click-only
-    /// menus (the "+" new-tab menu, the close-split confirmation) close.
+    // -- a pane's tab strip ---------------------------------------------------
+    /// A left press on a pane's tab strip, at a cell.
+    ///
+    /// The strip is one node per pane; its *interior* — the tabs, their close
+    /// buttons, the "+", the scroll arrows and the split controls drawn over
+    /// them — is laid out by the tab renderer and hit-tested against what it
+    /// recorded. So the fact says which strip and where, and the two handlers
+    /// behind it are the ones the boxes dispatched to, in the order their `z`
+    /// used to express: the split controls sit on top of the tab row.
+    PaneTabsPress { pane: LeafId, x: u16, y: u16 },
+    /// A right press on a pane's tab strip: the tab's context menu, on the tab
+    /// under the pointer. Dismissing it from elsewhere is still the base
+    /// surface's, which this claim simply keeps out of the way of.
+    PaneTabsSecondary { pane: LeafId, x: u16, y: u16 },
+    /// The pointer is on a pane's tab strip at a cell, or has left one.
+    ///
+    /// Which tab, which close button, which split control is the tab
+    /// renderer's hit test — resolved where that layout lives, not here.
+    PaneTabsHover(Option<(LeafId, u16, u16)>),
+    /// A vertical wheel over a pane's tab strip pans it: up walks toward the
+    /// first tab, down toward the last.
+    PaneTabsWheel {
+        pane: LeafId,
+        x: u16,
+        y: u16,
+        delta: i32,
+    },
+    /// A sideways wheel over the strip pans it the same way, without the
+    /// popup dismissal and plugin hook the vertical one carries.
+    PaneTabsPan { pane: LeafId, delta: i32 },
+
+    /// A left press on a pane's content, and which press of a run it is: one
+    /// places the caret, two selects the word, three the line — or toggles a
+    /// fold, when the cell is a folded line's gutter indicator.
+    ///
+    /// The pane is the node's. The content *rectangle* the handlers take is
+    /// read back from the same node, because click-to-byte is a projection
+    /// through the view pipeline and needs the extent, not just the cell.
+    PaneContentPress {
+        pane: LeafId,
+        x: u16,
+        y: u16,
+        clicks: u8,
+    },
+
+    // -- a pane's scrollbars, and its wheel -----------------------------------
+    /// A left press on one of a pane's scrollbars.
+    ///
+    /// The pane is the node's; where the thumb is, and how wide the content
+    /// is, are reads of the scroll state at paint time and stay recorded.
+    PaneScrollbarPress {
+        pane: LeafId,
+        axis: fresh_ui::Axis,
+        x: u16,
+        y: u16,
+    },
+    /// The pointer is on a pane's vertical scrollbar at a row, or has left it.
+    /// Thumb or track is decided from the recorded thumb extent.
+    PaneScrollbarHover(Option<(LeafId, u16)>),
+    /// A wheel notch over a pane — its content, either of its bars, whichever
+    /// part reported it. They all mean the same thing: move this pane's
+    /// surface. Carries the pointer's cell for the plugin `mouse_wheel` hook.
+    PaneWheel {
+        pane: LeafId,
+        x: u16,
+        y: u16,
+        delta: i32,
+    },
+    /// A sideways wheel over a pane pans its surface. No popup dismissal and
+    /// no terminal live/scrollback transition — panning is not reading.
+    PanePan { pane: LeafId, delta: i32 },
+
+    /// A right-click landed somewhere — anywhere — so the three transient tab
+    /// menus close: the "+" new-tab menu, the close-split confirmation, and a
+    /// tab's context menu.
     ///
     /// An observation, not a claim: the click goes on to whatever it was aimed
-    /// at. See `shell::splits::tab_menu_guard`.
+    /// at, which is how the same press that clears a tab's context menu can go
+    /// on to open the next one. See `shell::splits::tab_menu_guard`.
     ClearTabMenus,
     /// A click on a status-bar element that answers one.
     ///

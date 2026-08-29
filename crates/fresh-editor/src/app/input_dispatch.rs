@@ -160,7 +160,6 @@ impl Editor {
         // Deferred actions mutate UI state outside the handle_key/handle_action
         // funnels (they run from the event loop after a handler returns), so
         // spoil the per-generation UI memos here too.
-        self.bump_ui_gen();
 
         // Set status message if provided
         if let Some(msg) = ctx.status_message {

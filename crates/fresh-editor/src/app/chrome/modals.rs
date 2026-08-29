@@ -19,7 +19,7 @@ use anyhow::Result as AnyhowResult;
 use crate::app::overlay::{Layer, LayerKind};
 use crate::input::keybindings::KeyContext;
 
-use super::{layer_rank, ChromeComponent, ChromeTreeBuilder, Editor};
+use super::{layer_rank, ChromeComponent, Editor};
 
 fn settings_up(ed: &Editor) -> bool {
     ed.settings_state.as_ref().is_some_and(|s| s.visible)
@@ -40,8 +40,6 @@ fn calibration_up(ed: &Editor) -> bool {
 pub(crate) struct Settings;
 
 impl ChromeComponent for Settings {
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
-
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, Layer)>) {
         // Full-screen modal: owns the keyboard whenever present.
         if settings_up(ed) {
@@ -81,8 +79,6 @@ impl ChromeComponent for Settings {
 pub(crate) struct KeybindingEditor;
 
 impl ChromeComponent for KeybindingEditor {
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
-
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, Layer)>) {
         // Installs its own input dispatcher, so it is transparent to
         // `KeyContext`-driven resolution (`key_context: None`) but
@@ -114,8 +110,6 @@ impl ChromeComponent for KeybindingEditor {
 pub(crate) struct CalibrationWizard;
 
 impl ChromeComponent for CalibrationWizard {
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
-
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, Layer)>) {
         // Same custom-dispatcher treatment as the keybinding editor.
         if calibration_up(ed) {
@@ -149,8 +143,6 @@ impl ChromeComponent for CalibrationWizard {
 pub(crate) struct WorkspaceTrust;
 
 impl ChromeComponent for WorkspaceTrust {
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
-
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, Layer)>) {
         // When it's the top of the global stack it takes the place of
         // the generic `Popup` layer (the popups component skips its

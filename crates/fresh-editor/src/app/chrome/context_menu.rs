@@ -3,24 +3,11 @@
 
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use super::{ChromeComponent, Editor};
 
 pub(crate) struct ContextMenu;
 
 impl ChromeComponent for ContextMenu {
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {
-        // Nothing. The menu is a `Layer` in the shell's tree, and its pointer
-        // behaviour comes from properties rather than boxes: `Modality::Inert`
-        // makes everything outside non-interactive — which is what the
-        // full-frame close-guard box simulated — and `OUTSIDE_POINTER`
-        // dismissal closes it. The shell is offered the pointer before this
-        // walk runs, so neither box has anything left to do.
-        //
-        // The keyboard grab that sat beside them is gone too — the pre-band
-        // stage it belonged to has no members left. The layer entry below is
-        // what answers keys now.
-    }
-
     /// The last thing this component does.
     ///
     /// Paint, pointer and keyboard have all moved to the `Layer` in the

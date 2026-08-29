@@ -78,7 +78,6 @@ impl Editor {
         // menus, plugin commands, macros) — any of them can change what the
         // overlay stack / chrome tree would derive, so spoil the
         // per-generation UI memos.
-        self.bump_ui_gen();
 
         // Record action to macro if recording
         self.record_macro_action(&action);

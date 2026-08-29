@@ -8,7 +8,7 @@
 
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use super::{ChromeComponent, Editor};
 use crate::app::types::HoverTarget;
 
 pub(crate) struct Menu;
@@ -39,20 +39,6 @@ impl ChromeComponent for Menu {
             return false;
         }
         ed.menu_hover_reaction(new)
-    }
-
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {
-        // Nothing. The bar row is a native region in the shell's tree and the
-        // open chain is a stack of `Layer`s; both answer the pointer
-        // themselves. The three boxes that used to be pushed here —
-        // `chrome:menu_bar`, `chrome:menu_dropdown` per level, and the
-        // full-frame `chrome:menu_close_guard` — are gone with them: the guard
-        // is `Dismiss::OUTSIDE_POINTER` on the outermost level, which is a
-        // property of the layer rather than a rectangle someone has to push,
-        // rank and keep in sync.
-        //
-        // The keyboard grab (`on_layer_key`) and the layer entry below have
-        // not migrated yet.
     }
 
     fn layers(&self, ed: &Editor, out: &mut Vec<(u16, crate::app::overlay::Layer)>) {

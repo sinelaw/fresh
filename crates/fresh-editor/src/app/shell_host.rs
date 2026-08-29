@@ -831,6 +831,26 @@ impl Editor {
         claimed
     }
 
+    /// Whether a wheel notch over a pane's content was taken by a live
+    /// terminal there rather than scrolling the pane.
+    ///
+    /// The same gate the content's press asks (`pane_content_takes_pointer`),
+    /// which is where the ruling lives; a notch simply has nowhere else to go
+    /// once the PTY has it.
+    fn pane_content_took_wheel(&mut self, x: u16, y: u16) -> bool {
+        let Some((ev, _)) = self.shell_pointer_event else {
+            return false;
+        };
+        match self.pane_content_takes_pointer(x, y, ev) {
+            Some(Err(e)) => {
+                tracing::warn!("terminal wheel forward failed: {e}");
+                true
+            }
+            Some(Ok(_)) => true,
+            None => false,
+        }
+    }
+
     /// Apply a positional fact — the half of a message that never becomes a
     /// keybinding.
     fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact) {
@@ -845,9 +865,108 @@ impl Editor {
                 }
             }
             UiFact::StatusBarTokenClicked(key) => self.fire_status_bar_token_click(&key),
+            // The tab strip. The strip is a node per pane; what is *inside* it
+            // is the tab renderer's layout, hit-tested against what it
+            // recorded — so these arms are the box handlers, minus the box.
+            UiFact::PaneTabsPress { pane, x, y } => {
+                let _ = pane;
+                // Split controls first: they are drawn on top of the tab row,
+                // which two `LayoutBox`es said by sitting at z 70 and 60.
+                let r = self
+                    .handle_click_split_controls(x, y)
+                    .or_else(|| self.handle_click_tab_bar(x, y));
+                if let Some(Err(e)) = r {
+                    tracing::warn!("tab strip click failed: {e}");
+                }
+            }
+            UiFact::PaneTabsSecondary { pane, x, y } => {
+                let _ = pane;
+                self.open_tab_context_menu(x, y);
+            }
+            UiFact::PaneTabsHover(at) => {
+                self.shell_hover = at.and_then(|(_, x, y)| self.tab_strip_hover(x, y));
+            }
+            UiFact::PaneTabsWheel { pane, x, y, delta } => {
+                self.dismiss_transient_popups();
+                self.active_window().wheel_plugin_hook(x, y, delta);
+                self.active_window_mut().scroll_tab_strip(pane, delta);
+            }
+            UiFact::PaneTabsPan { pane, delta } => {
+                self.active_window_mut().scroll_tab_strip(pane, delta);
+            }
+            UiFact::PaneContentPress { pane, x, y, clicks } => {
+                if let Err(e) = self.press_pane_content(pane, x, y, clicks) {
+                    tracing::warn!("pane content click failed: {e}");
+                }
+            }
+            // A pane's scrollbars, and its wheel. Every one of these took a
+            // `(col, row)` and asked each pane's recorded rectangle in turn
+            // whether it contained the point; the node says which pane, and
+            // what stays looked up is the bar's own geometry — the thumb's
+            // extent is a read of the scroll state at paint time.
+            UiFact::PaneScrollbarPress { pane, axis, x, y } => {
+                let r = match axis {
+                    fresh_ui::Axis::Vertical => self.handle_click_scrollbar(pane, x, y),
+                    fresh_ui::Axis::Horizontal => {
+                        self.handle_click_horizontal_scrollbar(pane, x, y)
+                    }
+                };
+                if let Some(Err(e)) = r {
+                    tracing::warn!("scrollbar click failed: {e}");
+                }
+            }
+            UiFact::PaneScrollbarHover(at) => {
+                self.shell_hover = at.and_then(|(pane, row)| self.scrollbar_hover(pane, row));
+            }
+            UiFact::PaneWheel { pane, x, y, delta } => {
+                // A live terminal that asked for the mouse gets the notch —
+                // the same gate the content's press asks, for the same reason.
+                if self.pane_content_took_wheel(x, y) {
+                    return;
+                }
+                // A plugin's panel inside the pane's content scrolls itself
+                // first — it was a box at z 120 over the pane's content rect,
+                // and a nested surface's wheel is genuinely the nested one's.
+                if self.handle_split_widget_panel_wheel(x, y, delta) {
+                    return;
+                }
+                let Some(buffer_id) = self.active_window().pane_buffer(pane) else {
+                    return;
+                };
+                // Only a wheel over a pane changes that terminal's
+                // live/scrollback state; panning the tab strip or the explorer
+                // leaves a live terminal streaming.
+                if self.active_window().focused_terminal_live() {
+                    self.enter_terminal_scrollback();
+                } else {
+                    self.active_window_mut()
+                        .set_split_terminal_drag_scrollback(pane, buffer_id, false);
+                }
+                self.dismiss_transient_popups();
+                self.active_window().wheel_plugin_hook(x, y, delta);
+                self.active_window_mut()
+                    .scroll_split_surface(pane, buffer_id, delta);
+            }
+            UiFact::PanePan { pane, delta } => {
+                let (x, y) = self.shell_hover_at;
+                if self.pane_content_took_wheel(x, y) {
+                    return;
+                }
+                let Some(buffer_id) = self.active_window().pane_buffer(pane) else {
+                    return;
+                };
+                if let Err(e) = self
+                    .active_window_mut()
+                    .pan_split_horizontal(pane, buffer_id, delta)
+                {
+                    tracing::warn!("pane pan failed: {e}");
+                }
+            }
             UiFact::ClearTabMenus => {
-                self.active_window_mut().new_tab_menu = None;
-                self.active_window_mut().close_split_menu = None;
+                let w = self.active_window_mut();
+                w.new_tab_menu = None;
+                w.close_split_menu = None;
+                w.tab_context_menu = None;
             }
             UiFact::MenuNav(step) => self.menu_nav(step),
             UiFact::CloseContextMenu => {
@@ -903,16 +1022,14 @@ impl Editor {
                 }
                 // **Every registered reaction, not one hand-picked one.**
                 // The tree says where the pointer is; what each surface does
-                // about it stays with that surface, exactly as it does for the
-                // legacy walk (`update_hover_target`). Calling
+                // about it stays with that surface. Calling
                 // `menu_hover_reaction` directly instead silently dropped the
                 // reactions belonging to two surfaces that had *also*
                 // migrated: the explorer's git-status tooltip
                 // (`FileExplorerStatusIndicator`) and the status bar's
-                // indicator styling. Neither is reachable from the legacy walk
-                // any more — those components no longer publish boxes — so a
-                // reaction this fact does not reach is a reaction that never
-                // runs.
+                // indicator styling. This is the only thing that reaches any
+                // of them — a reaction this fact does not run is a reaction
+                // that never runs.
                 //
                 // The pointer cell the reactions want is the one the fact
                 // arrived at; a hover fact is always produced by a pointer
@@ -1076,11 +1193,12 @@ impl Editor {
                 }
             }
             UiFact::SeparatorHover(at) => {
-                let target =
+                // The tree's field, not the walk's. The walk runs after this on
+                // the same event and finds nothing under a divider cell — it
+                // would store `None` straight over the answer. See
+                // `Editor::hovered`.
+                self.shell_hover =
                     at.map(|(id, dir)| crate::app::types::HoverTarget::SplitSeparator(id, dir));
-                if self.active_window().mouse_state.hover_target != target {
-                    self.active_window_mut().mouse_state.hover_target = target;
-                }
             }
             // A full-screen modal has the pointer. Which one is the tree's
             // answer — `Modality::Exclusive`, where a capture band offered
@@ -1141,10 +1259,7 @@ impl Editor {
                 }
             }
             UiFact::BrowserHover { x, y } => {
-                let target = self.compute_file_browser_hover(x, y);
-                if self.active_window().mouse_state.hover_target != target {
-                    self.active_window_mut().mouse_state.hover_target = target;
-                }
+                self.shell_hover = self.compute_file_browser_hover(x, y);
             }
             UiFact::BrowserScroll(delta) => {
                 self.handle_file_open_scroll(delta);
@@ -1167,8 +1282,7 @@ impl Editor {
                 }
             }
             UiFact::ThemeInfoButtonHover(on) => {
-                let target = on.then_some(crate::app::types::HoverTarget::ThemeInfoButton);
-                self.active_window_mut().mouse_state.hover_target = target;
+                self.shell_hover = on.then_some(crate::app::types::HoverTarget::ThemeInfoButton);
             }
             UiFact::ExplorerScroll { delta, x, y } => {
                 // The surface's wheel, with the surface. Unchanged from the

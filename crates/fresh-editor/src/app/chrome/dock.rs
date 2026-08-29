@@ -1,33 +1,18 @@
 //! The left dock column (orchestrator sessions panel).
 
-use crate::app::types::HoverTarget;
-
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use super::{ChromeComponent, Editor};
 
 pub(crate) struct Dock;
 
 impl ChromeComponent for Dock {
-    // No boxes. The column, its width grip, its wheel and the blur observer
-    // are nodes in the shell's tree — see `view::shell::dock`. What is left
-    // here is what the tree cannot yet own: the panel's *content* is a
-    // plugin's `WidgetSpec`, so its scrollbar-reveal hover reads zones the
-    // plugin publishes, and its keys ride the layer walk.
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
-
-    fn on_hover_change(
-        &self,
-        ed: &mut Editor,
-        _old: Option<&HoverTarget>,
-        _new: Option<&HoverTarget>,
-        col: u16,
-        row: u16,
-    ) -> bool {
+    fn on_pointer_moved(&self, ed: &mut Editor, col: u16, row: u16) -> bool {
         // The dock's overlay scrollbar follows the pointer: reveal it
         // while the mouse is over the sessions list, hide it otherwise.
         // Tracked off the actual motion events we receive (not gated on
         // `mouse_hover_enabled`, which only governs terminal-level mode
         // 1003 — and is off by default on Windows): if a Moved event
-        // arrives, use it. Keyed on col/row, not the target diff.
+        // arrives, use it. Keyed on the cell, not on a hover target, which
+        // is why it is `on_pointer_moved` and not `on_hover_change`.
         // Re-render only on the enter/leave transition (not every
         // motion) so it fades in/out without churn.
         let now_over = ed
