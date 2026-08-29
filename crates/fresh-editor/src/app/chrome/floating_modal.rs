@@ -2,7 +2,7 @@
 
 use anyhow::Result as AnyhowResult;
 
-use super::{in_rect, ChromeComponent, ChromeTreeBuilder, Editor};
+use super::{in_rect, ChromeComponent, Editor};
 
 pub(crate) struct FloatingModal;
 
@@ -14,12 +14,6 @@ fn panel_up(ed: &Editor) -> bool {
 }
 
 impl ChromeComponent for FloatingModal {
-    // No boxes, no wheel arm: the panel's layer is `Modality::Exclusive`, so
-    // every mouse event is claimed in the tree's own walk and a box here
-    // would be dead in every reachable state. The wheel is handled inside
-    // `handle_floating_modal_mouse`, which the layer's claim routes to.
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
-
     fn on_layer_key(
         &self,
         ed: &mut Editor,

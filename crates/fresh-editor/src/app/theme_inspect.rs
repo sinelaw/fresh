@@ -243,7 +243,7 @@ impl Editor {
             button: Some(Button {
                 label: " \u{25b6} Open in Theme Editor ".to_string(),
                 hovered: matches!(
-                    self.active_window().mouse_state.hover_target,
+                    self.hovered(),
                     Some(crate::app::types::HoverTarget::ThemeInfoButton)
                 ),
             }),

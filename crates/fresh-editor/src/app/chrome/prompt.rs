@@ -9,23 +9,11 @@
 use crate::input::keybindings::Action;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use super::{ChromeComponent, Editor};
 
 pub(crate) struct Prompt;
 
 impl ChromeComponent for Prompt {
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {
-        // Nothing. Both prompt forms are the shell tree's: the rows claim
-        // their own click and double-click, `hit.rs` owns the scrollbar's jump
-        // and drag, the viewport takes the wheel, and the overlay card absorbs
-        // every press and every notch that no band of it claimed — which is
-        // what `chrome:overlay_prompt_scrim`, `chrome:overlay_prompt_modal`
-        // and `chrome:overlay_rclick_guard` were, three boxes saying one rule
-        // split by gesture because a box can only say one thing at a time.
-        // The preview pane and the toolbar report their own events, so
-        // `chrome:prompt_preview` has nothing left to be either.
-    }
-
     // No pointer or wheel arms. Every box they matched on is gone: the card
     // absorbs what its bands do not claim, the toolbar and the preview report
     // their own events, and the suggestion list has been the tree's since the

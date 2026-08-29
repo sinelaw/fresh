@@ -16,27 +16,15 @@ use crate::model::event::{BufferId, LeafId};
 pub(crate) const TAB_SCROLL_STEP_COLUMNS: usize = 10;
 
 impl crate::app::window::Window {
-    /// The split whose tab strip occupies the given cell, for the
-    /// wheel's tab-strip panning (the strip is chrome, but chrome with
-    /// content of its own: when the tabs overflow their bar it
-    /// scrolls). There is deliberately no "whatever has focus"
-    /// fallback anywhere in wheel routing: the wheel moves what the
-    /// pointer is over, and chrome that owns no scrollable content —
-    /// the menu bar, the status bar, separators — drops it
-    /// (sinelaw/fresh#2969, the base component's ruling).
-    pub(crate) fn tab_bar_split_at(&self, col: u16, row: u16) -> Option<LeafId> {
-        self.layout_cache
-            .tab_layouts
-            .iter()
-            .find(|(_, layout)| {
-                let bar = layout.bar_area;
-                col >= bar.x && col < bar.x + bar.width && row >= bar.y && row < bar.y + bar.height
-            })
-            .map(|(split_id, _)| *split_id)
-    }
-
     /// Pan a split's tab strip by one scroll step: negative moves toward the
     /// first tab, positive toward the last.
+    ///
+    /// Which split is the strip node's own — it is that pane's. The cell was
+    /// compared against every recorded `bar_area` in turn to recover it, which
+    /// is what a keyed node makes unnecessary. The wheel routing's ruling is
+    /// unchanged and lives with the surfaces: there is no "whatever has focus"
+    /// fallback, and chrome that owns no scrollable content drops the wheel
+    /// (sinelaw/fresh#2969, the base component's).
     ///
     /// Scrolling right stops at the last tab — `right_overflow` is the
     /// renderer's own record of whether anything is still hidden off the right

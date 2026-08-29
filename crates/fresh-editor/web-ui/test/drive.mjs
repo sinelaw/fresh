@@ -860,11 +860,14 @@ if (!((await scene(page)).regions.widgets || []).some(w => w.kind === 'dock')) {
 await page.waitForTimeout(200);
 check('dock alone (no modal) has zero modal-scrims', (await page.locator('.modal-scrim').count()) === 0);
 // "New Task… ▾" opens a create dropdown first (dock redesign); pick the
-// "New Task…" option (rendered as "  New Task…" / "● New Task…") to open
-// the form.
+// "New Task…" option to open the form. The two are told apart by the
+// trigger's trailing "▾" rather than by how the option happens to be padded
+// — it is rendered with leading indent AND a trailing space, so an end-anchor
+// straight after the ellipsis matched neither row and the click hung for its
+// full timeout.
 await page.locator('.widget-surface.w-dock .w-button', { hasText: 'New Task' }).first().click();
 await page.waitForTimeout(300);
-await page.locator('.widget-surface.w-dock .w-button', { hasText: /New Task…$/ }).first().click();
+await page.locator('.widget-surface.w-dock .w-button', { hasText: /^\s*New Task…\s*$/ }).first().click();
 await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(200);
 check('New Workspace dialog is a floatingModal', ((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'));

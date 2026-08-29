@@ -781,6 +781,56 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     );
 }
 
+/// **Hovering a split separator names it, and the name survives the frame.**
+///
+/// The dividers are nodes in the shell's tree now, and the tree reports the
+/// hover. The legacy box walk runs after the tree on the same event, finds
+/// nothing under a divider cell — no chrome box covers it any more — and used
+/// to store that `None` straight over the tree's answer, so the highlight
+/// never appeared. `Editor::hovered` is where the two walks meet.
+#[test]
+fn test_hovering_a_split_separator_names_it() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split horiz").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let separators = harness.editor().get_separator_areas().to_vec();
+    assert_eq!(
+        separators.len(),
+        1,
+        "one separator after a horizontal split"
+    );
+    let (split_id, direction, sep_x, sep_y, sep_length) = separators[0];
+
+    harness.mouse_move(sep_x + sep_length / 2, sep_y).unwrap();
+    assert_eq!(
+        harness.editor().hovered(),
+        Some(fresh::app::HoverTarget::SplitSeparator(
+            split_id.into(),
+            direction
+        )),
+        "the pointer is on the separator"
+    );
+
+    // And moving off it gives the answer back to whatever is under the pointer.
+    harness.mouse_move(sep_x + sep_length / 2, 1).unwrap();
+    assert_ne!(
+        harness.editor().hovered(),
+        Some(fresh::app::HoverTarget::SplitSeparator(
+            split_id.into(),
+            direction
+        )),
+        "and off it, it is not"
+    );
+}
+
 /// Test mouse drag on horizontal split separator to resize
 #[test]
 fn test_horizontal_split_separator_drag_resize() {

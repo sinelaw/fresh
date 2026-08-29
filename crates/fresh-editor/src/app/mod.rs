@@ -114,14 +114,6 @@ use fresh_i18n::t;
 /// Returns true if a render is needed. The `clear_terminal` callback handles full-redraw
 /// requests (terminal clears the screen; GUI can ignore or handle differently).
 /// Used by both the terminal event loop and the GUI event loop.
-impl Editor {
-    /// Invalidate the derived-structure memos (see `ui_gen`).
-    #[inline]
-    pub(crate) fn bump_ui_gen(&mut self) {
-        self.ui_gen = self.ui_gen.wrapping_add(1);
-    }
-}
-
 pub fn editor_tick(
     editor: &mut Editor,
     mut clear_terminal: impl FnMut() -> AnyhowResult<()>,
@@ -229,9 +221,7 @@ pub fn editor_tick(
     // per-generation UI memos. An idle tick keeps the generation — that is
     // what lets a quiet mouse-motion stream reuse one chrome tree across
     // events.
-    if needs_render {
-        editor.bump_ui_gen();
-    }
+    if needs_render {}
 
     Ok(needs_render)
 }
@@ -1171,20 +1161,21 @@ pub struct Editor {
     /// What the pointer is over *in the shell's tree*, as the tree itself
     /// reported it.
     ///
-    /// Deliberately not `mouse_state.hover_target`. That field is written by
-    /// the legacy hover walk on every motion event, and a migrated surface's
-    /// chrome box is deleted — so the walk finds nothing there and would clear
-    /// whatever the tree had just set. Two owners, one field.
+    /// **The** hover target now, read through `Editor::hovered`. It had to be
+    /// its own field while a `mouse_state` one existed beside it, written by
+    /// the legacy hover walk on every motion event: a migrated surface's box
+    /// was deleted, so that walk found nothing there and cleared whatever the
+    /// tree had just set. Two owners, one field.
     ///
-    /// Two earlier attempts were worse. Claiming the `Move` in the tree killed
-    /// the plugin `mouse_move` hook, the terminal-link and LSP hover trackers,
-    /// and any drag whose pointer crossed the migrated row. A one-event flag
-    /// saying "the tree answered" flickered, because `Enter` fires once on the
-    /// way in and says nothing on the motions that follow inside the same
-    /// node.
+    /// Two earlier attempts at that were worse. Claiming the `Move` in the
+    /// tree killed the plugin `mouse_move` hook, the terminal-link and LSP
+    /// hover trackers, and any drag whose pointer crossed the migrated row. A
+    /// one-event flag saying "the tree answered" flickered, because `Enter`
+    /// fires once on the way in and says nothing on the motions that follow
+    /// inside the same node.
     ///
-    /// Separate ownership is the answer: the tree writes here, the walk writes
-    /// there, and neither reads the other's. This field retires with the walk.
+    /// Separate ownership was the answer, and then the walk went, and with it
+    /// the field it wrote.
     pub(crate) shell_hover: Option<crate::app::types::HoverTarget>,
     /// The cell the pointer was on when the shell last reported a hover.
     ///
@@ -1456,43 +1447,6 @@ pub struct Editor {
     /// shown. Independent of `floating_widget_panel` so the dock persists
     /// while a centered modal is open. Always rendered as a `LeftDock`.
     pub(crate) dock: Option<FloatingWidgetState>,
-    /// Coarse UI-STATE GENERATION — the GEOMETRY/EPOCH half of the
-    /// `chrome_tree` memo key. Bumped at the event funnels
-    /// (`handle_key` entry, `handle_mouse` exit-when-rendering,
-    /// `handle_action`, `process_deferred_actions`, `relayout`, popup
-    /// show/hide, `editor_tick` when it did work, `render` end). The
-    /// counter is deliberately NOT trusted as a full invalidation
-    /// story: surface presence/claim changes are caught by comparing
-    /// the freshly built `overlay_stack` against the memo's snapshot
-    /// (see `chrome_tree`), because the set of Editor APIs that can
-    /// flip a layer predicate is unbounded and a hand-maintained bump
-    /// roster there was proven incomplete by CI. Over-invalidation is
-    /// fine; a validated hit can never be stale, and debug builds
-    /// oracle-check every hit against a fresh rebuild anyway.
-    pub(crate) ui_gen: u64,
-    /// Memoized `chrome_tree()`: (generation, the `overlay_stack`
-    /// snapshot the tree was built from, the tree). A hit requires the
-    /// generation to match AND a fresh stack build to equal the
-    /// snapshot.
-    pub(crate) chrome_tree_memo: std::cell::RefCell<
-        Option<(
-            u64,
-            Vec<crate::app::overlay::OwnedLayer>,
-            Vec<crate::app::chrome::ChromeBox>,
-        )>,
-    >,
-    /// Monotonic count of ACTUAL `chrome_tree` rebuilds (memo misses).
-    /// An unchanged value between two queries proves the tree — and the
-    /// validated inputs it derives from — did not change in between;
-    /// downstream per-event memos (the hover cell) key on this instead
-    /// of `ui_gen` so they inherit the stack-equality validation.
-    pub(crate) ui_tree_seq: std::cell::Cell<u64>,
-    /// The (tree seq, col, row) of the last completed hover pass: an
-    /// identical triple means the tree provably didn't change and the
-    /// cursor is on the same cell, so the walk and every
-    /// `on_hover_change` reaction would see identical inputs and the
-    /// pass is skipped.
-    pub(crate) hover_cell_memo: std::cell::Cell<Option<(u64, u16, u16)>>,
 
     /// Persisted width (columns) of the orchestrator left dock after the
     /// user drags its right border. `None` until first resized; when set,

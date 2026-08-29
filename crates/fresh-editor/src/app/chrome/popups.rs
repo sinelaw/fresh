@@ -9,20 +9,11 @@
 
 use crate::input::keybindings::Action;
 
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use super::{ChromeComponent, Editor};
 
 pub(crate) struct Popups;
 
 impl ChromeComponent for Popups {
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {
-        // Nothing. Every box this component had is a property of the popup's
-        // own layer now: it absorbs a press that none of its rows, its close
-        // button or its text claimed, its viewport takes the wheel and the
-        // gutter, and a transient one declares the dismissal that the two
-        // guards performed. What is left below is the keyboard, which is the
-        // popup's own and has not moved.
-    }
-
     // No wheel arm. The popup's window is a viewport in the shell's tree and
     // takes its own wheel, vertical and horizontal — which is also what stops
     // a horizontal delta panning the buffer underneath, since a layer's

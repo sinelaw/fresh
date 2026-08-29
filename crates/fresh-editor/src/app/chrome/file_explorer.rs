@@ -4,25 +4,11 @@
 use crate::app::types::HoverTarget;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use super::{ChromeComponent, Editor};
 
 pub(crate) struct FileExplorer;
 
 impl ChromeComponent for FileExplorer {
-    /// **Nothing.** The panel is a native region in the shell's tree and
-    /// answers its own pointer — rows, title, close button and the right-edge
-    /// resize grip alike. Its context menu is the shell's context-menu layer,
-    /// which declares `Dismiss::OUTSIDE_POINTER`; the tree runs that for any
-    /// button and claims only for the primary one, which is the
-    /// off-explorer right-click guard exactly: dismiss, and let the press go
-    /// on to open the next menu.
-    ///
-    /// The grip could migrate because `pointer_mode` reaches an ordinary
-    /// container: the strip carrying it lets presses through to the rows
-    /// beneath, and only the one column absorbs. What it starts is still the
-    /// legacy drag; see `view::shell::file_explorer`.
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
-
     fn on_hover_change(
         &self,
         ed: &mut Editor,

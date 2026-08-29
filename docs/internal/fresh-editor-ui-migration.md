@@ -1330,13 +1330,19 @@ display-list-is-not-a-diff rule, pinned at the cell.
 | **S2** | The live-derived regions — status bar, search-options row — become native descriptions. | **Done.** Both surfaces describe what is on them and layout decides every column. The **search-options row** was the first surface to meet the third acceptance criterion. The **status bar** was the one that paid for it twice: `render_status` placed every element *and* emitted a `StatusBarLayout`, then `compute_status_layout` re-ran the whole walk at event time over state that may have moved. `clickable_rects`, `plugin_token_areas`, `segments` and `provenance_runs` all read the laid-out tree now; plugin tokens became first-class (they were a second loop the click rail reached only after missing every built-in). What stayed app-side is *which* right-hand elements appear when the bar is too narrow — a content decision from measured text, not geometry. |
 | **S3** | Overlays become real `Layer`s: context menus → dropdowns/menu bar → popups → prompt/palette → modals. | The value stage. Each one deletes guard boxes, a rank entry, and a slice of the capture band. **Context menus: done** (below) — paint, pointer, dismissal, keyboard and geometry, with only the `blocks_terminal_input` rank entry left behind. **Menu bar: paint and pointer migrated** — the bar row is a native background region, the dropdown chain is a stack of layers, and the close guard is a dismissal property. **Popups: done** — placement, paint, wheel, scrollbar, rows, close button, dismissal, links and text selection are all in the tree, and `view/popup.rs`'s painter and all four of its chrome boxes are deleted. **Prompt / palette: done** — both suggestion lists are the tree's (the overlay's anchors to the card's results band by name), the card is mouse-modal, and `shell_owns_suggestions`, which existed to tell the two apart, is gone with them. **Theme inspector and file-open dialog: done.** **The modals: done, on the pointer side.** Settings, the keybinding editor, the calibration wizard, the workspace-trust prompt and the floating panel each owned the whole mouse channel through `ChromeComponent::capture_mouse` — a band ahead of every walk including the shell's, and the reason `placed_surface_outranks_shell` existed. Capture is what a modal *is*, and `Modality::Exclusive` says it, so **the band and the precedence constant are both gone and there is one pointer walk.** The workspace-trust prompt migrated outright — layer, `Scrim::Dim`, rows, radios and buttons — retiring `TrustDialogLayout` (a paint-recorded roster entry), its painter, its `Vec<Seg>` row plan, its own word-wrap, its scroll clamp and `handle_workspace_trust_mouse`. The other four keep their interiors, which hit-test rectangles their own painters recorded and tell a drag from a move — something a tree `Event` deliberately cannot, since the library routes drags by pointer capture. So the tree answers *which* surface an event belongs to and the event stays on the editor: routed, not transported (`Editor::shell_pointer_event`), and that channel retires with the interiors. What is left of S3 is the keyboard, which is one wave rather than per-surface.
 
+**And the pointer walk itself is gone.** With S5's panes on the tree, no component contributed a box, so every question the walk answered was already being answered before it ran. `chrome_tree` and its validated memo, `ChromeBox`, `ChromeTreeBuilder` and `hit_stack`; `Disposition`, `PointerPress`, `ChromePointer` and `pointer_walk_step`; `dispatch_pointer`, `dispatch_wheel`, the click / right-click / double / triple entries and `handle_horizontal_scroll`; `compute_hover_target`, `update_hover_target` and `mouse_state.hover_target`; `ChromeComponent::{collect, hover, on_pointer, on_wheel, on_hwheel}`; and `ui_gen`, whose only reader was the memo. `ChromeComponent` is a keyboard interface now — `layers`, `on_layer_key`, and the two hover reactions — which is what makes the keyboard wave the last of S3 rather than one of two remainders.
+
+Three things had to move *out* of the gap between the two walks on the way, and they are one lesson: **the tree runs first, so anything that used to sit between it and the box walk now sits behind whatever the tree claims.** The right-click that clears the transient tab menus became a capture-phase listener on the frame — "anywhere" cannot mean it in a walk that only runs for what the tree declined. A live terminal's own mouse and the Ctrl+Click that opens a path it printed became `pane_content_takes_pointer`, asked at the head of the pane content's own handlers. And the smooth-scroll walk, which turns a multi-line notch into a slide, moved *ahead* of dispatch: it had been splitting only the notches nothing took, so every migrated surface had silently been jumping the whole notch since its wheel became a node.
+
 **The two remainders are both blocked, and neither is a loose end.**
 
-*The keyboard grab* is blocked on a precedence decision, found while trying to finish it. `MenuInputHandler` is capture-all (Esc / Enter / arrows+hjkl / Home / End, everything else swallowed) — that part maps onto the context menu's `on_key` shape directly. But `chrome::menu::menu_action_binding` consults the `menu` keymap section *first*, and it lives in the layer walk, which runs **after** the shell is offered the key (`app::input`). A capture-all `on_key` on the dropdown chain therefore swallows every user-bound menu key before the keymap is ever consulted — reintroducing exactly the bug that consult was added to fix (Emacs `C-n` / `C-g` in an open menu doing nothing). The context menu never hit this because it consults no keymap. **Decide first:** does keymap resolution move ahead of shell dispatch, or does a migrated surface get to ask the keymap from inside its description? Every later keyboard-owning surface — the palette, the prompt, the modals — hits the same question, so it is worth answering once.
+*The keyboard grab* had a precedence decision in front of it, and **that decision is settled and shipped**. The question was: does keymap resolution move ahead of shell dispatch, or does a migrated surface ask the keymap from inside its description? It is the second. `Editor::menu_shortcuts` reads the `menu` keymap section when the description is built and hands the tree `MenuShortcut { key, intent }` values, which `menu_intents` resolves with nothing in front of them. `menu_action_binding` — the consult that sat in the layer walk, *behind* the shell, and was therefore swallowed by any capture-all `on_key` above it — is gone. Every later keyboard-owning surface has the same answer available: bindings flow down as data, and the tree resolves key → intent → action.
+
+What is actually left is the **wave**, and its shape is now clear rather than blocked: `base`, `dock`, `floating_modal`, `menu`, the four `modals` and `popups` still implement `on_layer_key`. Several of those hand the key to an interior that is still the painter's — a modal's `dispatch_input`, the dock's widget command dispatcher — so their keyboard migrates when that interior does, which is M6. The ones whose interiors are already the tree's are the ones to take first.
 
 *The rank entries* cannot go until the rest of S3 does. `blocks_terminal_input` is contributed by six components — popups, dock, floating modal, base, menu, context menu — and `presents_blocking_overlay` is the single source of truth for "is anything modal up?". Removing the two migrated entries would mean an open context menu or menu stops blocking PTY routing. They retire with the last unmigrated overlay, not before. |
 | **S4** | Dock column, file explorer, plugin panels. | **File explorer: done** — the panel is a native region, rows and slots are measured by the tree, `trailing_slot_screen_bounds` and the old renderer's paint half are deleted, and the grip paints its own hover column via `layout_reader`. **Dock column: done** — its press, right-press, wheel and width grip are nodes, and the blur observer moved to a capture-phase listener on the frame, which fixed it: as the surfaces beside the dock became nodes, each one that claimed a press stopped blurring a focused dock, because the shell runs ahead of the walk the full-frame guard box lived in. The column's *content* is still a `Host` leaf. **Plugin panels remain**, and they are the M6 wave rather than a remainder: `WidgetSpec` → `Node` translation, element state replacing `WidgetInstanceState`, and a plugin API change. It no longer waits on anything: S3's ordering went with the two-pass fold, and §6.2's "colour that is not a theme name" is decided and shipped — `Paint::Lit` carries a plugin's `OverlayColorSpec::Rgb` as a `#rrggbb` literal the grammar reads back. The plugin API change (keyed `List`/`Tree` items) is deprecated ahead of it, so its release cycle runs in parallel rather than in series. |
-| **S5** | Splits, tabs, scrollbars decompose; the buffer becomes the only `Host` leaf. | The per-leaf decision is settled (§6.2 item 7): split the orchestration, with the leaf `Host` at the *content* rect and `split_grid` mutually recursive with the pane. Still last, because it is the only stage that touches the KEEP side — and now the only stage with any pointer surfaces left in `chrome/`: `splits.rs` and the `base.rs` floor beneath it are the whole of what remains there. |
+| **S5** | Splits, tabs, scrollbars decompose; the buffer becomes the only `Host` leaf. | **The pointer side is done, and `chrome/splits.rs` no longer has a component in it.** The grid is a description (`view::shell::splits`) that the model itself lays out — `get_leaves_with_rects` and `split_layout` are reads of it — and every surface a pane has is a node keyed by the pane it belongs to: its dividers, its tab strip (which took the split controls with it, since those are drawn *over* the tab row and a box said so with `z`), both scrollbars, and its content. **Which chrome a pane has is one rule** (`PaneChrome::resolve`) resolved once per frame by `Window::pane_chrome`, so the description and the painter cannot disagree about whether a pane has a strip; it had been four copies of the boolean algebra, two of which were quietly wrong about `Fixed` panels and live terminal grids. **A buffer group's panels are panes now too** — that layout lives in a side map and used to be dispatched into a pane's interior only at paint time, which is why its separators stayed recorded rectangles long after the main tree's became nodes; mounted in the pane's content node, which *is* the rectangle the painter uses, they are ordinary dividers. Each handler behind these nodes used to open by asking every recorded rectangle in turn whether it contained the point; they take a pane now. What they still read back is geometry that genuinely records the last paint — a scrollbar thumb's extent, the tab renderer's per-tab columns — and the pane's own content rectangle, read from the node that defines it. What remains of S5 is the **paint**: the leaf becomes a per-pane `Host` and `render_content` paints per leaf. |
 
 ### 5.1 M0 — the seam (a genuine prototype, not just plumbing)
 
@@ -1785,14 +1791,51 @@ list.
 
    **And the pane boundary showed itself exactly where this entry predicted.**
    A `Grouped` subtree is laid out inside a pane's *interior* — past the tab
-   bar and the scrollbars the painter reserves — so its dividers are not in
+   bar and the scrollbars the painter reserves — so its dividers were not in
    the main tree's description at all, and moving the main ones broke the
-   grouped drag until they were separated. They stay recorded rectangles, now
-   under their own `chrome:group_separators` box and
-   `WindowLayoutCache::grouped_separator_areas`, and they become nodes when
-   the pane's interior does. That is the "grid **and** the pane" this entry
-   warns about, met in practice: the grid alone is landable, and it stops at
-   the pane's edge.
+   grouped drag until they were separated out under their own box. That is the
+   "grid **and** the pane" this entry warns about, met in practice: the grid
+   alone was landable, and it stopped at the pane's edge.
+
+   **The pane's interior has since landed too, and the pointer half of S5 with
+   it.** In order, each step landing on its own:
+
+   - **The rule for which chrome a pane has.** Four places decided whether a
+     pane gets a tab strip and which scrollbars, each writing the boolean
+     algebra out again — and the paint's copy narrowed it by two refinements
+     the others did not know about (a `Fixed` panel earns no bar; a terminal
+     streaming its live grid gives up the scrollbar column), so the outer pane
+     of a buffer group and `flush_layout` were laying panes out a column wider
+     than the paint recorded. It is `PaneChrome::resolve` now, gathered once by
+     `Window::pane_chrome` and read by both the description and the painter.
+     The three callers that cannot see a buffer map say so in one place rather
+     than in three copies of `&& !`.
+   - **The tab strip**, which took the split controls with it: those are drawn
+     over the tab row, which two boxes said with z 70 over z 60 — an ordering a
+     node has to state itself, because the tree runs *before* the legacy walk.
+     `tab_bar_split_at` is gone with it.
+   - **The buffer group's grid**, mounted in the pane's content node — which
+     *is* the rectangle the painter lays that group out in. Its panels are
+     panes with their own keys and their own `PaneChrome`; its dividers are
+     ordinary dividers. `chrome:group_separators` and
+     `handle_click_group_separator` are gone.
+   - **Both scrollbars**, then **the content**. With those, `chrome/splits.rs`
+     has no `ChromeComponent` in it at all: the file is the handlers the nodes
+     dispatch to. Each of them used to open by asking every recorded rectangle
+     in turn whether it contained the point; they take a pane. What they still
+     read back is geometry that genuinely records the last paint — a thumb's
+     extent, the tab renderer's columns — and the pane's own content rectangle,
+     read from the node that defines it.
+
+   Two things had to move with the content, and both are the same lesson: **the
+   tree runs first, so anything that used to sit between the old capture band
+   and the legacy walk now sits behind whatever the tree claims.** A live
+   terminal's own mouse and the Ctrl+Click that opens a path it printed both
+   ran in that gap; they are `Editor::pane_content_takes_pointer`, asked at the
+   head of the content's own handlers, which is where they belonged. And
+   clicking a scrollbar *track* jumps the thumb under the pointer and says so
+   by writing the hover target — to the legacy walk's field, which the tree's
+   answer now shadows.
 
    **The order, therefore:**
    1. A leaf host id space (`HostRegion` is a small fixed enum; a leaf's id is

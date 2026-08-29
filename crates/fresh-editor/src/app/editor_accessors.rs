@@ -1032,6 +1032,19 @@ impl Editor {
     /// The active window's layout-cache (split-leaf rects, tab rects,
     /// file-explorer rect, view-line mappings). Mouse hit-testing and
     /// visual-line motion read from here.
+    /// What the pointer is on.
+    ///
+    /// One answer, from one walk. There were two: the tree wrote `shell_hover`
+    /// and a box walk wrote `mouse_state.hover_target`, and because the walk
+    /// ran *after* the tree on the same event it could erase a migrated
+    /// surface's hover — which is what happened to the split dividers when
+    /// they became nodes, the walk finding nothing under that cell and storing
+    /// `None` over the tree's answer. The walk is gone; the field it wrote is
+    /// gone with it.
+    pub fn hovered(&self) -> Option<crate::app::types::HoverTarget> {
+        self.shell_hover.clone()
+    }
+
     pub(crate) fn active_layout(&self) -> &crate::app::types::WindowLayoutCache {
         &self.active_window().layout_cache
     }

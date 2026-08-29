@@ -69,7 +69,7 @@ pub(crate) fn split_layout(id: LeafId, split_area: Rect, chrome: PaneChrome) -> 
     };
     let mut ui: fresh_ui::Ui<()> = fresh_ui::Ui::new();
     ui.frame(
-        pane_interior::<()>(id, chrome),
+        pane_interior::<()>(id, chrome, Default::default()),
         fresh_ui::Size::new(split_area.width, split_area.height),
     );
     let at = |k: fresh_ui::Key| -> Rect {

@@ -147,7 +147,6 @@ impl Editor {
         // memo caches under the new generation on first use, and a mid-
         // keystroke surface change is caught by the memo's overlay-stack
         // equality check, not by this bump.
-        self.bump_ui_gen();
 
         tracing::trace!(
             "Editor.handle_key: code={:?}, modifiers={:?}",

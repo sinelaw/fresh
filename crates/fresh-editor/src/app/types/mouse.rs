@@ -1,5 +1,4 @@
 use super::drag::TabDragState;
-use super::hover::HoverTarget;
 use crate::config::ExplorerWidth;
 use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection};
 
@@ -50,8 +49,6 @@ pub struct MouseState {
     /// preserves the active variant: a drag that begins in `Percent`
     /// stays in `Percent`, and likewise for `Columns`.
     pub drag_start_explorer_width: Option<ExplorerWidth>,
-    /// Current hover target (if any)
-    pub hover_target: Option<HoverTarget>,
     /// Whether we're currently doing a text selection drag
     pub dragging_text_selection: bool,
     /// The split where text selection started

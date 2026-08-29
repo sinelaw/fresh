@@ -3,17 +3,11 @@
 use crate::input::keybindings::Action;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, ChromeTreeBuilder, Editor};
+use super::{ChromeComponent, Editor};
 
 pub(crate) struct StatusBar;
 
-impl ChromeComponent for StatusBar {
-    /// **Nothing of the bar's input.** Every element is a keyed node in the
-    /// shell's tree and answers its own press and hover — built-in indicators
-    /// and plugin tokens alike — and the row itself claims the gaps between
-    /// them, which is what the box that used to be here was for.
-    fn collect(&self, _ed: &Editor, _t: &mut ChromeTreeBuilder) {}
-}
+impl ChromeComponent for StatusBar {}
 
 /// Behavior owned by this component (moved from mouse_input.rs —
 /// the handlers its arms dispatch to).

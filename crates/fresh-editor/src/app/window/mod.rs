@@ -2870,6 +2870,42 @@ impl Window {
         crate::app::terminal::combine_terminal_title(pty.as_deref(), osc.as_deref())
     }
 
+    /// The buffer a pane is showing — the main tree's leaves and a buffer
+    /// group's panels alike.
+    ///
+    /// A pane's identity comes from its node now, but the handlers behind it
+    /// still take a buffer. `split_at_position` answered both at once by
+    /// scanning recorded rectangles; this answers the half a node cannot.
+    pub fn pane_buffer(&self, pane: LeafId) -> Option<BufferId> {
+        let (mgr, _) = self.buffers.splits()?;
+        if let Some(b) = mgr.root().find(pane.into()).and_then(|n| n.buffer_id()) {
+            return Some(b);
+        }
+        self.grouped_subtrees
+            .values()
+            .find_map(|g| g.find(pane.into()).and_then(|n| n.buffer_id()))
+    }
+
+    /// The buffer group each visible pane is showing, by the pane showing it.
+    ///
+    /// A group's layout lives in `grouped_subtrees` rather than in the split
+    /// tree, and is dispatched at render time into the pane's *interior* —
+    /// past its strip and its scrollbar column. This is that dispatch, stated
+    /// once, so the description of the grid and the painter agree about which
+    /// pane holds which group.
+    pub fn pane_groups(&self) -> HashMap<LeafId, crate::view::split::SplitNode> {
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
+            return HashMap::new();
+        };
+        mgr.visible_leaves()
+            .into_iter()
+            .filter_map(|(leaf, _)| {
+                let group = vs_map.get(&leaf)?.active_group_tab?;
+                Some((leaf, self.grouped_subtrees.get(&group)?.clone()))
+            })
+            .collect()
+    }
+
     /// Which chrome each of this window's visible panes has, by leaf.
     ///
     /// **The one gathering.** `PaneChrome::resolve` is the rule; this is the
@@ -2889,23 +2925,38 @@ impl Window {
         let Some((mgr, vs_map)) = self.buffers.splits() else {
             return HashMap::new();
         };
-        mgr.visible_leaves()
-            .into_iter()
-            .map(|(leaf, buffer)| {
-                let terminal = self
-                    .buffer_metadata
-                    .get(&buffer)
-                    .and_then(|m| m.virtual_mode())
-                    .is_some_and(|m| m == "terminal");
-                let kind = PaneKind {
-                    inner_group_leaf: false,
-                    suppress_chrome: vs_map.get(&leaf).is_some_and(|vs| vs.suppress_chrome),
-                    scrollable: self.buffers.get(&buffer).is_none_or(|s| s.scrollable),
-                    terminal_live_grid: terminal && !self.split_terminal_scrollback(leaf, buffer),
-                };
-                (leaf, PaneChrome::resolve(window, kind))
-            })
-            .collect()
+        let mut out: HashMap<LeafId, PaneChrome> = HashMap::new();
+        let resolve = |leaf: LeafId, buffer: BufferId, inner: bool| {
+            let terminal = self
+                .buffer_metadata
+                .get(&buffer)
+                .and_then(|m| m.virtual_mode())
+                .is_some_and(|m| m == "terminal");
+            let kind = PaneKind {
+                inner_group_leaf: inner,
+                suppress_chrome: vs_map.get(&leaf).is_some_and(|vs| vs.suppress_chrome),
+                scrollable: self.buffers.get(&buffer).is_none_or(|s| s.scrollable),
+                terminal_live_grid: terminal && !self.split_terminal_scrollback(leaf, buffer),
+            };
+            (leaf, PaneChrome::resolve(window, kind))
+        };
+        for (leaf, buffer) in mgr.visible_leaves() {
+            let (k, v) = resolve(leaf, buffer, false);
+            out.insert(k, v);
+            // A group's panels are panes too — they sit inside this one's
+            // interior, which is what `inner_group_leaf` says about them.
+            let Some(group) = vs_map.get(&leaf).and_then(|vs| vs.active_group_tab) else {
+                continue;
+            };
+            let Some(node) = self.grouped_subtrees.get(&group) else {
+                continue;
+            };
+            for (inner_leaf, inner_buffer) in node.visible_leaves() {
+                let (k, v) = resolve(inner_leaf, inner_buffer, true);
+                out.insert(k, v);
+            }
+        }
+        out
     }
 
     /// Whether `split` is viewing terminal `buffer_id` in read-only scrollback.

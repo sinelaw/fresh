@@ -1,364 +1,29 @@
-//! The split grid: widget-panel content surfaces, separators,
-//! close/maximize buttons, tab bars, v/h scrollbars, and the editor
-//! content rects.
+//! The split grid's behaviour.
+//!
+//! **There is no chrome component here any more.** Every surface a pane has —
+//! its dividers, its tab strip with the split controls on it, both scrollbars,
+//! its content, and the buffer-group grid a pane can hold inside that content
+//! — is a node in the shell's tree (`view::shell::splits`), keyed by the pane
+//! it belongs to. What is left in this file is what those nodes dispatch to:
+//! the handlers themselves, which take a pane and a cell and do the work.
+//!
+//! Each of them used to open by asking every recorded rectangle in turn
+//! whether it contained the point, because a `LayoutBox` is a rectangle and
+//! the pane's identity had to be recovered from it. A node has that identity.
+//! What the handlers still read back is geometry that is genuinely a record of
+//! the last paint — where a scrollbar's thumb ended up, where the tab renderer
+//! put each tab — and the pane's own content rectangle, which is read from the
+//! node that defines it.
 
-use crate::app::types::HoverTarget;
+use crate::app::types::{HoverTarget, TabContextMenu};
 use crate::app::BufferId;
 use crate::input::keybindings::Action;
 use crate::model::event::{CursorId, LeafId, SplitDirection};
 use crate::view::ui::tabs::TabHit;
-use crate::widgets::LayoutBox;
 use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
 
-use super::{in_rect, ChromeComponent, ChromeTreeBuilder, Editor};
-
-pub(crate) struct Splits;
-
-impl ChromeComponent for Splits {
-    fn collect(&self, ed: &Editor, t: &mut ChromeTreeBuilder) {
-        for (_, buffer_id, content_rect, ..) in &ed.active_layout().split_areas {
-            if !ed.widget_registry.panels_for_buffer(*buffer_id).is_empty() {
-                t.rect("chrome:split_widget_panel", 120, *content_rect);
-            }
-        }
-        // The main tree's dividers are nodes in the shell's tree, and answer
-        // their own presses and hovers — see `view::shell::splits`. A box for
-        // them would be a rectangle recorded from the last paint, hit-tested
-        // to recover an identity the node simply has.
-        //
-        // A **grouped subtree** is different, and this is the boundary the
-        // migration keeps hitting: it is laid out inside a pane's *interior*,
-        // past the tab bar and the scrollbars the painter reserves, and that
-        // interior is still the painter's. So its dividers are still recorded
-        // rectangles, and they become nodes when the pane does.
-        for (_, direction, sep_x, sep_y, sep_len) in &ed.active_layout().grouped_separator_areas {
-            let (w, h) = match direction {
-                SplitDirection::Horizontal => (*sep_len as u32, 1),
-                SplitDirection::Vertical => (1, *sep_len as u32),
-            };
-            let mut b = LayoutBox::plain(
-                "chrome:group_separators",
-                *sep_y as u32,
-                *sep_x as u32,
-                w,
-                h,
-            );
-            b.z = 80;
-            t.push(b);
-        }
-        for (_, btn_row, start, end) in &ed.active_layout().close_split_areas {
-            let mut b = LayoutBox::plain(
-                "chrome:split_buttons",
-                *btn_row as u32,
-                *start as u32,
-                end.saturating_sub(*start) as u32,
-                1,
-            );
-            b.z = 70;
-            t.push(b);
-        }
-        for (_, btn_row, start, end) in &ed.active_layout().maximize_split_areas {
-            let mut b = LayoutBox::plain(
-                "chrome:split_buttons",
-                *btn_row as u32,
-                *start as u32,
-                end.saturating_sub(*start) as u32,
-                1,
-            );
-            b.z = 70;
-            t.push(b);
-        }
-        for (_, tl) in &ed.active_layout().tab_layouts {
-            t.rect("chrome:tabs", 60, tl.bar_area);
-        }
-        for (_, _, _, scrollbar_rect, _, _) in &ed.active_layout().split_areas {
-            t.rect("chrome:scrollbars", 50, *scrollbar_rect);
-        }
-        for (_, _, r, _, _, _) in &ed.active_layout().horizontal_scrollbar_areas {
-            t.rect("chrome:h_scrollbar", 50, *r);
-        }
-        for (_, _, content_rect, ..) in &ed.active_layout().split_areas {
-            t.rect("chrome:editor", 10, *content_rect);
-        }
-    }
-
-    fn hover(&self, ed: &mut Editor, bx: &LayoutBox, col: u16, row: u16) -> Option<HoverTarget> {
-        match bx.kind {
-            "chrome:group_separators" => {
-                for (split_id, direction, sep_x, sep_y, sep_length) in
-                    &ed.active_layout().grouped_separator_areas
-                {
-                    let on_it = match direction {
-                        SplitDirection::Horizontal => {
-                            row == *sep_y && col >= *sep_x && col < sep_x + sep_length
-                        }
-                        SplitDirection::Vertical => {
-                            col == *sep_x && row >= *sep_y && row < sep_y + sep_length
-                        }
-                    };
-                    if on_it {
-                        return Some(HoverTarget::SplitSeparator(*split_id, *direction));
-                    }
-                }
-                None
-            }
-            "chrome:split_buttons" => {
-                // Split control buttons sit on top of the tab row.
-                for (split_id, btn_row, start_col, end_col) in &ed.active_layout().close_split_areas
-                {
-                    if row == *btn_row && col >= *start_col && col < *end_col {
-                        return Some(HoverTarget::CloseSplitButton(*split_id));
-                    }
-                }
-                for (split_id, btn_row, start_col, end_col) in
-                    &ed.active_layout().maximize_split_areas
-                {
-                    if row == *btn_row && col >= *start_col && col < *end_col {
-                        return Some(HoverTarget::MaximizeSplitButton(*split_id));
-                    }
-                }
-                None
-            }
-            "chrome:tabs" => {
-                for (split_id, tab_layout) in &ed.active_layout().tab_layouts {
-                    match tab_layout.hit_test(col, row) {
-                        Some(TabHit::CloseButton(target)) => {
-                            return Some(HoverTarget::TabCloseButton(target, *split_id));
-                        }
-                        Some(TabHit::TabName(target)) => {
-                            return Some(HoverTarget::TabName(target, *split_id));
-                        }
-                        Some(TabHit::ScrollLeft)
-                        | Some(TabHit::ScrollRight)
-                        | Some(TabHit::BarBackground)
-                        | Some(TabHit::NewTabButton)
-                        | None => {}
-                    }
-                }
-                None
-            }
-            "chrome:scrollbars" => {
-                for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
-                    &ed.active_layout().split_areas
-                {
-                    if in_rect(col, row, *scrollbar_rect) {
-                        let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
-                        let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
-                        if is_on_thumb {
-                            return Some(HoverTarget::ScrollbarThumb(*split_id));
-                        } else {
-                            return Some(HoverTarget::ScrollbarTrack(
-                                *split_id,
-                                relative_row as u16,
-                            ));
-                        }
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    fn on_pointer(
-        &self,
-        ed: &mut Editor,
-        bx: &LayoutBox,
-        ev: &super::ChromePointer,
-    ) -> anyhow::Result<super::Disposition> {
-        use super::{Disposition, PointerPress};
-        match ev.press {
-            PointerPress::Left => {}
-            // The right-click clear is a capture-phase observer on the
-            // shell's frame now (`shell::splits::tab_menu_guard`), which
-            // is where "anywhere, then continue" can actually mean it:
-            // this walk runs only when the tree declines the event, so a
-            // box could not fire for a right-click a migrated surface
-            // took. Nothing here answers a right-click.
-            PointerPress::Right => return Ok(Disposition::Pass),
-            // Double = word select, triple = line select, on the split
-            // under the pointer (moved from the old post-walk scan /
-            // hand-ordered ladder — a popup's opaque box above this
-            // band now blocks them by construction).
-            PointerPress::Double | PointerPress::Triple => {
-                if bx.kind != "chrome:editor" {
-                    return Ok(Disposition::Pass);
-                }
-                // A double/triple press on a folded line's gutter
-                // indicator toggles the fold instead of selecting.
-                // Checked before word/line select (its historical
-                // pre-walk position), and INSIDE the walk since the
-                // move from `handle_mouse`'s pre-band: a popup's
-                // opaque box or the overlay prompt's double-click
-                // swallow above this band now blocks it by
-                // construction, like its select siblings.
-                if let Some((buffer_id, byte_pos)) =
-                    ed.fold_toggle_line_at_screen_position(ev.col, ev.row)
-                {
-                    ed.active_window_mut()
-                        .toggle_fold_at_byte(buffer_id, byte_pos);
-                    return Ok(Disposition::Consumed);
-                }
-                let areas: Vec<_> = ed
-                    .active_layout()
-                    .split_areas
-                    .iter()
-                    .map(|(split_id, buffer_id, content_rect, _, _, _)| {
-                        (*split_id, *buffer_id, *content_rect)
-                    })
-                    .collect();
-                for (split_id, buffer_id, content_rect) in areas {
-                    if in_rect(ev.col, ev.row, content_rect) {
-                        if ev.press == PointerPress::Double {
-                            ed.handle_split_double_click(
-                                split_id,
-                                buffer_id,
-                                content_rect,
-                                ev.col,
-                                ev.row,
-                            )?;
-                        } else {
-                            ed.handle_split_triple_click(
-                                split_id,
-                                buffer_id,
-                                content_rect,
-                                ev.col,
-                                ev.row,
-                            )?;
-                        }
-                        return Ok(Disposition::Consumed);
-                    }
-                }
-                return Ok(Disposition::Pass);
-            }
-        }
-        let consumed = match bx.kind {
-            "chrome:scrollbars" => ed.handle_click_scrollbar(ev.col, ev.row),
-            "chrome:h_scrollbar" => ed.handle_click_horizontal_scrollbar(ev.col, ev.row),
-            "chrome:group_separators" => ed.handle_click_group_separator(ev.col, ev.row),
-            "chrome:split_buttons" => ed.handle_click_split_controls(ev.col, ev.row),
-            "chrome:tabs" => ed.handle_click_tab_bar(ev.col, ev.row),
-            "chrome:editor" => {
-                let areas: Vec<_> = ed
-                    .active_layout()
-                    .split_areas
-                    .iter()
-                    .map(|(split_id, buffer_id, content_rect, _, _, _)| {
-                        (*split_id, *buffer_id, *content_rect)
-                    })
-                    .collect();
-                for (split_id, buffer_id, content_rect) in areas {
-                    if in_rect(ev.col, ev.row, content_rect) {
-                        ed.handle_editor_click(
-                            ev.col,
-                            ev.row,
-                            split_id,
-                            buffer_id,
-                            content_rect,
-                            ev.modifiers,
-                        )?;
-                        return Ok(Disposition::Consumed);
-                    }
-                }
-                None
-            }
-            _ => None,
-        };
-        if let Some(r) = consumed {
-            r?;
-            return Ok(Disposition::Consumed);
-        }
-        Ok(Disposition::Pass)
-    }
-
-    fn on_wheel(
-        &self,
-        ed: &mut Editor,
-        bx: &LayoutBox,
-        col: u16,
-        row: u16,
-        delta: i32,
-    ) -> anyhow::Result<super::Disposition> {
-        use super::Disposition;
-        match bx.kind {
-            "chrome:split_widget_panel" => {
-                if ed.handle_split_widget_panel_wheel(col, row, delta) {
-                    Ok(Disposition::Consumed)
-                } else {
-                    Ok(Disposition::Pass)
-                }
-            }
-            // A vertical wheel over a horizontal tab strip pans it: up
-            // walks toward the first tab, down toward the last.
-            "chrome:tabs" => {
-                let Some(split_id) = ed.active_window().tab_bar_split_at(col, row) else {
-                    return Ok(Disposition::Pass);
-                };
-                ed.dismiss_transient_popups();
-                ed.active_window().wheel_plugin_hook(col, row, delta);
-                ed.active_window_mut().scroll_tab_strip(split_id, delta);
-                Ok(Disposition::Consumed)
-            }
-            // A split pane, hit in its content rect or scrollbar
-            // gutter (moved from the old central `wheel_surface_at`
-            // fork — the surface's wheel lives with the surface).
-            "chrome:editor" | "chrome:scrollbars" | "chrome:h_scrollbar" => {
-                let Some((split_id, buffer_id)) = ed.active_window().split_at_position(col, row)
-                else {
-                    return Ok(Disposition::Pass);
-                };
-                // Only a wheel over a pane changes that terminal's
-                // live/scrollback state; panning the tab strip or the
-                // explorer leaves a live terminal streaming.
-                if ed.active_window().focused_terminal_live() {
-                    ed.enter_terminal_scrollback();
-                } else {
-                    ed.active_window_mut()
-                        .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
-                }
-                ed.dismiss_transient_popups();
-                ed.active_window().wheel_plugin_hook(col, row, delta);
-                ed.active_window_mut()
-                    .scroll_split_surface(split_id, buffer_id, delta);
-                Ok(Disposition::Consumed)
-            }
-            _ => Ok(Disposition::Pass),
-        }
-    }
-
-    fn on_hwheel(
-        &self,
-        ed: &mut Editor,
-        bx: &LayoutBox,
-        col: u16,
-        row: u16,
-        delta: i32,
-    ) -> anyhow::Result<super::Disposition> {
-        use super::Disposition;
-        match bx.kind {
-            // A horizontal wheel over the tab strip pans it the same
-            // way the vertical wheel does.
-            "chrome:tabs" => {
-                let Some(split_id) = ed.active_window().tab_bar_split_at(col, row) else {
-                    return Ok(Disposition::Pass);
-                };
-                ed.active_window_mut().scroll_tab_strip(split_id, delta);
-                Ok(Disposition::Consumed)
-            }
-            "chrome:editor" | "chrome:scrollbars" | "chrome:h_scrollbar" => {
-                let Some((split_id, buffer_id)) = ed.active_window().split_at_position(col, row)
-                else {
-                    return Ok(Disposition::Pass);
-                };
-                ed.active_window_mut()
-                    .pan_split_horizontal(split_id, buffer_id, delta)?;
-                Ok(Disposition::Consumed)
-            }
-            _ => Ok(Disposition::Pass),
-        }
-    }
-}
+use super::Editor;
 
 /// Behavior owned by this component (moved from mouse_input.rs —
 /// the handlers its arms dispatch to).
@@ -650,21 +315,26 @@ impl Editor {
         Ok(())
     }
 
-    pub(super) fn handle_click_scrollbar(
+    pub(crate) fn handle_click_scrollbar(
         &mut self,
+        pane: LeafId,
         col: u16,
         row: u16,
     ) -> Option<AnyhowResult<()>> {
+        // **Which pane is the node's**, so this looks its entry up by name
+        // rather than by asking every recorded rectangle whether it contains
+        // the point. What is still looked up is the bar's own geometry — the
+        // thumb's extent is a read of the scroll state at paint time, and that
+        // is genuinely recorded.
         let (split_id, buffer_id, scrollbar_rect, is_on_thumb) =
             self.active_layout().split_areas.iter().find_map(
                 |(split_id, buffer_id, _content, scrollbar_rect, thumb_start, thumb_end)| {
-                    if in_rect(col, row, *scrollbar_rect) {
-                        let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
-                        let on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
-                        Some((*split_id, *buffer_id, *scrollbar_rect, on_thumb))
-                    } else {
-                        None
+                    if *split_id != pane || scrollbar_rect.width == 0 {
+                        return None;
                     }
+                    let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
+                    let on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
+                    Some((*split_id, *buffer_id, *scrollbar_rect, on_thumb))
                 },
             )?;
 
@@ -713,16 +383,21 @@ impl Editor {
             ) {
                 return Some(Err(e));
             }
-            self.active_window_mut().mouse_state.hover_target =
-                Some(HoverTarget::ScrollbarThumb(split_id));
+            // The thumb jumped to the pointer, so the pointer is on the thumb
+            // now — and the tree will not say so again until the pointer
+            // moves. Written to the tree's field, since that is where this
+            // bar's hover comes from and it would otherwise still read
+            // `ScrollbarTrack` from the move that preceded the click.
+            self.shell_hover = Some(HoverTarget::ScrollbarThumb(split_id));
         }
         Some(Ok(()))
     }
 
-    pub(super) fn handle_click_horizontal_scrollbar(
+    pub(crate) fn handle_click_horizontal_scrollbar(
         &mut self,
+        pane: LeafId,
         col: u16,
-        row: u16,
+        _row: u16,
     ) -> Option<AnyhowResult<()>> {
         let (split_id, buffer_id, hscrollbar_rect, max_content_width, is_on_thumb) = self
             .active_layout()
@@ -737,11 +412,7 @@ impl Editor {
                     thumb_start,
                     thumb_end,
                 )| {
-                    if col >= hscrollbar_rect.x
-                        && col < hscrollbar_rect.x + hscrollbar_rect.width
-                        && row >= hscrollbar_rect.y
-                        && row < hscrollbar_rect.y + hscrollbar_rect.height
-                    {
+                    if *split_id == pane && hscrollbar_rect.width > 0 {
                         let relative_col = col.saturating_sub(hscrollbar_rect.x) as usize;
                         let on_thumb = relative_col >= *thumb_start && relative_col < *thumb_end;
                         Some((
@@ -806,40 +477,147 @@ impl Editor {
     /// The main tree's dividers are nodes and carry their own identity; a
     /// grouped subtree is laid out inside a pane's interior, which is still a
     /// painter's, so this is the hit test that remains — over the rectangles
-    /// that painter recorded.
-    pub(super) fn handle_click_group_separator(
+    /// A left press on a pane's content: place the caret, select the word, or
+    /// select the line — or toggle a fold, when the cell is a folded line's
+    /// gutter indicator, which is checked first and was checked first when it
+    /// lived pre-walk.
+    ///
+    /// The pane comes from the node. The content rectangle comes from that
+    /// same node, read back from the laid-out tree: click-to-byte projects
+    /// through the view pipeline and needs the extent. It used to come from
+    /// whichever recorded rectangle happened to contain the point.
+    pub(crate) fn press_pane_content(
         &mut self,
+        pane: LeafId,
         col: u16,
         row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        let areas = self.active_layout().grouped_separator_areas.clone();
-        for (split_id, direction, sep_x, sep_y, sep_length) in &areas {
-            let on_it = match direction {
-                SplitDirection::Horizontal => {
-                    row == *sep_y && col >= *sep_x && col < sep_x + sep_length
-                }
-                SplitDirection::Vertical => {
-                    col == *sep_x && row >= *sep_y && row < sep_y + sep_length
-                }
-            };
-            if on_it {
-                let ratio = self
-                    .split_manager_mut()
-                    .get_ratio((*split_id).into())
-                    .or_else(|| self.grouped_split_ratio(*split_id));
-                let st = &mut self.active_window_mut().mouse_state;
-                st.dragging_separator = Some((*split_id, *direction));
-                st.drag_start_position = Some((col, row));
-                if let Some(ratio) = ratio {
-                    self.active_window_mut().mouse_state.drag_start_ratio = Some(ratio);
-                }
-                return Some(Ok(()));
+        clicks: u8,
+    ) -> AnyhowResult<()> {
+        // The pane's content is a live terminal that wants the mouse, or a
+        // Ctrl+Click on a path it printed. Both are the content's, and both
+        // come before placing a caret — the same order they had when they sat
+        // between the tree and the legacy walk, back when a box did this.
+        if let Some(ev) = self.shell_pointer_event.map(|(ev, _)| ev) {
+            if let Some(r) = self.pane_content_takes_pointer(col, row, ev) {
+                r?;
+                return Ok(());
             }
         }
-        None
+        if clicks >= 2 {
+            if let Some((buffer_id, byte_pos)) = self.fold_toggle_line_at_screen_position(col, row)
+            {
+                self.active_window_mut()
+                    .toggle_fold_at_byte(buffer_id, byte_pos);
+                return Ok(());
+            }
+        }
+        let (Some(buffer_id), Some(content_rect)) = (
+            self.active_window().pane_buffer(pane),
+            self.pane_content_rect(pane),
+        ) else {
+            return Ok(());
+        };
+        match clicks {
+            1 => {
+                let modifiers = self
+                    .shell_pointer_event
+                    .map(|(ev, _)| ev.modifiers)
+                    .unwrap_or_else(crossterm::event::KeyModifiers::empty);
+                self.handle_editor_click(col, row, pane, buffer_id, content_rect, modifiers)
+            }
+            2 => self.handle_split_double_click(pane, buffer_id, content_rect, col, row),
+            _ => self.handle_split_triple_click(pane, buffer_id, content_rect, col, row),
+        }
     }
 
-    pub(super) fn handle_click_split_controls(
+    /// Where the shell laid this pane's content out.
+    fn pane_content_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
+        crate::view::shell::rect_of(
+            self.shell_ui.as_ref()?,
+            &crate::view::shell::splits::content_key(pane),
+            ratatui::layout::Rect::new(
+                0,
+                0,
+                self.active_chrome().last_frame.width,
+                self.active_chrome().last_frame.height,
+            ),
+        )
+    }
+
+    /// Whether the pointer is on a pane's scrollbar thumb or its track.
+    ///
+    /// The pane comes from the node; the thumb's extent is the recorded read
+    /// of the scroll state, which is what makes this a lookup rather than a
+    /// calculation.
+    pub(crate) fn scrollbar_hover(&self, pane: LeafId, row: u16) -> Option<HoverTarget> {
+        let (_, _, _, bar, thumb_start, thumb_end) = self
+            .active_layout()
+            .split_areas
+            .iter()
+            .find(|(split_id, ..)| *split_id == pane)?;
+        let rel = row.saturating_sub(bar.y) as usize;
+        Some(match rel >= *thumb_start && rel < *thumb_end {
+            true => HoverTarget::ScrollbarThumb(pane),
+            false => HoverTarget::ScrollbarTrack(pane, rel as u16),
+        })
+    }
+
+    /// What the pointer is on within a pane's tab strip.
+    ///
+    /// The strip is a node; its interior is the tab renderer's layout, so this
+    /// is the hit test the two boxes ran, in the order their `z` gave them:
+    /// the split controls are drawn over the tab row, so they answer first.
+    /// A cell that is only the strip's ground — the bar behind the tabs, the
+    /// scroll arrows, the "+" — names nothing, exactly as `chrome:tabs`
+    /// declined those and let the point fall through.
+    pub(crate) fn tab_strip_hover(&self, col: u16, row: u16) -> Option<HoverTarget> {
+        for (split_id, btn_row, start_col, end_col) in &self.active_layout().close_split_areas {
+            if row == *btn_row && col >= *start_col && col < *end_col {
+                return Some(HoverTarget::CloseSplitButton(*split_id));
+            }
+        }
+        for (split_id, btn_row, start_col, end_col) in &self.active_layout().maximize_split_areas {
+            if row == *btn_row && col >= *start_col && col < *end_col {
+                return Some(HoverTarget::MaximizeSplitButton(*split_id));
+            }
+        }
+        self.active_layout()
+            .tab_layouts
+            .iter()
+            .find_map(
+                |(split_id, tab_layout)| match tab_layout.hit_test(col, row) {
+                    Some(TabHit::CloseButton(target)) => {
+                        Some(HoverTarget::TabCloseButton(target, *split_id))
+                    }
+                    Some(TabHit::TabName(target)) => Some(HoverTarget::TabName(target, *split_id)),
+                    _ => None,
+                },
+            )
+    }
+
+    /// A right press on a tab raises its context menu; on the strip's ground
+    /// it raises none and leaves any open one to the base surface's clear.
+    ///
+    /// Context menus only make sense for buffer tabs — groups are
+    /// plugin-managed — which is what `as_buffer` is asking.
+    pub(crate) fn open_tab_context_menu(&mut self, col: u16, row: u16) {
+        let hit = self
+            .active_layout()
+            .tab_layouts
+            .iter()
+            .find_map(
+                |(split_id, tab_layout)| match tab_layout.hit_test(col, row) {
+                    Some(TabHit::TabName(target) | TabHit::CloseButton(target)) => {
+                        target.as_buffer().map(|bid| (*split_id, bid))
+                    }
+                    _ => None,
+                },
+            );
+        self.active_window_mut().tab_context_menu =
+            hit.map(|(split_id, buffer_id)| TabContextMenu::new(buffer_id, split_id, col, row + 1));
+    }
+
+    pub(crate) fn handle_click_split_controls(
         &mut self,
         col: u16,
         row: u16,
@@ -926,7 +704,7 @@ impl Editor {
         None
     }
 
-    pub(super) fn handle_click_tab_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    pub(crate) fn handle_click_tab_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         let tab_hit = self
             .active_layout()
             .tab_layouts
