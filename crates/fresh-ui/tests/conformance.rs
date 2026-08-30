@@ -768,6 +768,56 @@ fn a_pass_through_dismissal_beats_the_modal_claim() {
     );
 }
 
+/// **A layer that owns the keyboard confines focus traversal to itself**, and
+/// nothing inside it has to declare a scope for that to hold.
+///
+/// This is the same containment as the key claim, on the other mechanism, and
+/// leaving it out is worse than a stray highlight: `move_focus` returning true
+/// *claims the key*, so every directional key a modal declines was spent
+/// walking focus out of it. The editor found all three faces of that at once —
+/// Left, Right and Shift+Tab over a completion popup were swallowed instead of
+/// dismissing it, and Tab in a dialog left the dialog instead of reaching its
+/// next button.
+#[test]
+fn a_keyboard_modal_layer_keeps_focus_traversal_inside_itself() {
+    let mk = || -> Node<()> {
+        col()
+            // Two focusables behind the layer, so traversal has somewhere
+            // tempting to go in both directions.
+            .child(focusable(text("behind one")))
+            .child(focusable(text("behind two")))
+            .child(
+                layer()
+                    .modality(Modality::Keyboard)
+                    .dismiss(fresh_ui::Dismiss {
+                        any_key: true,
+                        ..fresh_ui::Dismiss::default()
+                    })
+                    .child(focusable(text("inside")).autofocus()),
+            )
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(mk(), FRAME);
+    let inside = ui.focused().expect("the layer autofocused");
+
+    for code in [
+        KeyCode::Tab,
+        KeyCode::BackTab,
+        KeyCode::Left,
+        KeyCode::Right,
+    ] {
+        ui.dispatch(Input::Key(KeyPress {
+            code,
+            mods: Mods::NONE,
+        }));
+        assert_eq!(
+            ui.focused(),
+            Some(inside),
+            "{code:?} moved focus out of the modal layer"
+        );
+    }
+}
+
 /// The other half of the same rule: without modality an unclaimed key falls
 /// through, and the host behind the tree is told so.
 #[test]

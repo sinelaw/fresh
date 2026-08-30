@@ -68,6 +68,7 @@ pub enum KeyCode {
     BackTab,
     Backspace,
     Delete,
+    Insert,
     Up,
     Down,
     Left,

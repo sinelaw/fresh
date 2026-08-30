@@ -351,6 +351,27 @@ impl<M: 'static> Ui<M> {
                 }
             }
         }
+        // **The layer confines the set, not a registration inside it.**
+        //
+        // `active_scope` asks the topmost keyboard-owning layer for a focus
+        // registration — and a `layer()` has none, ever, because a layer is
+        // not focusable. So the confinement this function's own doc promises
+        // silently did not happen unless something in the layer *also*
+        // declared `focus_scope()`, and traversal walked straight out of a
+        // modal into the frame behind it.
+        //
+        // That is worse than a stray highlight. `move_focus` returning true
+        // *claims the key*, so Tab and the arrows a modal declines were spent
+        // moving focus out of it: a completion popup's pass-through dismissal
+        // never ran (Left, Right and Shift+Tab were swallowed), and Tab in a
+        // dialog left the dialog instead of reaching its next button.
+        //
+        // Filtering here rather than in `active_scope` because both answers
+        // are wanted: a scope *inside* a modal is narrower still, and this
+        // leaves it alone.
+        if let Some(m) = self.topmost_modal() {
+            nodes.retain(|n| self.is_within(n.id, m));
+        }
         FocusScope { nodes }
     }
 
@@ -430,6 +451,12 @@ impl<M: 'static> Ui<M> {
     /// Whether an element is inside the scope traversal is currently confined
     /// to.
     fn in_active_scope(&self, e: ElementId) -> bool {
+        // The same two confinements `focus_scope` applies, in the same order.
+        if let Some(m) = self.topmost_modal() {
+            if !self.is_within(e, m) {
+                return false;
+            }
+        }
         match self.active_scope() {
             None => true,
             Some(scope) => {
@@ -571,6 +598,15 @@ impl<M: 'static> Ui<M> {
         // took the keyboard away from what is behind it — so the key stops
         // here. That is what modal means to a keyboard, and it is the last
         // thing a host with its own pipeline behind this tree needs told.
+        self.key_stops_at_modal()
+    }
+
+    /// Whether focus sits inside a layer that owns the keyboard.
+    ///
+    /// A host with its own input pipeline behind this tree asks this about the
+    /// keys the tree has no vocabulary for: it cannot route them, and letting
+    /// them past a modal surface would reach what the modal is covering.
+    pub fn keyboard_owned(&self) -> bool {
         self.key_stops_at_modal()
     }
 

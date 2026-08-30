@@ -682,6 +682,7 @@ impl Editor {
                 ui
             }),
             shell_pointer_event: None,
+            shell_key_event: None,
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
             // Boot-loaded state came *from* disk — nothing is dirty yet.

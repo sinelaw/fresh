@@ -130,12 +130,17 @@ pub fn layer(c: &Calibration) -> Node<UiMsg> {
         .place(Place::Over)
         .modality(Modality::Exclusive)
         .scrim(Some(Scrim::Dim))
-        .child(
+        // **The keys are the wizard's, and they are raw.** It exists to
+        // record which physical key the user pressed, so nothing about them
+        // is an intent; the claim says whose they are and the interior reads
+        // the crossterm event the editor already had.
+        .child(super::modal::keys(
+            super::modal::KeySlot::Calibration,
             dialog(c)
                 .w(Sizing::Cells(c.width))
                 .h(Sizing::Cells(c.height))
                 .key(key()),
-        )
+        ))
 }
 
 fn dialog(c: &Calibration) -> Node<UiMsg> {

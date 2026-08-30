@@ -62,6 +62,15 @@ pub struct Trust {
     pub width: u16,
     /// The tallest the dialog may be, likewise.
     pub max_height: u16,
+    /// Whether the prompt is holding the keyboard.
+    ///
+    /// **An exclusive layer with nobody listening inside it is a trap.** The
+    /// layer owns the keyboard by containment, so a key nothing in it answers
+    /// stops there — and if the prompt is up without capturing, stopping it
+    /// would be silence rather than routing. `popups_capture_keys` is the
+    /// gate the old popup block put around this same handler, read once here
+    /// instead of being asked again after the key arrived.
+    pub captures: bool,
 }
 
 pub fn key() -> Key {
@@ -87,7 +96,20 @@ pub fn layer(t: &Trust) -> Node<UiMsg> {
         .place(Place::Over)
         .modality(Modality::Exclusive)
         .scrim(Some(Scrim::Dim))
-        .child(dialog(t).w(Sizing::Cells(t.width)).key(key()))
+        .child(claim(t, dialog(t).w(Sizing::Cells(t.width)).key(key())))
+}
+
+/// The keys the prompt's own controls do not answer.
+///
+/// Its radios and buttons are nodes, but the prompt is driven by the keyboard
+/// far more than by the pointer — arrows, digits, Enter, Esc — and that
+/// dispatcher is `handle_workspace_trust_key`. Which surface a key belongs to
+/// is the layer's; what it means is still the host's.
+fn claim(t: &Trust, content: Node<UiMsg>) -> Node<UiMsg> {
+    match t.captures {
+        false => content,
+        true => super::modal::keys(super::modal::KeySlot::WorkspaceTrust, content),
+    }
 }
 
 fn dialog(t: &Trust) -> Node<UiMsg> {
@@ -271,6 +293,7 @@ mod tests {
 
     fn prompt(selected: usize) -> Trust {
         Trust {
+            captures: true,
             selected,
             title: "Security Warning".into(),
             can_execute: "This folder can execute code.".into(),

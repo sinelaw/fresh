@@ -866,15 +866,16 @@ impl<M: 'static> Ui<M> {
         (dismissed, spent)
     }
 
-    /// Reports whether any dismissed layer *spent* the key on its dismissal —
-    /// see [`crate::desc::Dismiss::pass_through`], which reads the same here as
-    /// it does for the pointer. Escape closing a menu is the menu's reply and
-    /// belongs to nothing else; a key that hides a tooltip should still be
-    /// typed, or the tooltip has charged the user a keystroke to get rid of it.
     /// Returns `(dismissed, spent)` — the same pair `dismiss_for_pointer`
-    /// reports, and for the same reason: a layer that dismissed itself
-    /// *passing through* is no longer in the way of the input, which is a
-    /// different answer from never having been there.
+    /// reports, and for the same reason. `spent` is
+    /// [`crate::desc::Dismiss::pass_through`], which reads the same here as it
+    /// does for the pointer: Escape closing a menu is the menu's reply and
+    /// belongs to nothing else; a key that hides a tooltip should still be
+    /// typed, or the tooltip has charged the user a keystroke to get rid of
+    /// it. `dismissed` is the half the keyboard needs on its own — a layer
+    /// that dismissed itself *passing through* is no longer in the way of the
+    /// input, which is a different answer from never having been there, and
+    /// only the pair can tell them apart.
     pub(crate) fn dismiss_for_key(&mut self, k: KeyPress, out: &mut Vec<M>) -> (bool, bool) {
         use crate::event::KeyCode;
         let layers: Vec<ElementId> = self

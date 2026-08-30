@@ -222,24 +222,22 @@ fn grip_ink(hovered: bool) -> Node<UiMsg> {
 }
 
 fn grip_strip(e: &Explorer) -> Node<UiMsg> {
-    let grip = gesture(grip_ink(e.grip_hovered))
-        .w(Sizing::Cells(1))
-        .key(grip_key())
-        .on(
-            GestureKind::Press,
-            Rc::new(|e: &Event| {
-                if e.button != fresh_ui::MouseButton::Left {
-                    return None;
-                }
-                e.stop();
-                Some(UiMsg::Ui(UiFact::ExplorerResizeBegin {
-                    x: e.pos.x.max(0) as u16,
-                    y: e.pos.y.max(0) as u16,
-                }))
-            }),
-        )
-        .on_enter(hover_msg(Some(HoverTarget::FileExplorerBorder)))
-        .on_leave(hover_msg(None));
+    let grip = super::grip::draggable(
+        super::msg::Grip::ExplorerWidth,
+        grip_ink(e.grip_hovered),
+        Rc::new(|e: &Event| {
+            Some(UiMsg::Ui(UiFact::ExplorerResizeBegin {
+                x: e.pos.x.max(0) as u16,
+                y: e.pos.y.max(0) as u16,
+            }))
+        }),
+    )
+    // On the outside, on the gesture node: an unconstrained one would cover
+    // the whole panel and take every press in it.
+    .w(Sizing::Cells(1))
+    .key(grip_key())
+    .on_enter(hover_msg(Some(HoverTarget::FileExplorerBorder)))
+    .on_leave(hover_msg(None));
     // A one-cell tail below the strip, so the grip spans the panel's *wall* and
     // stops above `┘`. The corners belong to the frame that drew them: the old
     // post-pass walked `0..explorer_area.height` and recoloured both of them,
@@ -849,6 +847,13 @@ mod tests {
             "got {:?}",
             got.msgs
         );
+        // The grip holds the pointer for the whole drag, so let go of it before
+        // asking where the *next* press lands.
+        ui.dispatch(Input::release(
+            Point::new(grip.x, grip.y),
+            MouseButton::Left,
+            Mods::default(),
+        ));
 
         // …and the strip between them is not a target: a press on the row
         // underneath the title strip's empty middle reaches the row.

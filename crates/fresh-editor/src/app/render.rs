@@ -1045,6 +1045,23 @@ impl Editor {
         self.active_window()
             .render_terminal_splits(frame.buffer_mut(), &split_areas, true);
 
+        // **The oracle E.1 asks for, before the swap it asks for.**
+        //
+        // These rectangles are the painter's record of what it drew, and the
+        // tree has already placed the same three under `content_key`,
+        // `vscroll_key` and `hscroll_key` — `split_layout` even lays
+        // `pane_interior` out in a *throwaway* `Ui` per pane to get them,
+        // which is the same description evaluated a second time. They cannot
+        // disagree in principle; the point of asserting it is that "in
+        // principle" is what every duplicate says right up until it stops
+        // being true, and these rectangles route every click in the editor.
+        //
+        // Debug only, and deliberately: the plan's rule is derive both, prove
+        // they agree, then delete the recorded one — and the proof has to run
+        // against a live editor with real panes, which is what an integration
+        // build is. A release frame pays nothing.
+        #[cfg(debug_assertions)]
+        self.assert_pane_rects_match_layout(&split_areas, &horizontal_scrollbar_areas);
         self.active_layout_mut().split_areas = split_areas;
         self.active_layout_mut().horizontal_scrollbar_areas = horizontal_scrollbar_areas;
         self.active_layout_mut().tab_layouts = tab_layouts;
@@ -1220,11 +1237,22 @@ impl Editor {
         // topmost surface there was; it is not, now that the chrome over it is
         // the tree's.
         //
-        // The dock is painted later still (`render_panels_and_modals`), so the
-        // dimming this pass applies to it is re-applied there once its cells
-        // exist. The modal itself lays into the chrome column beside the dock,
-        // so nothing of it is at risk from that later paint.
+        // The dock's cells are painted just below, still before the band, so
+        // the dimming this pass applies to it is re-applied by
+        // `render_panels_and_modals` once those cells exist. The modal itself
+        // lays into the chrome column beside the dock, so nothing of it is at
+        // risk from that later paint.
         self.render_modal_overlays(frame, size);
+
+        // The dock's own rows, for the same reason and by the same rule: it
+        // is a legacy painter, and the band goes after every legacy painter.
+        // The dimming that belongs *over* those rows still runs from
+        // `render_panels_and_modals`, after the band, where it always did.
+        if let Some(dock) = dock_area {
+            if self.dock.is_some() {
+                self.render_floating_widget_panel(frame, dock, super::PanelSlot::Dock);
+            }
+        }
 
         if !self.suppress_chrome_cells {
             let palette = self.shell_palette();
@@ -1808,16 +1836,15 @@ impl Editor {
         chrome_area: ratatui::layout::Rect,
         dock_area: Option<ratatui::layout::Rect>,
     ) {
-        // Panels are drawn last so they sit above every other layer
-        // (prompts, popups, animations). The two slots are independent:
-        // the dock paints into its carved column (`dock_area`); a
-        // centered modal paints over the whole frame (dimmed). Draw the
-        // dock first so a centered modal sits visually above it.
-        if let Some(dock) = dock_area {
-            if self.dock.is_some() {
-                self.render_floating_widget_panel(frame, dock, super::PanelSlot::Dock);
-            }
-        }
+        // **The dock's cells are painted before the overlay band now**, by
+        // `render_dock_column`, and what is left here is the dimming that has
+        // to run over them. It was drawn from this method, after everything —
+        // which made it the one legacy painter still exempt from the rule the
+        // band states for all of them, and the exemption showed: a plugin's
+        // anchored context menu is a layer in the tree, its anchor is an
+        // absolute cell that may sit over the dock column, and the dock's own
+        // rows painted straight over it. The menu was mounted, laid out and
+        // folded, and never reached the screen.
 
         // The full-screen modals were painted here once, after the dock, so
         // the dock could not overpaint a modal's left edge. They lay into the
@@ -3302,6 +3329,7 @@ impl Editor {
         };
         let triggers = self.workspace_trust_markers.join(", ");
         Some(Trust {
+            captures: self.popups_capture_keys(),
             selected: self.current_workspace_trust_selection(),
             title: fresh_i18n::t!("trust.dialog.security_warning").into_owned(),
             can_execute: fresh_i18n::t!("trust.dialog.can_execute").into_owned(),
@@ -5021,6 +5049,71 @@ impl Editor {
     /// of the way up from its background, the one inside it two thirds,
     /// and the third row in is fully painted.
     const EDGE_FADE_ROWS: u16 = 2;
+
+    /// Every pane rectangle the painter recorded, against the one the tree
+    /// placed under the same key.
+    ///
+    /// **Half of E.1, and the half that has to come first.** The recorded
+    /// rects are read by mouse handlers *between* frames — they route every
+    /// click, every scrollbar drag and every click-to-byte in the editor — so
+    /// swapping their source is not a change that a unit test can cover. What
+    /// makes it safe is this: derive both for a while, assert they agree
+    /// wherever a real editor with real panes is running, and only then delete
+    /// the recorded one. It is the same shape E.2 used to retire
+    /// `separator_areas`.
+    ///
+    /// A pane the tree has no node for is skipped rather than failed: the
+    /// session preview paints another window's grid offscreen, and its panes
+    /// are legitimately absent from this window's tree.
+    #[cfg(debug_assertions)]
+    fn assert_pane_rects_match_layout(
+        &self,
+        split_areas: &[(
+            crate::model::event::LeafId,
+            BufferId,
+            ratatui::layout::Rect,
+            ratatui::layout::Rect,
+            usize,
+            usize,
+        )],
+        hscroll_areas: &[(
+            crate::model::event::LeafId,
+            BufferId,
+            ratatui::layout::Rect,
+            usize,
+            usize,
+            usize,
+        )],
+    ) {
+        use crate::view::shell::splits::{content_key, hscroll_key, vscroll_key};
+        let check = |what: &str, leaf, painted: ratatui::layout::Rect, key| {
+            let Some(placed) = self.panel_rect(&key) else {
+                return;
+            };
+            // A zero-width bar is "no bar" on the painter's side and an empty
+            // node on the tree's; both mean the same thing and neither is a
+            // rectangle worth comparing.
+            if painted.width == 0 || placed.width == 0 {
+                return;
+            }
+            debug_assert_eq!(
+                painted, placed,
+                "{what} of pane {leaf:?}: the painter recorded {painted:?}, layout placed {placed:?}"
+            );
+        };
+        for (leaf, _buffer, content, vscroll, _t0, _t1) in split_areas {
+            check("the content", leaf, *content, content_key(*leaf));
+            check("the scrollbar", leaf, *vscroll, vscroll_key(*leaf));
+        }
+        for (leaf, _buffer, hscroll, _w, _t0, _t1) in hscroll_areas {
+            check(
+                "the horizontal scrollbar",
+                leaf,
+                *hscroll,
+                hscroll_key(*leaf),
+            );
+        }
+    }
 
     /// Shade the top and bottom rows of every split's content.
     ///

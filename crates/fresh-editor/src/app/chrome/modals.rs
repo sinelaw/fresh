@@ -1,20 +1,24 @@
 //! The full-screen modal band: Settings, the keybinding editor, the
 //! calibration wizard, and the workspace-trust prompt.
 //!
-//! **Their mouse has moved.** Each owned the whole channel through
-//! `ChromeComponent::capture_mouse`, a band ahead of every walk; a modal is a
-//! `Modality::Exclusive` layer in the shell's tree now, and the trust prompt's
-//! controls are nodes outright. What is left here is the keyboard — a
-//! capture-all with a bespoke dispatcher apiece — and the rank entry each
-//! contributes while that walk is still the chrome's.
+//! **Their mouse and their keyboard have both moved.** Each owned the whole
+//! pointer channel through `ChromeComponent::capture_mouse`, a band ahead of
+//! every walk, and the whole keyboard through `on_layer_key`, a capture-all
+//! offered in `layer_rank` order. A modal is a `Modality::Exclusive` layer in
+//! the shell's tree now: it owns both channels by *containment*, and the
+//! facts it produces (`ModalPointer`, `ModalKey`) name the surface rather
+//! than a rank.
 //!
-//! Their INTERIORS stay bespoke (Settings is its own later phase): the
-//! component is the dispatch slot, so replacing an interior never touches
-//! dispatch again. They contribute no boxes, and now cannot: an exclusive
-//! layer claims every event in the tree's own walk, so a box here would be
-//! dead in every reachable state.
-
-use anyhow::Result as AnyhowResult;
+//! Their INTERIORS stay bespoke, which is the ruling that let either channel
+//! cross: the tree answers which surface an event belongs to, the surface
+//! answers what it means. Three of the four dispatchers moved from here to
+//! `Editor` methods with one caller each; the trust prompt's is still here
+//! because its layer is a popup's rather than a modal's.
+//!
+//! What is left is the rank entry each contributes — read now by the PTY gate
+//! and `get_key_context`, not by any key walk — and they contribute no boxes,
+//! and now cannot: an exclusive layer claims every event in the tree's own
+//! walk, so a box here would be dead in every reachable state.
 
 use crate::app::overlay::{Layer, LayerKind};
 use crate::input::keybindings::KeyContext;
@@ -54,25 +58,22 @@ impl ChromeComponent for Settings {
             ));
         }
     }
+}
 
-    fn on_layer_key(
-        &self,
-        ed: &mut Editor,
-        _layer: &Layer,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
+impl Editor {
+    /// Settings' own keyboard, reached by containment rather than by rank.
+    ///
+    /// Capture-all: every key is this modal's while its layer is up, which is
+    /// what `Modality::Exclusive` says and what the `on_layer_key` this
+    /// replaces said by returning `Some` unconditionally. The interior is
+    /// eleven modules of `InputHandler` and stays exactly where it is.
+    pub(crate) fn dispatch_settings_key(&mut self, event: &crossterm::event::KeyEvent) {
         use crate::input::handler::{InputContext, InputHandler};
-        // Capture-all: every key is this modal's while its layer is up.
         let mut ctx = InputContext::new();
-        let result = {
-            let settings = ed
-                .settings_state
-                .as_mut()
-                .expect("Settings layer implies settings_state present");
-            settings.dispatch_input(event, &mut ctx)
-        };
-        ed.process_deferred_actions(ctx);
-        Some(Ok(result))
+        if let Some(settings) = self.settings_state.as_mut() {
+            settings.dispatch_input(event, &mut ctx);
+        }
+        self.process_deferred_actions(ctx);
     }
 }
 
@@ -96,15 +97,9 @@ impl ChromeComponent for KeybindingEditor {
         }
     }
 
-    fn on_layer_key(
-        &self,
-        ed: &mut Editor,
-        _layer: &Layer,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
-        // Capture-all with its own bespoke dispatcher.
-        Some(Ok(ed.handle_keybinding_editor_input(event)))
-    }
+    // The keyboard is `KeySlot::KeybindingEditor`'s: the layer it declares in
+    // `view::shell::keybinding` owns it, and `handle_keybinding_editor_input`
+    // is reached by containment rather than by this rank.
 }
 
 pub(crate) struct CalibrationWizard;
@@ -125,21 +120,15 @@ impl ChromeComponent for CalibrationWizard {
         }
     }
 
-    fn on_layer_key(
-        &self,
-        ed: &mut Editor,
-        _layer: &Layer,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
-        // Capture-all with its own bespoke dispatcher.
-        Some(Ok(ed.handle_calibration_input(event)))
-    }
+    // The same, for `KeySlot::Calibration`. Its interior is a *key capture*
+    // wizard — the raw key is the point — so it stays a dispatcher on a
+    // crossterm event and the tree only says whose key it is.
 }
 
-/// The prompt's pointer is the tree's — layer, scrim, modality, radios and
-/// buttons all in `view::shell::trust`. What is left here is its keyboard and
-/// the rank entry that stands in for the layer while the keyboard walk is
-/// still the chrome's.
+/// The prompt's pointer and keyboard are both the tree's — layer, scrim,
+/// modality, radios, buttons and the key claim all in `view::shell::trust`.
+/// What is left here is the rank entry, which the PTY gate and
+/// `get_key_context` still read.
 pub(crate) struct WorkspaceTrust;
 
 impl ChromeComponent for WorkspaceTrust {
@@ -161,22 +150,9 @@ impl ChromeComponent for WorkspaceTrust {
         }
     }
 
-    fn on_layer_key(
-        &self,
-        ed: &mut Editor,
-        _layer: &Layer,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
-        // Same gate the old popup block put around its trust rung: the
-        // prompt owns keys only while it captures (focused, or the
-        // editor-wide startup gate). `handle_workspace_trust_key`
-        // returns `Some(Consumed)` for every key — the modal swallows
-        // everything — so nothing falls past it to a generic popup
-        // treatment (the layer REPLACES the Popup layer while the
-        // trust prompt tops the global stack).
-        if !ed.popups_capture_keys() {
-            return None;
-        }
-        ed.handle_workspace_trust_key(event).map(Ok)
-    }
+    // The keyboard is `KeySlot::WorkspaceTrust`'s. The gate this used to apply
+    // after the key arrived — the prompt owns keys only while it captures — is
+    // `Trust::captures`, read once when the layer is described: an exclusive
+    // layer with nobody listening inside it would stop a key rather than route
+    // it, so whether to claim has to be decided where the claim is made.
 }

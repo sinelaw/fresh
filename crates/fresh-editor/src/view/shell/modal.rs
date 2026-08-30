@@ -46,17 +46,63 @@ pub fn key() -> Key {
     Key::Str("modal".into())
 }
 
+/// Which surface a key belongs to.
+///
+/// Separate from [`Slot`] because the two answer different questions and no
+/// longer have the same members: the calibration wizard and the keybinding
+/// editor carry their own exclusivity in their own modules and never wanted a
+/// pointer slot, while the floating panel's keys go to the widget runtime
+/// rather than to a dialog's dispatcher.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeySlot {
+    Settings,
+    KeybindingEditor,
+    Calibration,
+    WorkspaceTrust,
+}
+
+/// Wrap a modal's contents so that a key nothing inside it answered is that
+/// modal's.
+///
+/// **This is the keyboard's `surface`.** The pointer's version claims by
+/// gesture on a full-frame node; the keyboard's claims by *focus containment*,
+/// which is the same statement one channel down: a modal layer owns the
+/// keyboard (`Modality::Exclusive` implies it), so focus goes inside it, and
+/// an `on_key` at the top of that subtree sees everything the subtree itself
+/// declined.
+///
+/// A field inside the modal that answers its own key stops it first —
+/// listeners run from the focused element outward — so this never gets in the
+/// way of an interior that has migrated. That is what makes it the seam and
+/// not a shim: the surface keeps whatever it has taken over, and this catches
+/// the rest.
+pub fn keys(slot: KeySlot, content: Node<UiMsg>) -> Node<UiMsg> {
+    fresh_ui::focusable(content).autofocus().on_key(move |e| {
+        e.stop();
+        Some(UiMsg::Ui(UiFact::ModalKey(slot)))
+    })
+}
+
 /// The modal as a layer: the whole frame, exclusive, painting nothing.
 ///
 /// It paints nothing because its interior still does — a layer is in the
 /// overlay band, so anything it drew would land on top of the painter that
 /// owns the surface. What it contributes is the claim.
 pub fn layer(slot: Slot) -> Node<UiMsg> {
+    let content = surface(slot).key(key());
+    let content = match slot {
+        Slot::Settings => keys(KeySlot::Settings, content),
+        // The floating panel's keys are the widget runtime's, and reach it
+        // through `dispatch_floating_widget_key` — a different interior from
+        // a dialog's own dispatcher, and one that declines rather than
+        // swallowing (an unhandled shortcut blurs the dock).
+        Slot::FloatingPanel => content,
+    };
     fresh_ui::layer()
         .anchor(Anchor::Screen(Align::Start))
         .place(Place::Fill)
         .modality(Modality::Exclusive)
-        .child(surface(slot).key(key()))
+        .child(content)
 }
 
 fn surface(slot: Slot) -> Node<UiMsg> {
@@ -143,6 +189,20 @@ mod tests {
                 vec![UiFact::ModalPointer(Slot::Settings)],
                 "{label} names the modal it belongs to"
             );
+        }
+    }
+
+    /// **The keyboard, on the same terms as the pointer.** A key nothing
+    /// inside the modal answered is that modal's — by containment, not by a
+    /// rank in a central list.
+    #[test]
+    fn a_modal_takes_the_keyboard_too() {
+        use fresh_ui::{KeyCode, KeyPress};
+        let mut ui = laid_out(Some(Slot::Settings));
+        for code in [KeyCode::Char('x'), KeyCode::Esc, KeyCode::Down] {
+            let got = ui.dispatch(Input::Key(KeyPress::with(code, Mods::NONE)));
+            assert!(got.claimed, "{code:?} is the modal's");
+            assert_eq!(facts(got), vec![UiFact::ModalKey(KeySlot::Settings)]);
         }
     }
 
