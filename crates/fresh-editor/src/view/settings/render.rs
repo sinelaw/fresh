@@ -80,6 +80,8 @@ pub fn render_settings(
     frame: &mut Frame,
     area: Rect,
     modal_area: Rect,
+    panel_area: Option<Rect>,
+    items_area: Option<Rect>,
     state: &mut SettingsState,
     theme: &Theme,
 ) -> SettingsLayout {
@@ -155,10 +157,18 @@ pub fn render_settings(
 
     if narrow_mode {
         // Vertical layout: categories on top, items below
-        render_vertical_layout(frame, content_area, modal_area, state, theme, &mut layout);
+        render_vertical_layout(frame, content_area, state, theme, &mut layout);
     } else {
         // Horizontal layout: categories left, items right
-        render_horizontal_layout(frame, content_area, modal_area, state, theme, &mut layout);
+        render_horizontal_layout(
+            frame,
+            content_area,
+            panel_area,
+            items_area,
+            state,
+            theme,
+            &mut layout,
+        );
     }
 
     // Determine the topmost dialog layer and apply dimming to layers below
@@ -213,7 +223,8 @@ pub fn render_settings(
 fn render_horizontal_layout(
     frame: &mut Frame,
     content_area: Rect,
-    modal_area: Rect,
+    panel: Option<Rect>,
+    items: Option<Rect>,
     state: &mut SettingsState,
     theme: &Theme,
     layout: &mut SettingsLayout,
@@ -227,12 +238,14 @@ fn render_horizontal_layout(
     ])
     .split(content_area);
 
-    let categories_area = chunks[0];
     let divider_area = chunks[1];
-    let settings_area = chunks[2];
-
-    // Render category list (left panel)
-    render_categories(frame, categories_area, state, theme, layout);
+    // **The tree is the tree's** (`view::shell::settings::categories`): a
+    // `widgets::List` in the window it scrolls in, with the rows answering
+    // their own presses. `render_categories` and the five families of
+    // rectangle it filed are gone with it. What is left of the split here is
+    // the divider between the two panes and the fallback for the frame the
+    // description has not been laid out on yet.
+    let settings_area = panel.unwrap_or(chunks[2]);
 
     // Single straight vertical line dividing categories from settings.
     let divider_style = Style::default().fg(theme.split_separator_fg);
@@ -255,19 +268,19 @@ fn render_horizontal_layout(
     if state.search_active && !state.search_results.is_empty() {
         render_search_results(frame, settings_inner, state, theme, layout);
     } else {
-        render_settings_panel(frame, settings_inner, state, theme, layout);
+        render_settings_panel(frame, settings_inner, items, state, theme, layout);
     }
 
-    // Render footer with buttons (horizontal layout)
-    // The wide footer is the tree's; only the narrow one still paints.
-    render_footer(frame, modal_area, state, theme, layout, false);
+    // **Both footers are the tree's** (`view::shell::settings`): one row of
+    // buttons across, or five down below sixty columns. `render_footer` and
+    // `render_footer_vertical` are gone, and with them the five rectangles
+    // the narrow one filed for `hit_test` to compare a cell against.
 }
 
 /// Render vertical layout (narrow mode): categories on top, items below
 fn render_vertical_layout(
     frame: &mut Frame,
     content_area: Rect,
-    modal_area: Rect,
     state: &mut SettingsState,
     theme: &Theme,
     layout: &mut SettingsLayout,
@@ -315,11 +328,8 @@ fn render_vertical_layout(
     if state.search_active && !state.search_results.is_empty() {
         render_search_results(frame, settings_area, state, theme, layout);
     } else {
-        render_settings_panel(frame, settings_area, state, theme, layout);
+        render_settings_panel(frame, settings_area, None, state, theme, layout);
     }
-
-    // Render footer with buttons (vertical layout)
-    render_footer(frame, modal_area, state, theme, layout, true);
 }
 
 /// Render categories as a horizontal strip (for narrow mode)
@@ -415,7 +425,7 @@ fn render_categories_horizontal(
 /// already relies on, so terminal font fallback can always supply
 /// them. The Nerd Font set is used only when `editor.nerd_font_icons`
 /// is enabled.
-fn category_icon(name: &str, nerd_fonts: bool) -> &'static str {
+pub fn category_icon(name: &str, nerd_fonts: bool) -> &'static str {
     let name = name.to_lowercase();
     if nerd_fonts {
         return match name.as_str() {
@@ -450,245 +460,6 @@ fn category_icon(name: &str, nerd_fonts: bool) -> &'static str {
     }
 }
 
-/// Render the category tree (categories + expanded sections) in the left panel.
-///
-/// Rows are flattened by [`SettingsState::visible_tree`] and rendered through
-/// [`ScrollablePanel`], which handles partial-row clipping and the scrollbar.
-/// Per-row Rects are recorded on `layout` for hit-testing.
-fn render_categories(
-    frame: &mut Frame,
-    area: Rect,
-    state: &mut SettingsState,
-    theme: &Theme,
-    layout: &mut SettingsLayout,
-) {
-    use super::state::{FocusPanel, TreeRow};
-
-    layout.categories_panel_area = Some(area);
-
-    let rows = state.visible_tree();
-    state.categories_scroll.set_viewport(area.height);
-    state
-        .categories_scroll
-        .update_content_height(&rows, area.width);
-
-    let focus_panel = state.focus_panel();
-    let selected_category = state.selected_category;
-    // Where the keyboard cursor lives in the tree. `None` = on the
-    // category row; `Some(s_idx)` = on the s-th section row inside the
-    // currently-selected category. This is the single source of truth
-    // for the `>` indicator and the row-bg highlight.
-    let tree_cursor = state.tree_cursor_section;
-
-    // Snapshot the data each row needs so we don't hold a borrow on `state`
-    // through the render callback.
-    struct RowData {
-        chevron: &'static str,
-        is_expandable: bool,
-        is_selected: bool,
-        has_changes: bool,
-        indent_cols: u16,
-        is_category: bool,
-        is_plugin_category: bool,
-        cat_idx: Option<usize>,
-        section_idx: Option<usize>,
-        label: String,
-        icon: Option<&'static str>,
-    }
-    let nerd_fonts = state.nerd_font_icons_enabled();
-    let row_data: Vec<RowData> = rows
-        .iter()
-        .map(|row| match *row {
-            TreeRow::Category {
-                idx,
-                expandable,
-                expanded,
-            } => {
-                let page = &state.pages[idx];
-                RowData {
-                    chevron: if expandable {
-                        if expanded {
-                            "▼"
-                        } else {
-                            "▶"
-                        }
-                    } else {
-                        " "
-                    },
-                    is_expandable: expandable,
-                    // Category row is "selected" iff the keyboard cursor
-                    // is sitting on it (no section is the cursor target).
-                    is_selected: idx == selected_category && tree_cursor.is_none(),
-                    has_changes: state.page_has_pending_changes(idx),
-                    indent_cols: 0,
-                    is_category: true,
-                    is_plugin_category: page.name.starts_with("Plugin: "),
-                    cat_idx: Some(idx),
-                    section_idx: None,
-                    label: page.name.clone(),
-                    icon: Some(category_icon(&page.name, nerd_fonts)),
-                }
-            }
-            TreeRow::Section {
-                cat_idx,
-                section_idx,
-            } => {
-                let section = &state.pages[cat_idx].sections[section_idx];
-                // Section row is "selected" iff the explicit tree cursor
-                // points at it. The cursor follows the user's keyboard
-                // navigation AND syncs to body scroll (handled by the
-                // sync-on-scroll path), so this single check covers
-                // both keyboard and wheel-driven highlight updates.
-                let is_current = cat_idx == selected_category && tree_cursor == Some(section_idx);
-                RowData {
-                    chevron: " ",
-                    is_expandable: false,
-                    is_selected: is_current,
-                    has_changes: false,
-                    indent_cols: 4,
-                    is_category: false,
-                    is_plugin_category: false,
-                    cat_idx: Some(cat_idx),
-                    section_idx: Some(section_idx),
-                    label: section.name.clone(),
-                    icon: None,
-                }
-            }
-        })
-        .collect();
-
-    // Render through ScrollablePanel so we get scrollbar + clipping.
-    let panel_layout = state.categories_scroll.render(
-        frame,
-        area,
-        &rows,
-        |frame, info, row| {
-            // Find this row's snapshot. `rows` and `row_data` are 1:1 by index.
-            let idx = info.index;
-            let data = &row_data[idx];
-            let row_area = info.area;
-
-            // Only the cursor row paints a bg — no separate hover-bg
-            // path. Hover bg in addition to the cursor bg produced two
-            // visually-highlighted rows simultaneously (with two
-            // *different* colors, since hover and selection use
-            // different theme keys), which violates the single-cursor
-            // invariant. The OS mouse cursor itself is the user's
-            // "where am I" indicator; we don't need an in-app one.
-            let row_bg = if data.is_selected {
-                if focus_panel == FocusPanel::Categories {
-                    Some(theme.menu_highlight_bg)
-                } else {
-                    Some(theme.selection_bg)
-                }
-            } else {
-                None
-            };
-            if let Some(bg) = row_bg {
-                frame.render_widget(
-                    Paragraph::new(" ".repeat(row_area.width as usize))
-                        .style(Style::default().bg(bg)),
-                    row_area,
-                );
-            }
-
-            let fg = if data.is_selected {
-                if focus_panel == FocusPanel::Categories {
-                    theme.menu_highlight_fg
-                } else {
-                    theme.menu_fg
-                }
-            } else {
-                theme.popup_text_fg
-            };
-            let bg = row_bg.unwrap_or(theme.popup_bg);
-            let style = Style::default().fg(fg).bg(bg);
-
-            let mut spans: Vec<Span> = Vec::with_capacity(8);
-            // Selection indicator (">" when this row is the focused one in
-            // the categories panel) lives in col 0 before any indentation.
-            // The category-selection-indicator-visible test asserts on this.
-            let selected_marker = if data.is_selected && focus_panel == FocusPanel::Categories {
-                ">"
-            } else {
-                " "
-            };
-            spans.push(Span::styled(selected_marker.to_string(), style));
-            if data.indent_cols > 0 {
-                spans.push(Span::styled(" ".repeat(data.indent_cols as usize), style));
-            }
-            // Chevron occupies one column; followed by a space for breathing room.
-            spans.push(Span::styled(format!("{} ", data.chevron), style));
-            if data.has_changes {
-                spans.push(Span::styled(
-                    "● ",
-                    Style::default().fg(theme.menu_highlight_fg).bg(bg),
-                ));
-            } else {
-                spans.push(Span::styled("  ", style));
-            }
-            if let Some(icon) = data.icon {
-                spans.push(Span::styled(
-                    icon.to_string(),
-                    Style::default().fg(theme.popup_border_fg).bg(bg),
-                ));
-            } else {
-                spans.push(Span::styled(" ", style));
-            }
-            let label = if data.is_plugin_category {
-                let prefix_width: usize = spans
-                    .iter()
-                    .map(|span| str_width(span.content.as_ref()))
-                    .sum();
-                let label_width = row_area.width as usize;
-                let label_width = label_width.saturating_sub(prefix_width);
-                truncate_display_width_with_ellipsis(&data.label, label_width)
-            } else {
-                data.label.clone()
-            };
-            spans.push(Span::styled(label, style));
-
-            frame.render_widget(Paragraph::new(Line::from(spans)), row_area);
-
-            // Hand back the row identity so we can register hit-test areas
-            // after rendering.
-            (
-                row_area,
-                data.is_category,
-                data.is_expandable,
-                data.cat_idx,
-                data.section_idx,
-                data.indent_cols,
-                *row,
-            )
-        },
-        theme,
-    );
-
-    // Translate per-row Rects into hit-test entries.
-    for layout_info in panel_layout.item_layouts.iter() {
-        let (row_area, is_category, is_expandable, cat_idx, section_idx, indent_cols, _row) =
-            layout_info.layout;
-        if is_category {
-            if let Some(idx) = cat_idx {
-                layout.add_category(idx, row_area);
-                if is_expandable {
-                    // Chevron sits one column after the selection-indicator
-                    // marker plus any indent for nested rows.
-                    let chevron_x = row_area.x.saturating_add(1 + indent_cols);
-                    let chevron_area = Rect::new(chevron_x, row_area.y, 1, 1);
-                    layout.add_category_disclosure(idx, chevron_area);
-                }
-            }
-        } else if let (Some(c), Some(s)) = (cat_idx, section_idx) {
-            layout.add_section(c, s, row_area);
-        }
-    }
-    if let Some(scrollbar) = panel_layout.scrollbar_area {
-        layout.categories_scrollbar_area = Some(scrollbar);
-    }
-}
-
 /// Context for rendering a setting item (extracted to avoid borrow issues)
 struct RenderContext<'a> {
     selected_item: usize,
@@ -706,6 +477,7 @@ struct RenderContext<'a> {
 fn render_settings_panel(
     frame: &mut Frame,
     area: Rect,
+    items: Option<Rect>,
     state: &mut SettingsState,
     theme: &Theme,
     layout: &mut SettingsLayout,
@@ -715,50 +487,59 @@ fn render_settings_panel(
         None => return,
     };
 
-    let mut y = area.y;
-    let header_start_y = y;
-
-    // Right-panel page title is the full context fallback for sidebar labels,
-    // which are width-clamped because plugin names are external input.
-    if area.height > 0 && area.width > 0 {
-        let title = truncate_display_width_with_ellipsis(&page_title, area.width as usize);
-        let title_style = Style::default()
-            .fg(theme.editor_fg)
-            .add_modifier(Modifier::BOLD);
-        frame.render_widget(
-            Paragraph::new(title).style(title_style),
-            Rect::new(area.x, y, area.width, 1),
-        );
-        y += 1;
-    }
-
-    // "Clear" button for nullable categories (e.g., Option<LanguageConfig>)
-    if page_nullable && state.current_category_has_values() {
-        let btn_text = format!("[{}]", t!("settings.btn_clear_category"));
-        let btn_len = btn_text.len() as u16;
-        let is_hovered = matches!(state.hover_hit, Some(SettingsHit::ClearCategoryButton));
-        let btn_style = if is_hovered {
-            Style::default()
-                .fg(theme.menu_hover_fg)
-                .bg(theme.menu_hover_bg)
-        } else {
-            Style::default().fg(theme.line_number_fg)
-        };
-        let btn_area = Rect::new(area.x, y, btn_len, 1);
-        frame.render_widget(Paragraph::new(btn_text).style(btn_style), btn_area);
-        layout.clear_category_button = Some(btn_area);
-        y += 1;
-    } else {
-        layout.clear_category_button = None;
-    }
-
-    y += 1; // Blank line
-
-    let header_height = (y - header_start_y) as usize;
-    let items_start_y = y;
-
-    // Calculate available height for items
-    let available_height = area.height.saturating_sub(header_height as u16);
+    // **In the wide layout the header is the tree's**
+    // (`view::shell::settings::page_header`): the page's title and the
+    // `[Clear …]` a nullable category offers, with the button answering its
+    // own press, and the band under it is layout's answer rather than
+    // `area.height - (y - header_start_y)` — a height counted from rows this
+    // function had just drawn.
+    //
+    // The **narrow** layout has not crossed — its categories are a horizontal
+    // strip and the tree lays out no band for it — so it still paints its own
+    // header here, and still files the button's rectangle. Same boundary its
+    // category strip sits on.
+    let (items_start_y, available_height) = match items {
+        Some(r) => {
+            layout.clear_category_button = None;
+            (r.y, r.height)
+        }
+        None => {
+            let mut y = area.y;
+            let header_start_y = y;
+            if area.height > 0 && area.width > 0 {
+                let title = truncate_display_width_with_ellipsis(&page_title, area.width as usize);
+                let title_style = Style::default()
+                    .fg(theme.editor_fg)
+                    .add_modifier(Modifier::BOLD);
+                frame.render_widget(
+                    Paragraph::new(title).style(title_style),
+                    Rect::new(area.x, y, area.width, 1),
+                );
+                y += 1;
+            }
+            if page_nullable && state.current_category_has_values() {
+                let btn_text = format!("[{}]", t!("settings.btn_clear_category"));
+                let btn_len = btn_text.len() as u16;
+                let is_hovered = matches!(state.hover_hit, Some(SettingsHit::ClearCategoryButton));
+                let btn_style = if is_hovered {
+                    Style::default()
+                        .fg(theme.menu_hover_fg)
+                        .bg(theme.menu_hover_bg)
+                } else {
+                    Style::default().fg(theme.line_number_fg)
+                };
+                let btn_area = Rect::new(area.x, y, btn_len, 1);
+                frame.render_widget(Paragraph::new(btn_text).style(btn_style), btn_area);
+                layout.clear_category_button = Some(btn_area);
+                y += 1;
+            } else {
+                layout.clear_category_button = None;
+            }
+            y += 1; // Blank line
+            let header_height = y - header_start_y;
+            (y, area.height.saturating_sub(header_height))
+        }
+    };
 
     // The body panel width is the full width of the area allocated to items.
     // Items size themselves against this width directly via the ScrollItem
@@ -1904,241 +1685,6 @@ pub enum ControlLayoutInfo {
     Complex,
 }
 
-/// Render a single button with focus/hover states
-#[allow(clippy::too_many_arguments)]
-fn render_button(
-    frame: &mut Frame,
-    area: Rect,
-    text: &str,
-    focused_text: &str,
-    is_focused: bool,
-    is_hovered: bool,
-    theme: &Theme,
-    dimmed: bool,
-) {
-    if is_focused {
-        let style = Style::default()
-            .fg(theme.menu_highlight_fg)
-            .bg(theme.menu_highlight_bg)
-            .add_modifier(Modifier::BOLD);
-        frame.render_widget(Paragraph::new(focused_text).style(style), area);
-    } else if is_hovered {
-        let style = Style::default()
-            .fg(theme.menu_hover_fg)
-            .bg(theme.menu_hover_bg);
-        frame.render_widget(Paragraph::new(text).style(style), area);
-    } else {
-        let fg = if dimmed {
-            theme.line_number_fg
-        } else {
-            theme.popup_text_fg
-        };
-        frame.render_widget(Paragraph::new(text).style(Style::default().fg(fg)), area);
-    }
-}
-
-/// Render footer with action buttons
-/// When `vertical` is true, buttons are stacked vertically (for narrow mode)
-/// The **narrow** layout's footer: seven rows with the buttons stacked.
-///
-/// The wide one — two rows, a separator and five buttons flush right of an
-/// `[ Edit ]` — is the tree's (`view::shell::settings::Footer`), and its five
-/// recorded rectangles went with it. What was here summed the buttons' widths
-/// to decide which of them fit and then filed a rectangle per button for
-/// `SettingsLayout::hit_test` to compare a cell against; the rule survives,
-/// resolved against the width layout gives.
-fn render_footer(
-    frame: &mut Frame,
-    modal_area: Rect,
-    state: &SettingsState,
-    theme: &Theme,
-    layout: &mut SettingsLayout,
-    vertical: bool,
-) {
-    // Guard against too-small modal
-    if modal_area.height < 4 || modal_area.width < 10 {
-        return;
-    }
-    if vertical {
-        render_footer_vertical(frame, modal_area, state, theme, layout);
-    }
-}
-
-/// Render footer with buttons stacked vertically (for narrow mode)
-fn render_footer_vertical(
-    frame: &mut Frame,
-    modal_area: Rect,
-    state: &SettingsState,
-    theme: &Theme,
-    layout: &mut SettingsLayout,
-) {
-    use super::layout::SettingsHit;
-    use super::state::FocusPanel;
-
-    // Footer takes bottom 7 lines: separator + 5 buttons + help
-    let footer_height = 7u16;
-    let footer_y = modal_area
-        .y
-        .saturating_add(modal_area.height.saturating_sub(footer_height));
-    let footer_width = modal_area.width.saturating_sub(2);
-
-    // Draw top separator
-    let sep_y = footer_y;
-    if sep_y > modal_area.y {
-        let sep_line: String = "─".repeat(footer_width as usize);
-        frame.render_widget(
-            Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
-            Rect::new(modal_area.x + 1, sep_y, footer_width, 1),
-        );
-    }
-
-    // Check if footer has keyboard focus
-    let footer_focused = state.focus_panel() == FocusPanel::Footer;
-
-    // Determine hover and keyboard focus states for buttons
-    let layer_hovered = matches!(state.hover_hit, Some(SettingsHit::LayerButton));
-    let reset_hovered = matches!(state.hover_hit, Some(SettingsHit::ResetButton));
-    let save_hovered = matches!(state.hover_hit, Some(SettingsHit::SaveButton));
-    let cancel_hovered = matches!(state.hover_hit, Some(SettingsHit::CancelButton));
-    let edit_hovered = matches!(state.hover_hit, Some(SettingsHit::EditButton));
-
-    let layer_focused = footer_focused && state.footer_button_index == 0;
-    let reset_focused = footer_focused && state.footer_button_index == 1;
-    let save_focused = footer_focused && state.footer_button_index == 2;
-    let cancel_focused = footer_focused && state.footer_button_index == 3;
-    let edit_focused = footer_focused && state.footer_button_index == 4;
-
-    // Get translated button labels
-    // Use "Inherit" label instead of "Reset" when current item is nullable and explicitly set
-    let current_is_nullable_set = state
-        .current_item()
-        .map(|item| item.nullable && !item.is_null)
-        .unwrap_or(false);
-    let save_label = t!("settings.btn_save").to_string();
-    let cancel_label = t!("settings.btn_cancel").to_string();
-    let reset_label = if current_is_nullable_set {
-        t!("settings.btn_inherit").to_string()
-    } else {
-        t!("settings.btn_reset").to_string()
-    };
-    let edit_label = t!("settings.btn_edit").to_string();
-
-    // Build button text
-    let layer_text = format!("[ {} ]", state.target_layer_name());
-    let layer_text_focused = format!(">[ {} ]", state.target_layer_name());
-    let save_text = format!("[ {} ]", save_label);
-    let save_text_focused = format!(">[ {} ]", save_label);
-    let cancel_text = format!("[ {} ]", cancel_label);
-    let cancel_text_focused = format!(">[ {} ]", cancel_label);
-    let reset_text = format!("[ {} ]", reset_label);
-    let reset_text_focused = format!(">[ {} ]", reset_label);
-    let edit_text = format!("[ {} ]", edit_label);
-    let edit_text_focused = format!(">[ {} ]", edit_label);
-
-    // Render buttons vertically, centered
-    let button_x = modal_area.x + 2;
-    let mut y = sep_y + 1;
-
-    // Layer button
-    let layer_width = str_width(if layer_focused {
-        &layer_text_focused
-    } else {
-        &layer_text
-    }) as u16;
-    let layer_area = Rect::new(button_x, y, layer_width.min(footer_width), 1);
-    render_button(
-        frame,
-        layer_area,
-        &layer_text,
-        &layer_text_focused,
-        layer_focused,
-        layer_hovered,
-        theme,
-        false,
-    );
-    layout.layer_button = Some(layer_area);
-    y += 1;
-
-    // Save button
-    let save_width = str_width(if save_focused {
-        &save_text_focused
-    } else {
-        &save_text
-    }) as u16;
-    let save_area = Rect::new(button_x, y, save_width.min(footer_width), 1);
-    render_button(
-        frame,
-        save_area,
-        &save_text,
-        &save_text_focused,
-        save_focused,
-        save_hovered,
-        theme,
-        false,
-    );
-    layout.save_button = Some(save_area);
-    y += 1;
-
-    // Reset button
-    let reset_width = str_width(if reset_focused {
-        &reset_text_focused
-    } else {
-        &reset_text
-    }) as u16;
-    let reset_area = Rect::new(button_x, y, reset_width.min(footer_width), 1);
-    render_button(
-        frame,
-        reset_area,
-        &reset_text,
-        &reset_text_focused,
-        reset_focused,
-        reset_hovered,
-        theme,
-        false,
-    );
-    layout.reset_button = Some(reset_area);
-    y += 1;
-
-    // Cancel button
-    let cancel_width = str_width(if cancel_focused {
-        &cancel_text_focused
-    } else {
-        &cancel_text
-    }) as u16;
-    let cancel_area = Rect::new(button_x, y, cancel_width.min(footer_width), 1);
-    render_button(
-        frame,
-        cancel_area,
-        &cancel_text,
-        &cancel_text_focused,
-        cancel_focused,
-        cancel_hovered,
-        theme,
-        false,
-    );
-    layout.cancel_button = Some(cancel_area);
-    y += 1;
-
-    // Edit button
-    let edit_width = str_width(if edit_focused {
-        &edit_text_focused
-    } else {
-        &edit_text
-    }) as u16;
-    let edit_area = Rect::new(button_x, y, edit_width.min(footer_width), 1);
-    render_button(
-        frame,
-        edit_area,
-        &edit_text,
-        &edit_text_focused,
-        edit_focused,
-        edit_hovered,
-        theme,
-        true, // dimmed
-    );
-    layout.edit_button = Some(edit_area);
-}
-
 /// Render search results with breadcrumbs
 fn render_search_results(
     frame: &mut Frame,
@@ -2147,9 +1693,11 @@ fn render_search_results(
     theme: &Theme,
     layout: &mut SettingsLayout,
 ) {
-    // Calculate max visible results (each result is 3 rows tall)
-    let max_visible = (area.height.saturating_sub(3) / 3) as usize;
-    state.search_max_visible = max_visible.max(1);
+    // **The window is the tree's** (`view::shell::settings::search_window`),
+    // computed from the box it places and set before this frame's description
+    // was built. It was computed here instead, from the rectangle this painter
+    // had been handed — which meant the search row's "(1-3 of 298)" was
+    // describing a window measured on the frame before it.
 
     // Ensure scroll offset is valid
     if state.search_scroll_offset >= state.search_results.len() {

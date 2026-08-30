@@ -378,6 +378,23 @@ pub enum UiFact {
     SettingsButton(super::settings::Button),
     /// The pointer entered or left one of them.
     SettingsButtonHover(Option<super::settings::Button>),
+    /// A press on a row of the settings modal's category tree.
+    ///
+    /// **The row's own index, not a cell compared against a rectangle.** The
+    /// painter filed one rectangle per visible row in `layout.categories` and
+    /// `layout.sections`, and the arm behind them walked both lists.
+    SettingsCategory(usize),
+    /// A press on a section row under a category, by `(category, section)`.
+    SettingsCategorySection(usize, usize),
+    /// A press on a category's `▶`/`▼`, which expands it rather than
+    /// selecting it. This was `layout.disclosures` — a one-column rectangle
+    /// per expandable row, filed so a chain of `point_in_rect` could tell the
+    /// chevron from the label beside it.
+    SettingsCategoryDisclosure(usize),
+    /// A press on the settings panel header's `[Clear …]`. It was
+    /// `layout.clear_category_button` — a rectangle the painter filed as it
+    /// drew the button, for a chain of `point_in_rect` to find again.
+    SettingsClearCategory,
 }
 
 /// What a menu-bar navigation step does to the open chain.

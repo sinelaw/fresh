@@ -52,6 +52,42 @@ pub fn fit(info: LayoutInfo) -> Option<(u16, u16)> {
     Some(((w * 90 / 100).min(MAX_WIDTH), h * 90 / 100))
 }
 
+/// How many search results fit inside a box of `modal`'s size.
+///
+/// The twin of [`super::keybinding::table_rows`], and there for the same
+/// reason: the box is the tree's, so the window of the list inside it is the
+/// tree's arithmetic too. The painter computed it as it drew and filed it in
+/// `search_max_visible` — where the *next* frame's chrome read it, one frame
+/// after the description that needed it had already been built. That is why
+/// the result count opened reading "(1-5 of 298)" over a list three results
+/// tall: five is the field's constructor default, and the first frame with a
+/// search on it had nothing else to read.
+pub fn search_window(modal: ratatui::layout::Rect) -> usize {
+    let inner_w = modal.width.saturating_sub(2);
+    let inner_h = modal.height.saturating_sub(2);
+    // The painter's own threshold: `inner_area.width < 60` is a narrow box,
+    // and a narrow box stacks its five buttons instead of laying them in a
+    // row, which costs seven rows rather than two.
+    let narrow = inner_w < 60;
+    let footer = if narrow { 7 } else { 2 };
+    // One row of search bar, one blank row under it, then the footer.
+    let content = inner_h.saturating_sub(2 + footer);
+    let rows = match narrow {
+        false => content,
+        // The narrow layout subtracts the footer a second time — the content
+        // band already excludes it — and then takes three rows for the
+        // category strip and one for the rule under it. Mirrored rather than
+        // corrected: this states the geometry the painter has, and the two
+        // have to agree while the panel below is still painted.
+        true => {
+            let main = content.saturating_sub(footer);
+            main.saturating_sub(3u16.min(main) + 1)
+        }
+    };
+    // Three rows a result: its name, its breadcrumb and its category.
+    ((rows.saturating_sub(3) / 3) as usize).max(1)
+}
+
 /// The dialog's box as a layer: centred beside the dock, with the chrome the
 /// tree owns inside it and the painter's body between.
 ///
@@ -83,22 +119,60 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
             // painter's body — `search_header_height + search_gap` in the
             // renderer, which is where it puts everything else.
             Some(c) => {
+                // The body band: the category tree down its left, the
+                // painter's panel to the right of the divider between them.
+                // `Layout::horizontal([Length(24), Length(1), Min(40)])` is
+                // where those three numbers come from — the tree's rectangle
+                // was `chunks[0]` and the panel's `chunks[2]`, and the
+                // painter reads the second back rather than splitting again.
+                let body = match &c.categories {
+                    None => row().flex(1),
+                    Some(t) => row().flex(1).children([
+                        col().w(Sizing::Cells(CATEGORY_COLS)).child(categories(t)),
+                        // The divider column, which the painter draws.
+                        row().w(Sizing::Cells(1)),
+                        match &c.page {
+                            Some(p) => col().flex(1).key(panel_key()).child(page_header(p)),
+                            None => row().flex(1).key(panel_key()),
+                        },
+                    ]),
+                };
                 let mut rows: Vec<Node<UiMsg>> = vec![
                     row().h(Sizing::Cells(1)),
                     row()
                         .h(Sizing::Cells(1))
                         .children([row().w(Sizing::Cells(1)), search_row(&c.search)]),
-                    row().flex(1),
+                    body,
                 ];
                 if let Some(f) = &c.footer {
                     // The separator the painter drew one row above the
-                    // buttons, then the buttons, then the border.
-                    rows.push(rule());
+                    // buttons, then the buttons, then the border. The rule is
+                    // inset by the same cell as the buttons: the box's border
+                    // is the painter's and a full-width rule drew straight
+                    // over both of its sides.
                     rows.push(row().h(Sizing::Cells(1)).children([
                         row().w(Sizing::Cells(1)),
-                        footer_row(f).flex(1),
+                        rule().flex(1),
                         row().w(Sizing::Cells(1)),
                     ]));
+                    // One row across, five rows down — `footer_height` was 2
+                    // and 7, and the second cell of indent is the narrow
+                    // footer's `modal_area.x + 2`.
+                    rows.push(
+                        row()
+                            .h(Sizing::Cells(match f.stacked {
+                                true => 5,
+                                false => 1,
+                            }))
+                            .children([
+                                row().w(Sizing::Cells(1 + f.stacked as u16)),
+                                match f.stacked {
+                                    true => footer_column(f).flex(1),
+                                    false => footer_row(f).flex(1),
+                                },
+                                row().w(Sizing::Cells(1)),
+                            ]),
+                    );
                     // The border's own row, which the painter draws.
                     rows.push(row().h(Sizing::Cells(1)));
                 }
@@ -130,6 +204,198 @@ fn route(n: Node<UiMsg>) -> Node<UiMsg> {
         );
     }
     g
+}
+
+/// The width the painter's `Constraint::Length(24)` gave the tree.
+pub const CATEGORY_COLS: u16 = 24;
+
+pub fn categories_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("settings_categories".into())
+}
+
+/// The settings panel's rectangle — the body band right of the divider.
+///
+/// The painter split the content area into `[Length(24), Length(1), Min(40)]`
+/// and kept `chunks[2]`; the tree lays the same three out, so this is the
+/// answer rather than a second split of the same row.
+pub fn panel_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("settings_panel".into())
+}
+
+/// The category tree as a `widgets::List` in the window it scrolls in.
+///
+/// **The rows answer their own presses and the list owns its window**, which
+/// is the whole of what the painter recorded here: `layout.categories`,
+/// `layout.sections`, `layout.disclosures`, `categories_scrollbar_area` and
+/// `categories_panel_area` were five families of rectangle so a chain of
+/// `point_in_rect` could turn a cell back into a row — and, for the
+/// disclosure, back into a *column of* a row. A row knows its own index and a
+/// chevron is a node beside the label.
+///
+/// The cursor is revealed by the list rather than by
+/// `categories_scroll.ensure_visible`: the window is the element's, so the
+/// wheel moves it without moving the selection and a keyboard move brings the
+/// selection back into view. That is the behaviour the two of them had
+/// between them, said once.
+pub fn categories(c: &Categories) -> Node<UiMsg> {
+    let rows = Rc::new(c.rows.clone());
+    let focused = c.focused;
+    let n = rows.len();
+    let list = fresh_ui::List::windowed(
+        n,
+        |i| fresh_ui::Key::Pair("settings_cat".into(), i as u64),
+        {
+            let rows = rows.clone();
+            let selected = c.selected;
+            move |i| cat_row(&rows[i], selected == Some(i), focused)
+        },
+    )
+    .focusable(false)
+    .scrollbar()
+    .row_theme(move |_, st| match (st, focused) {
+        (
+            fresh_ui::widgets::RowState::Selected | fresh_ui::widgets::RowState::SelectedBlur,
+            true,
+        ) => pair("ui.menu_highlight_fg", "ui.menu_highlight_bg"),
+        (
+            fresh_ui::widgets::RowState::Selected | fresh_ui::widgets::RowState::SelectedBlur,
+            false,
+        ) => pair("ui.menu_fg", "ui.selection_bg"),
+        _ => ink(),
+    })
+    .on_select({
+        let rows = rows.clone();
+        move |i| match &rows[i] {
+            CatRow::Category { idx, .. } => UiMsg::Ui(UiFact::SettingsCategory(*idx)),
+            CatRow::Section { cat, section, .. } => {
+                UiMsg::Ui(UiFact::SettingsCategorySection(*cat, *section))
+            }
+        }
+    });
+    let list = match (n, c.selected) {
+        (0, _) | (_, None) => list,
+        (_, Some(i)) => list.selected(i.min(n - 1)),
+    };
+    fresh_ui::ComponentExt::node(list).key(categories_key())
+}
+
+pub fn clear_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("settings_clear_category".into())
+}
+
+/// The band the settings themselves are painted into.
+///
+/// The painter derived it by counting the header rows it had just drawn —
+/// `header_height = y - header_start_y`, then `available_height = area.height
+/// - header_height`. The header is a description now, so the band under it is
+/// layout's answer and this is the key to read it back by.
+pub fn items_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("settings_items".into())
+}
+
+/// The settings panel's header, and the band under it the painter still owns.
+///
+/// **The `[Clear …]` button answers its own press.** It was
+/// `layout.clear_category_button` — a rectangle filed as the painter drew it,
+/// for `hit_test` to compare a cell against.
+fn page_header(p: &Page) -> Node<UiMsg> {
+    let mut rows: Vec<Node<UiMsg>> = vec![line(
+        p.title.clone(),
+        attrs("ui.editor_fg", "ui.popup_bg", &["bold"]),
+    )];
+    if let Some(label) = &p.clear {
+        let theme = match p.clear_hovered {
+            true => pair("ui.menu_hover_fg", "ui.menu_hover_bg"),
+            false => pair("ui.line_number_fg", "ui.popup_bg"),
+        };
+        rows.push(
+            row().h(Sizing::Cells(1)).children([
+                gesture(text(label.clone()).theme(theme))
+                    .key(clear_key())
+                    .on(
+                        GestureKind::Press,
+                        Rc::new(|e: &Event| {
+                            if e.button != MouseButton::Left {
+                                return None;
+                            }
+                            e.stop();
+                            Some(UiMsg::Ui(UiFact::SettingsClearCategory))
+                        }),
+                    ),
+                row().flex(1),
+            ]),
+        );
+    }
+    // The painter's blank row between the header and the first card, and then
+    // the band it fills.
+    rows.push(row().h(Sizing::Cells(1)));
+    rows.push(row().flex(1).key(items_key()));
+    col().children(rows)
+}
+
+/// One row: the cursor's `>`, the indent, the chevron, the dirty dot, the
+/// icon and the label — the painter's own span order.
+fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
+    // The row's own theme comes from `row_theme`; a run that differs from it
+    // says so, and only two do.
+    let marker = match selected && focused {
+        true => ">",
+        false => " ",
+    };
+    match r {
+        CatRow::Category {
+            idx,
+            chevron,
+            expandable,
+            dirty,
+            icon,
+            label,
+            elide,
+        } => {
+            // The chevron is its own target: the painter recorded a
+            // one-column rectangle for it so a click there expanded the
+            // category instead of selecting it.
+            let idx = *idx;
+            let chev = text(format!("{chevron} "));
+            let chev = match expandable {
+                true => gesture(chev).on(
+                    GestureKind::Press,
+                    Rc::new(move |e: &Event| {
+                        if e.button != MouseButton::Left {
+                            return None;
+                        }
+                        e.stop();
+                        Some(UiMsg::Ui(UiFact::SettingsCategoryDisclosure(idx)))
+                    }),
+                ),
+                false => chev,
+            };
+            let mut kids: Vec<Node<UiMsg>> = vec![text(marker), chev];
+            kids.push(match dirty {
+                true => text("● ").theme(pair("ui.menu_highlight_fg", "ui.popup_bg")),
+                false => text("  "),
+            });
+            kids.push(text(icon.to_string()).theme(pair("ui.popup_border_fg", "ui.popup_bg")));
+            // A plugin page's name is longer than the tree is wide, so the
+            // painter clipped it with an ellipsis. `Sizing::Flex` gives the
+            // label the rest of the row and the fold clips it; the ellipsis
+            // is what the two do not share, and it stays in the description.
+            kids.push(match elide {
+                true => text(label.clone()).flex(1),
+                false => text(label.clone()),
+            });
+            row().h(Sizing::Cells(1)).children(kids)
+        }
+        CatRow::Section { label, .. } => row().h(Sizing::Cells(1)).children([
+            text(marker),
+            // Four columns of indent, then the chevron column the category
+            // rows spend on their arrow.
+            text("     "),
+            text("  "),
+            text(" "),
+            text(label.clone()),
+        ]),
+    }
 }
 
 fn search_row(s: &Search) -> Node<UiMsg> {
@@ -205,6 +471,60 @@ pub struct Chrome {
     /// The footer's buttons. `None` in the narrow layout, whose footer is
     /// seven rows rather than two and has not crossed.
     pub footer: Option<Footer>,
+    /// The category tree down the left of the box. `None` in the narrow
+    /// layout, whose categories are a horizontal strip, and while a search is
+    /// running, when the painter replaces the whole body with its results.
+    pub categories: Option<Categories>,
+    /// The page's own header, above the settings. `None` under the same two
+    /// conditions as the tree.
+    pub page: Option<Page>,
+}
+
+/// The settings panel's header: the page's title, and the button that clears
+/// a nullable category.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Page {
+    pub title: String,
+    /// `[Clear …]`, offered on a nullable category that has values.
+    pub clear: Option<String>,
+    /// True while the pointer is on that button.
+    pub clear_hovered: bool,
+}
+
+/// The category tree: the rows, the keyboard cursor, and whether that cursor
+/// is the one with the keyboard.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Categories {
+    pub rows: Vec<CatRow>,
+    /// The display index the cursor is on. The painter derived it from
+    /// `selected_category` and `tree_cursor_section` at every row; it is one
+    /// number here, and the row that matches it is the selected one.
+    pub selected: Option<usize>,
+    /// Whether the categories panel has the keyboard. It decides both the
+    /// highlight's colour and whether the `>` is drawn, exactly as it did.
+    pub focused: bool,
+}
+
+/// One row of the category tree.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CatRow {
+    Category {
+        idx: usize,
+        /// `▼`, `▶` or a space — the painter's own three states.
+        chevron: &'static str,
+        expandable: bool,
+        /// A dot beside a category with unsaved changes in it.
+        dirty: bool,
+        icon: &'static str,
+        label: String,
+        /// A plugin's page has a long name and the painter elided it.
+        elide: bool,
+    },
+    Section {
+        cat: usize,
+        section: usize,
+        label: String,
+    },
 }
 
 pub fn search_key() -> fresh_ui::Key {
@@ -241,6 +561,12 @@ pub struct Footer {
     /// The key hints between `[ Edit ]` and the right-hand group, in the
     /// painter's own `Key:Action  Key:Action` form.
     pub help: String,
+    /// **Below sixty columns the five stack.** The painter had two footers —
+    /// `render_footer` and `render_footer_vertical` — differing in which way
+    /// the buttons run, in what order (`[Layer, Save, Reset, Cancel, Edit]`
+    /// down, `[Edit, …, Layer, Reset, Save, Cancel]` across), and in whether
+    /// the hints are shown at all. One description, one flag.
+    pub stacked: bool,
 }
 
 pub fn footer_key(b: Button) -> fresh_ui::Key {
@@ -264,6 +590,30 @@ pub fn footer_key(b: Button) -> fresh_ui::Key {
 /// stays, resolved against the width layout gives rather than against a
 /// rectangle passed in. What goes is the five recorded rectangles and the
 /// `hit_test` that compared a cell against each.
+/// The narrow layout's footer: the same five buttons, one per row.
+///
+/// The painter's own order and its one dimmed button. Nothing about which
+/// buttons fit is decided here — below sixty columns all five are shown and
+/// the hints are not.
+fn footer_column(f: &Footer) -> Node<UiMsg> {
+    col().children(
+        [
+            (Button::Layer, &f.layer),
+            (Button::Save, &f.save),
+            (Button::Reset, &f.reset),
+            (Button::Cancel, &f.cancel),
+            (Button::Edit, &f.edit),
+        ]
+        .into_iter()
+        .map(|(b, label)| {
+            row()
+                .h(Sizing::Cells(1))
+                .children([button(f, b, label), row().flex(1)])
+        })
+        .collect::<Vec<_>>(),
+    )
+}
+
 fn footer_row(f: &Footer) -> Node<UiMsg> {
     let f = f.clone();
     layout_reader(move |info: LayoutInfo| {
@@ -291,12 +641,15 @@ fn footer_row(f: &Footer) -> Node<UiMsg> {
             kids.push(button(&f, Button::Edit, &f.edit));
             kids.push(text("  ").theme(ink()));
         }
-        // The hints, between `[ Edit ]` and the right-hand group. The painter
-        // worked out the gap's start and end from whichever buttons it had
-        // decided to show and clipped the text to it; a flexible child between
-        // them is the same gap, and it elides rather than being cut.
-        kids.extend(keyhints(&f.help));
-        kids.push(row().flex(1));
+        // The hints, between `[ Edit ]` and the right-hand group, **inside**
+        // the flexible child rather than beside it. The painter worked out the
+        // gap's start and end from whichever buttons it had decided to show
+        // and clipped the text to it; a flexible child *containing* them is
+        // that gap, and the hints are clipped to it. Laid beside a bare
+        // spacer they are fixed-width instead, so a help string longer than
+        // the slack pushed the right-hand group off the box's edge and the
+        // last button came out cut in half.
+        kids.push(row().flex(1).children(keyhints(&f.help)));
         for (on, b, label) in [
             (show_layer, Button::Layer, &f.layer),
             (show_reset, Button::Reset, &f.reset),
@@ -470,7 +823,13 @@ pub fn dialog_layer(d: &Dialog) -> Node<UiMsg> {
             let w = want_w.min(info.constraints.max_w.saturating_sub(4));
             let want = match &d {
                 Dialog::Help { .. } => 20,
-                Dialog::Confirm(c) | Dialog::Reset(c) => (7 + c.changes.len() as u16).min(20),
+                // Two borders, the title, the prompt, the blank under it,
+                // the rule, the buttons and the help line — then a row per
+                // change. The painter's own figure was seven, because it hung
+                // its title *in* the top border and this box gives it a row of
+                // its own; at seven the changes list was squeezed to nothing
+                // and the prompt promised a list that was not there.
+                Dialog::Confirm(c) | Dialog::Reset(c) => (8 + c.changes.len() as u16).min(20),
                 Dialog::EntryDiscard(_) | Dialog::EntryDelete(_) => 7,
             };
             let h = want.min(info.constraints.max_h.saturating_sub(4));
@@ -691,6 +1050,51 @@ mod tests {
             title: " Settings [user] ".into(),
             search: Search::Hint(vec![Span::new("Press / to search settings...", dim)]),
             footer: Some(footer()),
+            categories: Some(tree()),
+            page: Some(Page {
+                title: "General".into(),
+                clear: Some("[Clear]".into()),
+                clear_hovered: false,
+            }),
+        }
+    }
+
+    /// A category tree with one expandable page, its two sections, and a
+    /// second page under them.
+    fn tree() -> Categories {
+        Categories {
+            rows: vec![
+                CatRow::Category {
+                    idx: 0,
+                    chevron: "▼",
+                    expandable: true,
+                    dirty: true,
+                    icon: "⚙",
+                    label: "General".into(),
+                    elide: false,
+                },
+                CatRow::Section {
+                    cat: 0,
+                    section: 0,
+                    label: "Startup".into(),
+                },
+                CatRow::Section {
+                    cat: 0,
+                    section: 1,
+                    label: "Appearance".into(),
+                },
+                CatRow::Category {
+                    idx: 1,
+                    chevron: " ",
+                    expandable: false,
+                    dirty: false,
+                    icon: "✂",
+                    label: "Clipboard".into(),
+                    elide: false,
+                },
+            ],
+            selected: Some(0),
+            focused: true,
         }
     }
 
@@ -723,12 +1127,17 @@ mod tests {
                     pair("ui.line_number_fg", "ui.popup_bg"),
                 )],
             },
+            // A search replaces the body, so neither the tree nor the page
+            // header is described.
             footer: Some(footer()),
+            categories: None,
+            page: None,
         }
     }
 
     fn footer() -> Footer {
         Footer {
+            stacked: false,
             layer: "[ user ]".into(),
             reset: "[ Reset ]".into(),
             save: "[ Save ]".into(),
@@ -741,10 +1150,14 @@ mod tests {
     }
 
     fn laid_out(w: u16, h: u16, dock: Option<u16>) -> Ui<UiMsg> {
+        with_chrome(chrome(), w, h, dock)
+    }
+
+    fn with_chrome(c: Chrome, w: u16, h: u16, dock: Option<u16>) -> Ui<UiMsg> {
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
             frame_tree(Frame {
-                settings: Some(chrome()),
+                settings: Some(c),
                 modal: Some(Slot::Settings),
                 dock,
                 menu_bar: false,
@@ -848,6 +1261,169 @@ mod tests {
             .collect()
     }
 
+    /// **The `[Clear …]` answers its own press**, where the painter filed a
+    /// rectangle for it as it drew, and the band under the header is layout's
+    /// answer rather than a height counted back from the rows just painted.
+    #[test]
+    fn the_page_header_sits_above_the_band_the_painter_fills() {
+        let mut ui = laid_out(200, 60, None);
+        let panel = ui.rect_of(ui.find_by_key(&panel_key()).expect("the panel"));
+        let items = ui.rect_of(ui.find_by_key(&items_key()).expect("the item band"));
+        assert_eq!(items.x, panel.x, "the band is the panel's width");
+        assert_eq!(
+            items.y,
+            panel.y + 3,
+            "title, clear button, blank — then the band"
+        );
+        assert!(items.h > 0, "and it has room to fill");
+
+        let at = ui.rect_of(ui.find_by_key(&clear_key()).expect("the clear button"));
+        let got = facts(ui.dispatch(fresh_ui::Input::press(
+            fresh_ui::Point::new(at.x, at.y),
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        )));
+        assert!(
+            got.contains(&UiFact::SettingsClearCategory),
+            "the button is its own target, got {got:?}"
+        );
+    }
+
+    /// **Below sixty columns the five buttons stack**, which is the whole of
+    /// what `render_footer_vertical` was: the same five, one per row, in the
+    /// painter's own order, with the hints dropped. Two painters differing in
+    /// a direction are one description and a flag.
+    #[test]
+    fn the_narrow_footer_stacks_its_five_buttons() {
+        let mut c = chrome();
+        if let Some(f) = c.footer.as_mut() {
+            f.stacked = true;
+        }
+        c.categories = None;
+        let ui = with_chrome(c, 60, 40, None);
+        let ys: Vec<i32> = [
+            Button::Layer,
+            Button::Save,
+            Button::Reset,
+            Button::Cancel,
+            Button::Edit,
+        ]
+        .into_iter()
+        .map(|b| {
+            ui.rect_of(
+                ui.find_by_key(&footer_key(b))
+                    .unwrap_or_else(|| panic!("{b:?} is on screen")),
+            )
+            .y
+        })
+        .collect();
+        let mut sorted = ys.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted, ys, "one per row, in the painter's order: {ys:?}");
+        assert_eq!(ys[4] - ys[0], 4, "five consecutive rows, not a row of five");
+    }
+
+    /// The category tree sits down the left of the body band, twenty-four
+    /// columns wide, with the painter's panel to the right of the divider —
+    /// `Layout::horizontal([Length(24), Length(1), Min(40)])`, which the
+    /// painter now *reads* rather than splits a second time.
+    #[test]
+    fn the_tree_and_the_panel_share_the_body_band() {
+        let ui = laid_out(200, 60, None);
+        let boxed = ui.rect_of(ui.find_by_key(&key()).expect("the box"));
+        let tree = ui.rect_of(ui.find_by_key(&categories_key()).expect("the tree"));
+        let panel = ui.rect_of(ui.find_by_key(&panel_key()).expect("the panel"));
+        assert_eq!(tree.w, CATEGORY_COLS, "the tree's width is the painter's");
+        assert_eq!(tree.x, boxed.x, "flush with the box");
+        assert_eq!(
+            panel.x,
+            tree.x + tree.w as i32 + 1,
+            "the panel starts one divider column right of the tree"
+        );
+        assert!(panel.h > 0 && tree.h > 0, "both have a band to fill");
+    }
+
+    /// **A press on a row is that row's identity**, which is what the four
+    /// families of rectangle the painter filed were reconstructing.
+    #[test]
+    fn a_press_on_a_row_names_it() {
+        for (row, want) in [
+            (0usize, UiFact::SettingsCategory(0)),
+            (1, UiFact::SettingsCategorySection(0, 0)),
+            (2, UiFact::SettingsCategorySection(0, 1)),
+            (3, UiFact::SettingsCategory(1)),
+        ] {
+            let mut ui = laid_out(200, 60, None);
+            let at = ui.rect_of(
+                ui.find_by_key(&fresh_ui::Key::Pair("settings_cat".into(), row as u64))
+                    .expect("a row"),
+            );
+            // A `List` selects on the click, not on the press.
+            let p = fresh_ui::Point::new(at.x + 6, at.y);
+            let _ = ui.dispatch(fresh_ui::Input::press(
+                p,
+                fresh_ui::MouseButton::Left,
+                fresh_ui::Mods::NONE,
+            ));
+            let got = facts(ui.dispatch(fresh_ui::Input::release(
+                p,
+                fresh_ui::MouseButton::Left,
+                fresh_ui::Mods::NONE,
+            )));
+            assert!(
+                got.contains(&want),
+                "row {row} should be {want:?}, got {got:?}"
+            );
+        }
+    }
+
+    /// **The chevron is its own target.** The painter recorded a one-column
+    /// rectangle for it so a click there expanded the category instead of
+    /// selecting it; here it is a node beside the label that stops the press.
+    #[test]
+    fn a_press_on_the_chevron_expands_rather_than_selects() {
+        let mut ui = laid_out(200, 60, None);
+        let at = ui.rect_of(
+            ui.find_by_key(&fresh_ui::Key::Pair("settings_cat".into(), 0u64))
+                .expect("the first row"),
+        );
+        // Column 0 is the cursor marker; the chevron is the one after it.
+        let got = facts(ui.dispatch(fresh_ui::Input::press(
+            fresh_ui::Point::new(at.x + 1, at.y),
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        )));
+        assert!(
+            got.contains(&UiFact::SettingsCategoryDisclosure(0)),
+            "the chevron toggles, got {got:?}"
+        );
+    }
+
+    /// **The cursor wears a `>` when the tree has the keyboard**, and only
+    /// then: the painter drew the marker on `is_selected && focus_panel ==
+    /// Categories` and the highlight on `is_selected` alone.
+    #[test]
+    fn the_cursor_wears_its_marker_only_while_the_tree_has_the_keyboard() {
+        let marks = |focused: bool| {
+            let mut c = chrome();
+            if let Some(t) = c.categories.as_mut() {
+                t.focused = focused;
+            }
+            let ui = with_chrome(c, 200, 60, None);
+            ui.spec()
+                .layers()
+                .iter()
+                .filter(|i| match &i.draw {
+                    fresh_ui::Draw::Lines(l) => l.iter().any(|s| &**s == ">"),
+                    _ => false,
+                })
+                .count()
+        };
+        assert_eq!(marks(true), 1, "one marked row while focused");
+        assert_eq!(marks(false), 0, "and none while the body has the keyboard");
+    }
+
     /// **Fifty wide, as tall as it needs within twenty, centred in the box** —
     /// the painter's own two lines, and the same `parent_area` it was handed.
     #[test]
@@ -856,7 +1432,11 @@ mod tests {
         let d = ui.rect_of(ui.find_by_key(&dialog_key()).expect("the dialog"));
         let b = ui.rect_of(ui.find_by_key(&key()).expect("the box"));
         assert_eq!(d.w, 50);
-        assert_eq!(d.h, 10, "seven plus one per change");
+        // Two borders, the title, the prompt, the blank under it, the rule,
+        // the buttons and the help line — then one row per change. The
+        // painter's figure was seven because its title rode *in* the top
+        // border; this box gives it a row.
+        assert_eq!(d.h, 11, "eight plus one per change");
         assert_eq!(d.x, b.x + (b.w as i32 - 50) / 2, "centred in the box");
     }
 

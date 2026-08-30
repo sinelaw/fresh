@@ -21,11 +21,13 @@ use crate::render::geom::Point;
 
 use super::Behavior;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     ScrollTo(Point),
     /// Move the window so that this index is inside it.
     Reveal(u32),
+    /// Move the window so that the descendant with this key is inside it.
+    RevealKey(crate::key::Key),
 }
 
 #[derive(Default)]
@@ -61,6 +63,28 @@ impl Anchor {
     /// distance. Nothing happens if it already is.
     pub fn reveal(&self, index: u32) {
         self.queue.borrow_mut().push(Command::Reveal(index));
+    }
+
+    /// Move the target's window so that the descendant carrying `key` is
+    /// inside it, by the shortest distance. Nothing happens if it already is,
+    /// or if nothing under the target carries that key.
+    ///
+    /// **The companion [`Anchor::reveal`] cannot answer for content whose
+    /// items differ in height**: it takes an index and treats it as a content
+    /// row, which is the same thing only when every row is one cell. A column
+    /// of cards — a settings page, a diff, a feed — knows *which* card to
+    /// show and has no idea what row it landed on; the framework, which laid
+    /// the column out, does. So the caller names the card and the window is
+    /// moved by what was measured, rather than by a second measurement the
+    /// caller would have to keep in step.
+    ///
+    /// A band taller than the window is shown from its top: the alternative
+    /// (its bottom edge flush with the window's) scrolls past the very thing
+    /// the caller asked to see.
+    pub fn reveal_key(&self, key: impl Into<crate::key::Key>) {
+        self.queue
+            .borrow_mut()
+            .push(Command::RevealKey(key.into()));
     }
 }
 

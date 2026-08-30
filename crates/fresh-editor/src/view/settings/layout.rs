@@ -12,7 +12,6 @@ pub struct SettingsLayout {
     /// The modal area
     pub modal_area: Rect,
     /// Category list items (index, area)
-    pub categories: Vec<(usize, Rect)>,
     /// Setting items (index, path, area, control_layout)
     pub items: Vec<ItemLayout>,
     /// Search result items (page_index, item_index, area)
@@ -29,14 +28,18 @@ pub struct SettingsLayout {
     pub reset_button: Option<Rect>,
     /// Clear category button area (shown in page header for nullable categories)
     pub clear_category_button: Option<Rect>,
-    /// Sections rendered under expanded categories: (cat_idx, section_idx, area).
-    pub sections: Vec<(usize, usize, Rect)>,
-    /// Disclosure-chevron areas for expandable categories: (cat_idx, area).
-    pub category_disclosures: Vec<(usize, Rect)>,
-    /// Categories panel area (for mouse-wheel detection).
-    pub categories_panel_area: Option<Rect>,
-    /// Categories panel scrollbar area (for drag).
-    pub categories_scrollbar_area: Option<Rect>,
+    /// The **narrow** layout's horizontal category strip: (index, area).
+    ///
+    /// **Four of this family's five are gone.** `sections`,
+    /// `category_disclosures`, `categories_panel_area` and
+    /// `categories_scrollbar_area` belonged to the wide layout's tree, and
+    /// existed so a chain of `point_in_rect` could turn a cell back into a
+    /// row — and, for the chevron, into a *column of* a row. That tree is a
+    /// `widgets::List` now (`view::shell::settings::categories`): a row knows
+    /// its own index, the chevron is a node beside the label, and the window
+    /// and its bar are the viewport's. The strip below forty columns is still
+    /// painted, so it still records these.
+    pub categories: Vec<(usize, Rect)>,
     /// Settings panel area (for scroll hit testing)
     pub settings_panel_area: Option<Rect>,
     /// Scrollbar area (for drag detection)
@@ -92,10 +95,6 @@ impl SettingsLayout {
             cancel_button: None,
             reset_button: None,
             clear_category_button: None,
-            sections: Vec::new(),
-            category_disclosures: Vec::new(),
-            categories_panel_area: None,
-            categories_scrollbar_area: None,
             settings_panel_area: None,
             scrollbar_area: None,
             search_scrollbar_area: None,
@@ -103,19 +102,9 @@ impl SettingsLayout {
         }
     }
 
-    /// Add a category to the layout
+    /// Register a row of the narrow layout's horizontal category strip.
     pub fn add_category(&mut self, index: usize, area: Rect) {
         self.categories.push((index, area));
-    }
-
-    /// Add a section row (under an expanded category) for hit-testing.
-    pub fn add_section(&mut self, cat_idx: usize, section_idx: usize, area: Rect) {
-        self.sections.push((cat_idx, section_idx, area));
-    }
-
-    /// Register the disclosure-chevron area for an expandable category.
-    pub fn add_category_disclosure(&mut self, cat_idx: usize, area: Rect) {
-        self.category_disclosures.push((cat_idx, area));
     }
 
     /// Add a setting item to the layout
@@ -193,32 +182,12 @@ impl SettingsLayout {
             }
         }
 
-        // Check categories tree (chevrons → sections → category rows; chevron
-        // first so clicking just the disclosure toggles expansion without
-        // changing the body-panel selection).
-        for (cat_idx, area) in &self.category_disclosures {
-            if point_in_rect(*area, x, y) {
-                return Some(SettingsHit::CategoryDisclosure(*cat_idx));
-            }
-        }
-        for (cat_idx, section_idx, area) in &self.sections {
-            if point_in_rect(*area, x, y) {
-                return Some(SettingsHit::CategorySection(*cat_idx, *section_idx));
-            }
-        }
+        // The wide layout's tree answered here through four ordered lists of
+        // rectangle — chevrons, then sections, then rows, then the panel. Its
+        // rows answer for themselves now; what is left is the narrow strip.
         for (index, area) in &self.categories {
             if point_in_rect(*area, x, y) {
                 return Some(SettingsHit::Category(*index));
-            }
-        }
-        if let Some(ref scrollbar) = self.categories_scrollbar_area {
-            if point_in_rect(*scrollbar, x, y) {
-                return Some(SettingsHit::CategoriesScrollbar);
-            }
-        }
-        if let Some(ref panel) = self.categories_panel_area {
-            if point_in_rect(*panel, x, y) {
-                return Some(SettingsHit::CategoriesPanel);
             }
         }
 
@@ -399,15 +368,6 @@ pub enum SettingsHit {
     Background,
     /// Click on a category (index)
     Category(usize),
-    /// Click on the chevron of an expandable category — toggles expansion
-    /// without changing the body-panel selection.
-    CategoryDisclosure(usize),
-    /// Click on a section row inside an expanded category in the tree view.
-    CategorySection(usize, usize),
-    /// Click on the categories panel itself (for mouse-wheel scroll).
-    CategoriesPanel,
-    /// Click on the categories panel scrollbar (for drag).
-    CategoriesScrollbar,
     /// Click on a setting item (index)
     Item(usize),
     /// Click on a search result (absolute index into the state's
