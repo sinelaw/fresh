@@ -288,7 +288,7 @@ API is frozen, and this is a change of what the host does with it.
 | `Tree` | ~~`widgets::Tree`~~ **`widgets::List`** | **The table was wrong here.** `WidgetSpec::Tree` is already *flat* — `nodes: Vec<TreeNode>` with a `depth` and a `has_children` flag — and its expansion is the **plugin's**: `expanded_keys` comes down in the spec and goes back through `WidgetMutation`. `widgets::Tree` builds its own nesting from recursive roots and owns `expanded` in element state, so it would fight the plugin for the one fact the plugin is authoritative for. The spec's tree is a controlled list of pre-rendered rows, and that is what it maps onto. |
 | `Component` | `focus_scope()` + `key()` | Its two jobs are exactly those: trap Tab inside the subtree, and name it. Not a component in the library's sense, and it should not become one — it owns no state. |
 | `Overlay` | `layer()` anchored to its own position | "Anchors at the row it would have occupied but the rows below do not shift" is `Place::Over` on a layer whose anchor is the node's slot. |
-| `Popup { anchor, screen_space }` | `layer()`, `Anchor::Point` or the node, `within` the panel unless `screen_space` | `screen_space` is precisely "not confined to the panel's region", which is the `within` the base PR added. |
+| `Popup { anchor, screen_space }` | `layer()`, `offset` from the panel body or anchored to the node, `within` the panel unless `screen_space` | `screen_space` is precisely "not confined to the panel's region", which is the `within` the base PR added. The *anchor* is panel-inner in both modes — a description cannot turn that into a frame coordinate, because it does not know where the panel is — so it hangs off the body and says how far inside. |
 | `WindowEmbed` | a `Host` leaf | A real editor window inside a panel: cells, like every other `Host`. G's rule applies — this one never migrates. |
 
 **The mapping is done.** `view/shell/widgets.rs` describes every variant but
@@ -299,8 +299,7 @@ asserted against `render_spec`'s own answer. Nine are written out
 `Popup`, `Number`), and five go through the adapter described above.
 
 **The coverage boundary is not the mapping's edge.** Every variant is
-described; not every one is *mounted*. The scrollable kinds — `List`, `Tree`,
-`DualList`, `Dropdown`, and multi-line `Text` — own their scroll in the
+described; not every one is *mounted*. Some kinds own their scroll in the
 runtime: the collector windows the rows itself and reports the offset on a
 `LayoutBox`, and the painter draws a bar over the rightmost column from that.
 The adapter turns rows into nodes and has nothing to say about a bar, so
@@ -308,6 +307,56 @@ describing one of them today would render it correctly and **silently lose its
 scrollbar**, which is worse than painting it whole. Wrapping already-windowed
 rows in a `viewport` does not fix it either: there would be nothing to scroll,
 so the bar would be wrong rather than missing.
+
+**The boundary is the scrollbar, not the offset**, and three of the five kinds
+first held back turned out to be on the near side of it once asked rather than
+assumed:
+
+* `DualList` does not scroll at all. Its body is `max(available, included,
+  visible_rows)` tall and its instance state carries no offset, so it emits
+  every row and there is no bar to lose.
+* `Dropdown` has a `scroll_offset`, which is what put it on the far side — but
+  the host's pop-over pass paints a border and the rows and nothing else.
+  `render_dropdown` clamps the scroll, slices the window and hands over each
+  visible row with its absolute index; describing that reproduces it exactly.
+* `Tree` is a *flat, controlled* list of pre-rendered rows whose expansion is
+  the plugin's, so it crossed on `widgets::List` with `List` itself.
+
+A `List` of *cards* — `item_specs`, each item a little block — crossed on a
+library change rather than a boundary argument: `List` stamped `Cells(1)` on
+every row and `ScrollMode::Items` counted one item per cell, so `row_rows` is
+what it needed. The gutter is reserved whether the bar is there or not, which
+also removes the reflow the runtime had (every card re-rendered one column
+narrower the moment one more session made the list overflow).
+
+A `Tree` with `card_borders` crossed on the other window the library has.
+Its rows are *heterogeneous* — `item_height + 2` for a card node, one for a
+folder header — and reading the renderer through settled which window it
+wants: **it scrolls in rows, not in nodes.** The offset is a row into the
+flattened list and a card straddling either edge is emitted and clipped, so a
+`List` snapping to whole items would have been a behaviour change. A
+cells-scrolling `viewport` is the same behaviour, and it owns the offset. The
+one thing that needed saying afterwards was the reveal — the runtime scrolled
+to keep the selection visible by writing the offset it also read; here the
+offset is the viewport's, so what is left is "put this row in the window",
+which is `Anchor::reveal`. (`item_height > 1` without `card_borders` does not
+occur — the only producer sets the two together — so there is no third arm.)
+
+**Multi-line `Text` closed it.** It was the last kind whose bar the panel's
+painter drew, and it crossed the same way: the collector is asked for the
+*whole* document — its `rows` is the window, so handing it one as tall as the
+text makes it emit every line and clamp its own scroll to zero — and the
+window is then `List::windowed` over those rows, one cell each, which is the
+row scroll the runtime had. The caret is what the list reveals, which is the
+whole of the auto-clamp. A label stays outside, because the collector windowed
+only the text under it.
+
+**So the boundary is closed.** `covered` answers yes to every variant but
+`WindowEmbed`, which is a real editor window inside a panel and a `Host` leaf
+by G's rule. What is left of C is no longer coverage: it is mounting the dock
+(C.5b), deleting `LayoutBox` and the byte-range scan once nothing reads them
+(C.3), and turning `WidgetInstanceState` into element state (C.2) — of which
+the scroll, for every kind that had one, is now done.
 
 **`List` has already crossed, and it is the proof of the shape.**
 `widgets::List` windows its rows out of a `viewport`, so the scroll is the
@@ -321,7 +370,7 @@ row *says* is not this migration's business.
 
 **That is why C.2 comes before full coverage, not after.** `widgets::List` and
 `widgets::Tree` own their scroll, and then the bar is the viewport's and comes
-free. These kinds cross the boundary when their state does. The panels that
+free. The kinds still behind the boundary cross it when their state does. The panels that
 are mounted today are the ones made of controls — forms, confirmations,
 button rows — which is most of what the dock's dialogs are.
 
@@ -370,8 +419,20 @@ substitution rather than a rewrite.
 
 **Three things the table settles that were open.**
 
-* **`indeterminate` is the only library gap left in the set**, and it is one
-  glyph state on `Toggle`, not a new widget.
+* **`indeterminate` was the only library gap the *set* had**, and it is one
+  glyph state on `Toggle`, not a new widget. Mounting the set found two more,
+  both about the same thing and both in the base PR: **a coordinate needs a
+  space to be in**. `Anchor::Point` and `Anchor::Cell` resolved to a frame
+  coordinate whatever region the layer named, so `within` moved a screen
+  anchor's origin but not a point's — an inconsistency the region's own
+  docstring already ruled against ("the bounds are the whole coordinate space
+  the placement works in, not just a right-hand limit"). And `offset` says
+  where a layer's real anchor is when it is *inside a leaf*: the `[value ▼]`
+  button inside a row a widget runtime laid out, a completion row of a
+  sub-render with no node of its own. It shifts the anchor rather than the
+  result, so a pop-over that flips above still clears the button it hangs
+  off — the same fact `set_host_anchor` publishes, for a caller that holds the
+  offset rather than the rectangle.
 * **`Component` is not a `Component`.** It is a focus scope with a key, and
   reading it as the library's `Component` would give a plugin's subtree host
   state it never asked for. The name collides; the concept does not.

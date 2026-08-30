@@ -5728,6 +5728,21 @@ impl Editor {
         // projection and the widget-runtime hit helpers read, and it is
         // layout's answer either way.
         if described {
+            // **The caret's cell is layout's answer.** The runtime reported a
+            // row and a byte and this turned it into a screen cell with
+            // `inner.x + byte_to_screen_col(...)` — measuring text the row had
+            // already measured to paint it. The description carries a
+            // zero-width marker at the caret's byte, so the cell is where the
+            // glyphs put it. A focused panel with no field still parks the
+            // caret in its corner, for the same reason as below.
+            match self.panel_rect(&crate::view::shell::widgets::caret_key()) {
+                Some(r) => frame.set_cursor_position((r.x, r.y)),
+                None if panel_focused => frame.set_cursor_position((
+                    inner.x + inner.width.saturating_sub(1),
+                    inner.y + inner.height.saturating_sub(1),
+                )),
+                None => {}
+            }
             if let Some(fwp) = self.panel_mut(slot) {
                 fwp.last_inner_rect = Some(inner);
             }

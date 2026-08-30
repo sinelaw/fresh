@@ -24,8 +24,10 @@
 //!
 //! **Coverage is explicit** ([`covered`]) because a panel is either described
 //! or painted, never half of each: a spec using a variant this module has not
-//! reached yet takes the old path whole. That is the same seam as a `Host`
-//! leaf, and it is temporary in the same way.
+//! reached takes the old path whole. That is the same seam as a `Host` leaf.
+//! It now answers `true` for everything but `WindowEmbed`, which is a `Host`
+//! leaf by rule and never crosses — so the gate is what remains of a boundary
+//! that has closed rather than a list of things still to do.
 
 use std::borrow::Cow;
 
@@ -102,6 +104,11 @@ impl Ctx<'_> {
 /// A panel is described or painted, never half of each — a `Row` of migrated
 /// children with one unmigrated child among them has nothing sensible to be.
 /// So the whole tree is asked, and the answer gates the panel.
+///
+/// **The one no left is `WindowEmbed`**, which is a real editor window inside
+/// a panel: cells, like every other `Host`, and G's rule says it never
+/// migrates. Everything else crossed — see the arms below for what each one
+/// needed, and `every_variant_but_the_host_leaf_is_covered` for the list.
 pub fn covered(spec: &WidgetSpec) -> bool {
     match spec {
         WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
@@ -132,21 +139,28 @@ pub fn covered(spec: &WidgetSpec) -> bool {
         // of a viewport — the scroll is the element's and `scrollbar()` is the
         // bar. A list of *cards* has not: its rows are multi-row subtrees with
         // their own selection marking, which is the next substitution.
-        WidgetSpec::List { item_specs, .. } => item_specs.is_empty(),
-        // A single-line field does not scroll; a multi-line one does.
-        WidgetSpec::Text { rows, .. } => *rows <= 1,
-        // `Dropdown` carries a `scroll_offset` of its own: its open pop-over
-        // windows its options.
+        // A list of *cards* crosses on `List::row_rows`: an item is a band of
+        // rows rather than one, and everything else — the window in items, the
+        // selection, the press — is the list above.
+        WidgetSpec::List { .. } => true,
+        // A multi-line field crosses on the same window the card tree does:
+        // the collector is asked for the whole document and the `viewport`
+        // owns which of it shows. That was the last bar the panel's painter
+        // drew, so the coverage boundary closes here.
+        WidgetSpec::Text { .. } => true,
         // A tree is a *flat, controlled* list of pre-rendered rows — its
         // expansion is the plugin's — so it crosses on `widgets::List` too.
-        // Multi-row items (`item_height > 1`, `card_borders`) have not: their
-        // rows are subtrees with their own selection marking, which is the
-        // card substitution.
-        WidgetSpec::Tree {
-            item_height,
-            card_borders,
-            ..
-        } => *item_height <= 1 && !card_borders,
+        //
+        // **`card_borders` scrolls in rows, so it is a viewport rather than a
+        // list.** With it a tree's rows are heterogeneous — a card node takes
+        // `item_height + 2` and a folder header takes one — and the runtime's
+        // offset is a *row* into the flattened list, so a card straddling
+        // either edge is emitted and clipped. `widgets::List` snaps to whole
+        // items, which would be a different behaviour; the cells-scrolling
+        // `viewport` is the same one, and it owns the offset. (`item_height >
+        // 1` without `card_borders` does not occur — the only producer sets
+        // the two together — so there is no third arm.)
+        WidgetSpec::Tree { .. } => true,
         // **`DualList` does not scroll**, which is why it crosses through the
         // adapter with no substitution at all. It emits every row — its body
         // is `max(available, included, visible_rows)` tall and there is no
@@ -160,9 +174,14 @@ pub fn covered(spec: &WidgetSpec) -> bool {
         // `entry_row_hits` gives, and without it only the left column would
         // have answered.
         WidgetSpec::DualList { .. } => true,
-        // `Dropdown` carries a `scroll_offset` of its own: its open pop-over
-        // windows its options.
-        WidgetSpec::Dropdown { .. } => false,
+        // **`Dropdown`'s pop-over windows its options and paints no bar.** It
+        // has a `scroll_offset`, which is why it was held back with the
+        // scrollable kinds — but the boundary is the *scrollbar*, not the
+        // offset, and the host's pop-over pass draws a border and the rows and
+        // nothing else. `render_dropdown` clamps the scroll and slices, and
+        // hands over each visible row with its absolute index; describing that
+        // reproduces it exactly and loses nothing.
+        WidgetSpec::Dropdown { .. } => true,
 
         // `WindowEmbed` is a `Host` leaf by rule and never crosses.
         _ => false,
@@ -353,15 +372,21 @@ pub fn node(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>) -> Node<UiMsg> {
                 _ => fresh_ui::Key::Str("popup".into()),
             };
             let slot = row().h(Sizing::Cells(0)).key(k.clone());
+            // **Panel-inner coordinates, and the panel is what they are inner
+            // to.** A description cannot turn one into a frame coordinate — it
+            // does not know where the panel is — so it anchors to the body and
+            // says how far inside. Which is also the difference `screen_space`
+            // names: both are positioned in the panel's space, and only one is
+            // *confined* to it.
             let l = fresh_ui::layer()
                 .place(fresh_ui::Place::Over)
-                .anchor(match anchor {
-                    // Panel-inner coordinates, which is what the anchor is
-                    // documented in.
-                    Some([r, c]) => fresh_ui::Anchor::Point(*c as u16, *r as u16),
-                    None => fresh_ui::Anchor::Node(k),
-                })
                 .fit(fresh_ui::Fit::CLAMP);
+            let l = match anchor {
+                Some([r, c]) => l
+                    .anchor(fresh_ui::Anchor::Node(super::panel::body_key()))
+                    .offset(*c as i16, *r as i16),
+                None => l.anchor(fresh_ui::Anchor::Node(k)),
+            };
             let l = match screen_space {
                 true => l,
                 false => l.within(super::panel::body_key()),
@@ -649,6 +674,138 @@ pub fn node(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>) -> Node<UiMsg> {
                 None => node.flex(1),
             }
         }
+        // **A card list is a list whose items are blocks.**
+        //
+        // `item_specs` makes each item a `WidgetSpec` rendered into a band of
+        // rows — a rounded pill with a title, a line of detail and a rule.
+        // Everything else about it is the list above: the window is in items,
+        // the selection is the owner's, a press anywhere on the card selects
+        // it. What it needed was for the library's `List` to stop stamping one
+        // cell on every row, which is `row_rows`.
+        //
+        // **The card's own rows stay the runtime's**, and so does the way a
+        // selected one is marked: `mark_list_card_selected` swaps the light
+        // box glyphs for heavy ones and adds bold and an accent, because "no
+        // background band — it reads garish over a multi-row card". That is
+        // not a theme name and could not be one, so the list's own row states
+        // are overridden to the base ink and the marking is applied where the
+        // rows are made.
+        //
+        // **The gutter is reserved whether the bar is there or not.** The
+        // runtime re-rendered every card one column narrower the moment the
+        // list overflowed, so adding one session reflowed all of them; a
+        // stable gutter is the same column, always, which is what that
+        // reflow was an accident of.
+        WidgetSpec::List {
+            item_specs,
+            item_keys,
+            selected_index,
+            visible_rows,
+            key,
+            ..
+        } if !item_specs.is_empty() => {
+            use std::rc::Rc;
+            let card_width = (width as u32).saturating_sub(1).max(1);
+            let mut cards: Vec<Vec<TextPropertyEntry>> = Vec::with_capacity(item_specs.len());
+            let mut item_height: u16 = 1;
+            for item in item_specs.iter() {
+                let mut scratch = std::collections::HashMap::new();
+                let rows = crate::widgets::render::render_collected(
+                    item,
+                    cx.states,
+                    &mut scratch,
+                    crate::widgets::RenderContext {
+                        focus_key: &cx.focus_key,
+                        hover_key: cx.hovered_key.as_deref().unwrap_or(""),
+                        hover_item_key: &cx.hovered_item_key,
+                        markdown: None,
+                        marker_gutter: cx.marker_gutter,
+                        avail_height: cx.avail_height,
+                    },
+                    card_width,
+                )
+                .entries;
+                item_height = item_height.max((rows.len() as u16).max(1));
+                cards.push(rows);
+            }
+            let n = cards.len();
+            let cards = Rc::new(cards);
+            let keys = Rc::new(item_keys.clone());
+            let list_key = key.clone().unwrap_or_default();
+            let slot = cx.slot;
+            let sel = *selected_index;
+            let hit_keys = keys.clone();
+            let list = fresh_ui::List::windowed(
+                n,
+                {
+                    let keys = keys.clone();
+                    move |i| {
+                        fresh_ui::Key::Str(
+                            keys.get(i).cloned().unwrap_or_else(|| i.to_string()).into(),
+                        )
+                    }
+                },
+                {
+                    let cards = cards.clone();
+                    move |i| {
+                        let selected = i as i32 == sel;
+                        col().children((0..item_height as usize).map(|r| {
+                            let mut e = cards[i]
+                                .get(r)
+                                .cloned()
+                                .unwrap_or_else(crate::widgets::render::blank_list_row);
+                            e.normalize_widths();
+                            if selected {
+                                crate::widgets::render::mark_list_card_selected(&mut e);
+                            }
+                            entry_row(&e)
+                        }))
+                    }
+                },
+            )
+            .focusable(false)
+            .row_rows(item_height)
+            .scrollbar_gutter()
+            .row_theme(|_, st| match st {
+                fresh_ui::widgets::RowState::Hover => {
+                    Ink::new(Paint::key(BASE_FG), Paint::key("ui.menu_hover_bg")).to_string()
+                }
+                // A selected card is marked in its own glyphs, not by a band.
+                _ => Ink::new(Paint::key(BASE_FG), Paint::key(BASE_BG)).to_string(),
+            })
+            .on_activate_handler(Rc::new(move |i| {
+                let item_key = hit_keys.get(i).cloned().unwrap_or_default();
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
+                    slot,
+                    hit: crate::widgets::HitArea {
+                        row_target: true,
+                        context_click: true,
+                        overlay: false,
+                        widget_key: item_key.clone(),
+                        widget_kind: "list",
+                        buffer_row: i as u32,
+                        byte_start: 0,
+                        byte_end: 0,
+                        payload: serde_json::json!({
+                            "index": i,
+                            "key": item_key,
+                            "list_key": list_key,
+                        }),
+                        event_type: "select",
+                        owner_key: Some(list_key.clone()),
+                    },
+                }))
+            }));
+            let list = match sel >= 0 {
+                true => list.selected(sel as usize),
+                false => list,
+            };
+            let node = fresh_ui::ComponentExt::node(list);
+            match visible_rows {
+                Some(r) => node.h(Sizing::Cells(*r as u16)),
+                None => node.flex(1),
+            }
+        }
         // **A tree is a flat list whose expansion belongs to the plugin.**
         //
         // `WidgetSpec::Tree` is not the library's `Tree`: it arrives already
@@ -667,6 +824,162 @@ pub fn node(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>) -> Node<UiMsg> {
         // Each row carries up to three hits — the disclosure glyph expands,
         // the checkbox toggles, the rest selects — which is why a row had to
         // stop being one target.
+        // **A tree of cards scrolls in rows, so the rows are the content.**
+        //
+        // With `card_borders` a node is a folder header one row tall or a
+        // bordered card `item_height + 2` tall, and the runtime's offset is a
+        // *row* into the flattened list: a card straddling either edge is
+        // emitted and clipped. A window that snapped to whole nodes would be a
+        // different behaviour, so this is a `viewport` over every visible row
+        // — the library's cells-scrolling window, which clips at both edges by
+        // construction and owns the offset itself.
+        //
+        // The rows are the runtime's, marking included: a selected card gets
+        // the heavy box frame rather than a band, and those heavy glyphs are
+        // also the marker `paint_dock_seamless_active_tab` keys on to merge
+        // the active card into the editor beside it.
+        WidgetSpec::Tree {
+            nodes,
+            item_keys,
+            selected_index,
+            visible_rows,
+            key,
+            expanded_keys,
+            checkable,
+            indent_cols,
+            item_height,
+            card_borders,
+        } if *card_borders && *item_height > 1 => {
+            let expanded: std::collections::HashSet<String> =
+                expanded_keys.iter().cloned().collect();
+            let visible = crate::widgets::collect_visible_tree_indices(nodes, item_keys, &expanded);
+            let tree_key = key.clone().unwrap_or_default();
+            let mut blocks: Vec<Chunk> = Vec::with_capacity(visible.len());
+            let mut at: u32 = 0;
+            let mut selected: Option<usize> = None;
+            for (i, &abs) in visible.iter().enumerate() {
+                let mut n = nodes[abs].clone();
+                n.text.normalize_widths();
+                for line in n.extra_lines.iter_mut() {
+                    line.normalize_widths();
+                }
+                let item_key = item_keys.get(abs).cloned().unwrap_or_default();
+                let open = n.has_children && !item_key.is_empty() && expanded.contains(&item_key);
+                let r = crate::widgets::render_tree_row(
+                    &n,
+                    open,
+                    *checkable,
+                    *item_height,
+                    true,
+                    width as u32,
+                    *indent_cols,
+                );
+                let is_selected = abs as i32 == *selected_index;
+                if is_selected {
+                    selected = Some(i);
+                }
+                // A card marks selection in its glyphs; a folder header takes
+                // the band. Hover lights every row of the block, because the
+                // block selects as one unit and so must light as one — and
+                // selection outranks it.
+                let as_card = crate::widgets::render::tree_node_is_card(&n, *checkable);
+                let hovered = !is_selected
+                    && !cx.hovered_item_key.is_empty()
+                    && cx.hovered_item_key == item_key;
+                let dress = |e: &mut TextPropertyEntry| {
+                    if is_selected {
+                        match as_card {
+                            true => crate::widgets::render::mark_list_card_selected(e),
+                            false => {
+                                let mut st = e.style.clone().unwrap_or_default();
+                                st.bg = Some(OverlayColorSpec::theme_key("ui.popup_selection_bg"));
+                                st.extend_to_line_end = true;
+                                e.style = Some(st);
+                            }
+                        }
+                    } else if hovered {
+                        crate::widgets::render::apply_hover_band(e);
+                    }
+                };
+                let select = |a: usize, b: usize, row_target: bool| crate::widgets::HitArea {
+                    row_target,
+                    context_click: row_target,
+                    overlay: false,
+                    widget_key: tree_key.clone(),
+                    widget_kind: "tree",
+                    buffer_row: 0,
+                    byte_start: a,
+                    byte_end: b,
+                    payload: serde_json::json!({ "index": abs, "key": item_key }),
+                    event_type: "select",
+                    owner_key: None,
+                };
+                let mut rows: Vec<Node<UiMsg>> = Vec::new();
+                let mut primary = r.entry.clone();
+                dress(&mut primary);
+                let end = primary.text.len();
+                let mut hits: Vec<((usize, usize), crate::widgets::HitArea)> = Vec::new();
+                if let Some((a, b)) = r.disclosure_range {
+                    let mut h = select(a, b, false);
+                    h.event_type = "expand";
+                    h.payload =
+                        serde_json::json!({ "index": abs, "key": item_key, "expanded": !open });
+                    hits.push(((a, b), h));
+                }
+                if let Some((a, b)) = r.checkbox_range {
+                    let mut h = select(a, b, false);
+                    h.event_type = "toggle";
+                    h.payload = serde_json::json!({
+                        "index": abs,
+                        "key": item_key,
+                        "checked": !n.checked.unwrap_or(false),
+                    });
+                    hits.push(((a, b), h));
+                }
+                // The body starts after whatever prefix the glyphs took —
+                // the collector's own rule, so a press on the glyph is the
+                // glyph's and the rest of the row is the card's.
+                let body = match (r.checkbox_range, r.disclosure_range) {
+                    (Some((_, e)), _) => e + 1,
+                    (None, Some((_, e))) => e,
+                    (None, None) => 0,
+                };
+                if body < end {
+                    hits.push(((body, end), select(body, end, true)));
+                }
+                rows.push(entry_row_hits(&primary, cx.slot, &hits));
+                for extra in r.extra_entries.iter() {
+                    let mut e = extra.clone();
+                    dress(&mut e);
+                    let b = e.text.len();
+                    rows.push(match b > 0 {
+                        true => entry_row_hit(&e, (0, b), cx.slot, select(0, b, true)),
+                        false => entry_row(&e),
+                    });
+                }
+                let h = rows.len() as u32;
+                blocks.push(Chunk {
+                    key: fresh_ui::Key::Str(
+                        match item_key.is_empty() {
+                            true => i.to_string(),
+                            false => item_key.clone(),
+                        }
+                        .into(),
+                    ),
+                    start: at,
+                    rows,
+                });
+                at += h;
+            }
+            let node = fresh_ui::ComponentExt::node(Scrolled {
+                blocks: std::rc::Rc::new(blocks),
+                selected,
+            });
+            match visible_rows {
+                Some(r) => node.h(Sizing::Cells(*r as u16)),
+                None => node.flex(1),
+            }
+        }
         WidgetSpec::Tree {
             nodes,
             item_keys,
@@ -812,9 +1125,109 @@ pub fn node(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>) -> Node<UiMsg> {
                 None => node.flex(1),
             }
         }
-        // The rest, with collectors of their own. See [`collected`]. A list
-        // of *cards* falls here too: `covered` says no, and the arm above
-        // matched only the plain form.
+        // **A multi-line field's window is the tree's.**
+        //
+        // The collector windows the document itself, reports the offset on a
+        // `LayoutBox`, and the panel's scrollbar pass draws a bar over the
+        // rightmost column from it — the last kind whose bar the painter drew.
+        // So the collector is asked for the *whole* document instead: its
+        // `rows` is the window, and handing it one as tall as the text makes
+        // it emit every line and clamp its own scroll to zero. The window is
+        // then a `viewport` of the row budget the spec asked for, with the
+        // library's own bar, and the caret is what it reveals.
+        //
+        // A label stays out of it. The collector emits it as row zero and
+        // windows only the text under it, so scrolling it away would be a
+        // different field.
+        WidgetSpec::Text {
+            rows,
+            label,
+            value,
+            key,
+            ..
+        } if *rows > 1 => {
+            // As many lines as the text has, from whichever of the two is
+            // authoritative — instance state once it exists, the spec before.
+            let lines = key
+                .as_deref()
+                .filter(|k| !k.is_empty())
+                .and_then(|k| cx.states.get(k))
+                .and_then(|st| match st {
+                    crate::widgets::WidgetInstanceState::Text { editor, .. } => {
+                        Some(editor.line_count())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| value.split('\n').count());
+            let mut whole = spec.clone();
+            if let WidgetSpec::Text { rows: r, .. } = &mut whole {
+                *r = (lines as u32).max(*rows);
+            }
+            let mut scratch = std::collections::HashMap::new();
+            let mut out = crate::widgets::render::render_collected(
+                &whole,
+                cx.states,
+                &mut scratch,
+                crate::widgets::RenderContext {
+                    focus_key: &cx.focus_key,
+                    hover_key: cx.hovered_key.as_deref().unwrap_or(""),
+                    hover_item_key: &cx.hovered_item_key,
+                    markdown: None,
+                    marker_gutter: cx.marker_gutter,
+                    avail_height: cx.avail_height,
+                },
+                width as u32,
+            );
+            let head = usize::from(!label.is_empty());
+            let caret = out.focus_cursor.map(|c| c.byte_in_row as usize);
+            let caret_row = out.focus_cursor.map(|c| c.buffer_row as usize);
+            // **The rows are formatted once and built for the window only.**
+            // Formatting the whole document is what asking the collector for
+            // it costs, and it is padding and overlay arithmetic per line;
+            // building a node per line is what would actually scale badly, and
+            // `List::windowed` is the same window `widgets::List` gives every
+            // other kind here. Its rows are one cell each, so its item scroll
+            // *is* the row scroll the runtime had.
+            let rows_src = std::rc::Rc::new(out.entries.split_off(head));
+            let hits = std::rc::Rc::new(out.hits.clone());
+            let n = rows_src.len();
+            let slot = cx.slot;
+            let sel = caret_row.and_then(|r| r.checked_sub(head));
+            let list = fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
+                let rows_src = rows_src.clone();
+                move |i| {
+                    let mine: Vec<((usize, usize), crate::widgets::HitArea)> = hits
+                        .iter()
+                        .filter(|h| h.buffer_row as usize == i + head)
+                        .map(|h| ((h.byte_start, h.byte_end), h.clone()))
+                        .collect();
+                    let at = caret.filter(|_| sel == Some(i));
+                    match mine.is_empty() && at.is_none() {
+                        true => entry_row(&rows_src[i]),
+                        false => row_pieces(&rows_src[i], slot, &mine, at),
+                    }
+                }
+            })
+            .focusable(false)
+            .scrollbar()
+            // The rows carry their own colours — a focused field paints its
+            // own background band per row — so the list's row states must not
+            // paint over them.
+            .row_theme(|_, _| Ink::new(Paint::key(BASE_FG), Paint::key(BASE_BG)).to_string());
+            // "Selected" here means "where the caret is", which is what the
+            // list reveals when it moves. That is the whole of the auto-clamp
+            // the runtime did by hand.
+            let list = match sel {
+                Some(i) => list.selected(i),
+                None => list,
+            };
+            let body = fresh_ui::ComponentExt::node(list).h(Sizing::Cells(*rows as u16));
+            match head {
+                0 => body,
+                _ => col().children([entry_row(&out.entries[0]), body]),
+            }
+        }
+        // The rest, with collectors of their own. See [`collected`].
         WidgetSpec::Text { .. }
         | WidgetSpec::List { .. }
         | WidgetSpec::Tree { .. }
@@ -826,6 +1239,81 @@ pub fn node(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>) -> Node<UiMsg> {
         other => {
             debug_assert!(false, "widget variant not covered: {other:?}");
             row().h(Sizing::Cells(0))
+        }
+    }
+}
+
+/// One addressable run of rows inside a [`Scrolled`]: a card tree's node, or
+/// a single line of a text area. `start` is where it begins in the content.
+struct Chunk {
+    key: fresh_ui::Key,
+    /// First row of this block within the whole tree's rows.
+    start: u32,
+    rows: Vec<Node<UiMsg>>,
+}
+
+#[derive(Default)]
+struct ScrolledState {
+    anchor: Option<std::rc::Rc<fresh_ui::behavior::Anchor>>,
+    revealed: fresh_ui::behavior::Cache<usize, ()>,
+}
+
+/// Rows in a window that owns its own scroll, revealing one of them.
+///
+/// **A component, for one reason: the reveal.** The runtime scrolled to keep
+/// the selection visible unless the user had scrolled by wheel, and it did
+/// that by writing an offset into the side table it also read. Here the
+/// offset is the viewport's, which is the whole point — so the only thing
+/// left to say is "put this row in the window", which is `Anchor::reveal`,
+/// and an anchor is registered at mount. The memo is what keeps the reveal a
+/// statement about the *selection moving* rather than about every build:
+/// asking on every one would fight the wheel, which is a statement about the
+/// window.
+///
+/// The scroll survives a rebuild because the element does, which is what
+/// retains it — no `scroll_offset` is carried anywhere.
+struct Scrolled {
+    blocks: std::rc::Rc<Vec<Chunk>>,
+    /// Which block is selected, if any.
+    selected: Option<usize>,
+}
+
+impl fresh_ui::Component<UiMsg> for Scrolled {
+    type State = ScrolledState;
+
+    fn init(&self, cx: &mut fresh_ui::InitCx<'_, UiMsg>) -> ScrolledState {
+        ScrolledState {
+            anchor: Some(cx.register(fresh_ui::behavior::Anchor::default())),
+            ..ScrolledState::default()
+        }
+    }
+
+    fn build(&self, s: &ScrolledState, _cx: &mut fresh_ui::BuildCx<'_, UiMsg>) -> Node<UiMsg> {
+        if let (Some(a), Some(i)) = (s.anchor.clone(), self.selected) {
+            if let Some(b) = self.blocks.get(i) {
+                let (start, rows) = (b.start, b.rows.len() as u32);
+                s.revealed.get_or(i, move || {
+                    // The last row first, then the first: the shortest move
+                    // that shows the end, then the one that shows the start,
+                    // so a block taller than the window anchors to its top —
+                    // which is the rule the runtime spelled with a `min`.
+                    a.reveal(start + rows.saturating_sub(1));
+                    a.reveal(start);
+                });
+            }
+        }
+        let mut content = col();
+        for b in self.blocks.iter() {
+            content = content.child(
+                col()
+                    .key(b.key.clone())
+                    .children(b.rows.iter().map(|r| r.clone())),
+            );
+        }
+        let body = fresh_ui::viewport(content).scrollbar();
+        match s.anchor.clone() {
+            Some(a) => body.anchor_to(a),
+            None => body,
         }
     }
 }
@@ -871,7 +1359,14 @@ fn collected(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>) -> Node<UiMsg> {
         },
         width as u32,
     );
-    rows_with_hits(&out.entries, &out.hits, cx, &out.overlays, &out.popups)
+    rows_with_hits(
+        &out.entries,
+        &out.hits,
+        cx,
+        &out.overlays,
+        &out.popups,
+        out.focus_cursor,
+    )
 }
 
 /// The rows of a collected subtree, each carrying whatever hits land on it.
@@ -880,106 +1375,165 @@ fn collected(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>) -> Node<UiMsg> {
 /// [`entry_row_hit`] turns into a gesture on a piece of that row. A row with
 /// no hit is a plain styled row; a row with several — a list's rows each carry
 /// their own — becomes as many pieces as there are ranges.
+///
+/// **The floats anchor to nodes, not to coordinates.** An overlay row and a
+/// dropdown's pop-over both name a position *inside this sub-render* — row 3
+/// of it, or the column the `[value ▼]` button starts at. Neither is a frame
+/// coordinate, and a description cannot turn one into a frame coordinate
+/// because it does not know where the panel is. So each hangs off the node it
+/// actually belongs to — the sub-render's own box, or the trigger's row — and
+/// `offset` says where inside that the real anchor is. That is also what makes
+/// the pop-over's flip correct: it flips clear of the trigger's row.
 fn rows_with_hits(
     entries: &[TextPropertyEntry],
     hits: &[crate::widgets::HitArea],
     cx: &Ctx<'_>,
     overlays: &[crate::widgets::OverlayRow],
     popups: &[crate::widgets::PanelPopup],
+    caret: Option<crate::widgets::FocusCursor>,
 ) -> Node<UiMsg> {
     let mut kids: Vec<Node<UiMsg>> = Vec::with_capacity(entries.len());
     for (i, entry) in entries.iter().enumerate() {
         let mine: Vec<&crate::widgets::HitArea> =
             hits.iter().filter(|h| h.buffer_row as usize == i).collect();
-        kids.push(match mine.is_empty() {
+        // The caret is on at most one row, and the marker goes in that row's
+        // pieces so its cell comes from the glyphs rather than from measuring
+        // them a second time.
+        let at = caret
+            .filter(|c| c.buffer_row as usize == i)
+            .map(|c| c.byte_in_row as usize);
+        let mut node = match mine.is_empty() && at.is_none() {
             true => entry_row(entry),
             // **Every hit on the row, not the first.** A tree row has three
             // and a dual list's has two; keeping only one silently made the
             // others unclickable.
-            false => entry_row_hits(
+            false => row_pieces(
                 entry,
                 cx.slot,
                 &mine
                     .iter()
                     .map(|h| ((h.byte_start, h.byte_end), (*h).clone()))
                     .collect::<Vec<_>>(),
+                at,
             ),
-        });
+        };
+        // An open dropdown's option list hangs off the row its trigger is on,
+        // one row down and at the button's own column.
+        for p in popups.iter().filter(|p| p.anchor_row as usize == i) {
+            node = row()
+                .h(Sizing::Cells(1))
+                .children([node, popup_layer(p, cx)]);
+        }
+        kids.push(node);
     }
     let body = col().children(kids);
-    match overlays.is_empty() && popups.is_empty() {
-        true => body,
-        // Rows the collector floated: they anchor at a row of the body and
-        // paint over what is there, without having consumed its height. A
-        // layer says both.
-        false => {
-            let mut stack = vec![body];
-            for o in overlays {
-                stack.push(
-                    fresh_ui::layer()
-                        .anchor(fresh_ui::Anchor::Point(0, o.buffer_row as u16))
-                        .place(fresh_ui::Place::Over)
-                        .fit(fresh_ui::Fit::CLAMP)
-                        .child(entry_row(&o.entry)),
-                );
-            }
-            // An open dropdown's option list. **Not confined to the panel**:
-            // it "extends past the panel/modal border instead of
-            // growing/clipping it", which is a layer that names no region —
-            // the frame is its bounds. Each row selects an absolute option
-            // index, which is the payload the runtime's own hit carries.
-            for p in popups {
-                let rows: Vec<Node<UiMsg>> = p
-                    .entries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, e)| match p.row_indices.get(i) {
-                        Some(idx) => entry_row_hit(
-                            e,
-                            (0, e.text.len()),
-                            cx.slot,
-                            crate::widgets::HitArea {
-                                row_target: true,
-                                context_click: false,
-                                overlay: true,
-                                widget_key: p.widget_key.clone(),
-                                widget_kind: "dropdown",
-                                buffer_row: i as u32,
-                                byte_start: 0,
-                                byte_end: e.text.len(),
-                                payload: serde_json::json!({ "index": idx }),
-                                event_type: "dropdown_select",
-                                owner_key: None,
-                            },
-                        ),
-                        None => entry_row(e),
-                    })
-                    .collect();
-                stack.push(
-                    fresh_ui::layer()
-                        .anchor(fresh_ui::Anchor::Point(
-                            p.anchor_col as u16,
-                            p.anchor_row as u16,
-                        ))
-                        .place(fresh_ui::Place::Below)
-                        .fit(fresh_ui::Fit::FLIP.or(fresh_ui::Fit::CLAMP))
-                        .child(
-                            col()
-                                .theme(
-                                    Ink::new(
-                                        Paint::key("ui.popup_border_fg"),
-                                        Paint::key("ui.popup_bg"),
-                                    )
-                                    .to_string(),
-                                )
-                                .border()
-                                .children(rows),
-                        ),
-                );
-            }
-            fresh_ui::stack().children(stack)
-        }
+    // A pop-over whose anchor row is past the collector's own rows has no row
+    // to hang off; it falls back to the body, which is where the runtime put
+    // it too (`inner.y + anchor_row`).
+    let stray: Vec<&crate::widgets::PanelPopup> = popups
+        .iter()
+        .filter(|p| p.anchor_row as usize >= entries.len())
+        .collect();
+    if overlays.is_empty() && stray.is_empty() {
+        return body;
     }
+    let mut stack = vec![body];
+    // Rows the collector floated: they anchor at a row of the sub-render and
+    // paint over what is there, without having consumed its height. A layer
+    // says both — and `offset` says which row, because a completion list runs
+    // past the rows its own sub-render has (a one-line text input's popup is
+    // anchored at rows 1..n) and there is no node at row 4 of a one-row box.
+    for o in overlays {
+        stack.push(
+            fresh_ui::layer()
+                .anchor(fresh_ui::Anchor::Parent)
+                .place(fresh_ui::Place::Over)
+                .offset(0, o.buffer_row as i16)
+                .fit(fresh_ui::Fit::CLAMP)
+                .child(
+                    row()
+                        .h(Sizing::Cells(1))
+                        .theme(Ink::new(Paint::key(BASE_FG), Paint::key("ui.popup_bg")).to_string())
+                        .child(entry_row(&o.entry)),
+                ),
+        );
+    }
+    for p in stray {
+        stack.push(
+            popup_layer(p, cx)
+                .anchor(fresh_ui::Anchor::Parent)
+                .place(fresh_ui::Place::Over)
+                .offset(p.anchor_col as i16, p.anchor_row as i16 + 1),
+        );
+    }
+    fresh_ui::stack().children(stack)
+}
+
+/// An open dropdown's option list, as a layer hanging off its trigger's row.
+///
+/// **Not confined to the panel**: it "extends past the panel/modal border
+/// instead of growing/clipping it", which is a layer that names no region —
+/// the frame is its bounds. Each row selects an absolute option index, which
+/// is the payload the runtime's own hit carries.
+///
+/// The rows arrive already windowed: `render_dropdown` clamps the scroll and
+/// slices, and `row_indices` carries the absolute index of each. So there is
+/// no scroll for the tree to own here and no bar to lose — which is why
+/// `Dropdown` crosses through the adapter rather than waiting for a
+/// substitution, unlike the kinds whose scrollbar the painter draws.
+fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
+    let rows: Vec<Node<UiMsg>> = p
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| match p.row_indices.get(i) {
+            Some(idx) => entry_row_hit(
+                e,
+                (0, e.text.len()),
+                cx.slot,
+                crate::widgets::HitArea {
+                    row_target: true,
+                    context_click: false,
+                    overlay: true,
+                    widget_key: p.widget_key.clone(),
+                    widget_kind: "dropdown",
+                    buffer_row: i as u32,
+                    byte_start: 0,
+                    byte_end: e.text.len(),
+                    payload: serde_json::json!({ "index": idx }),
+                    event_type: "dropdown_select",
+                    owner_key: None,
+                },
+            ),
+            None => entry_row(e),
+        })
+        .collect();
+    // A press anywhere in the box that is not on an option — its border — is
+    // swallowed rather than allowed through: "so the modal isn't dismissed and
+    // the list stays open". The runtime said that by testing the recorded
+    // `popup_rect` before anything else; here the box is the rectangle and
+    // taking the press is what claiming it means.
+    let box_node = fresh_ui::gesture(
+        col()
+            .theme(
+                Ink::new(Paint::key("ui.popup_border_fg"), Paint::key("ui.popup_bg")).to_string(),
+            )
+            .border()
+            .children(rows),
+    )
+    .on(
+        fresh_ui::GestureKind::Press,
+        std::rc::Rc::new(|e: &fresh_ui::Event| {
+            e.stop();
+            None
+        }),
+    );
+    fresh_ui::layer()
+        .anchor(fresh_ui::Anchor::Parent)
+        .place(fresh_ui::Place::Below)
+        .offset(p.anchor_col as i16, 0)
+        .fit(fresh_ui::Fit::FLIP.or(fresh_ui::Fit::CLAMP))
+        .child(box_node)
 }
 
 /// Wrap a widget's node so a press on it delivers the widget's own hit.
@@ -1047,11 +1601,36 @@ pub fn entry_row_hits(
     slot: Slot,
     hits: &[((usize, usize), crate::widgets::HitArea)],
 ) -> Node<UiMsg> {
-    let mut cuts: Vec<usize> = Vec::with_capacity(hits.len() * 2);
+    row_pieces(entry, slot, hits, None)
+}
+
+/// The key of the caret's cell, for the host that has to place a hardware
+/// cursor there.
+///
+/// **The caret is a node, because its cell is layout's answer.** The runtime
+/// reported a row and a byte offset and the painter turned that into a screen
+/// cell with `inner.x + byte_to_screen_col(...)` — a second measurement of
+/// text the row had already measured to paint it. A zero-width marker at the
+/// caret's byte lands where the glyphs put it, and the host reads the
+/// rectangle back rather than recomputing it.
+pub fn caret_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("widget_caret".into())
+}
+
+/// One row split into its hit pieces, with the caret's marker at `caret` if it
+/// falls on this row.
+fn row_pieces(
+    entry: &TextPropertyEntry,
+    slot: Slot,
+    hits: &[((usize, usize), crate::widgets::HitArea)],
+    caret: Option<usize>,
+) -> Node<UiMsg> {
+    let mut cuts: Vec<usize> = Vec::with_capacity(hits.len() * 2 + 1);
     for ((a, b), _) in hits {
         cuts.push(*a);
         cuts.push(*b);
     }
+    cuts.extend(caret);
     let runs = entry_runs(entry, &cuts);
     // Group consecutive runs by which hit covers them. A byte covered by two
     // ranges takes the first that names it, which is the order the collector
@@ -1059,6 +1638,12 @@ pub fn entry_row_hits(
     let owner = |at: &std::ops::Range<usize>| -> Option<usize> {
         hits.iter()
             .position(|((a, b), _)| at.start >= *a && at.end <= *b && b > a)
+    };
+    let marker = || {
+        row()
+            .key(caret_key())
+            .w(Sizing::Cells(0))
+            .h(Sizing::Cells(1))
     };
     let mut kids: Vec<Node<UiMsg>> = Vec::new();
     let mut group: Vec<Run> = Vec::new();
@@ -1073,15 +1658,27 @@ pub fn entry_row_hits(
             None => piece,
         });
     };
+    let mut end = 0usize;
     for (at, run) in runs {
         let of = owner(&at);
-        if of != group_of {
+        // The caret sits *between* two runs, so the group before it has to
+        // close whether or not the hit changes there.
+        if of != group_of || caret == Some(at.start) {
             flush(&mut kids, &mut group, group_of);
             group_of = of;
         }
+        if caret == Some(at.start) {
+            kids.push(marker());
+        }
+        end = at.end;
         group.push(run);
     }
     flush(&mut kids, &mut group, group_of);
+    // A caret past the last glyph — the usual place for one — is the row's
+    // end, which no run starts at.
+    if caret.is_some_and(|c| c >= end) {
+        kids.push(marker());
+    }
     row().h(Sizing::Cells(1)).children(kids)
 }
 
@@ -1875,16 +2472,22 @@ mod tests {
         }
     }
 
-    /// **The boundary, and why it is where it is.** The scrollable kinds
-    /// window their own rows and report the offset for the painter to draw a
-    /// bar from. The adapter turns rows into nodes and has nothing to say
-    /// about a bar, so describing one today would render it correctly and
-    /// silently lose its scrollbar — which is worse than painting it whole.
-    /// They cross when their state does (C.2), and this pins that they have
-    /// not yet.
+    /// **The boundary is closed.** Every variant but `WindowEmbed` is
+    /// described.
+    ///
+    /// It was the *scrollbar*, never the scroll offset: a kind whose painter
+    /// drew a bar from a recorded offset could not be described without
+    /// silently losing it. Each of the five that were behind it turned out to
+    /// be on the near side for its own reason — a dual list does not scroll, a
+    /// dropdown's pop-over paints no bar, a plain list and a plain tree are
+    /// `widgets::List`, a card list is that with a taller row — and the last
+    /// two, a card tree and a multi-line field, crossed by giving the window
+    /// to a `viewport`, which is what owning the scroll means.
+    ///
+    /// `WindowEmbed` is a `Host` leaf by G's rule and never crosses.
     #[test]
-    fn the_scrollable_kinds_are_not_covered_yet() {
-        let list = WidgetSpec::List {
+    fn every_variant_but_the_host_leaf_is_covered() {
+        let plain_list = WidgetSpec::List {
             items: vec![raw("one")],
             item_specs: Vec::new(),
             item_keys: vec!["a".into()],
@@ -1893,18 +2496,13 @@ mod tests {
             key: Some("l".into()),
             focusable: true,
         };
-        assert!(covered(&list), "a plain list is `widgets::List` now");
-
-        // A tree still windows its own rows, so it has not crossed — and one
-        // uncovered node takes its panel with it.
-        // A multi-line text field, which still scrolls.
-        let tree = WidgetSpec::Text {
+        let multiline = |rows: u32| WidgetSpec::Text {
             value: "a\nb\nc".into(),
             cursor_byte: -1,
             focused: false,
             label: String::new(),
             placeholder: None,
-            rows: 4,
+            rows,
             field_width: 10,
             max_visible_chars: 0,
             full_width: false,
@@ -1918,19 +2516,33 @@ mod tests {
             markdown: false,
             key: Some("t2".into()),
         };
-        assert!(
-            !covered(&tree),
-            "a multi-line field still owns its own scroll"
-        );
+        for (what, spec) in [
+            ("a plain list", plain_list),
+            ("a card list", card_list(3, 0, 9)),
+            ("an open dropdown", dropdown(&["fast", "slow"], 0, true, 0)),
+            ("a single-line field", multiline(1)),
+            ("a multi-line field", multiline(6)),
+            ("a card tree", card_tree(3, 0, 15)),
+        ] {
+            assert!(covered(&spec), "{what}");
+        }
+
+        // And the one that does not, which takes its panel with it.
+        let embed = WidgetSpec::WindowEmbed {
+            window_id: 1,
+            rows: 3,
+            key: None,
+        };
+        assert!(!covered(&embed), "a window embed is cells");
         assert!(
             !covered(&col_of(vec![
                 WidgetSpec::Raw {
                     entries: vec![raw("x")],
                     key: None
                 },
-                tree
+                embed
             ])),
-            "and one of them takes its panel with it"
+            "one uncovered node takes its panel with it"
         );
     }
 
@@ -2024,34 +2636,6 @@ mod tests {
         assert_eq!(hit.owner_key.as_deref(), Some("l"));
         assert_eq!(hit.payload["index"], 2);
         assert_eq!(hit.payload["key"], "k2");
-    }
-
-    /// A single-line text field is covered; a multi-line one is not, for the
-    /// same reason — it scrolls.
-    #[test]
-    fn a_text_field_crosses_the_boundary_at_its_row_count() {
-        let field = |rows: u32| WidgetSpec::Text {
-            value: "hello".into(),
-            cursor_byte: -1,
-            focused: false,
-            label: String::new(),
-            placeholder: None,
-            rows,
-            field_width: 12,
-            max_visible_chars: 0,
-            full_width: false,
-            completions: Vec::new(),
-            completions_visible_rows: 0,
-            block_caret: false,
-            sel_start: -1,
-            sel_end: -1,
-            label_width: 0,
-            read_only: false,
-            markdown: false,
-            key: Some("t".into()),
-        };
-        assert!(covered(&field(1)));
-        assert!(!covered(&field(4)));
     }
 
     fn tree_node(text: &str, depth: u32, has_children: bool) -> fresh_core::api::TreeNode {
@@ -2412,6 +2996,700 @@ mod tests {
             texts,
             vec!["ab".to_string(), "cd".to_string(), "ef".to_string()],
             "three runs, split where the overlay starts and ends"
+        );
+    }
+
+    fn dropdown(options: &[&str], selected: i32, open: bool, scroll: u32) -> WidgetSpec {
+        WidgetSpec::Dropdown {
+            options: options.iter().map(|o| (*o).into()).collect(),
+            selected_index: selected,
+            label: "Mode".into(),
+            focused: false,
+            label_width: 0,
+            open,
+            scroll_offset: scroll,
+            key: Some("mode".into()),
+        }
+    }
+
+    /// The runtime's own pop-over for a spec: the rows it windowed and the
+    /// absolute index each of them selects.
+    fn runtime_popup(spec: &WidgetSpec) -> crate::widgets::PanelPopup {
+        crate::widgets::render_spec(spec, &Default::default(), "", WIDTH as u32)
+            .popup
+            .expect("an open dropdown has a pop-over")
+    }
+
+    /// Every line the layers paint, grouped by row the way [`rows_of`] groups
+    /// the in-flow half.
+    fn layer_rows(ui: &Ui<UiMsg>) -> Vec<String> {
+        let mut pieces: Vec<(i32, i32, String)> = Vec::new();
+        for item in ui.spec().layers() {
+            if let fresh_ui::Draw::Lines(lines) = &item.draw {
+                for (i, l) in lines.iter().enumerate() {
+                    pieces.push((item.rect.y + i as i32, item.rect.x, l.to_string()));
+                }
+            }
+        }
+        pieces.sort_by_key(|(y, x, _)| (*y, *x));
+        let mut out: Vec<String> = Vec::new();
+        let mut at: Option<i32> = None;
+        for (y, _, s) in pieces {
+            match at {
+                Some(prev) if prev == y => out.last_mut().unwrap().push_str(&s),
+                _ => {
+                    out.push(s);
+                    at = Some(y);
+                }
+            }
+        }
+        out
+    }
+
+    fn facts(got: fresh_ui::Dispatch<UiMsg>) -> Vec<UiFact> {
+        got.msgs
+            .into_iter()
+            .filter_map(|m| match m {
+                UiMsg::Ui(f) => Some(f),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A closed dropdown is one row, and it is the row the runtime renders.
+    #[test]
+    fn a_closed_dropdown_is_the_trigger_row_the_runtime_renders() {
+        let spec = dropdown(&["fast", "slow"], 1, false, 0);
+        assert_eq!(tree_rows(&spec), runtime_rows(&spec));
+    }
+
+    /// Open, the trigger row is still the runtime's — the option list floats
+    /// rather than growing the panel, exactly as the runtime's does.
+    #[test]
+    fn an_open_dropdowns_trigger_row_is_still_the_runtimes() {
+        let spec = dropdown(&["fast", "slow", "off"], 0, true, 0);
+        assert_eq!(tree_rows(&spec), runtime_rows(&spec));
+    }
+
+    /// **The pop-over's rows are the collector's, verbatim.** The runtime is
+    /// the formatter here: it clamps the scroll, slices the window and renders
+    /// each option. What the tree adds is where the box goes and what a press
+    /// on a row means.
+    #[test]
+    fn the_pop_over_paints_the_rows_the_collector_windowed() {
+        let spec = dropdown(&["fast", "slow", "off"], 0, true, 0);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        let want: Vec<String> = runtime_popup(&spec)
+            .entries
+            .iter()
+            .map(|e| {
+                let mut n = e.clone();
+                n.normalize_widths();
+                n.text.trim_end_matches('\n').to_string()
+            })
+            .collect();
+        let got = layer_rows(&ui);
+        assert_eq!(
+            got,
+            want.iter().map(|w| w.to_string()).collect::<Vec<_>>(),
+            "the option rows, verbatim"
+        );
+    }
+
+    /// **The box hangs off the trigger's row, at the button's own column.**
+    /// The runtime worked this out in screen coordinates — `inner.y +
+    /// anchor_row + 1`, `inner.x + anchor_col` — from a rectangle it had
+    /// recorded at paint time. The description has neither, and does not need
+    /// them: the row is a node and the column within it is the collector's own
+    /// answer.
+    #[test]
+    fn the_pop_over_opens_under_the_trigger_at_the_buttons_column() {
+        let spec = dropdown(&["fast", "slow", "off"], 0, true, 0);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        let boxes = ui.spec().layers();
+        let top = boxes
+            .iter()
+            .map(|i| i.rect)
+            .min_by_key(|r| (r.y, r.x))
+            .expect("a pop-over");
+        assert_eq!(top.y, 1, "the row after the trigger's");
+        assert_eq!(
+            top.x,
+            runtime_popup(&spec).anchor_col as i32,
+            "the column the `[` is at"
+        );
+    }
+
+    /// A press on an option row delivers `dropdown_select` with the option's
+    /// **absolute** index — the window's offset is already in `row_indices`,
+    /// which is why a scrolled list selects the right thing.
+    #[test]
+    fn pressing_an_option_selects_its_absolute_index() {
+        let opts: Vec<String> = (0..12).map(|i| format!("opt{i}")).collect();
+        let refs: Vec<&str> = opts.iter().map(|s| s.as_str()).collect();
+        let spec = dropdown(&refs, 0, true, 4);
+        let popup = runtime_popup(&spec);
+        assert!(
+            popup.entries.len() < opts.len(),
+            "this list is windowed, or the test proves nothing"
+        );
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        // Row 0 of the box's interior: one row down and one column in from the
+        // box's own corner, because the box has a border.
+        let boxes = ui.spec().layers();
+        let top = boxes
+            .iter()
+            .map(|i| i.rect)
+            .min_by_key(|r| (r.y, r.x))
+            .expect("a pop-over");
+        let got = facts(ui.dispatch(fresh_ui::Input::press(
+            fresh_ui::Point::new(top.x + 1, top.y + 1),
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        )));
+        let UiFact::WidgetHit { hit, .. } = got.first().expect("a hit") else {
+            panic!("expected a widget hit, got {got:?}");
+        };
+        assert_eq!(hit.event_type, "dropdown_select");
+        assert_eq!(hit.widget_key, "mode");
+        assert_eq!(
+            hit.payload.get("index").and_then(|v| v.as_i64()),
+            Some(popup.row_indices[0] as i64),
+            "the first *visible* row's absolute index"
+        );
+    }
+
+    /// A press on the box's border is swallowed, not passed on. It selects
+    /// nothing and — the reason the runtime tested `popup_rect` before
+    /// anything else — it must not reach whatever dismissal is behind it.
+    #[test]
+    fn a_press_on_the_pop_overs_border_is_swallowed() {
+        let spec = dropdown(&["fast", "slow", "off"], 0, true, 0);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        let top = ui
+            .spec()
+            .layers()
+            .iter()
+            .map(|i| i.rect)
+            .min_by_key(|r| (r.y, r.x))
+            .expect("a pop-over");
+        let got = ui.dispatch(fresh_ui::Input::press(
+            fresh_ui::Point::new(top.x, top.y),
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        ));
+        assert!(got.claimed, "the box takes the press");
+        assert!(
+            !got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::WidgetHit { .. }))),
+            "and does nothing with it: {:?}",
+            got.msgs
+        );
+    }
+
+    /// A press on the trigger toggles the list, which is the runtime's own
+    /// `dropdown_toggle` hit over the `[value ▼]` button and not the label.
+    #[test]
+    fn pressing_the_trigger_toggles_and_the_label_does_not() {
+        let spec = dropdown(&["fast", "slow"], 0, false, 0);
+        let out = crate::widgets::render_spec(&spec, &Default::default(), "", WIDTH as u32);
+        let h = out.hits.first().expect("a toggle hit");
+        assert_eq!(h.event_type, "dropdown_toggle");
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        let on_button = facts(ui.dispatch(fresh_ui::Input::press(
+            fresh_ui::Point::new(h.byte_start as i32, 0),
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        )));
+        assert!(
+            matches!(
+                on_button.first(),
+                Some(UiFact::WidgetHit { hit, .. }) if hit.event_type == "dropdown_toggle"
+            ),
+            "the button toggles: {on_button:?}"
+        );
+        assert!(
+            facts(ui.dispatch(fresh_ui::Input::press(
+                fresh_ui::Point::new(0, 0),
+                fresh_ui::MouseButton::Left,
+                fresh_ui::Mods::NONE,
+            )))
+            .is_empty(),
+            "the label does not"
+        );
+    }
+
+    fn card(title: &str) -> WidgetSpec {
+        WidgetSpec::LabeledSection {
+            label: title.into(),
+            child: Box::new(WidgetSpec::Raw {
+                entries: vec![raw(title)],
+                key: None,
+            }),
+            width_pct: None,
+            key: None,
+        }
+    }
+
+    fn card_list(n: usize, selected: i32, visible: u32) -> WidgetSpec {
+        WidgetSpec::List {
+            items: Vec::new(),
+            item_specs: (0..n).map(|i| card(&format!("card{i}"))).collect(),
+            item_keys: (0..n).map(|i| format!("c{i}")).collect(),
+            selected_index: selected,
+            visible_rows: Some(visible),
+            key: Some("cards".into()),
+            focusable: true,
+        }
+    }
+
+    /// **A card is a band of rows, and the band is the item.** The runtime maps
+    /// item `i` to rows `i * item_height ..`; `List::row_rows` is the same
+    /// statement, made once, where the rows are placed.
+    #[test]
+    fn a_card_lists_items_take_a_band_of_rows_each() {
+        let spec = card_list(6, 0, 9);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        let band = |k: &str| {
+            let id = ui
+                .find_by_key(&fresh_ui::Key::Str(k.into()))
+                .unwrap_or_else(|| panic!("card {k}"));
+            let r = ui.rect_of(id);
+            (r.y, r.h)
+        };
+        let (y0, h0) = band("c0");
+        assert!(h0 > 1, "a card is taller than a line: {h0}");
+        assert_eq!(band("c1"), (y0 + h0 as i32, h0), "the next band, stacked");
+        assert_eq!(band("c2"), (y0 + 2 * h0 as i32, h0));
+    }
+
+    /// The rows themselves are the runtime's, marking included: a selected
+    /// card is drawn in heavy box glyphs rather than banded, because a band
+    /// "reads garish over a multi-row card".
+    #[test]
+    fn a_selected_card_is_marked_in_its_own_glyphs() {
+        let plain = tree_rows(&card_list(3, -1, 12));
+        let picked = tree_rows(&card_list(3, 0, 12));
+        assert!(
+            plain.iter().any(|r| r.contains('╭')),
+            "unselected cards keep the light box: {plain:?}"
+        );
+        assert!(
+            picked.iter().any(|r| r.contains('┏')),
+            "the selected one is heavy: {picked:?}"
+        );
+        assert_eq!(
+            plain.len(),
+            picked.len(),
+            "and marking does not change the layout"
+        );
+    }
+
+    /// A press anywhere on a card selects it, and says which — the same
+    /// `select` hit with the same payload the runtime recorded for every row
+    /// of the band.
+    #[test]
+    fn pressing_a_card_selects_that_item() {
+        let spec = card_list(6, 0, 9);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        let r = ui.rect_of(
+            ui.find_by_key(&fresh_ui::Key::Str("c1".into()))
+                .expect("c1"),
+        );
+        // The card's *last* row, to prove the whole band is the target.
+        let at = fresh_ui::Point::new(2, r.y + r.h as i32 - 1);
+        ui.dispatch(fresh_ui::Input::press(
+            at,
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        ));
+        let got = facts(ui.dispatch(fresh_ui::Input::release(
+            at,
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        )));
+        let hit = got
+            .iter()
+            .find_map(|f| match f {
+                UiFact::WidgetHit { hit, .. } => Some(hit),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a select, got {got:?}"));
+        assert_eq!(hit.event_type, "select");
+        assert_eq!(hit.widget_key, "c1");
+        assert_eq!(hit.owner_key.as_deref(), Some("cards"));
+        assert_eq!(hit.payload.get("index").and_then(|v| v.as_i64()), Some(1));
+    }
+
+    /// The bar reads in items. Nine rows of window over three-row cards is a
+    /// window of three *cards*, and a thumb sized from the nine would say the
+    /// list is three times as visible as it is.
+    #[test]
+    fn a_card_lists_bar_measures_the_window_in_cards() {
+        let spec = card_list(20, 0, 9);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        let bar = ui
+            .spec()
+            .items
+            .iter()
+            .find_map(|i| match i.draw {
+                fresh_ui::Draw::Scrollbar {
+                    offset,
+                    content,
+                    window,
+                } => Some((offset, content, window)),
+                _ => None,
+            })
+            .expect("twenty cards in nine rows overflow");
+        let h0 = ui
+            .rect_of(
+                ui.find_by_key(&fresh_ui::Key::Str("c0".into()))
+                    .expect("c0"),
+            )
+            .h;
+        assert_eq!(bar.0, 0);
+        assert_eq!(bar.1, 20, "twenty items");
+        assert_eq!(bar.2, 9 / h0, "however many of them fit");
+    }
+
+    fn card_tree(n: usize, selected: i32, visible: u32) -> WidgetSpec {
+        use fresh_core::api::TreeNode;
+        WidgetSpec::Tree {
+            nodes: (0..n)
+                .map(|i| TreeNode {
+                    text: raw(&format!("session {i}")),
+                    depth: 0,
+                    has_children: false,
+                    checked: None,
+                    extra_lines: vec![raw(&format!("branch-{i}")), raw("2 files")],
+                })
+                .collect(),
+            item_keys: (0..n).map(|i| format!("s{i}")).collect(),
+            selected_index: selected,
+            visible_rows: Some(visible),
+            key: Some("sessions".into()),
+            expanded_keys: Vec::new(),
+            checkable: false,
+            indent_cols: 2,
+            item_height: 3,
+            card_borders: true,
+        }
+    }
+
+    /// **A card node is a bordered block, and the blocks stack.** Three
+    /// content rows plus a top and a bottom border is five, which is
+    /// `tree_node_rows`' answer, arrived at by laying the rows out rather
+    /// than by computing a band.
+    #[test]
+    fn a_card_trees_nodes_are_bordered_blocks() {
+        let spec = card_tree(6, 0, 15);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        let band = |k: &str| {
+            let id = ui
+                .find_by_key(&fresh_ui::Key::Str(k.into()))
+                .unwrap_or_else(|| panic!("node {k}"));
+            let r = ui.rect_of(id);
+            (r.y, r.h)
+        };
+        let (y0, h0) = band("s0");
+        assert_eq!(h0, 5, "three content rows between two borders");
+        assert_eq!(band("s1"), (y0 + 5, 5), "and the next block under it");
+    }
+
+    /// The selected card is framed in heavy glyphs — the marker
+    /// `paint_dock_seamless_active_tab` keys on, so a background band here
+    /// would silently lose the seamless-tab treatment.
+    #[test]
+    fn the_selected_card_is_framed_in_heavy_glyphs() {
+        let picked = tree_rows(&card_tree(3, 1, 20));
+        assert!(
+            picked.iter().any(|r| r.contains('┏')),
+            "a heavy frame somewhere: {picked:?}"
+        );
+        let plain = tree_rows(&card_tree(3, -1, 20));
+        assert!(
+            !plain.iter().any(|r| r.contains('┏')),
+            "and only when something is selected: {plain:?}"
+        );
+    }
+
+    /// **A press anywhere on the card selects it**, continuation rows
+    /// included — "a card selects as a unit, so clicking its branch line must
+    /// behave like clicking its title line".
+    #[test]
+    fn pressing_any_row_of_a_card_selects_the_node() {
+        let spec = card_tree(6, 0, 15);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
+        let r = ui.rect_of(
+            ui.find_by_key(&fresh_ui::Key::Str("s1".into()))
+                .expect("s1"),
+        );
+        // Its second content row, which is a continuation line.
+        let got = facts(ui.dispatch(fresh_ui::Input::press(
+            fresh_ui::Point::new(4, r.y + 3),
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        )));
+        let hit = got
+            .iter()
+            .find_map(|f| match f {
+                UiFact::WidgetHit { hit, .. } => Some(hit),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a select, got {got:?}"));
+        assert_eq!(hit.event_type, "select");
+        assert_eq!(hit.widget_kind, "tree");
+        assert_eq!(hit.payload.get("index").and_then(|v| v.as_i64()), Some(1));
+    }
+
+    /// **The window scrolls to the selection, and the window is the tree's.**
+    /// The runtime kept a row offset in its side table and wrote it as it
+    /// rendered; here the offset is the viewport's and the only thing said is
+    /// "put this row in the window".
+    #[test]
+    fn the_window_follows_a_selected_card_out_of_view() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        // Ten five-row cards in a ten-row window: two fit.
+        ui.frame(
+            node(&card_tree(10, 0, 10), WIDTH, &cx()),
+            Size::new(WIDTH, 24),
+        );
+        let top = |ui: &Ui<UiMsg>, k: &str| {
+            ui.rect_of(ui.find_by_key(&fresh_ui::Key::Str(k.into())).expect(k))
+                .y
+        };
+        assert_eq!(top(&ui, "s0"), 0, "the window starts at the top");
+        // Select the eighth: it is far below the window and the window moves.
+        ui.frame(
+            node(&card_tree(10, 7, 10), WIDTH, &cx()),
+            Size::new(WIDTH, 24),
+        );
+        let y = top(&ui, "s7");
+        assert!(
+            (0..10).contains(&y),
+            "the selected card is inside the window, at {y}"
+        );
+    }
+
+    /// A card tree that fits needs no bar; one that overflows gets the
+    /// viewport's, measured in rows because that is what it scrolls in.
+    #[test]
+    fn a_card_tree_that_overflows_shows_the_viewports_bar() {
+        let bar_of = |spec: &WidgetSpec, h: u16| {
+            let mut ui: Ui<UiMsg> = Ui::new();
+            ui.frame(node(spec, WIDTH, &cx()), Size::new(WIDTH, h));
+            ui.spec().items.iter().find_map(|i| match i.draw {
+                fresh_ui::Draw::Scrollbar {
+                    offset,
+                    content,
+                    window,
+                } => Some((offset, content, window)),
+                _ => None,
+            })
+        };
+        assert_eq!(
+            bar_of(&card_tree(2, 0, 10), 24),
+            None,
+            "two cards fit in ten rows"
+        );
+        assert_eq!(
+            bar_of(&card_tree(10, 0, 10), 24),
+            Some((0, 50, 10)),
+            "ten five-row cards in a ten-row window"
+        );
+    }
+
+    fn text_field(value: &str, cursor: i32, focused: bool) -> WidgetSpec {
+        WidgetSpec::Text {
+            value: value.into(),
+            cursor_byte: cursor,
+            focused,
+            label: String::new(),
+            placeholder: None,
+            rows: 1,
+            field_width: 20,
+            max_visible_chars: 0,
+            full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            read_only: false,
+            markdown: false,
+            key: Some("field".into()),
+        }
+    }
+
+    /// **The caret is a node, and its cell is where the glyphs put it.**
+    ///
+    /// The runtime reported a row and a byte offset and the painter turned
+    /// that into a screen cell by measuring the row's text a second time. A
+    /// zero-width marker at the caret's byte lands after the same glyphs the
+    /// row painted, so the host reads a rectangle instead of re-measuring.
+    #[test]
+    fn the_caret_is_a_cell_the_layout_placed() {
+        let focused = Ctx {
+            focus_key: "field".into(),
+            ..cx()
+        };
+        let at = |value: &str, cursor: i32| {
+            let mut ui: Ui<UiMsg> = Ui::new();
+            ui.frame(
+                node(&text_field(value, cursor, true), WIDTH, &focused),
+                Size::new(WIDTH, 8),
+            );
+            ui.find_by_key(&caret_key()).map(|id| ui.rect_of(id).x)
+        };
+        let head = at("hello", 0).expect("a caret at the head");
+        let mid = at("hello", 3).expect("a caret in the middle");
+        let end = at("hello", 5).expect("a caret past the last glyph");
+        assert_eq!(mid - head, 3, "three glyphs to the left of it");
+        assert_eq!(end - head, 5, "and five at the end");
+    }
+
+    /// A caret only where there is one: an unfocused field has no marker, so
+    /// the host has nothing to place and parks its cursor instead.
+    #[test]
+    fn an_unfocused_field_has_no_caret_node() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            node(&text_field("hello", -1, false), WIDTH, &cx()),
+            Size::new(WIDTH, 8),
+        );
+        assert!(ui.find_by_key(&caret_key()).is_none());
+    }
+
+    fn text_area(value: &str, cursor: i32, rows: u32, label: &str) -> WidgetSpec {
+        WidgetSpec::Text {
+            value: value.into(),
+            cursor_byte: cursor,
+            focused: false,
+            label: label.into(),
+            placeholder: None,
+            rows,
+            field_width: 20,
+            max_visible_chars: 0,
+            full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            read_only: false,
+            markdown: false,
+            key: Some("doc".into()),
+        }
+    }
+
+    /// **A multi-line field takes the rows it asked for and no more**, however
+    /// long the document is — which is what a window is.
+    #[test]
+    fn a_text_areas_height_is_its_row_budget() {
+        let doc: String = (0..30).map(|i| format!("line {i}\n")).collect();
+        let k = fresh_ui::Key::Str("area".into());
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            node(&text_area(&doc, -1, 6, ""), WIDTH, &cx()).key(k.clone()),
+            Size::new(WIDTH, 40),
+        );
+        assert_eq!(
+            ui.rect_of(ui.find_by_key(&k).expect("the area")).h,
+            6,
+            "six rows of a thirty-line document"
+        );
+    }
+
+    /// And the bar is the viewport's, measured in the rows it scrolls.
+    #[test]
+    fn a_text_area_that_overflows_shows_the_viewports_bar() {
+        let bar = |lines: usize| {
+            let doc: String = (0..lines).map(|i| format!("line {i}\n")).collect();
+            let mut ui: Ui<UiMsg> = Ui::new();
+            ui.frame(
+                node(&text_area(&doc, -1, 6, ""), WIDTH, &cx()),
+                Size::new(WIDTH, 40),
+            );
+            ui.spec().items.iter().find_map(|i| match i.draw {
+                fresh_ui::Draw::Scrollbar {
+                    content, window, ..
+                } => Some((content, window)),
+                _ => None,
+            })
+        };
+        assert_eq!(bar(3), None, "a document that fits needs no bar");
+        let (content, window) = bar(30).expect("a thirty-line document overflows six rows");
+        assert!(
+            content > window as u32,
+            "{content} rows in a window of {window}"
+        );
+        assert_eq!(window, 6);
+    }
+
+    /// **The label does not scroll.** The collector emits it as row zero and
+    /// windows only the text under it, so it stays outside the viewport.
+    #[test]
+    fn a_text_areas_label_stays_out_of_the_window() {
+        let doc: String = (0..30).map(|i| format!("line {i}\n")).collect();
+        let k = fresh_ui::Key::Str("area".into());
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            col().child(node(&text_area(&doc, -1, 6, "Notes"), WIDTH, &cx()).key(k.clone())),
+            Size::new(WIDTH, 40),
+        );
+        let rows = rows_of(&ui);
+        assert!(rows[0].starts_with("Notes"), "the label leads: {rows:?}");
+        assert!(rows[1].starts_with("line 0"), "then the window: {rows:?}");
+        assert_eq!(
+            ui.rect_of(ui.find_by_key(&k).expect("the area")).h,
+            7,
+            "the label plus the window's six"
+        );
+    }
+
+    /// **The window follows the caret**, which is the whole of what the
+    /// runtime's auto-clamp did — said as "put this row in the window" rather
+    /// than as an offset written into the side table it also read.
+    #[test]
+    fn the_window_follows_the_caret() {
+        let doc: String = (0..30).map(|i| format!("line {i}\n")).collect();
+        let focused = Ctx {
+            focus_key: "doc".into(),
+            ..cx()
+        };
+        // The caret on line 25: byte offset is 25 lines of "line NN\n".
+        let at: i32 = doc
+            .char_indices()
+            .filter(|(_, c)| *c == '\n')
+            .nth(24)
+            .map(|(i, _)| i as i32 + 1)
+            .expect("line 25");
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            node(&text_area(&doc, at, 6, ""), WIDTH, &focused),
+            Size::new(WIDTH, 40),
+        );
+        let rows = rows_of(&ui);
+        assert!(
+            rows.iter().any(|r| r.starts_with("line 25")),
+            "the caret's line is in the window: {rows:?}"
+        );
+        assert!(
+            !rows.iter().any(|r| r.starts_with("line 0 ")),
+            "and the top of the document is not"
         );
     }
 }
