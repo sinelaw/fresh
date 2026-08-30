@@ -21,6 +21,18 @@ pub struct ViewLineMapping {
     /// the cursor on a position whose `line_end_byte` was inherited
     /// from the previous source row.
     pub is_plugin_virtual: bool,
+    /// One byte past the last character this row drew, when the row ends on a
+    /// content character rather than on a separator. `None` when
+    /// `line_end_byte` is already the row's end position — a row ending at its
+    /// line ending, or at the whitespace a wrap consumed.
+    ///
+    /// A compose-mode soft break consumes the space it broke on, so the rows it
+    /// wraps end on a content character and the position past it is carried by
+    /// no cell. It still belongs to this row: it is where `End` goes and where
+    /// the caret is drawn (`row_end_exclusive` in `render_line`). Without it
+    /// the row below claims the byte, and a `Home` or `Up` after `End` acts on
+    /// the wrong row.
+    pub end_exclusive: Option<usize>,
 }
 
 impl ViewLineMapping {
@@ -267,7 +279,20 @@ impl WindowLayoutCache {
     /// Find which visual row contains the given byte position for a split
     pub fn find_visual_row(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
         let mappings = self.view_line_mappings.get(&split_id)?;
-        mappings.iter().position(|m| m.contains_byte(byte_pos))
+        if let Some(idx) = mappings.iter().position(|m| m.contains_byte(byte_pos)) {
+            return Some(idx);
+        }
+        // No row drew this byte. It can still be the position just past some
+        // row's last character — a compose-mode soft break consumes the space
+        // it fell on, so that position is carried by no cell even though the
+        // row owns it (see `ViewLineMapping::end_exclusive`). Asked only after
+        // the rows that do draw the byte have had their say, so a row never
+        // takes a byte the row below actually starts with: that is the ordinary
+        // wrapped row, where the next row draws the byte and `Down` steps onto
+        // it.
+        mappings
+            .iter()
+            .position(|m| m.end_exclusive == Some(byte_pos))
     }
 
     /// Get the visual column of a byte position within its visual row

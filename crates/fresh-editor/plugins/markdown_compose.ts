@@ -1670,6 +1670,12 @@ function processLineConceals(
   measure: number,
   region: RegionLine | undefined,
   lineNumber?: number,
+  /** This line is a flow continuation: its leading indent and `>` run are
+   * already inside the join conceal that merges it into the block above (see
+   * `processFlowBlock`), so the decorations that would render them in place
+   * stand down. Overlapping conceals over the same bytes would otherwise both
+   * fire and the run would render twice. */
+  joined = false,
 ): void {
   // Clear existing conceals and overlays for this line first.
   // This ensures clear+add commands are sent together from the plugin thread
@@ -2016,7 +2022,11 @@ function processLineConceals(
   const quoteRun = quoteMarkerRun(lineContent);
   if (quoteRun) {
     const { runStart, runEnd } = quoteRun;
-    for (let i = runStart; i < runEnd; i++) {
+    // A joined continuation's own markers are concealed by the join; only the
+    // quoted-text overlay below still applies to it. The bar it would have
+    // drawn is supplied for the whole block by the head row and by the
+    // continuation rows' soft-break prefix.
+    for (let i = joined ? runEnd : runStart; i < runEnd; i++) {
       if (lineContent[i] !== '>') continue;
       const markerByte = charToByte(lineContent, i, byteStart);
       const markerByteEnd = charToByte(lineContent, i + 1, byteStart);
@@ -2149,24 +2159,384 @@ function processLineConceals(
 let lastViewportWidth = 0;
 
 // =============================================================================
+// Reflow: a run of source lines renders as one flowed block
+// =============================================================================
+//
+// Markdown reads consecutive non-blank lines as ONE paragraph (or one list
+// item, or one quote): the newlines between them are word separators, not line
+// breaks. Compose mode has to render that reading, or a hard-wrapped source
+// file — the ordinary way markdown is written — shows every source break as a
+// rendered break, leaving the page ragged and the continuation rows hanging
+// under nothing.
+//
+// Reflow is expressed with the two decorations already in play, so it needs no
+// machinery of its own:
+//
+//   * a JOIN conceal over `[end of the previous line's text, start of this
+//     line's text)` — the newline, this line's leading indent, and its `>` run
+//     when it is a quote — replaced by a single space. A conceal whose range
+//     covers a newline swallows the line break (see `lineContentEndByte`), so
+//     the two source rows render as one;
+//   * soft breaks computed over the WHOLE block instead of per line, so rows
+//     break at the measure and hang under the item's text rather than
+//     restarting at each source line's own column.
+//
+// Both are decided from a `lines_changed` batch alone. That is sound because
+// the editor makes such a batch *run-closed* for a composing buffer: a line is
+// never offered without the rest of its blank-line-delimited run (see
+// `flow_run_start` in `app/render.rs`). A line whose predecessor is absent
+// from the batch is therefore either its run's first line or part of a run too
+// long to close, and both are treated as block heads — the conservative
+// answer, the same one the table frame gives a row whose neighbour it cannot
+// see.
+
+/** The kind of block a flow head opens. A continuation has to match it: a
+ * quote continues only with more quote lines, and prose only with prose. */
+type FlowKind = "paragraph" | "list" | "quote";
+
+/** A source line's text without its terminator.
+ *
+ * `lines_changed` content carries the newline, and every flow decision here is
+ * about the text — a trailing `\n` would read as a trailing space, break the
+ * hard-break test, and put a phantom column into the wrap. */
+function lineText(line: LineInfoLike): string {
+  return line.content.replace(/\r?\n$/, "");
+}
+
+/** A line that is only `=`s or `-`s: a setext heading's underline, or a
+ * thematic break. Never joins to the line above (it *decorates* it) and never
+ * opens a flow block of its own. */
+function isRuleLine(text: string): boolean {
+  return /^\s*(?:=+|-+)\s*$/.test(text);
+}
+
+/** An image on a line of its own, which compose mode renders as a banner. */
+function isImageLine(text: string): boolean {
+  return /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(text.trim());
+}
+
+/** A line that is raw HTML rather than prose: an open or close tag, or a
+ * comment, that makes up the whole line.
+ *
+ * Requiring the line to END in `>` is what keeps a paragraph that merely
+ * *starts* with an inline tag — `<em>like this</em> and then prose` — reading
+ * as the prose it is. An unterminated `<!--` still opens: a comment spanning
+ * several lines is the common case that would otherwise flow. */
+function isHtmlBlockLine(text: string): boolean {
+  const t = text.trim();
+  if (t.startsWith("<!--")) return true;
+  if (!/^<(?:\/?[A-Za-z][A-Za-z0-9-]*(?:[\s/>]|$)|[!?])/.test(t)) return false;
+  return t.endsWith(">");
+}
+
+/** A line that opens an indented code block: four columns of indent or a tab,
+ * and not a list marker.
+ *
+ * Only asked of a run's FIRST line, because an indented code block cannot
+ * interrupt a paragraph — it can only begin where a block can. That is exactly
+ * what keeps a list item's continuation lines out of it: they are indented too,
+ * often past four columns for a wide marker like `12. `, but they are never a
+ * run's first line. */
+function opensIndentedCode(text: string): boolean {
+  if (!/^(?: {4}|\t)/.test(text)) return false;
+  return !/^\s*(?:[-*+]|\d{1,9}[.)])\s/.test(text);
+}
+
+/** A `---` or `+++` on a line of its own: a front-matter delimiter, when it is
+ * the buffer's first line or the one that closes the block it opened. */
+const FRONT_MATTER_FENCE = /^(?:---|\+\+\+)\s*$/;
+
+/** Whether each line of a batch is *verbatim* — text the reader must see laid
+ * out as written, never re-flowed as prose, and never read as a heading.
+ * `true` for a line inside a fenced code block, a raw HTML block or the file's
+ * front matter; `false` for ordinary markdown; `null` where the batch cannot
+ * say.
+ *
+ * `region` is the editor's answer for the fenced case and wins wherever it is
+ * present, but it is absent BOTH for an ordinary line and when the engine
+ * could not resolve the state (see `RegionLine`), so "no region" is not
+ * evidence of "outside a fence". The rest is recovered the way `scanHeadings`
+ * does it, by tracking the delimiters textually across the batch, seeded
+ * wherever the batch proves the state: the buffer's first line is outside
+ * every fence, the line after a `close` is too, and an opener is the only
+ * fence delimiter that may carry an info string (CommonMark forbids one on a
+ * closer).
+ *
+ * The other three need no such seeding, because a batch is run-closed: an HTML
+ * block, an indented code block and a front-matter block all run to a blank
+ * line — front matter from the buffer's first line — so a batch that carries
+ * any of their lines carries the opener too.
+ *
+ * Consumers differ in what they do with `null`, and should: the flow pass
+ * falls back to reading the line as prose, which is what every other per-line
+ * pass in this plugin already does with an unresolved region, while the
+ * heading marks stand down rather than replace a correct pre-scan mark with a
+ * guess. */
+function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
+  const out: Array<boolean | null> = [];
+  let inFence: boolean | null = null;
+  let fenceChar = "";
+  let inHtml = false;
+  let inIndentedCode = false;
+  let inFrontMatter = false;
+  // The next non-blank line opens a block, so it is the one that may open an
+  // indented code block. True for the batch's own first line: the walk that
+  // built it backed up to the run's start.
+  let atRunStart = true;
+  let prevLineNumber = -2;
+  for (const line of lines) {
+    // A gap in the batch loses the state: the lines in between could have
+    // opened or closed any of these.
+    if (line.line_number !== prevLineNumber + 1) {
+      inFence = null;
+      inHtml = false;
+      inIndentedCode = false;
+      inFrontMatter = false;
+      atRunStart = true;
+    }
+    prevLineNumber = line.line_number;
+    const text = lineText(line);
+    const blank = text.trim() === "";
+    const openingRun = atRunStart && !blank;
+    if (!blank) atRunStart = false;
+
+    if (line.line_number === 0) {
+      inFence = false;
+      fenceChar = "";
+      inHtml = false;
+      inFrontMatter = FRONT_MATTER_FENCE.test(text);
+      if (inFrontMatter) { out.push(true); continue; }
+    }
+    if (inFrontMatter) {
+      out.push(true);
+      if (FRONT_MATTER_FENCE.test(text)) inFrontMatter = false;
+      continue;
+    }
+
+    if (isCodeRegion(line.region)) {
+      out.push(true);
+      inFence = line.region !== "close";
+      inHtml = false;
+      continue;
+    }
+
+    if (inFence === true) {
+      out.push(true);
+      // A closer has to match its opener's character, so a ``` inside a ~~~
+      // block is content, not a delimiter.
+      if (looksLikeFence(text) && text.trimStart()[0] === fenceChar) inFence = false;
+      continue;
+    }
+    if (looksLikeFence(text)) {
+      const marker = text.trimStart();
+      // With no seed, an info string is what tells an opener from a closer.
+      if (inFence === false || /^(?:`{3,}|~{3,})\S/.test(marker)) {
+        inFence = true;
+        fenceChar = marker[0];
+        out.push(true);
+      } else {
+        out.push(null);
+      }
+      continue;
+    }
+
+    // An HTML block and an indented code block both run to a blank line, which
+    // is also what ends a flow run.
+    if (blank) {
+      inHtml = false;
+      inIndentedCode = false;
+      atRunStart = true;
+      out.push(inFence);
+      continue;
+    }
+    if (openingRun) inIndentedCode = opensIndentedCode(text);
+    if (inIndentedCode) {
+      out.push(true);
+      continue;
+    }
+    if (inHtml || isHtmlBlockLine(text)) {
+      inHtml = true;
+      out.push(true);
+      continue;
+    }
+    out.push(inFence);
+  }
+  return out;
+}
+
+/** The kind of flow block this line opens, or null when it opens none —
+ * blank, code, fence, heading, rule, table row or image. Those either have no
+ * prose to flow or are single-line by definition. */
+function flowHeadKind(
+  line: LineInfoLike,
+  measure: number,
+  verbatim: boolean | null,
+): FlowKind | null {
+  if (isCodeRegion(line.region) || verbatim === true) return null;
+  const text = lineText(line);
+  if (text.trim() === "") return null;
+  if (looksLikeFence(text) || isRuleLine(text) || isImageLine(text)) return null;
+  if (atxHeading(text) || isTableRowContent(text)) return null;
+  if (quoteMarkerRun(text)) return "quote";
+  if (listItemInfo(text, measure)) return "list";
+  return "paragraph";
+}
+
+/** Whether `line` continues the `kind` block that `prev` is part of.
+ *
+ * Everything that opens a block of its own ends the one above it, and so does
+ * a hard break — two trailing spaces or a trailing backslash are markdown's
+ * one line ending that is NOT read as a space, which is exactly what a reflow
+ * must not swallow. */
+function continuesFlow(
+  kind: FlowKind,
+  prev: LineInfoLike,
+  line: LineInfoLike,
+  measure: number,
+  verbatim: boolean | null,
+): boolean {
+  if (line.line_number !== prev.line_number + 1) return false;
+  if (isCodeRegion(prev.region) || isCodeRegion(line.region)) return false;
+  if (verbatim === true) return false;
+  if (/(?:  |\\)$/.test(lineText(prev))) return false;
+
+  const text = lineText(line);
+  if (text.trim() === "") return false;
+  if (looksLikeFence(text) || isRuleLine(text) || isImageLine(text)) return false;
+  if (atxHeading(text) || isTableRowContent(text)) return false;
+
+  const run = quoteMarkerRun(text);
+  if (kind === "quote") {
+    // Same depth only: `> a` followed by `> > b` opens a quote INSIDE the
+    // first one, and flowing them together would erase exactly the nesting
+    // the second row exists to show.
+    const prevRun = quoteMarkerRun(lineText(prev));
+    return run !== null && prevRun !== null
+      && quoteDepth(run.rendered) === quoteDepth(prevRun.rendered);
+  }
+  if (run) return false;
+  // A marker starts a new item rather than continuing the one above, however
+  // it is indented.
+  return listItemInfo(text, measure) === null;
+}
+
+/** Nesting depth of a quote marker run: how many bars its rendering draws. */
+function quoteDepth(rendered: string): number {
+  let depth = 0;
+  for (const ch of rendered) if (ch === QUOTE_BAR) depth++;
+  return depth;
+}
+
+/** Character offset where a continuation line's flowed text begins: past its
+ * leading whitespace, and past the `>` run when the block is a quote. That
+ * span is what the join conceal replaces with a single space. */
+function flowContentStart(kind: FlowKind, text: string): number {
+  if (kind === "quote") {
+    const run = quoteMarkerRun(text);
+    if (run) return run.runEnd;
+  }
+  return text.length - text.trimStart().length;
+}
+
+/** One block of the batch: its head line plus every line that flows into it.
+ * A line that opens no block (blank, code, table, heading) is a block of one
+ * with `kind === null`, so the blocks always partition the batch and every
+ * line's soft breaks are cleared and rebuilt exactly once. */
+interface FlowBlock {
+  kind: FlowKind | null;
+  lines: LineInfoLike[];
+  /** `contentStart[i]` is the char offset in `lines[i]`; always 0 for the head. */
+  contentStart: number[];
+}
+
+/** Partition a `lines_changed` batch into flow blocks, in batch order. */
+function groupFlowBlocks(
+  lines: LineInfoLike[],
+  measure: number,
+  verbatim: Array<boolean | null>,
+): FlowBlock[] {
+  const blocks: FlowBlock[] = [];
+  let cur: FlowBlock | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (
+      cur !== null && cur.kind !== null &&
+      continuesFlow(cur.kind, cur.lines[cur.lines.length - 1], line, measure, verbatim[i])
+    ) {
+      cur.contentStart.push(flowContentStart(cur.kind, lineText(line)));
+      cur.lines.push(line);
+      continue;
+    }
+    cur = { kind: flowHeadKind(line, measure, verbatim[i]), lines: [line], contentStart: [0] };
+    blocks.push(cur);
+  }
+  return blocks;
+}
+
+/** Per-character visual width of a source line as compose mode renders it:
+ * concealed markup costs nothing, an entity costs its replacement, and a list
+ * item's widened indent is charged to its first column (the shape the indent
+ * conceal produces). Shared by every line of a flow block so the wrap measures
+ * the rendering, not the source. */
+function composedCharWidths(text: string, listInfo: ListLineInfo | null): number[] {
+  const charW = new Array<number>(text.length).fill(1);
+  if (listInfo && listInfo.sourceIndent > 0) {
+    for (let c = 0; c < listInfo.sourceIndent && c < charW.length; c++) charW[c] = 0;
+    charW[0] = listInfo.renderedIndent;
+  }
+  for (const span of findInlineSpans(text)) {
+    for (const range of span.concealRanges) {
+      for (let c = range.start; c < range.end && c < text.length; c++) charW[c] = 0;
+      if (range.replacement !== null && range.start < text.length) {
+        charW[range.start] = range.replacement.length;
+      }
+    }
+  }
+  return charW;
+}
+
+/** One column of a flow block's rendered text.
+ *
+ * `li`/`ci` locate the cell in the block: the character at `ci` of
+ * `lines[li]`, or — when `ci` is `JOIN_CELL` — the join *before* `lines[li]`,
+ * the single space a swallowed newline renders as. A break taken there falls
+ * on the join itself, which is why the joins' conceal replacements are decided
+ * after the wrap and not before it. */
+const JOIN_CELL = -1;
+interface FlowCell {
+  w: number;
+  /** A break opportunity: a space that survives concealment, or a join. */
+  brk: boolean;
+  li: number;
+  ci: number;
+}
+
+// =============================================================================
 // Hook handlers
 // =============================================================================
 
 /**
- * Compute soft break points for a single line, using the same block parsing
- * and word-wrap logic as the old token transform, but emitting
- * marker-based soft breaks.
+ * Emit one flow block's soft breaks — and, when it spans more than one source
+ * line, the join conceals that make those lines render as a single flowed
+ * block.
+ *
+ * A block of one line is the old per-line pass unchanged: code rows break at
+ * the frame's inner width, table rows at their cells' segment boundaries, and
+ * prose at the measure. A block of several adds only the two things reflow
+ * needs — the wrap runs over the block's concatenated text instead of
+ * restarting at each source line, and the newlines between them are concealed.
  */
-function processLineSoftBreaks(
-  bufferId: number,
-  lineContent: string,
-  byteStart: number,
-  byteEnd: number,
-  region: RegionLine | undefined,
-  lineNumber?: number,
-): void {
-  // Clear existing soft breaks for this line range
-  editor.clearSoftBreaksInRange(bufferId, byteStart, byteEnd);
+function processFlowBlock(bufferId: number, block: FlowBlock, width: number): void {
+  const head = block.lines[0];
+  // Clear existing soft breaks for every line in the block, so a block that
+  // has shrunk (an edit split it) leaves none behind.
+  for (const line of block.lines) {
+    editor.clearSoftBreaksInRange(bufferId, line.byte_start, line.byte_end);
+  }
+
+  const lineContent = head.content;
+  const byteStart = head.byte_start;
+  const byteEnd = head.byte_end;
 
   // Code is never re-flowed as prose: its line breaks are significant, and a
   // body line is not a markdown block at all. `parseMarkdownBlocks` cannot tell
@@ -2179,12 +2549,10 @@ function processLineSoftBreaks(
   // fold where `emitCodeRails` expects a row to end, at the frame's inner
   // width, and hangs the continuation under the code rather than under the
   // rail. Same positions from the same helper, so the two passes agree.
-  if (isCodeRegion(region)) {
-    if (region !== "body") return;
-    const text = lineContent.replace(/\r?\n$/, "");
-    const viewport = editor.getViewport();
-    const measure = effectiveComposeWidth(viewport ? viewport.width : 80);
-    for (const charPos of codeRowLayout(text, measure).breaks) {
+  if (isCodeRegion(head.region)) {
+    if (head.region !== "body") return;
+    const text = lineText(head);
+    for (const charPos of codeRowLayout(text, width).breaks) {
       // Indent 0, not the rail's width: the continuation row's own left rail
       // is virtual text spliced in ahead of the wrap, so it already supplies
       // those columns. Asking for them again would indent the row twice.
@@ -2195,26 +2563,22 @@ function processLineSoftBreaks(
     return;
   }
 
-  const viewport = editor.getViewport();
-  if (!viewport) return;
-  const width = effectiveComposeWidth(viewport.width);
-
-  // Parse this single line to get block structure
+  // Parse the head line to get block structure
   const blocks = parseMarkdownBlocks(lineContent);
   if (blocks.length === 0) return;
 
-  const block = blocks[0]; // Single line = single block
+  const parsed = blocks[0]; // Single line = single block
 
   // Determine if this block type should be soft-wrapped
-  const noWrap = block.type === 'table-row' || block.type === 'code-fence' ||
-                 block.type === 'code-content' || block.type === 'hr' ||
-                 block.type === 'heading' || block.type === 'image' ||
-                 block.type === 'empty';
+  const noWrap = parsed.type === 'table-row' || parsed.type === 'code-fence' ||
+                 parsed.type === 'code-content' || parsed.type === 'hr' ||
+                 parsed.type === 'heading' || parsed.type === 'image' ||
+                 parsed.type === 'empty';
 
   // Image blocks: add a trailing blank line for visual separation when
   // concealed. Deactivates while the cursor is on the line (same scope as
   // the image conceal), where the raw markup shows instead.
-  if (block.type === 'image') {
+  if (parsed.type === 'image') {
     editor.addSoftBreak(
       bufferId, "md-wrap", byteEnd - 1, 0,
       "unless-cursor-in", byteStart, byteEnd + 1,
@@ -2225,7 +2589,7 @@ function processLineSoftBreaks(
   // concealed cell widths — the cursor-OFF rendering. The breaks deactivate
   // while the cursor is on the row (strict scope, matching the segment
   // conceals), where the row renders as a plain single line.
-  if (block.type === 'table-row') {
+  if (parsed.type === 'table-row') {
     const trimmedLine = lineContent.trim();
     const isSep = /^\|[-:\s|]+\|$/.test(trimmedLine);
     if (!isSep) {
@@ -2275,7 +2639,8 @@ function processLineSoftBreaks(
   // the wrap budget and the continuation indent have to use the *rendered*
   // width, not the source's. Otherwise a wrapped nested item's continuation
   // rows sit left of its text and its last row can overrun the measure.
-  const listInfo = listItemInfo(lineContent, width);
+  const headText = lineText(head);
+  const listInfo = listItemInfo(headText, width);
 
   // A block quote's bar is drawn by concealing its `>` markers, which only
   // exist on the source row — so a quote long enough to wrap used to lose the
@@ -2289,7 +2654,7 @@ function processLineSoftBreaks(
   // continuation row is entirely virtual — there is no source markup there to
   // reveal for editing — so hiding the bar while the cursor sits on the quote
   // would only break the block's edge exactly when the user is working in it.
-  const quoteRun = block.type === 'blockquote' ? quoteMarkerRun(lineContent) : null;
+  const quoteRun = parsed.type === 'blockquote' ? quoteMarkerRun(headText) : null;
   const quotePrefix = quoteRun
     ? { text: quoteRun.rendered, ...quoteBarStyle }
     : null;
@@ -2298,33 +2663,28 @@ function processLineSoftBreaks(
     ? listInfo.renderedIndent + listInfo.markerLen
     : quoteRun
     ? editor.stringWidth(quoteRun.rendered)
-    : block.hangingIndent;
+    : parsed.hangingIndent;
 
-  // Compute per-character visual width so concealed markup (emphasis
-  // markers, link syntax, entities) doesn't count towards line width.
-  const spans = findInlineSpans(lineContent);
-  const charW = new Array<number>(lineContent.length).fill(1);
-
-  // Charge the widened indent to its first character and zero the rest, the
-  // same shape the entity replacements below use.
-  if (listInfo && listInfo.sourceIndent > 0) {
-    for (let c = 0; c < listInfo.sourceIndent && c < charW.length; c++) charW[c] = 0;
-    charW[0] = listInfo.renderedIndent;
-  }
-  for (const span of spans) {
-    for (const range of span.concealRanges) {
-      for (let c = range.start; c < range.end && c < lineContent.length; c++) {
-        charW[c] = 0;
-      }
-      // Entity replacements contribute their replacement's length
-      if (range.replacement !== null && range.start < lineContent.length) {
-        charW[range.start] = range.replacement.length;
-      }
+  // The block's rendered columns, head first and then each continuation
+  // preceded by the join it renders as. Compose-mode widths throughout
+  // (`composedCharWidths`), so concealed markup doesn't count towards the
+  // measure.
+  const cells: FlowCell[] = [];
+  for (let li = 0; li < block.lines.length; li++) {
+    const text = li === 0 ? headText : lineText(block.lines[li]);
+    if (li > 0) cells.push({ w: 1, brk: true, li, ci: JOIN_CELL });
+    const charW = composedCharWidths(text, li === 0 ? listInfo : null);
+    for (let ci = block.contentStart[li]; ci < text.length; ci++) {
+      cells.push({
+        w: charW[ci],
+        brk: text[ci] === ' ' && charW[ci] > 0,
+        li,
+        ci,
+      });
     }
   }
 
-  // Walk through the line content and find word-wrap break points
-  // We need to find Space positions where wrapping should occur.
+  // Walk the block's columns and find word-wrap break points.
   //
   // The wrap budget must reserve columns to match the Rust renderer's
   // `apply_wrapping_transform`, which subtracts one from `content_width`
@@ -2339,40 +2699,69 @@ function processLineSoftBreaks(
   // covering minor differences in scrollbar / gutter / EOL-cursor
   // reservation between terminals.
   const wrapBudget = Math.max(1, width - 2);
+  const breaks: FlowCell[] = [];
   let column = 0;
-  let i = 0;
 
-  while (i < lineContent.length) {
-    const ch = lineContent[i];
-
-    if (ch === ' ' && column > 0 && charW[i] > 0) {
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i];
+    if (cell.brk && column > 0) {
       // Look ahead to find the next word's visual length
       let nextWordLen = 0;
-      for (let j = i + 1; j < lineContent.length; j++) {
-        if ((lineContent[j] === ' ' || lineContent[j] === '\n') && charW[j] > 0) break;
-        nextWordLen += charW[j];
+      for (let j = i + 1; j < cells.length; j++) {
+        if (cells[j].brk) break;
+        nextWordLen += cells[j].w;
       }
 
-      // Check if space + next word would exceed wrap budget
-      if (column + 1 + nextWordLen > wrapBudget && nextWordLen > 0) {
-        // Add a soft break at this space's buffer position
-        const breakBytePos = byteStart + editor.utf8ByteLength(lineContent.slice(0, i));
-        if (quotePrefix) {
-          editor.addSoftBreak(
-            bufferId, "md-wrap", breakBytePos, hangingIndent,
-            undefined, undefined, undefined, quotePrefix,
-          );
-        } else {
-          editor.addSoftBreak(bufferId, "md-wrap", breakBytePos, hangingIndent);
-        }
+      // Check if the separator + next word would exceed the wrap budget
+      if (column + cell.w + nextWordLen > wrapBudget && nextWordLen > 0) {
+        breaks.push(cell);
         column = hangingIndent;
-        i++;
         continue;
       }
     }
+    column += cell.w;
+  }
 
-    column += charW[i];
-    i++;
+  // The joins themselves. Anchored from the end of the previous line's text
+  // (trailing whitespace included in the concealed span, so a line padded with
+  // spaces doesn't flow with two) to the start of this line's own text.
+  for (let li = 1; li < block.lines.length; li++) {
+    const prev = block.lines[li - 1];
+    const line = block.lines[li];
+    const prevText = lineText(prev).replace(/\s+$/, "");
+    const joinStart = prev.byte_start + editor.utf8ByteLength(prevText);
+    const text = lineText(line);
+    const joinEnd = line.byte_start
+      + editor.utf8ByteLength(text.slice(0, block.contentStart[li]));
+    editor.addConceal(
+      bufferId, "md-syntax", joinStart, joinEnd, " ",
+    );
+  }
+
+  for (const cell of breaks) {
+    const line = block.lines[cell.li];
+    let breakBytePos: number;
+    if (cell.ci === JOIN_CELL) {
+      // Past the join, not at it. A row break falling on a join is a break
+      // between two words whose separator is the swallowed line ending: like
+      // any other wrap between words, that separator trails the row it ends
+      // rather than opening the next one. Anchoring at the join instead put
+      // its replacement space at the head of the row below — a stray leading
+      // column — and left the row above with no separator for the caret.
+      breakBytePos = line.byte_start
+        + editor.utf8ByteLength(lineText(line).slice(0, block.contentStart[cell.li]));
+    } else {
+      const text = lineText(line);
+      breakBytePos = line.byte_start + editor.utf8ByteLength(text.slice(0, cell.ci));
+    }
+    if (quotePrefix) {
+      editor.addSoftBreak(
+        bufferId, "md-wrap", breakBytePos, hangingIndent,
+        undefined, undefined, undefined, quotePrefix,
+      );
+    } else {
+      editor.addSoftBreak(bufferId, "md-wrap", breakBytePos, hangingIndent);
+    }
   }
 }
 
@@ -2547,9 +2936,22 @@ editor.on("lines_changed", (data) => {
   const batchViewport = editor.getViewport();
   const measure = effectiveComposeWidth(batchViewport ? batchViewport.width : 80);
 
-  // Per line: clear+rebuild conceals, soft-breaks, and the table border frame —
-  // all anchored to this one line. No whole-table rebuild, no stored row model;
-  // borders for lines not in this batch keep riding their auto-shift markers.
+  // The batch's flow blocks, computed before the per-line pass because the
+  // conceal pass needs to know which lines are continuations: their leading
+  // indent and `>` run are inside a join conceal, so the per-line decorations
+  // that would otherwise render them must stand down.
+  const verbatim = verbatimStates(data.lines);
+  const blocks = groupFlowBlocks(data.lines, measure, verbatim);
+  const joined = new Set<number>();
+  for (const block of blocks) {
+    for (let i = 1; i < block.lines.length; i++) joined.add(block.lines[i].byte_start);
+  }
+
+  // Per line: clear+rebuild conceals and the table border frame — all anchored
+  // to this one line. No whole-table rebuild, no stored row model; borders for
+  // lines not in this batch keep riding their auto-shift markers. Soft breaks
+  // are the one pass that is per *block* rather than per line (see
+  // `processFlowBlock`), and they run below, after every line's clear.
   for (const line of data.lines) {
     // Clear this row's border range first (covers a row that stopped being a
     // table row, e.g. its pipes were deleted, and stale frames left a few bytes
@@ -2569,8 +2971,7 @@ editor.on("lines_changed", (data) => {
       line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
     );
 
-    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, measure, line.region, line.line_number);
-    processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, line.region, line.line_number);
+    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, measure, line.region, line.line_number, joined.has(line.byte_start));
 
     // Blank row after each list item, so items read as discrete entries.
     //
@@ -2639,6 +3040,15 @@ editor.on("lines_changed", (data) => {
     }
   }
 
+  // Soft breaks, and the joins that make a run of source lines flow as one
+  // block. Deliberately a second pass: a join conceal is anchored in the line
+  // ABOVE the continuation it belongs to, and the per-line pass above clears
+  // conceals by range — so emitting joins inside that loop would have the next
+  // line's clear delete the join just added.
+  for (const block of blocks) {
+    processFlowBlock(data.buffer_id, block, measure);
+  }
+
   // Publish this batch's heading marks. Range-scoped to the batch's byte span
   // so headings outside it — the rest of the document, marked by the pre-scan
   // at compose time — keep their marks; see HEADING_MARKER_NS. Emitted even
@@ -2648,15 +3058,20 @@ editor.on("lines_changed", (data) => {
     const batchStart = data.lines[0].byte_start;
     const batchEnd = data.lines[data.lines.length - 1].byte_end;
     const headingMarkers: ScrollbarMarker[] = [];
-    for (const line of data.lines) {
-      const level = headingLevel(line.content);
+    // False once any `#` line in the batch could not be told apart from a
+    // comment inside a fence (see `verbatimStates`). The whole republish is then
+    // skipped rather than replacing the pre-scan's marks with a guess — an
+    // out-of-date mark beats a wrong one, and the next batch that can see a
+    // fence boundary refreshes the range.
+    let classified = true;
+    for (let i = 0; i < data.lines.length; i++) {
+      const line = data.lines[i];
+      const level = headingLevel(lineText(line));
       if (level === 0 || level > HEADING_MARKER_MAX_LEVEL) continue;
       // `# ...` inside a fenced block is a comment in the block's language,
-      // not a heading. The batch cannot decide that from its own lines, so it
-      // takes the editor's classification — the same source the frame uses,
-      // and current by construction, where a plugin-side memo of fence
-      // extents would be stale for exactly the edit that moved a fence.
-      if (isCodeRegion(line.region)) continue;
+      // and inside front matter it is a YAML comment. Neither is a heading.
+      if (verbatim[i] === null) { classified = false; continue; }
+      if (verbatim[i]) continue;
       headingMarkers.push({
         // Byte offsets, not line numbers: they are exact regardless of file
         // size, and the editor anchors them so later edits shift the marks.
@@ -2665,11 +3080,13 @@ editor.on("lines_changed", (data) => {
         priority: 10 - level, // shallower headings win a shared track cell
       });
     }
-    editor.setScrollbarMarkersInRange(
-      data.buffer_id, HEADING_MARKER_NS,
-      batchStart, Math.max(batchEnd, batchStart + 1),
-      headingMarkers,
-    );
+    if (classified) {
+      editor.setScrollbarMarkersInRange(
+        data.buffer_id, HEADING_MARKER_NS,
+        batchStart, Math.max(batchEnd, batchStart + 1),
+        headingMarkers,
+      );
+    }
   }
 
   // One whole-viewport re-fire when an edit left a delimiter-shaped line

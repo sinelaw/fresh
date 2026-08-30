@@ -256,6 +256,8 @@ Smart editing for Markdown files (provided by the built-in `markdown_source` plu
 
 "Markdown: Toggle Compose" from the command palette enables a distraction-free mode that conceals markup (`**`, `*`, `[]()`), applies soft line breaks at a configurable width, and renders tables. Use "Markdown: Set Compose Width" to adjust the width. Open the same file in a vertical split to see source and composed views side by side.
 
+Compose mode reads the document the way markdown defines it, so a paragraph, list item or quote written across several source lines is re-flowed into one block at the page width — a hard-wrapped file reads as prose rather than as its source layout. The things markdown treats as their own block still are: a blank line, a heading, a thematic break, a table row, a fenced code block, a new list marker, and a hard break (two trailing spaces or a trailing backslash).
+
 ## Shell Integration
 
 Run shell commands on your buffer or selection:

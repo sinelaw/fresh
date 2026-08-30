@@ -10,8 +10,8 @@ use super::folding::{apply_folding, fold_adjusted_visible_count, fold_skip_set};
 use super::style::fold_placeholder_style;
 use super::transforms::{
     apply_conceal_ranges, apply_grid_wrapping_transform, apply_soft_breaks,
-    apply_wrapping_transform_from, inject_virtual_lines, resolve_inline_hints,
-    splice_inline_virtual_text,
+    apply_wrapping_transform_from, inject_virtual_lines, join_adjusted_visible_count,
+    resolve_inline_hints, splice_inline_virtual_text,
 };
 use super::MAX_SAFE_LINE_WIDTH;
 use crate::state::{EditorState, ViewMode};
@@ -195,6 +195,21 @@ pub(super) fn build_view_data(
         folds,
         viewport.top_byte(),
         visible_count,
+    );
+    // A conceal that spans a line break swallows it: the two source lines
+    // render as one row. Compose mode reflows a paragraph exactly that way
+    // (markdown_compose's join conceals), so a window of N source lines can
+    // fill fewer than N rows and the viewport's bottom comes up short — the
+    // same shortfall a collapsed fold produces, and answered the same way, by
+    // asking the token build for the lines the joins ate.
+    let adjusted_visible_count = join_adjusted_visible_count(
+        &state.buffer,
+        &state.conceals,
+        &state.marker_list,
+        cursor_positions,
+        viewport.top_byte(),
+        adjusted_visible_count,
+        matches!(view_mode, ViewMode::PageView),
     );
 
     let is_binary = state.buffer.is_binary();

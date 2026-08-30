@@ -260,11 +260,20 @@ fn heading_marks_survive_exploring_the_document() {
     // the comparison.
     //
     // Not "wait for the screen to change", though: a PageDown at the end of
-    // the document is a no-op, and this sweep runs twelve pages over a
-    // document only about thirteen deep, so that wait would be one viewport
-    // row away from never resolving. A settled frame is true whether or not
-    // the page moved.
-    for _ in 0..12 {
+    // the document is a no-op, and this sweep runs over a document only about
+    // thirteen pages deep, so that wait would be one viewport row away from
+    // never resolving. A settled frame is true whether or not the page moved.
+    //
+    // Six pages, not twelve. Compose mode sizes its window from the line
+    // breaks its conceals already swallow, so a scrolled-to page settles over
+    // a few frames rather than one — self-correcting by design, but it
+    // multiplies the renders each `wait_until_stable` has to sit through, and
+    // this test settles once per page. Twelve pages of that timed out at
+    // nextest's 180s cap on a loaded macOS runner while taking under three
+    // seconds unloaded. Six still carries the property: the marks under test
+    // are the ones for sections the viewport has left behind, and by page six
+    // most of the document is behind it.
+    for _ in 0..6 {
         harness
             .send_key(KeyCode::PageDown, KeyModifiers::NONE)
             .unwrap();
@@ -274,11 +283,30 @@ fn heading_marks_survive_exploring_the_document() {
 
     // Each batch republishes only its own byte span, so the marks for the
     // sections scrolled past are left alone. With a whole-namespace replace
-    // per batch, only the headings near the viewport would survive.
+    // per batch, only the headings near the viewport would survive — the set
+    // would shrink to the last page's two or three marks and start well down
+    // the track instead of at its top.
+    //
+    // The count and the two ends, not the exact rows: the track's coordinate
+    // space is *visual* rows (`MarkerBasis::VisualRows`, chosen so marks and
+    // thumb agree), and compose mode reflows a paragraph by concealing the
+    // line breaks inside it — a conceal that only exists for the lines the
+    // plugin has decorated. Exploring the document therefore shortens it, by
+    // design, and every mark below the part already visited slides up a row or
+    // two as that happens. What must not change is which headings are marked.
     let after = marker_rows(&harness);
     assert_eq!(
-        after, initial,
-        "the marked rows should be identical before and after scrolling"
+        after.len(),
+        initial.len(),
+        "every heading should still be marked after exploring the document; \
+         before {initial:?}, after {after:?}"
+    );
+    assert_eq!(
+        (after.first(), after.last()),
+        (initial.first(), initial.last()),
+        "the marks should still span the whole track — the first heading is at \
+         the top of the document and the last at its end; \
+         before {initial:?}, after {after:?}"
     );
 }
 
