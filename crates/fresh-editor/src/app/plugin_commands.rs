@@ -2090,14 +2090,18 @@ impl Editor {
     /// `EditorState`, so it follows the buffer wherever it's shown — including a
     /// buffer-group detail panel that isn't the focused split, and across the
     /// panel's per-commit buffer retargets.
-    pub(super) fn handle_set_indentation_guide(&mut self, buffer_id: BufferId, enabled: bool) {
+    pub(super) fn handle_set_indentation_guide(
+        &mut self,
+        buffer_id: BufferId,
+        enabled: Option<bool>,
+    ) {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            state.indentation_guide_override = Some(enabled);
+            state.indentation_guide_override = enabled;
         }
     }
 

@@ -920,22 +920,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         }
 
         if !line_spans.is_empty() {
-            // Where the row's end position is, when no cell carries it — the
-            // same value `build_view_line_mapping` records as `end_exclusive`.
-            let row_end_exclusive = current_view_line
-                .char_source_bytes
-                .iter()
-                .enumerate()
-                .rev()
-                .find_map(|(idx, m)| m.map(|byte| (idx, byte)))
-                .and_then(|(idx, byte)| {
-                    current_view_line
-                        .text
-                        .chars()
-                        .nth(idx)
-                        .filter(|ch| !ch.is_whitespace())
-                        .map(|ch| byte + ch.len_utf8())
-                });
+            let row_end_exclusive = row_end_exclusive(current_view_line, &state.buffer);
             if let Some(x) = locate_cursor_in_view_map(
                 &line_view_map,
                 primary_cursor_position,
@@ -1061,6 +1046,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             gutter_width,
             prev_line_end_byte,
             state.buffer.len(),
+            &state.buffer,
         ));
 
         // Track if line was empty before moving line_spans
@@ -1509,12 +1495,72 @@ fn append_inline_diagnostic(
 }
 
 /// Build the mouse-click/cursor-movement mapping for a rendered row.
+/// One byte past the last character a row drew, when that position belongs to
+/// the row and no cell carries it. `None` otherwise.
+///
+/// A row ends on a content character whenever the wrap that ended it consumed a
+/// separator — which is what a compose-mode soft break does with the space it
+/// fell on. The position past that character is then the separator's own, drawn
+/// by nobody, and it is where `End` goes.
+///
+/// A wrap can also split a run with no whitespace in it at all — CJK text, a
+/// long URL, an unbreakable token — and there the byte past the last character
+/// is the first character of the NEXT row, which that row draws. Claiming it
+/// would paint the caret on the wrong row and send `End` off the row entirely.
+/// The two cases are told apart by the byte itself: a consumed separator is
+/// whitespace, the next row's first character is not.
+fn row_end_exclusive(view_line: &ViewLine, buffer: &crate::model::buffer::Buffer) -> Option<usize> {
+    // `char_source_bytes` is indexed by character of `text` (its length is
+    // `text.chars().count()`), so the index of the last mapped byte is the
+    // index of its character.
+    let (idx, byte) = view_line
+        .char_source_bytes
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(idx, m)| m.map(|byte| (idx, byte)))?;
+    let ch = view_line
+        .text
+        .chars()
+        .nth(idx)
+        .filter(|c| !c.is_whitespace())?;
+    let end = byte + ch.len_utf8();
+    if end >= buffer.len() || byte_at_is_whitespace(buffer, end) {
+        Some(end)
+    } else {
+        None
+    }
+}
+
+/// Whether the buffer's character at `pos` is whitespace. `pos` must be a
+/// character boundary; the width is read from the leading byte so a slice that
+/// ends mid-character cannot make this fail silently.
+fn byte_at_is_whitespace(buffer: &crate::model::buffer::Buffer, pos: usize) -> bool {
+    let lead = match buffer.slice_bytes(pos..pos.saturating_add(1)).first() {
+        Some(b) => *b,
+        None => return false,
+    };
+    let width = match lead {
+        0x00..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => return false,
+    };
+    let bytes = buffer.slice_bytes(pos..pos.saturating_add(width));
+    std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|text| text.chars().next())
+        .is_some_and(char::is_whitespace)
+}
+
 fn build_view_line_mapping(
     view_line: &ViewLine,
     line_view_map: &[Option<usize>],
     gutter_width: usize,
     prev_line_end_byte: usize,
     buffer_len: usize,
+    buffer: &crate::model::buffer::Buffer,
 ) -> ViewLineMapping {
     let line_end_byte = if view_line.ends_with_newline {
         // Position ON the newline - find the last source byte (the newline's position)
@@ -1550,26 +1596,7 @@ fn build_view_line_mapping(
         prev_line_end_byte
     };
 
-    // One past the row's last character, when the row ends on a content
-    // character rather than on a separator — see `ViewLineMapping::
-    // end_exclusive`. `char_source_bytes` is indexed by character of `text`
-    // (its length is `text.chars().count()`), so the index of the last mapped
-    // byte is the index of its character.
-    let end_exclusive = view_line
-        .char_source_bytes
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(idx, m)| m.map(|byte| (idx, byte)))
-        .and_then(|(idx, byte)| {
-            view_line
-                .text
-                .chars()
-                .nth(idx)
-                .filter(|ch| !ch.is_whitespace())
-                .map(|ch| byte + ch.len_utf8())
-        })
-        .filter(|end| *end != line_end_byte);
+    let end_exclusive = row_end_exclusive(view_line, buffer).filter(|end| *end != line_end_byte);
 
     // Content mapping starts after the gutter
     let content_map = if line_view_map.len() >= gutter_width {

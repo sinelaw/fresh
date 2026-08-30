@@ -584,21 +584,38 @@ fn test_consecutive_list_items_are_vertically_spaced() {
     );
 }
 
-/// A nested item is indented deeper than its two-space source indent, so
-/// nesting depth is readable without counting spaces.
+/// A nested item's bullet sits under the first letter of its parent's text.
+///
+/// That is what markdown's own indent already says: an item is nested by being
+/// indented to where its parent's TEXT begins — two columns under `- `, three
+/// under `2. ` — so rendering the source indent unchanged puts each child's
+/// marker under its parent's first letter, which is how every other renderer
+/// draws it.
+///
+/// This asserted a *deeper* indent than the source once, on the reasoning that
+/// scaling makes depth readable without counting spaces. It reads as a level
+/// too far instead: a sub-bullet under `2. ` landed three columns right of the
+/// text it belongs to, attached to nothing above it.
 #[test]
-fn test_nested_list_items_get_a_deeper_indent() {
+fn test_nested_list_items_align_under_their_parent_s_text() {
     let (harness, _tmp) = composed(LIST_MD, 100, 30);
 
-    let indent_of = |needle: &str| glyph_column(&line_with(&harness, needle), '•');
+    let parent = line_with(&harness, "second item");
+    let top = glyph_column(&parent, '•');
+    // Char columns, not byte offsets: `•` is three bytes wide and one column.
+    let parent_text = parent
+        .chars()
+        .enumerate()
+        .find(|(i, c)| *i > top && !c.is_whitespace() && *c != '•')
+        .map(|(i, _)| i)
+        .expect("the parent item should have text after its bullet");
 
-    let top = indent_of("second item");
-    let nested = indent_of("nested item");
-    assert!(
-        nested > top + 2,
-        "a nested item's bullet should sit deeper than its two-space source \
-         indent would put it: top-level bullet at column {top}, nested at \
-         {nested}",
+    let nested = glyph_column(&line_with(&harness, "nested item"), '•');
+    assert_eq!(
+        nested, parent_text,
+        "a nested item's bullet should sit under the first letter of its \
+         parent's text: parent bullet at column {top}, its text at \
+         {parent_text}, nested bullet at {nested}",
     );
 }
 
