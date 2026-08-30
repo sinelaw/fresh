@@ -968,6 +968,56 @@ fn a_region_moves_the_origin_as_well_as_the_limit() {
     assert_eq!((r.x, r.y), (35, 4 + (10 - 2) / 2));
 }
 
+/// And it moves where a *point* starts, which is what lets a caller state a
+/// coordinate in the space it already holds one in.
+///
+/// A plugin panel's dropdown anchors at a row and column inside the panel. The
+/// panel's own origin is the shell's business, not the description's, so the
+/// description names the region and the point — and before this, the point was
+/// read as a frame coordinate and the pop-over opened in the top-left corner
+/// whenever the panel was not already there.
+#[test]
+fn a_region_moves_where_a_point_anchor_starts() {
+    let area = Key::Str("area".into());
+    let popup = Key::Str("popup".into());
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().child(
+            fresh_ui::layer()
+                .key(popup.clone())
+                .anchor(fresh_ui::Anchor::Point(3, 2))
+                .place(fresh_ui::Place::Over)
+                .within(area.clone())
+                .child(col().w(Sizing::Cells(10)).h(Sizing::Cells(2)).theme("p")),
+        ),
+        FRAME,
+    );
+    ui.set_host_anchor(area.clone(), Rect::new(20, 4, 40, 10));
+    ui.place_layers(FRAME);
+    let r = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+    assert_eq!((r.x, r.y), (23, 6), "the region's origin plus the point");
+}
+
+/// A layer that names no region is unaffected: the frame's origin is `(0, 0)`,
+/// so a screen coordinate stays a screen coordinate.
+#[test]
+fn a_point_with_no_region_is_still_a_frame_coordinate() {
+    let popup = Key::Str("popup".into());
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        col().child(
+            fresh_ui::layer()
+                .key(popup.clone())
+                .anchor(fresh_ui::Anchor::Point(12, 7))
+                .place(fresh_ui::Place::Over)
+                .child(col().w(Sizing::Cells(4)).h(Sizing::Cells(1)).theme("p")),
+        ),
+        FRAME,
+    );
+    let r = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+    assert_eq!((r.x, r.y), (12, 7));
+}
+
 // ---------------------------------------------------------------------------
 // Wrapping boxes
 // ---------------------------------------------------------------------------

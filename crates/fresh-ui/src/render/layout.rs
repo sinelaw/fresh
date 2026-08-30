@@ -822,11 +822,17 @@ impl<M: 'static> Ui<M> {
                     .map(|r| self.render[r].data.rect)
                     .or_else(|| self.host_anchors.get(k).copied())
                     .unwrap_or(self.render[parent].data.rect),
-                Anchor::Point(x, y) => Rect::new(*x as i32, *y as i32, 0, 0),
+                // In `bounds`' space, origin included — the frame when the
+                // layer named no region. A region "moves the origin as well as
+                // the limit" for a screen anchor already; a point was the one
+                // that did not, so a caller holding coordinates inside a panel
+                // had to add the panel's origin itself, and that addition is
+                // the second source of geometry naming a region removes.
+                Anchor::Point(x, y) => Rect::new(bounds.x + *x as i32, bounds.y + *y as i32, 0, 0),
                 // One cell, which is the whole difference: `Place::Below` a
                 // cell is the row after it, while below a point is the point's
                 // own row.
-                Anchor::Cell(x, y) => Rect::new(*x as i32, *y as i32, 1, 1),
+                Anchor::Cell(x, y) => Rect::new(bounds.x + *x as i32, bounds.y + *y as i32, 1, 1),
                 Anchor::Screen(_) => bounds,
             };
             let c = if props.place == Place::Fill {

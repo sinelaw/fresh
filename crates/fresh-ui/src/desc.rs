@@ -409,6 +409,15 @@ pub enum Anchor {
     Node(Key),
     /// A position with no extent. A click happened *at* a coordinate, and a
     /// menu placed `Over` it starts there.
+    ///
+    /// **In the coordinate space the layer is placed in**, which is the frame
+    /// unless the layer names a region with [`crate::desc::LayerProps::within`]
+    /// — then it is that region's, origin included. The bounds are "the whole
+    /// coordinate space the placement works in, not just a right-hand limit",
+    /// and a point is the one anchor that used to ignore it: a caller with
+    /// panel-inner coordinates had to add the panel's origin by hand, which is
+    /// the geometry duplication naming a region exists to remove. A layer that
+    /// names no region is unaffected — the frame's origin is `(0, 0)`.
     Point(u16, u16),
     /// A single cell, which is what a caret or a hovered cell is.
     ///
@@ -419,6 +428,8 @@ pub enum Anchor {
     /// click position has no extent, a caret occupies one — and a completion
     /// popup that opens on top of the character it is completing is the bug
     /// that comes of having only the first.
+    ///
+    /// Region-relative like [`Anchor::Point`], for the same reason.
     Cell(u16, u16),
     Screen(Align),
 }
