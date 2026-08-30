@@ -282,6 +282,16 @@ pub enum UiFact {
     /// it is — the coordinate hit-test in `chrome::Popups` recovered an index
     /// the row already had.
     PopupSelect(usize),
+    /// One step the open popup's keyboard takes.
+    ///
+    /// **What the step is, not which key made it.** Every arm of
+    /// `view/popup/input/` was a key match: `KeyCode::Down` beside
+    /// `select_next`, `KeyCode::PageUp` beside `page_up`, four files' worth,
+    /// with `try_handle_shared` in front of each to say the ones they had in
+    /// common. Which key means which step is the keymap's answer, declared on
+    /// the open popup as shortcuts and resolved by the tree; this says only
+    /// what each step does.
+    PopupKey(PopupKey),
     /// A pointer landed outside a transient popup, which is what dismisses one.
     /// The layer declares the condition; hiding the popup is the app's move.
     PopupDismissTransient,
@@ -499,6 +509,37 @@ pub enum UiFact {
     /// once the list had scrolled, not the result's index (#2860). A list row
     /// knows its own index whether it is on screen or not.
     SettingsSearchResult(usize),
+}
+
+/// One step the open popup's keyboard takes.
+///
+/// The union of what the four `view/popup/input/` handlers did, minus the key
+/// matching. A step a given popup has no use for is simply not declared on it:
+/// a hover pane scrolls where a list selects, and a completion list filters
+/// where an action list picks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PopupKey {
+    /// Move the selection.
+    Prev,
+    Next,
+    First,
+    Last,
+    PageUp,
+    PageDown,
+    /// Move a read-only pane's window instead of a selection.
+    ScrollUp,
+    ScrollDown,
+    /// Take the selected row.
+    Confirm,
+    /// Take row `i` and confirm it in one step — the number keys.
+    Pick(usize),
+    /// Close, without taking anything.
+    Close,
+    /// Copy the selection to the clipboard.
+    Copy,
+    /// A completion list's filter.
+    TypeChar(char),
+    Backspace,
 }
 
 /// What a menu-bar navigation step does to the open chain.

@@ -460,24 +460,12 @@ impl Editor {
         router::unfocused_popup_action(self.active_window().key_context.clone(), &kb, event)
     }
 
-    /// Resolve a key event against `KeyContext::Completion` when the topmost
-    /// visible popup is a completion popup. The gating and precedence
-    /// decision is [`router::completion_popup_action`]; this shell supplies
-    /// the topmost popup kind and the keymap.
-    pub(crate) fn resolve_completion_popup_action(
-        &self,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<crate::input::keybindings::Action> {
-        let topmost_kind = if self.global_popups.is_visible() {
-            self.global_popups.top().map(|p| p.kind)
-        } else if self.active_state().popups.is_visible() {
-            self.active_state().popups.top().map(|p| p.kind)
-        } else {
-            None
-        };
-        let kb = self.keybindings.read().unwrap();
-        router::completion_popup_action(topmost_kind, &kb, event)
-    }
+    // **The completion resolver is the popup's own now.** It asked the keymap
+    // for the key as it arrived, from inside a walk the shell tree is offered
+    // the key *before* — the same shape that let a `menu`-section binding be
+    // swallowed before the keymap was ever consulted. The bindings are
+    // enumerated instead (`Editor::popup_keys`) and declared on the open
+    // popup's layer, where nothing is in front of them.
 
     /// Fire a `widget_event` at the plugin owning the dock, keyed to the
     /// `sessions` widget. Used for dock-only gestures (Enter-activate,

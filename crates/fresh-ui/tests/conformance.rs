@@ -7,10 +7,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, focusable, gesture, host_leaf, layer, layout_reader, text, viewport, BuildCx, Component,
-    ComponentExt, Constraints, Draw, Event, Focusable, Geom, GeomHandle, GestureKind, Hit,
-    HostLeaf, InitCx, Input, Intent, Key, KeyCode, KeyPress, LayoutCx, LayoutInfo, Modality, Mods,
-    MouseButton, Node, Point, PointerMode, Rect, RenderObject, Shortcut, Size, Sizing, Ui,
+    col, focusable, gesture, host_leaf, layer, layout_reader, text, viewport, Anchor, BuildCx,
+    Component, ComponentExt, Constraints, Draw, Event, Focusable, Geom, GeomHandle, GestureKind,
+    Hit, HostLeaf, InitCx, Input, Intent, Key, KeyCode, KeyPress, LayoutCx, LayoutInfo, Modality,
+    Mods, MouseButton, Node, Point, PointerMode, Rect, RenderObject, Shortcut, Size, Sizing, Ui,
 };
 
 const FRAME: Size = Size { w: 20, h: 10 };
@@ -661,6 +661,133 @@ fn an_item_window_of_tall_rows_reveals_by_item_not_by_cell() {
             "row 11.1", "row 11.2"
         ],
         "the window moved by items, not by cells"
+    );
+}
+
+/// **A modal layer owns the keys it declines, and the pointer can still pass.**
+///
+/// `Modality` used to be one knob for two channels, so a surface that wanted
+/// the keyboard had to take the pointer with it — or, as the editor's menu
+/// did, keep a whole input handler alive whose only remaining job was to
+/// return "consumed" for every key it had nothing to say about. `Keyboard`
+/// says the one thing without the other.
+#[test]
+fn a_keyboard_modal_layer_swallows_what_it_declines_and_lets_the_pointer_by() {
+    let pressed = Rc::new(Cell::new(0));
+    let p = pressed.clone();
+    let mk = || -> Node<()> {
+        let p = p.clone();
+        col()
+            .child(gesture(text("behind")).on(
+                GestureKind::Press,
+                Rc::new(move |_: &Event| {
+                    p.set(p.get() + 1);
+                    None
+                }),
+            ))
+            .child(
+                layer()
+                    .modality(Modality::Keyboard)
+                    // Anchored below the row behind it, the way a menu hangs
+                    // off its bar — so the pointer test is about modality
+                    // rather than about what the layer happens to cover.
+                    .anchor(Anchor::Point(0, 2))
+                    .child(focusable(text("menu")).autofocus()),
+            )
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(mk(), FRAME);
+
+    // Nothing in the chain acts on a printable key, and it stops all the same:
+    // the host behind this tree must not type it into the document.
+    assert!(
+        ui.dispatch(Input::Key(KeyPress {
+            code: KeyCode::Char('x'),
+            mods: Mods::NONE,
+        }))
+        .claimed,
+        "a modal layer owns the keys it declines"
+    );
+
+    // The pointer is untouched — the row behind still answers its own press,
+    // which is how clicking another menu label switches menus in one press.
+    click(&mut ui, 1, 0);
+    assert_eq!(pressed.get(), 1, "the pointer passes through");
+}
+
+/// **A layer that steps out of the way is out of the way.** A modal layer
+/// owns the keys it declines — but a `passing_through` dismissal is the layer
+/// saying "close me, and let the input reach what it was aimed at", so the
+/// modal claim must not put it back in front of the key it just left.
+///
+/// The editor's completion list is the shape: Enter means "close this and
+/// insert a newline", and the newline is the buffer's.
+#[test]
+fn a_pass_through_dismissal_beats_the_modal_claim() {
+    let dismiss_on_any = fresh_ui::Dismiss {
+        any_key: true,
+        ..fresh_ui::Dismiss::default()
+    };
+    let mk = move || -> Node<()> {
+        col().child(
+            layer()
+                .modality(Modality::Keyboard)
+                .dismiss(dismiss_on_any.passing_through())
+                .child(focusable(text("list")).autofocus()),
+        )
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(mk(), FRAME);
+    assert!(
+        !ui.dispatch(Input::Key(KeyPress {
+            code: KeyCode::Enter,
+            mods: Mods::NONE,
+        }))
+        .claimed,
+        "the layer dismissed itself and said the key goes on"
+    );
+
+    // Without `passing_through` the dismissal spends the key, as it always
+    // has: the layer *was* in the way, and getting rid of it is the gesture.
+    let mk2 = move || -> Node<()> {
+        col().child(
+            layer()
+                .modality(Modality::Keyboard)
+                .dismiss(dismiss_on_any)
+                .child(focusable(text("pane")).autofocus()),
+        )
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(mk2(), FRAME);
+    assert!(
+        ui.dispatch(Input::Key(KeyPress {
+            code: KeyCode::Enter,
+            mods: Mods::NONE,
+        }))
+        .claimed
+    );
+}
+
+/// The other half of the same rule: without modality an unclaimed key falls
+/// through, and the host behind the tree is told so.
+#[test]
+fn a_non_modal_layer_lets_a_key_it_declines_through() {
+    let mk = || -> Node<()> {
+        col().child(
+            layer()
+                .modality(Modality::None)
+                .child(focusable(text("menu")).autofocus()),
+        )
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(mk(), FRAME);
+    assert!(
+        !ui.dispatch(Input::Key(KeyPress {
+            code: KeyCode::Char('x'),
+            mods: Mods::NONE,
+        }))
+        .claimed,
+        "nothing claimed it, so the host may act on it"
     );
 }
 

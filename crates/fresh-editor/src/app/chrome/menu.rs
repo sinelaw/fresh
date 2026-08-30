@@ -1,12 +1,11 @@
-//! What is left of the menu bar's chrome component: its layer entry and its
-//! keyboard grab.
+//! What is left of the menu bar's chrome component: its layer entry and the
+//! reaction half of hover.
 //!
-//! Paint and pointer input have both migrated. The bar row is a native region
-//! in the shell's tree, the open dropdown chain is a stack of `Layer`s, and
+//! Paint, pointer and keyboard have all migrated. The bar row is a native
+//! region in the shell's tree, the open dropdown chain is a stack of `Layer`s,
 //! the full-frame close guard is the outermost layer's `OUTSIDE_POINTER`
-//! dismissal.
-
-use anyhow::Result as AnyhowResult;
+//! dismissal, and the keys are shortcuts and intents on the open chain with
+//! `Modality::Keyboard` owning the ones it declines.
 
 use super::{ChromeComponent, Editor};
 use crate::app::types::HoverTarget;
@@ -56,43 +55,15 @@ impl ChromeComponent for Menu {
         }
     }
 
-    fn on_layer_key(
-        &self,
-        ed: &mut Editor,
-        _layer: &crate::app::overlay::Layer,
-        event: &crossterm::event::KeyEvent,
-    ) -> Option<AnyhowResult<crate::input::handler::InputResult>> {
-        use crate::input::handler::{InputContext, InputHandler};
-        // **No keymap consult here any more.** It used to sit at the top of
-        // this handler, and that was the bug: this runs in the layer walk,
-        // which the shell is offered the key *before*. Anything a user bound
-        // in the `menu` section was swallowed by the capture-all below before
-        // the keymap was ever asked. The bindings are now shortcuts on the
-        // open chain (`Editor::menu_shortcuts`), resolved by the tree with
-        // nothing in front of them.
-        //
-        // What is left is the swallow. An open menu is modal to the keyboard:
-        // a key it does not act on must not reach the buffer underneath and
-        // type into the document. The tree cannot express that yet — its
-        // `Modality` gates pointer routing and focus traversal, and this chain
-        // is deliberately `Modality::None` so the bar stays clickable for
-        // switching menus. Keyboard-only modality is the next library gap.
-        let mut ctx = InputContext::new();
-        let all_menus: Vec<crate::config::Menu> = ed
-            .menus
-            .menus
-            .iter()
-            .chain(ed.menu_state.plugin_menus.iter())
-            .cloned()
-            .collect();
-        let result = {
-            let mut handler =
-                crate::view::ui::MenuInputHandler::new(&mut ed.menu_state, &all_menus);
-            handler.dispatch_input(event, &mut ctx)
-        };
-        ed.process_deferred_actions(ctx);
-        Some(Ok(result))
-    }
+    // **No keyboard here at all any more.** What was left of this handler was
+    // the swallow: an open menu is modal to the keyboard, so a key it does not
+    // act on must not reach the buffer underneath and type into the document.
+    // The library says that now — the open chain declares
+    // `Modality::Keyboard`, which owns the keys its focus chain declines while
+    // leaving the bar underneath clickable — so the walk never reaches this
+    // component, `MenuInputHandler` is gone, and `view/ui/menu_input.rs` with
+    // it. The navigation itself has been the tree's since the bindings became
+    // shortcuts on the open chain (`Editor::menu_shortcuts`).
 }
 
 impl Editor {

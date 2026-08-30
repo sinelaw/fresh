@@ -488,15 +488,48 @@ impl Fit {
     }
 }
 
+/// How much of the input a layer takes away from what is behind it.
+///
+/// The variants are ordered by how much they take. Every one above `None`
+/// confines focus traversal to the layer and **owns the keyboard**: a key its
+/// focus chain does not act on stops at the layer rather than reaching what is
+/// behind it, which is what "modal" means to a keyboard.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Modality {
     /// Content underneath keeps pointer and keyboard.
     #[default]
     None,
-    /// Content underneath is visible but takes no input.
+    /// **The keyboard only.** Traversal cannot leave and an unhandled key
+    /// stops here, while the pointer passes through untouched.
+    ///
+    /// An open menu is the shape: it owns the keyboard — a printable key must
+    /// not reach the buffer underneath and type into the document — while the
+    /// bar it hangs from stays clickable, because clicking another label is
+    /// how a user switches menus and every platform does that in one press.
+    /// Without this the two were a single knob, and the editor paid for it
+    /// with a whole input handler whose only job was to swallow.
+    Keyboard,
+    /// The keyboard, and content underneath is visible but takes no input.
     Inert,
-    /// Content underneath takes no input and traversal cannot leave.
+    /// The keyboard, no input underneath, and no leaf outside takes raw input.
     Exclusive,
+}
+
+impl Modality {
+    /// Whether what is behind this layer still answers the pointer.
+    ///
+    /// The two channels are asked separately because they have different
+    /// answers, which is the whole reason `Keyboard` exists: a layer can own
+    /// every key while leaving the surface it hangs from clickable.
+    pub fn blocks_pointer(self) -> bool {
+        matches!(self, Modality::Inert | Modality::Exclusive)
+    }
+
+    /// Whether this layer owns the keyboard: focus traversal is confined to
+    /// it, and a key its focus chain does not act on stops here.
+    pub fn owns_keyboard(self) -> bool {
+        !matches!(self, Modality::None)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

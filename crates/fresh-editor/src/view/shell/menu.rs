@@ -381,14 +381,21 @@ fn dropdown(
         // **The close guard, replaced by a property.** A click anywhere else
         // closes the menu and is spent doing so.
         //
-        // `Modality::None`, not `Exclusive`: the bar underneath must stay
-        // live, because clicking another label is how a user switches menus,
-        // and every platform does that in one press. Dismissal runs first and
-        // the label's own click follows, so the pair reads "close this, open
+        // `Modality::Keyboard`: an open menu owns every key — a printable one
+        // must not reach the buffer underneath and type into the document —
+        // while the bar underneath stays live to the pointer, because
+        // clicking another label is how a user switches menus and every
+        // platform does that in one press. Dismissal runs first and the
+        // label's own click follows, so the pair reads "close this, open
         // that" — which is why the label's handler carries the menu's
         // open-ness from build time rather than asking after the close.
+        //
+        // It read `Modality::None` while the library had one knob for both
+        // channels, and the cost was a whole input handler
+        // (`view::ui::menu_input`) whose only remaining job was to answer
+        // "consumed" for every key the menu had nothing to say about.
         l = l
-            .modality(Modality::None)
+            .modality(Modality::Keyboard)
             // Pointer only. Closing on a *key* is `Intent::Cancel`, handled in
             // `menu_intents` — one mechanism for every key that means "close",
             // not just for `Esc`.
@@ -1033,8 +1040,10 @@ mod input_tests {
     /// **The close guard, replaced by a property, without breaking the switch.**
     /// Clicking another label while a menu is open closes the first and opens
     /// the second from that one press — which is why the dropdown declares
-    /// `Modality::None` rather than `Exclusive`: an exclusive layer would make
-    /// the bar underneath inert and cost the user a click.
+    /// `Modality::Keyboard` rather than `Inert` or `Exclusive`: those take the
+    /// pointer away from what is behind them, which would make the bar inert
+    /// and cost the user a click. The keyboard is the only channel an open
+    /// menu wants.
     #[test]
     fn clicking_another_label_closes_one_menu_and_opens_the_other() {
         let mut ui = open_menu(Some(0));
@@ -1355,6 +1364,45 @@ mod intent_tests {
             press(&mut ui, KeyCode::Up, Mods::NONE).as_slice(),
             [UiMsg::Ui(UiFact::MenuNav(MenuNav::PrevItem))]
         ));
+    }
+
+    /// **An open menu owns the keys it declines**, which is what modal means
+    /// to a keyboard: a printable key must not reach the buffer underneath
+    /// and type into the document.
+    ///
+    /// This was a whole input handler (`view::ui::menu_input`) whose only
+    /// remaining job was to return "consumed" — it existed because
+    /// `Modality` was one knob for two channels, and the chain could not take
+    /// the keyboard without also taking the pointer from the bar it hangs
+    /// from. `Modality::Keyboard` says the one without the other, so the
+    /// claim is the layer's property and the handler is gone.
+    #[test]
+    fn an_open_menu_swallows_what_it_does_not_act_on() {
+        let mut ui = open(Vec::new());
+        let d = ui.dispatch(Input::Key(KeyPress::with(KeyCode::Char('x'), Mods::NONE)));
+        assert!(d.msgs.is_empty(), "nothing in the chain acts on it");
+        assert!(
+            d.claimed,
+            "and it stops here rather than typing into the buffer"
+        );
+    }
+
+    /// The other half: with no menu open the same key is nobody's, so the
+    /// editor's own pipeline gets it.
+    #[test]
+    fn a_closed_menu_claims_nothing() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                menu_bar: true,
+                ..Frame::default()
+            }),
+            Size::new(40, 10),
+        );
+        assert!(
+            !ui.dispatch(Input::Key(KeyPress::with(KeyCode::Char('x'), Mods::NONE)))
+                .claimed
+        );
     }
 
     /// **The bug this migration fixes.** A user binds `C-n` to `menu_down` in
