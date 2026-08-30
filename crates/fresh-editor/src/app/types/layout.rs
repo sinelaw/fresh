@@ -218,8 +218,6 @@ impl ChromeLayout {
 /// editor-chrome rects live on [`ChromeLayout`].
 #[derive(Debug, Clone, Default)]
 pub(crate) struct WindowLayoutCache {
-    /// File explorer area (if visible)
-    pub file_explorer_area: Option<Rect>,
     /// Where the body was **last painted**, excluding the file explorer.
     ///
     /// Distinct from `Window::editor_content_area()`, which computes the same

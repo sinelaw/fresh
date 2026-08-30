@@ -701,8 +701,19 @@ impl Editor {
     /// shell's own row nodes answer them — `viewport_rows[n]` and the tree's
     /// n-th row key are the same number by construction.
     pub fn file_explorer_view(&self) -> Option<FileExplorerView> {
-        let rect = self.active_layout().file_explorer_area?;
+        // **Derived, not recorded.** The sidebar's rectangle is
+        // `HostRegion::Explorer`'s, which is a keyed node — so this asks the
+        // tree rather than reading a copy the draw filed a frame ago. Presence
+        // is app state and stays app state: a hidden sidebar still has a
+        // rectangle, and it is `file_explorer_visible` that says it is not
+        // there.
+        if !self.file_explorer_visible() {
+            return None;
+        }
         let view = self.file_explorer()?;
+        let rect = self.panel_rect(&crate::view::shell::frame::region_key(
+            crate::view::shell::frame::HostRegion::Explorer,
+        ))?;
         let tree = view.tree();
         let rows = view
             .get_display_nodes()

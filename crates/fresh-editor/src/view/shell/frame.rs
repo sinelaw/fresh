@@ -182,6 +182,15 @@ pub struct Frame {
     /// The full-screen modal that has the pointer, if any. At most one: the
     /// capture band this replaces stopped at the first taker in rank order.
     pub modal: Option<super::modal::Slot>,
+    /// Whether the keybinding editor is open. Its *interior* is still a
+    /// painter's — a table with its own scrollbar and ten recorded
+    /// rectangles — so what the tree carries is the box those rectangles are
+    /// measured from, and the claim.
+    pub keybinding: bool,
+    /// The input calibration wizard. Unlike the other three modals its
+    /// *interior* is here too — it has no mouse and no recorded rectangles,
+    /// so there was nothing left behind the seam once the box moved.
+    pub calibration: Option<super::calibration::Calibration>,
     /// **Which window the window-owned half of this frame belongs to.**
     ///
     /// The editor is N independent workspaces and there is one retained tree,
@@ -226,6 +235,8 @@ impl Default for Frame {
             browser: None,
             trust: None,
             modal: None,
+            keybinding: false,
+            calibration: None,
             splits: None,
             window: None,
             panel: None,
@@ -479,6 +490,21 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // outranks every one of them and is the security gate that must.
     let frame = match f.modal {
         Some(slot) => frame.child(super::modal::layer(slot)),
+        None => frame,
+    };
+    // The keybinding editor's box, over the modal slot that routes its
+    // pointer — the same order and for the same reason as the floating panel
+    // below: the box is asked first, and the slot behind it catches whatever
+    // the box does not answer.
+    let frame = match f.keybinding {
+        true => frame.child(super::keybinding::layer()),
+        false => frame,
+    };
+    // The calibration wizard, over the modal slot it shares a rank with. It
+    // brings its own exclusivity and its own scrim, so the slot beneath it
+    // contributes nothing but the routing the applier no longer needs.
+    let frame = match &f.calibration {
+        Some(c) => frame.child(super::calibration::sized(c)),
         None => frame,
     };
     // The floating plugin panel's frame, over the modal slot that routes its
