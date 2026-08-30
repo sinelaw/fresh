@@ -151,7 +151,7 @@ pub struct List<M> {
     bar_theme: Option<String>,
     #[allow(clippy::type_complexity)]
     row_theme: Option<Rc<dyn Fn(usize, RowState) -> String>>,
-    row_rows: crate::desc::ItemRows,
+    row_rows: u16,
 }
 
 impl<M: 'static> List<M> {
@@ -195,7 +195,7 @@ impl<M: 'static> List<M> {
             stable_gutter: false,
             bar_theme: None,
             row_theme: None,
-            row_rows: crate::desc::ItemRows::default(),
+            row_rows: 1,
         }
     }
 
@@ -283,18 +283,17 @@ impl<M: 'static> List<M> {
         self
     }
 
-    /// How many cells each row occupies. One by default, which is what a list
-    /// of lines is; a card list says more. See [`crate::desc::ItemRows`].
+    /// How many cells one row occupies. One by default, which is what a list
+    /// of lines is.
+    ///
+    /// **Uniform, and that is the point.** A card list — each item a little
+    /// block rather than a line — is still addressable by index: the window
+    /// knows which items it holds without measuring any of them, which is what
+    /// keeps a window onto a million of them possible. Rows that each decide
+    /// their own height are a different widget and would need a different
+    /// answer.
     pub fn row_rows(mut self, cells: u16) -> Self {
-        self.row_rows = crate::desc::ItemRows::Uniform(cells.max(1));
-        self
-    }
-
-    /// One height per row, for a list whose rows differ in kind — a tree of
-    /// folder headers one row tall and cards several. See
-    /// [`crate::desc::ItemRows::Each`].
-    pub fn row_rows_each(mut self, cells: impl Into<Rc<[u16]>>) -> Self {
-        self.row_rows = crate::desc::ItemRows::Each(cells.into());
+        self.row_rows = cells.max(1);
         self
     }
 }
@@ -398,7 +397,7 @@ impl<M: 'static> Component<M> for List<M> {
 
         // The window comes from the viewport, which owns it. This component
         // decides only which rows fill it.
-        let row_rows = self.row_rows.clone();
+        let row_rows = self.row_rows;
         let reader = layout_reader(move |info| {
             let win = info.scroll_window.unwrap_or_default();
             let visible = (win.h as usize).max(1);
@@ -423,7 +422,7 @@ impl<M: 'static> Component<M> for List<M> {
                     Some(f) => f(i, state),
                     None => state.theme().to_string(),
                 };
-                let content = row.key(k).theme(theme).h(Sizing::Cells(row_rows.at(i)));
+                let content = row.key(k).theme(theme).h(Sizing::Cells(row_rows));
                 let g = gesture(content).on_enter(hover(i)).on_leave(hover(i));
                 match &click {
                     Some(mk) => g.on(GestureKind::Click, mk(i)),
@@ -432,9 +431,7 @@ impl<M: 'static> Component<M> for List<M> {
             }))
         });
 
-        let mut body = viewport(reader)
-            .items(n as u32)
-            .item_rows(self.row_rows.clone());
+        let mut body = viewport(reader).items(n as u32).item_rows(row_rows);
         if let Some(a) = anchor.clone() {
             body = body.anchor_to(a);
         }
