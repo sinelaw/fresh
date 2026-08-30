@@ -2303,7 +2303,26 @@ const FRONT_MATTER_FENCE = /^(?:---|\+\+\+)\s*$/;
  * guess. */
 function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
   const out: Array<boolean | null> = [];
-  let inFence: boolean | null = null;
+  // A batch showing no sign of a fence anywhere starts outside one.
+  //
+  // Without this the fenced state is unknowable for most batches of a document
+  // that has no fences at all: the seeds are the buffer's first line, a line
+  // the engine placed in a region, and a delimiter carrying an info string, and
+  // such a document offers none of them below line 0. Every line then came back
+  // `null`, and the heading marks — which stand down on `null` rather than
+  // guess — stopped republishing below the first screen: a heading typed
+  // mid-document never got a mark, and one that stopped being a heading kept a
+  // stale one, since only the pre-scan could correct it and it re-runs on
+  // backtick edits alone.
+  //
+  // Evidence of a fence is a delimiter line or a line the engine gave a region,
+  // both of which the tracking below already handles. Their complete absence is
+  // what is being read as "no fence is in play here", and it is the same
+  // reading the pre-scan makes of the whole document.
+  const noFenceInSight = !lines.some(
+    (line) => isCodeRegion(line.region) || looksLikeFence(lineText(line)),
+  );
+  let inFence: boolean | null = noFenceInSight ? false : null;
   let fenceChar = "";
   let inHtml = false;
   let inIndentedCode = false;
@@ -2317,7 +2336,7 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
     // A gap in the batch loses the state: the lines in between could have
     // opened or closed any of these.
     if (line.line_number !== prevLineNumber + 1) {
-      inFence = null;
+      inFence = noFenceInSight ? false : null;
       inHtml = false;
       inIndentedCode = false;
       inFrontMatter = false;
