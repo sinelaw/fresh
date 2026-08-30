@@ -355,6 +355,147 @@ pub fn wrap_runs(runs: &[crate::desc::Run], width: u16, wrap: Wrap) -> Vec<Vec<F
     out
 }
 
+/// Lay children out along the main axis, breaking onto a new line whenever the
+/// next child would not fit.
+///
+/// CSS calls this `flex-wrap: wrap`, and the shape is the same: children are
+/// never split — a break happens at a child boundary — so a group that must
+/// stay together is a nested non-wrapping box. A child wider than the whole
+/// container gets a line to itself and overflows it, which is the honest
+/// answer: the alternative is silently shrinking something that said how wide
+/// it was.
+///
+/// **`Flex` on the main axis is treated as `Auto` here**, deliberately. A
+/// flexible child absorbs the remainder of its line, so one of them makes
+/// every line the full width and there is nothing left to wrap; the two
+/// features answer opposite questions ("fill the row" and "let the row become
+/// as many rows as it needs") and a container that tried to honour both would
+/// silently do neither. Cross-axis sizing is unaffected.
+fn wrap_in(
+    c: Constraints,
+    cx: &mut dyn LayoutCx,
+    dir: Dir,
+    align: Align,
+    gap: u16,
+    inset: Point,
+) -> Size {
+    let kids = cx.children();
+    let n = kids.len();
+    let avail = main_of(dir, c.max());
+    let cross_extent = cross_of(dir, c.max());
+
+    // Every child at its natural main extent. Nothing here depends on which
+    // line a child lands on, so this is one pass — the lines are decided from
+    // the answers.
+    let mut mains = vec![0u16; n];
+    let mut crosses = vec![0u16; n];
+    for i in 0..n {
+        let (sw, sh) = cx.sizing(kids[i]);
+        let (s_main, s_cross) = match dir {
+            Dir::Row => (sw, sh),
+            Dir::Col => (sh, sw),
+        };
+        let floor = main_floor(dir, cx.floor(kids[i]));
+        let main = match s_main {
+            Sizing::Cells(v) => (v.min(avail), v.min(avail)),
+            Sizing::Pct(p) => {
+                let v = pct(avail, p);
+                (v, v)
+            }
+            // See above: flexible means "as big as it needs" in a wrapping box.
+            Sizing::Auto | Sizing::Flex(_) => (0, avail),
+        };
+        let main = (main.0.max(floor), main.1.max(floor));
+        // The cross axis is never definite per-child here: a line's extent is
+        // not known until the line is full, so a child that wants to fill it
+        // is stretched afterwards rather than measured against a guess.
+        let cross = range(s_cross, cross_extent, false, Align::Start);
+        let s = cx.measure(kids[i], axes(dir, main, cross));
+        mains[i] = main_of(dir, s);
+        crosses[i] = cross_of(dir, s);
+    }
+
+    // Greedy fill. `used` is the line's main extent including the gaps already
+    // spent inside it, so the fit test is the same arithmetic as the placement.
+    let mut lines: Vec<(usize, usize)> = Vec::new(); // [start, end)
+    let mut start = 0usize;
+    let mut used = 0u16;
+    for i in 0..n {
+        let with_gap = match i == start {
+            true => mains[i],
+            false => mains[i].saturating_add(gap),
+        };
+        if i > start && used.saturating_add(with_gap) > avail {
+            lines.push((start, i));
+            start = i;
+            used = mains[i];
+        } else {
+            used = used.saturating_add(with_gap);
+        }
+    }
+    if start < n {
+        lines.push((start, n));
+    }
+
+    let line_cross: Vec<u16> = lines
+        .iter()
+        .map(|&(a, b)| crosses[a..b].iter().copied().max().unwrap_or(0))
+        .collect();
+    let content_main = lines
+        .iter()
+        .map(|&(a, b)| {
+            let sum = mains[a..b].iter().fold(0u16, |x, y| x.saturating_add(*y));
+            sum.saturating_add(gap.saturating_mul((b - a).saturating_sub(1) as u16))
+        })
+        .max()
+        .unwrap_or(0);
+    let content_cross = line_cross
+        .iter()
+        .fold(0u16, |x, y| x.saturating_add(*y))
+        .saturating_add(gap.saturating_mul(lines.len().saturating_sub(1) as u16));
+
+    // A child that asked to fill its line's cross extent is measured again now
+    // that the line is full — the same second pass the non-wrapping path makes
+    // when the cross extent was not known in advance, per line instead of per
+    // container.
+    if align == Align::Stretch {
+        for (li, &(a, b)) in lines.iter().enumerate() {
+            for i in a..b {
+                let (sw, sh) = cx.sizing(kids[i]);
+                let s_cross = match dir {
+                    Dir::Row => sh,
+                    Dir::Col => sw,
+                };
+                if s_cross == Sizing::Auto && crosses[i] != line_cross[li] {
+                    let s = cx.measure(
+                        kids[i],
+                        axes(dir, (mains[i], mains[i]), (line_cross[li], line_cross[li])),
+                    );
+                    mains[i] = main_of(dir, s);
+                    crosses[i] = cross_of(dir, s);
+                }
+            }
+        }
+    }
+
+    let mut cross_at = 0u16;
+    for (li, &(a, b)) in lines.iter().enumerate() {
+        let mut main_at = 0u16;
+        for i in a..b {
+            let at = point_of(
+                dir,
+                main_at as i32,
+                cross_at as i32 + align_offset(align, line_cross[li], crosses[i]),
+            );
+            cx.place(kids[i], Point::new(at.x + inset.x, at.y + inset.y));
+            main_at = main_at.saturating_add(mains[i]).saturating_add(gap);
+        }
+        cross_at = cross_at.saturating_add(line_cross[li]).saturating_add(gap);
+    }
+
+    c.constrain(size_of(dir, content_main, content_cross))
+}
+
 /// Lay children out one on top of another, each honouring its own size
 /// request. What a node with no layout of its own does.
 fn stack_in(c: Constraints, cx: &mut dyn LayoutCx, align: Align, inset: Point) -> Size {
@@ -420,6 +561,21 @@ impl RenderObject for BoxRender {
 
         if p.stack {
             let content = stack_in(inner, cx, p.align, Point::new(ins_x as i32, ins_y as i32));
+            return c.constrain(Size::new(
+                content.w.saturating_add(2 * ins_x),
+                content.h.saturating_add(2 * ins_y),
+            ));
+        }
+
+        if p.wrap {
+            let content = wrap_in(
+                inner,
+                cx,
+                p.dir,
+                p.align,
+                p.gap,
+                Point::new(ins_x as i32, ins_y as i32),
+            );
             return c.constrain(Size::new(
                 content.w.saturating_add(2 * ins_x),
                 content.h.saturating_add(2 * ins_y),

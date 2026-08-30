@@ -196,6 +196,9 @@ pub struct BoxProps {
     /// [`border`](Node::border) turns it on, because a frame its own content
     /// can paint over is not a frame.
     pub clip: bool,
+    /// Break onto a new line when the next child would not fit, instead of
+    /// letting the row overflow. See [`Node::wrap_children`].
+    pub wrap: bool,
 }
 
 /// How a run gives up cells it was not given.
@@ -1201,6 +1204,29 @@ impl<M> Node<M> {
         let p = self.box_props();
         p.border = true;
         p.clip = true;
+        self
+    }
+
+    /// Break onto a new line when the next child would not fit.
+    ///
+    /// CSS calls this `flex-wrap: wrap`, and the shape is the same: children
+    /// are never split — a break happens at a child boundary — so a group that
+    /// must stay together is a nested non-wrapping box. A child wider than the
+    /// whole container gets a line to itself and overflows it, which is the
+    /// honest answer; the alternative is silently shrinking something that
+    /// said how wide it was.
+    ///
+    /// **`Flex` on the main axis is treated as `Auto` in a wrapping box.** A
+    /// flexible child absorbs the remainder of its line, so one of them makes
+    /// every line the full width and there is nothing left to wrap. The two
+    /// features answer opposite questions — "fill the row" and "let the row
+    /// become as many rows as it needs" — and a container honouring both would
+    /// silently do neither.
+    ///
+    /// No effect on a [`stack`](crate::stack), whose children all get the
+    /// whole rect.
+    pub fn wrap_children(mut self) -> Self {
+        self.box_props().wrap = true;
         self
     }
 
