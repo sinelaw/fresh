@@ -33,6 +33,7 @@ pub mod splits;
 pub mod status_bar;
 pub mod theme_info;
 pub mod trust;
+pub mod widgets;
 
 // ── layout read-back ────────────────────────────────────────────────────────
 

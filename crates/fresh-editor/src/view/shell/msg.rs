@@ -35,6 +35,19 @@ pub enum UiMsg {
 /// comparable, and tests compare facts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiFact {
+    /// A press landed on a plugin widget, carrying the widget's own hit.
+    ///
+    /// **What replaces the byte-range scan.** The runtime recorded a
+    /// `HitArea` per interactive range and resolved a click by walking those
+    /// ranges against a row and a byte offset; the tree hit-tests a rectangle
+    /// it laid out and the node hands over the hit it was built with. The
+    /// dispatch behind it — `deliver_widget_hit`, which all three frontends
+    /// share — is unchanged, so the byte range stops being a hit-test and
+    /// becomes what it always was: a payload.
+    WidgetHit {
+        slot: super::widgets::Slot,
+        hit: crate::widgets::HitArea,
+    },
     /// The floating plugin panel's `[×]` was pressed.
     ///
     /// It dismisses exactly as Esc and Cancel do, firing the panel's `cancel`

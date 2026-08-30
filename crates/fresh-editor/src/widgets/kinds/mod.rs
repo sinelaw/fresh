@@ -331,3 +331,5 @@ pub(crate) fn behavior(spec: &WidgetSpec) -> &'static dyn WidgetImpl {
         WidgetSpec::Popup { .. } => &popup::Popup,
     }
 }
+
+pub use tree::collect_visible_tree_indices;

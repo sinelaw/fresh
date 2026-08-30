@@ -26,14 +26,17 @@ pub use actions::{
     set_toggle_checked_in_spec, set_tree_checked_keys_in_spec, set_tree_nodes_in_spec,
     tree_parent_index,
 };
+pub use kinds::collect_visible_tree_indices;
 pub use layout_box::LayoutBox;
 pub use registry::{
     HitArea, PanelId, PanelKey, WidgetInstanceState, WidgetPanelState, WidgetRegistry,
 };
 pub use render::{
-    clamp_number, dual_available_values, dual_label, dual_sanitize_included, format_number_value,
-    render_dropdown, render_number, render_spec, render_spec_no_autofocus, render_spec_with_marker,
-    render_spec_with_options, wrap_index, EmbedRect, FocusCursor, MarkdownCtx, OverlayRow,
-    PanelPopup, RenderContext, RenderOptions, RenderOutput, DROPDOWN_VISIBLE_OPTIONS,
+    apply_hover_band, clamp_number, dual_available_values, dual_label, dual_sanitize_included,
+    fill_button_label, format_number_value, render_bare_button, render_button, render_dropdown,
+    render_hint_bar, render_number, render_spec, render_spec_no_autofocus, render_spec_with_marker,
+    render_spec_with_options, render_toggle, render_toggle_form, render_tree_row, wrap_index,
+    EmbedRect, FocusCursor, MarkdownCtx, NumberEdit, OverlayRow, PanelPopup, RenderContext,
+    RenderOptions, RenderOutput, RenderedTreeRow, DROPDOWN_VISIBLE_OPTIONS,
 };
 pub use text_click::{row_byte_to_value_byte, WidgetTextClickGeometry};
