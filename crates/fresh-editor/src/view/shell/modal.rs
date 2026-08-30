@@ -1,7 +1,7 @@
-//! The full-screen modals: Settings, the keybinding editor, and the floating
-//! plugin panel.
+//! The full-screen modals: Settings and the floating plugin panel.
 //!
-//! The calibration wizard was here and is not any more — its interior had no
+//! The calibration wizard and the keybinding editor were here and are not any
+//! more — its interior had no
 //! mouse and no recorded rectangles, so once its box became a description
 //! there was nothing left behind the seam and it carries its own exclusivity
 //! (`view::shell::calibration`). That is what each of the remaining three is
@@ -39,7 +39,6 @@ use super::msg::{UiFact, UiMsg};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
     Settings,
-    KeybindingEditor,
     FloatingPanel,
 }
 

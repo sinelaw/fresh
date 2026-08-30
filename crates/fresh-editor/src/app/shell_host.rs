@@ -1390,6 +1390,174 @@ impl Editor {
             // itself in rank order and stopped at the first taker — and what
             // the event means is the modal's, because its controls are
             // rectangles its own painter recorded.
+            // **The editor's dialogs answer for themselves.** Five of the ten
+            // rectangles its painter recorded were these three boxes' fields
+            // and buttons, and the mouse arm behind them was a chain of
+            // `point_in_rect` against each. What is left here is what the
+            // press *meant*, which was always the editor's own business.
+            // A row of the editor's table. Selecting is the whole of it, and
+            // a section heading toggles as well — which is what the arm did
+            // once it had worked out which row was under the cell.
+            UiFact::KeybindingRow(i) => {
+                if let Some(e) = self.keybinding_editor.as_mut() {
+                    if i < e.display_rows.len() {
+                        e.selected = i;
+                        if e.selected_is_section_header() {
+                            e.toggle_section_at_selected();
+                        }
+                    }
+                }
+            }
+            // **The settings dialogs' buttons.** The arm behind them recomputed
+            // the painter's layout to find which one a cell was on, with the
+            // comment "must match `render_confirm_dialog`" beside the copy.
+            // Now the button is a node and this is only what it means.
+            UiFact::SettingsDialog(t) => {
+                use crate::view::shell::settings::Target;
+                match t {
+                    Target::Confirm(0) => self.save_settings_and_close(),
+                    Target::Confirm(1) => self.discard_settings_and_close(),
+                    Target::Confirm(_) => {
+                        if let Some(s) = self.settings_state.as_mut() {
+                            s.showing_confirm_dialog = false;
+                        }
+                    }
+                    // The reset prompt's two, which the keyboard's `Enter` arm
+                    // spells the same way.
+                    Target::Reset(0) => {
+                        if let Some(s) = self.settings_state.as_mut() {
+                            s.discard_changes();
+                            s.showing_reset_dialog = false;
+                        }
+                    }
+                    Target::Reset(_) => {
+                        if let Some(s) = self.settings_state.as_mut() {
+                            s.showing_reset_dialog = false;
+                        }
+                    }
+                    // An entry dialog's two prompts, spelled the way their
+                    // `Enter` arms are. Both had no mouse at all before this.
+                    Target::EntryDiscard(i) => {
+                        if let Some(s) = self.settings_state.as_mut() {
+                            s.showing_entry_discard_confirm = false;
+                            if i == 1 {
+                                s.close_entry_dialog();
+                            }
+                        }
+                    }
+                    Target::EntryDelete(i) => {
+                        if let Some(s) = self.settings_state.as_mut() {
+                            s.showing_entry_delete_confirm = false;
+                            if i == 1 {
+                                s.delete_entry_dialog();
+                            }
+                        }
+                    }
+                }
+            }
+            UiFact::SettingsDialogHover(t) => {
+                use crate::view::shell::settings::Target;
+                if let Some(s) = self.settings_state.as_mut() {
+                    s.confirm_dialog_hover = match t {
+                        Some(Target::Confirm(i)) => Some(i),
+                        _ => None,
+                    };
+                    s.reset_dialog_hover = match t {
+                        Some(Target::Reset(i)) => Some(i),
+                        _ => None,
+                    };
+                }
+            }
+            // **The footer's five buttons.** Each was a rectangle the painter
+            // filed and `SettingsLayout::hit_test` compared a cell against.
+            UiFact::SettingsButton(b) => {
+                use crate::view::shell::settings::Button;
+                match b {
+                    Button::Layer => {
+                        if let Some(s) = self.settings_state.as_mut() {
+                            s.cycle_target_layer();
+                        }
+                    }
+                    Button::Save => self.close_settings(true),
+                    Button::Cancel => {
+                        if let Some(s) = self.settings_state.as_mut() {
+                            match s.has_changes() {
+                                true => {
+                                    s.showing_confirm_dialog = true;
+                                    s.confirm_dialog_selection = 0;
+                                }
+                                false => s.visible = false,
+                            }
+                        }
+                    }
+                    Button::Reset => {
+                        if let Some(s) = self.settings_state.as_mut() {
+                            s.reset_current_to_default();
+                        }
+                    }
+                    Button::Edit => {
+                        if let Some(layer) = self.settings_state.as_ref().map(|s| s.target_layer) {
+                            // Best-effort: the file may not exist yet.
+                            #[allow(clippy::let_underscore_must_use)]
+                            let _ = self.open_config_file(layer);
+                        }
+                    }
+                }
+            }
+            UiFact::SettingsButtonHover(b) => {
+                use crate::view::settings::layout::SettingsHit;
+                use crate::view::shell::settings::Button;
+                if let Some(s) = self.settings_state.as_mut() {
+                    s.hover_hit = b.map(|b| match b {
+                        Button::Layer => SettingsHit::LayerButton,
+                        Button::Reset => SettingsHit::ResetButton,
+                        Button::Save => SettingsHit::SaveButton,
+                        Button::Cancel => SettingsHit::CancelButton,
+                        Button::Edit => SettingsHit::EditButton,
+                    });
+                }
+            }
+            UiFact::KeybindingSearch => {
+                if let Some(e) = self.keybinding_editor.as_mut() {
+                    e.start_search();
+                }
+            }
+            UiFact::KeybindingDialog(t) => {
+                use crate::view::shell::keybinding::Target;
+                let Some(mut e) = self.keybinding_editor.take() else {
+                    return;
+                };
+                match t {
+                    Target::KeyField | Target::ActionField | Target::ContextField => {
+                        use crate::app::keybinding_editor::EditMode;
+                        if let Some(d) = e.edit_dialog.as_mut() {
+                            let (area, mode) = match t {
+                                Target::KeyField => (0, EditMode::RecordingKey),
+                                Target::ActionField => (1, EditMode::EditingAction),
+                                _ => (2, EditMode::EditingContext),
+                            };
+                            d.focus_area = area;
+                            d.mode = mode;
+                        }
+                    }
+                    Target::Save => {
+                        if let Some(err) = e.apply_edit_dialog() {
+                            self.set_status_message(err);
+                        }
+                    }
+                    Target::Cancel => e.edit_dialog = None,
+                    Target::ConfirmSave => {
+                        self.save_keybinding_editor_changes(&e);
+                        return;
+                    }
+                    Target::ConfirmDiscard => {
+                        self.set_status_message("Keybinding editor closed".to_string());
+                        return;
+                    }
+                    Target::ConfirmCancel => e.showing_confirm_dialog = false,
+                }
+                self.keybinding_editor = Some(e);
+            }
             UiFact::ModalPointer(slot) => {
                 use crate::view::shell::modal::Slot;
                 let Some((ev, double)) = self.shell_pointer_event else {
@@ -1397,7 +1565,6 @@ impl Editor {
                 };
                 let r = match slot {
                     Slot::Settings => self.handle_settings_mouse(ev, double),
-                    Slot::KeybindingEditor => self.handle_keybinding_editor_mouse(ev),
                     Slot::FloatingPanel => self.handle_floating_modal_mouse(ev),
                 };
                 if let Err(e) = r {
