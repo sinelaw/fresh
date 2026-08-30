@@ -38,6 +38,19 @@ pub fn mods(m: KeyModifiers) -> Mods {
     }
 }
 
+/// The other direction, for a fact that carries the modifiers a press had.
+///
+/// The tree reports them on the `Event`, and the handlers behind a fact are
+/// crossterm's. One conversion, so a Ctrl+click means the same thing whether
+/// it arrived through the tree or through the walk below it.
+pub fn crossterm_mods(m: Mods) -> KeyModifiers {
+    let mut out = KeyModifiers::empty();
+    out.set(KeyModifiers::CONTROL, m.ctrl);
+    out.set(KeyModifiers::ALT, m.alt);
+    out.set(KeyModifiers::SHIFT, m.shift);
+    out
+}
+
 /// A key the tree understands, or `None` for one it has no vocabulary for.
 ///
 /// `None` is not a failure: the key simply stays on the existing path.

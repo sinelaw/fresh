@@ -146,6 +146,11 @@ pub enum UiFact {
         x: u16,
         y: u16,
         clicks: u8,
+        /// Which modifiers were down. A Ctrl+click adds a cursor and an
+        /// Alt+click starts a column selection, and the press carries that
+        /// the way it carries `clicks` — rather than the applier reading it
+        /// off the crossterm event parked on the editor.
+        mods: fresh_ui::Mods,
     },
 
     // -- a pane's scrollbars, and its wheel -----------------------------------

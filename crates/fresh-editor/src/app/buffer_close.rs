@@ -1195,8 +1195,10 @@ impl Editor {
         // from the left. Wraparound still follows the user's intent
         // (Next wraps right, Prev wraps left) so the animation
         // direction matches the keystroke rather than the idx delta.
-        self.active_window_mut()
-            .animate_tab_switch(active_split, direction.signum());
+        if let Some(area) = self.pane_or_group_content_rect(active_split) {
+            self.active_window_mut()
+                .animate_tab_switch(area, direction.signum());
+        }
 
         match targets[next_idx] {
             TabTarget::Buffer(buffer_id) => {

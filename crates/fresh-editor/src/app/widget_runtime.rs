@@ -813,11 +813,8 @@ impl Editor {
     /// `None` when it wasn't painted into a split at all (hidden panel,
     /// a group slot pointing at some other buffer).
     fn painted_panel_height(&self, buffer_id: BufferId) -> Option<u32> {
-        self.active_layout()
-            .split_areas
-            .iter()
-            .find(|(_, id, _, _, _, _)| *id == buffer_id)
-            .map(|(_, _, content_rect, _, _, _)| content_rect.height as u32)
+        self.pane_content_rect_for_buffer(buffer_id)
+            .map(|content_rect| content_rect.height as u32)
             .filter(|h| *h > 0)
     }
 
@@ -2299,11 +2296,7 @@ impl Editor {
         &self,
         buffer_id: BufferId,
     ) -> Option<ratatui::layout::Rect> {
-        self.active_layout()
-            .split_areas
-            .iter()
-            .find(|(_, bid, _, _, _, _)| *bid == buffer_id)
-            .map(|(_, _, content_rect, _, _, _)| *content_rect)
+        self.pane_content_rect_for_buffer(buffer_id)
     }
 }
 
@@ -2456,13 +2449,7 @@ impl Editor {
         else {
             return;
         };
-        let Some(rect) = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(_, bid, ..)| *bid == buffer_id)
-            .map(|(_, _, rect, ..)| *rect)
-        else {
+        let Some(rect) = self.pane_content_rect_for_buffer(buffer_id) else {
             return;
         };
         let (top_line, gutter) = self

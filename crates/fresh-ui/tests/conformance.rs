@@ -818,6 +818,49 @@ fn a_keyboard_modal_layer_keeps_focus_traversal_inside_itself() {
     }
 }
 
+/// **Landing where you started is not a move**, so it does not claim the key.
+///
+/// Reading order wraps, so a scope holding one focusable answers every
+/// direction with that same element — and a "move" that reports true stops
+/// the key at `default_for_intent`, in front of the layer's own `Dismiss`.
+/// One focusable in one dismissing layer is the editor's completion popup,
+/// where it meant Left, Right and Shift+Tab did nothing at all instead of
+/// closing it.
+#[test]
+fn a_traversal_that_lands_where_it_started_does_not_claim_the_key() {
+    let mk = || -> Node<()> {
+        col().child(
+            layer()
+                .modality(Modality::Keyboard)
+                .dismiss(
+                    fresh_ui::Dismiss {
+                        any_key: true,
+                        ..fresh_ui::Dismiss::default()
+                    }
+                    .passing_through(),
+                )
+                .child(focusable(text("the only one")).autofocus()),
+        )
+    };
+    for code in [
+        KeyCode::Tab,
+        KeyCode::BackTab,
+        KeyCode::Left,
+        KeyCode::Right,
+    ] {
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(mk(), FRAME);
+        assert!(
+            !ui.dispatch(Input::Key(KeyPress {
+                code,
+                mods: Mods::NONE,
+            }))
+            .claimed,
+            "{code:?} was spent moving focus to where it already was"
+        );
+    }
+}
+
 /// The other half of the same rule: without modality an unclaimed key falls
 /// through, and the host behind the tree is told so.
 #[test]

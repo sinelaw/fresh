@@ -1303,8 +1303,15 @@ impl Editor {
             UiFact::PaneTabsPan { pane, delta } => {
                 self.active_window_mut().scroll_tab_strip(pane, delta);
             }
-            UiFact::PaneContentPress { pane, x, y, clicks } => {
-                if let Err(e) = self.press_pane_content(pane, x, y, clicks) {
+            UiFact::PaneContentPress {
+                pane,
+                x,
+                y,
+                clicks,
+                mods,
+            } => {
+                let mods = crate::view::shell::input::crossterm_mods(mods);
+                if let Err(e) = self.press_pane_content(pane, x, y, clicks, mods) {
                     tracing::warn!("pane content click failed: {e}");
                 }
             }

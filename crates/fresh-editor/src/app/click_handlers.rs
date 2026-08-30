@@ -31,109 +31,110 @@ impl Editor {
         col: u16,
         row: u16,
     ) -> Option<(BufferId, usize)> {
-        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.active_layout().split_areas
+        // Which pane covers the cell, and where its content is — one
+        // question the shell answers from the tree, rather than a scan of
+        // the painter's record repeating the containment test by hand.
+        let Some((split_id, content_rect)) = self.pane_content_at(col, row) else {
+            return None;
+        };
+        let Some(buffer_id) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.pane_buffer(split_id))
+        else {
+            return None;
+        };
+        let (split_id, buffer_id, content_rect) = (&split_id, &buffer_id, &content_rect);
+        // Neither a terminal grid nor a composite view has fold gutters.
+        if self.active_window().is_terminal_buffer(*buffer_id)
+            || self.active_window().is_composite_buffer(*buffer_id)
         {
-            if col < content_rect.x
-                || col >= content_rect.x + content_rect.width
-                || row < content_rect.y
-                || row >= content_rect.y + content_rect.height
-            {
-                continue;
-            }
+            return None;
+        }
 
-            if self.active_window().is_terminal_buffer(*buffer_id)
-                || self.active_window().is_composite_buffer(*buffer_id)
-            {
-                continue;
-            }
-
-            let (gutter_width, collapsed_header_bytes) = {
-                let state = self
-                    .windows
-                    .get(&self.active_window)
-                    .map(|w| &w.buffers)
-                    .expect("active window present")
-                    .get(buffer_id)?;
-                let headers = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(split_id)
-                    .map(|vs| {
-                        vs.folds
-                            .collapsed_header_bytes(&state.buffer, &state.marker_list)
-                    })
-                    .unwrap_or_default();
-                (state.margins.left_total_width() as u16, headers)
-            };
-
-            let cached_mappings = self
-                .active_layout()
-                .view_line_mappings
-                .get(split_id)
-                .cloned();
-            let fallback = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(split_id)
-                .map(|vs| vs.viewport.top_byte())
-                .unwrap_or(0);
-            let compose_width = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(split_id)
-                .and_then(|vs| vs.compose_width);
-
-            let target_position = super::click_geometry::screen_to_buffer_position(
-                col,
-                row,
-                *content_rect,
-                gutter_width,
-                &cached_mappings,
-                fallback,
-                true,
-                compose_width,
-            )?;
-
-            let adjusted_rect = super::click_geometry::adjust_content_rect_for_compose(
-                *content_rect,
-                compose_width,
-            );
-            let content_col = col.saturating_sub(adjusted_rect.x);
+        let (gutter_width, collapsed_header_bytes) = {
             let state = self
                 .windows
                 .get(&self.active_window)
                 .map(|w| &w.buffers)
                 .expect("active window present")
                 .get(buffer_id)?;
-            let fold_indicators_visible = self
+            let headers = self
                 .windows
                 .get(&self.active_window)
                 .and_then(|w| w.buffers.splits())
                 .map(|(_, vs)| vs)
                 .expect("active window must have a populated split layout")
                 .get(split_id)
-                .map(|vs| vs.fold_indicators_visible())
-                .unwrap_or(true);
-            if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
-                state,
-                &collapsed_header_bytes,
-                target_position,
-                content_col,
-                gutter_width,
-                fold_indicators_visible,
-            ) {
-                return Some((*buffer_id, byte_pos));
-            }
+                .map(|vs| {
+                    vs.folds
+                        .collapsed_header_bytes(&state.buffer, &state.marker_list)
+                })
+                .unwrap_or_default();
+            (state.margins.left_total_width() as u16, headers)
+        };
+
+        let cached_mappings = self
+            .active_layout()
+            .view_line_mappings
+            .get(split_id)
+            .cloned();
+        let fallback = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(split_id)
+            .map(|vs| vs.viewport.top_byte())
+            .unwrap_or(0);
+        let compose_width = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(split_id)
+            .and_then(|vs| vs.compose_width);
+
+        let target_position = super::click_geometry::screen_to_buffer_position(
+            col,
+            row,
+            *content_rect,
+            gutter_width,
+            &cached_mappings,
+            fallback,
+            true,
+            compose_width,
+        )?;
+
+        let adjusted_rect =
+            super::click_geometry::adjust_content_rect_for_compose(*content_rect, compose_width);
+        let content_col = col.saturating_sub(adjusted_rect.x);
+        let state = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(buffer_id)?;
+        let fold_indicators_visible = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(split_id)
+            .map(|vs| vs.fold_indicators_visible())
+            .unwrap_or(true);
+        if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
+            state,
+            &collapsed_header_bytes,
+            target_position,
+            content_col,
+            gutter_width,
+            fold_indicators_visible,
+        ) {
+            return Some((*buffer_id, byte_pos));
         }
 
         None

@@ -172,31 +172,15 @@ pub fn layer(d: &Dialog) -> Node<UiMsg> {
                     .w(Sizing::Cells(w))
                     .h(Sizing::Cells(h))
                     .key(key(d.level))
-                    .children([boxed, title_strip(&d.title, ring_fg)])
+                    .children([
+                        boxed,
+                        super::modal::title_strip(
+                            d.title.clone(),
+                            attrs(ring_fg, "ui.popup_bg", &["bold"]),
+                        ),
+                    ])
             }),
         ))
-}
-
-/// The title, in the top border where `Block::title` drew it.
-///
-/// **It is an overlay, not a row.** `Draw::Border` says "a ring around this
-/// rectangle" and carries no caption, and a caption is not a ring: it is text
-/// that happens to sit on one of its cells. So the box and the strip are two
-/// children of a stack, exactly as the floating panel's frame does it — and
-/// the strip is *one row tall*, because a taller transparent node still
-/// produces a path over the whole interior and offers it before the
-/// interior's own.
-fn title_strip(title: &str, ring_fg: &str) -> Node<UiMsg> {
-    let clear = |n: Node<UiMsg>| n.pointer_mode(PointerMode::Transparent);
-    row()
-        .h(Sizing::Cells(1))
-        .pointer_mode(PointerMode::Transparent)
-        .children([
-            // `Block::title` starts one cell in from the corner.
-            clear(row().w(Sizing::Cells(1))),
-            clear(text(title.to_string()).theme(attrs(ring_fg, "ui.popup_bg", &["bold"]))),
-            clear(row().flex(1)),
-        ])
 }
 
 /// Everything inside the border: the fields in their window, then the three

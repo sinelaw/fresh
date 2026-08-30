@@ -216,10 +216,6 @@ pub fn layer(c: &Chrome, t: Option<&Table>) -> Node<UiMsg> {
                     None => claim().flex(1),
                 };
                 let inner = col().theme(ring()).border().children([
-                    line(
-                        format!(" {} ", c.title),
-                        attrs("ui.popup_border_fg", "ui.popup_bg", &["bold"]),
-                    ),
                     col().h(Sizing::Cells(3)).children([
                         row().h(Sizing::Cells(1)).children(spans(&c.path)),
                         search_row(&c.search),
@@ -233,7 +229,18 @@ pub fn layer(c: &Chrome, t: Option<&Table>) -> Node<UiMsg> {
                 // that mean something stop the flow before it reaches here. The
                 // size and the key go on the outside, or the box would be a
                 // full-bounds wrapper with a small child parked in its corner.
-                swallow(inner)
+                // The title rides the top border, as `Block::title` drew it
+                // — not a row of its own, which would take a row from the
+                // table and put its scrollbar track one row below where every
+                // caller computes it.
+                let titled = fresh_ui::stack().children([
+                    inner,
+                    super::modal::title_strip(
+                        format!(" {} ", c.title),
+                        attrs("ui.popup_border_fg", "ui.popup_bg", &["bold"]),
+                    ),
+                ]);
+                swallow(titled)
                     .w(Sizing::Cells(w))
                     .h(Sizing::Cells(h))
                     .key(key())

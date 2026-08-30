@@ -1643,12 +1643,7 @@ impl Editor {
             .1
             .get(&active_split)
             .map(|vs| *vs.cursors.primary())?;
-        let content_rect = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(split_id, _, _, _, _, _)| *split_id == active_split)
-            .map(|(_, _, rect, _, _, _)| *rect);
+        let content_rect = self.pane_content_rect(active_split);
 
         let state = self.active_state_mut();
         let gutter_width = viewport.gutter_width(&state.buffer) as u16;
@@ -1810,12 +1805,7 @@ impl Editor {
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .active_split();
-            let active_split_area = self
-                .active_layout()
-                .split_areas
-                .iter()
-                .find(|(split_id, _, _, _, _, _)| *split_id == active_split)
-                .map(|(_, _, content_rect, _, _, _)| *content_rect);
+            let active_split_area = self.pane_content_rect(active_split);
 
             if let Some(terminal_area) = active_split_area {
                 self.apply_keyboard_capture_dimming(frame, terminal_area);
@@ -4289,48 +4279,45 @@ impl Editor {
     /// the bindings instead puts them on the popup, where nothing is in front
     /// of them.
     fn popup_keys(&self) -> crate::view::shell::popup::Keys {
-        use crate::input::keybindings::{Action, KeyContext};
         use crate::view::popup::PopupKind;
         let kind = self.topmost_popup_kind().unwrap_or(PopupKind::Action);
         let mut bound = Vec::new();
         if let Ok(kb) = self.keybindings.read() {
-            // The `completion` section first, so a key bound in both wins
-            // there — `completion_popup_action` ran ahead of the popup's own
-            // handler for the same reason.
-            let sections = match kind {
-                PopupKind::Completion => vec![KeyContext::Completion, KeyContext::Popup],
-                _ => vec![KeyContext::Popup],
-            };
-            for ctx in sections {
-                for ((code, mods), action) in kb.bindings_in_context(ctx) {
-                    // Only the actions that are *about* the popup. A binding
-                    // for anything else in these sections is the base layer's
-                    // and reaches it the ordinary way.
-                    if !matches!(
-                        action,
-                        Action::PopupConfirm
-                            | Action::PopupCancel
-                            | Action::PopupFocus
-                            | Action::CompletionAccept
-                            | Action::CompletionDismiss
-                    ) {
-                        continue;
-                    }
-                    let Some(code) = crate::view::shell::input::key_code(code) else {
-                        continue;
-                    };
-                    let key = fresh_ui::KeyPress {
-                        code,
-                        mods: crate::view::shell::input::mods(mods),
-                    };
-                    if bound
-                        .iter()
-                        .any(|(k, _): &(fresh_ui::KeyPress, _)| *k == key)
-                    {
-                        continue;
-                    }
-                    bound.push((key, action));
+            // **One section per kind, and only the actions that section is
+            // for.** A completion list reads `completion` and takes only
+            // accept and dismiss from it; every other kind reads `popup`.
+            //
+            // Adding `popup` to the completion list's sections looked
+            // harmless and was not: that section binds Enter to
+            // `popup_confirm`, so Enter over a completion list accepted the
+            // selected row — and Enter there means "close this and insert a
+            // newline", which is the whole reason the layer declares no
+            // `Confirm` intent. `completion_popup_action` never consulted
+            // `popup` for exactly this reason ("only `CompletionAccept` and
+            // `CompletionDismiss` are recognised here"), and dropping that
+            // restriction put the confirm back in through the side door.
+            let (ctx, wanted) = crate::view::shell::popup::key_section(kind);
+            for ((code, mods), action) in kb.bindings_in_context(ctx) {
+                // Only the actions that section is *for*. A binding for
+                // anything else in it is the base layer's and reaches it the
+                // ordinary way.
+                if !wanted.contains(&action) {
+                    continue;
                 }
+                let Some(code) = crate::view::shell::input::key_code(code) else {
+                    continue;
+                };
+                let key = fresh_ui::KeyPress {
+                    code,
+                    mods: crate::view::shell::input::mods(mods),
+                };
+                if bound
+                    .iter()
+                    .any(|(k, _): &(fresh_ui::KeyPress, _)| *k == key)
+                {
+                    continue;
+                }
+                bound.push((key, action));
             }
         }
         crate::view::shell::popup::Keys { kind, bound }
@@ -5062,9 +5049,20 @@ impl Editor {
     /// the recorded one. It is the same shape E.2 used to retire
     /// `separator_areas`.
     ///
-    /// A pane the tree has no node for is skipped rather than failed: the
-    /// session preview paints another window's grid offscreen, and its panes
-    /// are legitimately absent from this window's tree.
+    /// **A pane the tree has no node for is a failure, not a skip.** The
+    /// weaker form was there for the session preview, which paints another
+    /// window's grid offscreen — but the preview has its own
+    /// `preview_split_areas` and never reaches this vector, a
+    /// `GroupTabBarOnly` entry returns before the push that fills it, and a
+    /// `SplitNode::Grouped` delegates to its own layout so its inner leaves
+    /// get nodes like any other. So every entry here is a pane of *this*
+    /// window, and a missing node means the tree and the painter disagree
+    /// about which panes exist — which is exactly what the oracle is for, and
+    /// the one disagreement the skip would have hidden.
+    ///
+    /// A pane with no scrollbar is not that case: `pane_interior` places all
+    /// three parts unconditionally and gives the bar the pane does not have a
+    /// width of zero, so the node is there either way.
     #[cfg(debug_assertions)]
     fn assert_pane_rects_match_layout(
         &self,
@@ -5086,13 +5084,18 @@ impl Editor {
         )],
     ) {
         use crate::view::shell::splits::{content_key, hscroll_key, vscroll_key};
-        let check = |what: &str, leaf, painted: ratatui::layout::Rect, key| {
+        let check = |what: &str, leaf, painted: ratatui::layout::Rect, key: fresh_ui::Key| {
             let Some(placed) = self.panel_rect(&key) else {
+                debug_assert!(
+                    false,
+                    "{what} of pane {leaf:?}: the painter recorded {painted:?} \
+                     and the tree placed nothing under {key:?}"
+                );
                 return;
             };
-            // A zero-width bar is "no bar" on the painter's side and an empty
-            // node on the tree's; both mean the same thing and neither is a
-            // rectangle worth comparing.
+            // A zero-width bar is "no bar" on the painter's side and a
+            // zero-width node on the tree's; both mean the same thing and
+            // neither is a rectangle worth comparing.
             if painted.width == 0 || placed.width == 0 {
                 return;
             }
@@ -6623,11 +6626,14 @@ impl Editor {
                 }
             }
             Some(HoverTarget::ScrollbarThumb(split_id)) => {
-                // Highlight scrollbar thumb
-                for (sid, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
+                // Highlight scrollbar thumb. The bar is where the tree put
+                // it; the thumb's extent is the recorded read of the scroll
+                // state, which is what the record is for.
+                let bar = self.pane_vscroll_rect(*split_id);
+                for (sid, _buffer_id, _content_rect, _bar, thumb_start, thumb_end) in
                     &self.active_layout().split_areas
                 {
-                    if sid == split_id {
+                    if let (true, Some(scrollbar_rect)) = (sid == split_id, bar) {
                         let hover_style = Style::default().bg(self
                             .theme
                             .read()
@@ -6649,11 +6655,12 @@ impl Editor {
                 }
             }
             Some(HoverTarget::ScrollbarTrack(split_id, hovered_row)) => {
-                // Highlight only the hovered cell on the scrollbar track
-                for (sid, _buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in
+                // Highlight only the hovered cell on the scrollbar track.
+                let bar = self.pane_vscroll_rect(*split_id);
+                for (sid, _buffer_id, _content_rect, _bar, _thumb_start, _thumb_end) in
                     &self.active_layout().split_areas
                 {
-                    if sid == split_id {
+                    if let (true, Some(scrollbar_rect)) = (sid == split_id, bar) {
                         let track_hover_style = Style::default().bg(self
                             .theme
                             .read()
@@ -6691,15 +6698,8 @@ impl Editor {
 
         let split_id = drop_zone.split_id();
 
-        // Find the content area for the target split
-        let split_area = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(sid, _, _, _, _, _)| *sid == split_id)
-            .map(|(_, _, content_rect, _, _, _)| *content_rect);
-
-        let Some(content_rect) = split_area else {
+        // Where the target pane's content is.
+        let Some(content_rect) = self.pane_content_rect(split_id) else {
             return;
         };
 
@@ -7055,7 +7055,18 @@ impl Editor {
         // panels' do instead of being decoration.
         let mut jobs: Vec<(ratatui::layout::Rect, ScrollbarState)> = Vec::new();
         let mut tracks: Vec<(crate::widgets::PanelKey, super::WidgetScrollbarTrack)> = Vec::new();
-        for (split_id, buffer_id, content_rect, _, _, _) in &self.active_layout().split_areas {
+        // Every visible pane, from the split model, at the rectangle the tree
+        // placed it — rather than the painter's list of what it just drew.
+        let panes: Vec<(crate::model::event::LeafId, BufferId, ratatui::layout::Rect)> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr.visible_leaves())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(pane, buffer)| self.pane_content_rect(pane).map(|r| (pane, buffer, r)))
+            .collect();
+        for (split_id, buffer_id, content_rect) in &panes {
             let panels = self.widget_registry.panels_for_buffer(*buffer_id);
             if panels.is_empty() {
                 continue;

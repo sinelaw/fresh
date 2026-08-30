@@ -54,33 +54,40 @@ impl Editor {
             .active_split();
         let active_buffer = self.active_buffer();
 
-        // Gather layout info and cursor from split_view_states (immutable borrows)
-        let (content_rect, gutter_width, compose_width, primary_cursor) = match self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(sid, bid, ..)| *sid == active_split && *bid == active_buffer)
-        {
-            Some((split_id, buffer_id, rect, ..)) => {
-                let gw = self
-                    .buffers()
-                    .get(buffer_id)
-                    .map(|s| s.margins.left_total_width() as u16)
-                    .unwrap_or(0);
-                let vs = match self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(split_id)
-                {
-                    Some(vs) => vs,
-                    None => return,
-                };
-                (*rect, gw, vs.compose_width, *vs.cursors.primary())
-            }
-            None => return,
+        // Where the active pane's content is, from the tree. The scan this
+        // replaces looked the same pane up in the painter's record and used
+        // the entry to confirm the pane still shows the active buffer —
+        // which the split model answers, and answers about *now* rather than
+        // about the last frame.
+        let (content_rect, gutter_width, compose_width, primary_cursor) = {
+            let shows_active = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.pane_buffer(active_split))
+                == Some(active_buffer);
+            let Some(rect) = self
+                .pane_content_rect(active_split)
+                .filter(|_| shows_active)
+            else {
+                return;
+            };
+            let gw = self
+                .buffers()
+                .get(&active_buffer)
+                .map(|s| s.margins.left_total_width() as u16)
+                .unwrap_or(0);
+            let vs = match self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&active_split)
+            {
+                Some(vs) => vs,
+                None => return,
+            };
+            (rect, gw, vs.compose_width, *vs.cursors.primary())
         };
 
         // Compute cursor screen position (needs &mut buffer for line_iterator).
