@@ -354,6 +354,16 @@ pub enum UiFact {
     },
     /// A right press inside the dock column: the plugin raises a per-session
     /// context menu from it.
+    /// A left press landed on the dock's column and nothing in it answered.
+    ///
+    /// **The half of `DockPress` that was never about geometry.** While the
+    /// interior is a painter the press has to say *where*, so the runtime can
+    /// hit-test its own boxes; once it is described the widgets answer their
+    /// own and what reaches the column is dead space. Focusing the dock is
+    /// what is left, and it is what `DockPress` did before its cell was used
+    /// for anything — `handle_floating_widget_click` returns without acting
+    /// when its probe finds no widget.
+    DockFocus,
     DockContext {
         x: u16,
         y: u16,

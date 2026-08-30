@@ -37,30 +37,67 @@ pub fn grip_key() -> Key {
     Key::Str("dock_grip".into())
 }
 
-/// The column: the panel's `Host` leaf under a pointer surface, with the width
+/// The column: the panel's interior under a pointer surface, with the width
 /// grip on top of its right edge.
-pub fn dock() -> Node<UiMsg> {
-    stack().children([column(), grip_strip()])
+///
+/// `interior` is the orchestrator's `WidgetSpec` as a description, when every
+/// variant in it is one the adapter covers. `None` keeps the `Host` leaf the
+/// painter fills — the same safety valve the floating panel has had since
+/// M6a, and the reason this flip cannot half-land: `panel_interior` returns
+/// `None` for an uncovered spec and the dock stays exactly as it was.
+pub fn dock(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
+    stack().children([column(interior), grip_strip()])
 }
 
 /// The panel's own pointer surface.
 ///
-/// Left and right presses report *where*, in screen columns and rows — which
-/// for a column pinned to `x = 0` is also the panel's own space. That is all
-/// the tree can say about a press until the panel's widgets are nodes: the
-/// runtime hit-tests its own boxes, the same seam the overlay prompt's toolbar
-/// band sits on (`UiFact::CardToolbarPress`).
-fn column() -> Node<UiMsg> {
-    gesture(host(HostRegion::Dock.id()))
+/// **What a left press means depends on what is under it.** While the
+/// interior is a painter, the press reports *where* and the runtime
+/// hit-tests its own boxes — the same seam the overlay prompt's toolbar band
+/// sits on (`UiFact::CardToolbarPress`). Once the interior is described its
+/// widgets answer their own presses and stop the flow, so what reaches here
+/// is a press they declined: the column's dead space. That still focuses the
+/// dock, which is the half of `DockPress` that was never about geometry —
+/// `handle_floating_widget_click` already returns without doing anything
+/// when its probe finds no widget.
+///
+/// A right press is unchanged either way: `probe_floating_widget` reads the
+/// registry's boxes, which the runtime fills whether or not the tree
+/// describes the panel.
+fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
+    let described = interior.is_some();
+    let body = match interior {
+        None => host(HostRegion::Dock.id()),
+        Some(i) => fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+            super::widgets::node(
+                &i.spec,
+                info.constraints.max_w.max(1),
+                &super::widgets::Ctx {
+                    slot: super::widgets::Slot::Dock,
+                    states: &i.states,
+                    focus_key: i.focus_key.clone(),
+                    hovered_key: i.hovered_key.clone(),
+                    marker_gutter: i.marker_gutter,
+                    hovered_item_key: i.hovered_item_key.clone(),
+                    avail_height: i.avail_height,
+                    surface: super::widgets::panel_surface(),
+                },
+            )
+        }),
+    };
+    gesture(body)
         .on(
             GestureKind::Press,
-            Rc::new(|e: &Event| {
+            Rc::new(move |e: &Event| {
                 let x = e.pos.x.max(0) as u16;
                 let y = e.pos.y.max(0) as u16;
                 match e.button {
                     MouseButton::Left => {
                         e.stop();
-                        Some(UiMsg::Ui(UiFact::DockPress { x, y }))
+                        match described {
+                            true => Some(UiMsg::Ui(UiFact::DockFocus)),
+                            false => Some(UiMsg::Ui(UiFact::DockPress { x, y })),
+                        }
                     }
                     MouseButton::Right => {
                         e.stop();
@@ -161,6 +198,74 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// A dock whose spec the adapter covers, for the two tests that care
+    /// which side of the seam the column is on.
+    fn described(dock: Option<u16>, w: u16, h: u16) -> Ui<UiMsg> {
+        use fresh_core::api::WidgetSpec;
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                menu_bar: false,
+                status_bar: false,
+                dock,
+                dock_interior: Some(super::super::panel::Interior {
+                    spec: Rc::new(WidgetSpec::Raw {
+                        entries: Vec::new(),
+                        key: None,
+                    }),
+                    states: Rc::new(Default::default()),
+                    focus_key: String::new(),
+                    hovered_key: None,
+                    hovered_item_key: String::new(),
+                    marker_gutter: false,
+                    avail_height: None,
+                }),
+                ..Frame::default()
+            }),
+            Size::new(w, h),
+        );
+        ui
+    }
+
+    /// **A press on the column means two different things**, and which one
+    /// depends on what is behind the seam.
+    ///
+    /// While the interior is a painter it has to say *where*, because the
+    /// runtime hit-tests its own boxes with the cell. Once the interior is
+    /// described the widgets answer their own presses, so a press that
+    /// reaches the column is one they declined — dead space — and the only
+    /// thing left to do with it is focus the dock.
+    #[test]
+    fn a_press_says_where_only_while_a_painter_is_behind_it() {
+        let mut ui = laid_out(Some(24), 100, 30);
+        assert_eq!(
+            press(&mut ui, 10, 5, MouseButton::Left),
+            vec![UiFact::DockPress { x: 10, y: 5 }],
+            "the painter needs the cell to hit-test with"
+        );
+
+        let mut ui = described(Some(24), 100, 30);
+        assert_eq!(
+            press(&mut ui, 10, 5, MouseButton::Left),
+            vec![UiFact::DockFocus],
+            "the widgets answered their own; this is dead space"
+        );
+    }
+
+    /// **The right press does not change with the seam.**
+    /// `probe_floating_widget` reads the registry's boxes, which the runtime
+    /// fills whether or not the tree describes the panel — so the context
+    /// menu is reached the same way on both sides.
+    #[test]
+    fn a_right_press_reports_where_on_either_side_of_the_seam() {
+        for mut ui in [described(Some(24), 100, 30), laid_out(Some(24), 100, 30)] {
+            assert_eq!(
+                press(&mut ui, 5, 7, MouseButton::Right),
+                vec![UiFact::DockContext { x: 5, y: 7 }]
+            );
+        }
     }
 
     /// The grip is the column's last cell, top to bottom.

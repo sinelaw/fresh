@@ -151,11 +151,21 @@ pub(crate) struct Stores<'a> {
 /// nothing for a pane to return this in.
 #[derive(Default)]
 pub(crate) struct PaneAreas {
-    pub split_areas: Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
+    pub split_areas: Vec<(LeafId, BufferId, usize, usize)>,
+    /// The rectangles this pass painted each pane at.
+    ///
+    /// **Used within the frame that produced them, never stored.** E.1's rule
+    /// is that a record read *between* frames must come from layout instead —
+    /// which `split_areas` now obeys, having dropped its two. These stay
+    /// because two consumers cannot ask the tree: the edge-fade and the
+    /// terminal grids paint during this same pass, and the session preview
+    /// renders *another window's* grid offscreen, where this window's tree has
+    /// no nodes at all.
+    pub pane_rects: Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
     pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
     pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
     /// Rect plus `max_content_width`, `thumb_start`, `thumb_end`.
-    pub horizontal_scrollbar_areas: Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
+    pub horizontal_scrollbar_areas: Vec<(LeafId, BufferId, usize, usize, usize)>,
 }
 
 /// Paint every pane in `area`, and every separator between them.
@@ -203,10 +213,15 @@ pub(crate) fn render_content(
     pending_hardware_cursor: &mut Option<(u16, u16)>,
     draw_tab_bar: bool,
 ) -> (
+    Vec<(LeafId, BufferId, usize, usize)>,
+    // The rectangles this pass painted at, for consumers inside the same
+    // frame — the edge fade, the terminal grids, and the session preview,
+    // which paints another window's grid where this window's tree has no
+    // nodes. Never stored: `WindowLayoutCache` keeps the thumbs only.
     Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
     HashMap<LeafId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
     HashMap<LeafId, Vec<ViewLineMapping>>,             // view line mappings for mouse clicks
-    Vec<(LeafId, BufferId, Rect, usize, usize, usize)>, // horizontal scrollbar areas (rect + max_content_width + thumb_start + thumb_end)
+    Vec<(LeafId, BufferId, usize, usize, usize)>, // horizontal scrollbar areas (max_content_width + thumb_start + thumb_end)
 ) {
     let _span = tracing::trace_span!("render_content").entered();
 
@@ -270,16 +285,18 @@ pub(crate) fn render_content(
     paint_separators(buf, area, split_manager, &base_visible, &facts, &stores);
     // Record vertical-scrollbar theme keys for the inspector, from the
     // thumb/track geometry the panes just computed.
-    record_scrollbar_theme_runs(&out.split_areas, stores.cell_theme_map, screen_width);
+    record_scrollbar_theme_runs(&out.pane_rects, stores.cell_theme_map, screen_width);
 
     let PaneAreas {
         split_areas,
+        pane_rects,
         tab_layouts,
         view_line_mappings,
         horizontal_scrollbar_areas,
     } = out;
     (
         split_areas,
+        pane_rects,
         tab_layouts,
         view_line_mappings,
         horizontal_scrollbar_areas,
@@ -404,6 +421,7 @@ pub(crate) fn paint_leaf(
     let cell_theme_map = &mut *s.cell_theme_map;
     let PaneAreas {
         split_areas,
+        pane_rects,
         tab_layouts,
         view_line_mappings,
         horizontal_scrollbar_areas,
@@ -568,6 +586,7 @@ pub(crate) fn paint_leaf(
             chrome,
             is_active,
             split_areas,
+            pane_rects,
             horizontal_scrollbar_areas,
         );
         view_line_mappings.insert(split_id, Vec::new());
@@ -837,7 +856,8 @@ pub(crate) fn paint_leaf(
         }
 
         // Store the areas for mouse handling
-        split_areas.push((
+        split_areas.push((split_id, buffer_id, thumb_start, thumb_end));
+        pane_rects.push((
             split_id,
             buffer_id,
             layout.content_rect,
@@ -849,7 +869,6 @@ pub(crate) fn paint_leaf(
             horizontal_scrollbar_areas.push((
                 split_id,
                 buffer_id,
-                layout.horizontal_scrollbar_rect,
                 max_content_width,
                 hthumb_start,
                 hthumb_end,
@@ -1113,8 +1132,9 @@ fn render_composite_split(
     split_show_tilde: bool,
     chrome: PaneChrome,
     is_active: bool,
-    split_areas: &mut Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
-    horizontal_scrollbar_areas: &mut Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
+    split_areas: &mut Vec<(LeafId, BufferId, usize, usize)>,
+    pane_rects: &mut Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
+    horizontal_scrollbar_areas: &mut Vec<(LeafId, BufferId, usize, usize, usize)>,
 ) {
     // Take initial_focus_hunk before borrowing composite immutably.
     let initial_focus_hunk = composite_buffers
@@ -1196,7 +1216,8 @@ fn render_composite_split(
         (0, 0)
     };
 
-    split_areas.push((
+    split_areas.push((split_id, buffer_id, thumb_start, thumb_end));
+    pane_rects.push((
         split_id,
         buffer_id,
         layout.content_rect,
@@ -1206,12 +1227,8 @@ fn render_composite_split(
     ));
     if chrome.hscroll {
         horizontal_scrollbar_areas.push((
-            split_id,
-            buffer_id,
-            layout.horizontal_scrollbar_rect,
-            0, // composite buffers don't horizontal-scroll
-            0,
-            0,
+            split_id, buffer_id, 0, // composite buffers don't horizontal-scroll
+            0, 0,
         ));
     }
 }

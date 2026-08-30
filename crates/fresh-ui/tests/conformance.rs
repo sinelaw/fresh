@@ -1120,3 +1120,48 @@ fn a_geometry_handle_does_not_read_a_recycled_slot() {
         "a handle to a disposed element reads nothing, not its slot's new occupant"
     );
 }
+
+/// **A thumb never claims less of the track than the window shows.**
+///
+/// The length is a ratio, and flooring it rounds the window *down*: 28 rows
+/// of 434 is 6.5% of a 28-cell track, which floors to one cell claiming 3.6%.
+/// A one-cell thumb is also the hardest thing on the bar to hit, so the row a
+/// user aims at lands on the track and page-jumps the viewport instead of
+/// grabbing — which is what a press one row below the top of a resting thumb
+/// did in the keybinding editor's 434-binding table.
+#[test]
+fn a_scrollbar_thumb_rounds_its_length_up() {
+    // The case above: two cells, not one.
+    assert_eq!(Draw::scrollbar_thumb(0, 434, 28).1, 2);
+
+    // The rule, not the case: for any content longer than the track, the
+    // thumb is at least as long as the exact ratio would make it.
+    for track in [3u16, 7, 28, 40] {
+        for content in (track as u32 + 1)..600 {
+            let len = Draw::scrollbar_thumb(0, content, track).1;
+            let exact = (track as f64) * (track as f64) / (content as f64);
+            assert!(
+                len as f64 >= exact,
+                "track {track}, content {content}: thumb {len} is shorter than the \
+                 window's own share of the track ({exact:.3})"
+            );
+            assert!(
+                (1..=track).contains(&len),
+                "track {track}, content {content}: thumb {len} is off the track"
+            );
+        }
+    }
+}
+
+/// Content that fits gives the whole track — there is nowhere to scroll, so
+/// there is no gap for the thumb to leave.
+#[test]
+fn a_scrollbar_thumb_fills_a_track_it_cannot_move_along() {
+    for content in 1..=28u32 {
+        assert_eq!(
+            Draw::scrollbar_thumb(0, content, 28),
+            (0, 28),
+            "content {content} fits in 28 cells"
+        );
+    }
+}

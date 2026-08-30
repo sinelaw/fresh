@@ -134,6 +134,10 @@ pub struct Frame {
     pub prompt_line: bool,
     /// Column width, already resolved against the frame width.
     pub dock: Option<u16>,
+    /// The dock's content as a description, when the adapter covers every
+    /// variant of the orchestrator's spec. `None` leaves the `Host` leaf the
+    /// painter fills.
+    pub dock_interior: Option<super::panel::Interior>,
     /// The sidebar's content, or `None` when it is hidden. Like the
     /// search-options row, content rather than a flag: the tree measures the
     /// panel's rows and reads their rectangles back.
@@ -253,6 +257,7 @@ impl Default for Frame {
             status_bar_items: None,
             prompt_line: false,
             dock: None,
+            dock_interior: None,
             explorer: None,
             menu: None,
             dropdowns: Vec::new(),
@@ -506,7 +511,8 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // list would lose its scroll on every switch.
     let frame = row().children([
         match f.dock {
-            Some(w) => named(HostRegion::Dock, super::dock::dock()).w(Sizing::Cells(w)),
+            Some(w) => named(HostRegion::Dock, super::dock::dock(f.dock_interior.clone()))
+                .w(Sizing::Cells(w)),
             None => region(HostRegion::Dock).w(Sizing::Cells(0)),
         },
         window_area,

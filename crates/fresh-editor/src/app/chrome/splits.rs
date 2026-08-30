@@ -409,15 +409,13 @@ impl Editor {
             .active_layout()
             .horizontal_scrollbar_areas
             .iter()
-            .find_map(
-                |(split_id, _, _, max_content_width, thumb_start, thumb_end)| {
-                    (*split_id == pane).then(|| {
-                        let relative_col = col.saturating_sub(hscrollbar_rect.x) as usize;
-                        let on_thumb = relative_col >= *thumb_start && relative_col < *thumb_end;
-                        (*max_content_width, on_thumb)
-                    })
-                },
-            )?;
+            .find_map(|(split_id, _, max_content_width, thumb_start, thumb_end)| {
+                (*split_id == pane).then(|| {
+                    let relative_col = col.saturating_sub(hscrollbar_rect.x) as usize;
+                    let on_thumb = relative_col >= *thumb_start && relative_col < *thumb_end;
+                    (*max_content_width, on_thumb)
+                })
+            })?;
 
         self.focus_split(split_id, buffer_id);
         self.active_window_mut()
@@ -512,7 +510,7 @@ impl Editor {
     }
 
     /// Where the shell laid this pane's content out.
-    pub(crate) fn pane_content_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
+    pub fn pane_content_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
         self.pane_part_rect(crate::view::shell::splits::content_key(pane))
     }
 
@@ -526,12 +524,12 @@ impl Editor {
     /// here" — a zero-width `Rect` in `split_areas` and a `None` from the
     /// tree — say the same thing, and every caller of these already had to
     /// handle it.
-    pub(crate) fn pane_vscroll_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
+    pub fn pane_vscroll_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
         self.pane_part_rect(crate::view::shell::splits::vscroll_key(pane))
     }
 
     /// The same, for the horizontal bar.
-    pub(crate) fn pane_hscroll_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
+    pub fn pane_hscroll_rect(&self, pane: LeafId) -> Option<ratatui::layout::Rect> {
         self.pane_part_rect(crate::view::shell::splits::hscroll_key(pane))
     }
 
@@ -619,7 +617,7 @@ impl Editor {
     ///
     /// A buffer mounted in no visible pane has no rectangle, which is what an
     /// absent entry meant.
-    pub(crate) fn pane_content_rect_for_buffer(
+    pub fn pane_content_rect_for_buffer(
         &self,
         buffer_id: crate::app::BufferId,
     ) -> Option<ratatui::layout::Rect> {
@@ -1101,7 +1099,7 @@ impl Editor {
                 return Ok(());
             };
             let hscrollbar_areas = self.active_layout().horizontal_scrollbar_areas.clone();
-            for (split_id, _buffer_id, _bar, max_content_width, thumb_start, thumb_end) in
+            for (split_id, _buffer_id, max_content_width, thumb_start, thumb_end) in
                 &hscrollbar_areas
             {
                 if *split_id == dragging_split_id {

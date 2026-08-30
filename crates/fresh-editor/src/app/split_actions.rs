@@ -437,17 +437,12 @@ impl Editor {
     }
 
     /// Get cached split content areas for testing
-    /// Returns (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) tuples
-    pub fn get_split_areas(
-        &self,
-    ) -> &[(
-        LeafId,
-        BufferId,
-        ratatui::layout::Rect,
-        ratatui::layout::Rect,
-        usize,
-        usize,
-    )] {
+    /// Returns `(split_id, buffer_id, thumb_start, thumb_end)` tuples.
+    ///
+    /// The two rectangles this used to carry are the tree's now
+    /// (`pane_content_rect`, `pane_vscroll_rect`); what a *record* keeps is
+    /// the thumb, which is a read of the scroll state at paint time.
+    pub fn get_split_areas(&self) -> &[(LeafId, BufferId, usize, usize)] {
         &self.active_layout().split_areas
     }
 

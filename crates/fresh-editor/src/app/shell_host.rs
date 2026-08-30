@@ -198,7 +198,7 @@ impl<'a> BodyPainter<'a> {
         let active = editor.active_window;
         if let Some(win) = editor.windows.get_mut(&active) {
             record_scrollbar_theme_runs(
-                &out.split_areas,
+                &out.pane_rects,
                 &mut win.chrome_layout.cell_theme_map,
                 screen_width,
             );
@@ -1570,6 +1570,16 @@ impl Editor {
                     self.refocus_floating_panel(crate::app::PanelSlot::Dock);
                 }
                 self.handle_floating_widget_click(crate::app::PanelSlot::Dock, x, y);
+            }
+            // The described dock's dead space: focus it, and nothing else.
+            // The re-focus is first for the same reason it is in `DockPress`
+            // — the un-blur fires a `focus` widget_event, and any mirror of
+            // dock-focus state has to update before whatever the press goes
+            // on to do.
+            UiFact::DockFocus => {
+                if self.dock.as_ref().is_some_and(|f| !f.focused) {
+                    self.refocus_floating_panel(crate::app::PanelSlot::Dock);
+                }
             }
             UiFact::DockContext { x, y } => {
                 if self.dock.as_ref().is_some_and(|f| !f.focused) {
