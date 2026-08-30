@@ -55,7 +55,8 @@ use crate::view::file_tree::FileTreeView;
 use crate::view::split::{SplitManager, SplitViewState};
 use fresh_core::{BufferId, WindowId};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::env;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// A project-rooted unit of editor state.
@@ -1207,18 +1208,27 @@ pub(crate) fn configure_lsp_servers(
     // against the window's own root so each workspace gets the detection for
     // its actual project rather than the process cwd.
     if root.join("deno.json").exists() || root.join("deno.jsonc").exists() {
-        tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
-        let deno_config = LspServerConfig {
-            command: "deno".to_string(),
-            args: Some(vec!["lsp".to_string()]),
-            enabled: true,
-            auto_start: false,
-            process_limits: ProcessLimits::default(),
-            initialization_options: Some(serde_json::json!({"enable": true})),
-            ..Default::default()
-        };
-        lsp.set_language_config("javascript".to_string(), deno_config.clone());
-        lsp.set_language_config("typescript".to_string(), deno_config);
+        // Check if the Deno runtime is present so we can safely switch to `deno lsp`.
+        let has_deno = env::var_os("PATH").and_then(|paths| {
+            env::split_paths(&paths).any(|dir| {
+                let executable = dir.join("deno");
+                executable.is_file()
+            }).then_some(true)
+        }).is_some();
+        if (has_deno) {
+            tracing::info!("Detected Deno project (deno.json + runtime found), using deno lsp for JS/TS");
+            let deno_config = LspServerConfig {
+                command: "deno".to_string(),
+                args: Some(vec!["lsp".to_string()]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: Some(serde_json::json!({"enable": true})),
+                ..Default::default()
+            };
+            lsp.set_language_config("javascript".to_string(), deno_config.clone());
+            lsp.set_language_config("typescript".to_string(), deno_config);
+        }
     }
 }
 
