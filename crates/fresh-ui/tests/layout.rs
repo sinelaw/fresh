@@ -1018,6 +1018,77 @@ fn a_point_with_no_region_is_still_a_frame_coordinate() {
     assert_eq!((r.x, r.y), (12, 7));
 }
 
+/// A layer whose real anchor is inside a leaf places against *that*, not
+/// against the rectangle it could name.
+///
+/// The dropdown case: the trigger row is a node, the `[value ▼]` button inside
+/// it is not — a widget runtime laid the row's text out and the tree only
+/// knows where the row is. The offset says where the button is within it, and
+/// the pop-over opens under the button rather than under the row's left edge.
+#[test]
+fn an_offset_moves_the_anchor_the_layer_places_against() {
+    let trigger = Key::Str("trigger".into());
+    let popup = Key::Str("popup".into());
+    let tree = |dx: i16| -> Node<()> {
+        col().h(Sizing::Cells(1)).child(
+            row()
+                .key(trigger.clone())
+                .h(Sizing::Cells(1))
+                .w(Sizing::Cells(30))
+                .child(
+                    fresh_ui::layer()
+                        .key(popup.clone())
+                        .anchor(fresh_ui::Anchor::Parent)
+                        .place(fresh_ui::Place::Below)
+                        .offset(dx, 0)
+                        .child(col().w(Sizing::Cells(8)).h(Sizing::Cells(3)).theme("p")),
+                ),
+        )
+    };
+    let at = |dx: i16| {
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(tree(dx), FRAME);
+        let r = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+        (r.x, r.y)
+    };
+    assert_eq!(at(0), (0, 1), "the row's left edge, the row after it");
+    assert_eq!(at(11), (11, 1), "the button's column, the row after it");
+}
+
+/// And the fit sees the moved anchor: a flip clears the button, not the row.
+#[test]
+fn an_offset_anchor_is_what_a_flip_clears() {
+    let trigger = Key::Str("trigger".into());
+    let popup = Key::Str("popup".into());
+    let mut ui: Ui<()> = Ui::new();
+    // The trigger is on the last row of the frame, so a pop-over three rows
+    // tall cannot open below it and flips above.
+    ui.frame(
+        col().child(row().flex(1)).child(
+            row()
+                .key(trigger.clone())
+                .h(Sizing::Cells(1))
+                .w(Sizing::Cells(30))
+                .child(
+                    fresh_ui::layer()
+                        .key(popup.clone())
+                        .anchor(fresh_ui::Anchor::Parent)
+                        .place(fresh_ui::Place::Below)
+                        .fit(fresh_ui::Fit::FLIP.or(fresh_ui::Fit::CLAMP))
+                        .offset(4, 0)
+                        .child(col().w(Sizing::Cells(8)).h(Sizing::Cells(3)).theme("p")),
+                ),
+        ),
+        FRAME,
+    );
+    let r = ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap();
+    assert_eq!(
+        (r.x, r.y, r.h),
+        (4, FRAME.h as i32 - 1 - 3, 3),
+        "above the trigger's row, still under the button's column"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Wrapping boxes
 // ---------------------------------------------------------------------------

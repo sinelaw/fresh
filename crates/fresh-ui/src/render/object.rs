@@ -152,6 +152,8 @@ pub struct LayerGeom {
     pub dismiss: Dismiss,
     /// See [`crate::desc::LayerProps::within`].
     pub within: Option<crate::key::Key>,
+    /// See [`crate::desc::LayerProps::offset`].
+    pub offset: (i16, i16),
 }
 
 /// A node's focus registration, as the focus tree needs it.

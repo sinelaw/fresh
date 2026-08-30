@@ -1264,6 +1264,7 @@ impl LayerRender {
                 scrim: p.scrim,
                 dismiss: p.dismiss,
                 within: p.within.clone(),
+                offset: p.offset,
             },
         }
     }

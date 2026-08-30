@@ -835,6 +835,17 @@ impl<M: 'static> Ui<M> {
                 Anchor::Cell(x, y) => Rect::new(bounds.x + *x as i32, bounds.y + *y as i32, 1, 1),
                 Anchor::Screen(_) => bounds,
             };
+            // Where the layer's real anchor is, when it is inside a leaf the
+            // tree cannot name — a button inside a row a widget runtime laid
+            // out, a row of a sub-render with no node of its own. Applied to
+            // the anchor rather than to the result, so the placement, the
+            // cross-axis alignment and the fit all work against the real one:
+            // a dropdown that flips above clears the button it hangs off.
+            // `Anchor::Screen` has no anchor rectangle and is left alone.
+            let anchor = match props.anchor {
+                Anchor::Screen(_) => anchor,
+                _ => anchor.translate(props.offset.0 as i32, props.offset.1 as i32),
+            };
             let c = if props.place == Place::Fill {
                 Constraints::tight(anchor.size())
             } else if props.align == Some(Align::Stretch) {

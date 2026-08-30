@@ -615,6 +615,23 @@ pub struct LayerProps<M> {
     /// carrying it, else a rectangle the host published for it, else the frame.
     /// So a region the tree does not contain yet can still be named.
     pub within: Option<crate::key::Key>,
+    /// Where the thing this layer hangs off actually is, relative to the
+    /// anchor rectangle the tree can name.
+    ///
+    /// **For an anchor inside a leaf.** A dropdown hangs off the `[value ▼]`
+    /// button inside a row a widget runtime laid out; a completion list hangs
+    /// off a row of a sub-render that has no node of its own. Neither has an
+    /// element to name, and both are known *relative* to something that does —
+    /// which is the same fact [`crate::Ui::set_host_anchor`] publishes, for a
+    /// caller that holds the offset rather than the absolute rectangle.
+    ///
+    /// The anchor rectangle is shifted by this before the placement runs, so
+    /// `Place`, `align_to_anchor` and `Fit` all see the real anchor: a
+    /// dropdown that flips above still clears the button it hangs off.
+    ///
+    /// It does not move [`Anchor::Screen`], which is placed against the
+    /// bounds and has no anchor rectangle to shift.
+    pub offset: (i16, i16),
 }
 
 impl<M> Default for LayerProps<M> {
@@ -625,6 +642,7 @@ impl<M> Default for LayerProps<M> {
             fit: Fit::default(),
             align: None,
             within: None,
+            offset: (0, 0),
             modality: Modality::default(),
             scrim: None,
             dismiss: Dismiss::default(),
@@ -645,6 +663,7 @@ impl<M> Clone for LayerProps<M> {
             dismiss: self.dismiss,
             on_dismiss: self.on_dismiss.clone(),
             within: self.within.clone(),
+            offset: self.offset,
         }
     }
 }
@@ -658,6 +677,7 @@ impl<M> LayerProps<M> {
             && self.fit == o.fit
             && self.align == o.align
             && self.within == o.within
+            && self.offset == o.offset
     }
 }
 
@@ -1472,6 +1492,13 @@ impl<M> Node<M> {
     /// See [`LayerProps::within`].
     pub fn within(mut self, key: crate::key::Key) -> Self {
         self.layer_props().within = Some(key);
+        self
+    }
+
+    /// Where this layer's real anchor is relative to the rectangle it named.
+    /// See [`LayerProps::offset`].
+    pub fn offset(mut self, dx: i16, dy: i16) -> Self {
+        self.layer_props().offset = (dx, dy);
         self
     }
 
