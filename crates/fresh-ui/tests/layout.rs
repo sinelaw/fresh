@@ -1157,3 +1157,43 @@ fn an_empty_wrapping_box_has_no_lines() {
     let ui = wrapped(10, 0, &[]);
     assert_eq!(wrapper(&ui).h, 0);
 }
+
+/// **`min_w` means the same thing in a stack as in a row.** "Never narrower
+/// than this, whatever the sizing resolves to" — and a percentage that
+/// resolves below the floor is exactly where the two could differ, so it is
+/// exactly where an omission would hide.
+///
+/// A layer measures its child through the same path, which is how this was
+/// found: a dialog sized `Pct(10)` with a 20-cell floor came out ten wide.
+#[test]
+fn a_stack_honours_its_childs_size_floor() {
+    let mut ui = ui();
+    ui.frame(
+        fresh_ui::stack().child(text("x").w(Sizing::Pct(10)).min_w(20).h(Sizing::Cells(1))),
+        Size::new(100, 24),
+    );
+    assert_eq!(ui.rect(ui.at(&[0]).unwrap()).w, 20, "the floor wins");
+}
+
+/// And the floor does not *become* the size: a percentage above it resolves
+/// normally.
+#[test]
+fn a_stacks_floor_does_not_override_a_larger_size() {
+    let mut ui = ui();
+    ui.frame(
+        fresh_ui::stack().child(text("x").w(Sizing::Pct(50)).min_w(20).h(Sizing::Cells(1))),
+        Size::new(100, 24),
+    );
+    assert_eq!(ui.rect(ui.at(&[0]).unwrap()).w, 50);
+}
+
+/// The same on the cross axis, so `min_h` is not a second omission waiting.
+#[test]
+fn a_stack_honours_a_height_floor_too() {
+    let mut ui = ui();
+    ui.frame(
+        fresh_ui::stack().child(text("x").h(Sizing::Pct(10)).min_h(6).w(Sizing::Cells(4))),
+        Size::new(100, 20),
+    );
+    assert_eq!(ui.rect(ui.at(&[0]).unwrap()).h, 6);
+}

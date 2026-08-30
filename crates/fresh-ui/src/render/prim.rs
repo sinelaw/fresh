@@ -506,8 +506,17 @@ fn stack_in(c: Constraints, cx: &mut dyn LayoutCx, align: Align, inset: Point) -
     let mut sizes = Vec::with_capacity(kids.len());
     for &k in &kids {
         let (sw, sh) = cx.sizing(k);
+        // **The floor wins over the sizing, here as in a row.** `min_w` says
+        // "never narrower than this, whatever the sizing resolves to", and a
+        // stack honouring the sizing but not the floor made that a promise
+        // that held in flow layout and quietly did not in a stack — or in a
+        // layer, which measures its child through this. A percentage below the
+        // floor is exactly where the two differ, so it is exactly where the
+        // omission hid.
+        let (fw, fh) = cx.floor(k);
         let wc = range(sw, c.max_w, w_definite, align);
         let hc = range(sh, c.max_h, h_definite, align);
+        let (wc, hc) = ((wc.0.max(fw), wc.1.max(fw)), (hc.0.max(fh), hc.1.max(fh)));
         let s = cx.measure(k, Constraints::new(wc.0, wc.1, hc.0, hc.1));
         sizes.push(s);
         size = Size::new(size.w.max(s.w), size.h.max(s.h));
