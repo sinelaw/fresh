@@ -593,12 +593,35 @@ impl<M: 'static> Ui<M> {
         }
     }
 
+    /// The first element carrying `key` inside `root`'s subtree, in tree
+    /// order — `find_by_key` starting somewhere other than the root.
+    ///
+    /// A key is only unique where its owner says it is: a list of cards keys
+    /// each card by index, and so does the list beside it. Searching within
+    /// the subtree that owns the keys is what makes the answer the right one,
+    /// and it is also what keeps a per-item lookup from walking the whole
+    /// frame each time.
+    pub fn find_by_key_in(&self, root: ElementId, key: &crate::key::Key) -> Option<ElementId> {
+        match self
+            .arena
+            .get(root)
+            .is_some_and(|e| e.key.as_ref() == Some(key))
+        {
+            true => Some(root),
+            false => self.keyed_descendant(root, key),
+        }
+    }
+
     /// The first descendant of `root` carrying `key`, not counting `root`
     /// itself — the element a `RevealKey` names.
     fn keyed_descendant(&self, root: ElementId, key: &crate::key::Key) -> Option<ElementId> {
         let el = self.arena.get(root)?;
         for c in &el.children {
-            if self.arena.get(*c).is_some_and(|e| e.key.as_ref() == Some(key)) {
+            if self
+                .arena
+                .get(*c)
+                .is_some_and(|e| e.key.as_ref() == Some(key))
+            {
                 return Some(*c);
             }
         }
@@ -619,11 +642,17 @@ impl<M: 'static> Ui<M> {
         vp_el: ElementId,
         vp_r: RenderId,
         key: &crate::key::Key,
+        arranged_at: Point,
     ) -> Option<(i32, i32)> {
         let el = self.keyed_descendant(vp_el, key)?;
         let child = self.render_for(el).and_then(|r| self.render.get(r))?;
         let vp = self.render.get(vp_r)?;
-        let top = child.data.rect.y - vp.data.rect.y + vp.data.scroll.y;
+        // `arranged_at`, not the window's *current* offset: an earlier command
+        // in the same batch may already have moved it, and nothing is
+        // re-arranged between commands — so the children's rectangles are
+        // still the ones the last arrange produced, and it is that offset they
+        // have to be read against.
+        let top = child.data.rect.y - vp.data.rect.y + arranged_at.y;
         Some((top, child.data.rect.h as i32))
     }
 
@@ -636,13 +665,46 @@ impl<M: 'static> Ui<M> {
             let Some(a) = self.arena.get(id).and_then(|e| e.desc.anchor.clone()) else {
                 continue;
             };
+            // **A command waits for the frame that measures its target.** An
+            // element created while a layer was being resolved has no
+            // geometry until the next pass over the tree, and every command
+            // here is a statement *about* geometry — "put this band in the
+            // window" against an unmeasured window is not a smaller move, it
+            // is a meaningless one. Draining the queue then would answer it
+            // wrongly and lose it; leaving it queued answers it on the frame
+            // that can.
+            let measured = self
+                .render_for(id)
+                .and_then(|r| self.render.get(r))
+                .is_some_and(|n| n.data.size.h > 0 || n.data.size.w > 0);
+            if !measured {
+                continue;
+            }
+            // Where the window was when the children were last placed. Every
+            // command in this batch reads their rectangles, and none of them
+            // triggers a re-arrange, so this is the offset those rectangles
+            // are relative to however many times the window moves below.
+            let arranged_at = self
+                .render_for(id)
+                .and_then(|r| self.render.get(r))
+                .map(|n| n.data.scroll)
+                .unwrap_or_default();
             for cmd in a.take() {
                 let Some(r) = self.render_for(id) else {
                     continue;
                 };
+                // **The window in whatever unit the offset counts.** A
+                // cell-scrolled window's offset is a row, and its window is
+                // its own height; an index-scrolled one's offset is an item,
+                // and its window is however many items fit — which is not its
+                // height in cells unless the items are one cell tall. Reading
+                // the height for both put a list of three-row cards eleven
+                // items down inside a "fifteen-row" window and left it where
+                // it was.
                 let (scroll, max, rows) = {
                     let n = &self.render[r];
-                    (n.data.scroll, n.data.scroll_max, n.data.size.h as i32)
+                    let rows = n.data.window.map_or(n.data.size.h, |w| w.h) as i32;
+                    (n.data.scroll, n.data.scroll_max, rows)
                 };
                 let next = match cmd {
                     Command::ScrollTo(p) => p,
@@ -662,8 +724,31 @@ impl<M: 'static> Ui<M> {
                     // The same, for a band the framework measured rather than
                     // a row the caller counted. A key that names nothing under
                     // this element leaves the window where it is.
+                    // "Take me there", rather than "keep it in sight".
+                    Command::TopKey(k) => {
+                        let Some((top, _)) = self.keyed_band(id, r, &k, arranged_at) else {
+                            continue;
+                        };
+                        Point::new(scroll.x, top)
+                    }
+                    // A row inside the band, which is one cell tall wherever
+                    // the band starts.
+                    Command::RevealKeyAt(k, at) => {
+                        let Some((top, h)) = self.keyed_band(id, r, &k, arranged_at) else {
+                            continue;
+                        };
+                        let want = top + (at as i32).min(h.saturating_sub(1).max(0));
+                        let y = if want < scroll.y {
+                            want
+                        } else if want >= scroll.y + rows {
+                            want - rows + 1
+                        } else {
+                            scroll.y
+                        };
+                        Point::new(scroll.x, y)
+                    }
                     Command::RevealKey(k) => {
-                        let Some((top, h)) = self.keyed_band(id, r, &k) else {
+                        let Some((top, h)) = self.keyed_band(id, r, &k, arranged_at) else {
                             continue;
                         };
                         let y = if top < scroll.y {

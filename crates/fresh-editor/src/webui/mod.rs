@@ -1157,7 +1157,7 @@ fn apply_settings(editor: &mut Editor, v: &Value) {
         _ => None,
     };
     if let Some(hit) = hit {
-        editor.dispatch_settings_hit(hit, 0, dbl);
+        editor.dispatch_settings_hit(hit, dbl);
     }
 }
 

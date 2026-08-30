@@ -192,6 +192,9 @@ pub struct Frame {
     /// unsaved-changes prompt, the reset prompt and the help overlay — and the
     /// entry-dialog stack is not.
     pub settings_dialog: Option<super::settings::Dialog>,
+    /// The entry-edit dialogs open over it, innermost last. A settings map
+    /// opens one to edit an entry, and an entry can open another.
+    pub settings_entry: Vec<super::entry::Dialog>,
     /// Whether the keybinding editor is open. Its *interior* is still a
     /// painter's — a table with its own scrollbar and ten recorded
     /// rectangles — so what the tree carries is the box those rectangles are
@@ -264,6 +267,7 @@ impl Default for Frame {
             modal: None,
             settings: None,
             settings_dialog: None,
+            settings_entry: Vec::new(),
             keybinding: None,
             keybinding_table: None,
             keybinding_dialog: None,
@@ -531,9 +535,17 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         Some(c) => frame.child(super::settings::layer(Some(c))),
         None => frame,
     };
+    // The entry-edit stack, over the box and under the prompts: each level
+    // dims what is below it, which is one `Scrim` per layer rather than the
+    // painter's `apply_dimming` once around the loop.
+    let mut frame = frame;
+    for d in &f.settings_entry {
+        frame = frame.child(super::entry::layer(d));
+    }
     // Its open dialog, **after** the box for the same reason the keybinding
     // editor's is: layers are offered the pointer in reverse declaration
-    // order, so a dialog declared first would be covered by the box.
+    // order, so a dialog declared first would be covered by the box. And
+    // after the entry stack, because the two prompts it opens sit over it.
     let frame = match &f.settings_dialog {
         Some(d) => frame.child(super::settings::dialog_layer(d)),
         None => frame,

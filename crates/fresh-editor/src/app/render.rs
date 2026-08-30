@@ -272,17 +272,43 @@ impl Editor {
         // the standing proof, and it keeps both derivations honest now that
         // only one of them runs here.
         // See docs/internal/fresh-editor-ui-migration.md (S1).
-        // The settings search list's window, from the box the tree placed last
-        // frame. This is the one mutation the description needs made *before*
-        // it is built: the row it describes says "(1-3 of 298)", and three is
-        // how many results the box has room for. The painter used to work that
-        // out as it drew and leave it behind for the next frame to read.
-        if let Some(r) = self.panel_rect(&crate::view::shell::settings::key()) {
-            let n = crate::view::shell::settings::search_window(r);
+        // The settings search list's window, from the band the tree placed
+        // last frame. This is the one mutation the description needs made
+        // *before* it is built: the row it describes says "(1-3 of 298)", and
+        // three is how many results the band has room for.
+        //
+        // The band is the page's — the same one the cards fill when no search
+        // is running — so its height is known on every frame the dialog is
+        // open, including the first frame a query has results on. What was
+        // here read the *box* and re-derived the band from it by mirroring
+        // the painter's arithmetic: subtract the border, the search row, the
+        // gap and a footer that is two rows wide and seven narrow, then in the
+        // narrow case subtract the footer a second time because the painter
+        // did. None of that is anyone's arithmetic any more.
+        //
+        // The list's own window is the better answer and is preferred where
+        // there is one; the band is what the *first* frame of a search has,
+        // since the list does not exist until the description that reports
+        // its window has already been built.
+        let window = self
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| ui.find_by_key(&crate::view::shell::settings::results_key()))
+            .map(|el| self.shell_ui.as_ref().expect("checked").scroll(el).1.h)
+            .filter(|h| *h > 0);
+        let band = self
+            .panel_rect(&crate::view::shell::settings::panel_key())
+            .map(|r| r.height / crate::view::shell::settings::RESULT_ROWS);
+        if let Some(n) = window.or(band) {
             if let Some(s) = self.settings_state.as_mut() {
-                s.search_max_visible = n;
+                s.search_max_visible = (n as usize).max(1);
             }
         }
+        // What the body's window turned out to be. Every answer the settings
+        // state used to compute from a second copy of every item's height —
+        // how far it can scroll, how much a page-down moves, which card is at
+        // the top — is read off the column that laid the cards out.
+        self.refresh_settings_body_window();
         let shell = self.shell_frame((dock_area, chrome_area));
         // The shell's tree is retained across frames — element state, focus and
         // the dirty set live on it — so it is moved out for the duration of the
@@ -2146,6 +2172,315 @@ impl Editor {
         })
     }
 
+    /// Read the settings body's window back off the tree.
+    ///
+    /// **The direction of travel is the point.** `ScrollablePanel` owned the
+    /// window and re-derived the column's height from `SettingItem::layout_box`
+    /// to bound it — the same arithmetic the painter drew each card with, in a
+    /// second place. The `viewport` owns it now, so this reads rather than
+    /// computes, and the state's scroll methods ask for a move by handle
+    /// instead of writing an offset.
+    fn refresh_settings_body_window(&mut self) {
+        use crate::view::shell::settings as st;
+        let Some(ui) = self.shell_ui.as_ref() else {
+            return;
+        };
+        let Some(vp) = ui.find_by_key(&st::items_key()) else {
+            return;
+        };
+        let vpr = ui.rect_of(vp);
+        let (scroll, content) = ui.scroll(vp);
+        let offset = scroll.y.max(0) as u16;
+        let moved = self
+            .settings_state
+            .as_ref()
+            .is_some_and(|s| s.body.offset != offset);
+        // Which card the window starts on. Only worth a walk when the window
+        // has actually moved — it is the left tree's highlight that reads it,
+        // and that only has to change when the body does.
+        let top_item = match moved {
+            false => self.settings_state.as_ref().and_then(|s| s.body.top_item),
+            true => {
+                let n = self
+                    .settings_state
+                    .as_ref()
+                    .and_then(|s| s.pages.get(s.selected_category))
+                    .map(|p| p.items.len())
+                    .unwrap_or(0);
+                (0..n).find(|&i| {
+                    ui.find_by_key_in(vp, &st::card_key(i))
+                        .map(|e| ui.rect_of(e))
+                        // The first card whose bottom edge is below the
+                        // window's top is the one the window starts on.
+                        .is_some_and(|r| r.y + r.h as i32 > vpr.y)
+                })
+            }
+        };
+        let Some(s) = self.settings_state.as_mut() else {
+            return;
+        };
+        s.body = crate::view::settings::state::BodyWindow {
+            offset,
+            height: vpr.h,
+            content: content.h,
+            top_item,
+        };
+        // The left tree's highlight follows the body, in both directions —
+        // the same contract the wheel and the scrollbar had, stated once
+        // against the window rather than at each thing that moves it.
+        if moved {
+            s.sync_tree_cursor_to_body_scroll();
+        }
+        // The search results' window, on the same terms. The list moves its
+        // own window when the selection leaves it, so what the count row
+        // reports is read back rather than kept in step by hand.
+        if let Some(el) = ui.find_by_key(&st::results_key()) {
+            // In results, not rows: an index-scrolled window counts its offset
+            // in the items it holds.
+            s.search_scroll_offset = ui.scroll(el).0.y.max(0) as usize;
+        }
+        // Each entry dialog's window, on the same terms. Its offset is read
+        // rather than kept: the keyboard moves it by asking, and what it
+        // ended up at is the window's answer.
+        for (level, d) in s.entry_dialog_stack.iter_mut().enumerate() {
+            if let Some(vp) = ui.find_by_key(&st::entry_items_key(level)) {
+                d.scroll_offset = ui.scroll(vp).0.y.max(0) as usize;
+            }
+        }
+    }
+
+    /// What a field offers at the right of its first row.
+    ///
+    /// A nullable field that is already unset shows the badge *only when the
+    /// unset value really does inherit* something — a clear-only field just
+    /// reads as not set (#2345). Otherwise it offers the actions that lead
+    /// somewhere different from where the value already is.
+    fn entry_affordance(
+        d: &crate::view::settings::entry_dialog::EntryDialogState,
+        index: usize,
+        item: &crate::view::settings::items::SettingItem,
+        focused: bool,
+    ) -> Option<crate::view::shell::entry::Affordance> {
+        use crate::view::shell::entry as e;
+        use fresh_i18n::t;
+        if item.read_only {
+            return None;
+        }
+        if item.nullable && item.is_null {
+            let inherits = d
+                .inheritable_fields
+                .contains(item.path.trim_start_matches('/'));
+            return inherits
+                .then(|| e::Affordance::Badge(t!("settings.inherited_badge").to_string()));
+        }
+        let buttons = d.field_action_buttons(index);
+        if buttons.is_empty() {
+            return None;
+        }
+        let cursor = focused.then_some(d.field_button_focus).flatten();
+        Some(e::Affordance::Actions(
+            buttons
+                .into_iter()
+                .enumerate()
+                .map(|(i, (_, label))| e::Action {
+                    label,
+                    focused: cursor == Some(i),
+                })
+                .collect(),
+        ))
+    }
+
+    /// The settings entry-edit dialog stack.
+    ///
+    /// **One description per level.** The painter drew them in a loop with
+    /// `apply_dimming` between, and every one of the three mouse paths behind
+    /// them recomputed the box, the button row and the field positions from
+    /// the modal area. Each level is a layer with its own scrim; each field,
+    /// button and per-field action answers its own press.
+    fn settings_entry_description(&self) -> Vec<crate::view::shell::entry::Dialog> {
+        use crate::view::shell::entry as e;
+        use fresh_i18n::t;
+
+        let Some(s) = self.settings_state.as_ref() else {
+            return Vec::new();
+        };
+        s.entry_dialog_stack
+            .iter()
+            .enumerate()
+            .map(|(level, d)| {
+                let label_width = d.label_column();
+                let first_editable = d.first_editable_index;
+                let divider_at =
+                    (first_editable > 0 && first_editable < d.items.len()).then_some(first_editable);
+                let items = d
+                    .items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| {
+                        let focused =
+                            !item.read_only && !d.focus_on_buttons && d.selected_item == index;
+                        e::Item {
+                            index,
+                            divider_above: divider_at == Some(index),
+                            section: item
+                                .section
+                                .clone()
+                                .filter(|_| item.is_section_start),
+                            spec: crate::view::settings::widget_map::setting_control_to_widget_aligned(
+                                &item.path,
+                                &item.control,
+                                label_width,
+                            ),
+                            focus_key: match item.control.is_editing() {
+                                true => item.path.clone(),
+                                false => String::new(),
+                            },
+                            focused,
+                            hovered: !item.read_only && d.hover_item == Some(index),
+                            modified: item.modified,
+                            read_only: item.read_only,
+                            // A composite control's cursor walks its own rows,
+                            // and the `>` goes where the cursor is.
+                            cursor_row: match item.control.is_composite() {
+                                true => item.control.focused_sub_row(),
+                                false => 0,
+                            },
+                            affordance: Self::entry_affordance(d, index, item, focused),
+                        }
+                    })
+                    .collect();
+                let mut buttons = vec![
+                    e::Button {
+                        label: "[ Save ]".into(),
+                        focused: d.focus_on_buttons && d.focused_button == 0,
+                        hovered: d.hover_button == Some(0),
+                        destructive: false,
+                    },
+                    e::Button {
+                        label: "[ Cancel ]".into(),
+                        focused: d.focus_on_buttons && d.focused_button == 1,
+                        hovered: d.hover_button == Some(1),
+                        destructive: false,
+                    },
+                ];
+                if !d.is_new && !d.no_delete {
+                    buttons.push(e::Button {
+                        label: crate::view::settings::render::entry_delete_button_label(d),
+                        focused: d.focus_on_buttons && d.focused_button == 2,
+                        hovered: d.hover_button == Some(2),
+                        destructive: true,
+                    });
+                }
+                let (legend, warn) = d.legend_line();
+                e::Dialog {
+                    level,
+                    title: match d.is_dirty() {
+                        true => format!(" {} • {} ", d.title, t!("settings.modified_suffix")),
+                        false => format!(" {} ", d.title),
+                    },
+                    dirty: d.is_dirty(),
+                    items,
+                    buttons,
+                    helper: d.helper_line(),
+                    legend: match warn {
+                        true => e::Legend::Warn(legend),
+                        false => e::Legend::Keys(legend),
+                    },
+                    anchor: Some(d.body_anchor.clone()),
+                }
+            })
+            .collect()
+    }
+
+    /// The settings page's cards.
+    ///
+    /// **This is what `ScrollablePanel::render` and `render_setting_item_pure`
+    /// were.** The painter planned each item as an `ItemBox` — five row counts
+    /// and five `_y()` accessors — clipped every band against a
+    /// `BandViewport`, and filed a `ControlLayoutInfo` per control so a later
+    /// click could be compared against it. None of the three survives here:
+    /// the column measures each card once, the window is a `viewport`, and the
+    /// control's own hits answer its presses.
+    fn settings_cards(
+        s: &crate::view::settings::SettingsState,
+    ) -> Option<crate::view::shell::settings::Items> {
+        use crate::view::settings::items::page_label_width;
+        use crate::view::shell::settings as st;
+        use fresh_i18n::t;
+
+        let page = s.pages.get(s.selected_category)?;
+        let focused = s.focus_panel() == crate::view::settings::state::FocusPanel::Settings;
+        let label_width = page_label_width(&page.items);
+        let cards =
+            page.items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    let hovered = matches!(
+                        s.hover_hit,
+                        Some(
+                            crate::view::settings::SettingsHit::Item(i)
+                                | crate::view::settings::SettingsHit::ControlToggle(i)
+                                | crate::view::settings::SettingsHit::ControlDropdown(i)
+                                | crate::view::settings::SettingsHit::ControlText(i)
+                                | crate::view::settings::SettingsHit::ControlNumberValue(i)
+                                | crate::view::settings::SettingsHit::ControlTextListRow(i, _)
+                                | crate::view::settings::SettingsHit::ControlMapRow(i, _)
+                                | crate::view::settings::SettingsHit::ControlInherit(i)
+                        ) if i == index
+                    );
+                    st::Card {
+                        index,
+                        section: item.section.clone().filter(|_| {
+                            item.is_section_start && item.style.section_header_rows > 0
+                        }),
+                        spec: crate::view::settings::widget_map::setting_control_to_widget_aligned(
+                            &item.path,
+                            &item.control,
+                            label_width,
+                        ),
+                        // A field paints its caret only while it is the focused
+                        // widget, and only editing means that — outside edit mode
+                        // ↑↓ walks the settings list and a caret would promise a
+                        // movement the arrows do not make.
+                        focus_key: match item.control.is_editing() {
+                            true => item.path.clone(),
+                            false => String::new(),
+                        },
+                        description: item.description.clone().filter(|d| !d.is_empty()),
+                        layer: match item.layer_source {
+                            crate::config_io::ConfigLayer::System => None,
+                            crate::config_io::ConfigLayer::User => Some("user"),
+                            crate::config_io::ConfigLayer::Project => Some("project"),
+                            crate::config_io::ConfigLayer::Session => Some("session"),
+                        },
+                        selected: focused && index == s.selected_item,
+                        hovered,
+                        dirty: s.path_has_pending_change(&item.path),
+                        inherit: match (item.nullable, item.is_null) {
+                            (false, _) => None,
+                            (true, true) => Some(st::Inherit::Badge(
+                                t!("settings.inherited_badge").to_string(),
+                            )),
+                            (true, false) => Some(st::Inherit::Button {
+                                label: format!("[{}]", t!("settings.btn_inherit")),
+                                hovered: matches!(
+                                    s.hover_hit,
+                                    Some(crate::view::settings::SettingsHit::ControlInherit(i))
+                                        if i == index
+                                ),
+                            }),
+                        },
+                        bordered: item.style.card_border_rows > 0,
+                    }
+                })
+                .collect();
+        Some(st::Items {
+            cards,
+            anchor: Some(s.body_anchor.clone()),
+        })
+    }
+
     /// The settings dialog's title and search row.
     fn settings_chrome_description(&self) -> Option<crate::view::shell::settings::Chrome> {
         use crate::app::shell_host::shell_theme::{attrs, pair};
@@ -2237,7 +2572,7 @@ impl Editor {
                     3 => st::Button::Cancel,
                     _ => st::Button::Edit,
                 });
-            use crate::view::settings::layout::SettingsHit;
+            use crate::view::settings::hit::SettingsHit;
             st::Footer {
                 layer: format!("[ {} ]", s.target_layer_name()),
                 reset: format!(
@@ -2274,13 +2609,12 @@ impl Editor {
         // running: the narrow layout lays its categories as a horizontal
         // strip, and a search replaces the whole body with its results.
         //
-        // **And not while the entry-dialog stack is up**, which is the same
-        // rule `keybinding_table_description` states for its table: the stack
-        // is still the painter's, the tree is folded after every painter, so
-        // a described tree would be drawn *over* the dialog covering it. The
-        // five prompts that have crossed are layers and land the right way
-        // round; this one is under the dialog, so it waits for it.
-        let categories = (wide && !s.search_active && !s.showing_entry_dialog()).then(|| {
+        // **And it no longer stands down for the entry-dialog stack.** That
+        // stack was the painter's, the tree folds after every painter, and a
+        // described tree would have been drawn *over* the dialog covering it
+        // — so the band behind an open dialog was blank. The stack is a layer
+        // now (`view::shell::entry`), which lands the right way round.
+        let categories = (wide && !s.search_active).then(|| {
             use crate::view::settings::state::{FocusPanel, TreeRow};
             let nerd = s.nerd_font_icons_enabled();
             let cursor = s.tree_cursor_section;
@@ -2335,10 +2669,10 @@ impl Editor {
             }
         });
         // The settings panel's own header: the page title, and the `[Clear …]`
-        // a nullable category with values offers. Described under the same two
-        // conditions as the tree — the narrow layout paints its own, and a
-        // search replaces the body.
-        let page = categories.is_some().then(|| {
+        // a nullable category with values offers. In either layout — the
+        // narrow one's categories are a painted strip, but its page is the
+        // tree's like the wide one's.
+        let page = (!s.search_active).then(|| {
             let p = s.current_page();
             st::Page {
                 title: p.map(|p| p.name.clone()).unwrap_or_default(),
@@ -2353,10 +2687,47 @@ impl Editor {
                 ),
             }
         });
+        // The cards. Described in either layout — the narrow one's categories
+        // are a painted strip, but its page is the tree's like the wide one's.
+        let items = (!s.search_active)
+            .then(|| Self::settings_cards(s))
+            .flatten();
+        // The narrow layout's categories, which are the other half of the
+        // same choice the tree above is.
+        let strip = (!wide && !s.search_active).then(|| st::Strip {
+            focused: s.focus_panel() == crate::view::settings::state::FocusPanel::Categories,
+            hint: "←→: Switch category".into(),
+            cats: s
+                .pages
+                .iter()
+                .enumerate()
+                .map(|(idx, page)| st::StripCat {
+                    idx,
+                    label: page.name.clone(),
+                    dirty: s.page_has_pending_changes(idx),
+                    selected: idx == s.selected_category,
+                })
+                .collect(),
+        });
+        // The search's results, in place of the page. The painter windowed
+        // them by hand and filed a rectangle per visible card; the list is
+        // the window, and a row knows its own index.
+        let results = (s.search_active && !s.search_results.is_empty()).then(|| st::Results {
+            selected: s.selected_search_result,
+            rows: s
+                .search_results
+                .iter()
+                .map(crate::view::settings::render::search_result_row)
+                .collect(),
+        });
         Some(st::Chrome {
+            wide,
             footer,
             categories,
+            strip,
+            results,
             page,
+            items,
             title: match s.has_changes() {
                 true => format!(" Settings [{}] • (modified) ", s.target_layer_name()),
                 false => format!(" Settings [{}] ", s.target_layer_name()),
@@ -2375,10 +2746,11 @@ impl Editor {
         use fresh_i18n::t;
 
         let s = self.settings_state.as_ref().filter(|s| s.visible)?;
-        // The painter's own precedence, topmost first. The entry dialog's two
-        // prompts sit *over* the entry stack, so they cross even though the
-        // stack has not: a layer lands on top of what the painter drew, which
-        // is where they were.
+        // The painter's own precedence, topmost first — and it is layer
+        // order now, so it holds without the gate that used to sit in the
+        // middle of this chain. The entry stack was painted, so anything
+        // *under* it had to stay painted too; a described prompt would have
+        // landed on top of the dialog it belonged behind.
         if s.showing_entry_delete_confirm {
             let named = !s.entry_delete_target_name.is_empty();
             return Some(st::Dialog::EntryDelete(st::Destructive {
@@ -2414,11 +2786,6 @@ impl Editor {
                 grave: false,
                 width: 50,
             }));
-        }
-        // The stack itself is still painted, so anything *under* it stays
-        // painted too — a described dialog would land on top of it.
-        if s.showing_entry_dialog() {
-            return None;
         }
         if s.showing_help {
             let head = |k: &str| st::HelpLine {
@@ -3776,6 +4143,7 @@ impl Editor {
             event_debug: self.event_debug_description(),
             settings: self.settings_chrome_description(),
             settings_dialog: self.settings_dialog_description(),
+            settings_entry: self.settings_entry_description(),
             keybinding: self.keybinding_chrome_description(),
             keybinding_table: self.keybinding_table_description(),
             keybinding_dialog: self.keybinding_dialog_description(),
@@ -4250,23 +4618,18 @@ impl Editor {
             // columns out, so the panel's rectangle is read rather than split
             // for a second time. See `settings::panel_key`.
             let panel_area = self.panel_rect(&crate::view::shell::settings::panel_key());
-            // And the band under that panel's header, which the header itself
-            // sizes. See `settings::items_key`.
-            let items_area = self.panel_rect(&crate::view::shell::settings::items_key());
             let open = self.settings_state.as_ref().is_some_and(|s| s.visible);
             if open {
                 let theme = self.theme.read().unwrap().clone();
-                if let Some(ref mut settings_state) = self.settings_state {
-                    let settings_layout = crate::view::settings::render_settings(
+                if let Some(ref settings_state) = self.settings_state {
+                    crate::view::settings::render_settings(
                         frame,
                         area,
                         modal_area.unwrap_or(ratatui::layout::Rect::ZERO),
                         panel_area,
-                        items_area,
                         settings_state,
                         &theme,
                     );
-                    self.active_chrome_mut().settings_layout = Some(settings_layout);
                 }
             }
         }

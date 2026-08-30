@@ -28,9 +28,14 @@ pub(crate) enum Command {
     Reveal(u32),
     /// Move the window so that the descendant with this key is inside it.
     RevealKey(crate::key::Key),
+    /// Move the window so that the descendant with this key is at its top.
+    TopKey(crate::key::Key),
+    /// Move the window so that one row *inside* the keyed descendant is in
+    /// it: `(key, rows from that band's top)`.
+    RevealKeyAt(crate::key::Key, u32),
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Anchor {
     bound: Cell<Option<ElementId>>,
     queue: RefCell<Vec<Command>>,
@@ -82,9 +87,34 @@ impl Anchor {
     /// (its bottom edge flush with the window's) scrolls past the very thing
     /// the caller asked to see.
     pub fn reveal_key(&self, key: impl Into<crate::key::Key>) {
+        self.queue.borrow_mut().push(Command::RevealKey(key.into()));
+    }
+
+    /// Move the target's window so that the descendant carrying `key` is at
+    /// the *top* of it, however far that is.
+    ///
+    /// The difference from [`Anchor::reveal_key`] is what "show me this" means
+    /// when the caller is jumping rather than following. Revealing moves as
+    /// little as possible, which leaves the target at the bottom edge — right
+    /// for a cursor that walked there, wrong for "take me to this section",
+    /// where everything under the heading is what the reader wants and a
+    /// tight viewport clips it away entirely.
+    pub fn top_key(&self, key: impl Into<crate::key::Key>) {
+        self.queue.borrow_mut().push(Command::TopKey(key.into()));
+    }
+
+    /// Move the target's window so that the row `row` rows into the keyed
+    /// descendant's band is inside it.
+    ///
+    /// **For an offset the caller owns inside content the framework placed.**
+    /// A text editor knows its caret is on its own line seventeen; it does
+    /// not know, and should not compute, which row of the column that lands
+    /// on. Naming the band and the offset within it splits the question at
+    /// the one place each side has an answer for.
+    pub fn reveal_key_at(&self, key: impl Into<crate::key::Key>, row: u32) {
         self.queue
             .borrow_mut()
-            .push(Command::RevealKey(key.into()));
+            .push(Command::RevealKeyAt(key.into(), row));
     }
 }
 

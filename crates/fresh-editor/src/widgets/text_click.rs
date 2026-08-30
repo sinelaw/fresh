@@ -106,6 +106,21 @@ impl WidgetTextClickGeometry {
         })
     }
 
+    /// Map a column *within the field's value cell* to a byte offset in the
+    /// value.
+    ///
+    /// **This is what a press on the cell's own node reports.** The runtime
+    /// restricted a text field's hit to its value range, so the node a
+    /// description hangs off that hit covers the cell alone and the offset
+    /// inside it starts at the cell, not at the row. `hit_byte_start` is where
+    /// the cell begins in the row, which is the only thing needed to put the
+    /// two back in the same space.
+    pub fn value_byte_in_cell(&self, hit_byte_start: usize, col_in_cell: u16) -> usize {
+        let head = &self.row_text[..hit_byte_start.min(self.row_text.len())];
+        let before = crate::primitives::display_width::str_width(head) as u16;
+        self.value_byte_at(self.origin_col + before + col_in_cell)
+    }
+
     /// Map an absolute screen column to a byte offset in the field's value
     /// (grapheme-boundary aligned, clamped to the value). A click left of
     /// the value yields 0; a click past its end yields `value_len`.

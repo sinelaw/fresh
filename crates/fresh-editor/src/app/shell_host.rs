@@ -941,6 +941,116 @@ impl Editor {
     }
 }
 
+/// What a press on a settings *card* means.
+///
+/// **The translation table already existed; it was written in geometry.**
+/// Every `hit_rect(&out, "<kind>", "<event>", …)` call in `render_control`
+/// paired a widget hit with the `ControlLayoutInfo` field it filled, and every
+/// arm of `SettingsLayout::hit_test` turned that field back into a
+/// `SettingsHit` by comparing a cell against it. The rectangle in the middle
+/// is what goes: the runtime already names the kind and the event, the row
+/// index rides in the payload, and the control's key names the item. So this
+/// is the same table with the geometry taken out of it.
+///
+/// The answer goes to `dispatch_settings_hit`, which is the body the web's
+/// `/settings` route calls by name — so a click still does the same thing in
+/// both frontends.
+impl Editor {
+    pub(crate) fn settings_widget_hit(&mut self, hit: &crate::widgets::HitArea, at: Option<u16>) {
+        use crate::view::settings::items::SettingControl;
+        use crate::view::settings::SettingsHit;
+
+        // A list row's own key is the row's; the list it belongs to is the
+        // owner, and that is the one keyed by the control's path.
+        let key = hit.owner_key.as_deref().unwrap_or(hit.widget_key.as_str());
+        // `{path}` for a scalar, `{path}::list` / `{path}::add` for the two
+        // lists a composite control owns.
+        let (path, part) = match key.split_once("::") {
+            Some((p, s)) => (p, s),
+            None => (key, ""),
+        };
+        let Some(state) = self.settings_state.as_ref() else {
+            return;
+        };
+        let Some(page) = state.pages.get(state.selected_category) else {
+            return;
+        };
+        let Some(idx) = page.items.iter().position(|i| i.path == path) else {
+            return;
+        };
+        let row = || {
+            hit.payload
+                .get("index")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize
+        };
+        let resolved = match (hit.widget_kind, hit.event_type) {
+            ("toggle", _) => SettingsHit::ControlToggle(idx),
+            ("number", "number_value") => SettingsHit::ControlNumberValue(idx),
+            ("dropdown", "dropdown_select") => SettingsHit::ControlDropdownOption(idx, row()),
+            ("dropdown", _) => SettingsHit::ControlDropdown(idx),
+            ("text", _) => SettingsHit::ControlText(idx),
+            // Which list a row belongs to decides what selecting it means: a
+            // `TextList` edits the item in place, a `Map` or an
+            // `ObjectArray` opens the entry dialog, and the trailing
+            // sentinel adds a new one. `usize::MAX` is the add row's index in
+            // `ControlTextListRow`, which is what `data_idx.unwrap_or(…)`
+            // meant when the painter recovered it from a rectangle.
+            ("list", _) => match (&page.items[idx].control, part) {
+                (SettingControl::TextList(_), "add") => {
+                    SettingsHit::ControlTextListRow(idx, usize::MAX)
+                }
+                (SettingControl::TextList(_), _) => SettingsHit::ControlTextListRow(idx, row()),
+                (_, "add") => SettingsHit::ControlMapAddNew(idx),
+                _ => SettingsHit::ControlMapRow(idx, row()),
+            },
+            ("dual_list", _) => match hit.payload.get("column").and_then(|v| v.as_str()) {
+                Some("included") => SettingsHit::ControlDualListIncluded(idx, row()),
+                _ => SettingsHit::ControlDualListAvailable(idx, row()),
+            },
+            // Anything else on a card is a press on the card: select it.
+            _ => SettingsHit::Item(idx),
+        };
+        // A press on a text field also says *where* in the value the caret
+        // goes (#2573). The payload carries the value's own offsets; the row
+        // it sits in is what turns a column into a byte, and re-rendering the
+        // control is how the entry dialog's click path gets it too.
+        let caret = match resolved {
+            SettingsHit::ControlText(_) => at.and_then(|col| {
+                let item = &page.items[idx];
+                let spec = crate::view::settings::widget_map::setting_control_to_widget_aligned(
+                    &item.path,
+                    &item.control,
+                    crate::view::settings::items::page_label_width(&page.items),
+                );
+                let out = crate::widgets::render_spec_no_autofocus(
+                    &spec,
+                    crate::view::shell::widgets::no_state(),
+                    "",
+                    u32::MAX,
+                );
+                crate::widgets::WidgetTextClickGeometry::from_render_output(&out, 0)
+                    .map(|g| g.value_byte_in_cell(hit.byte_start, col))
+            }),
+            _ => None,
+        };
+
+        // A map row activates on a *double* click and its add row on a
+        // single one (#604), so the press's own doubleness travels with it —
+        // the same bit `handle_settings_mouse` was handed.
+        let dbl = self
+            .shell_pointer_event
+            .map(|(_, double)| double)
+            .unwrap_or(false);
+        self.dispatch_settings_hit(resolved, dbl);
+        if let Some(byte) = caret {
+            if let Some(s) = self.settings_state.as_mut() {
+                s.position_text_cursor(byte);
+            }
+        }
+    }
+}
+
 /// What a press on the settings dialog's category tree means.
 ///
 /// **Three bodies, two callers.** The TUI reaches them through the tree's own
@@ -956,7 +1066,7 @@ impl Editor {
             s.focus.set(FocusPanel::Categories);
             s.selected_category = idx;
             s.selected_item = 0;
-            s.scroll_panel = crate::view::ui::ScrollablePanel::new();
+            s.body_anchor.scroll_to(fresh_ui::Point::ZERO);
             s.sub_focus = None;
             // A click lands the cursor on the category row itself, even after
             // auto-expand reveals its sections — which is where keyboard
@@ -1073,14 +1183,84 @@ impl Editor {
             // all three frontends already share, and it does not change.
             // `None` for the clicked byte: the byte range in the hit is a
             // payload now, not a position the caller resolved.
-            UiFact::WidgetHit { slot, hit } => {
+            UiFact::WidgetHit { slot, hit, at } => {
                 let slot = match slot {
                     crate::view::shell::widgets::Slot::Dock => crate::app::PanelSlot::Dock,
                     crate::view::shell::widgets::Slot::Floating => crate::app::PanelSlot::Floating,
+                    // Not a plugin panel: the same `WidgetSpec`s, whose hits
+                    // are settings actions rather than a plugin's
+                    // `widget_event`.
+                    crate::view::shell::widgets::Slot::Settings => {
+                        self.settings_widget_hit(&hit, at);
+                        return;
+                    }
+                    // The same, one surface in: an entry dialog's fields are
+                    // its own, not the page's.
+                    crate::view::shell::widgets::Slot::SettingsEntry => {
+                        self.settings_entry_widget_hit(&hit, at);
+                        return;
+                    }
                 };
                 if let Some(panel_key) = self.panel(slot).map(|p| p.panel_key.clone()) {
                     self.deliver_widget_hit(&panel_key, &hit, None);
                 }
+            }
+            UiFact::SettingsItem(idx) => {
+                self.dispatch_settings_hit(crate::view::settings::SettingsHit::Item(idx), false);
+            }
+            UiFact::SettingsItemHover(idx) => {
+                if let Some(s) = self.settings_state.as_mut() {
+                    s.hover_hit = idx.map(crate::view::settings::SettingsHit::Item);
+                }
+            }
+            UiFact::SettingsInherit(idx) => {
+                self.dispatch_settings_hit(
+                    crate::view::settings::SettingsHit::ControlInherit(idx),
+                    false,
+                );
+            }
+            UiFact::SettingsInheritHover(idx) => {
+                if let Some(s) = self.settings_state.as_mut() {
+                    s.hover_hit = Some(crate::view::settings::SettingsHit::ControlInherit(idx));
+                }
+            }
+            UiFact::SettingsEntryItem(idx) => self.entry_dialog_select_item(idx),
+            UiFact::SettingsEntryItemHover(idx) => {
+                if let Some(d) = self
+                    .settings_state
+                    .as_mut()
+                    .and_then(|s| s.entry_dialog_mut())
+                {
+                    d.hover_item = idx;
+                }
+            }
+            UiFact::SettingsEntryButton(i) => {
+                let kind = self
+                    .settings_state
+                    .as_ref()
+                    .and_then(|s| s.entry_dialog())
+                    .map(|d| Self::entry_button_kind(d, i));
+                if let Some(kind) = kind {
+                    self.entry_dialog_activate_button(kind);
+                }
+            }
+            UiFact::SettingsEntryButtonHover(i) => {
+                if let Some(d) = self
+                    .settings_state
+                    .as_mut()
+                    .and_then(|s| s.entry_dialog_mut())
+                {
+                    d.hover_button = i;
+                }
+            }
+            UiFact::SettingsEntryFieldAction(item, action) => {
+                self.entry_dialog_field_action(item, action);
+            }
+            UiFact::SettingsSearchResult(idx) => {
+                self.dispatch_settings_hit(
+                    crate::view::settings::SettingsHit::SearchResult(idx),
+                    false,
+                );
             }
             UiFact::PanelClosed => {
                 self.dismiss_floating_panel_with_cancel(crate::app::PanelSlot::Floating);
@@ -1562,7 +1742,7 @@ impl Editor {
                 }
             }
             UiFact::SettingsButtonHover(b) => {
-                use crate::view::settings::layout::SettingsHit;
+                use crate::view::settings::hit::SettingsHit;
                 use crate::view::shell::settings::Button;
                 if let Some(s) = self.settings_state.as_mut() {
                     s.hover_hit = b.map(|b| match b {
@@ -1617,11 +1797,11 @@ impl Editor {
             }
             UiFact::ModalPointer(slot) => {
                 use crate::view::shell::modal::Slot;
-                let Some((ev, double)) = self.shell_pointer_event else {
+                let Some((ev, _)) = self.shell_pointer_event else {
                     return;
                 };
                 let r = match slot {
-                    Slot::Settings => self.handle_settings_mouse(ev, double),
+                    Slot::Settings => self.handle_settings_mouse(ev),
                     Slot::FloatingPanel => self.handle_floating_modal_mouse(ev),
                 };
                 if let Err(e) = r {

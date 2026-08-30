@@ -7,75 +7,14 @@ use crate::app::Editor;
 use anyhow::Result as AnyhowResult;
 
 use super::items::SettingControl;
-use super::render::ControlLayoutInfo;
-use super::{FocusPanel, SettingsHit, SettingsLayout};
+use super::{FocusPanel, SettingsHit};
 use crate::view::controls::DualListColumn;
-
-/// Computed layout for entry dialog hit testing
-struct EntryDialogLayout {
-    dialog_x: u16,
-    dialog_y: u16,
-    dialog_width: u16,
-    dialog_height: u16,
-    inner_x: u16,
-    inner_y: u16,
-    inner_width: u16,
-    inner_height: u16,
-    button_y: u16,
-    scrollbar_x: u16,
-}
-
-impl EntryDialogLayout {
-    /// Compute entry dialog layout from modal area
-    fn from_modal(modal: ratatui::layout::Rect) -> Option<Self> {
-        if modal.width == 0 || modal.height == 0 {
-            return None;
-        }
-
-        let dialog_width = (modal.width * 85 / 100).clamp(50, 90);
-        let dialog_height = (modal.height * 90 / 100).max(15);
-        let dialog_x = modal.x + (modal.width.saturating_sub(dialog_width)) / 2;
-        let dialog_y = modal.y + (modal.height.saturating_sub(dialog_height)) / 2;
-
-        Some(Self {
-            dialog_x,
-            dialog_y,
-            dialog_width,
-            dialog_height,
-            inner_x: dialog_x + 2,
-            inner_y: dialog_y + 1,
-            inner_width: dialog_width.saturating_sub(4),
-            inner_height: dialog_height.saturating_sub(5),
-            button_y: dialog_y + dialog_height - 2,
-            scrollbar_x: dialog_x + dialog_width - 3,
-        })
-    }
-
-    fn contains(&self, col: u16, row: u16) -> bool {
-        col >= self.dialog_x
-            && col < self.dialog_x + self.dialog_width
-            && row >= self.dialog_y
-            && row < self.dialog_y + self.dialog_height
-    }
-
-    fn in_content_area(&self, col: u16, row: u16) -> bool {
-        col >= self.inner_x
-            && col < self.inner_x + self.inner_width
-            && row >= self.inner_y
-            && row < self.inner_y + self.inner_height
-    }
-
-    fn near_scrollbar(&self, col: u16) -> bool {
-        col >= self.scrollbar_x.saturating_sub(2) && col <= self.dialog_x + self.dialog_width
-    }
-}
 
 impl Editor {
     /// Handle mouse events when settings modal is open.
     pub(crate) fn handle_settings_mouse(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
-        is_double_click: bool,
     ) -> AnyhowResult<bool> {
         use crossterm::event::{MouseButton, MouseEventKind};
 
@@ -104,59 +43,27 @@ impl Editor {
             return Ok(false);
         }
 
-        // Handle mouse events for entry dialog
-        if let Some(ref mut state) = self.settings_state {
-            if state.showing_entry_dialog() {
-                match mouse_event.kind {
-                    MouseEventKind::Moved => {
-                        return Ok(self.entry_dialog_update_hover(col, row));
-                    }
-                    MouseEventKind::ScrollUp => {
-                        if let Some(dialog) = state.entry_dialog_mut() {
-                            dialog.scroll_up();
-                            return Ok(true);
-                        }
-                    }
-                    MouseEventKind::ScrollDown => {
-                        if let Some(dialog) = state.entry_dialog_mut() {
-                            dialog.scroll_down(20);
-                            return Ok(true);
-                        }
-                    }
-                    MouseEventKind::Drag(MouseButton::Left) => {
-                        return Ok(self.entry_dialog_scrollbar_drag(col, row));
-                    }
-                    MouseEventKind::Down(MouseButton::Left) => {
-                        return self.handle_entry_dialog_click(col, row, is_double_click);
-                    }
-                    _ => {}
-                }
-                return Ok(false);
-            }
+        // **The entry-dialog stack answers for itself.** Its fields, buttons
+        // and per-field actions are nodes, and its window is a `viewport` —
+        // so the wheel, the scrollbar drag and the hover that were handled
+        // here are the framework's. A press that reaches this far while the
+        // stack is up landed on its scrim.
+        if self
+            .settings_state
+            .as_ref()
+            .is_some_and(|s| s.showing_entry_dialog())
+        {
+            return Ok(false);
         }
 
-        // Track hover position and compute hover hit for visual feedback
         match mouse_event.kind {
+            // **Every surface reports its own hover.** A card, a category
+            // row, a footer button and a search result each say when the
+            // pointer enters and leaves them; this arm compared the cell
+            // against every recorded rectangle in the dialog on every move.
             MouseEventKind::Moved => {
-                let hover_hit = self
-                    .active_chrome()
-                    .settings_layout
-                    .as_ref()
-                    .and_then(|layout: &SettingsLayout| layout.hit_test(col, row));
-
                 if let Some(ref mut state) = self.settings_state {
-                    let old_hit = state.hover_hit;
                     state.hover_position = Some((col, row));
-                    state.hover_hit = hover_hit;
-
-                    // Update dropdown hover index when hovering over options
-                    let new_hover_idx = match hover_hit {
-                        Some(SettingsHit::ControlDropdownOption(_, opt_idx)) => Some(opt_idx),
-                        _ => None,
-                    };
-                    let hover_changed = state.set_dropdown_hover(new_hover_idx);
-
-                    return Ok(old_hit != hover_hit || hover_changed);
                 }
                 return Ok(false);
             }
@@ -166,10 +73,6 @@ impl Editor {
                     if state.is_dropdown_open() {
                         state.dropdown_scroll(-3);
                         return Ok(true);
-                    }
-                    // If search is active and we have results, scroll search results
-                    if state.search_active && !state.search_results.is_empty() {
-                        return Ok(state.search_scroll_up(3));
                     }
                 }
                 // A wheel over the category tree is the tree's: it is a
@@ -187,81 +90,32 @@ impl Editor {
                         state.dropdown_scroll(3);
                         return Ok(true);
                     }
-                    // If search is active and we have results, scroll search results
-                    if state.search_active && !state.search_results.is_empty() {
-                        return Ok(state.search_scroll_down(3));
-                    }
                 }
                 return Ok(self.settings_scroll_down(3));
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                // Check if dragging on search scrollbar
-                if let Some(ref mut state) = self.settings_state {
-                    if state.search_active && !state.search_results.is_empty() {
-                        if let Some(scrolled) = self.search_scrollbar_drag(col, row) {
-                            return Ok(scrolled);
-                        }
-                    }
-                }
-                return Ok(self.settings_scrollbar_drag(col, row));
-            }
-            MouseEventKind::Down(MouseButton::Left) => {}
-            _ => return Ok(false),
+            // Both bars in the dialog — the body's and the results' — are
+            // their windows' own, and the framework maps a press or a drag on
+            // one to an offset.
+            MouseEventKind::Drag(MouseButton::Left) => return Ok(false),
+            // **Every surface in the dialog answers its own press**, and the
+            // tree's layers answer before this handler runs. What reached
+            // here was `SettingsLayout::hit_test`: the modal's rectangle, each
+            // control's chip, each visible search row and two scrollbar
+            // tracks, compared against the cell in the order the painter had
+            // registered them. A press that gets this far landed on the box
+            // or its scrim, which is `Background` — and `Background` did
+            // nothing. It is still swallowed, because the dialog is modal and
+            // the editor behind it must not see the click.
+            MouseEventKind::Down(MouseButton::Left) => Ok(true),
+            _ => Ok(false),
         }
-
-        // Use cached settings layout for hit testing
-        let Some(hit) = self
-            .active_chrome()
-            .settings_layout
-            .as_ref()
-            .and_then(|layout: &SettingsLayout| layout.hit_test(col, row))
-        else {
-            return Ok(false);
-        };
-
-        // A click on a main-panel text field enters editing (via dispatch)
-        // AND positions the caret where the click landed (#2573). The
-        // geometry was stamped into the layout at render time; read it
-        // here, where the screen `col` is still available (the web-shared
-        // `dispatch_settings_hit` carries no column). Grab it before
-        // dispatch, since dispatch re-borrows the layout.
-        let text_click_geometry = match hit {
-            SettingsHit::ControlText(idx) => self
-                .active_chrome()
-                .settings_layout
-                .as_ref()
-                .and_then(|l| l.items.iter().find(|it| it.index == idx))
-                .and_then(|it| match &it.control {
-                    ControlLayoutInfo::Text { geometry, .. } => geometry.clone(),
-                    _ => None,
-                }),
-            _ => None,
-        };
-
-        self.dispatch_settings_hit(hit, row, is_double_click);
-
-        // Position the caret after dispatch, which ran `start_editing` and
-        // seeded the caret at end-of-value; the click position wins.
-        if let Some(geometry) = text_click_geometry {
-            let byte = geometry.value_byte_at(col);
-            if let Some(state) = self.settings_state.as_mut() {
-                state.position_text_cursor(byte);
-            }
-        }
-        Ok(true)
     }
 
-    /// Perform the action for a resolved `SettingsHit` — shared by the TUI mouse
-    /// hit-test above and the web `/settings` route, which sends the hit it
-    /// rendered natively. So a click does the same thing in both frontends.
-    /// `row` is used only by the scrollbar hits (TUI-only; the web never sends
-    /// them).
-    pub(crate) fn dispatch_settings_hit(
-        &mut self,
-        hit: SettingsHit,
-        row: u16,
-        is_double_click: bool,
-    ) {
+    /// Perform the action for a resolved `SettingsHit` — the one body both
+    /// frontends run. The TUI's nodes resolve their own presses to a hit
+    /// through `Editor::settings_widget_hit`; the web's `/settings` route
+    /// sends the hit it rendered. So a click does the same thing in both.
+    pub(crate) fn dispatch_settings_hit(&mut self, hit: SettingsHit, is_double_click: bool) {
         // If a dropdown is open and the click is outside it, cancel and stop.
         if let Some(ref mut state) = self.settings_state {
             if state.is_dropdown_open() {
@@ -278,7 +132,6 @@ impl Editor {
         }
 
         match hit {
-            SettingsHit::Outside | SettingsHit::Background | SettingsHit::SettingsPanel => {}
             // The wide layout's tree answers for itself now: its rows carry
             // `UiFact::SettingsCategory`, `SettingsCategorySection` and
             // `SettingsCategoryDisclosure` — the identity the row has, rather
@@ -289,7 +142,7 @@ impl Editor {
                     state.focus.set(FocusPanel::Categories);
                     state.selected_category = idx;
                     state.selected_item = 0;
-                    state.scroll_panel = crate::view::ui::ScrollablePanel::new();
+                    state.body_anchor.scroll_to(fresh_ui::Point::ZERO);
                     state.sub_focus = None;
                     state.tree_cursor_section = None;
                     state.auto_expand_current_category();
@@ -496,20 +349,145 @@ impl Editor {
                     let _ = self.open_config_file(layer);
                 }
             }
-            SettingsHit::Scrollbar => self.settings_scrollbar_click(row),
-            SettingsHit::SearchScrollbar => self.search_scrollbar_click(row),
-            SettingsHit::SearchResultsPanel => {
-                // Clicking on search results panel background - no action needed
+        }
+    }
+
+    /// Which of the dialog's buttons index `i` is.
+    ///
+    /// The row is `[Save] [Cancel]` plus `[Delete …]` when the entry can be
+    /// removed — the same rule `entry::Dialog` builds the labels from, read
+    /// back here rather than a fourth copy of the row's arithmetic.
+    pub(crate) fn entry_button_kind(
+        d: &super::entry_dialog::EntryDialogState,
+        i: usize,
+    ) -> &'static str {
+        match i {
+            0 => "save",
+            1 => "cancel",
+            _ if !d.is_new && !d.no_delete => "delete",
+            _ => "cancel",
+        }
+    }
+
+    /// A press on a field's `[Reset]` / `[Inherit]`.
+    pub(crate) fn entry_dialog_field_action(&mut self, idx: usize, action: usize) {
+        use super::entry_dialog::FieldAction;
+        let Some(dialog) = self
+            .settings_state
+            .as_mut()
+            .and_then(|s| s.entry_dialog_mut())
+        else {
+            return;
+        };
+        let Some((which, _)) = dialog.field_action_buttons(idx).into_iter().nth(action) else {
+            return;
+        };
+        let _ = match which {
+            FieldAction::Reset => dialog.reset_field(idx),
+            FieldAction::Inherit => dialog.inherit_field(idx),
+        };
+        dialog.focus_on_buttons = false;
+        dialog.field_button_focus = None;
+        dialog.selected_item = idx;
+        dialog.update_focus_states();
+    }
+
+    /// A press on a described entry-dialog field.
+    ///
+    /// **The hit says which field, which of its rows, and where in that row.**
+    /// All three used to be recovered from the pointer's cell: the field by
+    /// walking every item's height, the row by subtracting the item's start,
+    /// and the column by comparing against a rectangle the renderer had drawn
+    /// — with the trailing `[x]` guessed at, because the field width that
+    /// would have placed it exactly was not carried this far. It is carried
+    /// now, by the row that has it.
+    pub(crate) fn settings_entry_widget_hit(
+        &mut self,
+        hit: &crate::widgets::HitArea,
+        at: Option<u16>,
+    ) {
+        let key = hit.owner_key.as_deref().unwrap_or(hit.widget_key.as_str());
+        let (path, part) = match key.split_once("::") {
+            Some((p, s)) => (p, s),
+            None => (key, ""),
+        };
+        let Some(dialog) = self.settings_state.as_ref().and_then(|s| s.entry_dialog()) else {
+            return;
+        };
+        let Some(idx) = dialog.items.iter().position(|i| i.path == path) else {
+            return;
+        };
+        if dialog.items[idx].read_only {
+            return;
+        }
+        let row = || {
+            hit.payload
+                .get("index")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize
+        };
+        // A control's rows are numbered from its label, which is row zero —
+        // the same numbering `ScrollItem::focus_regions` handed out.
+        let sub_row = match (hit.widget_kind, part) {
+            // The sentinel is one past the last committed row.
+            ("list", "add") => match &dialog.items[idx].control {
+                SettingControl::TextList(t) => t.items.len() + 1,
+                SettingControl::Map(m) => m.entries.len() + 1,
+                SettingControl::ObjectArray(a) => a.bindings.len() + 1,
+                _ => 1,
+            },
+            ("list", _) => row() + 1,
+            _ => 0,
+        };
+        if matches!(dialog.items[idx].control, SettingControl::TextList(_)) && sub_row > 0 {
+            if let Err(e) = self.entry_text_list_press(idx, sub_row, at.unwrap_or(0)) {
+                tracing::warn!("settings entry text-list press failed: {e}");
+            }
+            return;
+        }
+        // A press on a text field also says where in the value the caret goes.
+        let caret = match hit.widget_kind == "text" {
+            false => None,
+            true => at.and_then(|col| {
+                let item = &dialog.items[idx];
+                let spec = super::widget_map::setting_control_to_widget_aligned(
+                    &item.path,
+                    &item.control,
+                    None,
+                );
+                let out = crate::widgets::render_spec_no_autofocus(
+                    &spec,
+                    crate::view::shell::widgets::no_state(),
+                    "",
+                    u32::MAX,
+                );
+                crate::widgets::WidgetTextClickGeometry::from_render_output(&out, 0)
+                    .map(|g| g.value_byte_in_cell(hit.byte_start, col))
+            }),
+        };
+        self.entry_dialog_select_item(idx);
+        if let Some(byte) = caret {
+            if let Some(dialog) = self
+                .settings_state
+                .as_mut()
+                .and_then(|s| s.entry_dialog_mut())
+            {
+                if let Some(SettingControl::Text(ts)) =
+                    dialog.items.get_mut(idx).map(|it| &mut it.control)
+                {
+                    ts.set_cursor_from_flat(byte);
+                }
             }
         }
     }
 
-    /// Select an entry-dialog item by index and begin editing it — the
-    /// semantic equivalent of a TUI click on that row inside the add/edit
-    /// dialog (`handle_entry_dialog_item_click`, non-TextList path). Used by
-    /// the web `/settings` route so the entry dialog is clickable instead of
-    /// keyboard-only.
-    #[cfg(feature = "web")]
+    /// Select an entry-dialog field by index and begin editing it.
+    ///
+    /// **Two callers now.** It was the web `/settings` route's alone — the
+    /// TUI reached the same behaviour through
+    /// `handle_entry_dialog_item_click`, which spent most of its length
+    /// working out *which* field the pointer was on. The field says so
+    /// itself now, so both frontends end here.
     pub(crate) fn entry_dialog_select_item(&mut self, idx: usize) {
         if let Some(state) = self.settings_state.as_mut() {
             if let Some(dialog) = state.entry_dialog_mut() {
@@ -528,8 +506,9 @@ impl Editor {
 
     /// Activate an entry-dialog button by semantic name ("save" | "cancel" |
     /// "delete"). Routing by name rather than index keeps the web and TUI in
-    /// agreement even though they lay the buttons out in a different order.
-    #[cfg(feature = "web")]
+    /// agreement even though they lay the buttons out in a different order —
+    /// which is now what the TUI's own button nodes do too, through
+    /// [`Self::entry_button_kind`].
     pub(crate) fn entry_dialog_activate_button(&mut self, kind: &str) {
         let Some(state) = self.settings_state.as_mut() else {
             return;
@@ -559,470 +538,37 @@ impl Editor {
             .unwrap_or(false)
     }
 
-    fn settings_scrollbar_click(&mut self, row: u16) {
-        if let Some(ref scrollbar_area) = self
-            .active_chrome()
-            .settings_layout
-            .as_ref()
-            .and_then(|l| l.scrollbar_area)
-        {
-            if scrollbar_area.height > 0 {
-                let relative_y = row.saturating_sub(scrollbar_area.y);
-                let ratio = relative_y as f32 / scrollbar_area.height as f32;
-                if let Some(ref mut state) = self.settings_state {
-                    state.scroll_to_ratio(ratio);
-                }
-            }
-        }
-    }
+    // **The body's scrollbar is the window's own.** Its track was a
+    // rectangle the painter filed and two handlers compared a cell against;
+    // the `viewport` the cards live in draws its bar in its own gutter and
+    // the framework maps a press or a drag on it to an offset.
 
-    fn settings_scrollbar_drag(&mut self, col: u16, row: u16) -> bool {
-        if let Some(ref scrollbar_area) = self
-            .active_chrome()
-            .settings_layout
-            .as_ref()
-            .and_then(|l| l.scrollbar_area)
-        {
-            let in_scrollbar_x = col >= scrollbar_area.x.saturating_sub(1)
-                && col <= scrollbar_area.x + scrollbar_area.width;
-            if in_scrollbar_x && scrollbar_area.height > 0 {
-                let relative_y = row.saturating_sub(scrollbar_area.y);
-                let ratio = relative_y as f32 / scrollbar_area.height as f32;
-                if let Some(ref mut state) = self.settings_state {
-                    return state.scroll_to_ratio(ratio);
-                }
-            }
-        }
-        false
-    }
+    // **The results' scrollbar is its window's own too.** Its track was a
+    // second filed rectangle, and a press and a drag each converted a row
+    // inside it to a ratio; the results are a `List` in a `viewport` now, and
+    // the framework maps both to an offset.
 
-    fn search_scrollbar_click(&mut self, row: u16) {
-        if let Some(ref scrollbar_area) = self
-            .active_chrome()
-            .settings_layout
-            .as_ref()
-            .and_then(|l| l.search_scrollbar_area)
-        {
-            if scrollbar_area.height > 0 {
-                let relative_y = row.saturating_sub(scrollbar_area.y);
-                let ratio = relative_y as f32 / scrollbar_area.height as f32;
-                if let Some(ref mut state) = self.settings_state {
-                    state.search_scroll_to_ratio(ratio);
-                }
-            }
-        }
-    }
+    // **Everything the entry-dialog stack hit-tested by geometry is gone.**
+    // `EntryDialogLayout` recomputed the box, its inner band, its button row
+    // and its scrollbar column from the modal area on every event;
+    // `entry_dialog_update_hover` and `handle_entry_dialog_click` then walked
+    // the fields a second and third time to find which one a cell was on —
+    // and the hover walk omitted the section headers the renderer drew, so it
+    // had been two rows out per section. The stack is `view::shell::entry`
+    // now: a layer per level, its fields in a `viewport`, and each field,
+    // button and per-field action answering its own press.
 
-    fn search_scrollbar_drag(&mut self, col: u16, row: u16) -> Option<bool> {
-        if let Some(ref scrollbar_area) = self
-            .active_chrome()
-            .settings_layout
-            .as_ref()
-            .and_then(|l| l.search_scrollbar_area)
-        {
-            let in_scrollbar_x = col >= scrollbar_area.x.saturating_sub(1)
-                && col <= scrollbar_area.x + scrollbar_area.width;
-            if in_scrollbar_x && scrollbar_area.height > 0 {
-                let relative_y = row.saturating_sub(scrollbar_area.y);
-                let ratio = relative_y as f32 / scrollbar_area.height as f32;
-                if let Some(ref mut state) = self.settings_state {
-                    return Some(state.search_scroll_to_ratio(ratio));
-                }
-            }
-        }
-        None // Not on search scrollbar
-    }
-
-    fn entry_dialog_layout(&self) -> Option<EntryDialogLayout> {
-        self.active_chrome()
-            .settings_layout
-            .as_ref()
-            .and_then(|l| EntryDialogLayout::from_modal(l.modal_area))
-    }
-
-    fn entry_dialog_scrollbar_drag(&mut self, col: u16, row: u16) -> bool {
-        let Some(layout) = self.entry_dialog_layout() else {
-            return false;
-        };
-
-        if layout.near_scrollbar(col) && layout.inner_height > 0 {
-            let relative_y = row.saturating_sub(layout.inner_y);
-            let ratio = (relative_y as f32 / layout.inner_height as f32).clamp(0.0, 1.0);
-
-            if let Some(ref mut state) = self.settings_state {
-                if let Some(dialog) = state.entry_dialog_mut() {
-                    dialog.scroll_to_ratio(ratio);
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    fn entry_dialog_update_hover(&mut self, col: u16, row: u16) -> bool {
-        let Some(layout) = self.entry_dialog_layout() else {
-            return false;
-        };
-
-        let Some(ref mut state) = self.settings_state else {
-            return false;
-        };
-        let Some(dialog) = state.entry_dialog_mut() else {
-            return false;
-        };
-
-        let old_item = dialog.hover_item;
-        let old_button = dialog.hover_button;
-
-        // Reset hover state
-        dialog.hover_item = None;
-        dialog.hover_button = None;
-
-        if !layout.contains(col, row) {
-            return old_item.is_some() || old_button.is_some();
-        }
-
-        // Check button hover. Layout matches `render_entry_dialog`:
-        // [Save, Cancel] or [Save, Cancel, Delete] with a wider gap
-        // before Delete so the destructive button stands apart.
-        if row == layout.button_y {
-            let has_delete = !dialog.is_new && !dialog.no_delete;
-            let buttons: &[&str] = if has_delete {
-                &["[ Save ]", "[ Cancel ]", "[ Delete ]"]
-            } else {
-                &["[ Save ]", "[ Cancel ]"]
-            };
-            let delete_idx = if has_delete {
-                Some(buttons.len() - 1)
-            } else {
-                None
-            };
-            const BUTTON_GAP: u16 = 2;
-            const DELETE_GAP: u16 = 6;
-            let total_width: u16 = buttons
-                .iter()
-                .enumerate()
-                .map(|(i, b)| {
-                    let gap = if Some(i) == delete_idx {
-                        DELETE_GAP
-                    } else if i == 0 {
-                        0
-                    } else {
-                        BUTTON_GAP
-                    };
-                    b.len() as u16 + gap
-                })
-                .sum();
-            let mut x = layout.dialog_x + (layout.dialog_width.saturating_sub(total_width)) / 2;
-
-            for (idx, label) in buttons.iter().enumerate() {
-                if idx > 0 {
-                    let gap = if Some(idx) == delete_idx {
-                        DELETE_GAP
-                    } else {
-                        BUTTON_GAP
-                    };
-                    x += gap;
-                }
-                let width = label.len() as u16;
-                if col >= x && col < x + width {
-                    dialog.hover_button = Some(idx);
-                    break;
-                }
-                x += width;
-            }
-        }
-
-        // Check item hover (only for editable items)
-        if layout.in_content_area(col, row) {
-            let click_y = (row - layout.inner_y) as usize + dialog.scroll_offset;
-            let mut content_y: usize = 0;
-
-            // Check if we have a separator between read-only and editable items
-            let first_editable = dialog.first_editable_index;
-            let has_separator = first_editable > 0 && first_editable < dialog.items.len();
-
-            for (idx, item) in dialog.items.iter().enumerate() {
-                // Account for separator before first editable item
-                if has_separator && idx == first_editable {
-                    content_y += 1; // separator height
-                }
-
-                let item_end = content_y + item.control.control_height() as usize;
-                if click_y >= content_y && click_y < item_end {
-                    // Only hover on editable items
-                    if !item.read_only {
-                        dialog.hover_item = Some(idx);
-                    }
-                    break;
-                }
-                content_y = item_end;
-            }
-        }
-
-        old_item != dialog.hover_item || old_button != dialog.hover_button
-    }
-
-    fn handle_entry_dialog_click(
-        &mut self,
-        col: u16,
-        row: u16,
-        _is_double_click: bool,
-    ) -> AnyhowResult<bool> {
-        let Some(layout) = self.entry_dialog_layout() else {
-            return Ok(false);
-        };
-
-        if !layout.contains(col, row) {
-            return Ok(false);
-        }
-
-        // Button click
-        if row == layout.button_y {
-            return self.handle_entry_dialog_button_click(col, &layout);
-        }
-
-        // Item click
-        if layout.in_content_area(col, row) {
-            return self.handle_entry_dialog_item_click(col, row, &layout);
-        }
-
-        Ok(false)
-    }
-
-    fn handle_entry_dialog_button_click(
-        &mut self,
-        col: u16,
-        layout: &EntryDialogLayout,
-    ) -> AnyhowResult<bool> {
-        let Some(ref mut state) = self.settings_state else {
-            return Ok(false);
-        };
-        let Some(dialog) = state.entry_dialog_mut() else {
-            return Ok(false);
-        };
-
-        let has_delete = !dialog.is_new && !dialog.no_delete;
-        let buttons: &[&str] = if has_delete {
-            &["[ Save ]", "[ Cancel ]", "[ Delete ]"]
-        } else {
-            &["[ Save ]", "[ Cancel ]"]
-        };
-        let delete_idx = if has_delete {
-            Some(buttons.len() - 1)
-        } else {
-            None
-        };
-        const BUTTON_GAP: u16 = 2;
-        const DELETE_GAP: u16 = 6;
-        let total_width: u16 = buttons
-            .iter()
-            .enumerate()
-            .map(|(i, b)| {
-                let gap = if Some(i) == delete_idx {
-                    DELETE_GAP
-                } else if i == 0 {
-                    0
-                } else {
-                    BUTTON_GAP
-                };
-                b.len() as u16 + gap
-            })
-            .sum();
-        let mut x = layout.dialog_x + (layout.dialog_width.saturating_sub(total_width)) / 2;
-
-        for (idx, label) in buttons.iter().enumerate() {
-            if idx > 0 {
-                let gap = if Some(idx) == delete_idx {
-                    DELETE_GAP
-                } else {
-                    BUTTON_GAP
-                };
-                x += gap;
-            }
-            let width = label.len() as u16;
-            if col >= x && col < x + width {
-                dialog.focus_on_buttons = true;
-                dialog.focused_button = idx;
-                return self.settings_entry_dialog_activate_button();
-            }
-            x += width;
-        }
-        Ok(false)
-    }
-
-    /// Map a click on a single-line `Text` control to a byte offset in
-    /// its value, so the caret lands where the user clicked (#2573).
+    /// A press on one row of a `TextList` inside an entry dialog.
     ///
-    /// The entry dialog is a modal that recomputes its own item positions
-    /// on click, so rather than store per-item geometry it reconstructs it:
-    /// it replays the exact widget render the dialog drew
-    /// (`setting_control_to_widget_aligned` → `render_spec_no_autofocus`)
-    /// and reads the value-layout breadcrumbs back off the field's `focus`
-    /// hit area via [`WidgetTextClickGeometry`] — the same type the main
-    /// settings panel stamps at render time, and the same value-byte
-    /// mapping the widget-panel click path uses. Returns `None` for
-    /// non-text controls or when the render produced no text hit (e.g. an
-    /// empty item name → no key).
-    fn entry_text_click_to_value_byte(
-        control: &SettingControl,
-        item_name: &str,
-        label_col_width: u16,
-        control_area_x: u16,
-        control_area_width: u16,
-        click_col: u16,
-    ) -> Option<usize> {
-        if !matches!(control, SettingControl::Text(_)) {
-            return None;
-        }
-        // Mirrors `render_entry_items`: the control is indented by the
-        // 3-col focus-indicator gutter, and the widget's own label column
-        // is the dialog-wide width minus that gutter.
-        const FOCUS_INDICATOR_WIDTH: u16 = 3;
-        let spec = crate::view::settings::widget_map::setting_control_to_widget_aligned(
-            item_name,
-            control,
-            Some(label_col_width.saturating_sub(FOCUS_INDICATOR_WIDTH)),
-        );
-        let out = crate::widgets::render_spec_no_autofocus(
-            &spec,
-            &std::collections::HashMap::new(),
-            "",
-            control_area_width.max(1) as u32,
-        );
-        let geometry =
-            crate::widgets::WidgetTextClickGeometry::from_render_output(&out, control_area_x)?;
-        Some(geometry.value_byte_at(click_col))
-    }
-
-    fn handle_entry_dialog_item_click(
-        &mut self,
-        col: u16,
-        row: u16,
-        layout: &EntryDialogLayout,
-    ) -> AnyhowResult<bool> {
-        let Some(ref mut state) = self.settings_state else {
-            return Ok(false);
-        };
-        let Some(dialog) = state.entry_dialog_mut() else {
-            return Ok(false);
-        };
-
-        let click_y = (row - layout.inner_y) as usize + dialog.scroll_offset;
-        let mut content_y: usize = 0;
-
-        // Check if we have a separator between read-only and editable items
-        let first_editable = dialog.first_editable_index;
-        let has_separator = first_editable > 0 && first_editable < dialog.items.len();
-
-        for (idx, item) in dialog.items.iter().enumerate() {
-            // Account for separator before first editable item
-            if has_separator && idx == first_editable {
-                content_y += 1; // separator height
-            }
-
-            let item_end = content_y + item.control.control_height() as usize;
-            if click_y >= content_y && click_y < item_end {
-                // Skip clicks on read-only items
-                if item.read_only {
-                    return Ok(false);
-                }
-                let sub_row = click_y - content_y;
-
-                // Per-field action buttons ([Reset]/[Inherit]) rendered on the
-                // control's first row at the right edge (mirror of the renderer
-                // in `render_entry_items`). Resolve which one was clicked using
-                // `item`/`dialog` immutably first, then mutate — keeps the
-                // borrows disjoint.
-                let clicked_action = if sub_row == 0 {
-                    let buttons = dialog.field_action_buttons(idx);
-                    let right = layout.inner_x + layout.inner_width;
-                    super::entry_dialog::layout_field_action_buttons(&buttons, right)
-                        .into_iter()
-                        .find(|(_, x, w)| col >= *x && col < x.saturating_add(*w))
-                        .map(|(action, _, _)| action)
-                } else {
-                    None
-                };
-                if let Some(action) = clicked_action {
-                    match action {
-                        super::entry_dialog::FieldAction::Reset => {
-                            dialog.reset_field(idx);
-                        }
-                        super::entry_dialog::FieldAction::Inherit => {
-                            dialog.inherit_field(idx);
-                        }
-                    }
-                    dialog.focus_on_buttons = false;
-                    dialog.field_button_focus = None;
-                    dialog.selected_item = idx;
-                    dialog.update_focus_states();
-                    return Ok(true);
-                }
-
-                // TextList rows render as: label (sub_row 0), one row
-                // per committed item, then the trailing add-new row.
-                // Map the click to either remove (`[x]`), focus +
-                // edit (text area), or activate-pending (`[+] Add new`
-                // / input `[+]`). Without this, every click in a
-                // TextList row just opened the input, ignoring `[x]`
-                // and the row-text targets entirely.
-                if matches!(item.control, SettingControl::TextList(_)) {
-                    return self.handle_text_list_click(idx, sub_row, col, layout);
-                }
-                // Click-to-position: resolve the clicked column to a value
-                // byte before mutating the dialog (the immutable `item`
-                // borrow is still live here). `label_col_width` mirrors
-                // `render_settings_entry_dialog`'s dialog-wide computation.
-                let click_byte = if matches!(item.control, SettingControl::Text(_)) {
-                    const FOCUS_INDICATOR_WIDTH: u16 = 3;
-                    let max_label_width = (layout.inner_width / 2).max(20);
-                    let label_col_width = dialog
-                        .items
-                        .iter()
-                        .map(|it| it.name.len() as u16 + 2)
-                        .filter(|&w| w <= max_label_width)
-                        .max()
-                        .unwrap_or(20)
-                        .min(max_label_width);
-                    Self::entry_text_click_to_value_byte(
-                        &item.control,
-                        &item.name,
-                        label_col_width,
-                        layout.inner_x + FOCUS_INDICATOR_WIDTH,
-                        layout.inner_width.saturating_sub(FOCUS_INDICATOR_WIDTH),
-                        col,
-                    )
-                } else {
-                    None
-                };
-                dialog.focus_on_buttons = false;
-                dialog.field_button_focus = None;
-                dialog.selected_item = idx;
-                dialog.update_focus_states();
-                if !dialog.editing_text {
-                    dialog.start_editing();
-                }
-                // Place the caret after `start_editing` (which seeds the
-                // cursor at end-of-value), so the click position wins.
-                if let Some(byte) = click_byte {
-                    if let SettingControl::Text(ts) = &mut dialog.items[idx].control {
-                        ts.set_cursor_from_flat(byte);
-                    }
-                }
-                return Ok(true);
-            }
-            content_y = item_end;
-        }
-        Ok(false)
-    }
-
-    fn handle_text_list_click(
+    /// `col` is the column *within that row*, which the row's own hit
+    /// reports. The trailing `[x]` / `[+]` is then a question for the module
+    /// that wrote the row — [`super::widget_map::text_list_target`] — rather
+    /// than for a guess made from the dialog's outer width.
+    pub(crate) fn entry_text_list_press(
         &mut self,
         item_idx: usize,
         sub_row: usize,
         col: u16,
-        _layout: &EntryDialogLayout,
     ) -> AnyhowResult<bool> {
         let Some(ref mut state) = self.settings_state else {
             return Ok(false);
@@ -1055,26 +601,11 @@ impl Editor {
         let on_add_row = sub_row == n_items + 1;
         let item_row_idx = if !on_add_row { Some(sub_row - 1) } else { None };
 
-        // Hit-test the trailing button (`[x]` or `[+]`). The renderer
-        // uses indent=2 then `[xxx]` for actual_field_width chars, then
-        // ` ` then `[x]` or `[+]` (3 chars). The dialog inner area starts
-        // at `inner_x + focus_indicator_width` (3 cols). Computing the
-        // exact column would need the actual_field_width, which we
-        // don't carry here; treat anything in the rightmost ~5 chars
-        // of the rendered row that the user is likely to click as the
-        // trailing button. With the dialog defaulting to 30-char fields
-        // this lands cleanly on `[x]` / `[+]`.
-        let dialog_inner_right = _layout.dialog_x + _layout.dialog_width.saturating_sub(2);
-        let in_trailing_button = col + 5 >= dialog_inner_right
-            || {
-                // Fallback: if the row text is shorter than the field
-                // (common — items rarely fill 30 chars), the user clicks
-                // the [x] which is right after `]`. Use a hand-rolled
-                // approximation: text_indent + field_width < col.
-                let text_indent = _layout.dialog_x + 2 + 3 /* focus indicator */ + 2 /* TextList indent */ + 1 /* `[` */;
-                let estimated_field_width = 28u16;
-                col > text_indent + estimated_field_width
-            };
+        // The trailing `[x]` / `[+]`, at the columns the row was built with.
+        let in_trailing_button = matches!(
+            super::widget_map::text_list_target(col),
+            super::widget_map::TextListTarget::Button
+        );
 
         match (on_add_row, item_row_idx, in_trailing_button) {
             // Click on `[+]` of an active input: commit pending.
@@ -1119,29 +650,6 @@ impl Editor {
             }
             _ => Ok(false),
         }
-    }
-
-    fn settings_entry_dialog_activate_button(&mut self) -> AnyhowResult<bool> {
-        let Some(ref mut state) = self.settings_state else {
-            return Ok(false);
-        };
-
-        let (btn, has_delete) = {
-            let Some(dialog) = state.entry_dialog() else {
-                return Ok(false);
-            };
-            let has_delete = !dialog.is_new && !dialog.no_delete;
-            (dialog.focused_button, has_delete)
-        };
-
-        // Button order: [Save, Cancel] or [Save, Cancel, Delete].
-        match (btn, has_delete) {
-            (0, _) => state.save_entry_dialog(),
-            (1, _) => state.close_entry_dialog(),
-            (2, true) => state.request_entry_delete_confirm(),
-            _ => state.close_entry_dialog(),
-        }
-        Ok(true)
     }
 
     pub(crate) fn save_settings_and_close(&mut self) {

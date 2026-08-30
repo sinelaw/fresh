@@ -169,8 +169,6 @@ pub(crate) struct ChromeLayout {
     /// show a preview. The mouse-wheel handler reads this to scroll the
     /// preview (rather than the result list) when the pointer is over it.
     pub prompt_preview_area: Option<Rect>,
-    /// Settings modal layout for hit testing
-    pub settings_layout: Option<crate::view::settings::SettingsLayout>,
     /// Dimensions of the last rendered frame. See [`FrameDimensions`].
     pub last_frame: FrameDimensions,
     /// Per-cell theme key provenance recorded during rendering.

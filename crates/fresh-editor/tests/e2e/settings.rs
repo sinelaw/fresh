@@ -735,22 +735,24 @@ fn test_settings_dropdown_button_click_opens_options() {
     harness.render().unwrap();
 
     // The dropdown is now open: the button shows the ▲ indicator and the
-    // inline option list renders each option on a row of its own (opening
-    // grows the item, which may re-scroll the panel — so look for the
-    // option rows anywhere on screen rather than at fixed coordinates).
-    // A bare "crlf" row only exists as an option row; the description
-    // mentions it only inside a longer sentence.
+    // options appear in the pop-over that floats over the cards below.
+    //
+    // **They used to be inline.** The settings painter reserved rows for an
+    // open dropdown's options through `SettingControl::height`, growing the
+    // card and pushing everything under it down; the widget adapter the body
+    // is described through surfaces the same list as the screen-level
+    // pop-over every other dropdown in the editor opens — a plugin panel's,
+    // the web's. Describing the body chose between them, and one dropdown
+    // everywhere is the answer: the list floats, bordered, over the
+    // description rather than reflowing the page around it.
     let screen = harness.screen_to_string();
     assert!(
         screen.contains('▲'),
         "dropdown button must show the open indicator:\n{screen}"
     );
-    let has_crlf_option_row = screen
-        .lines()
-        .any(|l| l.trim_matches(|c: char| c == ' ' || c == '~' || c == '│') == "crlf");
     assert!(
-        has_crlf_option_row,
-        "clicking the dropdown button must open the option list:\n{screen}"
+        screen.contains("│ crlf"),
+        "clicking the dropdown button must open the option pop-over:\n{screen}"
     );
 
     // Close the dropdown, discard, and close settings.

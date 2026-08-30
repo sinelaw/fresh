@@ -104,6 +104,10 @@ pub struct EntryDialogState {
     pub scroll_offset: usize,
     /// Last known viewport height (updated during render)
     pub viewport_height: usize,
+    /// The field window's handle. The twin of `SettingsState::body_anchor`,
+    /// one surface in: the fields are a `col` in a `viewport`, so how far the
+    /// window has moved is layout's answer and moving it is a message.
+    pub body_anchor: std::rc::Rc<fresh_ui::behavior::Anchor>,
     /// Hovered item index (for mouse hover feedback)
     pub hover_item: Option<usize>,
     /// Hovered button index (for mouse hover feedback)
@@ -256,6 +260,7 @@ impl EntryDialogState {
             delete_requested: false,
             scroll_offset: 0,
             viewport_height: 20, // Default, updated during render
+            body_anchor: fresh_ui::behavior::Anchor::new(),
             hover_item: None,
             hover_button: None,
             original_value: value.clone(),
@@ -337,6 +342,7 @@ impl EntryDialogState {
             delete_requested: false,
             scroll_offset: 0,
             viewport_height: 20,
+            body_anchor: fresh_ui::behavior::Anchor::new(),
             hover_item: None,
             hover_button: None,
             original_value: value.clone(),
@@ -422,6 +428,85 @@ impl EntryDialogState {
     ///
     /// Used to gate the Esc 'Discard changes?' prompt and to drive
     /// the title-bar modified indicator.
+    /// The window's handle, so the keyboard can move it to a field. The
+    /// twin of `SettingsState::body_anchor`, one surface in.
+    pub fn anchor(&self) -> std::rc::Rc<fresh_ui::behavior::Anchor> {
+        self.body_anchor.clone()
+    }
+
+    /// The label column its scalar fields align their value cells against.
+    ///
+    /// **Content, not geometry.** The painter capped this at half the box's
+    /// inner width and *excluded* any label wider than the cap rather than
+    /// clamping it, so one long name could not push every value across. The
+    /// cap is a constant here: the width it was half of is the tree's now,
+    /// and a form whose labels approach forty columns has a naming problem
+    /// rather than a layout one.
+    pub fn label_column(&self) -> Option<u16> {
+        const CAP: u16 = 40;
+        self.items
+            .iter()
+            .map(|item| item.name.len() as u16 + 2)
+            .filter(|&w| w <= CAP)
+            .max()
+    }
+
+    /// The one line of contextual help above the buttons: what the focused
+    /// field is for, or what Enter does on a list's pending row.
+    pub fn helper_line(&self) -> Option<String> {
+        if self.focus_on_buttons {
+            return None;
+        }
+        // On a `TextList`'s `[+] Add new` row the focused item slot is None;
+        // say what Enter and Esc do rather than absorbing them silently.
+        let pending = self.current_item().and_then(|it| match &it.control {
+            SettingControl::TextList(state) if state.focused_item.is_none() => {
+                Some(if !state.pending_active && state.new_item_text.is_empty() {
+                    "Press Enter (or type) to add a new item; ↓/Tab to leave"
+                } else if state.new_item_text.is_empty() {
+                    "Type the new item — Enter to add, Esc to cancel"
+                } else {
+                    "Editing new item — Enter to add, Esc to cancel"
+                })
+            }
+            _ => None,
+        });
+        pending.map(String::from).or_else(|| {
+            self.current_item()
+                .and_then(|it| it.description.as_deref())
+                .filter(|d| !d.is_empty())
+                .map(String::from)
+        })
+    }
+
+    /// The key legend under the buttons, or the warning that replaces it when
+    /// a field will not parse.
+    pub fn legend_line(&self) -> (String, bool) {
+        let editing_json = self.editing_text && self.is_editing_json();
+        let (invalid, is_json) = self
+            .current_item()
+            .map(|item| match &item.control {
+                SettingControl::Text(state) => (!state.is_valid(), false),
+                SettingControl::Json(state) => (!state.is_valid(), editing_json),
+                _ => (false, false),
+            })
+            .unwrap_or((false, false));
+        let text = if invalid && !is_json {
+            return ("⚠ Invalid JSON - fix before leaving field".into(), true);
+        } else if invalid {
+            return ("⚠ Invalid JSON".into(), true);
+        } else if is_json {
+            "↑↓←→:Move  Enter:Newline  Tab/Esc:Exit"
+        } else if self.editing_text {
+            "Enter/Tab:Commit field  Esc:Cancel"
+        } else {
+            // The `●:modified` legend is the only place that explains the
+            // row indicator.
+            "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit/Apply  Ctrl+S:Save  Esc:Cancel  ●:modified"
+        };
+        (text.into(), false)
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.user_edited
     }
@@ -1078,102 +1163,26 @@ impl EntryDialogState {
         }
     }
 
-    /// Height of a section header (label + blank line)
-    const SECTION_HEADER_HEIGHT: usize = 2;
-
-    /// Calculate total content height for all items (including separator and section headers)
-    pub fn total_content_height(&self) -> usize {
-        let items_height: usize = self
-            .items
-            .iter()
-            .map(|item| {
-                let section_h = if item.is_section_start {
-                    Self::SECTION_HEADER_HEIGHT
-                } else {
-                    0
-                };
-                item.control.control_height() as usize + section_h
-            })
-            .sum();
-        // Add 1 for separator if we have both read-only and editable items
-        let separator_height =
-            if self.first_editable_index > 0 && self.first_editable_index < self.items.len() {
-                1
-            } else {
-                0
-            };
-        items_height + separator_height
-    }
-
-    /// Calculate the Y offset of the selected item (including separator and section headers)
-    pub fn selected_item_offset(&self) -> usize {
-        let items_offset: usize = self
-            .items
-            .iter()
-            .take(self.selected_item)
-            .map(|item| {
-                let section_h = if item.is_section_start {
-                    Self::SECTION_HEADER_HEIGHT
-                } else {
-                    0
-                };
-                item.control.control_height() as usize + section_h
-            })
-            .sum();
-        // Add 1 for separator if selected item is after it
-        let separator_offset = if self.first_editable_index > 0
-            && self.first_editable_index < self.items.len()
-            && self.selected_item >= self.first_editable_index
-        {
-            1
-        } else {
-            0
-        };
-        // Add section header height if the selected item itself starts a section
-        let own_section_h = self
-            .items
-            .get(self.selected_item)
-            .map(|item| {
-                if item.is_section_start {
-                    Self::SECTION_HEADER_HEIGHT
-                } else {
-                    0
-                }
-            })
-            .unwrap_or(0);
-        items_offset + separator_offset + own_section_h
-    }
-
-    /// Calculate the height of the selected item
-    pub fn selected_item_height(&self) -> usize {
-        self.items
-            .get(self.selected_item)
-            .map(|item| item.control.control_height() as usize)
-            .unwrap_or(1)
-    }
-
     /// Ensure the selected item is visible within the viewport
-    pub fn ensure_selected_visible(&mut self, viewport_height: usize) {
-        if self.focus_on_buttons {
-            // Scroll to bottom when buttons are focused
-            let total = self.total_content_height();
-            if total > viewport_height {
-                self.scroll_offset = total.saturating_sub(viewport_height);
-            }
-            return;
-        }
-
-        let item_start = self.selected_item_offset();
-        let item_end = item_start + self.selected_item_height();
-
-        // If item starts before viewport, scroll up
-        if item_start < self.scroll_offset {
-            self.scroll_offset = item_start;
-        }
-        // If item ends after viewport, scroll down
-        else if item_end > self.scroll_offset + viewport_height {
-            self.scroll_offset = item_end.saturating_sub(viewport_height);
-        }
+    /// Move the field window so the cursor's field is in it.
+    ///
+    /// **One call, where three walks of every field's height used to be.**
+    /// `selected_item_offset` summed the rows above the cursor and
+    /// `selected_item_height` measured the cursor's own, both from
+    /// `control_height` — the same numbers the painter drew each field with,
+    /// kept in step by hand. The field is a band the layout measured; the
+    /// window is asked to hold it, by name.
+    ///
+    /// The buttons are not in the window, so putting the keyboard on them
+    /// asks for the last field instead — which is what "scroll to bottom"
+    /// meant.
+    pub fn ensure_selected_visible(&mut self, _viewport_height: usize) {
+        let target = match self.focus_on_buttons {
+            true => self.items.len().saturating_sub(1),
+            false => self.selected_item,
+        };
+        self.body_anchor
+            .reveal_key(crate::view::shell::entry::item_key(target));
     }
 
     /// Ensure the cursor within a JSON editor is visible
@@ -1196,45 +1205,35 @@ impl EntryDialogState {
             return;
         };
 
-        // Calculate absolute position of cursor row in content:
-        // item_offset + 1 (for label row) + cursor_row
-        let item_offset = self.selected_item_offset();
-        let cursor_content_row = item_offset + 1 + cursor_row;
-
-        let viewport_height = self.viewport_height;
-
-        // If cursor is above viewport, scroll up
-        if cursor_content_row < self.scroll_offset {
-            self.scroll_offset = cursor_content_row;
-        }
-        // If cursor is below viewport, scroll down
-        else if cursor_content_row >= self.scroll_offset + viewport_height {
-            self.scroll_offset = cursor_content_row.saturating_sub(viewport_height) + 1;
-        }
+        // The caret's row *within the field* — its label row, then the line
+        // the cursor is on. Where that field starts in the column is the
+        // window's business, not this one's: it used to be
+        // `selected_item_offset()`, a sum of every field above it.
+        self.body_anchor.reveal_key_at(
+            crate::view::shell::entry::item_key(self.selected_item),
+            1 + cursor_row as u32,
+        );
     }
 
     /// Scroll up by one line
     pub fn scroll_up(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+        self.scroll_by(-1);
     }
 
     /// Scroll down by one line
-    pub fn scroll_down(&mut self, viewport_height: usize) {
-        let max_scroll = self.total_content_height().saturating_sub(viewport_height);
-        if self.scroll_offset < max_scroll {
-            self.scroll_offset += 1;
-        }
+    pub fn scroll_down(&mut self, _viewport_height: usize) {
+        self.scroll_by(1);
     }
 
-    /// Scroll to a position based on ratio (0.0 = top, 1.0 = bottom)
+    /// Move the field window by `delta` rows.
     ///
-    /// Used for scrollbar drag operations.
-    pub fn scroll_to_ratio(&mut self, ratio: f32) {
-        let max_scroll = self
-            .total_content_height()
-            .saturating_sub(self.viewport_height);
-        let new_offset = (ratio * max_scroll as f32).round() as usize;
-        self.scroll_offset = new_offset.min(max_scroll);
+    /// The window clamps itself against the column it holds, so there is no
+    /// content height to compute here — which is what `total_content_height`
+    /// was for, and it was the fourth walk of every field's rows.
+    fn scroll_by(&mut self, delta: i32) {
+        let y = (self.scroll_offset as i32 + delta).max(0);
+        self.body_anchor.scroll_to(fresh_ui::Point::new(0, y));
+        self.scroll_offset = y as usize;
     }
 
     /// Start text editing mode for the current control

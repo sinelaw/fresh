@@ -8,7 +8,7 @@ use crate::view::controls::{
     DropdownState, DualListState, FocusState, KeybindingListState, MapState, NumberInputState,
     TextInputState, TextListState, ToggleState,
 };
-use crate::view::ui::{FocusRegion, ScrollItem, TextEdit};
+use crate::view::ui::TextEdit;
 use std::collections::{HashMap, HashSet};
 
 /// State for multiline JSON editing
@@ -360,7 +360,67 @@ pub enum SettingControl {
     },
 }
 
+/// The label column a page aligns its scalar controls' value cells against:
+/// the widest label among them, and `None` when the page has none.
+///
+/// Only single-row controls take part — a multi-row control puts its label on
+/// a line of its own, so padding it would move nothing.
+pub fn page_label_width(items: &[SettingItem]) -> Option<u16> {
+    use crate::primitives::display_width::str_width;
+    items
+        .iter()
+        .filter_map(|item| match &item.control {
+            SettingControl::Toggle(s) => Some(str_width(&s.label) as u16),
+            SettingControl::Number(s) => Some(str_width(&s.label) as u16),
+            SettingControl::Dropdown(s) => Some(str_width(&s.label) as u16),
+            SettingControl::Text(s) => Some(str_width(&s.label) as u16),
+            _ => None,
+        })
+        .max()
+}
+
 impl SettingControl {
+    /// Whether the control should be rendered as the *focused* widget — which
+    /// is what makes it paint its caret and its focus band.
+    ///
+    /// **Editing, not mere selection.** Outside edit mode ↑↓ walks the
+    /// settings list, so a caret drawn inside a field would promise a movement
+    /// the arrows do not make. The three controls that have a caret to draw
+    /// are the ones that answer here; every other kind draws its own
+    /// selection chrome and never wants the widget ring.
+    pub fn is_editing(&self) -> bool {
+        match self {
+            Self::Text(s) => s.editing,
+            Self::Json(s) => s.focus == crate::view::controls::FocusState::Focused,
+            Self::DualList(s) => s.editing,
+            _ => false,
+        }
+    }
+
+    /// The tree key of the row a `sub_focus` id names, for a control whose
+    /// rows are a `List`.
+    ///
+    /// The ids are the ones [`ScrollItem::focus_regions`] hands out: `0` is
+    /// the control's label row, `1 + i` its `i`th entry, and the one past
+    /// the last entry its `[+] Add new` sentinel. `None` means "no row of its
+    /// own" — the label row is the card's own top, and a control whose rows
+    /// are not a `List` (a dual list, a JSON editor) has nothing finer than
+    /// the card to move the window to.
+    pub fn sub_row_key(&self, path: &str, sub: usize) -> Option<fresh_ui::Key> {
+        let n = match self {
+            Self::TextList(s) => s.items.len(),
+            Self::Map(s) => s.entries.len(),
+            Self::ObjectArray(s) => s.bindings.len(),
+            _ => return None,
+        };
+        let name = match sub {
+            0 => return None,
+            i if i <= n => format!("{path}::list::{}", i - 1),
+            _ => format!("{path}::add::0"),
+        };
+        Some(fresh_ui::Key::Str(name.into()))
+    }
+
     /// Calculate the height needed for this control (in lines)
     pub fn control_height(&self) -> u16 {
         match self {
@@ -685,152 +745,13 @@ pub fn clean_description(name: &str, description: Option<&str>) -> Option<String
     Some(desc.to_string())
 }
 
-impl ScrollItem for SettingItem {
-    fn height(&self, width: u16) -> u16 {
-        self.layout_box(width, &self.style).total_rows()
-    }
-
-    fn focus_regions(&self, width: u16) -> Vec<FocusRegion> {
-        // y_offset is ABSOLUTE within the item — `ScrollablePanel` adds it
-        // to the cumulative item-y to compute a screen y for
-        // `ensure_visible`. Since the item now starts with a section header
-        // and/or a card top border above the control row, y=0 of the
-        // control is `plan.control_y()` rows down from the item top. Using
-        // 0 here scrolls the viewport to the chrome, not to the actual
-        // entry, which is exactly the bug that hid the focused map entry
-        // off-screen on search-jump.
-        let plan = self.layout_box(width, &self.style);
-        let label_y = plan.control_y();
-
-        match &self.control {
-            // TextList: each row is a focus region
-            SettingControl::TextList(state) => {
-                let mut regions = Vec::new();
-                // Label row
-                regions.push(FocusRegion {
-                    id: 0,
-                    y_offset: label_y,
-                    height: 1,
-                });
-                // Each item row (id = 1 + row_index)
-                for i in 0..state.items.len() {
-                    regions.push(FocusRegion {
-                        id: 1 + i,
-                        y_offset: label_y + 1 + i as u16,
-                        height: 1,
-                    });
-                }
-                // Add-new row
-                regions.push(FocusRegion {
-                    id: 1 + state.items.len(),
-                    y_offset: label_y + 1 + state.items.len() as u16,
-                    height: 1,
-                });
-                regions
-            }
-            // DualList: label + header + body rows
-            SettingControl::DualList(state) => {
-                let mut regions = Vec::new();
-                // Label row
-                regions.push(FocusRegion {
-                    id: 0,
-                    y_offset: label_y,
-                    height: 1,
-                });
-                // Header row (not selectable, but takes space)
-                // Body rows (id = 1 + row_index)
-                let body = state.body_rows();
-                for i in 0..body {
-                    regions.push(FocusRegion {
-                        id: 1 + i,
-                        y_offset: label_y + 2 + i as u16, // after label + header
-                        height: 1,
-                    });
-                }
-                regions
-            }
-            // Map: each entry row is a focus region
-            SettingControl::Map(state) => {
-                let mut regions = Vec::new();
-                let mut y = label_y;
-
-                // Label row
-                regions.push(FocusRegion {
-                    id: 0,
-                    y_offset: y,
-                    height: 1,
-                });
-                y += 1;
-
-                // Column header row (if display_field is set)
-                if state.display_field.is_some() {
-                    y += 1;
-                }
-
-                // Each entry (id = 1 + entry_index)
-                for (i, (_, v)) in state.entries.iter().enumerate() {
-                    let mut entry_height = 1u16;
-                    // Add expanded content height if expanded
-                    if state.expanded.contains(&i) {
-                        if let Some(obj) = v.as_object() {
-                            entry_height += obj.len().min(5) as u16;
-                            if obj.len() > 5 {
-                                entry_height += 1;
-                            }
-                        }
-                    }
-                    regions.push(FocusRegion {
-                        id: 1 + i,
-                        y_offset: y,
-                        height: entry_height,
-                    });
-                    y += entry_height;
-                }
-
-                // Add-new row
-                regions.push(FocusRegion {
-                    id: 1 + state.entries.len(),
-                    y_offset: y,
-                    height: 1,
-                });
-                regions
-            }
-            // KeybindingList: each entry row is a focus region
-            SettingControl::ObjectArray(state) => {
-                let mut regions = Vec::new();
-                // Label row
-                regions.push(FocusRegion {
-                    id: 0,
-                    y_offset: label_y,
-                    height: 1,
-                });
-                // Each binding (id = 1 + index)
-                for i in 0..state.bindings.len() {
-                    regions.push(FocusRegion {
-                        id: 1 + i,
-                        y_offset: label_y + 1 + i as u16,
-                        height: 1,
-                    });
-                }
-                // Add-new row
-                regions.push(FocusRegion {
-                    id: 1 + state.bindings.len(),
-                    y_offset: label_y + 1 + state.bindings.len() as u16,
-                    height: 1,
-                });
-                regions
-            }
-            // Other controls: single region covering the card content.
-            _ => {
-                vec![FocusRegion {
-                    id: 0,
-                    y_offset: label_y,
-                    height: plan.content_rows(),
-                }]
-            }
-        }
-    }
-}
+// **`ScrollItem for SettingItem` is gone, and `ItemBox` with it.** Its
+// `height` re-derived what the painter drew each card with so
+// `ScrollablePanel` could bound the scroll, and its `focus_regions` walked
+// the same rows again so a sub-focus could be scrolled to. The cards are a
+// `col` in a `viewport` now: the column measures them, the window is asked
+// to hold a card by key (`Anchor::reveal_key`), and a sub-row names itself
+// through `SettingControl::sub_row_key`.
 
 /// A page of settings (corresponds to a category)
 #[derive(Debug, Clone)]
