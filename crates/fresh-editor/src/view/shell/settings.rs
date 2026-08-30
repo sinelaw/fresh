@@ -22,8 +22,8 @@
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, gesture, layout_reader, row, text, Align, Anchor, Event, GestureKind, LayoutInfo,
-    Modality, MouseButton, Node, Place, PointerMode, Scrim, Sizing,
+    col, gesture, layout_reader, row, stack, text, viewport, Align, Anchor, Event, GestureKind,
+    LayoutInfo, Modality, MouseButton, Node, Place, PointerMode, Scrim, Sizing,
 };
 
 use crate::app::shell_host::shell_theme::{attrs, pair};
@@ -50,42 +50,6 @@ pub fn fit(info: LayoutInfo) -> Option<(u16, u16)> {
         return None;
     }
     Some(((w * 90 / 100).min(MAX_WIDTH), h * 90 / 100))
-}
-
-/// How many search results fit inside a box of `modal`'s size.
-///
-/// The twin of [`super::keybinding::table_rows`], and there for the same
-/// reason: the box is the tree's, so the window of the list inside it is the
-/// tree's arithmetic too. The painter computed it as it drew and filed it in
-/// `search_max_visible` — where the *next* frame's chrome read it, one frame
-/// after the description that needed it had already been built. That is why
-/// the result count opened reading "(1-5 of 298)" over a list three results
-/// tall: five is the field's constructor default, and the first frame with a
-/// search on it had nothing else to read.
-pub fn search_window(modal: ratatui::layout::Rect) -> usize {
-    let inner_w = modal.width.saturating_sub(2);
-    let inner_h = modal.height.saturating_sub(2);
-    // The painter's own threshold: `inner_area.width < 60` is a narrow box,
-    // and a narrow box stacks its five buttons instead of laying them in a
-    // row, which costs seven rows rather than two.
-    let narrow = inner_w < 60;
-    let footer = if narrow { 7 } else { 2 };
-    // One row of search bar, one blank row under it, then the footer.
-    let content = inner_h.saturating_sub(2 + footer);
-    let rows = match narrow {
-        false => content,
-        // The narrow layout subtracts the footer a second time — the content
-        // band already excludes it — and then takes three rows for the
-        // category strip and one for the rule under it. Mirrored rather than
-        // corrected: this states the geometry the painter has, and the two
-        // have to agree while the panel below is still painted.
-        true => {
-            let main = content.saturating_sub(footer);
-            main.saturating_sub(3u16.min(main) + 1)
-        }
-    };
-    // Three rows a result: its name, its breadcrumb and its category.
-    ((rows.saturating_sub(3) / 3) as usize).max(1)
 }
 
 /// The dialog's box as a layer: centred beside the dock, with the chrome the
@@ -125,24 +89,72 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
                 // where those three numbers come from — the tree's rectangle
                 // was `chunks[0]` and the panel's `chunks[2]`, and the
                 // painter reads the second back rather than splitting again.
-                let body = match &c.categories {
-                    None => row().flex(1),
-                    Some(t) => row().flex(1).children([
-                        col().w(Sizing::Cells(CATEGORY_COLS)).child(categories(t)),
+                // The page: its header, then its cards in the window that
+                // scrolls them. Both are the tree's in either layout.
+                let page = || {
+                    // A running search replaces the whole band with its
+                    // results; otherwise it is the page's header and cards.
+                    if let Some(r) = &c.results {
+                        return col()
+                            .w(Sizing::Flex(1))
+                            .child(results(r).h(Sizing::Flex(1)));
+                    }
+                    let mut kids: Vec<Node<UiMsg>> = Vec::with_capacity(2);
+                    if let Some(p) = &c.page {
+                        kids.push(page_header(p));
+                    }
+                    kids.push(match &c.items {
+                        Some(it) => items(it).h(Sizing::Flex(1)),
+                        None => row().h(Sizing::Flex(1)).key(items_key()),
+                    });
+                    col().w(Sizing::Flex(1)).children(kids)
+                };
+                // **Which layout, not which parts are described.** The two
+                // arrange the page differently — beside the category column,
+                // or under the horizontal strip — and a search takes the tree
+                // away without changing that. Reading `categories.is_none()`
+                // as "narrow" put the wide layout's search results at the
+                // box's left edge, straight over the divider.
+                let body = match c.wide {
+                    true => row().flex(1).children([
+                        col()
+                            .w(Sizing::Cells(CATEGORY_COLS))
+                            .children(c.categories.iter().map(categories).collect::<Vec<_>>()),
                         // The divider column, which the painter draws.
                         row().w(Sizing::Cells(1)),
-                        match &c.page {
-                            Some(p) => col().flex(1).key(panel_key()).child(page_header(p)),
-                            None => row().flex(1).key(panel_key()),
+                        page().key(panel_key()),
+                    ]),
+                    // The narrow layout's categories are a horizontal strip:
+                    // three rows with a rule under them, and the page below.
+                    false => col().flex(1).children([
+                        match &c.strip {
+                            Some(s) => strip_band(s).h(Sizing::Cells(4)),
+                            None => row().h(Sizing::Cells(4)),
                         },
+                        page().h(Sizing::Flex(1)).key(panel_key()),
                     ]),
                 };
                 let mut rows: Vec<Node<UiMsg>> = vec![
+                    // The box's own top border, which the painter draws.
                     row().h(Sizing::Cells(1)),
                     row()
                         .h(Sizing::Cells(1))
                         .children([row().w(Sizing::Cells(1)), search_row(&c.search)]),
-                    body,
+                    // The blank row under the search bar —
+                    // `search_header_height + search_gap` in the painter,
+                    // which is where it measures its content band from.
+                    row().h(Sizing::Cells(1)),
+                    // The content band, inset by the box's border on each
+                    // side. **Both insets are load-bearing now that the tree
+                    // draws the body**: the band is what the painter reads
+                    // back as its own `content_area`, and a band one column
+                    // wide and one row tall too much put the panel over the
+                    // divider between the two columns.
+                    row().flex(1).children([
+                        row().w(Sizing::Cells(1)),
+                        body,
+                        row().w(Sizing::Cells(1)),
+                    ]),
                 ];
                 if let Some(f) = &c.footer {
                     // The separator the painter drew one row above the
@@ -289,8 +301,140 @@ pub fn clear_key() -> fresh_ui::Key {
 /// `header_height = y - header_start_y`, then `available_height = area.height
 /// - header_height`. The header is a description now, so the band under it is
 /// layout's answer and this is the key to read it back by.
+/// One entry dialog's field window, re-exported so the host reads both
+/// windows through one module.
+pub fn entry_items_key(level: usize) -> fresh_ui::Key {
+    super::entry::items_key(level)
+}
+
 pub fn items_key() -> fresh_ui::Key {
     fresh_ui::Key::Str("settings_items".into())
+}
+
+pub fn results_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("settings_results".into())
+}
+
+/// Three rows a result: its name, its breadcrumb and its category. The list
+/// is the one place that says so — the count row reads its window back rather
+/// than dividing a band by it.
+pub const RESULT_ROWS: u16 = 3;
+
+/// The search's results: a card list, three rows to a card.
+///
+/// **A `List` is the window, the bar, the wheel and the drag at once.** The
+/// painter windowed the results by hand (`skip(scroll_offset)`, break at
+/// `height - 3`), drew its own scrollbar beside them, and filed a rectangle
+/// per *visible* card — which is why the hit had to carry the absolute index
+/// separately (#2860: the position in the filed list is a viewport slot, and
+/// once scrolled it is not the result's index).
+pub fn results(r: &Results) -> Node<UiMsg> {
+    let rows: std::rc::Rc<Vec<ResultRow>> = std::rc::Rc::new(r.rows.clone());
+    let n = rows.len();
+    let list = fresh_ui::List::windowed(
+        n,
+        |i| fresh_ui::Key::Pair("settings_result".into(), i as u64),
+        move |i| result_card(&rows[i]),
+    )
+    .row_rows(RESULT_ROWS)
+    .focusable(false)
+    .scrollbar()
+    .scrollbar_theme(pair("ui.split_separator_fg", "ui.popup_bg"))
+    .row_theme(|_, st| match st {
+        fresh_ui::widgets::RowState::Selected | fresh_ui::widgets::RowState::SelectedBlur => {
+            pair("ui.settings_selected_fg", "ui.settings_selected_bg")
+        }
+        fresh_ui::widgets::RowState::Hover => pair("ui.menu_hover_fg", "ui.menu_hover_bg"),
+        _ => pair("ui.popup_text_fg", "ui.popup_bg"),
+    })
+    .on_select(|i| UiMsg::Ui(UiFact::SettingsSearchResult(i)))
+    .on_activate(|i| UiMsg::Ui(UiFact::SettingsSearchResult(i)));
+    let list = match n {
+        0 => list,
+        _ => list.selected(r.selected.min(n - 1)),
+    };
+    fresh_ui::ComponentExt::node(list).key(results_key())
+}
+
+/// One result's three rows. The `▸` marks the cursor; the row's own theme
+/// says whether it is the selected one, so the marker is the only thing here
+/// that has to know.
+fn result_card(r: &ResultRow) -> Node<UiMsg> {
+    let dim = pair("ui.line_number_fg", "ui.popup_bg");
+    let mut name: Vec<Node<UiMsg>> = vec![text("  ")];
+    name.extend(
+        r.name
+            .iter()
+            .map(|s| text(s.text.clone()).theme(s.theme.clone())),
+    );
+    col().children([
+        row().h(Sizing::Cells(1)).children(name),
+        line(
+            format!("  {}", r.breadcrumb),
+            attrs("ui.line_number_fg", "ui.popup_bg", &["italic"]),
+        ),
+        match &r.desc {
+            Some(d) => line(format!("  {d}"), dim).elide(fresh_ui::Elide::Tail),
+            None => row().h(Sizing::Cells(1)),
+        },
+    ])
+}
+
+/// The narrow layout's category band: the names, the key hint, a blank row
+/// and the rule under them — the painter's three-row strip plus its
+/// separator.
+///
+/// **Each name answers its own press.** The painter tracked a rectangle per
+/// category as it laid the row out and called the result "approximate" in its
+/// own comment, which it was: it advanced by `name.len()`, so a category with
+/// a non-ASCII name put every rectangle after it out by the difference
+/// between its bytes and its columns.
+fn strip_band(s: &Strip) -> Node<UiMsg> {
+    let mut kids: Vec<Node<UiMsg>> = Vec::with_capacity(s.cats.len() * 2);
+    for (n, c) in s.cats.iter().enumerate() {
+        if n > 0 {
+            kids.push(text(" │ ").theme(pair("ui.split_separator_fg", "ui.popup_bg")));
+        }
+        let label = match (c.selected, s.focused) {
+            (true, true) => attrs("ui.menu_highlight_fg", "ui.menu_highlight_bg", &["bold"]),
+            (true, false) => attrs("ui.menu_highlight_fg", "ui.popup_bg", &["bold"]),
+            (false, _) => pair("ui.popup_text_fg", "ui.popup_bg"),
+        };
+        // The dot takes the highlight's colour whatever the name is doing.
+        let dot = match c.dirty {
+            true => pair("ui.menu_highlight_fg", "ui.popup_bg"),
+            false => label.clone(),
+        };
+        let idx = c.idx;
+        kids.push(
+            gesture(
+                row().children([
+                    text(match c.dirty {
+                        true => "● ",
+                        false => "  ",
+                    })
+                    .theme(dot),
+                    text(c.label.clone()).theme(label),
+                ]),
+            )
+            .on(
+                GestureKind::Press,
+                Rc::new(move |e: &Event| {
+                    if e.button != MouseButton::Left {
+                        return None;
+                    }
+                    e.stop();
+                    Some(UiMsg::Ui(UiFact::SettingsCategory(idx)))
+                }),
+            ),
+        );
+    }
+    col().children([
+        row().h(Sizing::Cells(1)).children(kids),
+        line(s.hint.clone(), pair("ui.line_number_fg", "ui.popup_bg")),
+        row().h(Sizing::Cells(1)),
+        rule(),
+    ])
 }
 
 /// The settings panel's header, and the band under it the painter still owns.
@@ -326,11 +470,240 @@ fn page_header(p: &Page) -> Node<UiMsg> {
             ]),
         );
     }
-    // The painter's blank row between the header and the first card, and then
-    // the band it fills.
+    // The painter's blank row between the header and the first card.
     rows.push(row().h(Sizing::Cells(1)));
-    rows.push(row().flex(1).key(items_key()));
     col().children(rows)
+}
+
+/// One card's band, so the host can ask where it is — which is how the window
+/// is moved to it (`Anchor::reveal_key`) and how "which card is at the top of
+/// the window" is answered without a second measurement of every height.
+pub fn card_key(i: usize) -> fresh_ui::Key {
+    fresh_ui::Key::Pair("settings_card".into(), i as u64)
+}
+
+/// The page's cards, in the window that scrolls them.
+///
+/// **This is what `ItemBox` was.** The painter planned each item as five row
+/// counts and five `_y()` accessors — section header, top border, control,
+/// description, bottom border — computed by `SettingItem::layout_box`,
+/// re-derived by `ScrollablePanel` to find the content's height, and clipped
+/// band by band against a `BandViewport` while it drew. All three were the
+/// same arithmetic in three places, which is the second layout tree goal 5
+/// forbids. A `col` of cards in a `viewport` is one: the column measures each
+/// card once, and the window is the thing that scrolls rather than an offset
+/// every band subtracts for itself.
+pub fn items(it: &Items) -> Node<UiMsg> {
+    let body = col().children(it.cards.iter().map(card).collect::<Vec<_>>());
+    let v = viewport(body)
+        .key(items_key())
+        .scrollbar()
+        .scrollbar_theme(pair("ui.split_separator_fg", "ui.popup_bg"));
+    match &it.anchor {
+        Some(a) => v.anchor_to(a.clone()),
+        None => v,
+    }
+}
+
+/// One setting: its section heading when it starts one, and its card.
+fn card(c: &Card) -> Node<UiMsg> {
+    let mut rows: Vec<Node<UiMsg>> = Vec::new();
+    if let Some(name) = &c.section {
+        // The blank row goes *above* the heading, so the title reads as
+        // "belongs to what is below" rather than to the card it follows. That
+        // is what the painter's two-row `section_header_rows` band was.
+        rows.push(row().h(Sizing::Cells(1)));
+        rows.push(line(
+            name.clone(),
+            attrs("ui.editor_fg", "ui.popup_bg", &["bold"]),
+        ));
+    }
+    rows.push(card_box(c));
+    let idx = c.index;
+    let mut g = gesture(col().key(card_key(c.index)).children(rows)).on(
+        GestureKind::Press,
+        Rc::new(move |e: &Event| {
+            if e.button != MouseButton::Left {
+                return None;
+            }
+            e.stop();
+            Some(UiMsg::Ui(UiFact::SettingsItem(idx)))
+        }),
+    );
+    // Hover is what the card's highlight reads, and the painter learned it by
+    // hit-testing the pointer's cell against every item's rectangle on every
+    // move. Entering and leaving are the two things that actually happen.
+    g = g.on_enter(Rc::new(move |_: &Event| {
+        Some(UiMsg::Ui(UiFact::SettingsItemHover(Some(idx))))
+    }));
+    g.on_leave(Rc::new(move |_: &Event| {
+        Some(UiMsg::Ui(UiFact::SettingsItemHover(None)))
+    }))
+}
+
+/// The bordered box: the three-column indicator gutter down its left, the
+/// control, and the wrapped description under it.
+fn card_box(c: &Card) -> Node<UiMsg> {
+    let band = band_bg(c);
+    let mut content: Vec<Node<UiMsg>> = vec![control(c, &band)];
+    if let Some(d) = description(c) {
+        content.push(d);
+    }
+    let mut body = col().w(Sizing::Flex(1)).children(content);
+    // The `(Inherited)` badge and the `[Inherit]` button sit at the right end
+    // of the control's *first* row — over a control that may be many rows
+    // tall, so they are a one-row layer over the top of the column rather
+    // than a sibling in it. Last in the stack, which is first at a point.
+    if let Some(i) = &c.inherit {
+        body = stack()
+            .w(Sizing::Flex(1))
+            .children([body, inherit(c.index, i, &band)]);
+    }
+    let inner = row().children([gutter(c, &band), body]);
+    match c.bordered {
+        true => col()
+            .border()
+            .theme(pair("ui.split_separator_fg", "ui.popup_bg"))
+            .child(inner),
+        false => inner,
+    }
+}
+
+/// The background the card's first row is painted on: the selection band, the
+/// hover band, or the dialog's own ground.
+///
+/// **The band is the control's, not a wash under it.** The painter drew an
+/// empty highlighted row and then painted the control's cells over it, and
+/// the cells whose background was *unset* let the band through. Every run of
+/// a description carries both halves, so the band has to be the background the
+/// control's own rows are built from — which is what [`super::widgets::Ctx`]'s
+/// surface is for.
+fn band_bg(c: &Card) -> String {
+    match (c.selected, c.hovered) {
+        (true, _) => "ui.settings_selected_bg".to_string(),
+        (_, true) => "ui.menu_hover_bg".to_string(),
+        _ => "ui.popup_bg".to_string(),
+    }
+}
+
+/// The `>` cursor and the `●` pending-change dot, in the three columns the
+/// painter reserved for them.
+fn gutter(c: &Card, band: &str) -> Node<UiMsg> {
+    let mark = match c.selected {
+        true => ">",
+        false => " ",
+    };
+    let dot = match c.dirty {
+        true => "●",
+        false => " ",
+    };
+    // One row tall, and no filler under it: the card's height comes from the
+    // control beside it, and a flexible filler inside a `viewport` — whose
+    // children are measured against an unbounded main axis — asks for every
+    // row there could ever be.
+    col()
+        .w(Sizing::Cells(3))
+        .child(row().h(Sizing::Cells(1)).children([
+            text(mark).theme(attrs("ui.settings_selected_fg", band, &["bold"])),
+            text(dot).theme(pair("ui.settings_selected_fg", band)),
+            text(" ").theme(pair("ui.popup_text_fg", band)),
+        ]))
+}
+
+/// The control itself — the same `WidgetSpec` the widget mapping produced,
+/// described by the same adapter a plugin's panel goes through.
+fn control(c: &Card, band: &str) -> Node<UiMsg> {
+    let spec = c.spec.clone();
+    let focus_key = c.focus_key.clone();
+    let surface =
+        crate::app::shell_host::shell_theme::Ink::keys("ui.popup_text_fg", band.to_string());
+    layout_reader(move |info: LayoutInfo| {
+        let cx = super::widgets::Ctx {
+            slot: super::widgets::Slot::Settings,
+            states: super::widgets::no_state(),
+            focus_key: focus_key.clone(),
+            hovered_key: None,
+            marker_gutter: false,
+            hovered_item_key: String::new(),
+            avail_height: None,
+            surface: surface.clone(),
+        };
+        super::widgets::node(&spec, info.constraints.max_w.max(1), &cx)
+    })
+}
+
+/// The wrapped description, with the layer the value came from after it.
+///
+/// The painter wrapped the text itself and then pushed ` (user)` onto the last
+/// line it had produced — so on a narrow card the label ran off the end. Here
+/// it is part of the text and wraps with it.
+fn description(c: &Card) -> Option<Node<UiMsg>> {
+    // **Reflowed, not re-broken.** A schema description is written with
+    // newlines for the sake of the JSON file it lives in, not as layout, and
+    // the painter's `wrap_text` split on whitespace — which threw them away.
+    // Keeping them costs a row per paragraph in a card whose height is the
+    // reason the page scrolls at all.
+    let mut body = c
+        .description
+        .as_deref()
+        .map(|d| d.split_whitespace().collect::<Vec<_>>().join(" "))
+        .unwrap_or_default();
+    if let Some(l) = c.layer {
+        match body.is_empty() {
+            true => body = format!("({l})"),
+            false => body.push_str(&format!(" ({l})")),
+        }
+    }
+    if body.is_empty() {
+        return None;
+    }
+    Some(
+        row().children([
+            text(body)
+                .theme(pair("ui.line_number_fg", "ui.popup_bg"))
+                .wrap()
+                .w(Sizing::Flex(1)),
+            // The painter's `description_right_padding_cols`, so wrapped text does
+            // not butt against the card's right border.
+            row().w(Sizing::Cells(2)),
+        ]),
+    )
+}
+
+/// `(Inherited)` or `[Inherit]`, flush right on the control's first row.
+fn inherit(idx: usize, i: &Inherit, band: &str) -> Node<UiMsg> {
+    let node = match i {
+        Inherit::Badge(label) => {
+            text(label.clone()).theme(attrs("ui.line_number_fg", band, &["italic"]))
+        }
+        Inherit::Button { label, hovered } => {
+            let theme = match hovered {
+                true => pair("ui.menu_hover_fg", "ui.menu_hover_bg"),
+                false => pair("ui.line_number_fg", band),
+            };
+            gesture(text(label.clone()).theme(theme))
+                .on(
+                    GestureKind::Press,
+                    Rc::new(move |e: &Event| {
+                        if e.button != MouseButton::Left {
+                            return None;
+                        }
+                        e.stop();
+                        Some(UiMsg::Ui(UiFact::SettingsInherit(idx)))
+                    }),
+                )
+                .on_enter(Rc::new(move |_: &Event| {
+                    Some(UiMsg::Ui(UiFact::SettingsInheritHover(idx)))
+                }))
+        }
+    };
+    row().h(Sizing::Cells(1)).children([
+        row().w(Sizing::Flex(1)).pointer_mode(PointerMode::Ignore),
+        node,
+        // The painter's trailing column, so the affordance is not flush
+        // against the border.
+        row().w(Sizing::Cells(1)).pointer_mode(PointerMode::Ignore),
+    ])
 }
 
 /// One row: the cursor's `>`, the indent, the chevron, the dirty dot, the
@@ -467,6 +840,10 @@ pub enum Search {
 #[derive(Clone, Debug)]
 pub struct Chrome {
     pub title: String,
+    /// Whether the box lays its categories down the left (wide) or across the
+    /// top (narrow). The painter's own threshold: an interior under sixty
+    /// columns is narrow.
+    pub wide: bool,
     pub search: Search,
     /// The footer's buttons. `None` in the narrow layout, whose footer is
     /// seven rows rather than two and has not crossed.
@@ -475,20 +852,88 @@ pub struct Chrome {
     /// layout, whose categories are a horizontal strip, and while a search is
     /// running, when the painter replaces the whole body with its results.
     pub categories: Option<Categories>,
-    /// The page's own header, above the settings. `None` under the same two
-    /// conditions as the tree.
+    /// That strip, in the narrow layout — the other half of the same choice.
+    pub strip: Option<Strip>,
+    /// The page's own header, above the settings. `None` while a search is
+    /// running or the entry-dialog stack is up.
     pub page: Option<Page>,
+    /// The search's results, in place of the page. `Some` exactly when the
+    /// page is `None` for a running search — the two are the same band.
+    pub results: Option<Results>,
+    /// The page's settings, as cards.
+    ///
+    /// `None` under the same two conditions as the header: a search replaces
+    /// the body with its results, and the entry-dialog stack is still the
+    /// painter's — the tree is folded after every painter, so a described
+    /// body would be drawn over the dialog covering it.
+    pub items: Option<Items>,
 }
 
-/// The settings panel's header: the page's title, and the button that clears
-/// a nullable category.
-#[derive(Clone, Debug, PartialEq)]
+/// The settings panel's header: the page's title, the button that clears a
+/// nullable category, and the cards under both.
+#[derive(Clone, Debug)]
 pub struct Page {
     pub title: String,
     /// `[Clear …]`, offered on a nullable category that has values.
     pub clear: Option<String>,
     /// True while the pointer is on that button.
     pub clear_hovered: bool,
+}
+
+/// The page's cards and the handle its window is addressed by.
+#[derive(Clone)]
+pub struct Items {
+    pub cards: Vec<Card>,
+    /// The window's handle, so the host can move it to a card — which is the
+    /// whole of what `ScrollablePanel::ensure_focused_visible` did, minus its
+    /// copy of every item's height.
+    pub anchor: Option<Rc<fresh_ui::behavior::Anchor>>,
+}
+
+impl std::fmt::Debug for Items {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Items")
+            .field("cards", &self.cards)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One setting, as the card that shows it.
+#[derive(Clone, Debug)]
+pub struct Card {
+    /// The item's position on the page — the number every settings hit
+    /// carries, and what `card_key` is built from.
+    pub index: usize,
+    /// The heading above this card, when it is the first of its section.
+    pub section: Option<String>,
+    /// The control, exactly as `widget_map` produced it.
+    pub spec: fresh_core::api::WidgetSpec,
+    /// The widget key the runtime should treat as focused: the control's own
+    /// key while it is being edited, empty otherwise. It is what makes a text
+    /// field paint its caret.
+    pub focus_key: String,
+    pub description: Option<String>,
+    /// `user`, `project` or `session` — the layer the value came from, shown
+    /// after the description. `None` for a schema default.
+    pub layer: Option<&'static str>,
+    /// The keyboard cursor is on this card and the body has the keyboard.
+    pub selected: bool,
+    /// The pointer is on it.
+    pub hovered: bool,
+    /// It has an unsaved change.
+    pub dirty: bool,
+    pub inherit: Option<Inherit>,
+    /// Whether the card draws its box. The flat style drops it.
+    pub bordered: bool,
+}
+
+/// What a nullable setting offers at the right of its first row.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Inherit {
+    /// `(Inherited)` — a label on a value that is already unset.
+    Badge(String),
+    /// `[Inherit]` — unsets it.
+    Button { label: String, hovered: bool },
 }
 
 /// The category tree: the rows, the keyboard cursor, and whether that cursor
@@ -503,6 +948,45 @@ pub struct Categories {
     /// Whether the categories panel has the keyboard. It decides both the
     /// highlight's colour and whether the `>` is drawn, exactly as it did.
     pub focused: bool,
+}
+
+/// The search's results, which replace the page while a search is running.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Results {
+    pub rows: Vec<ResultRow>,
+    pub selected: usize,
+}
+
+/// One result: three rows — its name with the query's matches picked out, the
+/// breadcrumb that says where it lives, and its description.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResultRow {
+    /// Already split at the match positions by the search, which is domain
+    /// knowledge: what a fuzzy match *is* belongs to the matcher.
+    pub name: Vec<Span>,
+    pub breadcrumb: String,
+    pub desc: Option<String>,
+}
+
+/// The narrow layout's categories: one row of names across the top, in place
+/// of the column the wide layout puts down its left.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Strip {
+    pub cats: Vec<StripCat>,
+    /// Whether the strip has the keyboard, which decides whether the selected
+    /// name is banded or merely bright.
+    pub focused: bool,
+    /// The `←→: Switch category` line under it.
+    pub hint: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StripCat {
+    pub idx: usize,
+    pub label: String,
+    /// A dot before a category with unsaved changes in it.
+    pub dirty: bool,
+    pub selected: bool,
 }
 
 /// One row of the category tree.
@@ -1047,10 +1531,14 @@ mod tests {
     fn chrome() -> Chrome {
         let dim = pair("ui.line_number_fg", "ui.popup_bg");
         Chrome {
+            wide: true,
             title: " Settings [user] ".into(),
             search: Search::Hint(vec![Span::new("Press / to search settings...", dim)]),
             footer: Some(footer()),
             categories: Some(tree()),
+            strip: None,
+            results: None,
+            items: None,
             page: Some(Page {
                 title: "General".into(),
                 clear: Some("[Clear]".into()),
@@ -1100,6 +1588,7 @@ mod tests {
 
     fn searching(query: &str) -> Chrome {
         Chrome {
+            wide: true,
             title: " Settings [user] ".into(),
             search: Search::Active {
                 field: std::rc::Rc::new(fresh_core::api::WidgetSpec::Text {
@@ -1131,7 +1620,10 @@ mod tests {
             // header is described.
             footer: Some(footer()),
             categories: None,
+            strip: None,
+            results: None,
             page: None,
+            items: None,
         }
     }
 
@@ -1167,6 +1659,218 @@ mod tests {
             Size::new(w, h),
         );
         ui
+    }
+
+    /// A page of `n` one-line toggles, with a handle on its window.
+    fn paged(n: usize, anchor: &Rc<fresh_ui::behavior::Anchor>) -> Chrome {
+        let mut c = chrome();
+        c.items = Some(Items {
+            anchor: Some(anchor.clone()),
+            cards: (0..n)
+                .map(|index| Card {
+                    index,
+                    section: None,
+                    spec: fresh_core::api::WidgetSpec::Raw {
+                        entries: vec![fresh_core::text_property::TextPropertyEntry::text(format!(
+                            "setting {index}"
+                        ))],
+                        key: None,
+                    },
+                    focus_key: String::new(),
+                    description: None,
+                    layer: None,
+                    selected: index == 0,
+                    hovered: false,
+                    dirty: false,
+                    inherit: None,
+                    bordered: true,
+                })
+                .collect(),
+        });
+        c
+    }
+
+    /// The rows the body's window is showing, in order.
+    fn body_rows(ui: &Ui<UiMsg>) -> Vec<String> {
+        let vp = ui.find_by_key(&items_key()).expect("the body window");
+        let band = ui.rect_of(vp);
+        let mut rows: Vec<(i32, String)> = ui
+            .spec()
+            .visible()
+            .filter_map(|i| match &i.draw {
+                fresh_ui::Draw::Lines(l) => {
+                    let t = l.first()?.trim().to_string();
+                    (!t.is_empty() && i.rect.y >= band.y && i.rect.y < band.y + band.h as i32)
+                        .then_some((i.rect.y, t))
+                }
+                _ => None,
+            })
+            .collect();
+        rows.sort_by_key(|(y, _)| *y);
+        rows.into_iter().map(|(_, t)| t).collect()
+    }
+
+    /// **The window is moved to a card, not to a row.** The painter kept the
+    /// offset itself and found the row to put it at by walking every item's
+    /// `ScrollItem::height` — a second copy of the heights it drew the cards
+    /// with. The cards are measured once now, and "show me this one" is a
+    /// message to the window that measured them.
+    #[test]
+    fn the_body_window_moves_to_the_card_it_is_asked_for() {
+        let anchor = fresh_ui::behavior::Anchor::new();
+        let mut ui: Ui<UiMsg> = Ui::new();
+        let frame = |c: Chrome| {
+            frame_tree(Frame {
+                settings: Some(c),
+                modal: Some(Slot::Settings),
+                dock: None,
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            })
+        };
+        ui.frame(frame(paged(40, &anchor)), Size::new(100, 40));
+        let first = body_rows(&ui);
+        assert!(
+            first.iter().any(|r| r.contains("setting 0")),
+            "the window starts at the top: {first:?}"
+        );
+        assert!(
+            !first.iter().any(|r| r.contains("setting 30")),
+            "and does not reach the thirtieth card: {first:?}"
+        );
+
+        anchor.reveal_key(card_key(30));
+        ui.frame(frame(paged(40, &anchor)), Size::new(100, 40));
+        let after = body_rows(&ui);
+        assert!(
+            after.iter().any(|r| r.contains("setting 30")),
+            "the window moved to the card it was asked for: {after:?}"
+        );
+    }
+
+    /// **The results' window follows the selection**, and what it ended up at
+    /// is readable — which is the two halves of what `search_scroll_offset`
+    /// used to be. The painter windowed the list by hand
+    /// (`skip(scroll_offset)`, break at `height - 3`) and the state nudged the
+    /// offset by `max_visible` whenever the selection left it; the count row
+    /// then read that offset back to say "(4-6 of 12)".
+    #[test]
+    fn the_results_window_follows_the_selected_result() {
+        let results = |selected: usize| {
+            let mut c = chrome();
+            c.results = Some(Results {
+                selected,
+                rows: (0..12)
+                    .map(|i| ResultRow {
+                        name: vec![Span::new(
+                            format!("result {i}"),
+                            pair("ui.popup_text_fg", "ui.popup_bg"),
+                        )],
+                        breadcrumb: format!("General > setting_{i}"),
+                        desc: None,
+                    })
+                    .collect(),
+            });
+            c
+        };
+        let shown = |ui: &Ui<UiMsg>| -> Vec<String> {
+            ui.spec()
+                .visible()
+                .filter_map(|i| match &i.draw {
+                    fresh_ui::Draw::Lines(l) => {
+                        let t = l.first()?.trim().to_string();
+                        t.starts_with("result ").then_some(t)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        // The band is short enough that twelve results cannot all fit.
+        let mut ui: Ui<UiMsg> = Ui::new();
+        let frame = |c: Chrome| {
+            frame_tree(Frame {
+                settings: Some(c),
+                modal: Some(Slot::Settings),
+                dock: None,
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            })
+        };
+        ui.frame(frame(results(0)), Size::new(100, 24));
+        let first = shown(&ui);
+        assert!(
+            first.iter().any(|r| r == "result 0"),
+            "the window starts at the top: {first:?}"
+        );
+        assert!(
+            !first.iter().any(|r| r == "result 11"),
+            "and does not reach the last result: {first:?}"
+        );
+
+        ui.frame(frame(results(11)), Size::new(100, 24));
+        let after = shown(&ui);
+        assert!(
+            after.iter().any(|r| r == "result 11"),
+            "selecting the last result brought it into the window: {after:?}"
+        );
+        // And what the count row reports — the first result in the window,
+        // and how many of them fit — is the window's own answer rather than a
+        // pair of numbers kept beside it. Both are in *results*: an
+        // index-scrolled window counts in the items it holds.
+        let el = ui.find_by_key(&results_key()).expect("the results list");
+        let (scroll, window) = ui.scroll(el);
+        let offset = scroll.y.max(0) as usize;
+        assert_eq!(
+            window.h as usize,
+            after.len(),
+            "the window reports as many results as are on screen"
+        );
+        assert!(
+            offset > 0,
+            "the window moved, so the count row starts past the first result"
+        );
+        assert!(
+            !after.iter().any(|r| *r == format!("result {}", offset - 1)),
+            "and the result above the window is not on screen: {after:?}"
+        );
+    }
+
+    /// An open dropdown's options float over the cards below it.
+    ///
+    /// The settings painter reserved inline rows for them and grew the item;
+    /// the widget adapter surfaces the same list as the screen-level pop-over
+    /// every other dropdown in the editor opens. One dropdown, everywhere.
+    #[test]
+    fn an_open_dropdown_shows_its_options() {
+        let anchor = fresh_ui::behavior::Anchor::new();
+        let mut c = paged(6, &anchor);
+        if let Some(it) = c.items.as_mut() {
+            it.cards[1].spec = fresh_core::api::WidgetSpec::Dropdown {
+                options: vec!["lf".into(), "crlf".into()],
+                selected_index: 0,
+                label: "Default Line Ending".into(),
+                focused: false,
+                label_width: 24,
+                open: true,
+                scroll_offset: 0,
+                key: Some("/editor/default_line_ending".into()),
+            };
+        }
+        let ui = with_chrome(c, 120, 40, None);
+        let painted: Vec<String> = ui
+            .spec()
+            .visible()
+            .filter_map(|i| match &i.draw {
+                fresh_ui::Draw::Lines(l) => l.first().map(|s| s.trim().to_string()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            painted.iter().any(|r| r == "crlf"),
+            "the option list is on screen: {painted:?}"
+        );
     }
 
     fn boxed(ui: &Ui<UiMsg>) -> fresh_ui::Rect {
@@ -1335,7 +2039,12 @@ mod tests {
         let tree = ui.rect_of(ui.find_by_key(&categories_key()).expect("the tree"));
         let panel = ui.rect_of(ui.find_by_key(&panel_key()).expect("the panel"));
         assert_eq!(tree.w, CATEGORY_COLS, "the tree's width is the painter's");
-        assert_eq!(tree.x, boxed.x, "flush with the box");
+        assert_eq!(
+            tree.x,
+            boxed.x + 1,
+            "inside the box's border, where the painter measures its content \
+             band from"
+        );
         assert_eq!(
             panel.x,
             tree.x + tree.w as i32 + 1,

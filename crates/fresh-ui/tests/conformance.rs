@@ -9,8 +9,8 @@ use std::rc::Rc;
 use fresh_ui::{
     col, focusable, gesture, host_leaf, layer, layout_reader, text, viewport, BuildCx, Component,
     ComponentExt, Constraints, Draw, Event, Focusable, Geom, GeomHandle, GestureKind, Hit,
-    HostLeaf, InitCx, Input, Intent, Key, KeyCode, KeyPress, LayoutCx, Modality, Mods, MouseButton,
-    Node, Point, PointerMode, Rect, RenderObject, Shortcut, Size, Sizing, Ui,
+    HostLeaf, InitCx, Input, Intent, Key, KeyCode, KeyPress, LayoutCx, LayoutInfo, Modality, Mods,
+    MouseButton, Node, Point, PointerMode, Rect, RenderObject, Shortcut, Size, Sizing, Ui,
 };
 
 const FRAME: Size = Size { w: 20, h: 10 };
@@ -550,7 +550,10 @@ fn a_window_is_moved_to_a_band_it_measured_itself() {
     let anchor = fresh_ui::behavior::anchor::Anchor::new();
     let mut ui: Ui<()> = Ui::new();
     ui.frame(cards(anchor.clone()), FRAME);
-    assert_eq!(shown(&ui), vec!["card 0.0", "card 1.0", "card 1.1", "card 2.0"]);
+    assert_eq!(
+        shown(&ui),
+        vec!["card 0.0", "card 1.0", "card 1.1", "card 2.0"]
+    );
 
     // The cards start at content rows 0, 1, 3, 6, 7 and 9. Card 4 is two
     // cells tall at row 7, so the *shortest* move that holds all of it puts
@@ -615,6 +618,50 @@ fn a_band_taller_than_the_window_is_shown_from_its_top() {
     anchor.reveal_key(Key::from("tall"));
     ui.frame(mk(anchor.clone()), FRAME);
     assert_eq!(shown(&ui), vec!["tall 0", "tall 1", "tall 2"]);
+}
+
+/// **A window's offset and its extent are counted in the same unit.** An
+/// index-scrolled window's offset is an item, so `reveal` has to compare it
+/// against how many *items* fit — which is the window's height in cells only
+/// when the items are one cell tall. Reading the height for both left a list
+/// of three-row cards where it was: item 11 sat "inside" a window that was
+/// fifteen cells but five items.
+#[test]
+fn an_item_window_of_tall_rows_reveals_by_item_not_by_cell() {
+    let anchor = fresh_ui::behavior::anchor::Anchor::new();
+    let mut ui: Ui<()> = Ui::new();
+    let mk = |a: Rc<fresh_ui::behavior::anchor::Anchor>| -> Node<()> {
+        viewport(layout_reader(move |info: LayoutInfo| {
+            let w = info.scroll_window.unwrap_or_default();
+            col().children((w.y..w.y + w.h as i32).map(|i| {
+                col()
+                    .h(Sizing::Cells(3))
+                    .children((0..3).map(move |r| text(format!("row {i}.{r}"))))
+            }))
+        }))
+        .items(12)
+        .item_rows(3)
+        .anchor_to(a)
+        .h(Sizing::Cells(9))
+    };
+    ui.frame(mk(anchor.clone()), FRAME);
+    assert_eq!(
+        shown(&ui).first().map(String::as_str),
+        Some("row 0.0"),
+        "the window starts on the first item"
+    );
+
+    // Three items fit in nine cells, so showing item 11 puts the window at 9.
+    anchor.reveal(11);
+    ui.frame(mk(anchor.clone()), FRAME);
+    assert_eq!(
+        shown(&ui),
+        vec![
+            "row 9.0", "row 9.1", "row 9.2", "row 10.0", "row 10.1", "row 10.2", "row 11.0",
+            "row 11.1", "row 11.2"
+        ],
+        "the window moved by items, not by cells"
+    );
 }
 
 // ---------------------------------------------------------------------------

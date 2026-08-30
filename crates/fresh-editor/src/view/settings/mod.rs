@@ -9,7 +9,7 @@
 //! - `items.rs` - Convert schema to renderable items with control states
 //! - `state.rs` - Manage settings UI state and pending changes
 //! - `render.rs` - Render the settings modal
-//! - `layout.rs` - Hit testing for mouse interaction
+//! - `hit.rs` - The vocabulary a press resolves to, shared by both frontends
 //! - `entry_dialog.rs` - Dialog for editing complex map entries
 
 // Schema is WASM-compatible (pure data types)
@@ -19,11 +19,11 @@ pub mod schema;
 #[cfg(feature = "runtime")]
 pub mod entry_dialog;
 #[cfg(feature = "runtime")]
+pub mod hit;
+#[cfg(feature = "runtime")]
 pub mod input;
 #[cfg(feature = "runtime")]
 pub mod items;
-#[cfg(feature = "runtime")]
-pub mod layout;
 #[cfg(feature = "runtime")]
 pub mod mouse;
 #[cfg(feature = "runtime")]
@@ -39,7 +39,7 @@ pub mod widget_map;
 #[cfg(feature = "runtime")]
 pub use entry_dialog::EntryDialogState;
 #[cfg(feature = "runtime")]
-pub use layout::{SettingsHit, SettingsLayout};
+pub use hit::SettingsHit;
 #[cfg(feature = "runtime")]
 pub use render::render_settings;
 #[cfg(feature = "runtime")]

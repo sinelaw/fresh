@@ -422,6 +422,33 @@ pub fn setting_control_to_widget_aligned(
 /// Matches the historical `field_width = 30` minus the two brackets.
 const TEXTLIST_CELL_WIDTH: usize = 28;
 
+/// What a column of a `TextList` row falls on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextListTarget {
+    /// The `[…]` cell — the item's own text.
+    Cell,
+    /// The trailing `[x]` (remove) or `[+]` (commit the pending item).
+    Button,
+}
+
+/// Which target the column `col` of a `TextList` row falls on.
+///
+/// **The columns come from the row's own construction**, four lines up: two
+/// of indent, `[`, the padded cell, `]`, a space, then the three-column
+/// button. The click path used to guess — "treat anything in the rightmost ~5
+/// chars of the rendered row that the user is likely to click as the trailing
+/// button", with a second hand-rolled estimate behind it when the row was
+/// shorter than the field, because "computing the exact column would need the
+/// actual_field_width, which we don't carry here". It is carried here.
+pub(crate) fn text_list_target(col: u16) -> TextListTarget {
+    // `  [` + cell + `] `
+    let button_start = (2 + 1 + TEXTLIST_CELL_WIDTH + 1 + 1) as u16;
+    match col >= button_start && col < button_start + 3 {
+        true => TextListTarget::Button,
+        false => TextListTarget::Cell,
+    }
+}
+
 /// Dim hint / disabled-text color.
 const DIM_HINT: &str = "ui.menu_disabled_fg";
 
@@ -800,10 +827,16 @@ fn list_of(
     selected: i32,
 ) -> WidgetSpec {
     let visible = rows.len().max(1) as u32;
+    // A key per row, so the row is addressable from outside the control: it
+    // is what `SettingControl::sub_row_key` names when the keyboard's
+    // sub-focus walks into a map, and what the body's window is moved to.
+    let item_keys = (0..rows.len())
+        .map(|i| format!("{field_key}::{suffix}::{i}"))
+        .collect();
     WidgetSpec::List {
         items: rows,
         item_specs: Vec::new(),
-        item_keys: Vec::new(),
+        item_keys,
         selected_index: selected,
         visible_rows: Some(visible),
         focusable: true,

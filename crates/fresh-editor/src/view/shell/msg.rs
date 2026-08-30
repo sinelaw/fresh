@@ -47,6 +47,14 @@ pub enum UiFact {
     WidgetHit {
         slot: super::widgets::Slot,
         hit: crate::widgets::HitArea,
+        /// The column the press landed on, within the hit's own piece.
+        ///
+        /// A press on a text field means "put the caret here", and the runtime
+        /// answered that by comparing the screen column against geometry the
+        /// painter had stamped. The piece the gesture is on *is* that
+        /// geometry, so the offset inside it is what is left to say. `None`
+        /// for a hit that arrived without a pointer behind it.
+        at: Option<u16>,
     },
     /// The floating plugin panel's `[×]` was pressed.
     ///
@@ -88,11 +96,19 @@ pub enum UiFact {
     /// recorded. So the fact says which strip and where, and the two handlers
     /// behind it are the ones the boxes dispatched to, in the order their `z`
     /// used to express: the split controls sit on top of the tab row.
-    PaneTabsPress { pane: LeafId, x: u16, y: u16 },
+    PaneTabsPress {
+        pane: LeafId,
+        x: u16,
+        y: u16,
+    },
     /// A right press on a pane's tab strip: the tab's context menu, on the tab
     /// under the pointer. Dismissing it from elsewhere is still the base
     /// surface's, which this claim simply keeps out of the way of.
-    PaneTabsSecondary { pane: LeafId, x: u16, y: u16 },
+    PaneTabsSecondary {
+        pane: LeafId,
+        x: u16,
+        y: u16,
+    },
     /// The `□` / `⧉` button on a pane's strip. No coordinates: the button is
     /// a node and it knows its pane.
     PaneMaximize(LeafId),
@@ -113,7 +129,10 @@ pub enum UiFact {
     },
     /// A sideways wheel over the strip pans it the same way, without the
     /// popup dismissal and plugin hook the vertical one carries.
-    PaneTabsPan { pane: LeafId, delta: i32 },
+    PaneTabsPan {
+        pane: LeafId,
+        delta: i32,
+    },
 
     /// A left press on a pane's content, and which press of a run it is: one
     /// places the caret, two selects the word, three the line — or toggles a
@@ -154,7 +173,10 @@ pub enum UiFact {
     },
     /// A sideways wheel over a pane pans its surface. No popup dismissal and
     /// no terminal live/scrollback transition — panning is not reading.
-    PanePan { pane: LeafId, delta: i32 },
+    PanePan {
+        pane: LeafId,
+        delta: i32,
+    },
 
     /// A right-click landed somewhere — anywhere — so the three transient tab
     /// menus close: the "+" new-tab menu, the close-split confirmation, and a
@@ -201,9 +223,14 @@ pub enum UiFact {
     /// `MouseEventKind::Down`. Pressing the bar and releasing over an item —
     /// the way a menu bar is used — needs exactly this split, the bar acting
     /// on the press and the row on the release.
-    MenuBarPress { index: usize },
+    MenuBarPress {
+        index: usize,
+    },
     /// A click on a dropdown row, named by its level and position.
-    MenuItemClick { depth: usize, index: usize },
+    MenuItemClick {
+        depth: usize,
+        index: usize,
+    },
     /// Close the open menu (an outside click, or a click on an inert cell of
     /// the dropdown's own box).
     CloseMenu,
@@ -217,10 +244,17 @@ pub enum UiFact {
     /// `Event::clicks` — the editor counts the run, the library carries it,
     /// and the handler reads it, so the two routes cannot disagree about which
     /// row they mean.
-    ExplorerRowPress { index: usize, clicks: u8 },
+    ExplorerRowPress {
+        index: usize,
+        clicks: u8,
+    },
     /// A right click on a tree row: select it and open its context menu at the
     /// pointer.
-    ExplorerRowContext { index: usize, x: u16, y: u16 },
+    ExplorerRowContext {
+        index: usize,
+        x: u16,
+        y: u16,
+    },
     /// A right-press on the panel that did not land on a row.
     ///
     /// The old component bound its right-press to the *whole* explorer — its
@@ -230,7 +264,10 @@ pub enum UiFact {
     /// nothing. The row index is resolved app-side from the panel's own
     /// rectangle, as the component resolved `relative_row`, because the
     /// description cannot read geometry.
-    ExplorerBodyContext { x: u16, y: u16 },
+    ExplorerBodyContext {
+        x: u16,
+        y: u16,
+    },
     /// A left-press on the panel that did not land on a row.
     ///
     /// The same union-box rule as `ExplorerBodyContext`, for the other button:
@@ -252,16 +289,25 @@ pub enum UiFact {
     /// coordinates. What it means is the host's: a link if one is there, and
     /// the start of a text selection otherwise. The rectangle it used to be
     /// hit-tested against is the tree's now, so only the cell is reported.
-    PopupTextPress { line: usize, col: usize },
+    PopupTextPress {
+        line: usize,
+        col: usize,
+    },
     /// The pointer moving while that press is still held. Extends the
     /// selection the press began.
-    PopupTextDrag { line: usize, col: usize },
+    PopupTextDrag {
+        line: usize,
+        col: usize,
+    },
     /// A press on the overlay card's toolbar band, in the band's own
     /// coordinates. The controls are a plugin's `WidgetSpec`, laid out by the
     /// widget runtime rather than by the tree, so the host hit-tests its own
     /// boxes — the band reports where, which is all the tree can know until
     /// `WidgetSpec` becomes a `Node`.
-    CardToolbarPress { x: u16, y: u16 },
+    CardToolbarPress {
+        x: u16,
+        y: u16,
+    },
     /// A wheel over the overlay card's preview pane. The pane is a painter's
     /// still, so it has no window for the wheel to chain into.
     CardPreviewScroll(i32),
@@ -273,21 +319,38 @@ pub enum UiFact {
     ExplorerClose,
     /// A press on the panel's right-edge grip: start a width drag from here.
     /// The drag itself is still the legacy one — see `shell::file_explorer`.
-    ExplorerResizeBegin { x: u16, y: u16 },
+    ExplorerResizeBegin {
+        x: u16,
+        y: u16,
+    },
     /// The wheel over the panel. Positive is down, matching `Input::Wheel`.
     /// Carries the pointer so the plugin `wheel` hook still gets a position.
-    ExplorerScroll { delta: i32, x: u16, y: u16 },
+    ExplorerScroll {
+        delta: i32,
+        x: u16,
+        y: u16,
+    },
     /// A left press inside the dock column, in screen coordinates. The panel's
     /// widgets are a plugin's `WidgetSpec` rather than nodes, so the runtime
     /// hit-tests its own boxes and the tree reports only where — the same seam
     /// as `CardToolbarPress`.
-    DockPress { x: u16, y: u16 },
+    DockPress {
+        x: u16,
+        y: u16,
+    },
     /// A right press inside the dock column: the plugin raises a per-session
     /// context menu from it.
-    DockContext { x: u16, y: u16 },
+    DockContext {
+        x: u16,
+        y: u16,
+    },
     /// The wheel over the dock column. Positive is down, and the pointer rides
     /// along for the panel's own hit test.
-    DockScroll { delta: i32, x: u16, y: u16 },
+    DockScroll {
+        delta: i32,
+        x: u16,
+        y: u16,
+    },
     /// A press on the dock's right-edge grip: start a width drag. The drag
     /// itself is still the legacy grab — see `shell::dock`.
     DockResizeBegin,
@@ -303,15 +366,25 @@ pub enum UiFact {
     /// The pointer entered or left that row.
     ThemeInfoButtonHover(bool),
     /// Ctrl+Right-Click: inspect the theme keys behind this screen cell.
-    ThemeInspect { x: u16, y: u16 },
+    ThemeInspect {
+        x: u16,
+        y: u16,
+    },
     /// A left press in the file-open dialog, in screen coordinates. The
     /// dialog's elements are cell spans its painter recorded, so the tree
     /// reports where and the hit test is the painter's — the same seam as
     /// `CardToolbarPress`.
-    BrowserPress { x: u16, y: u16, double: bool },
+    BrowserPress {
+        x: u16,
+        y: u16,
+        double: bool,
+    },
     /// The pointer moved over the dialog. The hover target is resolved against
     /// the same recorded spans.
-    BrowserHover { x: u16, y: u16 },
+    BrowserHover {
+        x: u16,
+        y: u16,
+    },
     /// The wheel over the dialog. Positive is down.
     BrowserScroll(i32),
     /// A radio row in the workspace-trust prompt was clicked. **Selection is
@@ -395,6 +468,37 @@ pub enum UiFact {
     /// `layout.clear_category_button` — a rectangle the painter filed as it
     /// drew the button, for a chain of `point_in_rect` to find again.
     SettingsClearCategory,
+    /// A press on a settings card — anywhere on it that a control did not
+    /// answer for. It selects the item, which is what `SettingsHit::Item` did.
+    SettingsItem(usize),
+    /// The pointer entered a card, or left the one it was on. The painter
+    /// learned this by hit-testing the pointer's cell against every item's
+    /// rectangle on every move; entering and leaving are the two things that
+    /// actually happen.
+    SettingsItemHover(Option<usize>),
+    /// A press on a nullable setting's `[Inherit]`, which unsets it.
+    SettingsInherit(usize),
+    /// The pointer is on that button.
+    SettingsInheritHover(usize),
+    /// A press on a field of the settings entry-edit dialog — anywhere on it
+    /// a control did not answer for. It focuses the field.
+    SettingsEntryItem(usize),
+    /// The pointer entered a field, or left the one it was on. The painter
+    /// re-walked every item's rows on every move to learn this, and its walk
+    /// omitted the section headers the renderer had drawn.
+    SettingsEntryItemHover(Option<usize>),
+    /// A press on one of the dialog's own buttons: Save, Cancel, Delete.
+    SettingsEntryButton(usize),
+    SettingsEntryButtonHover(Option<usize>),
+    /// A press on a field's `[Reset]` / `[Inherit]`: `(field, action)`.
+    SettingsEntryFieldAction(usize, usize),
+    /// A press on one of the search's results, by its absolute index.
+    ///
+    /// **Absolute, and it always was** — the painter filed a rectangle per
+    /// *visible* card, so the position in that list was a viewport slot and,
+    /// once the list had scrolled, not the result's index (#2860). A list row
+    /// knows its own index whether it is on screen or not.
+    SettingsSearchResult(usize),
 }
 
 /// What a menu-bar navigation step does to the open chain.
