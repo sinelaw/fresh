@@ -34,7 +34,6 @@ pub mod file_explorer;
 #[cfg(feature = "runtime")]
 pub mod menu;
 #[cfg(feature = "runtime")]
-pub mod menu_input;
 #[cfg(feature = "runtime")]
 pub mod split_rendering;
 #[cfg(feature = "runtime")]
@@ -58,7 +57,6 @@ pub(crate) use menu::MenuRowStyle;
 #[cfg(feature = "runtime")]
 pub use menu::{context_keys, MenuContext, MenuLayout, MenuRenderer, MenuState};
 #[cfg(feature = "runtime")]
-pub use menu_input::MenuInputHandler;
 pub use scroll_panel::{
     FocusRegion, RenderInfo, ScrollItem, ScrollState, ScrollablePanel, ScrollablePanelLayout,
 };

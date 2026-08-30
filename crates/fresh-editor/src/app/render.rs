@@ -4224,6 +4224,7 @@ impl Editor {
                 selected_hint: p.accept_key_hint.clone(),
             },
             transient: p.transient,
+            keys: None,
         };
         let mut out: Vec<Placed> = Vec::new();
         let state = self.active_state();
@@ -4233,7 +4234,86 @@ impl Editor {
         if !self.workspace_trust_on_top() {
             out.extend(self.global_popups.top().map(describe));
         }
+        // **One popup holds the keyboard, and it is the last one described.**
+        // `dispatch_popup_keys` said the same thing as an order of rungs —
+        // global stack first, then the buffer's — and the order they are
+        // pushed in above is that order, so the one on top is the last. Said
+        // once here rather than re-derived by a walk that could disagree with
+        // the one that painted.
+        // Not while the workspace-trust prompt is up: it is a popup that
+        // `popups_capture_keys` answers `true` for and that is deliberately
+        // *not* described here (it renders in the modal band on its own
+        // backdrop), so the last one in this list is somebody else.
+        if self.popups_capture_keys() && !self.workspace_trust_on_top() {
+            if let Some(top) = out.last_mut() {
+                top.keys = Some(self.popup_keys());
+            }
+        }
         out
+    }
+
+    /// What the keymap binds for the popup holding the keyboard.
+    ///
+    /// The two `resolve_*_popup_action` calls, turned inside out. They asked
+    /// the keymap for *this* key as it arrived, from inside a walk the shell
+    /// tree is offered the key before — which is how a `menu`-section binding
+    /// came to be swallowed before the keymap was ever consulted. Enumerating
+    /// the bindings instead puts them on the popup, where nothing is in front
+    /// of them.
+    fn popup_keys(&self) -> crate::view::shell::popup::Keys {
+        use crate::input::keybindings::{Action, KeyContext};
+        use crate::view::popup::PopupKind;
+        let kind = self.topmost_popup_kind().unwrap_or(PopupKind::Action);
+        let mut bound = Vec::new();
+        if let Ok(kb) = self.keybindings.read() {
+            // The `completion` section first, so a key bound in both wins
+            // there — `completion_popup_action` ran ahead of the popup's own
+            // handler for the same reason.
+            let sections = match kind {
+                PopupKind::Completion => vec![KeyContext::Completion, KeyContext::Popup],
+                _ => vec![KeyContext::Popup],
+            };
+            for ctx in sections {
+                for ((code, mods), action) in kb.bindings_in_context(ctx) {
+                    // Only the actions that are *about* the popup. A binding
+                    // for anything else in these sections is the base layer's
+                    // and reaches it the ordinary way.
+                    if !matches!(
+                        action,
+                        Action::PopupConfirm
+                            | Action::PopupCancel
+                            | Action::PopupFocus
+                            | Action::CompletionAccept
+                            | Action::CompletionDismiss
+                    ) {
+                        continue;
+                    }
+                    let Some(code) = crate::view::shell::input::key_code(code) else {
+                        continue;
+                    };
+                    let key = fresh_ui::KeyPress {
+                        code,
+                        mods: crate::view::shell::input::mods(mods),
+                    };
+                    if bound
+                        .iter()
+                        .any(|(k, _): &(fresh_ui::KeyPress, _)| *k == key)
+                    {
+                        continue;
+                    }
+                    bound.push((key, action));
+                }
+            }
+        }
+        crate::view::shell::popup::Keys { kind, bound }
+    }
+
+    /// The kind of the popup holding the keyboard, on the same rule.
+    fn topmost_popup_kind(&self) -> Option<crate::view::popup::PopupKind> {
+        match self.global_popups.is_visible() {
+            true => self.global_popups.top().map(|p| p.kind),
+            false => self.active_state().popups.top().map(|p| p.kind),
+        }
     }
 
     /// The floating-overlay prompt's card, as the shell describes it.

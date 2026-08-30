@@ -76,7 +76,6 @@ pub mod markdown;
 #[cfg(feature = "runtime")]
 pub mod popup;
 #[cfg(feature = "runtime")]
-pub mod popup_input;
 #[cfg(feature = "runtime")]
 #[cfg(feature = "runtime")]
 pub mod prompt;

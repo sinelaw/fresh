@@ -17,7 +17,6 @@
 //! extends the pattern to key routing.
 
 use crate::input::keybindings::{Action, KeyContext, KeybindingResolver};
-use crate::view::popup::PopupKind;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Convert a crossterm `KeyEvent` into the `KeyEventPayload` shape
@@ -127,24 +126,11 @@ pub fn unfocused_popup_action(
     }
 }
 
-/// Resolve a key event against `KeyContext::Completion` when the topmost
-/// visible popup is a completion popup. Only `CompletionAccept` and
-/// `CompletionDismiss` are recognised here — every other key falls
-/// through to the popup's own handler so type-to-filter, navigation, and
-/// the "any other key dismisses + passthrough" behaviours stay intact.
-pub fn completion_popup_action(
-    topmost_kind: Option<PopupKind>,
-    kb: &KeybindingResolver,
-    event: &KeyEvent,
-) -> Option<Action> {
-    if topmost_kind != Some(PopupKind::Completion) {
-        return None;
-    }
-    match kb.resolve_in_context_only(event, KeyContext::Completion) {
-        Some(action @ (Action::CompletionAccept | Action::CompletionDismiss)) => Some(action),
-        _ => None,
-    }
-}
+// **`completion_popup_action` went with the walk that called it.** It asked
+// the keymap for the key as it arrived, from inside a stage the shell tree is
+// offered the key before, so a binding it would have found could be swallowed
+// ahead of it. `Editor::popup_keys` enumerates the same two actions out of the
+// `completion` section instead and declares them on the open popup's layer.
 
 /// Read-only view of the floating widget panel state that
 /// [`widget_panel_key`] decides over. Built by the Editor from live
@@ -696,33 +682,12 @@ mod tests {
         KeyEvent::new(code, modifiers)
     }
 
-    #[test]
-    fn completion_action_requires_completion_popup() {
-        // Accept/dismiss aren't bound by default (the popup's own handler
-        // covers Tab/Enter); bind one so the gating is observable.
-        let mut config = config();
-        config.keybindings.push(crate::config::Keybinding {
-            key: "enter".to_string(),
-            modifiers: Vec::new(),
-            keys: Vec::new(),
-            action: "completion_accept".to_string(),
-            args: std::collections::HashMap::new(),
-            when: Some("completion".to_string()),
-        });
-        let kb = KeybindingResolver::new(&config);
-        let enter = event(KeyCode::Enter, KeyModifiers::NONE);
-        // The binding fires only when the topmost popup IS a completion
-        // popup; any other kind falls through to the popup's own handler.
-        assert_eq!(
-            completion_popup_action(Some(PopupKind::Completion), &kb, &enter),
-            Some(Action::CompletionAccept)
-        );
-        assert_eq!(
-            completion_popup_action(Some(PopupKind::Hover), &kb, &enter),
-            None
-        );
-        assert_eq!(completion_popup_action(None, &kb, &enter), None);
-    }
+    // `completion_action_requires_completion_popup` went with the function.
+    // The gating it pinned — the `completion` section's bindings apply only
+    // when the popup holding the keyboard is a completion list — is
+    // `Editor::popup_keys`'s, which reads the *kind* to decide which sections
+    // to enumerate, and `view::shell::popup::a_bound_key_runs_its_editor_action`
+    // is where a bound key is shown reaching the popup.
 
     #[test]
     fn unfocused_popup_esc_resolves_to_cancel() {

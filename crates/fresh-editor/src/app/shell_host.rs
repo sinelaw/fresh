@@ -1471,6 +1471,7 @@ impl Editor {
             // resolved a row.
             UiFact::ExplorerBodyPress => self.take_focus_for_file_explorer(),
             UiFact::PopupSelect(i) => self.select_popup_item(i),
+            UiFact::PopupKey(k) => self.popup_key(k),
             UiFact::PopupDismissTransient => self.dismiss_transient_popups(),
             // The toolbar's controls are a plugin's `WidgetSpec`, hit-tested
             // against the widget runtime's own boxes. The band said where the

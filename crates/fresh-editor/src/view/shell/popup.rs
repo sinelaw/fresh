@@ -42,7 +42,7 @@ use fresh_ui::{col, row, Align, Anchor, Elide, Fit, Key, Node, Place, Run, Sizin
 use crate::app::shell_host::shell_theme::{pair, Attrs, Ink, Paint};
 use crate::view::popup::{PopupContent, PopupListItem, PopupPosition};
 
-use super::msg::{UiFact, UiMsg};
+use super::msg::{PopupKey, UiFact, UiMsg};
 
 /// The caret's screen position, when the frame has one.
 ///
@@ -179,6 +179,28 @@ pub struct Placed {
     /// Whether a pointer landing outside it dismisses it — a hover popup or
     /// signature help, as against an action popup that waits to be answered.
     pub transient: bool,
+    /// The keyboard, when this is the popup holding it. At most one popup on
+    /// screen does — `popups_capture_keys`'s rule, stated where the popup is
+    /// described rather than re-derived by a walk.
+    pub keys: Option<Keys>,
+}
+
+/// The keyboard one popup owns.
+///
+/// **Which key means which step is not here.** The keymap answers that: its
+/// `popup` and `completion` bindings ride down as `bound` and are declared on
+/// the popup itself, which is the difference between a binding that works and
+/// one a capture-all handler in front of it swallows. What the *kind* decides
+/// is which steps exist at all — a hover pane scrolls where a list selects,
+/// and a completion list filters where an action list picks.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Keys {
+    pub kind: crate::view::popup::PopupKind,
+    /// The keymap's bindings for this surface, as the editor actions they
+    /// name. `completion_accept` and `popup_cancel` are actions rather than
+    /// intents because that is what they are — the popup runs them through
+    /// the same `handle_action` every other binding goes through.
+    pub bound: Vec<(fresh_ui::KeyPress, crate::input::keybindings::Action)>,
 }
 
 /// A popup's content, as the shell describes it.
@@ -236,13 +258,156 @@ pub fn placed_layers(ps: &[Placed]) -> Vec<Node<UiMsg>> {
                     .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER.passing_through())
                     .on_dismiss(|_| UiMsg::Ui(UiFact::PopupDismissTransient));
             }
-            l.child(
-                body(&p.body)
-                    .w(Sizing::Cells(p.size.0))
-                    .h(Sizing::Cells(p.size.1)),
-            )
+            let content = body(&p.body)
+                .w(Sizing::Cells(p.size.0))
+                .h(Sizing::Cells(p.size.1));
+            match &p.keys {
+                None => l.child(content),
+                Some(k) => keyboard(l, content, k),
+            }
         })
         .collect()
+}
+
+/// The open popup's keyboard, declared on its layer.
+///
+/// **Four files of key matching become three properties.** `try_handle_shared`
+/// answered Esc, PageUp/PageDown, Home/End and Ctrl+C in front of every kind;
+/// `handle_action_input`, `handle_hover_input` and
+/// `handle_completion_input_with_popup` then answered their own, each ending
+/// in a default that said what an unhandled key does. The default is the
+/// layer's `Dismiss`, the steps are `Intent`s, and the few keys that are not
+/// intents — the number keys, a filter character, Ctrl+Space — are the one
+/// raw listener left.
+fn keyboard(l: Node<UiMsg>, content: Node<UiMsg>, k: &Keys) -> Node<UiMsg> {
+    use crate::view::popup::PopupKind as PK;
+    use fresh_ui::{Dismiss, Intent, KeyCode, Modality, Mods};
+
+    let step = |s: PopupKey| move |_: &fresh_ui::Event| UiMsg::Ui(UiFact::PopupKey(s));
+    let mut f = fresh_ui::focusable(content).autofocus();
+
+    // Shared by every kind, in front of all four handlers as it always was.
+    f = f
+        .action(Intent::Cancel, step(PopupKey::Close))
+        .action(Intent::PageUp, step(PopupKey::PageUp))
+        .action(Intent::PageDown, step(PopupKey::PageDown))
+        .action(Intent::Home, step(PopupKey::First))
+        .action(Intent::End, step(PopupKey::Last));
+
+    // What Up and Down mean is the one thing the kind really decides: a
+    // read-only pane has no selection to move, so it moves its window.
+    let (up, down) = match k.kind {
+        PK::Hover => (PopupKey::ScrollUp, PopupKey::ScrollDown),
+        _ => (PopupKey::Prev, PopupKey::Next),
+    };
+    f = f
+        .action(Intent::Up, step(up))
+        .action(Intent::Down, step(down));
+
+    match k.kind {
+        // A list waits to be answered: Enter takes the row, Tab and Shift+Tab
+        // walk it, the number keys take one outright, and everything else
+        // stays inside — which is `Modality::Keyboard` on the layer below.
+        PK::Action | PK::List | PK::Text => {
+            f = f
+                .action(Intent::Confirm, step(PopupKey::Confirm))
+                .action(Intent::Next, step(PopupKey::Next))
+                .action(Intent::Prev, step(PopupKey::Prev));
+        }
+        // A hover pane is read-only, so Enter is just another way to be done
+        // with it. Every key it has no use for dismisses it, which is the
+        // layer's property below.
+        PK::Hover => f = f.action(Intent::Confirm, step(PopupKey::Close)),
+        // **A completion list declares no `Confirm`, deliberately.** Enter
+        // there means "close this and insert a newline" — the popup is not in
+        // the way of the keystroke, so it must not spend it. With no action
+        // bound, Enter reaches the layer's pass-through dismissal below,
+        // which is exactly what `InputResult::Ignored` after a deferred
+        // `ClosePopup` was saying.
+        PK::Completion => {}
+    }
+
+    // The keys that are not intents. One raw listener rather than a match arm
+    // per kind, because what each of them does is the same wherever it works.
+    let kind = k.kind;
+    f = f.on_key(move |e: &fresh_ui::Event| {
+        let key = e.key?;
+        let plain = key.mods == Mods::NONE;
+        let msg = |s: PopupKey| {
+            e.stop();
+            Some(UiMsg::Ui(UiFact::PopupKey(s)))
+        };
+        match key.code {
+            // Copy what is selected, wherever there is a selection.
+            KeyCode::Char('c') if key.mods == Mods::CTRL => msg(PopupKey::Copy),
+            // A list's number keys take a row outright.
+            KeyCode::Char(c @ '1'..='9')
+                if plain && matches!(kind, PK::Action | PK::List | PK::Text) =>
+            {
+                msg(PopupKey::Pick(c as usize - '1' as usize))
+            }
+            // The completion list's filter. Word characters only — anything
+            // else is a key the popup is not in the way of, and falls to the
+            // pass-through dismissal.
+            KeyCode::Char(' ') if key.mods == Mods::CTRL && kind == PK::Completion => {
+                msg(PopupKey::Close)
+            }
+            KeyCode::Char(c)
+                if kind == PK::Completion
+                    && (plain || key.mods == Mods::SHIFT)
+                    && (c.is_alphanumeric() || c == '_') =>
+            {
+                msg(PopupKey::TypeChar(c))
+            }
+            // Shift+Backspace is plain Backspace here: an accidentally-held
+            // Shift must not throw the popup away mid-word.
+            KeyCode::Backspace if kind == PK::Completion && (plain || key.mods == Mods::SHIFT) => {
+                msg(PopupKey::Backspace)
+            }
+            _ => None,
+        }
+    });
+
+    // The keymap's own bindings, declared on the popup so nothing in front of
+    // it can swallow them.
+    for (key, action) in &k.bound {
+        let (a, key) = (action.clone(), *key);
+        f = f.on_key(move |e: &fresh_ui::Event| {
+            (e.key? == key).then(|| {
+                e.stop();
+                UiMsg::from(a.clone())
+            })
+        });
+    }
+
+    // **The popup holding the keyboard owns it**, whatever its kind: it is
+    // marked focused, which is what `popups_capture_keys` means, and a layer
+    // that owns the keyboard is where focus goes when it opens. What differs
+    // is only what an unhandled key *does* — and that is the layer's
+    // `Dismiss`, which is asked before the modal claim precisely so a layer
+    // can step out of the way of one.
+    let l = l.modality(Modality::Keyboard);
+    let gone = Dismiss {
+        any_key: true,
+        ..Dismiss::default()
+    };
+    match k.kind {
+        // Nothing leaves a list that is waiting to be answered.
+        PK::Action | PK::List | PK::Text => l.child(f),
+        // A hover pane goes away on any key it did not use, and the key is
+        // spent doing it — the pane was in the way.
+        PK::Hover => l
+            .dismiss(gone)
+            .on_dismiss(|_| UiMsg::Ui(UiFact::PopupKey(PopupKey::Close)))
+            .child(f),
+        // A completion list goes away too, but the key goes on: the user was
+        // typing at the buffer, not at the popup, so the popup was never in
+        // the way of the keystroke.
+        PK::Completion => l
+            .dismiss(gone.passing_through())
+            .on_dismiss(|_| UiMsg::Ui(UiFact::PopupKey(PopupKey::Close)))
+            .child(f),
+    }
 }
 
 /// A popup: its ring, its ground, the strip on its top border, and its content.
@@ -1038,5 +1203,164 @@ mod tests {
                 );
             }
         }
+    }
+
+    // -- the keyboard ------------------------------------------------------
+
+    use crate::view::popup::{PopupKind, PopupListItem};
+    use crate::view::shell::frame::{frame_tree, Frame};
+    use fresh_ui::{Input, KeyCode, KeyPress, Mods};
+
+    fn with_keys(
+        kind: PopupKind,
+        bound: Vec<(KeyPress, crate::input::keybindings::Action)>,
+    ) -> Ui<UiMsg> {
+        let items: Vec<PopupListItem> = (0..4)
+            .map(|i| PopupListItem::new(format!("item {i}")))
+            .collect();
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                popups: vec![Placed {
+                    position: PopupPosition::Centered,
+                    at: CaretAnchor::Caret,
+                    size: (30, 8),
+                    body: Body {
+                        title: None,
+                        description: None,
+                        content: PopupContent::List { items, selected: 0 },
+                        bordered: true,
+                        dismissible: true,
+                        selected_hint: None,
+                    },
+                    transient: false,
+                    keys: Some(Keys { kind, bound }),
+                }],
+                ..Frame::default()
+            }),
+            Size::new(FRAME.0, FRAME.1),
+        );
+        ui
+    }
+
+    fn press(ui: &mut Ui<UiMsg>, code: KeyCode, mods: Mods) -> fresh_ui::Dispatch<UiMsg> {
+        ui.dispatch(Input::Key(KeyPress::with(code, mods)))
+    }
+
+    fn steps(d: &fresh_ui::Dispatch<UiMsg>) -> Vec<PopupKey> {
+        d.msgs
+            .iter()
+            .filter_map(|m| match m {
+                UiMsg::Ui(UiFact::PopupKey(k)) => Some(*k),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The steps `try_handle_shared` answered in front of all four handlers,
+    /// as intents the popup carries out.
+    #[test]
+    fn the_shared_keys_are_intents_the_popup_carries_out() {
+        let mut ui = with_keys(PopupKind::Action, Vec::new());
+        for (code, want) in [
+            (KeyCode::Down, PopupKey::Next),
+            (KeyCode::Up, PopupKey::Prev),
+            (KeyCode::PageDown, PopupKey::PageDown),
+            (KeyCode::PageUp, PopupKey::PageUp),
+            (KeyCode::Home, PopupKey::First),
+            (KeyCode::End, PopupKey::Last),
+            (KeyCode::Esc, PopupKey::Close),
+        ] {
+            let d = press(&mut ui, code, Mods::NONE);
+            assert_eq!(steps(&d), vec![want], "{code:?}");
+        }
+    }
+
+    /// **A list waiting to be answered keeps what it declines.** The number
+    /// keys take a row outright, Enter takes the selected one, and a key it
+    /// has no use for must not reach the buffer underneath.
+    #[test]
+    fn a_list_popup_answers_its_keys_and_swallows_the_rest() {
+        let mut ui = with_keys(PopupKind::Action, Vec::new());
+        assert_eq!(
+            steps(&press(&mut ui, KeyCode::Enter, Mods::NONE)),
+            vec![PopupKey::Confirm]
+        );
+        assert_eq!(
+            steps(&press(&mut ui, KeyCode::Char('3'), Mods::NONE)),
+            vec![PopupKey::Pick(2)],
+            "the number keys are one-based to the user, zero-based to the list"
+        );
+        assert_eq!(
+            steps(&press(&mut ui, KeyCode::Char('c'), Mods::CTRL)),
+            vec![PopupKey::Copy]
+        );
+        let d = press(&mut ui, KeyCode::Char('x'), Mods::NONE);
+        assert!(steps(&d).is_empty(), "nothing acts on it");
+        assert!(d.claimed, "and it does not reach the buffer");
+    }
+
+    /// **A completion list is not in the way of the keystroke.** Enter means
+    /// "close this and insert a newline", so it must close *and* let the key
+    /// through — which is why no `Confirm` is declared on it.
+    #[test]
+    fn a_completion_popup_closes_and_lets_the_key_through() {
+        let mut ui = with_keys(PopupKind::Completion, Vec::new());
+        let d = press(&mut ui, KeyCode::Enter, Mods::NONE);
+        assert_eq!(steps(&d), vec![PopupKey::Close]);
+        assert!(!d.claimed, "the newline still reaches the buffer");
+
+        // A word character filters instead, and is spent doing it.
+        let mut ui = with_keys(PopupKind::Completion, Vec::new());
+        let d = press(&mut ui, KeyCode::Char('a'), Mods::NONE);
+        assert_eq!(steps(&d), vec![PopupKey::TypeChar('a')]);
+        assert!(d.claimed);
+
+        // Ctrl+Space closes it and is spent, so it cannot re-open on the way
+        // out.
+        let mut ui = with_keys(PopupKind::Completion, Vec::new());
+        let d = press(&mut ui, KeyCode::Char(' '), Mods::CTRL);
+        assert_eq!(steps(&d), vec![PopupKey::Close]);
+        assert!(d.claimed);
+    }
+
+    /// A hover pane *was* in the way, so a key it has no use for spends
+    /// itself getting rid of it.
+    #[test]
+    fn a_hover_popup_goes_away_on_a_key_it_cannot_use() {
+        let mut ui = with_keys(PopupKind::Hover, Vec::new());
+        assert_eq!(
+            steps(&press(&mut ui, KeyCode::Down, Mods::NONE)),
+            vec![PopupKey::ScrollDown],
+            "a read-only pane moves its window, not a selection"
+        );
+        let mut ui = with_keys(PopupKind::Hover, Vec::new());
+        let d = press(&mut ui, KeyCode::Char('x'), Mods::NONE);
+        assert_eq!(steps(&d), vec![PopupKey::Close]);
+        assert!(d.claimed, "and the key is spent doing it");
+    }
+
+    /// **The keymap's own binding reaches the popup**, which is the whole
+    /// point of declaring it there: `resolve_completion_popup_action` asked
+    /// the keymap from inside a walk the shell is offered the key before.
+    #[test]
+    fn a_bound_key_runs_its_editor_action() {
+        use crate::input::keybindings::Action;
+        let mut ui = with_keys(
+            PopupKind::Completion,
+            vec![(
+                KeyPress::with(KeyCode::Tab, Mods::NONE),
+                Action::CompletionAccept,
+            )],
+        );
+        let d = press(&mut ui, KeyCode::Tab, Mods::NONE);
+        assert!(
+            d.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Action(Action::CompletionAccept))),
+            "got {:?}",
+            d.msgs
+        );
+        assert!(d.claimed);
     }
 }

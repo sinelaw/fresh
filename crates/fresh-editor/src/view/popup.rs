@@ -2,14 +2,16 @@
 //! the close button, the description rows, the three content bodies, the
 //! scrollbar, the hover and selection highlighting — is a description in
 //! `view::shell::popup` now, and the fold paints it. What is left here is what
-//! a popup *is*: its content, where it wants to go, how big it asks to be, what
-//! its keys do, and the text selection the ledger's finding B keeps host-side.
+//! a popup *is*: its content, where it wants to go, how big it asks to be, the
+//! steps its keyboard takes on it, and the text selection the ledger's finding
+//! B keeps host-side. Which key takes which step is not here either — that is
+//! the keymap's answer, declared on the popup's own layer as shortcuts and
+//! resolved by the tree (`view::shell::popup::keyboard`).
 
 use ratatui::{layout::Rect, style::Style};
 
 use super::markdown::{parse_markdown, wrap_styled_lines, wrap_text_lines, StyledLine};
 
-pub mod input;
 use crate::primitives::grammar::GrammarRegistry;
 
 /// Position of a popup relative to a point in the buffer
