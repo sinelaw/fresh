@@ -1116,10 +1116,20 @@ fn apply_settings(editor: &mut Editor, v: &Value) {
         editor.entry_dialog_activate_button(btn);
         return;
     }
+    // The category tree's chevron and section rows: their `SettingsHit`s were
+    // the painter's rectangles and are gone with them, so these reach the
+    // same three bodies the TUI's nodes do (`Editor::settings_*`) rather than
+    // going round through `dispatch_settings_hit`.
+    if kind == "categoryDisclosure" {
+        editor.settings_toggle_category(a);
+        return;
+    }
+    if kind == "categorySection" {
+        editor.settings_jump_to_section(a, bb);
+        return;
+    }
     let hit = match kind {
         "category" => Some(H::Category(a)),
-        "categoryDisclosure" => Some(H::CategoryDisclosure(a)),
-        "categorySection" => Some(H::CategorySection(a, bb)),
         "item" => Some(H::Item(a)),
         "controlToggle" => Some(H::ControlToggle(a)),
         "controlDropdown" => Some(H::ControlDropdown(a)),

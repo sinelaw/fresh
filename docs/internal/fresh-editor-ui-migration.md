@@ -262,6 +262,57 @@ Everything else in this document is gated on one of these two. That is the
 honest shape of what is left: the ungated items are done, and the remainder is
 two subsystem replacements plus the deletions they unblock.
 
+#### B.1 in full: what is left of the settings dialog, and the one decision in it
+
+**Crossed so far**: the box, the search row, the wide footer, five of the seven
+dialogs, and the **category tree** — which took five families of recorded
+rectangle with it (`categories`, `sections`, `category_disclosures`,
+`categories_panel_area`, `categories_scrollbar_area`), the wheel arm that
+routed through one of them, and `categories_scroll`'s double life as both the
+window and the page. The body band's three columns
+(`[Length(24), Length(1), Min(40)]`) are laid out once now and the painter
+*reads* the panel's rectangle back.
+
+**Left**: the settings body itself, the entry-dialog stack, and the narrow
+layout's horizontal category strip and seven-row footer.
+
+The body is the piece the plan calls the bulk, and its shape is settled:
+
+* `render_settings_panel` walks `page.items` through a `ScrollablePanel` with a
+  per-item `ItemBox` plan — five row counts and five `_y()` accessors computed
+  by hand — plus a `skip_top` for the item hanging off the top edge and a
+  `BandViewport` to clip each band against. `ItemBox` **is** the second layout
+  tree goal 5 forbids; a `col()` is the same thing measured once, by the layout
+  that also paints it.
+* An item is: an optional section heading, a bordered card, a three-column
+  gutter (`>` for the cursor, `●` for a pending change, a space), the control,
+  and the wrapped description under it with its config layer appended. The
+  highlight sits on the label row only, and the `(Inherited)` badge or
+  `[Inherit]` button is right-aligned on that same row — **one row tall**,
+  which is the rule the panel's title strip cost us.
+* **The control is already a `WidgetSpec`.** `widget_map` maps a
+  `SettingControl` onto one and `render_control_via_widget` renders it through
+  `render_spec`, so it becomes `shell::widgets::node` — the adapter a plugin's
+  field goes through. Its press comes back as the runtime's own hit, and
+  `shell_host` turns that back into the `SettingsHit` the dialog's dispatch
+  takes — which is also what the **web** calls by name, so neither path moves.
+  The translation table already exists in the code: every
+  `hit_rect(&out, "<kind>", "<event>", …)` call paired with the
+  `ControlLayoutInfo` field it fills and the `hit_test` arm that reads it.
+
+**And one decision it cannot dodge: the open dropdown.** The settings dialog
+draws an open `Dropdown`'s options **inline**, reserving rows for them through
+`SettingControl::height`; the widget runtime surfaces the same options as a
+floating screen-level pop-over and discards the inline rows —
+`render_control`'s own comment records the bug that came of mixing the two
+(#2765: the dropdown opened to an empty box). `shell::widgets::node` describes
+the pop-over. So describing a settings dropdown *changes* it: the list floats
+over the cards instead of pushing the card taller, which is what a plugin
+panel's dropdown and the web's already do. That is almost certainly the better
+answer — one dropdown, everywhere — but it is a **behaviour change with
+e2e tests on the current one**, and it belongs in the commit that makes it,
+stated, rather than arriving as a diff nobody chose.
+
 #### C.1 in full: the nineteen variants, and where each one lands
 
 Written down because C.1 is the largest remaining item and every other
@@ -613,6 +664,59 @@ C.6 shipped with exactly that mistake and its own tests caught it, which is the
 argument for writing the tests at the same time rather than after: the panel's
 frame was a transparent layer above the modal's claim, and every press on the
 box's chrome and content area went nowhere.
+
+**And the same rule one level down, which C.1 then shipped.** *Within* a
+layer, a transparent node still produces a path — a second one, offered before
+the path that reaches the content behind it — and dispatch tries paths
+topmost-first, **stopping at the first one that claims**. Every node on a path
+gets its handlers run, ancestors included. So a decorative filler laid over a
+box whose root swallows what its interior does not answer hands that root the
+press *first*, and the widget under the filler never sees it: the panel's title
+strip was a column with a `flex` filler beneath it, covering the whole box, and
+every press on a described widget died one node short of the widget it landed
+on. A strip that ends where its content ends has no path to offer, and that —
+not a `PointerMode` — is the fix. **A decoration is as big as what it
+decorates.**
+
+**A float inside a layer owes the same answer for the kinds it does not
+handle.** A pop-over or an overlay row that listens for presses *eats* a wheel
+rather than letting it through, because the layer it is in is the first thing
+asked at the point. Every scrollable list in the panel stopped scrolling the
+moment a float covered it. `widgets::float_route` is the panel's version of
+what `shell::settings::route` says for its box: where the event goes when this
+node is not the one that wants it.
+
+**One more, about the library's own API rather than about layers.**
+`Node::flex(n)` sets **both** axes, and on a container's *cross* axis
+`Sizing::Flex` means "fill the extent", not "share the remainder". So
+`row().flex(1)` used as a horizontal spacer *inside a row* also asks that row
+to be as tall as everything left in the column above it — which is exactly
+right for `row().flex(1)` as a **column** child and exactly wrong as a **row**
+child. Three separate bugs in one wave came from it (a form's fields laid out
+at zero height, a section's legend asking for the rest of the form, a title
+strip covering the whole box). **A spacer flexes along the axis it sits on**;
+say the axis (`.w(Sizing::Flex(1))` or `.h(...)`) rather than reaching for
+`flex`, and where the axis is not known statically, carry it — which is what
+`widgets::Site` does for the adapter.
+
+**And a deletion is checked with `--all-features`, because the web is a
+second caller.** Every recorded rectangle this migration removes has *two*
+consumers: the TUI's hit test and `webui::apply_settings`, which names the same
+`SettingsHit` variants by string for the web's native projection. `cargo check
+--workspace --all-targets` does not build that path; CI's `--all-features`
+does, and the categories tree's deletion reached CI as a compile error in a
+file the change never touched. The seam is the answer as well as the trap: the
+three bodies became `Editor::settings_*` methods with one caller each side, and
+"one body, two callers" is what the fact was for.
+
+**And the parity oracle has to be a fold, not a string join.** The five faults
+above all passed a per-variant suite that compared the tree's *run strings*
+against the runtime's entries. A run join cannot see a gap a `Spacer` opened
+between two runs, a blank line nothing painted on, or a border drawn as
+`Draw::Border` rather than as text — and every one of those was the difference.
+`widgets::tests::rows_of` paints the display list into a grid the way
+`fold_native` does and reads the rows back; the composition cases are asserted
+against `render_spec` at that unit. **Compare what the backend would draw.**
 
 And one rule of this migration's own, learned the expensive way and worth
 keeping at the top: **the tree runs first, so anything that used to sit between

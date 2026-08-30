@@ -28,7 +28,18 @@
 //!   focused entry so the List paints the highlight, `[Enter to edit]`,
 //!   and Up/Down navigation. The `List` is the same primitive plugins
 //!   use — one renderer, no duplication.
-//! * `TextList` → a `Col` of a label, item rows, and an add row.
+//! * `TextList` → a `Col` of a label, a `List` of the committed item
+//!   rows, and an add row.
+//!
+//! Every row a user can click is a `List` row, including each control's
+//! trailing `[+] Add new` sentinel (its own one-row `List`, keyed
+//! `{field}::add` so it is distinguishable from entry row 0). This is
+//! not decoration: the runtime emits a `select` hit — the thing a
+//! pointer press resolves against — only for list rows, and emits
+//! nothing at all for a `Raw`. The historical painter reached these
+//! rows by hit-testing rects it had stashed in `ControlLayoutInfo`;
+//! once the body is a description there are no stashed rects, so the
+//! rows have to carry their own hits.
 //! * `Json` → a multi-line `Text`.
 //! * `Complex` → a labelled `Raw` (uneditable).
 //!
@@ -59,12 +70,6 @@ const ACTION_FG: &str = "syntax.function";
 const REMOVE_FG: &str = "diagnostic.error_fg";
 /// `[+] Add new` rows (historical `add_button` = `diagnostic_info_fg`).
 const ADD_FG: &str = "diagnostic.info_fg";
-/// Row-selection background — the same key the `List` widget paints on
-/// its focused row (`mark_list_row_selected`). Used to highlight the
-/// `[+] Add new` sentinel when it is the focused sub-row, so the add row
-/// reads as selected just like the list entries above it.
-const ROW_SELECTION_BG: &str = "ui.popup_selection_bg";
-
 /// Map one Settings control to a `WidgetSpec` node, keyed by the
 /// setting's stable identifier (its JSON-pointer path) so the widget
 /// runtime preserves instance state across re-renders.
@@ -231,13 +236,23 @@ pub fn setting_control_to_widget_aligned(
         // path; the rows faithfully project its state.
         SettingControl::TextList(s) => {
             let focused = s.focus == FocusState::Focused;
-            let mut children = Vec::with_capacity(s.items.len() + 2);
-            children.push(raw_row(format!("{}:", s.label)));
-            for (idx, it) in s.items.iter().enumerate() {
-                let row_focused = focused && s.focused_item == Some(idx);
-                children.push(text_list_item_row(it, row_focused, s.editing, s.cursor));
+            let rows: Vec<TextPropertyEntry> = s
+                .items
+                .iter()
+                .enumerate()
+                .map(|(idx, it)| {
+                    let row_focused = focused && s.focused_item == Some(idx);
+                    text_list_item_row(it, row_focused, s.editing, s.cursor)
+                })
+                .collect();
+            let mut children = vec![raw_row(format!("{}:", s.label))];
+            // Skip the empty List — its 1-row minimum viewport would
+            // push the add row out of the control band (see Map arm).
+            if !rows.is_empty() {
+                let selected = list_selection(s.focus, s.focused_item);
+                children.push(list_of(field_key, "list", rows, selected));
             }
-            children.push(text_list_add_row(s, focused));
+            children.push(text_list_add_row(field_key, s, focused));
             WidgetSpec::Col { children, key }
         }
         // Key→value map (e.g. Languages, LSP servers). Label, a dimmed
@@ -281,11 +296,11 @@ pub fn setting_control_to_widget_aligned(
             // control's clipped band and it never renders. Skip the
             // List entirely when there are no entries.
             if !rows.is_empty() {
-                children.push(list_of(field_key, rows, selected));
+                children.push(list_of(field_key, "list", rows, selected));
             }
             if !s.no_add {
                 let add_focused = s.focus == FocusState::Focused && s.focused_entry.is_none();
-                children.push(add_new_row(add_focused, "  [Enter to add]"));
+                children.push(add_new_row(field_key, add_focused, "  [Enter to add]"));
             }
             WidgetSpec::Col { children, key }
         }
@@ -338,9 +353,9 @@ pub fn setting_control_to_widget_aligned(
             // Skip the empty List — its 1-row minimum viewport would
             // push the add row out of the control band (see Map arm).
             if !rows.is_empty() {
-                children.push(list_of(field_key, rows, selected));
+                children.push(list_of(field_key, "list", rows, selected));
             }
-            children.push(add_new_row(add_focused, ""));
+            children.push(add_new_row(field_key, add_focused, ""));
             WidgetSpec::Col { children, key }
         }
         // Multiline JSON editor: label, a `│`-bordered line box showing
@@ -431,7 +446,11 @@ fn dual_list_hint(s: &DualListState) -> String {
 /// a live input box (with placeholder, block caret and `Enter:add
 /// Esc:cancel` hints) once the user starts adding; a focused
 /// `[+] Add new` with a "press Enter" hint; or the plain label.
-fn text_list_add_row(s: &crate::view::controls::TextListState, focused: bool) -> WidgetSpec {
+fn text_list_add_row(
+    field_key: &str,
+    s: &crate::view::controls::TextListState,
+    focused: bool,
+) -> WidgetSpec {
     let add_focused = focused && s.focused_item.is_none();
     let show_input = add_focused && (s.pending_active || !s.new_item_text.is_empty());
     if show_input {
@@ -491,14 +510,15 @@ fn text_list_add_row(s: &crate::view::controls::TextListState, focused: bool) ->
                 unit: OffsetUnit::Byte,
             });
         }
-        WidgetSpec::Raw {
-            entries: vec![entry],
-            key: None,
-        }
+        // The live input box is the add row in another state, so it
+        // keeps the add row's key and stays clickable — but it carries
+        // its own caret, and a selection band behind a field being
+        // typed into would fight it, so nothing is selected.
+        list_of(field_key, "add", vec![entry], -1)
     } else if add_focused {
-        add_new_row(true, "  press Enter (or type) to add a new item")
+        add_new_row(field_key, true, "  press Enter (or type) to add a new item")
     } else {
-        add_new_row(false, "")
+        add_new_row(field_key, false, "")
     }
 }
 
@@ -508,7 +528,12 @@ fn text_list_add_row(s: &crate::view::controls::TextListState, focused: bool) ->
 /// (a REVERSED cell), matching the historical renderer. The caret is
 /// gated on `editing` — not mere focus — so plain up/down navigation
 /// doesn't paint a caret on a field the user isn't typing into.
-fn text_list_item_row(item: &str, row_focused: bool, editing: bool, cursor: usize) -> WidgetSpec {
+fn text_list_item_row(
+    item: &str,
+    row_focused: bool,
+    editing: bool,
+    cursor: usize,
+) -> TextPropertyEntry {
     let mut text = String::from("  [");
     let cell_start = text.len();
     text.push_str(&pad(item, TEXTLIST_CELL_WIDTH));
@@ -569,27 +594,28 @@ fn text_list_item_row(item: &str, row_focused: bool, editing: bool, cursor: usiz
             unit: OffsetUnit::Byte,
         });
     }
-    raw_entry_row(entry)
+    entry
 }
 
-/// An `  [+] Add new` row, with an optional dim hint when focused. When
-/// focused the whole row gets the list's selection background (extended
-/// to the line end) so the sentinel highlights exactly like a selected
-/// list entry.
-fn add_new_row(focused: bool, hint: &str) -> WidgetSpec {
+/// An `  [+] Add new` row, with an optional dim hint when focused.
+///
+/// It is a one-row `List` keyed `{field_key}::add` rather than a `Raw`,
+/// for two reasons that happen to agree. The load-bearing one: a `Raw`
+/// emits no hit, so as a `Raw` the sentinel was unclickable — the
+/// painter's `ControlLayoutInfo::{TextList, Map}` reserved an add-row
+/// rect and hit-tested it by geometry, and once the body is described
+/// that geometry is gone. As a `List` the runtime emits the row's
+/// `select` hit itself. The second: a selected list row is painted with
+/// the selection background extended to the line end, which is exactly
+/// what the sentinel used to set by hand — so the highlight survives
+/// the move without a line of styling code.
+fn add_new_row(field_key: &str, focused: bool, hint: &str) -> WidgetSpec {
     let mut segs = vec![seg("  ", None), seg("[+] Add new", Some(ADD_FG))];
     if focused && !hint.is_empty() {
         segs.push(seg(hint, Some(DIM_HINT)));
     }
-    let mut entry = segments_row(segs);
-    if focused {
-        entry.style = Some(OverlayOptions {
-            bg: Some(OverlayColorSpec::theme_key(ROW_SELECTION_BG)),
-            extend_to_line_end: true,
-            ..Default::default()
-        });
-    }
-    raw_entry_row(entry)
+    let selected = if focused { 0 } else { -1 };
+    list_of(field_key, "add", vec![segments_row(segs)], selected)
 }
 
 /// One bordered JSON-editor line: `  │{padded line}│` with an optional
@@ -756,7 +782,23 @@ fn header_row(left: &str, right: &str) -> WidgetSpec {
 /// (host-owned selection + navigation). `selected` is the absolute
 /// index to highlight (`-1` for none). `visible_rows` covers the whole
 /// set — the settings viewport does the outer scroll/clipping.
-fn list_of(field_key: &str, rows: Vec<TextPropertyEntry>, selected: i32) -> WidgetSpec {
+///
+/// `suffix` distinguishes the several lists one control owns: a
+/// composite control keys its entries `{field}::list` and its trailing
+/// add-new sentinel `{field}::add`, so a click on either resolves to a
+/// different `widget_key` and the settings side can tell "row 0 of the
+/// entries" from "the add row" without consulting geometry.
+///
+/// A `List` — rather than a `Raw` — is also what makes any of these
+/// rows *clickable at all*: the runtime emits a `select` hit per list
+/// row carrying `payload.index`, and emits nothing whatsoever for a
+/// `Raw`.
+fn list_of(
+    field_key: &str,
+    suffix: &str,
+    rows: Vec<TextPropertyEntry>,
+    selected: i32,
+) -> WidgetSpec {
     let visible = rows.len().max(1) as u32;
     WidgetSpec::List {
         items: rows,
@@ -765,7 +807,7 @@ fn list_of(field_key: &str, rows: Vec<TextPropertyEntry>, selected: i32) -> Widg
         selected_index: selected,
         visible_rows: Some(visible),
         focusable: true,
-        key: Some(format!("{field_key}::list")),
+        key: Some(format!("{field_key}::{suffix}")),
     }
 }
 
@@ -1298,6 +1340,74 @@ mod tests {
                 .as_ref()
                 .is_some_and(|s| s.extend_to_line_end),
             "selection bg extends to the line end like a list row"
+        );
+    }
+
+    /// Every row of a composite control that the user can press must
+    /// carry a hit, and the hit must say *which* row — the settings
+    /// side has no other way to tell "the second extension" from "the
+    /// add sentinel" once the body is a description rather than a set
+    /// of stashed rects.
+    #[test]
+    fn every_clickable_row_of_a_composite_control_names_itself() {
+        use crate::view::controls::{MapState, TextListState};
+        use std::collections::HashMap;
+
+        /// `(list_key, index)` of every `select` hit, in row order.
+        fn selections(out: &crate::widgets::RenderOutput) -> Vec<(String, i64)> {
+            let mut hits: Vec<_> = out
+                .hits
+                .iter()
+                .filter(|h| h.event_type == "select")
+                .collect();
+            hits.sort_by_key(|h| h.buffer_row);
+            hits.iter()
+                .map(|h| {
+                    (
+                        h.payload["list_key"].as_str().unwrap_or("").to_string(),
+                        h.payload["index"].as_i64().unwrap_or(-1),
+                    )
+                })
+                .collect()
+        }
+
+        let field = "/languages/cpp/extensions";
+        let list = TextListState::new("Extensions")
+            .with_items(vec!["cpp".into(), "cc".into()])
+            .with_focus(FocusState::Focused);
+        let out = crate::widgets::render_spec(
+            &setting_control_to_widget(field, &SettingControl::TextList(list)),
+            &HashMap::new(),
+            "",
+            u32::MAX,
+        );
+        assert_eq!(
+            selections(&out),
+            vec![
+                (format!("{field}::list"), 0),
+                (format!("{field}::list"), 1),
+                (format!("{field}::add"), 0),
+            ],
+            "two items then the add sentinel, each naming its own list"
+        );
+
+        // The same for a Map, whose entries already went through a
+        // `List` — what is new is the trailing `[+] Add new`.
+        let mut map = MapState::new("Languages");
+        map.entries = vec![("rust".into(), serde_json::json!({}))];
+        let out = crate::widgets::render_spec(
+            &setting_control_to_widget("/languages", &SettingControl::Map(map)),
+            &HashMap::new(),
+            "",
+            u32::MAX,
+        );
+        assert_eq!(
+            selections(&out),
+            vec![
+                ("/languages::list".to_string(), 0),
+                ("/languages::add".to_string(), 0),
+            ],
+            "the map's one entry and its add sentinel are both hittable"
         );
     }
 }

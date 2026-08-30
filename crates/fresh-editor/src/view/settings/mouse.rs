@@ -172,13 +172,12 @@ impl Editor {
                         return Ok(state.search_scroll_up(3));
                     }
                 }
-                // Wheel over the categories panel scrolls it independently.
-                if self.over_categories_panel(col, row) {
-                    if let Some(ref mut state) = self.settings_state {
-                        state.categories_scroll.scroll.scroll_by(-3);
-                        return Ok(true);
-                    }
-                }
+                // A wheel over the category tree is the tree's: it is a
+                // `viewport` now, so its window moves without the selection
+                // moving with it — which is what this arm and
+                // `over_categories_panel`'s recorded rectangle did between
+                // them. The tree's layer answers first, so nothing reaches
+                // here from over it.
                 return Ok(self.settings_scroll_up(3));
             }
             MouseEventKind::ScrollDown => {
@@ -191,12 +190,6 @@ impl Editor {
                     // If search is active and we have results, scroll search results
                     if state.search_active && !state.search_results.is_empty() {
                         return Ok(state.search_scroll_down(3));
-                    }
-                }
-                if self.over_categories_panel(col, row) {
-                    if let Some(ref mut state) = self.settings_state {
-                        state.categories_scroll.scroll.scroll_by(3);
-                        return Ok(true);
                     }
                 }
                 return Ok(self.settings_scroll_down(3));
@@ -286,6 +279,11 @@ impl Editor {
 
         match hit {
             SettingsHit::Outside | SettingsHit::Background | SettingsHit::SettingsPanel => {}
+            // The wide layout's tree answers for itself now: its rows carry
+            // `UiFact::SettingsCategory`, `SettingsCategorySection` and
+            // `SettingsCategoryDisclosure` — the identity the row has, rather
+            // than a rectangle a cell is compared against. This arm is the
+            // **narrow** strip's, which is still painted.
             SettingsHit::Category(idx) => {
                 if let Some(ref mut state) = self.settings_state {
                     state.focus.set(FocusPanel::Categories);
@@ -293,37 +291,8 @@ impl Editor {
                     state.selected_item = 0;
                     state.scroll_panel = crate::view::ui::ScrollablePanel::new();
                     state.sub_focus = None;
-                    // Click lands the cursor on the category row itself
-                    // (not on a section), even after auto-expand reveals
-                    // child sections — matches keyboard Up/Down arriving
-                    // here.
                     state.tree_cursor_section = None;
-                    // Deliberate click on a category — auto-expand so the
-                    // user immediately sees its sections.
                     state.auto_expand_current_category();
-                }
-            }
-            SettingsHit::CategoryDisclosure(idx) => {
-                if let Some(ref mut state) = self.settings_state {
-                    state.toggle_category_expanded(idx);
-                }
-            }
-            SettingsHit::CategorySection(cat_idx, section_idx) => {
-                if let Some(ref mut state) = self.settings_state {
-                    state.jump_to_section(cat_idx, section_idx);
-                    // Mouse clicks in the left tree should keep the tree as
-                    // the focused panel, just like clicking a top-level
-                    // category. `jump_to_section` is also used by search and
-                    // keyboard flows where moving focus to the settings body
-                    // is correct, so restore the mouse-specific focus here.
-                    state.focus.set(FocusPanel::Categories);
-                }
-            }
-            SettingsHit::CategoriesPanel | SettingsHit::CategoriesScrollbar => {
-                // Click without scroll wheel — no-op for now (the panel-area
-                // hit only fires when no other category/section row was hit).
-                if let Some(ref mut state) = self.settings_state {
-                    state.focus.set(FocusPanel::Categories);
                 }
             }
             SettingsHit::SearchResult(idx) => {
@@ -574,21 +543,6 @@ impl Editor {
             "delete" if has_delete => state.request_entry_delete_confirm(),
             _ => state.close_entry_dialog(),
         }
-    }
-
-    /// Whether the given screen coords sit inside the categories panel —
-    /// used to route mouse-wheel events to the correct scroll target.
-    fn over_categories_panel(&self, col: u16, row: u16) -> bool {
-        self.active_chrome()
-            .settings_layout
-            .as_ref()
-            .and_then(|layout| layout.categories_panel_area)
-            .is_some_and(|area| {
-                col >= area.x
-                    && col < area.x.saturating_add(area.width)
-                    && row >= area.y
-                    && row < area.y.saturating_add(area.height)
-            })
     }
 
     fn settings_scroll_up(&mut self, delta: usize) -> bool {

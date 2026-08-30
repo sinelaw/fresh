@@ -593,6 +593,40 @@ impl<M: 'static> Ui<M> {
         }
     }
 
+    /// The first descendant of `root` carrying `key`, not counting `root`
+    /// itself — the element a `RevealKey` names.
+    fn keyed_descendant(&self, root: ElementId, key: &crate::key::Key) -> Option<ElementId> {
+        let el = self.arena.get(root)?;
+        for c in &el.children {
+            if self.arena.get(*c).is_some_and(|e| e.key.as_ref() == Some(key)) {
+                return Some(*c);
+            }
+        }
+        el.children
+            .iter()
+            .find_map(|c| self.keyed_descendant(*c, key))
+    }
+
+    /// Where a keyed descendant sits in its scrolling ancestor's *content*
+    /// space, as `(top, rows)`.
+    ///
+    /// A child's laid-out rectangle is already scrolled — the window's offset
+    /// has been taken off it — so putting it back is what turns "where it is
+    /// on screen" into "where it is in the column", which is the space a
+    /// scroll offset is in.
+    fn keyed_band(
+        &self,
+        vp_el: ElementId,
+        vp_r: RenderId,
+        key: &crate::key::Key,
+    ) -> Option<(i32, i32)> {
+        let el = self.keyed_descendant(vp_el, key)?;
+        let child = self.render_for(el).and_then(|r| self.render.get(r))?;
+        let vp = self.render.get(vp_r)?;
+        let top = child.data.rect.y - vp.data.rect.y + vp.data.scroll.y;
+        Some((top, child.data.rect.h as i32))
+    }
+
     /// Returns whether anything moved.
     fn apply_anchors(&mut self) -> bool {
         use crate::behavior::anchor::Command;
@@ -620,6 +654,25 @@ impl<M: 'static> Ui<M> {
                             i
                         } else if i >= scroll.y + rows {
                             i - rows + 1
+                        } else {
+                            scroll.y
+                        };
+                        Point::new(scroll.x, y)
+                    }
+                    // The same, for a band the framework measured rather than
+                    // a row the caller counted. A key that names nothing under
+                    // this element leaves the window where it is.
+                    Command::RevealKey(k) => {
+                        let Some((top, h)) = self.keyed_band(id, r, &k) else {
+                            continue;
+                        };
+                        let y = if top < scroll.y {
+                            top
+                        } else if top + h > scroll.y + rows {
+                            // A band taller than the window shows its top:
+                            // flushing its bottom edge would scroll past the
+                            // thing that was asked for.
+                            (top + h - rows).min(top)
                         } else {
                             scroll.y
                         };

@@ -272,6 +272,17 @@ impl Editor {
         // the standing proof, and it keeps both derivations honest now that
         // only one of them runs here.
         // See docs/internal/fresh-editor-ui-migration.md (S1).
+        // The settings search list's window, from the box the tree placed last
+        // frame. This is the one mutation the description needs made *before*
+        // it is built: the row it describes says "(1-3 of 298)", and three is
+        // how many results the box has room for. The painter used to work that
+        // out as it drew and leave it behind for the next frame to read.
+        if let Some(r) = self.panel_rect(&crate::view::shell::settings::key()) {
+            let n = crate::view::shell::settings::search_window(r);
+            if let Some(s) = self.settings_state.as_mut() {
+                s.search_max_visible = n;
+            }
+        }
         let shell = self.shell_frame((dock_area, chrome_area));
         // The shell's tree is retained across frames — element state, focus and
         // the dirty set live on it — so it is moved out for the duration of the
@@ -1167,6 +1178,28 @@ impl Editor {
         // geometry lives now. So the description is built either way and only
         // the cell-writing half is skipped, which is what "backends are folds
         // over the display list" buys: two backends, one layout.
+        // The full-screen modals' remaining paint, **before** the overlay band
+        // rather than after it. What is left of `render_modal_overlays` is the
+        // settings dialog's body — its two panels and its entry stack — and
+        // the box that body sits in is a layer in the tree, as are its search
+        // row, its footer and its five prompts. A `Block` fills the rectangle
+        // it borders, so a painter that ran after the fold wiped every one of
+        // them: the described rows came out blank and the help overlay never
+        // appeared at all.
+        //
+        // This is the rule the overlay band already states for every other
+        // legacy painter — "painted after every legacy painter, because paint
+        // order is what puts a menu on top" — applied to the last painter that
+        // was still exempt from it. It was exempt because it used to be the
+        // topmost surface there was; it is not, now that the chrome over it is
+        // the tree's.
+        //
+        // The dock is painted later still (`render_panels_and_modals`), so the
+        // dimming this pass applies to it is re-applied there once its cells
+        // exist. The modal itself lays into the chrome column beside the dock,
+        // so nothing of it is at risk from that later paint.
+        self.render_modal_overlays(frame, size);
+
         if !self.suppress_chrome_cells {
             let palette = self.shell_palette();
             let ui = self
@@ -1760,13 +1793,20 @@ impl Editor {
             }
         }
 
-        // Settings / calibration-wizard / keybinding-editor / event-debug —
-        // full-screen modals. They get the whole frame (`size`), not the
-        // chrome region right of the dock: each dims everything behind it,
-        // the dock included, and centres in the full window. Drawn here,
-        // after the dock's own pass, so the dock cannot overpaint the
-        // modal's left edge.
-        self.render_modal_overlays(frame, size);
+        // The full-screen modals were painted here once, after the dock, so
+        // the dock could not overpaint a modal's left edge. They lay into the
+        // chrome column beside the dock now — the tree places them, and
+        // `within(chrome_key())` is where that is said — so there is no edge
+        // left to overpaint, and they paint before the overlay band instead
+        // (see `render`). What is owed here is the half of their dimming the
+        // dock's own cells did not exist for yet.
+        if self.settings_state.as_ref().is_some_and(|s| s.visible) && !self.suppress_chrome_cells {
+            if let Some(dock) = dock_area {
+                if self.dock.is_some() {
+                    crate::view::dimming::apply_dimming(frame, dock);
+                }
+            }
+        }
 
         if self.floating_widget_panel.is_some() {
             // A `fullscreen` modal paints over the whole frame, covering the
@@ -2179,13 +2219,12 @@ impl Editor {
                 }
             }
         };
-        // The footer, in the wide layout only: the narrow one is seven rows
-        // rather than two and stacks its buttons, which has not crossed. The
-        // box's own width decides, the way `inner_area.width < 60` did.
+        // The box's own width decides which footer, the way
+        // `inner_area.width < 60` did: one row across, or five down.
         let wide = self
             .panel_rect(&st::key())
             .is_some_and(|r| r.width.saturating_sub(2) >= 60);
-        let footer = wide.then(|| {
+        let footer = Some(()).map(|()| {
             let nullable_set = s
                 .current_item()
                 .map(|i| i.nullable && !i.is_null)
@@ -2228,10 +2267,96 @@ impl Editor {
                     Some(SettingsHit::EditButton) => Some(st::Button::Edit),
                     _ => None,
                 },
+                stacked: !wide,
+            }
+        });
+        // The category tree, in the wide layout and while no search is
+        // running: the narrow layout lays its categories as a horizontal
+        // strip, and a search replaces the whole body with its results.
+        //
+        // **And not while the entry-dialog stack is up**, which is the same
+        // rule `keybinding_table_description` states for its table: the stack
+        // is still the painter's, the tree is folded after every painter, so
+        // a described tree would be drawn *over* the dialog covering it. The
+        // five prompts that have crossed are layers and land the right way
+        // round; this one is under the dialog, so it waits for it.
+        let categories = (wide && !s.search_active && !s.showing_entry_dialog()).then(|| {
+            use crate::view::settings::state::{FocusPanel, TreeRow};
+            let nerd = s.nerd_font_icons_enabled();
+            let cursor = s.tree_cursor_section;
+            let rows: Vec<st::CatRow> = s
+                .visible_tree()
+                .iter()
+                .map(|r| match *r {
+                    TreeRow::Category {
+                        idx,
+                        expandable,
+                        expanded,
+                    } => {
+                        let page = &s.pages[idx];
+                        st::CatRow::Category {
+                            idx,
+                            chevron: match (expandable, expanded) {
+                                (false, _) => " ",
+                                (true, true) => "▼",
+                                (true, false) => "▶",
+                            },
+                            expandable,
+                            dirty: s.page_has_pending_changes(idx),
+                            icon: crate::view::settings::render::category_icon(&page.name, nerd),
+                            label: page.name.clone(),
+                            elide: page.name.starts_with("Plugin: "),
+                        }
+                    }
+                    TreeRow::Section {
+                        cat_idx,
+                        section_idx,
+                    } => st::CatRow::Section {
+                        cat: cat_idx,
+                        section: section_idx,
+                        label: s.pages[cat_idx].sections[section_idx].name.clone(),
+                    },
+                })
+                .collect();
+            // **One index, where the painter asked every row.** It compared
+            // `idx == selected_category && tree_cursor.is_none()` on a
+            // category and `cat_idx == selected_category && tree_cursor ==
+            // Some(section_idx)` on a section; the list wants the position.
+            let selected = rows.iter().position(|r| match r {
+                st::CatRow::Category { idx, .. } => *idx == s.selected_category && cursor.is_none(),
+                st::CatRow::Section { cat, section, .. } => {
+                    *cat == s.selected_category && cursor == Some(*section)
+                }
+            });
+            st::Categories {
+                rows,
+                selected,
+                focused: s.focus_panel() == FocusPanel::Categories,
+            }
+        });
+        // The settings panel's own header: the page title, and the `[Clear …]`
+        // a nullable category with values offers. Described under the same two
+        // conditions as the tree — the narrow layout paints its own, and a
+        // search replaces the body.
+        let page = categories.is_some().then(|| {
+            let p = s.current_page();
+            st::Page {
+                title: p.map(|p| p.name.clone()).unwrap_or_default(),
+                clear: p
+                    .is_some_and(|p| p.nullable)
+                    .then(|| s.current_category_has_values())
+                    .unwrap_or(false)
+                    .then(|| format!("[{}]", t!("settings.btn_clear_category"))),
+                clear_hovered: matches!(
+                    s.hover_hit,
+                    Some(crate::view::settings::SettingsHit::ClearCategoryButton)
+                ),
             }
         });
         Some(st::Chrome {
             footer,
+            categories,
+            page,
             title: match s.has_changes() {
                 true => format!(" Settings [{}] • (modified) ", s.target_layer_name()),
                 false => format!(" Settings [{}] ", s.target_layer_name()),
@@ -4102,6 +4227,17 @@ impl Editor {
                 settings_state.update_focus_states();
             }
         }
+        // The page a `PgUp` moves the category cursor by: the tree's own
+        // height, read from the box the tree placed. It was
+        // `categories_scroll.set_viewport(area.height)`, filed by the painter
+        // as it drew the rows — so the page and the window it pages through
+        // came from two statements of the same rectangle.
+        if let (Some(r), Some(s)) = (
+            self.panel_rect(&crate::view::shell::settings::categories_key()),
+            self.settings_state.as_mut(),
+        ) {
+            s.categories_scroll.scroll.viewport = r.height;
+        }
         // **The box is the tree's.** `view::shell::settings` places it —
         // ninety percent of the chrome area, capped at 160, centred beside the
         // dock — and this reads the answer. The centring arithmetic here added
@@ -4110,6 +4246,13 @@ impl Editor {
         // left edge.
         if draw_settings {
             let modal_area = self.panel_rect(&crate::view::shell::settings::key());
+            // The body band right of the divider — the tree lays the three
+            // columns out, so the panel's rectangle is read rather than split
+            // for a second time. See `settings::panel_key`.
+            let panel_area = self.panel_rect(&crate::view::shell::settings::panel_key());
+            // And the band under that panel's header, which the header itself
+            // sizes. See `settings::items_key`.
+            let items_area = self.panel_rect(&crate::view::shell::settings::items_key());
             let open = self.settings_state.as_ref().is_some_and(|s| s.visible);
             if open {
                 let theme = self.theme.read().unwrap().clone();
@@ -4118,6 +4261,8 @@ impl Editor {
                         frame,
                         area,
                         modal_area.unwrap_or(ratatui::layout::Rect::ZERO),
+                        panel_area,
+                        items_area,
                         settings_state,
                         &theme,
                     );

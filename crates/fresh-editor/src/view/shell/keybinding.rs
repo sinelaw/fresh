@@ -702,9 +702,10 @@ pub fn table(t: &Table) -> Node<UiMsg> {
         let rule = text(format!(" {}", "─".repeat(w.saturating_sub(2) as usize))).theme(ink());
         let rows = std::rc::Rc::new(t.rows.clone());
         let n = rows.len();
+        let selected = t.selected;
         let list = fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
             let rows = rows.clone();
-            move |i| table_row(&rows[i], &cols)
+            move |i| table_row(&rows[i], &cols, i == selected)
         })
         .focusable(false)
         .scrollbar()
@@ -727,7 +728,18 @@ pub fn table(t: &Table) -> Node<UiMsg> {
     })
 }
 
-fn table_row(r: &Row, cols: &[u16; 5]) -> Node<UiMsg> {
+/// One row of the table, with the selection's `>` in its first column.
+///
+/// **The marker is a glyph, not only a highlight.** The painter drew
+/// `if is_selected { ">" } else { " " }` in the indicator column *and*
+/// restyled the row; the row theme crossed and the glyph did not, so the
+/// selection was legible on screen and invisible to anything reading the
+/// cells — which is most of this modal's coverage.
+fn table_row(r: &Row, cols: &[u16; 5], selected: bool) -> Node<UiMsg> {
+    let indicator = match selected {
+        true => ">",
+        false => " ",
+    };
     match r {
         // A section heading is one bold run after the indicator column; the
         // painter drew it that way too, ignoring the column grid.
@@ -736,7 +748,7 @@ fn table_row(r: &Row, cols: &[u16; 5]) -> Node<UiMsg> {
             label,
             count,
         } => row().h(Sizing::Cells(1)).children([
-            text(" ").theme(pair("ui.help_key_fg", "ui.popup_bg")),
+            text(indicator).theme(pair("ui.help_key_fg", "ui.popup_bg")),
             text(format!("{chevron} {label} ({count})")).theme(attrs(
                 "ui.help_key_fg",
                 "ui.popup_bg",
@@ -756,7 +768,7 @@ fn table_row(r: &Row, cols: &[u16; 5]) -> Node<UiMsg> {
                 false => ink(),
             };
             row().h(Sizing::Cells(1)).children([
-                text(" ").theme(pair("ui.help_key_fg", "ui.popup_bg")),
+                text(indicator).theme(pair("ui.help_key_fg", "ui.popup_bg")),
                 text(pad(key, cols[0] as usize)).theme(pair("ui.help_key_fg", "ui.popup_bg")),
                 text(" ").theme(ink()),
                 text(pad(action, cols[1] as usize))
@@ -1269,6 +1281,31 @@ mod tests {
             "the selected row is in view at {}",
             selected.y
         );
+    }
+
+    /// **The selected row wears a `>`, not only a highlight.** The painter
+    /// drew both — `if is_selected { ">" } else { " " }` in the indicator
+    /// column *and* a restyled row — and only the restyle crossed, so the
+    /// selection was legible on screen and invisible to every test that reads
+    /// the cells. Which is most of this modal's coverage.
+    #[test]
+    fn the_selected_row_wears_the_indicator() {
+        let ui = with_table(a_table(30, 4), 160, 50);
+        let marked: Vec<i32> = ui
+            .spec()
+            .layers()
+            .iter()
+            .filter_map(|i| match &i.draw {
+                fresh_ui::Draw::Lines(l) if l.iter().any(|s| &**s == ">") => Some(i.rect.y),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(marked.len(), 1, "exactly one row is marked: {marked:?}");
+        let row = ui.rect_of(
+            ui.find_by_key(&fresh_ui::Key::Str("4".into()))
+                .expect("row 4"),
+        );
+        assert_eq!(marked[0], row.y, "and it is the selected one");
     }
 
     /// **The table sits under the three header rows and over the footer**,

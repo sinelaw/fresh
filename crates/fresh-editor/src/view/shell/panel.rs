@@ -233,6 +233,16 @@ fn ring_theme(p: &Panel) -> String {
 /// Transparent all the way down, container included, except the button — the
 /// hit walk stops at the first child that blocks, so one opaque cell here
 /// hides the interior behind the whole strip.
+///
+/// **And it is one row tall, which is the only row it has anything on.** It
+/// used to be a column with a flexible filler under it, so the strip covered
+/// the whole box; a transparent node still *produces a path*, and that path
+/// runs up through the frame's catch-all gesture, which swallows what the
+/// interior does not answer. Paths are tried topmost-first and the first one
+/// to claim ends the dispatch — so the filler's path was offered before the
+/// interior's, the catch-all took it, and **every press on a described
+/// widget died one node short of the widget it landed on**. A strip that
+/// ends where its content ends has no path below its row to offer.
 fn border_strip(p: &Panel) -> Node<UiMsg> {
     let centred = matches!(p.spot, Spot::Centered { .. });
     let clear = |n: Node<UiMsg>| n.pointer_mode(PointerMode::Transparent);
@@ -254,13 +264,10 @@ fn border_strip(p: &Panel) -> Node<UiMsg> {
         // The painter left the last column clear.
         cells.push(clear(row().w(Sizing::Cells(1))));
     }
-    col().pointer_mode(PointerMode::Transparent).children([
-        row()
-            .h(Sizing::Cells(1))
-            .pointer_mode(PointerMode::Transparent)
-            .children(cells),
-        clear(row().flex(1)),
-    ])
+    row()
+        .h(Sizing::Cells(1))
+        .pointer_mode(PointerMode::Transparent)
+        .children(cells)
 }
 
 /// The `[×]`, answering its own press.
@@ -317,6 +324,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
                     marker_gutter: i.marker_gutter,
                     hovered_item_key: i.hovered_item_key.clone(),
                     avail_height: i.avail_height,
+                    surface: super::widgets::panel_surface(),
                 },
             )
         },
@@ -645,6 +653,64 @@ mod tests {
                 "{text} at {at:?} is outside the content area {body:?}"
             );
         }
+    }
+
+    /// **A press on a described widget delivers that widget's hit.** The area
+    /// keeping the press (below) and a widget answering it are two different
+    /// facts, and only the first was asserted: the panel's frame wraps its
+    /// whole box in one gesture that swallows what the interior does not
+    /// answer, and if that gesture is reached before the widget's the press
+    /// dies one node short of the thing it landed on.
+    #[test]
+    fn a_press_on_a_described_widget_delivers_its_hit() {
+        use fresh_core::api::WidgetSpec;
+        let spec = WidgetSpec::Button {
+            label: "Go".into(),
+            focused: false,
+            intent: Default::default(),
+            key: Some("go".into()),
+            disabled: false,
+            focusable: true,
+            bare: false,
+            full_width: false,
+            hover_style: None,
+        };
+        let mut p = panel(Spot::Centered {
+            width_pct: 60,
+            content_rows: 4,
+        });
+        p.interior = Some(Interior {
+            spec: std::rc::Rc::new(spec),
+            states: Default::default(),
+            focus_key: String::new(),
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+        });
+        let mut ui = laid_out(Some(p));
+        let at = ui
+            .spec()
+            .in_flow()
+            .iter()
+            .chain(ui.spec().layers().iter())
+            .find_map(|i| match &i.draw {
+                fresh_ui::Draw::Lines(l) if l.iter().any(|s| s.contains("Go")) => Some(i.rect),
+                _ => None,
+            })
+            .expect("the button paints");
+        let got = facts(ui.dispatch(Input::press(
+            Point::new(at.x + 1, at.y),
+            MouseButton::Left,
+            Mods::NONE,
+        )));
+        assert!(
+            got.iter().any(|f| matches!(
+                f,
+                UiFact::WidgetHit { hit, .. } if hit.widget_key == "go"
+            )),
+            "a press on the button at {at:?} should be its hit, got {got:?}"
+        );
     }
 
     /// A described panel's content area is **opaque**: the widgets answer

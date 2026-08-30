@@ -133,7 +133,7 @@ fn labeled_section_width_pct(spec: &WidgetSpec) -> Option<u32> {
     width_pct.filter(|pct| (1..=100).contains(pct))
 }
 
-fn predicts_block(spec: &WidgetSpec) -> bool {
+pub(crate) fn predicts_block(spec: &WidgetSpec) -> bool {
     match spec {
         WidgetSpec::Col { children, .. } => {
             if children.len() > 1 {
@@ -356,7 +356,7 @@ fn collect_row(
 /// remainder splits equally among the blocks without one. Non-block
 /// children get the full `panel_width` (a soft cap — they collapse to a
 /// single line, so width doesn't truncate them).
-fn allocate_row_child_widths(children: &[WidgetSpec], panel_width: u32) -> Vec<u32> {
+pub(crate) fn allocate_row_child_widths(children: &[WidgetSpec], panel_width: u32) -> Vec<u32> {
     let block_indices: Vec<usize> = children
         .iter()
         .enumerate()

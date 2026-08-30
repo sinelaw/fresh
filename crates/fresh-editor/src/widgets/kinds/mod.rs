@@ -22,7 +22,7 @@
 
 mod button;
 mod component;
-mod containers;
+pub(crate) mod containers;
 mod divider;
 pub(crate) mod dropdown;
 pub(crate) mod dual_list;

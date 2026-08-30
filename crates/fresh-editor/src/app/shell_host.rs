@@ -941,6 +941,49 @@ impl Editor {
     }
 }
 
+/// What a press on the settings dialog's category tree means.
+///
+/// **Three bodies, two callers.** The TUI reaches them through the tree's own
+/// nodes (`UiFact::SettingsCategory` and its two siblings); the web's native
+/// settings projection reaches them by name, through `webui::apply_settings`.
+/// They were arms of `handle_settings_mouse` keyed on a `SettingsHit` the
+/// painter's rectangles produced, so deleting those rectangles would have
+/// taken the web's path with them.
+impl Editor {
+    pub(crate) fn settings_select_category(&mut self, idx: usize) {
+        use crate::view::settings::state::FocusPanel;
+        if let Some(s) = self.settings_state.as_mut() {
+            s.focus.set(FocusPanel::Categories);
+            s.selected_category = idx;
+            s.selected_item = 0;
+            s.scroll_panel = crate::view::ui::ScrollablePanel::new();
+            s.sub_focus = None;
+            // A click lands the cursor on the category row itself, even after
+            // auto-expand reveals its sections — which is where keyboard
+            // Up/Down arrives too.
+            s.tree_cursor_section = None;
+            s.auto_expand_current_category();
+        }
+    }
+
+    pub(crate) fn settings_jump_to_section(&mut self, cat: usize, section: usize) {
+        use crate::view::settings::state::FocusPanel;
+        if let Some(s) = self.settings_state.as_mut() {
+            s.jump_to_section(cat, section);
+            // `jump_to_section` also serves search and the keyboard, where
+            // moving focus to the body is right; a click in the tree keeps
+            // the tree focused.
+            s.focus.set(FocusPanel::Categories);
+        }
+    }
+
+    pub(crate) fn settings_toggle_category(&mut self, idx: usize) {
+        if let Some(s) = self.settings_state.as_mut() {
+            s.toggle_category_expanded(idx);
+        }
+    }
+}
+
 impl Editor {
     /// Offer an input to the shell's tree before the legacy path sees it.
     ///
@@ -1470,6 +1513,20 @@ impl Editor {
             }
             // **The footer's five buttons.** Each was a rectangle the painter
             // filed and `SettingsLayout::hit_test` compared a cell against.
+            // The category tree's three answers. Each body is the arm
+            // `handle_settings_mouse` ran for the matching `SettingsHit`;
+            // what is gone is the five families of rectangle that decided
+            // *which* arm, and the walk over them.
+            UiFact::SettingsCategory(idx) => self.settings_select_category(idx),
+            UiFact::SettingsCategorySection(cat, section) => {
+                self.settings_jump_to_section(cat, section)
+            }
+            UiFact::SettingsCategoryDisclosure(idx) => self.settings_toggle_category(idx),
+            UiFact::SettingsClearCategory => {
+                if let Some(s) = self.settings_state.as_mut() {
+                    s.clear_current_category();
+                }
+            }
             UiFact::SettingsButton(b) => {
                 use crate::view::shell::settings::Button;
                 match b {

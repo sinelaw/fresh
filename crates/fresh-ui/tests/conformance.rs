@@ -519,6 +519,104 @@ fn a_scroll_command_does_not_duplicate_the_layers() {
     assert_eq!(after, 1, "one layer, one scrim");
 }
 
+/// Cards of three different heights, named `card 0`..`card 5`, in a window
+/// four cells tall.
+fn cards(a: Rc<fresh_ui::behavior::anchor::Anchor>) -> Node<()> {
+    viewport(col().children((0..6).map(|i| {
+        col()
+            .key(Key::Pair("card".into(), i))
+            .children((0..=i % 3).map(move |r| text(format!("card {i}.{r}"))))
+    })))
+    .anchor_to(a)
+    .h(Sizing::Cells(4))
+}
+
+/// The rows the window is showing, top to bottom.
+fn shown(ui: &Ui<()>) -> Vec<String> {
+    ui.spec()
+        .visible()
+        .filter_map(|i| match &i.draw {
+            Draw::Lines(l) => l.first().map(|s| s.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_window_is_moved_to_a_band_it_measured_itself() {
+    // `reveal` takes a content row, which is only an item's position when
+    // every item is one cell tall. These are 1, 2 and 3 cells — so the
+    // caller names the card and the framework, which laid it out, finds it.
+    let anchor = fresh_ui::behavior::anchor::Anchor::new();
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(cards(anchor.clone()), FRAME);
+    assert_eq!(shown(&ui), vec!["card 0.0", "card 1.0", "card 1.1", "card 2.0"]);
+
+    // The cards start at content rows 0, 1, 3, 6, 7 and 9. Card 4 is two
+    // cells tall at row 7, so the *shortest* move that holds all of it puts
+    // its last row at the window's bottom — the window starts at row 5.
+    anchor.reveal_key(Key::Pair("card".into(), 4));
+    ui.frame(cards(anchor.clone()), FRAME);
+    assert_eq!(
+        shown(&ui),
+        vec!["card 2.2", "card 3.0", "card 4.0", "card 4.1"],
+        "the window moved just far enough to hold card 4"
+    );
+
+    // Already inside: nothing moves.
+    anchor.reveal_key(Key::Pair("card".into(), 3));
+    ui.frame(cards(anchor.clone()), FRAME);
+    assert_eq!(
+        shown(&ui),
+        vec!["card 2.2", "card 3.0", "card 4.0", "card 4.1"],
+        "a band already in the window is left where it is"
+    );
+
+    // Backwards, to a band above the window.
+    anchor.reveal_key(Key::Pair("card".into(), 1));
+    ui.frame(cards(anchor.clone()), FRAME);
+    assert_eq!(
+        shown(&ui),
+        vec!["card 1.0", "card 1.1", "card 2.0", "card 2.1"],
+        "the window moved back to card 1's top"
+    );
+
+    // A key nothing carries leaves the window alone.
+    anchor.reveal_key(Key::Pair("card".into(), 99));
+    ui.frame(cards(anchor.clone()), FRAME);
+    assert_eq!(
+        shown(&ui),
+        vec!["card 1.0", "card 1.1", "card 2.0", "card 2.1"],
+        "an unknown key is not a scroll to the top"
+    );
+}
+
+#[test]
+fn a_band_taller_than_the_window_is_shown_from_its_top() {
+    // Otherwise the shortest move flushes its *bottom* edge with the
+    // window's, scrolling past the thing that was asked for.
+    let anchor = fresh_ui::behavior::anchor::Anchor::new();
+    let mut ui: Ui<()> = Ui::new();
+    let mk = |a: Rc<fresh_ui::behavior::anchor::Anchor>| -> Node<()> {
+        viewport(
+            col()
+                .child(text("before"))
+                .child(
+                    col()
+                        .key(Key::from("tall"))
+                        .children((0..6).map(|r| text(format!("tall {r}")))),
+                )
+                .child(text("after")),
+        )
+        .anchor_to(a)
+        .h(Sizing::Cells(3))
+    };
+    ui.frame(mk(anchor.clone()), FRAME);
+    anchor.reveal_key(Key::from("tall"));
+    ui.frame(mk(anchor.clone()), FRAME);
+    assert_eq!(shown(&ui), vec!["tall 0", "tall 1", "tall 2"]);
+}
+
 // ---------------------------------------------------------------------------
 // D10 — raw input is answered per element
 // ---------------------------------------------------------------------------
