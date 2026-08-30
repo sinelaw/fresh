@@ -178,10 +178,11 @@ impl SplitRenderer {
         // paints no cells (web renders tabs natively); panes always draw.
         draw_tab_bar: bool,
     ) -> (
+        Vec<(LeafId, BufferId, usize, usize)>,
         Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
         HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
         HashMap<LeafId, Vec<ViewLineMapping>>,
-        Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
+        Vec<(LeafId, BufferId, usize, usize, usize)>,
     ) {
         orchestration::render_content(
             buf,

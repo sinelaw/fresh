@@ -4404,14 +4404,21 @@ fn test_terminal_mode_hides_scrollbar_and_reclaims_width() {
 
     // While in terminal mode the split shows no scrollbar column.
     let (live_content_width, live_scrollbar_width) = {
-        let (_, _, content_rect, scrollbar_rect, _, _) = harness
+        let pane = harness
             .editor()
             .get_split_areas()
             .iter()
-            .find(|(_, buf, _, _, _, _)| *buf == terminal_buffer)
-            .copied()
+            .find(|(_, buf, ..)| *buf == terminal_buffer)
+            .map(|(pane, ..)| *pane)
             .expect("terminal split should be present");
-        (content_rect.width, scrollbar_rect.width)
+        // A pane with no scrollbar places a zero-width node, which the tree
+        // drops — so "no bar" reads back as `None`, not as a width of zero.
+        let content = harness
+            .editor()
+            .pane_content_rect(pane)
+            .expect("the shell laid the terminal pane out");
+        let bar = harness.editor().pane_vscroll_rect(pane);
+        (content.width, bar.map_or(0, |r| r.width))
     };
     assert_eq!(
         live_scrollbar_width, 0,
@@ -4443,14 +4450,21 @@ fn test_terminal_mode_hides_scrollbar_and_reclaims_width() {
     harness.render().unwrap();
 
     let (scrollback_content_width, scrollback_scrollbar_width) = {
-        let (_, _, content_rect, scrollbar_rect, _, _) = harness
+        let pane = harness
             .editor()
             .get_split_areas()
             .iter()
-            .find(|(_, buf, _, _, _, _)| *buf == terminal_buffer)
-            .copied()
+            .find(|(_, buf, ..)| *buf == terminal_buffer)
+            .map(|(pane, ..)| *pane)
             .expect("terminal split should be present");
-        (content_rect.width, scrollbar_rect.width)
+        // A pane with no scrollbar places a zero-width node, which the tree
+        // drops — so "no bar" reads back as `None`, not as a width of zero.
+        let content = harness
+            .editor()
+            .pane_content_rect(pane)
+            .expect("the shell laid the terminal pane out");
+        let bar = harness.editor().pane_vscroll_rect(pane);
+        (content.width, bar.map_or(0, |r| r.width))
     };
     assert_eq!(
         scrollback_scrollbar_width, 1,

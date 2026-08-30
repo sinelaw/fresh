@@ -67,6 +67,26 @@ fn setup_multi_file_harness() -> (EditorTestHarness, TempDir, Vec<std::path::Pat
 }
 
 /// Test that dragging a tab to the right edge creates a vertical split
+/// Every visible pane and the rectangle the shell laid its content out in.
+///
+/// The split record names the panes; the tree is the only thing that knows
+/// where they ended up, so the two are read together rather than the record
+/// carrying a stale copy of the geometry.
+fn laid_out_panes(harness: &EditorTestHarness) -> Vec<(LeafId, ratatui::layout::Rect)> {
+    harness
+        .editor()
+        .get_split_areas()
+        .iter()
+        .map(|(pane, ..)| {
+            let rect = harness
+                .editor()
+                .pane_content_rect(*pane)
+                .expect("the shell laid every visible pane out");
+            (*pane, rect)
+        })
+        .collect()
+}
+
 #[test]
 fn test_drag_tab_to_right_creates_vertical_split() {
     let (mut harness, _temp_dir, _files) = setup_multi_file_harness();
@@ -85,8 +105,11 @@ fn test_drag_tab_to_right_creates_vertical_split() {
     let buffer_id = tab.buffer_id;
 
     // Get split content area to find right edge
-    let split_areas = harness.editor().get_split_areas().to_vec();
-    let (_, _, content_rect, _, _, _) = split_areas[0];
+    let pane = harness.editor().get_split_areas()[0].0;
+    let content_rect = harness
+        .editor()
+        .pane_content_rect(pane)
+        .expect("the shell laid the only pane out");
 
     // Calculate the right edge drop zone (last 25% of width)
     let right_edge_col = content_rect.x + content_rect.width - 2;
@@ -144,8 +167,11 @@ fn test_drag_tab_to_left_creates_vertical_split() {
     let source_split_id = tab.split_id;
     let buffer_id = tab.buffer_id;
 
-    let split_areas = harness.editor().get_split_areas().to_vec();
-    let (_, _, content_rect, _, _, _) = split_areas[0];
+    let pane = harness.editor().get_split_areas()[0].0;
+    let content_rect = harness
+        .editor()
+        .pane_content_rect(pane)
+        .expect("the shell laid the only pane out");
 
     // Left edge
     let left_edge_col = content_rect.x + 2;
@@ -194,8 +220,11 @@ fn test_drag_tab_to_top_creates_horizontal_split() {
     let source_split_id = tab.split_id;
     let buffer_id = tab.buffer_id;
 
-    let split_areas = harness.editor().get_split_areas().to_vec();
-    let (_, _, content_rect, _, _, _) = split_areas[0];
+    let pane = harness.editor().get_split_areas()[0].0;
+    let content_rect = harness
+        .editor()
+        .pane_content_rect(pane)
+        .expect("the shell laid the only pane out");
 
     // Top edge
     let content_center_col = content_rect.x + content_rect.width / 2;
@@ -244,8 +273,11 @@ fn test_drag_tab_to_bottom_creates_horizontal_split() {
     let source_split_id = tab.split_id;
     let buffer_id = tab.buffer_id;
 
-    let split_areas = harness.editor().get_split_areas().to_vec();
-    let (_, _, content_rect, _, _, _) = split_areas[0];
+    let pane = harness.editor().get_split_areas()[0].0;
+    let content_rect = harness
+        .editor()
+        .pane_content_rect(pane)
+        .expect("the shell laid the only pane out");
 
     // Bottom edge
     let content_center_col = content_rect.x + content_rect.width / 2;
@@ -304,8 +336,7 @@ fn test_drag_tab_to_another_split_center() {
     let split_areas = harness.editor().get_split_areas().to_vec();
 
     // Find tab in the first split (left side)
-    let first_split_area = &split_areas[0];
-    let (first_split_id, _, _first_content_rect, _, _, _) = first_split_area;
+    let first_split_id = &split_areas[0].0;
 
     // Find a tab that belongs to the first split
     let tab_in_first_split = tabs.iter().find(|t| t.split_id == *first_split_id);
@@ -315,11 +346,14 @@ fn test_drag_tab_to_another_split_center() {
         let buffer_id = tab.buffer_id;
 
         // Find the second split (right side)
-        let second_split_area = split_areas
-            .iter()
-            .find(|(sid, _, _, _, _, _)| sid != first_split_id);
+        let second_split_area = split_areas.iter().find(|(sid, ..)| sid != first_split_id);
 
-        if let Some((target_split_id, _, target_content_rect, _, _, _)) = second_split_area {
+        if let Some(target_split_id) = second_split_area.map(|a| a.0) {
+            let target_content_rect = harness
+                .editor()
+                .pane_content_rect(target_split_id)
+                .expect("the shell laid the second pane out");
+            let target_split_id = &target_split_id;
             // Calculate center of second split
             let target_center_col = target_content_rect.x + target_content_rect.width / 2;
             let target_center_row = target_content_rect.y + target_content_rect.height / 2;
@@ -444,11 +478,11 @@ fn test_drag_last_tab_closes_split() {
 
     // Get split areas
     let split_areas = harness.editor().get_split_areas().to_vec();
-    let other_split = split_areas
-        .iter()
-        .find(|(sid, _, _, _, _, _)| *sid != active_split);
+    let other_split = split_areas.iter().find(|(sid, ..)| *sid != active_split);
 
-    if let Some((_target_split_id, _, target_content_rect, _, _, _)) = other_split {
+    if let Some(target_content_rect) =
+        other_split.and_then(|(sid, ..)| harness.editor().pane_content_rect(*sid))
+    {
         // Get the tab for the current buffer
         let tabs = get_all_tabs(&harness);
         let current_buffer = harness
@@ -492,8 +526,11 @@ fn test_drag_last_tab_closes_split() {
 fn test_drop_zone_matches_result_comprehensive() {
     let (harness, _temp_dir, _files) = setup_multi_file_harness();
 
-    let split_areas = harness.editor().get_split_areas().to_vec();
-    let (_, _, content_rect, _, _, _) = split_areas[0];
+    let pane = harness.editor().get_split_areas()[0].0;
+    let content_rect = harness
+        .editor()
+        .pane_content_rect(pane)
+        .expect("the shell laid the only pane out");
 
     // Test all edge positions
     let test_positions = [
@@ -716,17 +753,12 @@ fn test_drag_right_split_to_left_border_switches_order() {
 
     assert_eq!(harness.editor().get_split_count(), 2);
 
-    let split_areas = harness.editor().get_split_areas().to_vec();
-
-    // Find the left-most and right-most splits by comparing x positions
-    let (left_split, right_split) = if split_areas[0].2.x < split_areas[1].2.x {
-        (&split_areas[0], &split_areas[1])
-    } else {
-        (&split_areas[1], &split_areas[0])
-    };
-
-    let (_left_split_id, _, left_content_rect, _, _, _) = left_split;
-    let (right_split_id, _right_buffer_id, _right_content_rect, _, _, _) = right_split;
+    // Find the left-most and right-most splits by comparing x positions. The
+    // record says which panes there are; the tree says where each one sits.
+    let mut panes = laid_out_panes(&harness);
+    panes.sort_by_key(|(_, rect)| rect.x);
+    let left_content_rect = panes[0].1;
+    let right_split_id = &panes[1].0;
 
     // Get the tab from the right split
     let tabs = get_all_tabs(&harness);
@@ -766,18 +798,13 @@ fn test_drag_right_split_to_left_border_switches_order() {
 
         // Now we should have 2 splits (the right split may have closed if it was the last tab)
         // and the dragged tab should be in the leftmost position
-        let new_split_areas = harness.editor().get_split_areas().to_vec();
-
         // Find the new leftmost split
-        let new_leftmost = new_split_areas
-            .iter()
-            .min_by_key(|(_, _, rect, _, _, _)| rect.x)
-            .unwrap();
-
-        let (new_leftmost_id, _, _, _, _, _) = new_leftmost;
+        let mut new_panes = laid_out_panes(&harness);
+        new_panes.sort_by_key(|(_, rect)| rect.x);
+        let (new_leftmost_id, new_leftmost_rect) = new_panes[0];
 
         // The dragged buffer should be in the leftmost split now
-        let leftmost_tabs = harness.editor().get_split_tabs(*new_leftmost_id);
+        let leftmost_tabs = harness.editor().get_split_tabs(new_leftmost_id);
         assert!(
             leftmost_tabs.contains(&dragged_buffer),
             "Dragged buffer should be in the leftmost split after dragging to left edge. \
@@ -788,7 +815,7 @@ fn test_drag_right_split_to_left_border_switches_order() {
 
         // The new leftmost split should be to the left of where the original left split was
         assert!(
-            new_leftmost.2.x <= left_content_rect.x,
+            new_leftmost_rect.x <= left_content_rect.x,
             "New leftmost split should be at or to the left of original left split"
         );
     }
@@ -815,8 +842,11 @@ fn test_drag_tab_to_fresh_split_then_type_does_not_panic() {
     let tabs = get_all_tabs(&harness);
     assert!(tabs.len() >= 2, "Need at least two tabs to set up the test");
     let first_tab = &tabs[0];
-    let split_areas = harness.editor().get_split_areas().to_vec();
-    let (_, _, content_rect, _, _, _) = split_areas[0];
+    let pane = harness.editor().get_split_areas()[0].0;
+    let content_rect = harness
+        .editor()
+        .pane_content_rect(pane)
+        .expect("the shell laid the only pane out");
     let right_edge_col = content_rect.x + content_rect.width - 2;
     let content_center_row = content_rect.y + content_rect.height / 2;
 

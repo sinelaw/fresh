@@ -488,7 +488,6 @@ mod tests {
         ui.frame(
             frame_tree(Frame {
                 settings: Some(crate::view::shell::settings::Chrome {
-                    wide: true,
                     title: " Settings ".into(),
                     search: crate::view::shell::settings::Search::Hint(Vec::new()),
                     footer: None,

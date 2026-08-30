@@ -1931,15 +1931,18 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     let panes: Vec<Value> = layout
         .split_areas
         .iter()
-        .filter_map(|(leaf, bufid, _content, _bar, thumb_s, thumb_e)| {
-            let content_rect = &editor.pane_content_rect(*leaf)?;
-            let scrollbar_rect = &editor
+        .filter_map(|(leaf, bufid, thumb_s, thumb_e)| {
+            // Owned, because these are read *out* of the tree rather than
+            // borrowed from the vector being iterated.
+            let content_rect = editor.pane_content_rect(*leaf)?;
+            let scrollbar_rect = editor
                 .pane_vscroll_rect(*leaf)
                 .unwrap_or(Rect::new(0, 0, 0, 0));
             Some((leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e))
         })
         .map(
             |(leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e)| {
+                let (content_rect, scrollbar_rect) = (&content_rect, &scrollbar_rect);
                 // Tabs are derived once in the core (`Editor::tab_bar_view`).
                 let tb = editor.tab_bar_view(*leaf);
                 // Emit the line-number gutter as its own cell block, separate

@@ -208,13 +208,25 @@ fn frame_box(p: &Panel) -> Node<UiMsg> {
         }
     };
     let mut g = gesture(fresh_ui::stack().children([framed, border_strip(p)]));
-    for kind in [
-        GestureKind::Press,
-        GestureKind::Release,
-        GestureKind::Move,
-        GestureKind::Wheel,
-    ] {
+    for kind in [GestureKind::Press, GestureKind::Release, GestureKind::Move] {
         g = g.on(kind, Rc::new(claim));
+    }
+    // **The wheel only when a painter is behind the seam.**
+    //
+    // Scrolling is framework-owned: the library runs its scroll chain for a
+    // notch *nothing claimed*, so a catch-all that stops the wheel stops
+    // every viewport inside this box from scrolling. That is fine while the
+    // interior is a painter — the claim carries the notch to it through
+    // `ModalPointer`, which is the whole seam — and wrong once the interior
+    // is described, where the claim produces no message and the notch simply
+    // disappears.
+    //
+    // Nothing is lost by letting it through: the chain stops at the first
+    // out-of-flow node, and this box is inside a layer, so a notch that
+    // scrolls nothing here is still absorbed rather than reaching the buffer
+    // behind. `keybinding::swallow` had the same bug and the same fix.
+    if !described {
+        g = g.on(GestureKind::Wheel, Rc::new(claim));
     }
     g
 }

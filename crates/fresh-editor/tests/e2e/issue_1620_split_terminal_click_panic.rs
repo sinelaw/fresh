@@ -87,10 +87,10 @@ fn content_rect_for_buffer(
     harness: &EditorTestHarness,
     buffer_id: fresh::model::event::BufferId,
 ) -> ratatui::layout::Rect {
-    for (_, bid, content_rect, _, _, _) in harness.editor().get_split_areas() {
-        if *bid == buffer_id {
-            return *content_rect;
-        }
+    // The pane's rectangle is the tree's; the record names which pane shows
+    // which buffer.
+    if let Some(r) = harness.editor().pane_content_rect_for_buffer(buffer_id) {
+        return r;
     }
     panic!(
         "expected split area for buffer {:?}, cached layout has: {:?}",
@@ -99,7 +99,7 @@ fn content_rect_for_buffer(
             .editor()
             .get_split_areas()
             .iter()
-            .map(|(_, b, _, _, _, _)| *b)
+            .map(|(_, b, _, _)| *b)
             .collect::<Vec<_>>()
     );
 }

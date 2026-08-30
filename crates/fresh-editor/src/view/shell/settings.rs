@@ -32,6 +32,12 @@ use super::msg::UiFact;
 
 use super::msg::UiMsg;
 
+/// Below this many columns *inside* the box, the dialog lays itself out
+/// narrow: its categories become a horizontal strip and its five footer
+/// buttons stack. `inner_area.width < 60` is where the painter's two
+/// renderers parted, and it is the same number here.
+pub const NARROW_BELOW: u16 = 60;
+
 /// Never wider than this, however wide the area is.
 pub const MAX_WIDTH: u16 = 160;
 /// Below this the dialog does not open at all — the painter writes
@@ -76,6 +82,16 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
     };
     l.child(layout_reader(move |info: LayoutInfo| {
         let (w, h) = fit(info).unwrap_or((0, 0));
+        // **Which layout is a question about this box, and it is answered
+        // where the box is measured.** It used to be answered by asking the
+        // *previous* frame's tree for this node's rectangle — so on the frame
+        // that opened the dialog there was no node, the answer was "narrow",
+        // and the dialog opened with a horizontal category strip and a
+        // stacked footer at any terminal size, correcting itself only once
+        // some later input rebuilt the description. `fit` has just derived
+        // the width from the same constraints, so the question is already
+        // answered here, one frame earlier and without a layout read.
+        let wide = w.saturating_sub(2) >= NARROW_BELOW;
         let n = col().w(Sizing::Cells(w)).h(Sizing::Cells(h)).key(key());
         match &c {
             None => n.pointer_mode(PointerMode::Ignore),
@@ -115,7 +131,7 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
                 // away without changing that. Reading `categories.is_none()`
                 // as "narrow" put the wide layout's search results at the
                 // box's left edge, straight over the divider.
-                let body = match c.wide {
+                let body = match wide {
                     true => row().flex(1).children([
                         col()
                             .w(Sizing::Cells(CATEGORY_COLS))
@@ -172,15 +188,15 @@ pub fn layer(c: Option<&Chrome>) -> Node<UiMsg> {
                     // footer's `modal_area.x + 2`.
                     rows.push(
                         row()
-                            .h(Sizing::Cells(match f.stacked {
-                                true => 5,
-                                false => 1,
+                            .h(Sizing::Cells(match wide {
+                                false => 5,
+                                true => 1,
                             }))
                             .children([
-                                row().w(Sizing::Cells(1 + f.stacked as u16)),
-                                match f.stacked {
-                                    true => footer_column(f).flex(1),
-                                    false => footer_row(f).flex(1),
+                                row().w(Sizing::Cells(1 + !wide as u16)),
+                                match wide {
+                                    false => footer_column(f).flex(1),
+                                    true => footer_row(f).flex(1),
                                 },
                                 row().w(Sizing::Cells(1)),
                             ]),
@@ -840,10 +856,6 @@ pub enum Search {
 #[derive(Clone, Debug)]
 pub struct Chrome {
     pub title: String,
-    /// Whether the box lays its categories down the left (wide) or across the
-    /// top (narrow). The painter's own threshold: an interior under sixty
-    /// columns is narrow.
-    pub wide: bool,
     pub search: Search,
     /// The footer's buttons. `None` in the narrow layout, whose footer is
     /// seven rows rather than two and has not crossed.
@@ -1045,12 +1057,6 @@ pub struct Footer {
     /// The key hints between `[ Edit ]` and the right-hand group, in the
     /// painter's own `Key:Action  Key:Action` form.
     pub help: String,
-    /// **Below sixty columns the five stack.** The painter had two footers —
-    /// `render_footer` and `render_footer_vertical` — differing in which way
-    /// the buttons run, in what order (`[Layer, Save, Reset, Cancel, Edit]`
-    /// down, `[Edit, …, Layer, Reset, Save, Cancel]` across), and in whether
-    /// the hints are shown at all. One description, one flag.
-    pub stacked: bool,
 }
 
 pub fn footer_key(b: Button) -> fresh_ui::Key {
@@ -1539,7 +1545,6 @@ mod tests {
     fn chrome() -> Chrome {
         let dim = pair("ui.line_number_fg", "ui.popup_bg");
         Chrome {
-            wide: true,
             title: " Settings [user] ".into(),
             search: Search::Hint(vec![Span::new("Press / to search settings...", dim)]),
             footer: Some(footer()),
@@ -1596,7 +1601,6 @@ mod tests {
 
     fn searching(query: &str) -> Chrome {
         Chrome {
-            wide: true,
             title: " Settings [user] ".into(),
             search: Search::Active {
                 field: std::rc::Rc::new(fresh_core::api::WidgetSpec::Text {
@@ -1637,7 +1641,6 @@ mod tests {
 
     fn footer() -> Footer {
         Footer {
-            stacked: false,
             layer: "[ user ]".into(),
             reset: "[ Reset ]".into(),
             save: "[ Save ]".into(),
@@ -2004,15 +2007,14 @@ mod tests {
     /// **Below sixty columns the five buttons stack**, which is the whole of
     /// what `render_footer_vertical` was: the same five, one per row, in the
     /// painter's own order, with the hints dropped. Two painters differing in
-    /// a direction are one description and a flag.
+    /// a direction are one description and a width.
+    ///
+    /// The width is what decides it — nothing sets a flag here. A 60-column
+    /// frame gives a 54-column box, whose 52-column interior is under
+    /// [`NARROW_BELOW`].
     #[test]
     fn the_narrow_footer_stacks_its_five_buttons() {
-        let mut c = chrome();
-        if let Some(f) = c.footer.as_mut() {
-            f.stacked = true;
-        }
-        c.categories = None;
-        let ui = with_chrome(c, 60, 40, None);
+        let ui = with_chrome(chrome(), 60, 40, None);
         let ys: Vec<i32> = [
             Button::Layer,
             Button::Save,
@@ -2411,13 +2413,28 @@ mod tests {
     /// **Which buttons fit is a rule, and it drops them in order.** The
     /// painter summed the widths and hid Edit, then Layer, then Reset as the
     /// room ran out; Save and Cancel are the two that always stay.
+    ///
+    /// The room runs out because the *labels* are long, not because the box
+    /// is small: a box narrow enough to squeeze five English labels is
+    /// already under [`NARROW_BELOW`], where the footer stacks and drops
+    /// nothing. What this rule is actually for is a locale whose five labels
+    /// do not fit a box that is otherwise comfortably wide, so that is what
+    /// it is measured against.
     #[test]
     fn a_narrow_footer_drops_its_buttons_in_order() {
         // 66 wide leaves 64 inside the border, which is enough for everything.
         let wide = laid_out(74, 60, None);
         assert!(wide.find_by_key(&footer_key(Button::Edit)).is_some());
-        // Narrow enough that the two widest optional ones have to go.
-        let tight = laid_out(46, 60, None);
+        // The same box, with labels a translator might land on.
+        let mut c = chrome();
+        if let Some(f) = c.footer.as_mut() {
+            f.edit = "[ Bearbeiten ]".into();
+            f.layer = "[ Benutzerebene ]".into();
+            f.reset = "[ Zurücksetzen ]".into();
+            f.save = "[ Speichern ]".into();
+            f.cancel = "[ Abbrechen ]".into();
+        }
+        let tight = with_chrome(c, 74, 60, None);
         assert!(
             tight.find_by_key(&footer_key(Button::Save)).is_some()
                 && tight.find_by_key(&footer_key(Button::Cancel)).is_some(),

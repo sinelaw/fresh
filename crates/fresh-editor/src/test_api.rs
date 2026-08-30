@@ -905,7 +905,9 @@ impl EditorTestApi for crate::app::Editor {
 
     fn primary_scrollbar_geometry(&self) -> Option<(usize, usize, u16, u16)> {
         let areas = self.get_split_areas();
-        let (_split, _buf, _content, scrollbar_rect, thumb_start, thumb_end) = areas.first()?;
+        let (split, _buf, thumb_start, thumb_end) = areas.first()?;
+        // The bar is the tree's; the thumb is the record's.
+        let scrollbar_rect = self.pane_vscroll_rect(*split)?;
         Some((
             *thumb_start,
             *thumb_end,

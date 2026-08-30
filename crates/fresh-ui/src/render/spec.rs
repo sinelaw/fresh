@@ -139,12 +139,19 @@ impl Draw {
     /// thumb a row short of the end at maximum scroll. This maps the offset
     /// across `[0, max]` onto the thumb's travel `[0, track - len]`, so a
     /// fully-scrolled thumb sits flush against the bottom.
+    ///
+    /// **The length rounds up.** Flooring under-states the window: 28 rows of
+    /// 434 is 6.5% of the track, which floors to a single cell claiming 3.6%
+    /// — and a one-cell thumb is the hardest thing on the bar to grab, so the
+    /// row the user aims at lands on the track and page-jumps instead. The
+    /// thumb should never claim *less* of the track than the window actually
+    /// shows, so the division ceils and the result is clamped to the track.
     pub fn scrollbar_thumb(offset: u32, content: u32, track: u16) -> (u16, u16) {
         let t = track as u32;
         if content == 0 || t == 0 {
             return (0, track);
         }
-        let len = ((t * t) / content).clamp(1, t);
+        let len = (t * t).div_ceil(content).clamp(1, t);
         let max_off = content.saturating_sub(t);
         let top = (offset.min(max_off) * (t - len))
             .checked_div(max_off)
