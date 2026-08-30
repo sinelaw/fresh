@@ -5,7 +5,7 @@
 //! mode from the command palette, scroll — and assert only on rendered cells
 //! in the scrollbar column.
 
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -51,11 +51,18 @@ fn compose_harness(md: &str) -> (EditorTestHarness, tempfile::TempDir) {
     let md_path = project_root.join("headings.md");
     std::fs::write(&md_path, md).unwrap();
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
+    // `with_full_grammar_registry` is what makes the editor resolve embedded
+    // regions, which is how a line inside a fenced block reports `region`.
+    // Without it every line comes back unclassified and the marks are decided
+    // by the plugin's textual fence tracking alone — the fallback, not the path
+    // that runs in the editor.
+    let mut harness = EditorTestHarness::create(
         80,
         30,
-        Default::default(),
-        project_root.clone(),
+        HarnessOptions::new()
+            .with_working_dir(project_root.clone())
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
     )
     .unwrap();
 
