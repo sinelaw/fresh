@@ -215,7 +215,6 @@ impl<'a> BodyPainter<'a> {
     fn body(&mut self, area: Rect, buf: &mut Buffer) {
         let state = self.state;
         self.screen_width = buf.area.width;
-        let out = &mut self.out;
         self.pass = with_grid(
             self.editor,
             state,
@@ -232,7 +231,7 @@ impl<'a> BodyPainter<'a> {
                     facts.pane_chrome,
                     window_chrome,
                 );
-                paint_separators(buf, area, mgr, &base_visible, facts, stores, out);
+                paint_separators(buf, area, mgr, &base_visible, facts, stores);
                 pass
             },
         );
@@ -1027,6 +1026,9 @@ impl Editor {
     fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact, ev: EventFacts) {
         use crate::view::shell::msg::UiFact;
         match fact {
+            UiFact::PanelClosed => {
+                self.dismiss_floating_panel_with_cancel(crate::app::PanelSlot::Floating);
+            }
             UiFact::StatusBarClicked(id) => {
                 // The id→behaviour table is unchanged and stays where it is
                 // (`chrome::status_bar`); what the tree replaced is finding

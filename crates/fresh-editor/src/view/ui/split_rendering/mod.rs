@@ -42,7 +42,7 @@ use crate::app::types::ViewLineMapping;
 use crate::app::BufferMetadata;
 use crate::config::IndentationGuideMode;
 use crate::model::buffer::Buffer;
-use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
+use crate::model::event::{BufferId, EventLog, LeafId};
 use crate::primitives::ansi_background::AnsiBackground;
 use crate::state::EditorState;
 use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
@@ -182,13 +182,6 @@ impl SplitRenderer {
         HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
         HashMap<LeafId, Vec<ViewLineMapping>>,
         Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
-        Vec<(
-            crate::model::event::ContainerId,
-            SplitDirection,
-            u16,
-            u16,
-            u16,
-        )>,
     ) {
         orchestration::render_content(
             buf,

@@ -1625,13 +1625,6 @@ pub(crate) struct FloatingWidgetState {
     /// `dismiss_floating_panel_with_cancel`). Opt-in at mount
     /// (`MountFloatingWidget.closable`); `false` draws no button.
     pub closable: bool,
-    /// Screen rect of the `[×]` close button, recomputed on every draw
-    /// (like `last_inner_rect`) so the mouse hit-test can map a press back
-    /// to the dismiss action, and the web projection can ship it for a
-    /// native close control. Populated even under `suppress_chrome_cells`
-    /// (web mode) since geometry is computed there without painting cells.
-    /// `None` when the panel isn't a closable `Centered` modal.
-    pub close_button_rect: Option<ratatui::layout::Rect>,
     /// Widget key the pointer is currently over, tracked from mouse-move
     /// events against this panel's hit areas. Empty for "nothing hovered".
     ///
@@ -1657,7 +1650,7 @@ pub(crate) struct FloatingWidgetState {
     /// render alongside `entries`.
     pub popup: Option<crate::widgets::PanelPopup>,
     /// Screen-space hit rectangles for the open dropdown pop-over's option
-    /// rows, recomputed on every draw (like `close_button_rect`). Each maps
+    /// rows, recomputed on every draw (like `last_inner_rect`). Each maps
     /// a terminal rect to the absolute option index; the mouse hit-test
     /// checks these BEFORE the panel-inner gate so a click on an option
     /// below the modal border still selects it. Empty when no pop-over is
@@ -2232,7 +2225,6 @@ mod tests {
             focus_marker: false,
             title: None,
             closable: false,
-            close_button_rect: None,
             hovered_widget_key: String::new(),
             hovered_item_key: String::new(),
             popup: None,
