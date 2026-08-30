@@ -66,14 +66,27 @@ fn truncate_display_width_with_ellipsis(s: &str, max_width: usize) -> String {
 }
 
 /// Render the settings modal
+/// Render the settings dialog into the box the tree placed.
+///
+/// `modal_area` used to be computed here — ninety percent of `area`, capped at
+/// 160 columns, centred with `area.x` and `area.y` added back so the dock did
+/// not over-draw its left edge — and then filed in `SettingsLayout::modal_area`
+/// for the mouse handler to measure every other rectangle from. It is
+/// `view::shell::settings`'s now, and this is handed the answer.
+///
+/// `area` is still needed for one thing: the too-small message, which is not
+/// the dialog and does not go where the dialog would have.
 pub fn render_settings(
     frame: &mut Frame,
     area: Rect,
+    modal_area: Rect,
     state: &mut SettingsState,
     theme: &Theme,
 ) -> SettingsLayout {
-    // Minimum size guard — prevent panics from zero-sized layout arithmetic
-    if area.width < 40 || area.height < 10 {
+    // Minimum size guard — prevent panics from zero-sized layout arithmetic.
+    // The tree applies the same guard by placing no box; this is what it looks
+    // like when it did.
+    if modal_area.width == 0 || modal_area.height == 0 {
         let msg = "[Terminal too small for settings]";
         let x = area.x + area.width.saturating_sub(msg.len() as u16) / 2;
         let y = area.y + area.height / 2;
@@ -85,19 +98,6 @@ pub fn render_settings(
         }
         return SettingsLayout::new(Rect::ZERO);
     }
-
-    // Calculate modal size (90% of screen width, 90% height to fill most of available space)
-    let modal_width = (area.width * 90 / 100).min(160);
-    let modal_height = area.height * 90 / 100;
-    // Offsets must be ABSOLUTE — `area.x` / `area.y` are not assumed to be
-    // zero (this is the full frame today, but the modal must centre in
-    // whatever rect it is handed). Centring with bare `area.width / 2` placed
-    // the modal at the FRAME origin, where the dock then over-drew its left
-    // edge — hiding the title bar and clipping the rounded top-left corner.
-    let modal_x = area.x + (area.width.saturating_sub(modal_width)) / 2;
-    let modal_y = area.y + (area.height.saturating_sub(modal_height)) / 2;
-
-    let modal_area = Rect::new(modal_x, modal_y, modal_width, modal_height);
 
     // Clear the modal area and draw border
     frame.render_widget(Clear, modal_area);
@@ -134,11 +134,11 @@ pub fn render_settings(
     let search_area = Rect::new(inner_area.x, inner_area.y, inner_area.width, 1);
     let search_header_height = 1u16;
     let search_gap = 1u16;
-    if state.search_active {
-        render_search_header(frame, search_area, state, theme);
-    } else {
-        render_search_hint(frame, search_area, theme);
-    }
+    // **The search row is the tree's** (`view::shell::settings`): the query
+    // was already a `WidgetSpec::Text` rendered through `render_spec`, so it
+    // is a *node* now, through the same adapter a plugin's field goes through.
+    // `search_area` stays because everything below it is measured from here.
+    let _ = search_area;
 
     // Footer height: 2 lines for horizontal (separator + buttons), 7 for vertical
     let footer_height = if narrow_mode { 7 } else { 2 };
@@ -167,17 +167,17 @@ pub fn render_settings(
     let has_entry = state.showing_entry_dialog();
     let has_help = state.showing_help;
 
-    // Render confirmation dialog if showing
-    if has_confirm {
-        if !has_entry && !has_help {
-            crate::view::dimming::apply_dimming(frame, modal_area);
-        }
+    // **The confirm and reset prompts are the tree's** — layers over this box,
+    // with `apply_dimming` as their scrim and their buttons answering their
+    // own presses (`view::shell::settings`). They stay painted while the entry
+    // stack is up, because that stack is still painted and a described prompt
+    // would be a layer over it rather than under.
+    if has_confirm && has_entry {
+        crate::view::dimming::apply_dimming(frame, modal_area);
         render_confirm_dialog(frame, modal_area, state, theme);
     }
-
-    // Render reset confirmation dialog if showing
-    if has_reset {
-        if !has_confirm && !has_entry && !has_help {
+    if has_reset && has_entry {
+        if !has_confirm {
             crate::view::dimming::apply_dimming(frame, modal_area);
         }
         render_reset_dialog(frame, modal_area, state, theme);
@@ -194,24 +194,14 @@ pub fn render_settings(
         }
     }
 
-    // Render entry-dialog discard-confirm prompt if showing, on top of
-    // the entry dialog stack. Dim first so the user can see the prompt
-    // is asking about the dialog underneath.
-    if state.showing_entry_discard_confirm {
-        crate::view::dimming::apply_dimming(frame, modal_area);
-        render_entry_discard_confirm(frame, modal_area, state, theme);
-    }
+    // The entry dialog's two prompts are the tree's. They sit *over* the
+    // entry stack, so a layer lands where they were even though the stack
+    // itself is still painted (`view::shell::settings`). Both answer a press
+    // now, which they never did.
 
-    // Render entry-dialog delete-confirm prompt on top of everything
-    // else. Same chrome as the discard prompt but worded for
-    // destructive action.
-    if state.showing_entry_delete_confirm {
-        crate::view::dimming::apply_dimming(frame, modal_area);
-        render_entry_delete_confirm(frame, modal_area, state, theme);
-    }
-
-    // Render help overlay if showing
-    if has_help {
+    // The help overlay is the tree's too, on the same terms: painted only
+    // while the entry stack is, because a layer would sit over it.
+    if has_help && has_entry {
         crate::view::dimming::apply_dimming(frame, modal_area);
         render_help_overlay(frame, modal_area, theme);
     }
@@ -269,6 +259,7 @@ fn render_horizontal_layout(
     }
 
     // Render footer with buttons (horizontal layout)
+    // The wide footer is the tree's; only the narrow one still paints.
     render_footer(frame, modal_area, state, theme, layout, false);
 }
 
@@ -1948,6 +1939,14 @@ fn render_button(
 
 /// Render footer with action buttons
 /// When `vertical` is true, buttons are stacked vertically (for narrow mode)
+/// The **narrow** layout's footer: seven rows with the buttons stacked.
+///
+/// The wide one — two rows, a separator and five buttons flush right of an
+/// `[ Edit ]` — is the tree's (`view::shell::settings::Footer`), and its five
+/// recorded rectangles went with it. What was here summed the buttons' widths
+/// to decide which of them fit and then filed a rectangle per button for
+/// `SettingsLayout::hit_test` to compare a cell against; the rule survives,
+/// resolved against the width layout gives.
 fn render_footer(
     frame: &mut Frame,
     modal_area: Rect,
@@ -1956,284 +1955,13 @@ fn render_footer(
     layout: &mut SettingsLayout,
     vertical: bool,
 ) {
-    use super::layout::SettingsHit;
-    use super::state::FocusPanel;
-
     // Guard against too-small modal
     if modal_area.height < 4 || modal_area.width < 10 {
         return;
     }
-
     if vertical {
         render_footer_vertical(frame, modal_area, state, theme, layout);
-        return;
     }
-
-    let footer_y = modal_area.y + modal_area.height.saturating_sub(2);
-    let footer_width = modal_area.width.saturating_sub(2);
-    let footer_area = Rect::new(modal_area.x + 1, footer_y, footer_width, 1);
-
-    // Draw separator line (only if we have room above footer)
-    if footer_y > modal_area.y {
-        let sep_y = footer_y.saturating_sub(1);
-        let sep_area = Rect::new(modal_area.x + 1, sep_y, footer_width, 1);
-        let sep_line: String = "─".repeat(sep_area.width as usize);
-        frame.render_widget(
-            Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
-            sep_area,
-        );
-    }
-
-    // Check if footer has keyboard focus
-    let footer_focused = state.focus_panel() == FocusPanel::Footer;
-
-    // Determine hover and keyboard focus states for buttons
-    // Button indices: 0=Layer, 1=Reset, 2=Save, 3=Cancel, 4=Edit (on left, for advanced users)
-    let layer_hovered = matches!(state.hover_hit, Some(SettingsHit::LayerButton));
-    let reset_hovered = matches!(state.hover_hit, Some(SettingsHit::ResetButton));
-    let save_hovered = matches!(state.hover_hit, Some(SettingsHit::SaveButton));
-    let cancel_hovered = matches!(state.hover_hit, Some(SettingsHit::CancelButton));
-    let edit_hovered = matches!(state.hover_hit, Some(SettingsHit::EditButton));
-
-    let layer_focused = footer_focused && state.footer_button_index == 0;
-    let reset_focused = footer_focused && state.footer_button_index == 1;
-    let save_focused = footer_focused && state.footer_button_index == 2;
-    let cancel_focused = footer_focused && state.footer_button_index == 3;
-    let edit_focused = footer_focused && state.footer_button_index == 4;
-
-    // Get translated button labels
-    // Use "Inherit" label instead of "Reset" when current item is nullable and explicitly set
-    let current_is_nullable_set = state
-        .current_item()
-        .map(|item| item.nullable && !item.is_null)
-        .unwrap_or(false);
-    let save_label = t!("settings.btn_save").to_string();
-    let cancel_label = t!("settings.btn_cancel").to_string();
-    let reset_label = if current_is_nullable_set {
-        t!("settings.btn_inherit").to_string()
-    } else {
-        t!("settings.btn_reset").to_string()
-    };
-    let edit_label = t!("settings.btn_edit").to_string();
-
-    // Build button text with brackets (layer button uses layer name)
-    let layer_text = format!("[ {} ]", state.target_layer_name());
-    let layer_text_focused = format!(">[ {} ]", state.target_layer_name());
-    let save_text = format!("[ {} ]", save_label);
-    let save_text_focused = format!(">[ {} ]", save_label);
-    let cancel_text = format!("[ {} ]", cancel_label);
-    let cancel_text_focused = format!(">[ {} ]", cancel_label);
-    let reset_text = format!("[ {} ]", reset_label);
-    let reset_text_focused = format!(">[ {} ]", reset_label);
-    let edit_text = format!("[ {} ]", edit_label);
-    let edit_text_focused = format!(">[ {} ]", edit_label);
-
-    // Calculate button widths using display width (handles unicode)
-    let cancel_width = str_width(if cancel_focused {
-        &cancel_text_focused
-    } else {
-        &cancel_text
-    }) as u16;
-    let save_width = str_width(if save_focused {
-        &save_text_focused
-    } else {
-        &save_text
-    }) as u16;
-    let reset_width = str_width(if reset_focused {
-        &reset_text_focused
-    } else {
-        &reset_text
-    }) as u16;
-    let layer_width = str_width(if layer_focused {
-        &layer_text_focused
-    } else {
-        &layer_text
-    }) as u16;
-    let edit_width = str_width(if edit_focused {
-        &edit_text_focused
-    } else {
-        &edit_text
-    }) as u16;
-    let gap: u16 = 2;
-
-    // Calculate total width needed for all buttons
-    // Minimum needed: Save + Cancel
-    let min_buttons_width = save_width + gap + cancel_width;
-    // Full buttons: Edit + Layer + Reset + Save + Cancel with gaps
-    let all_buttons_width =
-        edit_width + gap + layer_width + gap + reset_width + gap + save_width + gap + cancel_width;
-
-    // Determine which buttons to show based on available width
-    let available = footer_area.width;
-    let show_edit = available >= all_buttons_width;
-    let show_layer = available >= (layer_width + gap + reset_width + gap + min_buttons_width);
-    let show_reset = available >= (reset_width + gap + min_buttons_width);
-
-    // Calculate X positions using saturating_sub to prevent overflow
-    let cancel_x = footer_area
-        .x
-        .saturating_add(footer_area.width.saturating_sub(cancel_width));
-    let save_x = cancel_x.saturating_sub(save_width + gap);
-    let reset_x = if show_reset {
-        save_x.saturating_sub(reset_width + gap)
-    } else {
-        0
-    };
-    let layer_x = if show_layer {
-        reset_x.saturating_sub(layer_width + gap)
-    } else {
-        0
-    };
-    let edit_x = footer_area.x; // Left-aligned
-
-    // Render buttons using helper function
-    // Layer button (conditionally shown)
-    if show_layer {
-        let layer_area = Rect::new(layer_x, footer_y, layer_width, 1);
-        render_button(
-            frame,
-            layer_area,
-            &layer_text,
-            &layer_text_focused,
-            layer_focused,
-            layer_hovered,
-            theme,
-            false,
-        );
-        layout.layer_button = Some(layer_area);
-    }
-
-    // Reset button (conditionally shown)
-    if show_reset {
-        let reset_area = Rect::new(reset_x, footer_y, reset_width, 1);
-        render_button(
-            frame,
-            reset_area,
-            &reset_text,
-            &reset_text_focused,
-            reset_focused,
-            reset_hovered,
-            theme,
-            false,
-        );
-        layout.reset_button = Some(reset_area);
-    }
-
-    // Save button (always shown)
-    let save_area = Rect::new(save_x, footer_y, save_width, 1);
-    render_button(
-        frame,
-        save_area,
-        &save_text,
-        &save_text_focused,
-        save_focused,
-        save_hovered,
-        theme,
-        false,
-    );
-    layout.save_button = Some(save_area);
-
-    // Cancel button (always shown)
-    let cancel_area = Rect::new(cancel_x, footer_y, cancel_width, 1);
-    render_button(
-        frame,
-        cancel_area,
-        &cancel_text,
-        &cancel_text_focused,
-        cancel_focused,
-        cancel_hovered,
-        theme,
-        false,
-    );
-    layout.cancel_button = Some(cancel_area);
-
-    // Edit button (on left, for advanced users, conditionally shown)
-    if show_edit {
-        let edit_area = Rect::new(edit_x, footer_y, edit_width, 1);
-        render_button(
-            frame,
-            edit_area,
-            &edit_text,
-            &edit_text_focused,
-            edit_focused,
-            edit_hovered,
-            theme,
-            true, // dimmed for advanced option
-        );
-        layout.edit_button = Some(edit_area);
-    }
-
-    // Help text (between Edit button and main buttons)
-    // Calculate position based on which buttons are visible
-    let help_start_x = if show_edit {
-        edit_x + edit_width + 2
-    } else {
-        footer_area.x
-    };
-    let help_end_x = if show_layer {
-        layer_x
-    } else if show_reset {
-        reset_x
-    } else {
-        save_x
-    };
-    let help_width = help_end_x.saturating_sub(help_start_x + 1);
-
-    // Get translated help text
-    let help = if state.search_active {
-        t!("settings.help_search").to_string()
-    } else if footer_focused {
-        t!("settings.help_footer").to_string()
-    } else if state.is_editing_dual_list() {
-        // The generic "Enter:Edit" line is actively wrong once the
-        // two-column picker has the keyboard — Enter no longer starts
-        // an edit, and none of the keys that do move items appear in
-        // it.
-        t!("settings.help_duallist").to_string()
-    } else {
-        t!("settings.help_default").to_string()
-    };
-    // Render help text with reverse-video styling for key hints
-    // Parse "Key:Action  Key:Action" format
-    let help_line = build_keyhint_line(&help, theme);
-    frame.render_widget(
-        Paragraph::new(help_line),
-        Rect::new(help_start_x, footer_y, help_width, 1),
-    );
-}
-
-/// Build a Line with reverse-video styled key hints from "Key:Action  Key:Action" format
-fn build_keyhint_line<'a>(text: &str, theme: &Theme) -> Line<'a> {
-    let key_style = Style::default()
-        .fg(theme.popup_text_fg)
-        .bg(theme.split_separator_fg);
-    let desc_style = Style::default().fg(theme.line_number_fg);
-    let sep_style = Style::default().fg(theme.line_number_fg);
-
-    let mut spans: Vec<Span<'a>> = Vec::new();
-
-    // Split by double-space to get individual key hints
-    for (i, segment) in text.split("  ").enumerate() {
-        let segment = segment.trim();
-        if segment.is_empty() {
-            continue;
-        }
-        if i > 0 {
-            spans.push(Span::styled(" ", sep_style));
-        }
-        // Split by first ":" to separate key from description
-        if let Some(colon_pos) = segment.find(':') {
-            let key = &segment[..colon_pos];
-            let action = &segment[colon_pos + 1..];
-            spans.push(Span::styled(format!(" {} ", key), key_style));
-            spans.push(Span::styled(action.to_string(), desc_style));
-        } else {
-            // No colon - just render as text
-            spans.push(Span::styled(segment.to_string(), desc_style));
-        }
-    }
-
-    Line::from(spans)
 }
 
 /// Render footer with buttons stacked vertically (for narrow mode)
@@ -2409,131 +2137,6 @@ fn render_footer_vertical(
         true, // dimmed
     );
     layout.edit_button = Some(edit_area);
-}
-
-/// Render the search header with query input
-fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
-    // Show result count and scroll position inline after cursor
-    let result_count = state.search_results.len();
-    let count_text = if state.search_query().is_empty() {
-        String::new()
-    } else if result_count == 0 {
-        " (no results)".to_string()
-    } else if result_count == 1 {
-        " (1 result)".to_string()
-    } else if state.search_max_visible >= result_count {
-        // All results visible, no need to show range
-        format!(" ({} results)", result_count)
-    } else {
-        // Show current position in results
-        let first = state.search_scroll_offset + 1;
-        let last = (state.search_scroll_offset + state.search_max_visible).min(result_count);
-        format!(" ({}-{} of {})", first, last, result_count)
-    };
-
-    // Add scroll indicators
-    let has_more_above = state.search_scroll_offset > 0;
-    let has_more_below = state.search_scroll_offset + state.search_max_visible < result_count;
-    let scroll_indicator = match (has_more_above, has_more_below) {
-        (true, true) => " ↑↓",
-        (true, false) => " ↑",
-        (false, true) => " ↓",
-        (false, false) => "",
-    };
-
-    let count_style = Style::default().fg(theme.line_number_fg);
-    let indicator_style = Style::default()
-        .fg(theme.menu_active_fg)
-        .add_modifier(Modifier::BOLD);
-
-    // The editable query renders through the plugin widget framework —
-    // the same `WidgetSpec::Text` + `render_spec` path every settings
-    // field now uses — instead of hand-rolled cursor spans. The widget
-    // owns the caret (a REVERSED block cell via `block_caret`) and the
-    // selection highlight, driven statelessly from the search input's
-    // `TextEdit` (value + byte cursor + live selection). The result
-    // count / scroll indicators are search chrome, painted after the
-    // field at its rendered width.
-    let query = state.search_query();
-    let cursor = state.search_cursor().min(query.len()) as i32;
-    let (sel_start, sel_end) = state
-        .search_input
-        .editor
-        .selection_flat_range()
-        .map(|(a, b)| (a as i32, b as i32))
-        .unwrap_or((-1, -1));
-    let field_spec = fresh_core::api::WidgetSpec::Text {
-        value: query.to_string(),
-        cursor_byte: cursor,
-        focused: true,
-        label: String::new(),
-        placeholder: None,
-        rows: 1,
-        field_width: 0,
-        max_visible_chars: 0,
-        full_width: false,
-        completions: Vec::new(),
-        completions_visible_rows: 0,
-        block_caret: true,
-        sel_start,
-        sel_end,
-        label_width: 0,
-        read_only: false,
-        markdown: false,
-        key: None,
-    };
-    let out = crate::widgets::render_spec_no_autofocus(
-        &field_spec,
-        &std::collections::HashMap::new(),
-        "",
-        area.width.max(1) as u32,
-    );
-    let field_width = out
-        .entries
-        .first()
-        .map(|e| crate::primitives::display_width::str_width(e.text.trim_end_matches('\n')))
-        .unwrap_or(0) as u16;
-    if let Some(entry) = out.entries.first() {
-        crate::app::render::paint_text_property_entry(
-            frame.buffer_mut(),
-            entry,
-            area.x,
-            area.y,
-            area.width,
-            theme,
-            None,
-        );
-    }
-
-    // Result-count + scroll-indicator suffix, right after the field.
-    let suffix_x = area.x.saturating_add(field_width);
-    if suffix_x < area.x + area.width && !(count_text.is_empty() && scroll_indicator.is_empty()) {
-        let suffix = Line::from(vec![
-            Span::styled(count_text, count_style),
-            Span::styled(scroll_indicator, indicator_style),
-        ]);
-        let suffix_w = (area.x + area.width).saturating_sub(suffix_x);
-        frame.render_widget(
-            Paragraph::new(suffix),
-            Rect::new(suffix_x, area.y, suffix_w, 1),
-        );
-    }
-}
-
-/// Render search hint when search is not active
-fn render_search_hint(frame: &mut Frame, area: Rect, theme: &Theme) {
-    let hint_style = Style::default().fg(theme.line_number_fg);
-    let key_style = Style::default()
-        .fg(theme.popup_text_fg)
-        .bg(theme.split_separator_fg);
-
-    let spans = vec![
-        Span::styled("Press ", hint_style),
-        Span::styled(" / ", key_style),
-        Span::styled(" to search settings...", hint_style),
-    ];
-    let line = Line::from(spans);
-    frame.render_widget(Paragraph::new(line), area);
 }
 
 /// Render search results with breadcrumbs
@@ -2904,57 +2507,6 @@ fn render_choice_buttons(
     }
 }
 
-/// Render a centered row of `[ label ]` buttons for a destructive-action
-/// confirm dialog: the button at `destructive_idx` is tinted with the danger
-/// foreground, and the selected button gets the popup-selection background.
-/// Shared by the entry discard / delete confirm dialogs.
-fn render_destructive_buttons(
-    frame: &mut Frame,
-    inner: Rect,
-    button_y: u16,
-    options: &[&str],
-    selected: usize,
-    destructive_idx: usize,
-    theme: &Theme,
-) {
-    let total_width: u16 =
-        options.iter().map(|o| o.len() as u16 + 5).sum::<u16>() + 2 * (options.len() as u16 - 1);
-    let mut x = inner.x + (inner.width.saturating_sub(total_width)) / 2;
-
-    for (idx, label) in options.iter().enumerate() {
-        let is_selected = idx == selected;
-        let is_destructive = idx == destructive_idx;
-        let style = if is_selected && is_destructive {
-            Style::default()
-                .fg(theme.diagnostic_error_fg)
-                .bg(theme.popup_selection_bg)
-                .add_modifier(Modifier::BOLD)
-        } else if is_selected {
-            Style::default()
-                .fg(theme.popup_selection_fg)
-                .bg(theme.popup_selection_bg)
-                .add_modifier(Modifier::BOLD)
-        } else if is_destructive {
-            Style::default()
-                .fg(theme.diagnostic_error_fg)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.popup_text_fg)
-        };
-        let text = if is_selected {
-            format!(">[ {} ]", label)
-        } else {
-            format!(" [ {} ]", label)
-        };
-        let w = label.len() as u16 + 5;
-        frame.render_widget(
-            Paragraph::new(text).style(style),
-            Rect::new(x, button_y, w, 1),
-        );
-        x += w + 2;
-    }
-}
-
 fn render_confirm_dialog(
     frame: &mut Frame,
     parent_area: Rect,
@@ -3076,53 +2628,6 @@ fn render_reset_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
     );
 }
 
-/// Render the "Discard changes?" prompt that appears when the user
-/// presses Esc on a dirty entry dialog.
-fn render_entry_discard_confirm(
-    frame: &mut Frame,
-    parent_area: Rect,
-    state: &SettingsState,
-    theme: &Theme,
-) {
-    let dialog_width = 50.min(parent_area.width.saturating_sub(4));
-    let dialog_height = 7u16.min(parent_area.height.saturating_sub(4));
-    let (dialog_area, inner) = centered_dialog_frame(
-        frame,
-        parent_area,
-        dialog_width,
-        dialog_height,
-        " Discard changes? ".to_string(),
-        theme.diagnostic_warning_fg,
-        theme,
-    );
-
-    frame.render_widget(
-        Paragraph::new("You have uncommitted edits in this dialog.")
-            .style(Style::default().fg(theme.popup_text_fg)),
-        Rect::new(inner.x, inner.y, inner.width, 1),
-    );
-
-    // Buttons. 0 = Keep editing (default), 1 = Discard. Discard styled
-    // in the danger fg to make the destructive choice unmistakable.
-    let button_y = dialog_area.y + dialog_area.height - 3;
-    render_destructive_buttons(
-        frame,
-        inner,
-        button_y,
-        &["Keep editing", "Discard"],
-        state.entry_discard_confirm_selection,
-        1,
-        theme,
-    );
-    render_dialog_help(
-        frame,
-        inner,
-        button_y,
-        "Tab/←→: Select   Enter: Confirm   Esc: Keep editing",
-        theme,
-    );
-}
-
 /// Compute the footer Delete-button label for an entry dialog.
 ///
 /// Schema-driven: shows the map key for map entries (e.g.
@@ -3149,69 +2654,6 @@ fn entry_delete_button_label(dialog: &EntryDialogState) -> String {
         };
         format!("[ Delete \"{}\" ]", key)
     }
-}
-
-/// Render the "Delete <name>?" prompt that appears when the user
-/// activates the Delete button on an entry dialog.
-fn render_entry_delete_confirm(
-    frame: &mut Frame,
-    parent_area: Rect,
-    state: &SettingsState,
-    theme: &Theme,
-) {
-    let dialog_width = 60.min(parent_area.width.saturating_sub(4));
-    let dialog_height = 7u16.min(parent_area.height.saturating_sub(4));
-
-    let title = if !state.entry_delete_target_name.is_empty() {
-        format!(" Delete \"{}\"? ", state.entry_delete_target_name)
-    } else if state.entry_delete_target_is_array_item {
-        " Delete item? ".to_string()
-    } else {
-        " Delete entry? ".to_string()
-    };
-
-    let (dialog_area, inner) = centered_dialog_frame(
-        frame,
-        parent_area,
-        dialog_width,
-        dialog_height,
-        title,
-        theme.diagnostic_error_fg,
-        theme,
-    );
-
-    let body = if !state.entry_delete_target_name.is_empty() {
-        format!(
-            "This will permanently remove \"{}\".",
-            state.entry_delete_target_name
-        )
-    } else if state.entry_delete_target_is_array_item {
-        "This will permanently remove this item.".to_string()
-    } else {
-        "This will permanently remove the entry.".to_string()
-    };
-    frame.render_widget(
-        Paragraph::new(body).style(Style::default().fg(theme.popup_text_fg)),
-        Rect::new(inner.x, inner.y, inner.width, 1),
-    );
-
-    let button_y = dialog_area.y + dialog_area.height - 3;
-    render_destructive_buttons(
-        frame,
-        inner,
-        button_y,
-        &["Cancel", "Delete"],
-        state.entry_delete_confirm_selection,
-        1,
-        theme,
-    );
-    render_dialog_help(
-        frame,
-        inner,
-        button_y,
-        "Tab/←→: Select   Enter: Confirm   Esc: Cancel",
-        theme,
-    );
 }
 
 /// Render a specific entry dialog from the stack by index.

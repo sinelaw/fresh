@@ -86,6 +86,35 @@ pub struct Ctx<'a> {
     pub avail_height: Option<u32>,
 }
 
+/// The empty instance-state map, for a spec with no host state behind it.
+///
+/// A settings field or a one-off `Text` is *stateless*: the caller hands the
+/// whole value down every frame and nothing is authoritative but the spec. The
+/// map is what the stateful kinds read, and there is nothing to read.
+pub fn no_state() -> &'static std::collections::HashMap<String, crate::widgets::WidgetInstanceState>
+{
+    use std::sync::OnceLock;
+    static EMPTY: OnceLock<std::collections::HashMap<String, crate::widgets::WidgetInstanceState>> =
+        OnceLock::new();
+    EMPTY.get_or_init(Default::default)
+}
+
+impl Ctx<'static> {
+    /// A context for a spec that carries all of its own state: no instance
+    /// map, no focus key, no hover, no gutter, no row budget.
+    pub fn plain(slot: Slot) -> Self {
+        Ctx {
+            slot,
+            states: no_state(),
+            focus_key: String::new(),
+            hovered_key: None,
+            marker_gutter: false,
+            hovered_item_key: String::new(),
+            avail_height: None,
+        }
+    }
+}
+
 impl Ctx<'_> {
     fn is_focused(&self, key: Option<&str>) -> bool {
         key.is_some_and(|k| !k.is_empty() && k == self.focus_key)

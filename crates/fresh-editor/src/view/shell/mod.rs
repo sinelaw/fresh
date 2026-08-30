@@ -17,6 +17,7 @@
 pub mod calibration;
 pub mod context_menu;
 pub mod dock;
+pub mod event_debug;
 pub mod file_browser;
 pub mod file_explorer;
 pub mod fold;
@@ -31,6 +32,7 @@ pub mod panel;
 pub mod popup;
 pub mod prompt;
 pub mod search_options;
+pub mod settings;
 pub mod splits;
 pub mod status_bar;
 pub mod theme_info;

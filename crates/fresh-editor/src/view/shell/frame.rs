@@ -182,11 +182,38 @@ pub struct Frame {
     /// The full-screen modal that has the pointer, if any. At most one: the
     /// capture band this replaces stopped at the first taker in rank order.
     pub modal: Option<super::modal::Slot>,
+    /// Whether the settings dialog is open. As `keybinding`: the tree carries
+    /// the box its twenty-odd recorded rectangles are measured from, and
+    /// nothing else of it yet.
+    /// The settings dialog, when it is open: its title and its search row.
+    /// The body between them is still the painter's.
+    pub settings: Option<super::settings::Chrome>,
+    /// Its open dialog, when it has one. Three of them are here — the
+    /// unsaved-changes prompt, the reset prompt and the help overlay — and the
+    /// entry-dialog stack is not.
+    pub settings_dialog: Option<super::settings::Dialog>,
     /// Whether the keybinding editor is open. Its *interior* is still a
     /// painter's — a table with its own scrollbar and ten recorded
     /// rectangles — so what the tree carries is the box those rectangles are
     /// measured from, and the claim.
-    pub keybinding: bool,
+    /// The keybinding editor, when it is open: its title, its three header
+    /// rows and its footer. The whole modal is the tree's now — box, chrome,
+    /// table and dialogs — so the flag became the content.
+    pub keybinding: Option<super::keybinding::Chrome>,
+    /// Its table, when no dialog covers it. `None` while one does: a dialog is
+    /// a layer over this one, so the table would be under it and building it
+    /// would be work for cells nobody sees.
+    pub keybinding_table: Option<super::keybinding::Table>,
+    /// The keybinding editor's open dialog, when it has one. **These are the
+    /// tree's and the rest of the interior is not**, which is a statement
+    /// about paint order rather than about how far the migration got: the
+    /// overlay band is folded after every legacy painter, so a described
+    /// dialog lands on top of the table the painter drew — where it belongs —
+    /// and a described *table* would have covered the painter's dialogs.
+    pub keybinding_dialog: Option<super::keybinding::Dialog>,
+    /// The event-debug dialog. Like the calibration wizard, its interior is
+    /// here too: no mouse, no recorded rectangles.
+    pub event_debug: Option<super::event_debug::EventDebug>,
     /// The input calibration wizard. Unlike the other three modals its
     /// *interior* is here too — it has no mouse and no recorded rectangles,
     /// so there was nothing left behind the seam once the box moved.
@@ -235,7 +262,12 @@ impl Default for Frame {
             browser: None,
             trust: None,
             modal: None,
-            keybinding: false,
+            settings: None,
+            settings_dialog: None,
+            keybinding: None,
+            keybinding_table: None,
+            keybinding_dialog: None,
+            event_debug: None,
             calibration: None,
             splits: None,
             window: None,
@@ -492,13 +524,40 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         Some(slot) => frame.child(super::modal::layer(slot)),
         None => frame,
     };
+    // The settings dialog's box. Like the keybinding editor's below it, this
+    // contributes a rectangle and nothing else — `PointerMode::Ignore`, so the
+    // modal slot behind it is still the one asked.
+    let frame = match &f.settings {
+        Some(c) => frame.child(super::settings::layer(Some(c))),
+        None => frame,
+    };
+    // Its open dialog, **after** the box for the same reason the keybinding
+    // editor's is: layers are offered the pointer in reverse declaration
+    // order, so a dialog declared first would be covered by the box.
+    let frame = match &f.settings_dialog {
+        Some(d) => frame.child(super::settings::dialog_layer(d)),
+        None => frame,
+    };
     // The keybinding editor's box, over the modal slot that routes its
     // pointer — the same order and for the same reason as the floating panel
     // below: the box is asked first, and the slot behind it catches whatever
     // the box does not answer.
-    let frame = match f.keybinding {
-        true => frame.child(super::keybinding::layer()),
-        false => frame,
+    let frame = match &f.keybinding {
+        Some(c) => frame.child(super::keybinding::layer(c, f.keybinding_table.as_ref())),
+        None => frame,
+    };
+    // Its open dialog, **after** the box: layers are offered the pointer in
+    // reverse declaration order, so a dialog declared before the box would be
+    // covered by it and its fields would never see a press.
+    let frame = match &f.keybinding_dialog {
+        Some(d) => frame.child(super::keybinding::dialog_layer(d)),
+        None => frame,
+    };
+    // The event-debug dialog, which like the wizard below carries its own
+    // exclusivity and its own scrim.
+    let frame = match &f.event_debug {
+        Some(d) => frame.child(super::event_debug::sized(d)),
+        None => frame,
     };
     // The calibration wizard, over the modal slot it shares a rank with. It
     // brings its own exclusivity and its own scrim, so the slot beneath it

@@ -347,6 +347,37 @@ pub enum UiFact {
     /// still a painter's and hit-tests rectangles that painter recorded. The
     /// event itself never left the host — see `shell::modal`.
     ModalPointer(super::modal::Slot),
+    /// A press on one of the keybinding editor's dialogs.
+    ///
+    /// **The dialogs answer for themselves, the table does not — yet.** Five
+    /// of the ten rectangles that modal's painter recorded belong to these
+    /// three boxes, and the mouse arm behind them was a chain of
+    /// `point_in_rect` against each. They are nodes now; the table and the
+    /// search bar still go through `ModalPointer`.
+    KeybindingDialog(super::keybinding::Target),
+    /// A press on a row of the keybinding editor's table, by display index.
+    ///
+    /// The arm behind it was `(row - table_first_row_y) + scroll.offset`,
+    /// against two rectangles the painter recorded — the second of which
+    /// existed only because the window belonged to the painter. The row knows
+    /// its own index.
+    KeybindingRow(usize),
+    /// A press on the keybinding editor's search row, which starts a search.
+    /// The last of that modal's ten recorded rectangles.
+    KeybindingSearch,
+    /// A press on one of the settings dialogs' buttons.
+    ///
+    /// **These were laid out twice**: the painter placed them, and
+    /// `get_confirm_dialog_button_at` placed them again to find which one a
+    /// cell was on — with the comment "must match `render_confirm_dialog`"
+    /// beside the copy. The button is the node now.
+    SettingsDialog(super::settings::Target),
+    /// The pointer entered or left one of them.
+    SettingsDialogHover(Option<super::settings::Target>),
+    /// A press on one of the settings modal's footer buttons.
+    SettingsButton(super::settings::Button),
+    /// The pointer entered or left one of them.
+    SettingsButtonHover(Option<super::settings::Button>),
 }
 
 /// What a menu-bar navigation step does to the open chain.

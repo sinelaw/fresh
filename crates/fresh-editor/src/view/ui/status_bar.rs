@@ -2363,7 +2363,7 @@ mod tests {
     /// whenever the cursor's logical column was past it).
     #[test]
     fn test_render_prompt_scrolls_long_input_and_places_cursor() {
-        use ratatui::backend::{Backend, TestBackend};
+        use ratatui::backend::TestBackend;
         use ratatui::Terminal;
 
         let theme =
@@ -2379,6 +2379,12 @@ mod tests {
         let width: u16 = 80;
         let backend = TestBackend::new(width, 1);
         let mut terminal = Terminal::new(backend).unwrap();
+        // **Where the caret wants to sit is reported, not set.**
+        // `render_prompt` takes a `&mut Buffer` and an out-parameter now:
+        // the fold resolves the caret across every region rather than
+        // letting each one call `set_cursor_position` itself. Asking the
+        // test backend where its cursor is asks a question nobody answers.
+        let mut caret: Option<(u16, u16)> = None;
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, width, 1);
@@ -2387,7 +2393,7 @@ mod tests {
                     area,
                     &prompt,
                     &theme,
-                    &mut None,
+                    &mut caret,
                 );
             })
             .unwrap();
@@ -2407,8 +2413,7 @@ mod tests {
             "tail of the input must scroll into view: {row:?}"
         );
         // Cursor rides the last column instead of being skipped.
-        let cursor = terminal.backend_mut().get_cursor_position().unwrap();
-        assert_eq!((cursor.x, cursor.y), (width - 1, 0));
+        assert_eq!(caret, Some((width - 1, 0)));
 
         // Move the cursor 15 chars left: still visible (pinned to the last
         // column), and the window follows it leftward.
@@ -2421,7 +2426,7 @@ mod tests {
                     area,
                     &prompt,
                     &theme,
-                    &mut None,
+                    &mut caret,
                 );
             })
             .unwrap();
@@ -2432,8 +2437,7 @@ mod tests {
             row.ends_with(&shifted_window[shifted_window.len() - 20..]),
             "window must shift with the cursor: {row:?}"
         );
-        let cursor = terminal.backend_mut().get_cursor_position().unwrap();
-        assert_eq!((cursor.x, cursor.y), (width - 1, 0));
+        assert_eq!(caret, Some((width - 1, 0)));
 
         // With a short input nothing scrolls and the cursor sits right
         // after the typed text.
@@ -2447,11 +2451,10 @@ mod tests {
                     area,
                     &prompt,
                     &theme,
-                    &mut None,
+                    &mut caret,
                 );
             })
             .unwrap();
-        let cursor = terminal.backend_mut().get_cursor_position().unwrap();
-        assert_eq!((cursor.x, cursor.y), (8 + 3, 0));
+        assert_eq!(caret, Some((8 + 3, 0)));
     }
 }

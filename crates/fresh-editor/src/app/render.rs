@@ -1837,9 +1837,9 @@ impl Editor {
         if self.settings_state.as_ref().is_some_and(|s| s.visible) {
             return Some(Slot::Settings);
         }
-        if self.keybinding_editor.is_some() {
-            return Some(Slot::KeybindingEditor);
-        }
+        // The keybinding editor is not here either: box, chrome, table and
+        // dialogs are all descriptions, so every press inside it is answered
+        // or swallowed by a node, and there is nothing left to route.
         // The calibration wizard is not here: it is a *described* modal now,
         // and its own layer carries the exclusivity. A slot beside it would
         // route a pointer to a surface that has never wanted one.
@@ -2072,6 +2072,715 @@ impl Editor {
             width: cal::DIALOG_WIDTH,
             height: cal::DIALOG_HEIGHT,
         })
+    }
+
+    /// The event-debug dialog as a description.
+    fn event_debug_description(&self) -> Option<crate::view::shell::event_debug::EventDebug> {
+        use crate::view::shell::event_debug as ed;
+        use fresh_i18n::t;
+        let d = self.active_window().event_debug.as_ref()?;
+        Some(ed::EventDebug {
+            title: t!("event_debug.title").to_string(),
+            instructions: t!("event_debug.instructions").to_string(),
+            help_text: t!("event_debug.help_text").to_string(),
+            recent_label: (!d.history.is_empty())
+                .then(|| format!("{} ({})", t!("event_debug.recent_events"), d.history.len())),
+            empty_label: t!("event_debug.no_events").to_string(),
+            history: d
+                .history
+                .iter()
+                .map(|e| ed::Event {
+                    description: e.description.clone(),
+                    normalized: e.normalized.clone(),
+                })
+                .collect(),
+            controls: vec![
+                ("q".into(), t!("event_debug.close").to_string()),
+                ("Esc".into(), t!("event_debug.close").to_string()),
+                ("c".into(), t!("event_debug.clear").to_string()),
+            ],
+            details: d.last_event_details(),
+            // Resolved against the frame by `event_debug::sized`.
+            width: ed::DIALOG_WIDTH,
+            height: ed::DIALOG_HEIGHT,
+        })
+    }
+
+    /// The settings dialog's title and search row.
+    fn settings_chrome_description(&self) -> Option<crate::view::shell::settings::Chrome> {
+        use crate::app::shell_host::shell_theme::{attrs, pair};
+        use crate::view::shell::settings as st;
+
+        let s = self.settings_state.as_ref().filter(|s| s.visible)?;
+        let dim = pair("ui.line_number_fg", "ui.popup_bg");
+        let search = match s.search_active {
+            false => st::Search::Hint(vec![
+                st::Span::new("Press ", dim.clone()),
+                st::Span::new(" / ", pair("ui.popup_text_fg", "ui.split_separator_fg")),
+                st::Span::new(" to search settings...", dim.clone()),
+            ]),
+            true => {
+                let query = s.search_query();
+                let cursor = s.search_cursor().min(query.len()) as i32;
+                let (sel_start, sel_end) = s
+                    .search_input
+                    .editor
+                    .selection_flat_range()
+                    .map(|(a, b)| (a as i32, b as i32))
+                    .unwrap_or((-1, -1));
+                let n = s.search_results.len();
+                // The count and the scroll arrows, which are search chrome
+                // rather than the field.
+                let count = match (query.is_empty(), n) {
+                    (true, _) => String::new(),
+                    (false, 0) => " (no results)".into(),
+                    (false, 1) => " (1 result)".into(),
+                    (false, _) if s.search_max_visible >= n => format!(" ({n} results)"),
+                    (false, _) => format!(
+                        " ({}-{} of {n})",
+                        s.search_scroll_offset + 1,
+                        (s.search_scroll_offset + s.search_max_visible).min(n)
+                    ),
+                };
+                let arrows = match (
+                    s.search_scroll_offset > 0,
+                    s.search_scroll_offset + s.search_max_visible < n,
+                ) {
+                    (true, true) => " ↑↓",
+                    (true, false) => " ↑",
+                    (false, true) => " ↓",
+                    (false, false) => "",
+                };
+                st::Search::Active {
+                    field: std::rc::Rc::new(fresh_core::api::WidgetSpec::Text {
+                        value: query.to_string(),
+                        cursor_byte: cursor,
+                        focused: true,
+                        label: String::new(),
+                        placeholder: None,
+                        rows: 1,
+                        field_width: 0,
+                        max_visible_chars: 0,
+                        full_width: false,
+                        completions: Vec::new(),
+                        completions_visible_rows: 0,
+                        block_caret: true,
+                        sel_start,
+                        sel_end,
+                        label_width: 0,
+                        read_only: false,
+                        markdown: false,
+                        key: None,
+                    }),
+                    suffix: vec![
+                        st::Span::new(count, dim.clone()),
+                        st::Span::new(arrows, attrs("ui.menu_active_fg", "ui.popup_bg", &["bold"])),
+                    ],
+                }
+            }
+        };
+        // The footer, in the wide layout only: the narrow one is seven rows
+        // rather than two and stacks its buttons, which has not crossed. The
+        // box's own width decides, the way `inner_area.width < 60` did.
+        let wide = self
+            .panel_rect(&st::key())
+            .is_some_and(|r| r.width.saturating_sub(2) >= 60);
+        let footer = wide.then(|| {
+            let nullable_set = s
+                .current_item()
+                .map(|i| i.nullable && !i.is_null)
+                .unwrap_or(false);
+            let focused = (s.focus_panel() == crate::view::settings::state::FocusPanel::Footer)
+                .then(|| match s.footer_button_index {
+                    0 => st::Button::Layer,
+                    1 => st::Button::Reset,
+                    2 => st::Button::Save,
+                    3 => st::Button::Cancel,
+                    _ => st::Button::Edit,
+                });
+            use crate::view::settings::layout::SettingsHit;
+            st::Footer {
+                layer: format!("[ {} ]", s.target_layer_name()),
+                reset: format!(
+                    "[ {} ]",
+                    match nullable_set {
+                        true => t!("settings.btn_inherit").to_string(),
+                        false => t!("settings.btn_reset").to_string(),
+                    }
+                ),
+                save: format!("[ {} ]", t!("settings.btn_save")),
+                cancel: format!("[ {} ]", t!("settings.btn_cancel")),
+                edit: format!("[ {} ]", t!("settings.btn_edit")),
+                help: match (s.search_active, focused.is_some(), s.is_editing_dual_list()) {
+                    (true, _, _) => t!("settings.help_search").to_string(),
+                    (_, true, _) => t!("settings.help_footer").to_string(),
+                    // "Enter:Edit" is actively wrong once the two-column
+                    // picker has the keyboard.
+                    (_, _, true) => t!("settings.help_duallist").to_string(),
+                    _ => t!("settings.help_default").to_string(),
+                },
+                focused,
+                hovered: match s.hover_hit {
+                    Some(SettingsHit::LayerButton) => Some(st::Button::Layer),
+                    Some(SettingsHit::ResetButton) => Some(st::Button::Reset),
+                    Some(SettingsHit::SaveButton) => Some(st::Button::Save),
+                    Some(SettingsHit::CancelButton) => Some(st::Button::Cancel),
+                    Some(SettingsHit::EditButton) => Some(st::Button::Edit),
+                    _ => None,
+                },
+            }
+        });
+        Some(st::Chrome {
+            footer,
+            title: match s.has_changes() {
+                true => format!(" Settings [{}] • (modified) ", s.target_layer_name()),
+                false => format!(" Settings [{}] ", s.target_layer_name()),
+            },
+            search,
+        })
+    }
+
+    /// The settings dialog's open prompt or help overlay.
+    ///
+    /// Not the entry-dialog stack, which is its own surface and its own
+    /// migration; when one of those is up this answers `None` and the painter
+    /// draws it as before.
+    fn settings_dialog_description(&self) -> Option<crate::view::shell::settings::Dialog> {
+        use crate::view::shell::settings as st;
+        use fresh_i18n::t;
+
+        let s = self.settings_state.as_ref().filter(|s| s.visible)?;
+        // The painter's own precedence, topmost first. The entry dialog's two
+        // prompts sit *over* the entry stack, so they cross even though the
+        // stack has not: a layer lands on top of what the painter drew, which
+        // is where they were.
+        if s.showing_entry_delete_confirm {
+            let named = !s.entry_delete_target_name.is_empty();
+            return Some(st::Dialog::EntryDelete(st::Destructive {
+                title: match (named, s.entry_delete_target_is_array_item) {
+                    (true, _) => format!("Delete \"{}\"?", s.entry_delete_target_name),
+                    (false, true) => "Delete item?".into(),
+                    (false, false) => "Delete entry?".into(),
+                },
+                message: match (named, s.entry_delete_target_is_array_item) {
+                    (true, _) => format!(
+                        "This will permanently remove \"{}\".",
+                        s.entry_delete_target_name
+                    ),
+                    (false, true) => "This will permanently remove this item.".into(),
+                    (false, false) => "This will permanently remove the entry.".into(),
+                },
+                buttons: vec!["Cancel".into(), "Delete".into()],
+                selected: s.entry_delete_confirm_selection,
+                destructive: 1,
+                help: "Tab/←→: Select   Enter: Confirm   Esc: Cancel".into(),
+                grave: true,
+                width: 60,
+            }));
+        }
+        if s.showing_entry_discard_confirm {
+            return Some(st::Dialog::EntryDiscard(st::Destructive {
+                title: "Discard changes?".into(),
+                message: "You have uncommitted edits in this dialog.".into(),
+                buttons: vec!["Keep editing".into(), "Discard".into()],
+                selected: s.entry_discard_confirm_selection,
+                destructive: 1,
+                help: "Tab/←→: Select   Enter: Confirm   Esc: Keep editing".into(),
+                grave: false,
+                width: 50,
+            }));
+        }
+        // The stack itself is still painted, so anything *under* it stays
+        // painted too — a described dialog would land on top of it.
+        if s.showing_entry_dialog() {
+            return None;
+        }
+        if s.showing_help {
+            let head = |k: &str| st::HelpLine {
+                key: k.to_string(),
+                desc: String::new(),
+                heading: true,
+            };
+            let l = |k: &str, d: &str| st::HelpLine {
+                key: k.to_string(),
+                desc: d.to_string(),
+                heading: false,
+            };
+            let gap = || st::HelpLine {
+                key: String::new(),
+                desc: String::new(),
+                heading: false,
+            };
+            return Some(st::Dialog::Help {
+                title: "Keyboard Shortcuts".into(),
+                lines: vec![
+                    head("Navigation"),
+                    l("↑ / ↓", "Move up/down"),
+                    l("Tab", "Switch between categories and settings"),
+                    l("Enter", "Activate/toggle setting"),
+                    gap(),
+                    head("Search"),
+                    l("/", "Start search"),
+                    l("Esc", "Cancel search"),
+                    l("↑ / ↓", "Navigate results"),
+                    l("Enter", "Jump to result"),
+                    gap(),
+                    head("Actions"),
+                    l("Ctrl+S", "Save settings"),
+                    l("Esc", "Close settings"),
+                    l("?", "Toggle this help"),
+                ],
+            });
+        }
+        let help = "←/→/Tab: Select   Enter: Confirm   Esc: Cancel".to_string();
+        if s.showing_reset_dialog {
+            return Some(st::Dialog::Reset(st::Choice {
+                title: "Reset All Changes".into(),
+                prompt: "Discard all pending changes?".into(),
+                changes: s.get_change_descriptions(),
+                buttons: vec!["Reset".into(), "Cancel".into()],
+                selected: s.reset_dialog_selection,
+                hovered: s.reset_dialog_hover,
+                help,
+            }));
+        }
+        if s.showing_confirm_dialog {
+            return Some(st::Dialog::Confirm(st::Choice {
+                title: t!("confirm.unsaved_changes_title").to_string(),
+                prompt: t!("confirm.unsaved_changes_prompt").to_string(),
+                changes: s.get_change_descriptions(),
+                buttons: vec![
+                    t!("confirm.save_and_exit").to_string(),
+                    t!("confirm.discard").to_string(),
+                    t!("confirm.cancel").to_string(),
+                ],
+                selected: s.confirm_dialog_selection,
+                hovered: s.confirm_dialog_hover,
+                help,
+            }));
+        }
+        None
+    }
+
+    /// The keybinding editor's title, header rows and footer.
+    fn keybinding_chrome_description(&self) -> Option<crate::view::shell::keybinding::Chrome> {
+        use crate::app::keybinding_editor::{ContextFilter, SearchMode, SourceFilter};
+        use crate::app::shell_host::shell_theme::{attrs, pair};
+        use crate::view::shell::keybinding as kb;
+        use fresh_i18n::t;
+
+        let e = self.keybinding_editor.as_ref()?;
+        let ink = pair("ui.popup_text_fg", "ui.popup_bg");
+        let accent = pair("ui.diagnostic_info_fg", "ui.popup_bg");
+        let key_ink = attrs("ui.help_key_fg", "ui.popup_bg", &["bold"]);
+
+        let mut path = vec![
+            kb::Span::new(
+                format!(" {} ", t!("keybinding_editor.label_config")),
+                ink.clone(),
+            ),
+            kb::Span::new(e.config_file_path.clone(), accent.clone()),
+        ];
+        if !e.keymap_names.is_empty() {
+            path.push(kb::Span::new(
+                format!("  {} ", t!("keybinding_editor.label_maps")),
+                ink.clone(),
+            ));
+            path.push(kb::Span::new(e.keymap_names.join(", "), ink.clone()));
+        }
+
+        let search = match (e.search_active, &e.search_mode) {
+            (false, _) => vec![
+                kb::Span::new(" ", ink.clone()),
+                kb::Span::new(t!("keybinding_editor.search_hint").to_string(), ink.clone()),
+            ],
+            (true, SearchMode::Text) => {
+                let mut v = vec![
+                    kb::Span::new(
+                        format!(" {} ", t!("keybinding_editor.label_search")),
+                        key_ink.clone(),
+                    ),
+                    kb::Span::new(e.search_query.clone(), ink.clone()),
+                ];
+                if e.search_focused {
+                    v.push(kb::Span::new("_", pair("ui.cursor", "ui.popup_bg")));
+                    v.push(kb::Span::new(
+                        format!("  {}", t!("keybinding_editor.search_text_hint")),
+                        ink.clone(),
+                    ));
+                }
+                v
+            }
+            (true, SearchMode::RecordKey) => vec![
+                kb::Span::new(
+                    format!(" {} ", t!("keybinding_editor.label_record_key")),
+                    attrs("ui.status_warning_fg", "ui.popup_bg", &["bold"]),
+                ),
+                kb::Span::new(
+                    match e.search_key_display.is_empty() {
+                        true => t!("keybinding_editor.press_a_key").to_string(),
+                        false => e.search_key_display.clone(),
+                    },
+                    ink.clone(),
+                ),
+                kb::Span::new(
+                    format!("  {}", t!("keybinding_editor.search_record_hint")),
+                    ink.clone(),
+                ),
+            ],
+        };
+
+        let total = e.bindings.len();
+        let filtered = e.filtered_indices.len();
+        let counts = match filtered == total {
+            true => t!("keybinding_editor.bindings_count", count = total).to_string(),
+            false => t!(
+                "keybinding_editor.bindings_filtered",
+                filtered = filtered,
+                total = total
+            )
+            .to_string(),
+        };
+        let set = |on: bool| match on {
+            true => accent.clone(),
+            false => ink.clone(),
+        };
+        let mut filters = vec![
+            kb::Span::new(
+                format!(" {} ", t!("keybinding_editor.label_context")),
+                ink.clone(),
+            ),
+            kb::Span::new(
+                format!("[{}]", e.context_filter_display()),
+                set(e.context_filter != ContextFilter::All),
+            ),
+            kb::Span::new(
+                format!("  {} ", t!("keybinding_editor.label_source")),
+                ink.clone(),
+            ),
+            kb::Span::new(
+                format!("[{}]", e.source_filter_display()),
+                set(e.source_filter != SourceFilter::All),
+            ),
+            kb::Span::new(format!("  {counts}"), ink.clone()),
+        ];
+        if e.has_changes {
+            filters.push(kb::Span::new(
+                format!("  {}", t!("keybinding_editor.modified")),
+                pair("ui.status_warning_fg", "ui.popup_bg"),
+            ));
+        }
+
+        // The footer's hints, which differ while the search bar has focus.
+        let hint = |k: &str, label: String| {
+            vec![
+                kb::Span::new(k.to_string(), pair("ui.help_key_fg", "ui.popup_bg")),
+                kb::Span::new(format!(":{label}  "), ink.clone()),
+            ]
+        };
+        let footer: Vec<kb::Span> = match e.search_active && e.search_focused {
+            true => [
+                hint(" Esc", t!("keybinding_editor.footer_cancel").to_string()),
+                hint(
+                    "Tab",
+                    t!("keybinding_editor.footer_toggle_mode").to_string(),
+                ),
+                hint("Enter", t!("keybinding_editor.footer_confirm").to_string()),
+            ]
+            .concat(),
+            false => [
+                hint(" Enter", t!("keybinding_editor.footer_edit").to_string()),
+                hint("a", t!("keybinding_editor.footer_add").to_string()),
+                hint("d", t!("keybinding_editor.footer_delete").to_string()),
+                hint("/", t!("keybinding_editor.footer_search").to_string()),
+                hint("r", t!("keybinding_editor.footer_record_key").to_string()),
+                hint("c", t!("keybinding_editor.footer_context").to_string()),
+                hint("s", t!("keybinding_editor.footer_source").to_string()),
+                hint("?", t!("keybinding_editor.footer_help").to_string()),
+                hint("Ctrl+S", t!("keybinding_editor.footer_save").to_string()),
+                hint("Esc", t!("keybinding_editor.footer_close").to_string()),
+            ]
+            .concat(),
+        };
+
+        Some(kb::Chrome {
+            title: format!(
+                "{} \u{2500} [{}]",
+                t!("keybinding_editor.title"),
+                e.active_keymap
+            ),
+            path,
+            search,
+            filters,
+            footer,
+        })
+    }
+
+    /// The keybinding editor's table, when no dialog covers it.
+    ///
+    /// **The rows are resolved here** — every column already padded to nothing
+    /// and every colour already a name — because a description is a pure
+    /// function of what it is handed, and `t!` and `Theme` are neither.
+    fn keybinding_table_description(&self) -> Option<crate::view::shell::keybinding::Table> {
+        use crate::app::keybinding_editor::{BindingSource, DisplayRow};
+        use crate::view::shell::keybinding as kb;
+        use fresh_i18n::t;
+
+        let e = self.keybinding_editor.as_ref()?;
+        // A dialog is a layer over the box, so the table under it is not seen.
+        if e.showing_help || e.edit_dialog.is_some() || e.showing_confirm_dialog {
+            return None;
+        }
+        Some(kb::Table {
+            columns: [
+                t!("keybinding_editor.header_key").to_string(),
+                t!("keybinding_editor.header_action").to_string(),
+                t!("keybinding_editor.header_description").to_string(),
+                t!("keybinding_editor.header_context").to_string(),
+                t!("keybinding_editor.header_source").to_string(),
+            ],
+            rows: e
+                .display_rows
+                .iter()
+                .map(|r| match r {
+                    DisplayRow::SectionHeader {
+                        plugin_name,
+                        collapsed,
+                        binding_count,
+                    } => kb::Row::Section {
+                        chevron: match collapsed {
+                            true => "▶".into(),
+                            false => "▼".into(),
+                        },
+                        label: plugin_name.clone().unwrap_or_else(|| "Builtin".into()),
+                        count: *binding_count,
+                    },
+                    DisplayRow::Binding(i) => {
+                        let b = &e.bindings[*i];
+                        kb::Row::Binding {
+                            key: b.key_display.clone(),
+                            action: b.action.clone(),
+                            description: b.action_display.clone(),
+                            context: b.context.clone(),
+                            source: match b.source {
+                                BindingSource::Custom => {
+                                    t!("keybinding_editor.source_custom").to_string()
+                                }
+                                BindingSource::Keymap => {
+                                    t!("keybinding_editor.source_keymap").to_string()
+                                }
+                                BindingSource::Plugin => {
+                                    t!("keybinding_editor.source_plugin", default = "Plugin")
+                                        .to_string()
+                                }
+                                BindingSource::Unbound => String::new(),
+                            },
+                            source_accent: matches!(
+                                b.source,
+                                BindingSource::Custom | BindingSource::Plugin
+                            ),
+                        }
+                    }
+                })
+                .collect(),
+            selected: e.selected,
+        })
+    }
+
+    /// The keybinding editor's open dialog, as a description.
+    fn keybinding_dialog_description(&self) -> Option<crate::view::shell::keybinding::Dialog> {
+        use crate::app::keybinding_editor::EditMode;
+        use crate::view::shell::keybinding as kb;
+        use fresh_i18n::t;
+
+        let e = self.keybinding_editor.as_ref()?;
+        // The painter's own precedence: help first, then the edit dialog, then
+        // the confirmation. Each returned before reaching the next.
+        if e.showing_help {
+            let head = |k: &str| kb::HelpLine {
+                key: k.to_string(),
+                desc: String::new(),
+                heading: true,
+            };
+            let l = |k: &str, d: String| kb::HelpLine {
+                key: k.to_string(),
+                desc: d,
+                heading: false,
+            };
+            let gap = || kb::HelpLine {
+                key: String::new(),
+                desc: String::new(),
+                heading: false,
+            };
+            return Some(kb::Dialog::Help(kb::Help {
+                title: t!("keybinding_editor.help_title").to_string(),
+                lines: vec![
+                    head(&t!("keybinding_editor.help_navigation")),
+                    l(
+                        "  ↑ / ↓",
+                        t!("keybinding_editor.help_move_up_down").to_string(),
+                    ),
+                    l(
+                        "  PgUp / PgDn",
+                        t!("keybinding_editor.help_page_up_down").to_string(),
+                    ),
+                    l(
+                        "  Home / End",
+                        t!("keybinding_editor.help_first_last").to_string(),
+                    ),
+                    gap(),
+                    head(&t!("keybinding_editor.help_search")),
+                    l(
+                        "  /",
+                        t!("keybinding_editor.help_search_by_name").to_string(),
+                    ),
+                    l(
+                        "  r",
+                        t!("keybinding_editor.help_search_by_key").to_string(),
+                    ),
+                    l(
+                        "  Tab",
+                        t!("keybinding_editor.help_toggle_search").to_string(),
+                    ),
+                    l(
+                        "  Esc",
+                        t!("keybinding_editor.help_cancel_search").to_string(),
+                    ),
+                    gap(),
+                    head(&t!("keybinding_editor.help_editing")),
+                    l(
+                        "  Enter",
+                        t!("keybinding_editor.help_edit_binding").to_string(),
+                    ),
+                    l("  a", t!("keybinding_editor.help_add_binding").to_string()),
+                    l(
+                        "  d / Delete",
+                        t!("keybinding_editor.help_delete_binding").to_string(),
+                    ),
+                    gap(),
+                    head(&t!("keybinding_editor.help_filters")),
+                    l(
+                        "  c",
+                        t!("keybinding_editor.help_cycle_context").to_string(),
+                    ),
+                    l("  s", t!("keybinding_editor.help_cycle_source").to_string()),
+                    gap(),
+                    l(
+                        "  Ctrl+S",
+                        t!("keybinding_editor.help_save_changes").to_string(),
+                    ),
+                    l(
+                        "  Esc / ?",
+                        t!("keybinding_editor.help_close_help").to_string(),
+                    ),
+                ],
+            }));
+        }
+
+        if let Some(d) = &e.edit_dialog {
+            let key_value = match d.key_display.is_empty() {
+                false => d.key_display.clone(),
+                true => match d.mode {
+                    EditMode::RecordingKey => t!("keybinding_editor.key_recording").to_string(),
+                    _ => t!("keybinding_editor.key_none").to_string(),
+                },
+            };
+            let key_focused = d.focus_area == 0;
+            let action_focused = d.focus_area == 1;
+            let ctx_focused = d.focus_area == 2;
+            let action_value = match d.action_text.is_empty() && d.mode != EditMode::EditingAction {
+                true => t!("keybinding_editor.action_placeholder").to_string(),
+                false => d.action_text.clone(),
+            };
+            // Shown only when the resolved form says something the typed name
+            // does not — the painter's own comparison.
+            let described = (!d.action_text.is_empty())
+                .then(|| {
+                    crate::input::keybindings::KeybindingResolver::format_action_from_str(
+                        &d.action_text,
+                    )
+                })
+                .filter(|desc| {
+                    desc.to_lowercase() != d.action_text.replace('_', " ").to_lowercase()
+                });
+            return Some(kb::Dialog::Edit(kb::Edit {
+                title: match d.editing_index.is_some() {
+                    true => t!("keybinding_editor.dialog_edit_title").to_string(),
+                    false => t!("keybinding_editor.dialog_add_title").to_string(),
+                },
+                instructions: match d.capturing_special && key_focused {
+                    true => t!("keybinding_editor.instr_capturing_special").to_string(),
+                    false => match d.mode {
+                        EditMode::RecordingKey => {
+                            t!("keybinding_editor.instr_recording_key").to_string()
+                        }
+                        EditMode::EditingAction => {
+                            t!("keybinding_editor.instr_editing_action").to_string()
+                        }
+                        EditMode::EditingContext => {
+                            t!("keybinding_editor.instr_editing_context").to_string()
+                        }
+                    },
+                },
+                key_field: kb::Field {
+                    label: t!("keybinding_editor.label_key").to_string(),
+                    value: key_value,
+                    hint: key_focused.then(|| match d.capturing_special {
+                        true => t!("keybinding_editor.capture_any_key_hint").to_string(),
+                        false => t!("keybinding_editor.capture_special_hint").to_string(),
+                    }),
+                    focused: key_focused,
+                    invalid: false,
+                    caret: false,
+                    target: kb::Target::KeyField,
+                },
+                action_field: kb::Field {
+                    label: t!("keybinding_editor.label_action").to_string(),
+                    value: action_value,
+                    hint: None,
+                    focused: action_focused,
+                    invalid: d.action_error.is_some(),
+                    caret: action_focused && d.mode == EditMode::EditingAction,
+                    target: kb::Target::ActionField,
+                },
+                action_description: described,
+                context_field: kb::Field {
+                    label: t!("keybinding_editor.label_context").to_string(),
+                    value: format!("[{}]", d.context),
+                    hint: ctx_focused
+                        .then(|| t!("keybinding_editor.context_change_hint").to_string()),
+                    focused: ctx_focused,
+                    invalid: false,
+                    caret: false,
+                    target: kb::Target::ContextField,
+                },
+                error: d.action_error.clone(),
+                conflicts_label: t!("keybinding_editor.conflicts_label").to_string(),
+                conflicts: d.conflicts.clone(),
+                save_label: t!("keybinding_editor.btn_save").to_string(),
+                cancel_label: t!("keybinding_editor.btn_cancel").to_string(),
+                focused_button: (d.focus_area == 3).then_some(d.selected_button),
+                autocomplete: (d.autocomplete_visible && !d.autocomplete_suggestions.is_empty())
+                    .then(|| kb::Autocomplete {
+                        suggestions: d.autocomplete_suggestions.clone(),
+                        selected: d.autocomplete_selected,
+                    }),
+            }));
+        }
+
+        if e.showing_confirm_dialog {
+            return Some(kb::Dialog::Confirm(kb::Confirm {
+                title: t!("keybinding_editor.confirm_title").to_string(),
+                message: t!("keybinding_editor.confirm_message").to_string(),
+                buttons: vec![
+                    t!("keybinding_editor.btn_save").to_string(),
+                    t!("keybinding_editor.btn_discard").to_string(),
+                    t!("keybinding_editor.btn_cancel").to_string(),
+                ],
+                selected: e.confirm_selection,
+            }));
+        }
+        None
     }
 
     pub(crate) fn trust_description(
@@ -2939,7 +3648,12 @@ impl Editor {
             browser,
             trust,
             modal,
-            keybinding: self.keybinding_editor.is_some(),
+            event_debug: self.event_debug_description(),
+            settings: self.settings_chrome_description(),
+            settings_dialog: self.settings_dialog_description(),
+            keybinding: self.keybinding_chrome_description(),
+            keybinding_table: self.keybinding_table_description(),
+            keybinding_dialog: self.keybinding_dialog_description(),
             calibration: self.calibration_description(),
             splits,
             menu_bar: menu_bar_visible,
@@ -3386,13 +4100,29 @@ impl Editor {
                 }
             } else if settings_state.visible {
                 settings_state.update_focus_states();
-                let settings_layout = crate::view::settings::render_settings(
-                    frame,
-                    area,
-                    settings_state,
-                    &self.theme.read().unwrap(),
-                );
-                self.active_chrome_mut().settings_layout = Some(settings_layout);
+            }
+        }
+        // **The box is the tree's.** `view::shell::settings` places it —
+        // ninety percent of the chrome area, capped at 160, centred beside the
+        // dock — and this reads the answer. The centring arithmetic here added
+        // `area.x` back by hand, and the comment beside it said why: without
+        // it the modal landed at the frame origin and the dock over-drew its
+        // left edge.
+        if draw_settings {
+            let modal_area = self.panel_rect(&crate::view::shell::settings::key());
+            let open = self.settings_state.as_ref().is_some_and(|s| s.visible);
+            if open {
+                let theme = self.theme.read().unwrap().clone();
+                if let Some(ref mut settings_state) = self.settings_state {
+                    let settings_layout = crate::view::settings::render_settings(
+                        frame,
+                        area,
+                        modal_area.unwrap_or(ratatui::layout::Rect::ZERO),
+                        settings_state,
+                        &theme,
+                    );
+                    self.active_chrome_mut().settings_layout = Some(settings_layout);
+                }
             }
         }
 
@@ -3405,8 +4135,10 @@ impl Editor {
         // cells only for the TUI.
         let draw_aux = !self.suppress_chrome_cells;
 
-        // Keybinding editor: web renders it natively from `keybinding_editor_view`;
-        // paint cells only for the TUI.
+        // The keybinding editor is the tree's — box, chrome, table and dialogs
+        // (`view::shell::keybinding`). What is left here is the one thing the
+        // description cannot say for itself: how many rows a `PgUp` moves by,
+        // which is the box's height less the bands around the rows.
         if draw_aux {
             // **The box is the tree's.** `view::shell::keybinding` places it —
             // ninety percent of the chrome area, capped, floored, centred
@@ -3415,30 +4147,21 @@ impl Editor {
             // `editor.layout.modal_area` for a mouse handler to compare
             // against were the same rectangle stated twice.
             let modal_area = self.panel_rect(&crate::view::shell::keybinding::key());
-            if let (Some(modal_area), true) = (modal_area, self.keybinding_editor.is_some()) {
-                let theme = self.theme.read().unwrap().clone();
-                if let Some(ref mut kb_editor) = self.keybinding_editor {
-                    crate::view::dimming::apply_dimming(frame, area);
-                    crate::view::keybinding_editor::render_keybinding_editor(
-                        frame, modal_area, kb_editor, &theme,
-                    );
-                }
+            // The page a `PgUp` moves by. It was the table rectangle's height,
+            // filed by the painter as it drew; the box is the tree's and the
+            // bands between it and the rows are one statement in
+            // `keybinding::table_rows`, so the page and the window the rows
+            // fill cannot disagree.
+            if let (Some(r), Some(e)) = (modal_area, self.keybinding_editor.as_mut()) {
+                e.scroll
+                    .set_viewport(crate::view::shell::keybinding::table_rows(r.height));
             }
         }
 
-        // Render event debug dialog if active
-        if draw_aux {
-            if let Some(ref debug) = self.active_window().event_debug {
-                // Dim the editor content behind the dialog modal
-                crate::view::dimming::apply_dimming(frame, area);
-                crate::view::event_debug::render_event_debug(
-                    frame,
-                    area,
-                    debug,
-                    &self.theme.read().unwrap(),
-                );
-            }
-        }
+        // The event-debug dialog is the tree's, box and contents alike
+        // (`view::shell::event_debug`) — the calibration wizard's twin, and
+        // migrated with it for the same reason: no mouse and no recorded
+        // rectangles. Nothing paints here.
     }
 
     /// Apply the theme-key provenance the frame's menu walk recorded.
